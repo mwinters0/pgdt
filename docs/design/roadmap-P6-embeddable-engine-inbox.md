@@ -443,3 +443,28 @@ than a reason to bring this phase forward.
 ([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The library
 hands out partitions; the CLI merges them" and "Workers come from
 `spawn_blocking`").
+
+---
+
+## A partitioned replay cannot be resumed, and the token says so rather than lying
+
+**Fact.** `table_stream_partitions` takes no `resume` argument, and a
+sub-stream's `ResumeToken` is stamped with the partition it came from — so
+feeding one back to `table_stream` is `Error::ResumeQueryMismatch` rather than
+a silent replay of every matching row from that offset onward. A token carries
+a file offset and nothing about the range its stream was confined to, and the
+ranges are decided per call from the caller's `Parallelism` and the source's
+own advice, so nothing about a partitioned run is reconstructible from a token
+alone ([`architecture.md`](architecture.md), "Partitioned replay").
+
+**Why this phase cares.** Resume is part of what the embedded API promises,
+and it is currently a whole-stream promise. An engine that pulls partitions
+and wants to stop and continue needs either a token that carries its own
+partition's extent, or a way to ask for the same split twice — and which of
+those is right is a question about what the embedded surface guarantees, not
+about the replay. It is worth deciding before the surface is frozen, because
+`ResumeToken` is opaque today and adding a field to it is free, where changing
+what a token means after an embedder holds one is not.
+
+**Origin.** P16.8, 2026-09-07
+([`roadmap-P16.8-partitioned-replay-notes.md`](roadmap-P16.8-partitioned-replay-notes.md)).

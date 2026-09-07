@@ -316,9 +316,13 @@ terminator.
 
 **Verified against:** koji (19.58B rows, no false terminator); the
 `public.escapes` round-trip on `pg_dump` 13.23 / 16.15 / 18.6.
-**Relied on by:** nothing built — the scanner enumerates lines. It is what
-would make the needle search safe, and that scheme is deferred rather than
-refused: `architecture.md`, "parse-profile".
+**Relied on by:** `architecture.md`, "Partitioned replay" — a sub-stream that
+starts inside a `COPY` block resyncs to a *line start* and never hands the
+scanner a mid-row byte, because this claim is about a line start and a row's
+own tail can be the two bytes `\.` (a value ending in an escaped backslash, cut
+between them). Otherwise nothing built: the scanner enumerates lines, and the
+needle search this would also make safe is deferred rather than refused
+(`architecture.md`, "parse-profile").
 **Re-verify:** the `public.escapes` fixture test already asserts the escaping
 rule this rests on; a new major that changed it would fail that test.
 

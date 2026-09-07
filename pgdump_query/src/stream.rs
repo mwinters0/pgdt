@@ -56,6 +56,7 @@
 //! decodes a row — see that method's docs and `resolve.rs`'s module docs for
 //! why the `RecordBatch`es this stream yields stay all-`Utf8View` regardless.
 
+use std::ops::Range;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -64,7 +65,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use async_stream::try_stream;
 use bytes::Bytes;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 
 use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names};
 use crate::cache::{CacheLoad, CacheMode};
@@ -74,7 +75,7 @@ use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
     union_census,
 };
-use crate::io::{ByteRangeSource, WaitPolicy};
+use crate::io::{ByteRangeSource, Parallelism, PartitionBoundaries, Partitioning, WaitPolicy};
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
@@ -224,7 +225,8 @@ fn project(
 }
 
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
-/// projection, the filter terms and the schema mode
+/// projection, the filter terms, the schema mode and — for a sub-stream of a
+/// partitioned replay — which partition of how many it came out of
 /// (`docs/design/architecture.md`, "Resume").
 ///
 /// Every field is hashed through an explicit `match` rather than a derived
@@ -232,11 +234,32 @@ fn project(
 /// than a fingerprint that quietly stops covering it. The hasher's output is
 /// not stable across Rust releases, which costs nothing: a token is valid
 /// only within the process that produced it.
-fn query_fingerprint(table: &str, options: &QueryOptions) -> u64 {
+///
+/// **`partition` is what keeps a sub-stream's token from resuming as a whole
+/// one.** A token carries an offset and nothing about the range its stream was
+/// confined to, so feeding partition *k*'s token to [`table_stream`] would
+/// replay every matching row from that offset onward — a superset of what the
+/// partition had left, silently. Stamping the partition makes that
+/// `Error::ResumeQueryMismatch` instead, which is the whole of the support a
+/// partitioned replay offers for resume
+/// (`docs/design/architecture.md`, "Partitioned replay").
+fn query_fingerprint(
+    table: &str,
+    options: &QueryOptions,
+    partition: Option<(usize, usize)>,
+) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     table.hash(&mut hasher);
+    match partition {
+        None => 0u8.hash(&mut hasher),
+        Some((index, of)) => {
+            1u8.hash(&mut hasher);
+            index.hash(&mut hasher);
+            of.hash(&mut hasher);
+        }
+    }
     match options.schema_mode {
         SchemaMode::Typed => 0u8,
         SchemaMode::Strings => 1u8,
@@ -1118,6 +1141,809 @@ fn snapshot(
     }
 }
 
+/// Everything a replay needs that the mapping pass produced, shared unchanged
+/// by every sub-stream of a partitioned replay
+/// (`docs/design/architecture.md`, "Partitioned replay").
+///
+/// Held behind an `Arc` because `metadata` is the whole dump's DDL and N
+/// sub-streams would otherwise each clone it. Nothing in here is mutated
+/// after the mapping pass, which is what makes one copy correct for all of
+/// them — the census in particular is the union over **every** block the
+/// query will replay, so two partitions of one table cannot resolve its
+/// arrays differently (`docs/design/architecture.md`, "The array shape
+/// census").
+struct ReplayPlan {
+    scan_options: ScanOptions,
+    query_options: QueryOptions,
+    metadata: Option<DumpMetadata>,
+    census: Vec<ArrayShape>,
+}
+
+/// What state a [`Segment`]'s scanner starts in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentEntry {
+    /// Outside a block, at [`Segment::start`] — which is the `COPY` header
+    /// line for a whole block, so the header the scanner reads is what
+    /// resolves the schema. Also how a [`ResumeToken`] that paused *between*
+    /// blocks re-enters.
+    Header,
+    /// Inside the block's data: reading begins at the first row boundary at
+    /// or after [`Segment::start`], and the schema comes from the map's own
+    /// copy of the header, no header line being in range.
+    Interior,
+}
+
+/// One contiguous piece of one `COPY` block that a sub-stream replays.
+///
+/// **The two offsets are not a byte range, and the difference is what makes
+/// the pieces tile.** `start` is where the *search* for this piece's first row
+/// begins; the piece's first row is the one starting just past the first LF at
+/// or after it. `limit` is not where reading stops either: the piece runs
+/// through the line that *ends* at the first LF at or after `limit`, which is
+/// exactly the row the next piece's search then skips. So a row that straddles
+/// a cut belongs to the piece before it, once, and no cut has to land on a row
+/// boundary — which is what lets a source advise cuts (block starts, or
+/// anywhere at all) that know nothing about rows
+/// (`docs/design/architecture.md`, "Partitioned replay").
+#[derive(Debug, Clone)]
+struct Segment {
+    block: CopyBlock,
+    start: u64,
+    limit: u64,
+    entry: SegmentEntry,
+}
+
+impl Segment {
+    /// The bytes this piece is responsible for, for balancing sub-streams
+    /// against each other. Approximate at both ends by exactly one row, which
+    /// is why nothing reads it as an extent.
+    ///
+    /// Measured from the block's **data**, so the first piece is not charged
+    /// for the header line it also covers: the header is not work, and on a
+    /// small block charging for it is enough to push the piece after it into
+    /// a neighbour's group.
+    fn weight(&self) -> u64 {
+        self.limit.saturating_sub(self.start.max(self.block.data_offset))
+    }
+}
+
+/// The three values a [`TableStream`] publishes to its owner while it runs.
+#[derive(Clone)]
+struct StreamShared {
+    position: Arc<Mutex<ResumeToken>>,
+    resolved_schema: Arc<Mutex<ResolvedSchema>>,
+    comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
+}
+
+impl StreamShared {
+    fn new(token: ResumeToken) -> Self {
+        Self {
+            position: Arc::new(Mutex::new(token)),
+            resolved_schema: Arc::new(Mutex::new(ResolvedSchema::default())),
+            comparison_notes: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn into_stream<'a>(
+        self,
+        inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
+    ) -> TableStream<'a> {
+        TableStream {
+            inner,
+            position: self.position,
+            resolved_schema: self.resolved_schema,
+            comparison_notes: self.comparison_notes,
+        }
+    }
+}
+
+/// Resolve one block's schema against `plan`, validate the filter and the
+/// projection against it, and build the [`RowBatcher`] that will hold its
+/// rows.
+///
+/// The three places a block becomes active — a `COPY` header the scanner
+/// read, the first row of a headerless block, and a partition that started
+/// inside a block and took the header off the map — differ only in where the
+/// header and the field count come from, so they share this rather than
+/// carrying three copies of the same six steps that would drift apart.
+fn activate(
+    header: CopyHeader,
+    header_offset: u64,
+    field_count: usize,
+    database: Option<String>,
+    plan: &ReplayPlan,
+) -> Result<(Active, ResolvedSchema, Vec<ComparisonNote>)> {
+    let full = resolve_block(
+        &header,
+        field_count,
+        plan.metadata.as_ref(),
+        database.as_deref(),
+        plan.query_options.schema_mode,
+        &plan.census,
+    )?;
+    // Against the *unprojected* schema: a term's index numbers the raw row's
+    // fields, and a term may name a column the projection dropped.
+    let filter = resolve_expr(&plan.query_options.filter, &full, header_offset)?;
+    let notes = filter.comparison_notes();
+    let (resolved, field_targets) =
+        project(&full, plan.query_options.projection.as_deref(), header_offset)?;
+    let batcher = RowBatcher::new(
+        &resolved,
+        header.qualified_name(),
+        plan.query_options.clone(),
+        field_targets,
+    );
+    Ok(((header_offset, header, batcher, filter, database), resolved, notes))
+}
+
+/// The offset of the first row boundary at or after `from`, searching no
+/// further than `end` — the byte just past the first LF in `[from, end)`, or
+/// `None` when there is none.
+///
+/// **A partition never resyncs by handing the scanner a mid-row byte.** The
+/// scanner in its `InCopy` state treats every line as a row, and the tail of a
+/// row can be the two bytes `\.` — a value ending in an escaped backslash, cut
+/// between the two — which it would read as the block's terminator. I7's
+/// guarantee that `\.` cannot open a data line is about a *line start*, so it
+/// covers a scanner started here and does not cover one started mid-row.
+///
+/// The read is one chunk in the common case and is re-read by the segment's
+/// own loop immediately after; on a block-decoding source it lands inside the
+/// block that segment was going to decode anyway.
+async fn first_row_start(
+    source: &dyn ByteRangeSource,
+    from: u64,
+    end: u64,
+    options: &ScanOptions,
+) -> Result<Option<u64>> {
+    let mut pos = from;
+    while pos < end {
+        let want = options.chunk_size.min((end - pos) as usize);
+        let bytes = source.read_range(pos, want).await?;
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        if let Some(nl) = memchr::memchr(b'\n', &bytes) {
+            return Ok(Some(pos + nl as u64 + 1));
+        }
+        pos += bytes.len() as u64;
+        if pos - from > options.max_line_bytes as u64 {
+            return Err(Error::LineTooLong { offset: from, limit: options.max_line_bytes });
+        }
+    }
+    Ok(None)
+}
+
+/// What a query's mapping pass settled: the blocks this query will replay,
+/// the DDL to type them against, and their combined array-shape census.
+struct MappedTable {
+    matches: Vec<CopyBlock>,
+    metadata: Option<DumpMetadata>,
+    census: Vec<ArrayShape>,
+}
+
+/// The two checks that are about the *request* rather than about the file, so
+/// they fire before a byte is read and regardless of whether the table turns
+/// up: a projection naming a column twice is wrong whatever the file holds,
+/// and a resume token from another query would otherwise be discovered only
+/// once its first block resolved.
+fn validate_request(
+    query_options: &QueryOptions,
+    resume: Option<&ResumeToken>,
+    fingerprint: u64,
+) -> Result<()> {
+    if let Some(columns) = query_options.projection.as_deref() {
+        for (i, name) in columns.iter().enumerate() {
+            if columns[..i].contains(name) {
+                return Err(Error::DuplicateProjectionColumn { column: name.clone() });
+            }
+        }
+    }
+    if resume.is_some_and(|t| t.query_fingerprint != fingerprint) {
+        return Err(Error::ResumeQueryMismatch);
+    }
+    Ok(())
+}
+
+/// Pass 1 of a query, whole: load or start the map, capture the preamble,
+/// extend the map until this query's table is settled, then narrow the
+/// name-only matches to at most one candidate and take their census. Yields
+/// no rows — see the module docs.
+///
+/// **Both entry points run exactly this**, which is what makes a partitioned
+/// replay map the file once rather than once per sub-stream, and what makes
+/// the two agree about which blocks a query covers.
+async fn map_for_query(
+    source: &dyn ByteRangeSource,
+    table: &str,
+    scan_options: &ScanOptions,
+    query_options: &QueryOptions,
+    cache: &CacheMode,
+) -> Result<MappedTable> {
+    let size = source.size().await?;
+
+    let mut index = match cache.load(source).await? {
+        CacheLoad::Index(index) => index,
+        // Four reasons to start cold: nothing to resume from, so this
+        // query maps from byte 0, and nothing at that path is worth
+        // keeping. Spelled out rather than wildcarded
+        // (`docs/design/architecture.md`, "The cache").
+        CacheLoad::Disabled
+        | CacheLoad::Missing
+        | CacheLoad::Unreadable
+        | CacheLoad::UnsupportedVersion => DumpIndex::default(),
+        // The fifth is a refusal, before a byte of the dump is read: this
+        // cache describes another file, and this query's own mapping pass
+        // would overwrite it.
+        CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
+            return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
+        }
+    };
+
+    // The first database's preamble always gets captured before anything else
+    // runs, regardless of which table this particular call queries or whether
+    // it ever reaches the file's first `COPY` block itself
+    // (`crate::index::scan_preamble`'s docs) — every `Typed`-mode query needs
+    // it for type resolution below, not just a caller that goes on to persist
+    // a cache. `CacheMode::Disabled` still runs the scan
+    // (`docs/design/architecture.md`, "Bounded preamble-only reads") but
+    // `cache.save` below is a no-op for it, so nothing is written. Persisted
+    // immediately (not deferred to whenever the mapping pass next saves) so it
+    // survives even a caller that polls the stream once and drops it.
+    let first_db_preamble_known = index
+        .metadata
+        .as_ref()
+        .and_then(|m| m.databases.first())
+        .is_some_and(|db| db.preamble_complete);
+    if !first_db_preamble_known {
+        // The prepass's spans are kept, not discarded: they tile
+        // `[0, preamble_end)`, which is exactly the prefix `map_forward`
+        // splices its own output onto. Without them the map would start
+        // at the frontier with nothing beneath it and could not tile.
+        let (metadata, spans, preamble_end, roles, tablespaces) =
+            scan_preamble(source, scan_options).await?;
+        index.metadata = Some(metadata);
+        index.spans = splice(&[], spans, 0, preamble_end, size);
+        index.roles.extend(roles);
+        index.tablespaces.extend(tablespaces);
+        index.scanned_through = index.scanned_through.max(preamble_end);
+        attach_text(source, &mut index.spans).await?;
+        cache.save(source, &index).await?;
+    }
+    // Pass 1: extend the map until this query's table is settled. No
+    // rows come out of this, and nothing is yielded until it returns.
+    let selector = query_options.database.as_deref();
+    let target = match query_options.scan_extent {
+        ScanExtent::UntilTargetSettled => Some((table, selector)),
+        ScanExtent::Full => None,
+    };
+    // A cancelled mapping pass is an error here rather than a short
+    // stream: the blocks it would replay are only the ones it happened to
+    // reach, and a caller that asked for a table's rows would be handed a
+    // prefix of them with nothing saying so. `pgdq query` never sets the
+    // flag; an embedder that does gets told.
+    if map_forward(source, scan_options, cache, &mut index, target, size).await?
+        == MapStop::Interrupted
+    {
+        return Err(Error::ScanCancelled { scanned_through: index.scanned_through });
+    }
+
+    // Read *after* the mapping pass, not before it: `map_forward` states
+    // the metadata at each `\connect`ed database's first `COPY` block, so
+    // a cold query on a `pg_dumpall` types a later database's blocks
+    // exactly as a query after `pgdq parse` does. The two passes are still
+    // strictly ordered (see the module docs), so the schema depends on the
+    // map, never on how far the *row* replay has got.
+    let metadata = index.metadata.clone();
+
+    // One target per query (`docs/design/architecture.md`,
+    // "One target per query"): narrow the name-only matches down to at
+    // most one `(database, qualified name)` candidate before reading any
+    // of them, so a would-be silent union across schemas or databases
+    // errors instead. `query_options.database`, when given, is the way
+    // out of an otherwise-ambiguous bare or cross-database name — it
+    // filters candidates first, exactly like a `WHERE` clause narrowing
+    // matches rather than picking among them after the fact.
+    //
+    // Because the map is now complete before any row is emitted, this
+    // check runs over every candidate the scan reached rather than
+    // incrementally as blocks turn up — so an ambiguous name errors
+    // before a single row goes out, not partway through one candidate's.
+    let matches: Vec<CopyBlock> = index
+        .blocks_for(table)
+        .filter(|b| selector.is_none() || b.database.as_deref() == selector)
+        .cloned()
+        .collect();
+    let mut target: Option<(Option<String>, String)> = None;
+    for b in &matches {
+        let key = (b.database.clone(), b.header.qualified_name());
+        match &target {
+            None => target = Some(key),
+            Some(t) if *t != key => {
+                return Err(Error::AmbiguousTable {
+                    name: table.to_string(),
+                    candidates: vec![render_candidate(t), render_candidate(&key)],
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // **A streamed schema needs no completeness test.** The mapping pass
+    // has finished, `matches` is fixed, and every block in it carries a
+    // census — so the union below is the evidence for exactly the rows
+    // this stream will hand back, on a cold query as much as on a full
+    // scan (`docs/design/architecture.md`, "The array shape census").
+    let census = union_census(matches.iter());
+    Ok(MappedTable { matches, metadata, census })
+}
+
+/// How many sub-streams a caller's [`Parallelism`] and a source's per-partition
+/// footprint allow between them.
+///
+/// **Both numbers bind, and the bytes bind on the *stream* count rather than
+/// per block**, because the sub-streams are what run at once: capping each
+/// block's cut at the memory allowance and then handing out one sub-stream per
+/// piece would multiply the allowance by the block count. A source that states
+/// no footprint (the declining default, and every source before this method
+/// existed) is bounded by `jobs` alone.
+fn worker_count(parallelism: Parallelism, partition_bytes: u64) -> usize {
+    let jobs = parallelism.jobs();
+    match parallelism.memory_bytes() {
+        Some(budget) if partition_bytes > 0 => {
+            jobs.min(usize::try_from(budget / partition_bytes).unwrap_or(usize::MAX).max(1))
+        }
+        _ => jobs,
+    }
+}
+
+/// Cut `range` into at most `want` pieces where `advice` permits, in ascending
+/// order and tiling it exactly.
+///
+/// `Anywhere` is cut evenly, which is the plain file's answer and the only one
+/// that can balance exactly. `At(offsets)` is cut at the source's own
+/// boundaries — thinned to `want - 1` of them, evenly spaced through the list,
+/// when it offers more than the caller can use — because a cut anywhere else
+/// makes two readers decode one block twice
+/// (`docs/design/architecture.md`, "The compressed source"). An empty `At` is
+/// the source declining to be split, and it yields the range whole.
+fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
+    if want <= 1 || range.start >= range.end {
+        return vec![range];
+    }
+    let mut cuts: Vec<u64> = match advice.boundaries() {
+        PartitionBoundaries::Anywhere => {
+            let len = range.end - range.start;
+            let want = want.min(usize::try_from(len).unwrap_or(usize::MAX)).max(1);
+            (1..want as u64).map(|i| range.start + len * i / want as u64).collect()
+        }
+        PartitionBoundaries::At(offsets) => {
+            let inside: Vec<u64> =
+                offsets.iter().copied().filter(|&o| o > range.start && o < range.end).collect();
+            let take = (want - 1).min(inside.len());
+            // `n` offers describe `n + 1` pieces, and what is being spread
+            // evenly is the **pieces**, not the offers: with four offers and
+            // three wanted groups the cuts fall after the second and fourth
+            // piece, not after the second and third offer. `ceil` is what
+            // rounds that the right way, and it keeps the picks strictly
+            // increasing (the step is at least one whole piece, since
+            // `take <= len`), so they need no dedup pass and collapse to "all
+            // of them" when the source offers no more than the caller wants.
+            (1..=take).map(|j| inside[(j * (inside.len() + 1)).div_ceil(take + 1) - 1]).collect()
+        }
+    };
+    cuts.dedup();
+    let mut out = Vec::with_capacity(cuts.len() + 1);
+    let mut start = range.start;
+    for cut in cuts {
+        out.push(start..cut);
+        start = cut;
+    }
+    out.push(start..range.end);
+    out
+}
+
+/// Split `matches` into the pieces `parallelism` and the source between them
+/// allow, then group those pieces into sub-streams — each internally in file
+/// order, and the groups themselves in file order, so concatenating them is
+/// the serial replay (`docs/design/architecture.md`, "Partitioned replay").
+///
+/// Never empty: a table with no blocks at all is one sub-stream that yields
+/// nothing, which is what [`table_stream`] does with the same map.
+fn plan_partitions(
+    source: &dyn ByteRangeSource,
+    matches: &[CopyBlock],
+    parallelism: Parallelism,
+) -> Vec<Vec<Segment>> {
+    // **Announced before the advice is asked for, not when the first
+    // sub-stream runs.** A compressed source decides from the stated budget
+    // whether it can decode a whole block at all, and that decision is what
+    // its answer here is read off (`ByteRangeSource::partitions`) — so asking
+    // under the mapping pass's budget would plan against a read path the
+    // replay is not going to take. Each sub-stream re-announces the same
+    // value, which is idempotent.
+    source.hint_parallelism(parallelism);
+    // A block's own advice, and its footprint, are read once per block; the
+    // footprint that decides the sub-stream count is the largest of them,
+    // since one sub-stream may read any of the blocks.
+    let advice: Vec<Partitioning> =
+        matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
+    let footprint = advice.iter().map(Partitioning::partition_bytes).max().unwrap_or(0);
+    let workers = worker_count(parallelism, footprint).max(1);
+
+    let mut segments = Vec::new();
+    for (block, advice) in matches.iter().zip(&advice) {
+        let want = match advice.max_partitions() {
+            Some(max) => workers.min(max),
+            None => workers,
+        };
+        // The **data** range is what is cut, not `[header_offset, …)`: a cut
+        // inside the header line would give the first piece no rows and the
+        // second all of them. The first piece is then extended back over the
+        // header, which is where its schema comes from.
+        for (i, piece) in
+            cut(block.data_offset..block.end_offset, advice, want).into_iter().enumerate()
+        {
+            let (start, entry) = if i == 0 {
+                (block.header_offset, SegmentEntry::Header)
+            } else {
+                (piece.start, SegmentEntry::Interior)
+            };
+            segments.push(Segment { block: block.clone(), start, limit: piece.end, entry });
+        }
+    }
+    distribute(segments, workers)
+}
+
+/// Group `segments` into at most `streams` contiguous, byte-balanced runs,
+/// dropping the empty ones.
+///
+/// **Contiguous rather than round-robin**, so a sub-stream reads a run of the
+/// file rather than every *n*th piece of it: on a block-decoding source that
+/// is what keeps one worker's blocks its own, and it is what makes
+/// concatenating the sub-streams in order equal the serial replay.
+///
+/// The group is chosen from a segment's **midpoint** in the running total, so
+/// one huge piece beside many small ones does not push everything after it
+/// into the last group.
+fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
+    let streams = streams.max(1).min(segments.len().max(1));
+    if streams == 1 {
+        return vec![segments];
+    }
+    let total: u64 = segments.iter().map(Segment::weight).sum();
+    let mut groups: Vec<Vec<Segment>> = vec![Vec::new(); streams];
+    let mut walked = 0u64;
+    for segment in segments {
+        let weight = segment.weight();
+        // Zero total is every piece empty, which is one group's worth of work
+        // however many pieces there are.
+        let group = ((walked + weight / 2) * streams as u64)
+            .checked_div(total)
+            .and_then(|g| usize::try_from(g).ok())
+            .unwrap_or(0);
+        groups[group.min(streams - 1)].push(segment);
+        walked += weight;
+    }
+    groups.retain(|group| !group.is_empty());
+    if groups.is_empty() {
+        groups.push(Vec::new());
+    }
+    groups
+}
+
+/// Pass 2, for one sub-stream: replay `segments` in file order, in whatever
+/// batches `plan.query_options` asks for.
+///
+/// This is the whole of the row path, and there is one of it: a serial
+/// [`table_stream`] is this function over one segment per matching block, and
+/// a partitioned replay is this function over each group
+/// [`plan_partitions`] handed out.
+fn replay<'a>(
+    source: &'a dyn ByteRangeSource,
+    plan: Arc<ReplayPlan>,
+    segments: Vec<Segment>,
+    shared: StreamShared,
+    resume: Option<ResumeToken>,
+    fingerprint: u64,
+) -> impl Stream<Item = Result<RecordBatch>> + Send + 'a {
+    try_stream! {
+        let scan_options = &plan.scan_options;
+        let query_options = &plan.query_options;
+
+        // The chunk length every segment's replay repeats, announced once for
+        // the whole sub-stream rather than per segment
+        // (`ByteRangeSource::hint_read_size`). The budget comes from
+        // `QueryOptions`, not `ScanOptions`: the mapping pass has finished, and
+        // a query states the two passes' parallelism separately because they
+        // split differently. Every sub-stream of a partitioned replay announces
+        // the same three values, so the announcements are idempotent whatever
+        // order the caller polls them in.
+        source.hint_read_size(scan_options.chunk_size);
+        source.hint_parallelism(query_options.parallelism);
+        // **The replay loop could not grant a wait even if the shipped loops
+        // armed the bound**, which is what makes stating it here different
+        // from the two mapping ones: `RetainedChunks` pins every chunk a batch
+        // has taken a `Utf8View` into until that batch flushes, and the batch
+        // then goes to the caller, so this loop holds many buffers at once and
+        // can never be the task that frees one it would be waiting on
+        // (`ByteRangeSource::hint_wait_policy`). Stated here rather than left
+        // to the default, so that whatever the mapping pass granted is
+        // un-stated on the same source.
+        source.hint_wait_policy(WaitPolicy::NeverWait);
+
+        let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
+
+        // Only the first segment can start mid-row (a resumed stream paused
+        // between two of one block's rows); its scanner and in-flight batcher
+        // are prebuilt here so `resume_state`'s logic isn't duplicated below.
+        let (mut active, mut first_scanner) = match &resume {
+            Some(token) if token.in_copy.is_some() => {
+                let (scanner, active, resolved) =
+                    resume_state(token, query_options, plan.metadata.as_ref(), &plan.census)?;
+                if let Some(r) = resolved {
+                    *shared.resolved_schema.lock().unwrap() = r;
+                }
+                if let Some((_, _, _, filter, _)) = &active {
+                    *shared.comparison_notes.lock().unwrap() = filter.comparison_notes();
+                }
+                (active, Some(scanner))
+            }
+            _ => (None, None),
+        };
+        // A matching header with no column list, waiting on its first row to
+        // learn the field count. Never non-empty across a resume point: a
+        // stream only yields right after a flush, and by then any pending
+        // headerless block has already seen its first row (see `active`).
+        let mut pending: Option<(CopyHeader, u64, Option<String>)> = None;
+        // One buffer for the whole replay: every row of a block has the same
+        // width, so after the first it never grows again.
+        let mut split = RowSplit::default();
+
+        for segment in segments {
+            let block = &segment.block;
+            let seg_limit = segment.limit;
+            let seg_end = block.end_offset;
+            let block_database = block.database.clone();
+
+            let mut scanner = match first_scanner.take() {
+                Some(scanner) => scanner,
+                None => match segment.entry {
+                    SegmentEntry::Header => CopyScanner::resume(segment.start, None),
+                    SegmentEntry::Interior => {
+                        // Where this piece's first row starts — and whether it
+                        // has one at all. A piece whose search lands past its
+                        // own limit is a piece two cuts fell inside one row
+                        // of: the row belongs to the piece before it, and this
+                        // one is empty rather than a duplicate.
+                        let Some(row_start) =
+                            first_row_start(source, segment.start, seg_end, scan_options).await?
+                        else {
+                            continue;
+                        };
+                        if row_start > seg_limit || row_start >= seg_end {
+                            continue;
+                        }
+                        // No header line is in range, so the schema comes off
+                        // the map's own copy of it — resolved now when the
+                        // header named its columns, and deferred to the first
+                        // row when it did not, exactly as the live paths below
+                        // do.
+                        if block.header.columns.is_empty() {
+                            pending = Some((
+                                block.header.clone(),
+                                block.header_offset,
+                                block_database.clone(),
+                            ));
+                        } else {
+                            let (opened, resolved, notes) = activate(
+                                block.header.clone(),
+                                block.header_offset,
+                                block.header.columns.len(),
+                                block_database.clone(),
+                                &plan,
+                            )?;
+                            *shared.comparison_notes.lock().unwrap() = notes;
+                            *shared.resolved_schema.lock().unwrap() = resolved;
+                            active = Some(opened);
+                        }
+                        CopyScanner::resume(row_start, Some((block.header_offset, 0)))
+                    }
+                },
+            };
+            let mut read_pos = scanner.position();
+            let mut carry = ChunkCarry::new();
+            let mut chunks = RetainedChunks::new();
+            // Set once this segment has read the line that ends at or past its
+            // limit — the last line it owns. The next segment's search skips
+            // exactly that line, so the two tile.
+            let mut past_limit = false;
+
+            loop {
+                let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
+                let chunk = if want > 0 {
+                    let bytes = source.read_range(read_pos, want).await?;
+                    chunks.retain(read_pos, &bytes);
+                    read_pos += bytes.len() as u64;
+                    bytes
+                } else {
+                    Bytes::new()
+                };
+                let eof = read_pos >= seg_end;
+
+                carry.absorb(&chunk);
+                for pass in ChunkCarry::PASSES {
+                    let (span, span_eof) = carry.span(pass, &chunk, eof);
+                    // `pos` is 0 at the top of every pass — `take_consumed`
+                    // resets it — so this is the absolute offset of `span[0]`,
+                    // which is what turns a row's file offset into a position
+                    // inside `validated` below.
+                    let span_base = scanner.position();
+                    // The span's rows, validated as UTF-8 in one SIMD pass
+                    // rather than one `from_utf8` per field. **Taken on the
+                    // first row that will decode something**, so a query that
+                    // decodes nothing pays nothing
+                    // (`docs/design/architecture.md`, "A row's bytes are
+                    // validated once, in bulk").
+                    let mut validated: Option<&str> = None;
+                    while let Some(event) = scanner.next_event(span, span_eof)? {
+                        match event {
+                            Event::CopyStart(start) => {
+                                if start.header.columns.is_empty() {
+                                    pending = Some((
+                                        start.header,
+                                        start.header_offset,
+                                        block_database.clone(),
+                                    ));
+                                } else {
+                                    let field_count = start.header.columns.len();
+                                    let (opened, resolved, notes) = activate(
+                                        start.header,
+                                        start.header_offset,
+                                        field_count,
+                                        block_database.clone(),
+                                        &plan,
+                                    )?;
+                                    *shared.comparison_notes.lock().unwrap() = notes;
+                                    *shared.resolved_schema.lock().unwrap() = resolved;
+                                    active = Some(opened);
+                                }
+                            }
+                            Event::Row(row) => {
+                                if let Some((header, header_offset, block_database)) =
+                                    pending.take()
+                                {
+                                    let field_count = if header.columns.is_empty() {
+                                        memchr::memchr_iter(DELIMITER, row.raw).count() + 1
+                                    } else {
+                                        header.columns.len()
+                                    };
+                                    let (opened, resolved, notes) = activate(
+                                        header,
+                                        header_offset,
+                                        field_count,
+                                        block_database,
+                                        &plan,
+                                    )?;
+                                    *shared.comparison_notes.lock().unwrap() = notes;
+                                    *shared.resolved_schema.lock().unwrap() = resolved;
+                                    active = Some(opened);
+                                }
+                                if let Some((header_offset, _, batcher, filter, _)) =
+                                    active.as_mut()
+                                {
+                                    let unchecked = RawRow::unchecked(row.raw);
+                                    let raw = if batcher.decodes_fields()
+                                        || filter.reads_fields()
+                                    {
+                                        let prefix = *validated
+                                            .get_or_insert_with(|| validated_prefix(span));
+                                        row_text(prefix, span_base, &row)
+                                            .map_or(unchecked, RawRow::validated)
+                                    } else {
+                                        unchecked
+                                    };
+                                    // One split per row, shared: the terms
+                                    // find the boundaries they read and
+                                    // `push_row` finds the rest.
+                                    split.restart();
+                                    let keep = filter.matches(
+                                        raw,
+                                        &mut split,
+                                        batcher.table(),
+                                        row.offset,
+                                    )?;
+                                    if keep {
+                                        batcher.push_row(
+                                            *header_offset,
+                                            row.offset,
+                                            raw,
+                                            &mut split,
+                                            &mut chunks,
+                                        )?;
+                                    }
+                                    if batcher.should_flush() {
+                                        let batch = batcher.flush()?;
+                                        chunks.invalidate_block_cache();
+                                        rows_emitted += batch.num_rows() as u64;
+                                        *shared.position.lock().unwrap() =
+                                            snapshot(&scanner, &active, rows_emitted, fingerprint);
+                                        yield batch;
+                                    }
+                                }
+                            }
+                            Event::CopyEnd(_) => {
+                                pending = None;
+                                if let Some((_, _, mut batcher, _, _)) = active.take()
+                                    && !batcher.is_empty()
+                                {
+                                    let batch = batcher.flush()?;
+                                    chunks.invalidate_block_cache();
+                                    rows_emitted += batch.num_rows() as u64;
+                                    *shared.position.lock().unwrap() =
+                                        snapshot(&scanner, &active, rows_emitted, fingerprint);
+                                    yield batch;
+                                }
+                            }
+                            // A replay segment covers exactly one block, so the
+                            // only non-row line in range is the `COPY` header
+                            // itself, which arrives as `CopyStart`. Nothing
+                            // outside a block — a dollar-quoted region or a
+                            // large-object region included — can fall inside one.
+                            Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+                            Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
+                        }
+                        // The line just consumed ended at or past this
+                        // segment's limit, so it was the last one this segment
+                        // owns. Checked after the event rather than before it,
+                        // because the straddling row is *this* segment's.
+                        if scanner.position() > seg_limit {
+                            past_limit = true;
+                            break;
+                        }
+                    }
+                    carry.consumed(pass, &chunk, scanner.take_consumed());
+                    if past_limit {
+                        break;
+                    }
+                }
+
+                // Everything before the scanner's new position has already had
+                // its chance to be referenced by a zero-copy view (that happens
+                // synchronously above, before we get here), so it's safe to
+                // drop. Which chunks that actually releases is
+                // `RetainedChunks`' rule, not this loop's.
+                chunks.release_through(scanner.position());
+
+                if past_limit || eof {
+                    break;
+                }
+                if carry.len() > scan_options.max_line_bytes {
+                    Err(Error::LineTooLong {
+                        offset: scanner.position(),
+                        limit: scan_options.max_line_bytes,
+                    })?;
+                }
+            }
+
+            // A segment that stopped at its limit rather than at the block's
+            // `\.` has no `CopyEnd` to flush it, so it flushes here — and
+            // clears the block state either way, since the next segment may be
+            // a different block with a different schema.
+            pending = None;
+            if let Some((_, _, mut batcher, _, _)) = active.take()
+                && !batcher.is_empty()
+            {
+                let batch = batcher.flush()?;
+                rows_emitted += batch.num_rows() as u64;
+                *shared.position.lock().unwrap() =
+                    snapshot(&scanner, &active, rows_emitted, fingerprint);
+                yield batch;
+            }
+        }
+    }
+}
+
 /// Pull-mode entry point: stream `Utf8View` `RecordBatch`es for every row of
 /// every `COPY` block whose table matches `table` (qualified or bare — see
 /// [`CopyHeader::matches`]). A table with zero rows yields no batches.
@@ -1161,422 +1987,107 @@ pub fn table_stream<'a>(
     cache: CacheMode,
 ) -> TableStream<'a> {
     let table = table.to_string();
-    let fingerprint = query_fingerprint(&table, &query_options);
+    let fingerprint = query_fingerprint(&table, &query_options, None);
     let start_token = resume.clone().unwrap_or_else(|| ResumeToken::start(fingerprint));
-    let position = Arc::new(Mutex::new(start_token));
-    let position_for_stream = Arc::clone(&position);
-    let resolved_schema = Arc::new(Mutex::new(ResolvedSchema::default()));
-    let resolved_schema_for_stream = Arc::clone(&resolved_schema);
-    let comparison_notes_shared = Arc::new(Mutex::new(Vec::new()));
-    let comparison_notes_for_stream = Arc::clone(&comparison_notes_shared);
+    let shared = StreamShared::new(start_token);
+    let shared_for_stream = shared.clone();
 
     let inner = try_stream! {
-        // Both checks are on the *request*, so they fire before a byte is
-        // read and regardless of whether the table turns up: a projection
-        // naming a column twice is wrong whatever the file holds, and a
-        // resume token from another query would otherwise be discovered only
-        // once its first block resolved.
-        if let Some(columns) = query_options.projection.as_deref() {
-            for (i, name) in columns.iter().enumerate() {
-                if columns[..i].contains(name) {
-                    Err(Error::DuplicateProjectionColumn { column: name.clone() })?;
-                }
-            }
-        }
-        if resume.as_ref().is_some_and(|t| t.query_fingerprint != fingerprint) {
-            Err(Error::ResumeQueryMismatch)?;
-        }
+        validate_request(&query_options, resume.as_ref(), fingerprint)?;
+        let mapped =
+            map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
 
-        let size = source.size().await?;
-
-        let mut index = match cache.load(source).await? {
-            CacheLoad::Index(index) => index,
-            // Four reasons to start cold: nothing to resume from, so this
-            // query maps from byte 0, and nothing at that path is worth
-            // keeping. Spelled out rather than wildcarded
-            // (`docs/design/architecture.md`, "The cache").
-            CacheLoad::Disabled
-            | CacheLoad::Missing
-            | CacheLoad::Unreadable
-            | CacheLoad::UnsupportedVersion => DumpIndex::default(),
-            // The fifth is a refusal, before a byte of the dump is read: this
-            // cache describes another file, and this query's own mapping pass
-            // would overwrite it.
-            CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
-                Err(cache.source_mismatch(cached_stored_size, live_stored_size))?
-            }
-        };
-
-        // The first database's preamble always gets captured before
-        // anything else runs, regardless of which table this particular
-        // call queries or whether it ever reaches the file's first `COPY`
-        // block itself (`crate::index::scan_preamble`'s docs) — every
-        // `Typed`-mode query needs it for type resolution below, not just a
-        // caller that goes on to persist a cache. `CacheMode::Disabled`
-        // still runs the scan (`docs/design/architecture.md`, "Bounded
-        // preamble-only reads") but `cache.save` below is a no-op for it, so
-        // nothing is written.
-        // Persisted immediately (not deferred to whenever the mapping pass
-        // next saves) so it survives even a caller that polls the stream
-        // once and drops it.
-        let first_db_preamble_known = index
-            .metadata
-            .as_ref()
-            .and_then(|m| m.databases.first())
-            .is_some_and(|db| db.preamble_complete);
-        if !first_db_preamble_known {
-            // The prepass's spans are kept, not discarded: they tile
-            // `[0, preamble_end)`, which is exactly the prefix `map_forward`
-            // splices its own output onto. Without them the map would start
-            // at the frontier with nothing beneath it and could not tile.
-            let (metadata, spans, preamble_end, roles, tablespaces) =
-                scan_preamble(source, &scan_options).await?;
-            index.metadata = Some(metadata);
-            index.spans = splice(&[], spans, 0, preamble_end, size);
-            index.roles.extend(roles);
-            index.tablespaces.extend(tablespaces);
-            index.scanned_through = index.scanned_through.max(preamble_end);
-            attach_text(source, &mut index.spans).await?;
-            cache.save(source, &index).await?;
-        }
-        // Pass 1: extend the map until this query's table is settled. No
-        // rows come out of this, and nothing is yielded until it returns.
-        let selector = query_options.database.as_deref();
-        let target = match query_options.scan_extent {
-            ScanExtent::UntilTargetSettled => Some((table.as_str(), selector)),
-            ScanExtent::Full => None,
-        };
-        // A cancelled mapping pass is an error here rather than a short
-        // stream: the blocks it would replay are only the ones it happened to
-        // reach, and a caller that asked for a table's rows would be handed a
-        // prefix of them with nothing saying so. `pgdq query` never sets the
-        // flag; an embedder that does gets told.
-        if map_forward(source, &scan_options, &cache, &mut index, target, size).await?
-            == MapStop::Interrupted
-        {
-            Err(Error::ScanCancelled { scanned_through: index.scanned_through })?;
-        }
-        // Read *after* the mapping pass, not before it: `map_forward` states
-        // the metadata at each `\connect`ed database's first `COPY` block, so
-        // a cold query on a `pg_dumpall` types a later database's blocks
-        // exactly as a query after `pgdq parse` does. The two passes are still
-        // strictly ordered (see the module docs), so the schema depends on the
-        // map, never on how far the *row* replay has got.
-        let metadata = index.metadata.clone();
-
-        // One target per query (`docs/design/architecture.md`,
-        // "One target per query"): narrow the name-only matches down to at
-        // most one `(database, qualified name)` candidate before reading any
-        // of them, so a would-be silent union across schemas or databases
-        // errors instead. `query_options.database`, when given, is the way
-        // out of an otherwise-ambiguous bare or cross-database name — it
-        // filters candidates first, exactly like a `WHERE` clause narrowing
-        // matches rather than picking among them after the fact.
-        //
-        // Because the map is now complete before any row is emitted, this
-        // check runs over every candidate the scan reached rather than
-        // incrementally as blocks turn up — so an ambiguous name errors
-        // before a single row goes out, not partway through one candidate's.
-        let matches: Vec<CopyBlock> = index
-            .blocks_for(&table)
-            .filter(|b| selector.is_none() || b.database.as_deref() == selector)
-            .cloned()
-            .collect();
-        let mut target: Option<(Option<String>, String)> = None;
-        for b in &matches {
-            let key = (b.database.clone(), b.header.qualified_name());
-            match &target {
-                None => target = Some(key),
-                Some(t) if *t != key => {
-                    Err(Error::AmbiguousTable {
-                        name: table.clone(),
-                        candidates: vec![render_candidate(t), render_candidate(&key)],
-                    })?;
-                }
-                _ => {}
-            }
-        }
-
-        // Pass 2: replay each matching block for its rows. A resumed stream
-        // picks up inside this same list — every resume point is inside a
-        // mapped block by construction, so there is no live-scan fallback and
-        // no cache bookkeeping left to do here.
-        // **A streamed schema needs no completeness test.** The mapping pass
-        // has finished, `matches` is fixed, and every block in it carries a
-        // census — so the union below is the evidence for exactly the rows
-        // this stream will hand back, on a cold query as much as on a full
-        // scan (`docs/design/architecture.md`, "The array shape census").
-        let census = union_census(matches.iter());
-
+        // Pass 2: replay each matching block for its rows, as one segment
+        // apiece. A resumed stream picks up inside this same list — every
+        // resume point is inside a mapped block by construction, so there is
+        // no live-scan fallback and no cache bookkeeping left to do here.
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
-        let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
-
-        // The chunk length every block's replay repeats, announced once for
-        // the whole replay rather than per block
-        // (`ByteRangeSource::hint_read_size`). The budget comes from
-        // `QueryOptions`, not `ScanOptions`: the mapping pass above has
-        // finished, and a query states the two passes' parallelism separately
-        // because they split differently.
-        source.hint_read_size(scan_options.chunk_size);
-        source.hint_parallelism(query_options.parallelism);
-        // **The replay loop could not grant a wait even if the shipped loops
-        // armed the bound**, which is what makes stating it here different
-        // from the two above: `RetainedChunks` pins every chunk a batch has
-        // taken a `Utf8View` into until that batch flushes, and the batch then
-        // goes to the caller, so this loop holds many buffers at once and can
-        // never be the task that frees one it would be waiting on
-        // (`ByteRangeSource::hint_wait_policy`). Stated here rather than left
-        // to the default, so that whatever the mapping pass above granted is
-        // un-stated on the same source.
-        source.hint_wait_policy(WaitPolicy::NeverWait);
-
-        // Only the first replayed block can start mid-block (a resumed
-        // stream paused between two of its rows); its scanner and in-flight
-        // batcher are prebuilt here so `resume_state`'s logic isn't
-        // duplicated below.
-        let (mut active, mut first_scanner) = match &resume {
-            Some(token) if token.in_copy.is_some() => {
-                let (scanner, active, resolved) =
-                    resume_state(token, &query_options, metadata.as_ref(), &census)?;
-                if let Some(r) = resolved {
-                    *resolved_schema_for_stream.lock().unwrap() = r;
-                }
-                if let Some((_, _, _, filter, _)) = &active {
-                    *comparison_notes_for_stream.lock().unwrap() = filter.comparison_notes();
-                }
-                (active, Some(scanner))
-            }
-            _ => (None, None),
-        };
-        // A matching header with no column list, waiting on its first row to
-        // learn the field count. Never non-empty across a resume point: a
-        // stream only yields right after a flush, and by then any pending
-        // headerless block has already seen its first row (see `active`).
-        let mut pending: Option<(CopyHeader, u64, Option<String>)> = None;
-        // One buffer for the whole replay: every row of a block has the same
-        // width, so after the first it never grows again.
-        let mut split = RowSplit::default();
-
-        for block in matches.iter().filter(|b| b.end_offset > resume_offset) {
-            let seg_start = block.header_offset.max(resume_offset);
-            let seg_end = block.end_offset;
-            let block_database = block.database.clone();
-
-            let mut scanner =
-                first_scanner.take().unwrap_or_else(|| CopyScanner::resume(seg_start, None));
-            let mut read_pos = seg_start;
-            let mut carry = ChunkCarry::new();
-            let mut chunks = RetainedChunks::new();
-
-            loop {
-                let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
-                let chunk = if want > 0 {
-                    let bytes = source.read_range(read_pos, want).await?;
-                    chunks.retain(read_pos, &bytes);
-                    read_pos += bytes.len() as u64;
-                    bytes
-                } else {
-                    Bytes::new()
-                };
-                let eof = read_pos >= seg_end;
-
-                carry.absorb(&chunk);
-                for pass in ChunkCarry::PASSES {
-                    let (span, span_eof) = carry.span(pass, &chunk, eof);
-                    // `pos` is 0 at the top of every pass — `take_consumed`
-                    // resets it — so this is the absolute offset of `span[0]`,
-                    // which is what turns a row's file offset into a position
-                    // inside `validated` below.
-                    let span_base = scanner.position();
-                    // The span's rows, validated as UTF-8 in one SIMD pass
-                    // rather than one `from_utf8` per field. **Taken on the
-                    // first row that will decode something**, so a query that
-                    // decodes nothing pays nothing
-                    // (`docs/design/architecture.md`, "A row's bytes are
-                    // validated once, in bulk").
-                    let mut validated: Option<&str> = None;
-                    while let Some(event) = scanner.next_event(span, span_eof)? {
-                        match event {
-                            Event::CopyStart(start) => {
-                                if start.header.columns.is_empty() {
-                                    pending = Some((
-                                        start.header,
-                                        start.header_offset,
-                                        block_database.clone(),
-                                    ));
-                                } else {
-                                    let full = resolve_block(
-                                        &start.header,
-                                        start.header.columns.len(),
-                                        metadata.as_ref(),
-                                        block_database.as_deref(),
-                                        query_options.schema_mode,
-                                        &census,
-                                    )?;
-                                    // Against the *unprojected* schema: a
-                                    // term's index numbers the raw row's
-                                    // fields, and a term may name a column the
-                                    // projection dropped.
-                                    let filter = resolve_expr(
-                                        &query_options.filter,
-                                        &full,
-                                        start.header_offset,
-                                    )?;
-                                    *comparison_notes_for_stream.lock().unwrap() =
-                                        filter.comparison_notes();
-                                    let (resolved, field_targets) = project(
-                                        &full,
-                                        query_options.projection.as_deref(),
-                                        start.header_offset,
-                                    )?;
-                                    let batcher = RowBatcher::new(
-                                        &resolved,
-                                        start.header.qualified_name(),
-                                        query_options.clone(),
-                                        field_targets,
-                                    );
-                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                    active = Some((
-                                        start.header_offset,
-                                        start.header,
-                                        batcher,
-                                        filter,
-                                        block_database.clone(),
-                                    ));
-                                }
-                            }
-                            Event::Row(row) => {
-                                if let Some((header, header_offset, block_database)) =
-                                    pending.take()
-                                {
-                                    let field_count =
-                                        memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                                    let full = resolve_block(
-                                        &header,
-                                        field_count,
-                                        metadata.as_ref(),
-                                        block_database.as_deref(),
-                                        query_options.schema_mode,
-                                        &census,
-                                    )?;
-                                    let filter =
-                                        resolve_expr(&query_options.filter, &full, header_offset)?;
-                                    *comparison_notes_for_stream.lock().unwrap() =
-                                        filter.comparison_notes();
-                                    let (resolved, field_targets) = project(
-                                        &full,
-                                        query_options.projection.as_deref(),
-                                        header_offset,
-                                    )?;
-                                    let batcher = RowBatcher::new(
-                                        &resolved,
-                                        header.qualified_name(),
-                                        query_options.clone(),
-                                        field_targets,
-                                    );
-                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                    active = Some((
-                                        header_offset,
-                                        header,
-                                        batcher,
-                                        filter,
-                                        block_database,
-                                    ));
-                                }
-                                if let Some((header_offset, _, batcher, filter, _)) =
-                                    active.as_mut()
-                                {
-                                    let unchecked = RawRow::unchecked(row.raw);
-                                    let raw = if batcher.decodes_fields()
-                                        || filter.reads_fields()
-                                    {
-                                        let prefix = *validated
-                                            .get_or_insert_with(|| validated_prefix(span));
-                                        row_text(prefix, span_base, &row)
-                                            .map_or(unchecked, RawRow::validated)
-                                    } else {
-                                        unchecked
-                                    };
-                                    // One split per row, shared: the terms
-                                    // find the boundaries they read and
-                                    // `push_row` finds the rest.
-                                    split.restart();
-                                    let keep = filter.matches(
-                                        raw,
-                                        &mut split,
-                                        batcher.table(),
-                                        row.offset,
-                                    )?;
-                                    if keep {
-                                        batcher.push_row(
-                                            *header_offset,
-                                            row.offset,
-                                            raw,
-                                            &mut split,
-                                            &mut chunks,
-                                        )?;
-                                    }
-                                    if batcher.should_flush() {
-                                        let batch = batcher.flush()?;
-                                        chunks.invalidate_block_cache();
-                                        rows_emitted += batch.num_rows() as u64;
-                                        *position_for_stream.lock().unwrap() =
-                                            snapshot(&scanner, &active, rows_emitted, fingerprint);
-                                        yield batch;
-                                    }
-                                }
-                            }
-                            Event::CopyEnd(_) => {
-                                pending = None;
-                                if let Some((_, _, mut batcher, _, _)) = active.take()
-                                    && !batcher.is_empty()
-                                {
-                                    let batch = batcher.flush()?;
-                                    chunks.invalidate_block_cache();
-                                    rows_emitted += batch.num_rows() as u64;
-                                    *position_for_stream.lock().unwrap() =
-                                        snapshot(&scanner, &active, rows_emitted, fingerprint);
-                                    yield batch;
-                                }
-                            }
-                            // A replay segment covers exactly one block, so the
-                            // only non-row line in range is the `COPY` header
-                            // itself, which arrives as `CopyStart`. Nothing
-                            // outside a block — a dollar-quoted region or a
-                            // large-object region included — can fall inside one.
-                            Event::Line(_) | Event::DollarQuoteEnd(_) => {}
-                            Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
-                        }
-                    }
-                    carry.consumed(pass, &chunk, scanner.take_consumed());
-                }
-
-                // Everything before the scanner's new position has already had
-                // its chance to be referenced by a zero-copy view (that happens
-                // synchronously above, before we get here), so it's safe to
-                // drop. Which chunks that actually releases is
-                // `RetainedChunks`' rule, not this loop's.
-                chunks.release_through(scanner.position());
-
-                if eof {
-                    break;
-                }
-                if carry.len() > scan_options.max_line_bytes {
-                    Err(Error::LineTooLong {
-                        offset: scanner.position(),
-                        limit: scan_options.max_line_bytes,
-                    })?;
-                }
-            }
+        let segments: Vec<Segment> = mapped
+            .matches
+            .iter()
+            .filter(|b| b.end_offset > resume_offset)
+            .map(|b| Segment {
+                block: b.clone(),
+                start: b.header_offset.max(resume_offset),
+                limit: b.end_offset,
+                entry: SegmentEntry::Header,
+            })
+            .collect();
+        let plan = Arc::new(ReplayPlan {
+            scan_options,
+            query_options,
+            metadata: mapped.metadata,
+            census: mapped.census,
+        });
+        let mut rows =
+            Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint));
+        while let Some(batch) = rows.next().await {
+            yield batch?;
         }
     };
 
-    TableStream {
-        inner: Box::pin(inner),
-        position,
-        resolved_schema,
-        comparison_notes: comparison_notes_shared,
-    }
+    shared.into_stream(Box::pin(inner))
+}
+
+/// The same query as [`table_stream`], handed back as **N sub-streams over one
+/// map** — the partitioned replay
+/// (`docs/design/architecture.md`, "Partitioned replay").
+///
+/// The mapping pass runs once, here, before any sub-stream exists; each
+/// sub-stream then replays a contiguous run of the blocks that pass settled,
+/// cut where the source said it was willing to be cut
+/// ([`ByteRangeSource::partitions`]) and no finer than
+/// `query_options.parallelism` allows. **The caller runs them**, concurrently
+/// or not: running them in order and concatenating is exactly what
+/// [`table_stream`] yields, so the serial path is not a second implementation.
+///
+/// The returned `Vec` is never empty and never holds an empty sub-stream
+/// beyond the degenerate one a table with no rows produces.
+/// `Parallelism::Serial` is one sub-stream, which is the serial replay.
+///
+/// **Each sub-stream carries its own schema, notes and position.**
+/// [`TableStream::resolved_schema`] is empty on a sub-stream until that
+/// sub-stream's first block resolves, so a caller wanting the schema before
+/// consuming anything reads it off the *first* sub-stream, whose first segment
+/// starts at a `COPY` header. [`TableStream::resume_token`] is stamped with the
+/// partition it came from, so feeding one back to [`table_stream`] is
+/// `Error::ResumeQueryMismatch` rather than a silent superset of the rows that
+/// partition had left — resuming a partitioned replay is not supported.
+///
+/// **What N sub-streams cost resident is N times one.** Each holds its own
+/// read chunks for as long as its in-flight batch pins them
+/// (`QueryOptions::max_source_span`), and the source holds
+/// `Partitioning::partition_bytes` per concurrent reader on top — which is the
+/// number `query_options.parallelism`'s byte half is spent against here.
+pub async fn table_stream_partitions<'a>(
+    source: &'a dyn ByteRangeSource,
+    table: &str,
+    scan_options: ScanOptions,
+    query_options: QueryOptions,
+    cache: CacheMode,
+) -> Result<Vec<TableStream<'a>>> {
+    validate_request(&query_options, None, 0)?;
+    let table = table.to_string();
+    let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
+    let groups = plan_partitions(source, &mapped.matches, query_options.parallelism);
+    let plan = Arc::new(ReplayPlan {
+        scan_options,
+        query_options,
+        metadata: mapped.metadata,
+        census: mapped.census,
+    });
+    let of = groups.len();
+    Ok(groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, segments)| {
+            let fingerprint = query_fingerprint(&table, &plan.query_options, Some((index, of)));
+            let shared = StreamShared::new(ResumeToken::start(fingerprint));
+            let inner =
+                replay(source, Arc::clone(&plan), segments, shared.clone(), None, fingerprint);
+            shared.into_stream(Box::pin(inner))
+        })
+        .collect())
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers
@@ -1701,5 +2212,151 @@ mod tests {
             resolve_block(&header, 1, Some(&metadata), Some("second"), SchemaMode::Strings, &[])
                 .is_ok()
         );
+    }
+
+    /// The two properties every cut has to have, whatever the source advised:
+    /// the pieces **tile** the range exactly, in ascending order, and there
+    /// are never more of them than the caller asked for. Everything above
+    /// this — which rows a piece owns — rests on the tiling.
+    fn assert_tiles(range: Range<u64>, pieces: &[Range<u64>], want: usize) {
+        assert!(!pieces.is_empty(), "a cut always yields at least the range itself");
+        assert!(pieces.len() <= want.max(1), "{} pieces for want {want}", pieces.len());
+        assert_eq!(pieces[0].start, range.start);
+        assert_eq!(pieces[pieces.len() - 1].end, range.end);
+        for pair in pieces.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start, "{pieces:?}");
+        }
+    }
+
+    /// `Anywhere` is cut evenly, and never into pieces of zero bytes: a range
+    /// shorter than the worker count is cut into one piece per byte and no
+    /// finer, since a piece with no bytes in it can own no rows and would
+    /// only cost a sub-stream a resync read.
+    #[test]
+    fn an_anywhere_source_is_cut_evenly_and_never_below_a_byte() {
+        let advice = Partitioning::anywhere(1 << 20);
+        for want in [1usize, 2, 3, 4, 7, 8, 64] {
+            let pieces = cut(100..900, &advice, want);
+            assert_tiles(100..900, &pieces, want);
+            assert_eq!(pieces.len(), want.max(1));
+        }
+        let pieces = cut(10..13, &advice, 8);
+        assert_eq!(pieces, vec![10..11, 11..12, 12..13]);
+    }
+
+    /// `At` is cut only where the source offered, and thinned evenly when it
+    /// offers more boundaries than the caller can use — an offer of exactly
+    /// as many as are wanted is taken whole.
+    #[test]
+    fn an_at_source_is_cut_only_where_it_offered() {
+        let advice = Partitioning::at(vec![20, 40, 60, 80], 1 << 20);
+        assert_eq!(cut(0..100, &advice, 5), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
+        assert_eq!(cut(0..100, &advice, 9), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
+        assert_eq!(cut(0..100, &advice, 3), vec![0..40, 40..80, 80..100]);
+        assert_eq!(cut(0..100, &advice, 2), vec![0..60, 60..100]);
+        // Boundaries outside the range are not cuts, and the range's own ends
+        // are not either — `n` offers inside describe `n + 1` pieces.
+        assert_eq!(cut(40..80, &advice, 4), vec![40..60, 60..80]);
+        for want in [1usize, 2, 3, 4, 5, 9] {
+            assert_tiles(0..100, &cut(0..100, &advice, want), want);
+        }
+    }
+
+    /// A source that declines to be split is not split, however many workers
+    /// the caller has — the empty `At` is a policy, not an absence
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    #[test]
+    fn a_source_that_declines_to_be_split_is_not() {
+        assert_eq!(cut(0..1000, &Partitioning::single(0), 16), vec![0..1000]);
+    }
+
+    /// The bytes bind as well as the count, and they bind on the number of
+    /// **sub-streams**: eight workers against a budget that affords two
+    /// partitions is two.
+    #[test]
+    fn a_stated_budget_caps_the_worker_count_below_the_stated_jobs() {
+        let eight = Parallelism::workers(8, 64 << 20);
+        assert_eq!(worker_count(eight, 32 << 20), 2);
+        assert_eq!(worker_count(eight, 4 << 20), 8);
+        // A footprint larger than the whole budget still leaves one worker:
+        // the serial path is what a caller with no room for two gets.
+        assert_eq!(worker_count(eight, 128 << 20), 1);
+        // A source that states no footprint is bounded by `jobs` alone.
+        assert_eq!(worker_count(eight, 0), 8);
+        // `Serial` states no budget and is one worker, not a pool of one.
+        assert_eq!(worker_count(Parallelism::Serial, 32 << 20), 1);
+    }
+
+    /// Grouping keeps the pieces in file order and contiguous, which is what
+    /// makes concatenating the sub-streams equal the serial replay — and it
+    /// balances by bytes, so one long piece beside many short ones does not
+    /// land in the same group as all of them.
+    #[test]
+    fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
+        let block = CopyBlock {
+            header: crate::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
+            database: None,
+            header_offset: 0,
+            data_offset: 0,
+            terminator_offset: 0,
+            end_offset: 0,
+            row_count: 0,
+            partition_root: None,
+            sparse_index: None,
+            column_stats: None,
+            array_shapes: Vec::new(),
+        };
+        let piece = |start: u64, limit: u64| Segment {
+            block: block.clone(),
+            start,
+            limit,
+            entry: SegmentEntry::Interior,
+        };
+        let segments =
+            vec![piece(0, 10), piece(10, 20), piece(20, 30), piece(30, 40), piece(40, 50)];
+
+        let groups = distribute(segments.clone(), 5);
+        assert_eq!(groups.len(), 5);
+        assert!(groups.iter().all(|g| g.len() == 1));
+
+        // Contiguity and order: flattening the groups is the original list.
+        for streams in [1usize, 2, 3, 4, 5, 9] {
+            let groups = distribute(segments.clone(), streams);
+            assert!(groups.len() <= streams.max(1));
+            assert!(groups.iter().all(|g| !g.is_empty()));
+            let flat: Vec<u64> = groups.iter().flatten().map(|s| s.start).collect();
+            assert_eq!(flat, vec![0, 10, 20, 30, 40], "streams {streams}");
+        }
+
+        // One piece carrying most of the bytes gets a group of its own rather
+        // than dragging its neighbours in with it.
+        let lopsided = vec![piece(0, 1), piece(1, 2), piece(2, 1002), piece(1002, 1003)];
+        let groups = distribute(lopsided, 2);
+        assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2]);
+    }
+
+    /// No blocks at all is one sub-stream that yields nothing, so a caller
+    /// never has to distinguish "no partitions" from "no rows".
+    #[test]
+    fn a_table_with_no_blocks_is_still_one_sub_stream() {
+        let groups = distribute(Vec::new(), 8);
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].is_empty());
+    }
+
+    /// A sub-stream's resume token is stamped with the partition it came out
+    /// of, so it cannot be mistaken for a whole stream's — which is what
+    /// turns "resuming a partition is unsupported" into an error rather than
+    /// into a silent superset of the rows that partition had left.
+    #[test]
+    fn a_partitions_fingerprint_differs_from_the_whole_streams() {
+        let options = QueryOptions::default();
+        let whole = query_fingerprint("public.t", &options, None);
+        let first = query_fingerprint("public.t", &options, Some((0, 4)));
+        let second = query_fingerprint("public.t", &options, Some((1, 4)));
+        let of_two = query_fingerprint("public.t", &options, Some((0, 2)));
+        assert_ne!(whole, first);
+        assert_ne!(first, second);
+        assert_ne!(first, of_two);
     }
 }

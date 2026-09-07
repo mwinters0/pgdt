@@ -42,6 +42,7 @@ through.
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar, the `--where` expression grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
+| splitting a replay into sub-streams, how a piece finds its first and last row, how the caller's two numbers bound them | [Partitioned replay](#partitioned-replay) |
 | where a scan's time actually goes, before proposing to make one faster | [Where a scan's time goes](#where-a-scans-time-goes) |
 | `alloc.rs`, a `#[global_allocator]`, what a figure's apparatus line names | [The allocator is the binary's choice](#the-allocator-is-the-binarys-choice) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
@@ -3677,7 +3678,9 @@ columns than the original did.
 A reserved `generation` field is always 0.
 
 **It also carries a fingerprint of the query that produced it** — the table,
-the projection, the filter expression and the schema mode, hashed — and resuming a stream
+the projection, the filter expression, the schema mode and, for a sub-stream of
+a partitioned replay, which partition of how many it came out of ("Partitioned
+replay") — hashed — and resuming a stream
 whose options hash differently is `Error::ResumeQueryMismatch`. That defends
 "one schema per stream, resolved up front", which nothing else defends: the
 token never named even the table, so resuming against a different one was
@@ -3697,6 +3700,117 @@ blocks are replayed, not the shape of what comes back.
 offset is meaningless inside a compressed archive entry; opaque now means the
 representation can change without an API break. It is also valid only within
 the producing process.
+
+### Partitioned replay
+
+`table_stream_partitions` is the same query as `table_stream`, handed back as
+**N sub-streams over one map**. The mapping pass runs once, before any
+sub-stream exists — which is why this entry point is an `async fn` returning
+`Vec<TableStream>` where `table_stream` is a synchronous constructor whose
+whole body is lazy. Each sub-stream then replays a contiguous run of the blocks
+that pass settled, and **the caller runs them**: sequentially, and it is
+exactly the serial replay; concurrently, and it is the extraction win a
+CPU-bound `query` is after. That maps onto DataFusion's
+`TableProvider::scan` partitions directly.
+
+**With a complete map there is no scanner state to establish, which is what
+makes this a deliverable of its own.** A block's extent is already known, so a
+sub-stream starting inside one knows by construction that every byte until `\.`
+is line-structured rows; it needs no leader and no speculation. The cold path,
+where the map does not yet cover the region, is the leader's, and it is
+separate work.
+
+**One replay implementation, two entry points.** `map_for_query` is pass 1
+whole — cache load, preamble prepass, `map_forward`, the ambiguity narrowing,
+the census — and `replay` is pass 2 over a list of segments. `table_stream` is
+`replay` over one segment per matching block; a partitioned replay is `replay`
+over each group the split handed out. So "running the partitions sequentially
+*is* the serial path" is a property of the code rather than a claim about it.
+
+**A `Segment`'s two offsets are not a byte range, and that is what makes the
+pieces tile.** `start` is where the *search* for the piece's first row begins:
+the piece's first row is the one starting just past the first LF at or after
+it. `limit` is not where reading stops either — the piece runs through the line
+that *ends* at the first LF at or after `limit`, which is exactly the row the
+next piece's search then skips. So a row straddling a cut belongs to the piece
+before it, once; two cuts inside one row leave the piece between them empty
+rather than duplicating it; and **no cut has to land on a row boundary**, which
+is what lets a source advise cuts that know nothing about rows.
+
+**A partition never resyncs by handing the scanner a mid-row byte.** In its
+`InCopy` state the scanner reads every line as a row, and the tail of a row can
+be the two bytes `\.` — a value ending in an escaped backslash, cut between the
+two — which it would take for the block's terminator. I7's guarantee that
+`\.` cannot open a data line is about a *line start*, so it covers a scanner
+started at one and does not cover one started mid-row. Hence the explicit
+forward search, one chunk in the common case, landing on a block-decoding
+source inside the block that piece was going to decode anyway.
+
+**The data range is what is cut, not the block.** A cut inside the `COPY`
+header line would give the first piece no rows and the second all of them, so
+`[data_offset, end_offset)` is what the source is asked about and the first
+piece is then extended back over the header — which is where its schema comes
+from. Every later piece takes the header off the map's own `CopyBlock` instead,
+resolving eagerly when it named its columns and deferring to the first row when
+it did not, exactly as a headerless block does live.
+
+**Both of the caller's numbers bind, and the bytes bind on the sub-stream
+count.** `worker_count` is `jobs` capped by `memory_bytes / partition_bytes`,
+where `partition_bytes` is what the source says one concurrent reader costs it
+("Execution model and API surface"). It is computed once over the whole match
+set, from the largest footprint any of its blocks advised, because the
+sub-streams are what run at once: capping each *block's* cut at the allowance
+and then handing out one sub-stream per piece would multiply the allowance by
+the block count. `Parallelism::Serial` is one sub-stream, so the serial path is
+reached as a property of the value.
+
+**`hint_parallelism` is announced before the advice is asked for.** A
+compressed source decides from the stated budget whether it can decode a whole
+block at all, and its partitioning answer is read off that decision — so asking
+under the mapping pass's budget would plan against a read path the replay is
+not going to take.
+
+**Grouping is contiguous and balanced by bytes**, from each piece's midpoint in
+the running total rather than its start, so one long piece beside many short
+ones does not push everything after it into the last group. Contiguous rather
+than round-robin for two reasons: on a block-decoding source it keeps one
+worker's blocks its own, and it is what makes concatenating the sub-streams in
+order equal the serial replay — which is the property the whole test file for
+this rests on. A piece's balancing weight is measured from the block's *data*,
+so the first piece is not charged for the header line it also covers.
+
+**A sub-stream's resume token is stamped with its partition, and that is the
+whole of the support resume gets here.** A token carries an offset and nothing
+about the range its stream was confined to, so feeding partition *k*'s token to
+`table_stream` would replay every matching row from that offset onward — a
+superset of what the partition had left, silently. The stamp makes it
+`Error::ResumeQueryMismatch` instead.
+
+**Each sub-stream carries its own `ResolvedSchema` and `ComparisonNote`s**, and
+they are empty until that sub-stream's first block resolves — so a caller
+wanting the schema before consuming anything reads it off the *first*
+sub-stream, whose first segment starts at a `COPY` header. What N sub-streams
+cost resident is N times one: each holds its own read chunks while its
+in-flight batch pins them (`QueryOptions::max_source_span`), and the source
+holds `partition_bytes` per concurrent reader on top.
+
+*Rejected:* **splitting only at block boundaries**, one sub-stream per `COPY`
+block. It needs no resync and no tiling rule at all — and it is worth nothing
+for the ordinary query, which targets one table, whose data is usually one
+block. The parallelism has to be available *inside* a block or it is not
+available.
+
+*Rejected:* **round-robin grouping**, piece *k* of every block to sub-stream
+*k*. It balances at least as well across heterogeneous blocks and is simpler,
+but it gives up file order across the returned `Vec` — so the equality against
+the serial stream becomes a multiset comparison, and the strongest available
+statement about the split gets weaker at exactly the point it is most load-bearing.
+
+*Rejected:* **resyncing by starting the scanner at `start - 1` and discarding
+its first row.** It needs no separate read, since the discarded line ends
+exactly where the piece's first row begins — and it is unsound for the `\.`
+reason above, and on a block-decoding source it would decode the *previous*
+block to read one byte.
 
 ### Projection
 

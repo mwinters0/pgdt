@@ -46,6 +46,9 @@ pub use scan::{
     ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DEFAULT_CHUNK_SIZE, Event,
     LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
 };
-pub use stream::{BlockingTableIter, MapRun, ResumeToken, TableStream, map_file, table_stream};
+pub use stream::{
+    BlockingTableIter, MapRun, ResumeToken, TableStream, map_file, table_stream,
+    table_stream_partitions,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
