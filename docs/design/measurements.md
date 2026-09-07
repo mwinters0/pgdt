@@ -897,6 +897,39 @@ hardware sees. Adding the row would cost minutes of every sweep to re-confirm a
 bound two 54-minute runs agree on to within 1%. The HDD therefore stays
 koji-only and stays a *regression* check rather than a throughput one.
 
+**A regime is admitted for a figure when that figure's legs demand bytes at a
+rate approaching the device's floor — computed from readings already held, not
+measured to find out.** That is the test the HDD paragraph above applies, stated
+generally, and it is what decides whether a device is a regime or a repetition:
+a leg whose demand sits an order of magnitude under the floor reads the same
+warm and cold, and a leg already at the floor reads flat at every worker count.
+Both publish the apparatus rather than the mechanism. The arithmetic is a
+division over published tables, so the question is answerable before a sitting
+is spent rather than after — which is the whole point, a sitting being an hour
+of a quiet machine.
+
+**Neither cold device is a parallel regime.** *Rejected: `cold-parallel` and
+`cold-nvme-parallel` legs of the two `parallel-*` figures, which are registered
+`warm-parallel` only.* Applying the test leg by leg answers all four without a
+sitting. A **compressed** leg reads `control_xz`'s 563.8 MB while it decodes,
+so its demand is that size over the decode wall in "What a second decode worker
+buys" — 35.9 MB/s at one worker rising to **387 MB/s at twenty-four**, against a
+561 MB/s SATA floor and a 2602 MB/s NVMe one. It never reaches either device, so
+a cold compressed curve is the warm one plus queueing. A **plain** leg is the
+opposite: `parse` runs at 7049 MB/s warm, above every device this project owns,
+and a typed `query` at 678 MB/s is already above the SATA floor at one worker.
+On the NVMe that leaves one apparently live cell, and it is **confounded**: a
+typed `query` needs 3.84× to reach 2602 MB/s, and a plain source's pool clamps
+to `POOL_DEPTH` — four slots — whatever `--jobs` states, so the pool ceiling and
+the device ceiling land on top of each other and the table could not say which
+one bent the curve. The warm leg isolates the pool clamp cleanly, which is what
+that column is for.
+
+The device question concurrency *does* raise — whether scattering reads across N
+workers costs a device its sequential advantage — is fatal on rotational media
+and immaterial at 387 MB/s on either SSD, and it is answered on the HDD by the
+koji scan below, on the same terms as everything else there.
+
 <!-- figure: scan-throughput-cold — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-cold` -->
 
 **Every run cold, on the SSD**

@@ -553,9 +553,11 @@ are worth, and the orderings that do bind are named in
       a block-decoding `.xz` deadlocks, so three of the four throughput legs and
       both RSS legs cannot be taken at all. And on `16.13` being committed —
       a figure published outside a stamped sweep names the commit it was taken
-      at, and a tree carrying its own uncommitted apparatus has none. **Read the
-      open "Decisions worth another look" entry first** — whether the register
-      also carries cold-NVMe parallel legs decides what the sitting takes.
+      at, and a tree carrying its own uncommitted apparatus has none. The
+      sitting is the four `warm-parallel` legs and nothing else: neither cold
+      device is a parallel regime
+      ([`../design/measurements.md`](../design/measurements.md), "The HDD is not
+      a fourth regime").
 - [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
       cache byte-identical to the serial 784 GB scan. Outside the register.
 - [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
@@ -726,22 +728,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`parallel-scan-throughput` is registered warm-only, where the spec row said
-  "on the HDD, SATA SSD and NVMe".** The decision to make is whether the
-  register also carries a **cold-NVMe** parallel leg, which would need a
-  `cold-nvme-parallel` row in `CONTENTION_LIMITS` — a regime with no row gates
-  nothing — and would roughly triple `16.13.1`'s sitting. Settling it before
-  that sitting rather than after is what this entry is for: taking the figure
-  twice is an hour of a quiet machine twice. Two of the three devices are
-  already answered: the HDD is excluded by a standing rule
-  ([`../design/measurements.md`](../design/measurements.md), "The HDD is not a
-  fourth regime") and is `16.14`'s, outside the register; on the SATA SSD every
-  scan shape already reads 1.00–1.03× the `dd` floor, so three of the four legs
-  would publish a device ceiling as a scaling result, which is the defect the
-  spec row already warns about for `POOL_DEPTH`. The NVMe is the one where a
-  cold curve would say something the warm one does not, that regime existing
-  precisely because its read time and pgdq's parse time are within a small
-  factor of each other. Reversing this is cheap while the figures are untaken
-  and expensive after: the reasoning is
-  [`history/2026-09-07.md`](history/2026-09-07.md), "The parallel figures are
-  registered warm-only".
+Nothing open.
