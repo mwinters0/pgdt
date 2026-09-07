@@ -477,9 +477,10 @@ impl ChunkCarry {
 /// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so
 /// a chunk of any size is kept and reused by the local source's buffer pool
 /// rather than allocated and zeroed afresh. What a larger chunk does cost is
-/// the pool holding four buffers of it, or 64 MiB's worth, whichever is fewer
-/// — the slot count falls out of a byte budget, so the cost levels off rather
-/// than scaling with the size
+/// the pool holding four buffers of it, or the caller's stated memory
+/// budget's worth ([`crate::Parallelism`], defaulting to
+/// [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count falls
+/// out of that budget, so the cost levels off rather than scaling with the size
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 
@@ -516,12 +517,15 @@ pub struct ScanOptions {
     /// path this build has rather than a pool of one
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
-    /// **Nothing reads it yet**, in the same sense
-    /// [`crate::ByteRangeSource::size_is_exact`] is not read: the surface is
-    /// where a caller states the two numbers, and the mechanisms that consume
-    /// them — the read path's memory budget and the worker scheduler — are not
-    /// in this build. A caller that sets it gets the serial path, which is
-    /// what it would have got by leaving it alone.
+    /// **The read path's buffer budget reads it; no worker scheduler does
+    /// yet.** Every read loop announces it to the source
+    /// ([`crate::ByteRangeSource::hint_parallelism`]), which sizes its pools
+    /// from the byte half and — for a compressed source — decides from it
+    /// whether a whole block can be decoded at all. The `jobs` half is that
+    /// source's retention depth, one decoded block per concurrent reader; the
+    /// scheduler that would run those readers is not in this build, so a
+    /// caller that sets this still gets the serial path, executing it inside
+    /// the memory it asked for.
     pub parallelism: Parallelism,
 }
 
@@ -560,8 +564,10 @@ where
     let size = source.size().await?;
     // The chunk length this loop will ask for until EOF, announced once so a
     // buffer-recycling source can keep one of that size whatever it is
-    // (`ByteRangeSource::hint_read_size`).
+    // (`ByteRangeSource::hint_read_size`), and the budget the caller allows it
+    // to keep them inside (`ByteRangeSource::hint_parallelism`).
     source.hint_read_size(options.chunk_size);
+    source.hint_parallelism(options.parallelism);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();
     let mut read_pos = 0u64;

@@ -117,8 +117,8 @@ diagnostics:
 
 `parse` is unaffected: it only ever reads forwards, so it costs the same on
 such a file as on any other. `query` is where you would feel it, and only on a
-large one — a single-block file small enough to hold in memory is decoded once
-and read from there, so only one above about 256 MB uncompressed pays the
+large one — a single-block file that fits inside `--parallel-memory` (64 MiB by
+default) is decoded once and read from there, so only a bigger one pays the
 decode again on every backward read. The remedy is in the message —
 recompressing with `xz -T0` or an
 explicit `--block-size` produces a file pgdq can seek into. Files that
@@ -154,10 +154,10 @@ Two things are worth knowing if you change it anyway. **Small is slower**:
 64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
 sixteen times as often. **Large costs memory, and the cost levels off**: read
 buffers are reused at whatever size you ask for, and the pool holds four of
-them or 64 MiB's worth, whichever is fewer — so a 16 MiB chunk is 64 MiB of
-resident memory on top of whatever the scan already holds, and a 32 MiB chunk
-is the same 64 MiB rather than double it. Past 64 MiB the pool keeps a single
-buffer, which is the size you asked for.
+them or `--parallel-memory`'s worth, whichever is fewer — so at the 64 MiB
+default a 16 MiB chunk is 64 MiB of resident memory on top of whatever the scan
+already holds, and a 32 MiB chunk is the same 64 MiB rather than double it.
+Past that the pool keeps a single buffer, which is the size you asked for.
 
 What it already holds does not grow with the *size* of the dump — a 3 GiB file
 costs no more than a 2 MB one, a few megabytes either way — but it does grow
@@ -165,14 +165,53 @@ with the number of tables in it, by roughly 10 KB each. A dump of a few thousand
 tables is tens of megabytes resident before any chunk size is chosen.
 
 **An `.xz` source costs more than a plain one**, and by an amount the *file*
-chooses rather than you: it decodes a whole compressed block at a time and
-keeps a couple of them, so a file of 24 MiB blocks adds about 48 MiB resident
-and one of 128 MiB blocks adds 128 MiB. That is what buys reading the same
-block repeatedly for free; the block size is set when the file is compressed
-(`xz --block-size=`), not when it is read.
+chooses as much as you: it decodes a whole compressed block at a time and keeps
+as many of them as the budget affords, so at the default a file of 24 MiB
+blocks adds about 48 MiB resident. That is what buys reading the same block
+repeatedly for free; the block size is set when the file is compressed
+(`xz --block-size=`), not when it is read. A file whose blocks are too large to
+fit the budget is read a different way — see `--parallel-memory` below.
 
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.
+
+### `--jobs` and `--parallel-memory`: the ceiling and the budget
+
+`parse` and `query` take two more numbers, and today only the second of them
+changes anything you can measure.
+
+**`--parallel-memory <bytes>` is how much memory pgdq's read buffers may hold,
+and it defaults to 64 MiB.** It is a bound rather than a target: pgdq will not
+exceed it by allocating a buffer bigger than you allowed. The one place that
+bites is `.xz` input. A compressed file is normally read a whole block at a
+time, which is what makes reading the same block twice free — but a block that
+does not fit inside the budget cannot be held, so such a file is read through
+the streaming decoder instead. That is still correct and still complete; what
+it costs is that reading *backwards* means decoding forward from the start of
+the block again, which `query` does and `parse` never does.
+
+Two ordinary ways of compressing produce blocks larger than the default budget:
+`xz -9 -T0`, whose threaded blocks are about 192 MiB, and any explicit
+`xz --block-size=` above roughly 60 MiB. If you are querying such a file and
+have the memory, `--parallel-memory 256000000` buys the block path back. If you
+do not, nothing is wrong — the file reads fine, just with more decoding on
+backward reads.
+
+**`--jobs <n>` is a ceiling on concurrent workers, and it defaults to your
+machine's core count.** `--jobs 1` is the single-threaded path. Today no part
+of pgdq runs workers, so what this actually bounds is how many decoded `.xz`
+blocks are kept at once — one per worker you allowed, if `--parallel-memory`
+leaves room for them. Raising it on its own therefore does nothing; raising it
+together with the budget lets a compressed file keep more of itself decoded.
+
+**Three shapes will never get parallelism, whatever you set.** A plain
+(uncompressed) file's structure scan is already faster than any disk we have
+measured, so there is nothing to win. An `.xz` file with a single block has no
+seam to split at — the warning above says so when you hit it. And an `INSERT`
+run — a dump taken with `pg_dump --inserts` — has no line-anchored statement
+boundary a second reader could start from, which is unfortunate, because it is
+also the shape that costs the most: about five times a `COPY` block's CPU per
+byte.
 
 ## `info`: reporting what is known
 

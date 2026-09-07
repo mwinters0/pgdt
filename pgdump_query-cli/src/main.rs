@@ -6,15 +6,16 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, CompareKind, ComparisonPlan, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
-    DumpMetadata, KnownCompression, NestedPlan, Predicate, PredicateOp, QueryOptions, Recognized,
-    ScanOptions, Severity, Span, SpanBody, TypeKind, open_local, preamble_only, render_field_into,
+    ArrayShape, CompareKind, ComparisonPlan, DEFAULT_MEMORY_BUDGET, DataBlock, Diagnostic,
+    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
+    PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody, TypeKind,
+    open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -46,6 +47,78 @@ impl From<CliSchemaMode> for SchemaMode {
             CliSchemaMode::Typed => SchemaMode::Typed,
             CliSchemaMode::Strings => SchemaMode::Strings,
         }
+    }
+}
+
+/// The two numbers a caller states its parallelism in, shared by the two
+/// scanning commands (`docs/design/architecture.md`, "Execution model and API
+/// surface").
+///
+/// **The CLI defaults to parallel where the library defaults to serial**, this
+/// being a program a person ran on purpose rather than a component inside
+/// someone else's. `--jobs 1` is the serial path, as a property of
+/// `Parallelism::workers` rather than of anything here.
+#[derive(Args)]
+struct ParallelArgs {
+    /// Ceiling on concurrent workers. Defaults to this machine's available
+    /// parallelism; `--jobs 1` is the serial path.
+    ///
+    /// **A ceiling, not a request** — three input shapes admit no parallelism
+    /// whatever this says: a plain-file `parse`, a `.xz` file with one block,
+    /// and an `INSERT` run (`docs/manual/dump-inspection.md`). No worker
+    /// scheduler is in this build either, so what this bounds today is how
+    /// many decoded `.xz` blocks the source retains, one per would-be reader.
+    #[arg(long, value_name = "N", value_parser = parse_jobs)]
+    jobs: Option<usize>,
+    /// What those workers may hold between them in read buffers, in bytes.
+    /// Defaults to 64 MiB.
+    ///
+    /// It is a real bound rather than a target: a `.xz` file whose blocks do
+    /// not fit inside it is read through the streaming decoder instead of
+    /// being decoded a block at a time, which is correct but slower on
+    /// backward reads. Raise it to buy the block path back on a file written
+    /// with large blocks (`xz -9 -T0`, `xz --block-size=`).
+    #[arg(long, value_name = "BYTES", value_parser = parse_parallel_memory)]
+    parallel_memory: Option<u64>,
+}
+
+impl ParallelArgs {
+    /// The [`Parallelism`] these flags state, filling in the CLI's own
+    /// defaults for whichever was omitted.
+    fn resolve(&self) -> Parallelism {
+        let jobs = self.jobs.unwrap_or_else(default_jobs);
+        Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET))
+    }
+}
+
+/// This machine's available parallelism, or one where the platform declines to
+/// say — which is the serial path, and the honest answer when nothing is
+/// known about how many cores a caller has.
+fn default_jobs() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
+/// A `--jobs` value: a worker count, and never zero. Zero would read as one
+/// through `Parallelism::workers`, but a person who typed it meant something,
+/// and silently answering "serial" is the kind of surprise a flag should not
+/// hold.
+fn parse_jobs(text: &str) -> std::result::Result<usize, String> {
+    match text.parse::<usize>() {
+        Ok(0) => Err("a job count of 0 would run no workers; --jobs 1 is the serial path".into()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// A `--parallel-memory` value: a byte count, and never zero. Zero affords no
+/// buffer of any unit, so every pool would fall back to its one-slot floor and
+/// a compressed source to its streaming reader — a configuration nobody wants
+/// and one the flag should refuse rather than honour.
+fn parse_parallel_memory(text: &str) -> std::result::Result<u64, String> {
+    match text.parse::<u64>() {
+        Ok(0) => Err("a parallel memory budget of 0 leaves no room for a read buffer".into()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -81,10 +154,12 @@ enum Command {
         /// chunk size is worth") — so this is a tuning escape hatch for a
         /// device unlike those, not a knob with a win behind it. A raised
         /// value keeps its buffer pooling and costs memory instead: the read
-        /// path holds four buffers of whatever size you ask for, or 64 MiB's
-        /// worth, whichever is fewer.
+        /// path holds four buffers of whatever size you ask for, or
+        /// `--parallel-memory`'s worth, whichever is fewer.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
         chunk_size: Option<usize>,
+        #[command(flatten)]
+        parallel: ParallelArgs,
     },
     /// Report what a dump's cache holds. **`info` never scans** — it reads the
     /// cache `pgdq parse` wrote and errors if there is not one, rather than
@@ -226,6 +301,8 @@ enum Command {
         /// carries, and with the same measured answer behind its default.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
         chunk_size: Option<usize>,
+        #[command(flatten)]
+        parallel: ParallelArgs,
     },
 }
 
@@ -244,10 +321,12 @@ fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
 }
 
 /// The [`ScanOptions`] one scanning command runs under: the default, with
-/// `--chunk-size` applied where it was given.
-fn scan_options(chunk_size: Option<usize>) -> ScanOptions {
+/// `--chunk-size` applied where it was given and the parallelism flags
+/// resolved.
+fn scan_options(chunk_size: Option<usize>, parallel: &ParallelArgs) -> ScanOptions {
     ScanOptions {
         chunk_size: chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
+        parallelism: parallel.resolve(),
         ..ScanOptions::default()
     }
 }
@@ -694,7 +773,13 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Parse { source: file, dqcache, preamble_only: preamble_only_flag, chunk_size } => {
+        Command::Parse {
+            source: file,
+            dqcache,
+            preamble_only: preamble_only_flag,
+            chunk_size,
+            parallel,
+        } => {
             // `parse` is the only scanner (`docs/design/architecture.md`,
             // "CLI surface"). Reject `--dqcache none` up front, before paying
             // for a scan we won't be allowed to persist.
@@ -714,7 +799,8 @@ async fn main() -> Result<()> {
             let source = open_for_scan(&file, &mode)?;
             if preamble_only_flag {
                 let (metadata, diagnostics) =
-                    preamble_only(source.as_ref(), &scan_options(chunk_size), &mode).await?;
+                    preamble_only(source.as_ref(), &scan_options(chunk_size, &parallel), &mode)
+                        .await?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -724,7 +810,8 @@ async fn main() -> Result<()> {
             let size = source.size().await?;
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
-            let scan_options = ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size) };
+            let scan_options =
+                ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: the user asked the scan to stop, not for a
@@ -832,6 +919,7 @@ async fn main() -> Result<()> {
             database,
             schema_mode,
             chunk_size,
+            parallel,
         } => {
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             // Every term is parsed before the file is opened, so a
@@ -869,6 +957,10 @@ async fn main() -> Result<()> {
                 schema_mode: schema_mode.into(),
                 filter,
                 projection: projection(column, no_columns),
+                // The same flags on both passes: `pgdq query` runs one mapping
+                // scan and one replay over one source, so the number a person
+                // typed is the number both of them work inside.
+                parallelism: parallel.resolve(),
                 ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to
@@ -880,7 +972,7 @@ async fn main() -> Result<()> {
             let mut stream = pgdump_query::table_stream(
                 source.as_ref(),
                 &table,
-                scan_options(chunk_size),
+                scan_options(chunk_size, &parallel),
                 query_options,
                 None,
                 mode,

@@ -109,6 +109,7 @@ trait ByteRangeSource: Send + Sync {
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
+    fn hint_parallelism(&self, _parallelism: Parallelism) {}
 }
 ```
 
@@ -152,7 +153,7 @@ which is what the CLI holds. Worth knowing when a similar rework is costed
 elsewhere: the two forms are not a matter of taste, and which one is needed is
 decided by whether anything constructs a source it cannot name.
 
-**Three of the five defaulted methods exist for a source the local file is
+**Three of the six defaulted methods exist for a source the local file is
 not.** `stored_size()` is the bytes as stored on the device where `size()` is
 the addressable length — equal for a plain file, divergent for a decompressing
 one, and it is what the cache's staleness check reads, so that check stays a
@@ -163,9 +164,9 @@ that cannot answer exactly (gzip's `ISIZE` is useless above 4 GiB, zstd's frame
 content size is optional), added in the pass that reshaped these signatures
 because a later pass would have had to touch them all again for one bool.
 `seek_table()` hands a compressed source's block index to the cache without the
-cache knowing what kind of source it holds. The other two are answered by every
-source: `hint_read_size` is about the caller rather than the source and is
-described below, and `partitions` is next.
+cache knowing what kind of source it holds. The other three are answered by
+every source: `hint_read_size` and `hint_parallelism` are about the caller
+rather than the source and are described below, and `partitions` is next.
 
 **A source advises its own partitioning, and the layer above never learns what
 is underneath.** `partitions(range)` answers a `Partitioning` — where this
@@ -229,12 +230,41 @@ produces. That is what keeps "is this parallel" a match on the value instead of
 a comparison against a magic number, and it is what makes `--jobs 1` the serial
 path as a property of the value rather than of the CLI.
 
-**Nothing reads it yet, and that is the honest state of the surface**, in the
-same sense `size_is_exact` is carried and unread. The two mechanisms that
-consume it are the read path's memory budget — where the stated bytes replace
-`POOL_BUDGET_BYTES` and the block-decode cap retires into them ("The compressed
-source") — and the worker scheduler; neither is in this build, so a caller that
-sets the field gets the serial path, which is what leaving it alone gives.
+**The read path's buffer budget reads it; no worker scheduler does yet.** Each
+of the three read loops announces the value to the source through a sixth
+defaulted method, `hint_parallelism`, at the same point it announces its chunk
+size — the mapping pass and `scan` from `ScanOptions`, the replay from
+`QueryOptions`, so a query's two passes are bounded separately. A source makes
+of it what its own read units require: `LocalFileSource` sizes its one free
+list from the bytes, and `XzSource` divides them between its two pools and
+decides from the remainder whether it can afford to decode a whole block at all
+("The compressed source"). The scheduler that would run the workers is not in
+this build, so a caller that sets the field still gets the serial path —
+executing it inside the memory it asked for, which leaving the field alone does
+not promise.
+
+**The `jobs` half is therefore a retention depth today, not a concurrency
+one.** It is the *block* pool's slot ceiling — one retained decoded block per
+concurrent reader, floored at `POOL_DEPTH` because a block pool of one drains
+before every decode. The chunk pool's depth is deliberately left alone by it: a
+chunk buffer is taken and released inside a single `read_range`, so what its
+free list has to hold is the replay path's depth, and raising the ceiling with
+a worker count would grow a query's resident set by `(jobs - POOL_DEPTH)`
+chunks the moment `RetainedChunks` releases the buffers a flushed batch was
+pinning — idle capacity bought for concurrency nothing produces. That is a
+number to re-derive against real holders when the scheduler lands, not a
+standing rule.
+
+**A budget divided between two pools is divided chunks-first, so one stated
+number bounds the source rather than each pool.** `XzSource::apportion` gives
+the chunk pool its own ceiling — 4 MiB at the 1 MiB default chunk — and the
+block pool what is left, and it recomputes from the stated number on *both*
+announcements so `hint_read_size` and `hint_parallelism` may arrive in either
+order. *Rejected:* giving each pool the whole budget and stating the source's
+bound as the sum of two terms. It is simpler and it is what the partitioning
+advisory already does for a *partition*, but here the second term is the one
+that grows: a source could hold twice its stated budget, in a phase whose
+central promise is a number in bytes.
 
 **The local backend pools its read buffers, and the trait shape is why.**
 `read_range` returns owned `Bytes` because `get_range` does, so the obvious
@@ -268,18 +298,32 @@ a source no caller announced to, and the hint only separates the two above it. A
 RSS claim is read against that bound rather than against the steady state.
 
 **The slot count is derived from a byte budget, because a block pool cannot be
-bounded in slots.** The count was a constant 4; the bound is now
-`POOL_BUDGET_BYTES` — 64 MiB — and the count is
-`(budget / unit).clamp(1, 4)`, where the unit is the length a read loop
+bounded in slots.** The count was a constant 4; the bound is the caller's
+stated bytes, defaulting to `DEFAULT_MEMORY_BUDGET` — 64 MiB — and the count is
+`(budget / unit).clamp(1, depth)`, where the unit is the length a read loop
 announced or the 8 MiB ceiling where nothing has. At the 1 MiB default chunk
 and at the 16 MiB the sweep brackets it is still 4, so nothing the read-chunk
 figure measures loses a slot and the **1.83×** a pool miss costs cannot come
-back through this ceiling; at a decoded 24 MiB xz block it is 2 and at a
-128 MiB block 1, where four fixed slots would have been 512 MiB — the whole
-cgroup the measurements run in. **A unit larger than the whole budget gets one
-slot rather than none**: refusing to keep a block at all would hand every
-reader back the `calloc` the pool exists to remove, which is the more expensive
-of the two ways to be wrong.
+back through this ceiling; at a decoded 24 MiB xz block it is 2, where four
+fixed slots would have been 96 MiB and a 128 MiB block's four would have been
+512 MiB — the whole cgroup the measurements run in. **A unit larger than the
+whole budget gets one slot rather than none**: refusing to keep a block at all
+would hand every reader back the `calloc` the pool exists to remove, which is
+the more expensive of the two ways to be wrong.
+
+**That floor is what would make a stated budget a fiction, and the block path
+is where it is stopped instead.** A slot at least one unit wide means a unit
+above the budget is still allocated at its own size — so the number is honoured
+by refusing the *unit*, not by shrinking the slot: a decoded xz block the
+caller left no room for is never decoded whole, and the file is read through
+the streaming decoder ("The compressed source"). The chunk unit needs no such
+refusal, being the caller's own `chunk_size`.
+
+**64 MiB is the default because it is the serial path's number**, not because
+it is large enough for every file: it is `POOL_DEPTH` slots at the largest
+chunk size the read-chunk sweep measured, so every published figure was taken
+under it and stays under it. What it costs is named where it bites, at the
+block-decode line below.
 
 *Rejected:* **backpressure — a `take` that waits for a free slot instead of
 allocating.** It is what turns the slot count into a bound on what is
@@ -600,9 +644,10 @@ eviction keep zero and drain before every decode, so an outstanding view forces
 a fresh allocation of the block unit instead of a reuse — the pool stops
 pooling exactly when a caller is holding a block.
 
-**A block above 256 MiB is not decoded whole; that file keeps the streaming
-reader.** A *single block* file's one block is the whole plaintext, and
-decoding koji whole is not a read, it is an allocation the size of the file. So
+**A block the caller's budget cannot hold is not decoded whole; that file keeps
+the streaming reader.** A *single block* file's one block is the whole
+plaintext, and decoding koji whole is not a read, it is an allocation the size
+of the file. So
 `XzSource` keeps `xz_seek::Reader::read_at` behind its mutex as the fallback
 for that shape: one live decode, restarted on a backward seek, retaining
 nothing, exactly as the source read before block decode existed. The reader
@@ -621,21 +666,49 @@ and the constant together, which is the whole of its appeal, and it would make
 the most ordinary `.xz` there is unreadable where today it is merely
 serialized.
 
-**What the cap declines is memory, not seekability.** Any file with more than
-one block is seekable, and decodable block-wise, for a client willing to
-allocate a block. The cap is keyed on the file's **largest block**, not on its
-block count, so a multi-block file written with large blocks (`xz -T8
---block-size=512MiB`) is declined by it and genuinely does have parallelism to
-lose. Nothing in hand writes that shape and no tool defaults to it, so one
-constant still serves; what would make the line principled rather than merely
-safe is a caller stating the budget, which is where the `Parallelism` surface
-takes it ([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md),
-"Slices"). *Rejected: keying the refusal on block count instead*, so that only
-a genuinely single-block file falls back — that sends a 20 × 512 MiB file down
-the block path to allocate 512 MiB a slot, which is the allocation the cap
-exists to prevent. *Rejected: deciding per read rather than per file*, a block
-under the cap decoding whole and one above it streaming — it doubles the read
-paths inside one source to serve a file shape nothing in hand produces.
+**What the line declines is memory, not seekability, and it is the stated
+budget rather than a constant beside it.** Any file with more than one block is
+seekable, and decodable block-wise, for a client willing to allocate a block —
+so the question was never "is this file seekable" but "did the caller leave
+room for a block". It is keyed on the file's **largest block**, not on its
+block count, so a multi-block file written with large blocks is declined and
+genuinely does have parallelism to lose; what changed is that the caller can
+now say so. `BlockCache::affordable` compares that unit against the block
+pool's share of `Parallelism`'s bytes, and the refusal is what keeps the
+budget's own one-slot floor from making the stated number a fiction ("Execution
+model and API surface").
+
+**Under the default budget that line sits at ~60 MiB, and the shapes it
+declines are ordinary ones.** `xz --block-size=128MiB` and `xz -9 -T0` — whose
+threaded block size is three times its 64 MiB dictionary, so ~192 MiB — both
+fall back where a flat 256 MiB constant took them down the block path at 128 or
+192 MiB resident against a 64 MiB budget. That is the budget being *honoured*
+rather than a regression, and `xz-seek` endorses the fallback in as many words
+(`vendor/xz-seek/src/plan.rs`: a budget too small for one worker "clamps to one
+and reports", so the caller "can fall back to its own streaming decoder"). The
+remedy is `--parallel-memory`, which is in the user's hands and is the flag
+that landed with the derivation. *Rejected: raising the default to 256 MiB* so
+that no file changes read path — it keeps the block path for those two shapes
+at the price of the *serial* path holding twice as much on every 24 MiB-block
+`.xz` (four retained blocks where two are enough) and four times as much at a
+raised `--chunk-size`, which is a memory cost paid by every user to spare two
+file shapes a slower read.
+
+**The fallback is silent, and that is a property rather than a defect.** A file
+declined for budget reasons is not the shape
+`DiagnosticKind::NonSeekableCompressedSource` warns about — that warning is
+about a *file* with no seek structure at all, which no flag can change, where
+this one is about a number the user set and can raise. The manual states the
+line ([`../manual/dump-inspection.md`](../manual/dump-inspection.md)); a
+diagnostic saying it per run would need the source's budget to reach
+`index.rs`, which is a trait method for a sentence.
+
+*Rejected: keying the refusal on block count instead*, so that only a genuinely
+single-block file falls back — that sends a 20 × 512 MiB file down the block
+path to allocate 512 MiB a slot, which is the allocation the line exists to
+prevent. *Rejected: deciding per read rather than per file*, a small block
+decoding whole and a large one streaming — it doubles the read paths inside one
+source to serve a file shape nothing in hand produces.
 
 **A source with two read units takes two pools, not two hints.** The chunk pool
 is shared with the read loop above; the block pool is the decoder's own, hinted

@@ -487,9 +487,11 @@ async fn map_forward(
     let mut metadata_covers: Option<Option<String>> =
         index.metadata.as_ref().and_then(|m| m.databases.last()).map(|db| db.name.clone());
 
-    // The chunk length this loop repeats to the frontier, announced once
-    // (`ByteRangeSource::hint_read_size`).
+    // The chunk length this loop repeats to the frontier, and the budget it
+    // may keep buffers inside, announced once
+    // (`ByteRangeSource::hint_read_size`, `hint_parallelism`).
     source.hint_read_size(scan_options.chunk_size);
+    source.hint_parallelism(scan_options.parallelism);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
     let mut carry = ChunkCarry::new();
@@ -1305,8 +1307,12 @@ pub fn table_stream<'a>(
 
         // The chunk length every block's replay repeats, announced once for
         // the whole replay rather than per block
-        // (`ByteRangeSource::hint_read_size`).
+        // (`ByteRangeSource::hint_read_size`). The budget comes from
+        // `QueryOptions`, not `ScanOptions`: the mapping pass above has
+        // finished, and a query states the two passes' parallelism separately
+        // because they split differently.
         source.hint_read_size(scan_options.chunk_size);
+        source.hint_parallelism(query_options.parallelism);
 
         // Only the first replayed block can start mid-block (a resumed
         // stream paused between two of its rows); its scanner and in-flight

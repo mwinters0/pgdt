@@ -114,6 +114,22 @@ pub trait ByteRangeSource: Send + Sync {
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
+    /// How much concurrency this caller allows, and how many bytes the source
+    /// may hold while serving it — announced once before a read loop starts,
+    /// exactly where [`ByteRangeSource::hint_read_size`] is
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **Advisory, and it defaults to doing nothing**, for the same reason the
+    /// read-size hint is: the numbers are the *caller's*, stated on
+    /// `ScanOptions`/`QueryOptions`, and nothing in a `read_range` call carries
+    /// them. What a source makes of them is its own business —
+    /// [`LocalFileSource`] sizes its one free list, [`XzSource`] divides the
+    /// budget between its two read units and decides from it whether it can
+    /// afford to decode a whole block at all.
+    ///
+    /// [`Parallelism::Serial`] states no byte count, so a source told that
+    /// keeps [`DEFAULT_MEMORY_BUDGET`].
+    fn hint_parallelism(&self, _parallelism: Parallelism) {}
 }
 
 /// Where a source is willing to be split
@@ -224,9 +240,13 @@ impl Partitioning {
 /// from it — which is what keeps "is this parallel" a match on the value
 /// instead of a comparison against a magic number.
 ///
-/// **Nothing reads this yet.** It is the surface the caller states its budget
-/// in; the mechanisms that read it are the pool budget and the worker
-/// scheduler, neither of which is in this build
+/// **The read path's buffer budget reads it; no worker scheduler does yet.**
+/// `memory_bytes` is what both pools in a source are sized from, and it is
+/// what decides whether a compressed source can afford to decode a whole block
+/// ("The compressed source"); `jobs` is the block pool's depth, one retained
+/// block per concurrent reader. The scheduler that would actually run those
+/// readers is not in this build, so `jobs` is today a ceiling on retention
+/// rather than on concurrency
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Parallelism {
@@ -267,7 +287,46 @@ impl Parallelism {
     pub fn is_serial(&self) -> bool {
         matches!(self, Self::Serial)
     }
+
+    /// The bytes this caller allows, or `None` for [`Parallelism::Serial`],
+    /// which states no number.
+    ///
+    /// `None` rather than [`DEFAULT_MEMORY_BUDGET`] because "the caller said
+    /// nothing" and "the caller said 64 MiB" are different facts, and a source
+    /// that already holds a budget of its own — one set by an earlier
+    /// announcement — must be able to tell them apart.
+    pub fn memory_bytes(&self) -> Option<u64> {
+        match self {
+            Self::Serial => None,
+            Self::Workers { memory_bytes, .. } => Some(*memory_bytes),
+        }
+    }
+
+    /// The ceiling on concurrent workers: one for [`Parallelism::Serial`],
+    /// which *is* one worker rather than none.
+    pub fn jobs(&self) -> usize {
+        match self {
+            Self::Serial => 1,
+            Self::Workers { jobs, .. } => jobs.get(),
+        }
+    }
 }
+
+/// What a source may hold in pooled buffers when the caller has stated no
+/// budget of its own — [`Parallelism::Serial`]'s number, and the CLI's default
+/// for `--parallel-memory`.
+///
+/// **It is the serial path's budget and it is deliberately not the largest
+/// block anyone might write.** 64 MiB is [`POOL_DEPTH`] slots at the largest
+/// chunk size the read-chunk sweep measured
+/// (`docs/design/measurements.md`, "What the read chunk size is worth"), so
+/// nothing at or below 16 MiB loses a slot to it and the 1.83× a pool miss
+/// costs cannot come back through this ceiling. It is also the line a
+/// compressed source's whole-block decode is refused above, which is what
+/// makes the number a *bound* rather than an aspiration — see
+/// [`BlockCache::affordable`] and `docs/design/architecture.md`, "The
+/// compressed source".
+pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
 /// How deep a [`BufferPool`] would like to be, in slots.
 ///
@@ -276,39 +335,17 @@ impl Parallelism {
 /// (`crate::batch::RetainedChunks`), so the buffer of chunk *N* can still be
 /// alive when chunk *N+1* is read. Four is that depth with room to spare.
 ///
-/// **It is a wish, not the bound** — [`POOL_BUDGET_BYTES`] is the bound, and
-/// the two together are what make a slot able to hold a decoded xz block
-/// rather than only a read chunk (`docs/design/architecture.md`, "Execution
-/// model and API surface").
+/// **It is a wish, not the bound** — the stated budget is the bound, and the
+/// two together are what make a slot able to hold a decoded xz block rather
+/// than only a read chunk (`docs/design/architecture.md`, "Execution model and
+/// API surface").
+///
+/// **It is also the floor under a stated worker count**, not a second number
+/// beside it: a pool told to keep one block per concurrent reader still keeps
+/// this many when the reader is serial, because a block pool of one makes
+/// eviction drain before every decode and stops pooling exactly when a caller
+/// is holding a block ("The compressed source").
 const POOL_DEPTH: usize = 4;
-
-/// What a [`BufferPool`] may hold in free buffers at once, in bytes.
-///
-/// **The pool is bounded in bytes because a block pool cannot be bounded in
-/// slots.** [`POOL_DEPTH`] slots of a decoded 128 MiB xz block is 512 MiB —
-/// the whole cgroup the measurements run in — so a pool whose slot size is
-/// free and whose count is fixed states no bound at all. Turning the constant
-/// into a byte budget makes the count the consequence
-/// ([`BufferPool::slots`]) and the memory the constant, which is the currency
-/// an RSS claim is made in.
-///
-/// 64 MiB is [`POOL_DEPTH`] slots at the largest chunk size the read-chunk
-/// sweep measured (`docs/design/measurements.md`, "What the read chunk size is
-/// worth"), so nothing at or below 16 MiB loses a slot to it and the 1.83×
-/// pool miss that row prices cannot come back through this ceiling. A
-/// 24 MiB block gets two slots and a 128 MiB block one; a pool that has to
-/// serve N workers a block each is given its budget by the caller rather than
-/// by this number.
-///
-/// **It bounds the free list at or below its own slot size, and not above
-/// it.** [`BufferPool::slots`] clamps to at least one, so a unit larger than
-/// this budget still gets a slot, at that unit's size — a 128 MiB block is
-/// 128 MiB resident against a 64 MiB budget. That floor is deliberate (a pool
-/// that can hold nothing is not a pool), and it means the real ceiling on the
-/// block unit is [`BLOCK_DECODE_MAX_BYTES`] rather than this number. Read the
-/// two together: this one sizes the free list, that one bounds what a single
-/// slot may cost.
-const POOL_BUDGET_BYTES: usize = 64 << 20;
 
 /// The largest buffer worth keeping, in bytes, for a length nobody has
 /// announced as a read size.
@@ -361,12 +398,41 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// "Execution model and API surface"). The short version is that the serial
 /// reader is the one holder a wait must exempt, so a wait with nothing else in
 /// the tree can assert only what this `take` already guarantees.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct BufferPool {
     /// A poisoned lock is not a corruption hazard here — the only thing under
     /// it is a list of scratch buffers — so every caller recovers the guard
     /// rather than propagating a panic from an unrelated task.
     free: Mutex<Vec<Vec<u8>>>,
+    /// What this pool may hold in free buffers at once, in bytes:
+    /// [`DEFAULT_MEMORY_BUDGET`] until a caller states one through
+    /// [`ByteRangeSource::hint_parallelism`].
+    ///
+    /// **The pool is bounded in bytes because a block pool cannot be bounded
+    /// in slots.** [`POOL_DEPTH`] slots of a decoded 128 MiB xz block is
+    /// 512 MiB — the whole cgroup the measurements run in — so a pool whose
+    /// slot size is free and whose count is fixed states no bound at all. The
+    /// byte budget makes the count the consequence ([`BufferPool::slots`]) and
+    /// the memory the number a caller states, which is the currency an RSS
+    /// claim is made in.
+    ///
+    /// **It bounds the free list at or below its own slot size, and not above
+    /// it.** [`BufferPool::slots`] clamps to at least one, so a unit larger
+    /// than the budget still gets a slot at that unit's size; a pool that can
+    /// hold nothing is not a pool. What keeps that floor from making the
+    /// budget a fiction is that the one unit which can exceed it — a decoded
+    /// xz block — is refused *before* a slot is asked for
+    /// ([`BlockCache::affordable`]).
+    ///
+    /// `Relaxed` for the same reason [`BufferPool::hinted`] is: it is written
+    /// once per read loop and read once per sizing decision, nothing is
+    /// published through it, and a value that arrives a buffer late costs one
+    /// allocation.
+    budget: AtomicUsize,
+    /// The ceiling on the free list in slots, whatever the budget affords:
+    /// [`POOL_DEPTH`] until a caller states a worker count, and then one slot
+    /// per concurrent reader.
+    depth: AtomicUsize,
     /// The read length a caller announced through
     /// [`ByteRangeSource::hint_read_size`], or `0` for none — the pool's slot
     /// size, and a buffer of exactly this length is kept past
@@ -387,6 +453,17 @@ struct BufferPool {
     /// second read unit takes a second pool rather than a second hint
     /// (`docs/design/architecture.md`, "The compressed source").
     hinted: AtomicUsize,
+}
+
+impl Default for BufferPool {
+    fn default() -> Self {
+        Self {
+            free: Mutex::new(Vec::new()),
+            budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
+            depth: AtomicUsize::new(POOL_DEPTH),
+            hinted: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl BufferPool {
@@ -424,14 +501,41 @@ impl BufferPool {
         }
     }
 
-    /// How many free buffers this pool holds: [`POOL_DEPTH`] where the budget
+    /// The budget this pool is sizing itself against, in bytes.
+    fn budget(&self) -> usize {
+        self.budget.load(Ordering::Relaxed)
+    }
+
+    /// State the budget and the slot ceiling this pool is to work inside.
+    ///
+    /// Both at once, because they are two halves of one sizing decision and a
+    /// pool caught between an old depth and a new budget would report a count
+    /// neither caller asked for.
+    fn set_limits(&self, budget: usize, depth: usize) {
+        self.budget.store(budget, Ordering::Relaxed);
+        self.depth.store(depth.max(1), Ordering::Relaxed);
+    }
+
+    /// How many free buffers this pool holds: its depth where the budget
     /// affords it, fewer where a slot is large, never zero.
     ///
     /// **This is what makes the pool block-capable.** At the 1 MiB default
-    /// chunk it is 4, exactly the fixed count it replaces; at a decoded
+    /// chunk it is 4, exactly the fixed count it once had; at a decoded
     /// 128 MiB xz block it is 1, where four would have been the whole cgroup.
     fn slots(&self) -> usize {
-        (POOL_BUDGET_BYTES / self.slot_bytes()).clamp(1, POOL_DEPTH)
+        let depth = self.depth.load(Ordering::Relaxed).max(1);
+        (self.budget() / self.slot_bytes()).clamp(1, depth)
+    }
+
+    /// The most this pool can hold in free buffers: its slot count at its own
+    /// slot size.
+    ///
+    /// This is what a source with **two** read units subtracts before handing
+    /// the remainder to the second pool, so that one stated budget bounds the
+    /// source rather than each of its pools separately
+    /// (`docs/design/architecture.md`, "The compressed source").
+    fn held_bytes(&self) -> usize {
+        self.slots().saturating_mul(self.slot_bytes())
     }
 
     /// Whether a released buffer is worth keeping: anything under the ceiling,
@@ -574,32 +678,32 @@ impl ByteRangeSource for LocalFileSource {
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::anywhere(self.pool.slot_bytes() as u64)
     }
+
+    /// **The budget sizes the free list; the worker count does not.** This
+    /// source has one read unit, and a chunk buffer is taken and released
+    /// inside a single `read_range` — so what the free list has to hold is the
+    /// *replay* path's depth, which is what [`POOL_DEPTH`] is, and not a
+    /// worker count. Raising the ceiling with `jobs` would grow a query's
+    /// resident set by `(jobs - POOL_DEPTH)` chunks the moment
+    /// `crate::batch::RetainedChunks` releases the buffers a flushed batch was
+    /// pinning, buying idle capacity for concurrency that no scheduler in this
+    /// build produces (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.pool.set_limits(budget_bytes(parallelism), POOL_DEPTH);
+    }
 }
 
-/// The largest block this source decodes whole, in uncompressed bytes.
-///
-/// **A block is the decode unit only where holding one is affordable.** A
-/// *single-block* file's one block is the whole plaintext, which may be
-/// hundreds of gigabytes, so decoding it whole would turn a streaming read
-/// into an allocation the size of the file. That shape is not exotic and the
-/// fallback is not a concession to an edge case: `xz` writes one block per
-/// stream unless it is threading, so plain `xz bigfile` — no `-T`, the
-/// default — produces exactly it.
-///
-/// So a file whose largest block is above this keeps the streaming reader
-/// ([`XzSource::read_streaming`]): correct, serialized, and exactly what the
-/// source did before block decode existed.
-///
-/// **What the cap declines is memory, not seekability.** Any file with more
-/// than one block is seekable, and decodable block-wise, for a client willing
-/// to allocate a block — so a multi-block file written with large blocks
-/// (`xz -T8 --block-size=512MiB`) is declined here and genuinely *does* have
-/// parallelism to lose. Nothing in hand writes that shape and no tool defaults
-/// to it, which is why one constant still serves; what would make the line
-/// principled rather than merely safe is a caller stating the budget, at which
-/// point this becomes that budget's consequence rather than a second number
-/// beside it (`docs/design/architecture.md`, "The compressed source").
-const BLOCK_DECODE_MAX_BYTES: u64 = 256 << 20;
+/// The byte budget a caller's [`Parallelism`] states, as a `usize`, falling
+/// back to [`DEFAULT_MEMORY_BUDGET`] where it states none — which is
+/// [`Parallelism::Serial`], and also a `u64` too large to be a length on this
+/// target, where the default is the smaller and therefore the safe answer.
+fn budget_bytes(parallelism: Parallelism) -> usize {
+    parallelism
+        .memory_bytes()
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .unwrap_or(DEFAULT_MEMORY_BUDGET as usize)
+}
 
 /// One block's plaintext, decoded whole into a pooled slot.
 ///
@@ -678,18 +782,48 @@ struct BlockCache {
 }
 
 impl BlockCache {
-    /// The cache for `table`, or `None` where whole-block decode is refused —
-    /// a file with no blocks, or one whose largest block is above
-    /// [`BLOCK_DECODE_MAX_BYTES`].
+    /// The cache for `table`, or `None` where there is no block unit to build
+    /// one around: a file with no blocks at all, or a block longer than a
+    /// length on this target.
+    ///
+    /// **Whether the unit is *affordable* is a separate question and a later
+    /// one** ([`BlockCache::affordable`]), because the answer depends on a
+    /// budget the caller has not stated yet at the moment a source is
+    /// constructed.
     fn for_table(table: &xz_seek::SeekTable) -> Option<BlockCache> {
         let unit = table.max_block_uncompressed();
-        if unit == 0 || unit > BLOCK_DECODE_MAX_BYTES {
+        if unit == 0 {
             return None;
         }
         let unit = usize::try_from(unit).ok()?;
         let pool = Arc::new(BufferPool::default());
         pool.hint(unit);
         Some(BlockCache { unit, pool, retained: Mutex::new(Vec::new()) })
+    }
+
+    /// Whether a whole block fits the budget this pool was given — the line
+    /// that decides between block decode and the streaming reader
+    /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// **This is where a constant used to be.** The refusal was a fixed
+    /// 256 MiB beside a fixed 64 MiB budget, two unrelated numbers of which
+    /// the smaller was not a bound above its own slot size — a 128 MiB block
+    /// was 128 MiB resident against a 64 MiB budget, because
+    /// [`BufferPool::slots`] floors at one. Reading it off the budget makes
+    /// the stated number true: a unit the caller did not allow room for is
+    /// never decoded whole, so the floor can never be reached with a slot
+    /// bigger than the budget.
+    ///
+    /// **What it declines is memory, not seekability.** Any file with more
+    /// than one block is seekable, and decodable block-wise, for a client
+    /// willing to allocate a block — so a file written with large blocks
+    /// (`xz -9 -T0`, whose blocks are ~192 MiB; `xz -T8
+    /// --block-size=512MiB`) is declined under the default budget and does
+    /// have parallelism to lose. That is now the caller's to reverse, with
+    /// `--parallel-memory` or `Parallelism::Workers`, rather than a constant's
+    /// to permit.
+    fn affordable(&self) -> bool {
+        self.unit <= self.pool.budget()
     }
 
     /// The retained block at `index`, promoted to most-recently-used.
@@ -749,8 +883,8 @@ impl BlockCache {
 /// mutex held only long enough to *name* the task, never across the decode.
 /// That is what lets concurrent `read_range` calls genuinely run concurrently.
 /// The streaming `xz_seek::Reader::read_at` path is kept for the one shape
-/// block decode refuses, a file whose largest block is above
-/// [`BLOCK_DECODE_MAX_BYTES`].
+/// block decode refuses, a file whose largest block does not fit the caller's
+/// stated budget ([`BlockCache::affordable`]).
 ///
 /// `Verify::Full` — completing a partly-decoded block's check before the
 /// decoder leaves it — is `xz_seek::Reader::new`'s own default, so nothing
@@ -771,9 +905,24 @@ pub struct XzSource {
     /// The chunk unit: what a read spanning more than one block is assembled
     /// into, and what the fallback path reads into.
     pool: Arc<BufferPool>,
-    /// The block unit, or `None` where this file's blocks are too large to
-    /// decode whole.
+    /// The block unit, or `None` where this file has no blocks to decode.
+    /// Present does not mean *taken*: [`XzSource::block_path`] is what decides
+    /// per read, since a block the caller's budget cannot hold is streamed.
     blocks: Option<Arc<BlockCache>>,
+    /// What the caller stated it may hold, in bytes, across **both** pools —
+    /// [`DEFAULT_MEMORY_BUDGET`] until one is announced.
+    ///
+    /// Held on the source rather than pushed straight into the pools because
+    /// the split between them is derived from it and from the announced chunk
+    /// size, which arrive in either order: [`XzSource::apportion`] recomputes
+    /// from this on both announcements, so neither hint has to come first.
+    budget: AtomicUsize,
+    /// The worker ceiling the caller stated — 1 until one is announced. It is
+    /// the **block** pool's depth: one retained block per concurrent reader is
+    /// what keeps N workers off each other's decodes, where a chunk buffer is
+    /// taken and released inside one read and wants the replay path's depth
+    /// instead ([`LocalFileSource::hint_parallelism`]).
+    jobs: AtomicUsize,
 }
 
 impl XzSource {
@@ -832,7 +981,7 @@ impl XzSource {
     ) -> Self {
         let table = Arc::new(reader.index().clone());
         let blocks = BlockCache::for_table(&table).map(Arc::new);
-        Self {
+        let source = Self {
             path,
             stat_file,
             data_file,
@@ -840,7 +989,49 @@ impl XzSource {
             reader: Arc::new(Mutex::new(reader)),
             pool: Arc::new(BufferPool::default()),
             blocks,
+            budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
+            jobs: AtomicUsize::new(1),
+        };
+        // A source is readable before anything is announced to it, so the two
+        // pools are divided at construction rather than at the first hint.
+        source.apportion();
+        source
+    }
+
+    /// Divide the stated budget between the two pools, **chunks first**.
+    ///
+    /// One stated number bounds the source, not each of its pools, so the
+    /// block pool is given what is left after the chunk pool's own ceiling
+    /// (`BufferPool::held_bytes`) — 4 MiB at the 1 MiB default chunk, so a
+    /// 64 MiB budget leaves 60 for blocks. Chunks come first because that pool
+    /// is the one every read path uses and the one the 1.83× pool-miss figure
+    /// was measured through; the block pool is what a large budget is
+    /// *for*, and it is the term that actually grows.
+    ///
+    /// Recomputed from `self.budget` on **both** announcements rather than
+    /// composed incrementally, so `hint_read_size` and `hint_parallelism` may
+    /// arrive in either order and a source that is never told either still
+    /// holds a coherent split.
+    fn apportion(&self) {
+        let budget = self.budget.load(Ordering::Relaxed);
+        let jobs = self.jobs.load(Ordering::Relaxed).max(1);
+        self.pool.set_limits(budget, POOL_DEPTH);
+        if let Some(blocks) = &self.blocks {
+            // One retained block per concurrent reader, and never fewer than
+            // the pool's own depth: a block pool of one drains before every
+            // decode, so it stops pooling exactly when a caller is holding a
+            // block.
+            blocks
+                .pool
+                .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(jobs));
         }
+    }
+
+    /// The block-decode path, or `None` where this read goes through the
+    /// streaming reader: no blocks at all, or a block the caller's budget
+    /// cannot hold ([`BlockCache::affordable`]).
+    fn block_path(&self) -> Option<&Arc<BlockCache>> {
+        self.blocks.as_ref().filter(|cache| cache.affordable())
     }
 
     pub fn path(&self) -> &Path {
@@ -979,8 +1170,9 @@ impl XzSource {
     ///
     /// Taken as a free function over the two pieces of state it reads, so the
     /// fallback arm is assertable against a table that *does* have blocks —
-    /// which no fixture can produce, a block above
-    /// [`BLOCK_DECODE_MAX_BYTES`] being a quarter-gigabyte of plaintext.
+    /// which a fixture reaches only by stating a budget smaller than one of
+    /// them, since a real file the default budget declines carries blocks of
+    /// tens of megabytes each.
     fn partition_advice(
         table: &xz_seek::SeekTable,
         blocks: Option<&BlockCache>,
@@ -1001,9 +1193,10 @@ impl XzSource {
     }
 
     /// The fallback: one live decode, restarted on a backward seek, serialized
-    /// by the reader's mutex. It is what a file whose blocks are above
-    /// [`BLOCK_DECODE_MAX_BYTES`] is read through, where decoding a block
-    /// whole would allocate the file.
+    /// by the reader's mutex. It is what a file whose largest block does not
+    /// fit the stated budget is read through ([`BlockCache::affordable`]),
+    /// where decoding a block whole would allocate more than the caller
+    /// allowed — up to the whole file, on a single-block one.
     fn read_streaming(
         offset: u64,
         len: usize,
@@ -1042,7 +1235,7 @@ impl ByteRangeSource for XzSource {
             let chunks = Arc::clone(&self.pool);
             let table = Arc::clone(&self.table);
             let file = Arc::clone(&self.data_file);
-            let blocks = self.blocks.clone();
+            let blocks = self.block_path().cloned();
             tokio::task::spawn_blocking(move || match blocks {
                 Some(cache) => {
                     Self::read_by_blocks(offset, len, &table, &cache, &reader, &file, &chunks)
@@ -1086,8 +1279,28 @@ impl ByteRangeSource for XzSource {
         })
     }
 
+    /// The chunk unit is announced to the chunk pool, and the split between
+    /// the two pools is re-derived: the chunk pool's share is its own ceiling,
+    /// which this number is what sizes ([`XzSource::apportion`]).
     fn hint_read_size(&self, len: usize) {
         self.pool.hint(len);
+        self.apportion();
+    }
+
+    /// **One stated budget, divided between two read units.** The chunk pool
+    /// takes its own ceiling and the block pool takes the rest, so the number
+    /// a caller states bounds this source rather than each of its pools; the
+    /// worker count is the block pool's depth, one retained block per
+    /// concurrent reader (`docs/design/architecture.md`, "The compressed
+    /// source").
+    ///
+    /// A budget too small for a whole block sends every read through the
+    /// streaming reader ([`BlockCache::affordable`]) — the budget is honoured
+    /// rather than exceeded by a slot the pool floors at one.
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.budget.store(budget_bytes(parallelism), Ordering::Relaxed);
+        self.jobs.store(parallelism.jobs(), Ordering::Relaxed);
+        self.apportion();
     }
 
     fn seek_table(&self) -> Option<xz_seek::SeekTable> {
@@ -1097,7 +1310,7 @@ impl ByteRangeSource for XzSource {
     fn partitions(&self, range: Range<u64>) -> Partitioning {
         Self::partition_advice(
             &self.table,
-            self.blocks.as_deref(),
+            self.block_path().map(|cache| &**cache),
             self.pool.slot_bytes() as u64,
             range,
         )
@@ -1395,6 +1608,43 @@ mod tests {
         }
     }
 
+    /// The budget and the depth are both the caller's to state, and each binds
+    /// on its own: whichever is smaller decides the count, and the floor of
+    /// one survives both.
+    #[test]
+    fn the_stated_budget_and_depth_each_bound_the_slot_count() {
+        let pool = BufferPool::default();
+        pool.hint(24 << 20);
+        assert_eq!(pool.slots(), 2, "the default budget affords two 24 MiB slots");
+
+        // A larger budget with the same depth: the depth binds.
+        pool.set_limits(512 << 20, POOL_DEPTH);
+        assert_eq!(pool.slots(), POOL_DEPTH);
+        // A larger budget and a larger depth: the budget binds.
+        pool.set_limits(512 << 20, 32);
+        assert_eq!(pool.slots(), 21);
+        // A budget below one slot still keeps one, since a pool that holds
+        // nothing hands every reader back the `calloc` it exists to remove.
+        pool.set_limits(1 << 20, 8);
+        assert_eq!(pool.slots(), 1);
+        assert_eq!(pool.held_bytes(), 24 << 20);
+    }
+
+    /// A plain file has one read unit, so the stated budget sizes its free
+    /// list and the worker count does not — a chunk buffer is taken and
+    /// released inside one read, where a retained block is not.
+    #[test]
+    fn a_plain_source_takes_the_budget_and_not_the_worker_count() {
+        let (_file, source) = source_of(b"0123456789abcdef");
+        source.hint_read_size(1 << 20);
+        assert_eq!(source.pool.slots(), POOL_DEPTH);
+
+        source.hint_parallelism(Parallelism::workers(16, 2 << 20));
+        assert_eq!(source.pool.slots(), 2, "the stated budget binds");
+        source.hint_parallelism(Parallelism::Serial);
+        assert_eq!(source.pool.slots(), POOL_DEPTH, "serial states no number");
+    }
+
     /// A source implementing nothing but the three required methods, to pin
     /// what the *defaults* answer — the only way to read a defaulted body,
     /// since both shipped sources override this one.
@@ -1481,9 +1731,9 @@ mod tests {
     /// table has boundaries.** Reaching an offset inside a block there means
     /// restarting that block and discarding forward, so two workers each force
     /// the other's restart and parallel mode is worse than serial. Asserted
-    /// against a synthetic multi-block table: a real file whose blocks are
-    /// above [`BLOCK_DECODE_MAX_BYTES`] is a quarter-gigabyte of plaintext per
-    /// block, which no fixture can be.
+    /// against a synthetic multi-block table, `partition_advice` being a free
+    /// function precisely so that the fallback arm can be handed a table that
+    /// *does* have boundaries.
     #[test]
     fn a_streaming_fallback_source_advises_one_partition() {
         let block = |i: u64| xz_seek::BlockEntry {
@@ -1751,8 +2001,9 @@ mod tests {
         }
     }
 
-    /// A block above [`BLOCK_DECODE_MAX_BYTES`] is not decoded whole: a single
-    /// block holding hundreds of gigabytes is the whole plaintext, and the
+    /// **A block the stated budget cannot hold is not decoded whole**, and the
+    /// line is the budget rather than a constant beside it: a single block
+    /// holding the whole plaintext is what a bare `xz` writes, and the
     /// streaming reader is what such a file is read through. Asserted against
     /// a synthetic table, that being the only way to have a block this size
     /// without writing one.
@@ -1778,16 +2029,88 @@ mod tests {
             }],
             blocks: vec![block(uncompressed_size)],
         };
-        assert!(BlockCache::for_table(&table(BLOCK_DECODE_MAX_BYTES)).is_some());
-        assert!(BlockCache::for_table(&table(BLOCK_DECODE_MAX_BYTES + 1)).is_none());
+        // A cache exists for any file with blocks; whether the block path is
+        // *taken* is the budget's answer, asked again on every read.
+        let affordable = |unit: u64, budget: usize| {
+            let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
+            cache.pool.set_limits(budget, POOL_DEPTH);
+            cache.affordable()
+        };
+        assert!(affordable(24 << 20, DEFAULT_MEMORY_BUDGET as usize));
+        // 128 and 192 MiB blocks — `xz --block-size=128MiB`, and `xz -9 -T0`,
+        // whose block is three times its 64 MiB dictionary — are declined at
+        // the default and taken once the caller allows the room.
+        assert!(!affordable(128 << 20, DEFAULT_MEMORY_BUDGET as usize));
+        assert!(!affordable(192 << 20, DEFAULT_MEMORY_BUDGET as usize));
+        assert!(affordable(192 << 20, 512 << 20));
         // A file with no blocks at all — `xz -c /dev/null` writes one — has no
-        // unit to size a slot with.
+        // unit to size a slot with, so there is no cache to ask.
         let empty = xz_seek::SeekTable {
             compressed_file_size: 32,
             streams: Vec::new(),
             blocks: Vec::new(),
         };
         assert!(BlockCache::for_table(&empty).is_none());
+    }
+
+    /// The stated budget bounds the **source**, not each of its pools: the
+    /// chunk pool takes its own ceiling and the block pool takes what is left,
+    /// and the two hints may arrive in either order because the split is
+    /// re-derived from the stated number rather than composed incrementally.
+    #[tokio::test]
+    async fn a_stated_budget_is_divided_between_the_two_pools() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let held = |source: &XzSource| {
+            let blocks = source.blocks.as_ref().unwrap();
+            (source.pool.held_bytes(), blocks.pool.held_bytes(), blocks.pool.slots())
+        };
+
+        // Budget then chunk size, and chunk size then budget: same split.
+        let one = XzSource::open(compressed.path()).unwrap();
+        one.hint_parallelism(Parallelism::workers(8, 32 << 20));
+        one.hint_read_size(1 << 20);
+        let two = XzSource::open(compressed.path()).unwrap();
+        two.hint_read_size(1 << 20);
+        two.hint_parallelism(Parallelism::workers(8, 32 << 20));
+        assert_eq!(held(&one), held(&two));
+
+        let (chunks, blocks, slots) = held(&one);
+        assert_eq!(chunks, POOL_DEPTH * (1 << 20), "four slots of the announced chunk");
+        assert_eq!(blocks, slots * 4096);
+        assert!(chunks + blocks <= 32 << 20, "the two pools sum inside the stated budget");
+        // Eight workers, so eight retained blocks where the budget affords
+        // them — the depth is the caller's number and the floor is the pool's.
+        assert_eq!(slots, 8);
+        one.hint_parallelism(Parallelism::Serial);
+        assert_eq!(held(&one).2, POOL_DEPTH, "serial keeps the pool's own depth");
+    }
+
+    /// A budget too small for a whole block sends every read through the
+    /// streaming reader, and the bytes are the same either way — the budget
+    /// changes the path, never the answer.
+    #[tokio::test]
+    async fn a_budget_below_the_block_unit_streams_and_still_reads_the_same_bytes() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        assert!(source.block_path().is_some(), "4 KiB blocks fit the default budget");
+
+        // Under a budget of one chunk buffer there is nothing left for a
+        // block, so the source falls back — and says so through its own
+        // partitioning advice as well.
+        source.hint_read_size(1 << 20);
+        source.hint_parallelism(Parallelism::workers(4, 1 << 20));
+        assert!(source.block_path().is_none());
+        assert_eq!(source.partitions(0..payload.len() as u64).max_partitions(), Some(1));
+
+        let got = source.read_range(4000, 5000).await.unwrap();
+        assert_eq!(&got[..], &payload[4000..9000]);
+
+        source.hint_parallelism(Parallelism::Serial);
+        assert!(source.block_path().is_some(), "the default budget takes it back");
+        let again = source.read_range(4000, 5000).await.unwrap();
+        assert_eq!(&again[..], &payload[4000..9000]);
     }
 
     /// The non-seekable shape (D2): one stream, one block, produced by a bare

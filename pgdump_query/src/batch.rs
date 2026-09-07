@@ -135,8 +135,13 @@ pub struct QueryOptions {
     /// shapes: a mapping scan, and a replay this phase splits into partitions
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
-    /// **Nothing reads it yet.** The scheduler that would is not in this
-    /// build, so a caller that sets it gets the serial path.
+    /// **The replay's buffer budget reads it; no worker scheduler does yet.**
+    /// The replay loop announces it to the source
+    /// ([`crate::ByteRangeSource::hint_parallelism`]) where the mapping pass
+    /// announces [`ScanOptions::parallelism`], so the two passes are bounded
+    /// separately. The scheduler that would split the replay is not in this
+    /// build, so a caller that sets this still gets the serial path, executing
+    /// it inside the memory it asked for.
     pub parallelism: Parallelism,
 }
 
