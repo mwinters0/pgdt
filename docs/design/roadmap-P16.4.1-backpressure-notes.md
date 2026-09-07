@@ -76,6 +76,18 @@ holder.
 
 ## What the next slice inherits
 
+**`M68` reverses which class the two discard loops announce, and renames the
+pair.** `scan` and `map_forward` move to the exempt class, so nothing in the
+shipped build arms the wait until `16.10`'s worker does, and the class is
+renamed to state the permission rather than describe the holder. It blocks
+`P16`: a worker written against the current vocabulary is written twice. Why
+the call reversed is
+[`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The
+holder class is a permission, and the shipped loops take the exempt one" — in
+short, the wait's own test drives the pool directly and so never depended on
+what a read loop announces, and this phase has shipped half a contract
+deliberately twice already.
+
 **A scheduler's workers are transient holders and must hold one slot each.**
 That is the discipline, and it is a property of the worker loop rather than
 anything the pool can check: a worker that decodes a block, parses its rows and

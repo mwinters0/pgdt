@@ -364,6 +364,30 @@ the acquisition order is fixed as well: a read that needs both takes the chunk
 slot first and the block slot inside it, never the other way round, so two
 waiting readers cannot hold each other's next slot.
 
+**The two failure directions are not comparable, which is why the exempt class
+is the `Default`.** The exempt class where the waiting one was right means the
+bound fails to bind: more memory, degraded, and visible in `peak-rss`. The
+waiting class where it was wrong means a hang, with no output and nothing to
+measure. So a source nobody announces to cannot hang, and a loop whose
+discipline is in any doubt takes the exempt class rather than the tighter
+bound.
+
+**The wait's own test does not run through a read loop, so which class the
+shipped loops announce is not what covers it.**
+`a_transient_read_waits_for_a_slot_rather_than_allocating` drives a bare
+`BufferPool` through `set_class` — two threads against one slot, with a
+negative assertion before the release — and constructs no source at all. That
+matters because the reachability of the wait in a serial build reads like a
+coverage argument and is not one: what a production loop's announcement decides
+is exposure, not what is tested. `tests/holder_class.rs` is the separate half,
+recording which loop announces which, since the pool cannot see it.
+
+Reversing which class the two discard loops announce, and renaming the pair to
+state the permission rather than describe the holder, is the out-of-band
+`M68` ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
+"The holder class is a permission, and the shipped loops take the exempt
+one").
+
 **The failing configuration without the exemption would be
 `Parallelism::Serial` at both defaults, not an exotic one**: one serial query
 over a 24 MiB-block `.xz` pins three or four block slots against the two a

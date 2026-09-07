@@ -543,22 +543,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The serial `scan` and mapping loops announce the *waiting* class, rather
-  than every loop in this build staying exempt until a scheduler exists.** The
-  decision is which loops carry `HolderClass::Transient`. Announcing it on the
-  two discard loops is what makes the bound reachable and testable today — the
-  wait is exercised against real contention rather than only asserted not to
-  have blocked — and it is what the spec row's "a read that will be retained
-  into a batch never waits" implies by exclusion. What it costs is that a
-  hang-shaped failure mode now sits on the hottest read path in the build: if
-  any transient loop ever holds two reads alive at once against a one-slot
-  pool, it blocks forever instead of allocating. Nothing today does — each
-  chunk is dropped at the end of its iteration, the carry copies what it keeps,
-  and `map::attach_text` holds one coalesced read at a time — and
-  `tests/holder_class.rs` pins which loop announces what, but no check can pin
-  the one-buffer discipline itself. Reconsidering it would mean announcing
-  `Retaining` from all three loops and letting `16.10`'s worker be the first
-  transient holder: the mechanism, the exemption and the tests all stand
-  unchanged, and what is lost is that nothing in the shipped build would
-  exercise the wait
-  ([`../design/roadmap-P16.4.1-backpressure-notes.md`](../design/roadmap-P16.4.1-backpressure-notes.md)).
+Nothing open.
