@@ -129,6 +129,66 @@ fn the_merge_prints_file_order_at_every_job_count() {
     }
 }
 
+/// A dump whose one table holds `rows` integers, with two values that are not
+/// integers at all: `zzzEARLY` at row `early` and `zzzLATE` at row `late`.
+///
+/// Row counts rather than byte offsets, because what the test needs is only
+/// that one bad value is earlier in the file than the other and that they land
+/// in **different** sub-streams at a low job count — 40,000 rows split in two
+/// puts the byte midpoint near row 20,900, so 18,000 and 22,000 sit either side
+/// of it with a margin of a thousand rows each, and 18,000 is past the
+/// 8,192-row batch that sub-stream 0 fills first.
+fn dump_with_two_bad_rows(dir: &Path, rows: u32, early: u32, late: u32) -> PathBuf {
+    let mut file = String::from("SET client_encoding = 'UTF8';\n\n");
+    file.push_str("CREATE TABLE public.t_bad (\n    id integer\n);\n\n");
+    file.push_str("COPY public.t_bad (id) FROM stdin;\n");
+    for i in 1..=rows {
+        match i {
+            _ if i == early => file.push_str("zzzEARLY\n"),
+            _ if i == late => file.push_str("zzzLATE\n"),
+            _ => file.push_str(&format!("{i}\n")),
+        }
+    }
+    file.push_str("\\.\n\n");
+    let path = dir.join("two_bad_rows.sql");
+    std::fs::write(&path, file).unwrap();
+    path
+}
+
+/// **The lowest-offset error is the one raised, at every job count**
+/// (`docs/design/roadmap-P16-parallel-scan.md`, "The lowest-offset error
+/// wins"). Two rows fail to decode; the later one is in a sub-stream that
+/// reaches it in its very first batch, while the earlier one is three batches
+/// into the sub-stream before it. A merge that raised whichever failure arrived
+/// first would name `zzzLATE` at `--jobs 2` and `zzzEARLY` serially, so a user
+/// re-running to confirm the failure would be told about a different row.
+///
+/// The serial run is the reference, named rather than defaulted to, and the
+/// assertion is on the *value* rather than the offset so a failure says which
+/// row was reported.
+#[test]
+fn the_lowest_offset_error_is_the_one_the_merge_raises() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dump_with_two_bad_rows(dir.path(), 40_000, 18_000, 22_000);
+    for jobs in ["1", "2", "3", "4", "8"] {
+        let out = query(&dump, "public.t_bad", &["--jobs", jobs]);
+        assert!(!out.status.success(), "--jobs {jobs}: the bad rows must fail the query");
+        let err = stderr_of(&out);
+        assert!(err.contains("zzzEARLY"), "--jobs {jobs} named the wrong row: {err}");
+        assert!(!err.contains("zzzLATE"), "--jobs {jobs} named the later row: {err}");
+        // And nothing past the error prints. Every sub-stream is filled in the
+        // first round, so the ones after the failing one are holding a batch
+        // when it fails; left in their slots those batches would print as soon
+        // as the sub-streams before them drained, which is rows a serial
+        // replay never reached.
+        let printed = stdout_of(&out);
+        for line in printed.lines().skip(1) {
+            let id: u32 = line.trim().parse().unwrap_or_else(|_| panic!("--jobs {jobs}: {line}"));
+            assert!(id < 18_000, "--jobs {jobs} printed row {id}, past the error at 18000");
+        }
+    }
+}
+
 /// A `parse` under a stated budget writes the cache a default one writes: the
 /// listing does not depend on which read path the budget chose.
 #[test]

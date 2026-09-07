@@ -3899,12 +3899,31 @@ the *first* sub-stream instead — its first segment starts at a `COPY` header,
 so it has resolved a schema whether or not it had rows to show for it, which is
 the block the serial path announced from too.
 
-**Error ordering is not yet the file's.** `join_all` answers in argument order,
-so the failure raised is the earliest in the file *among one round's reads*;
-a sub-stream that fails while an earlier one is still running is not held back
-for it. Draining the partitions before a failing one, so the lowest-offset
-error wins outright, is separate work
+**A failure is recorded, not raised, and the lowest-offset one wins.**
+Sub-stream `k` reads a contiguous run of blocks after `k-1`'s, so *index order
+is file order* and a failure in a lower-indexed sub-stream is earlier in the
+file however much later it arrives. The merge therefore keeps the
+lowest-indexed failure it has seen, marks every sub-stream at or after it
+`Done` — their rows are past the error, and a serial replay never reaches them
+— and goes on filling and printing from the ones before it, one of which
+failing in turn moves the frontier down again. The error is raised when the
+merge runs out of held batches, so the rows before it print exactly as a serial
+replay prints up to the row it dies on. What this buys is that a person
+re-running to confirm a failure gets the same message: raising whichever
+sub-stream failed first *in time* would name a different row on each run over
+an unchanged file. It costs nothing where there is no error — the bookkeeping
+is one comparison per slot per round
 ([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The lowest-offset error wins").
+
+**Discarding those sub-streams' held batches is the load-bearing half, not a
+tidy-up.** Every sub-stream is filled in the first round, so when sub-stream `i`
+fails the ones after it are routinely *holding* a batch — they simply have not
+been printed, the merge always having a lower-indexed batch to print first.
+Left in their slots, those batches would print the moment the sub-streams
+before `i` drained, which is rows past the error a serial replay never reached.
+So the failure is recorded and the loop goes round again to mark them `Done`
+before the printer next picks, rather than the error being acted on where it is
+found.
 
 *Rejected:* **reordering inside `TableStream` into one merged stream.** It puts
 a buffer the consumer controls inside the library, and it takes the partitions
@@ -4051,6 +4070,21 @@ rather than reading the same window forever — the one thing between a truncate
 dump and a hang. Reaching the end of the file with no terminator is
 `Error::UnterminatedCopyBlock`, which is the leader's to raise precisely
 because `scan_piece` never claims end of file.
+
+**A window's pieces are collected in file order, which is what makes a failure
+reproducible.** The pieces tile the window in ascending order, so partition
+order *is* file order, and the window is drained through a
+`futures::stream::FuturesOrdered`: the futures are polled concurrently, exactly
+as `try_join_all` polls them, but the results come back in argument order. The
+error the leader raises is therefore the **earliest failing piece**, after every
+piece before it has finished or failed, and the pieces after it are dropped
+unread. `try_join_all` returns the first error it *observes* instead, which is a
+race between the workers — so the same truncated or unreadable file could name a
+different offset on each run, and a user re-running to confirm a failure would
+be told about a different byte
+([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The lowest-offset error wins").
+Windows need no rule of their own: a window is folded before the next is
+dispatched, so a later window cannot outrun an earlier one's failure.
 
 **A worker is two reads, and the second is why a partition's footprint is a
 block *plus a chunk*.** The first read is the piece exactly,

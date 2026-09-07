@@ -509,6 +509,119 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled parallel region");
 }
 
+/// A [`ByteRangeSource`] whose reads fail **out of file order**: everything at
+/// or past `fail_at` fails, and the read that starts exactly at `fail_at`
+/// yields to the runtime eight times before it does, where every later one
+/// fails on its first poll.
+///
+/// That is the arrangement the ordering rule exists for and the one a real
+/// source produces only by luck — four workers reading four pieces of one
+/// region, the earliest of them the slowest to come back. The failure names its
+/// own offset, so the test can say *which* read the scan reported.
+struct FailsOutOfOrder<'a> {
+    inner: &'a LocalFileSource,
+    fail_at: u64,
+}
+
+impl ByteRangeSource for FailsOutOfOrder<'_> {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdump_query::Result<bytes::Bytes>> + Send + '_>,
+    > {
+        Box::pin(async move {
+            if offset >= self.fail_at {
+                if offset == self.fail_at {
+                    for _ in 0..8 {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                return Err(pgdump_query::Error::Io(std::io::Error::other(format!(
+                    "read failed at {offset}"
+                ))));
+            }
+            self.inner.read_range(offset, len).await
+        })
+    }
+
+    fn size(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdump_query::Result<u64>> + Send + '_>>
+    {
+        self.inner.size()
+    }
+
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.inner.modified()
+    }
+
+    /// Forwarded for the reason [`CancelsPast`] forwards them: a scan stating a
+    /// `Parallelism` through this wrapper must be cut exactly as it would be
+    /// through the file itself, and the default `partitions` declines to
+    /// advise.
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdump_query::Partitioning {
+        self.inner.partitions(range)
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+}
+
+/// **The lowest-offset error is the one a split region raises**
+/// (`docs/design/roadmap-P16-parallel-scan.md`, "The lowest-offset error
+/// wins"). Four workers each fail on their own piece of one `COPY` block's
+/// interior, and the *earliest* piece is deliberately the last to answer — so a
+/// scheduler that raised whichever failure arrived first would report the
+/// second worker's offset, and a user re-running to confirm the failure would
+/// get a different message each time.
+///
+/// The window is four 64-byte pieces starting at the block's `data_offset`, so
+/// the four failing offsets are known exactly and the assertion names one
+/// rather than a set.
+#[tokio::test]
+async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
+    let mut file = b"COPY public.t (a) FROM stdin;\n".to_vec();
+    let data_offset = file.len() as u64;
+    for i in 0..2000 {
+        file.extend_from_slice(format!("{i}\n").as_bytes());
+    }
+    file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::write(&dump, &file).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Disabled;
+
+    let failing = FailsOutOfOrder { inner: &source, fail_at: data_offset };
+    let options = ScanOptions {
+        chunk_size: 64,
+        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
+        ..ScanOptions::default()
+    };
+
+    let err = map_file(&failing, &options, &mode).await.expect_err("every worker's read fails");
+    assert_eq!(
+        err.to_string(),
+        format!("io error: read failed at {data_offset}"),
+        "the earliest piece's failure is the one raised, however late it arrived"
+    );
+}
+
 /// **The interrupt guard.** A cancelled scan is not an error and not a lie: it
 /// reports `interrupted`, the index it returns stops at the last **spliced**
 /// watermark, and the cache on disk holds exactly that — every exit saves

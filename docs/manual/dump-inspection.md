@@ -207,7 +207,10 @@ you named. Both are below.
 For `query` it cuts the row reading up: the parts of the file holding the rows
 you asked for are split into at most this many pieces, read at the same time,
 and printed back in the file's own order — so the rows and their order are the
-same at every setting, and only the reading changes. What it buys today is
+same at every setting, and only the reading changes. **A failure is the same at
+every setting too**: if two rows in the file cannot be read, the one that comes
+first is the one you are told about, whichever reader happened to reach its row
+first, so re-running to confirm a failure names the same row again. What it buys today is
 overlap in the *reading*; the rows are still turned into output one thread at
 a time, so on a plain file on a fast disk raising it will not show up on a
 clock. On a compressed file the reading is the expensive part, and there it

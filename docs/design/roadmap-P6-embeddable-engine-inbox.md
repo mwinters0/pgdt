@@ -454,6 +454,38 @@ hands out partitions; the CLI merges them" and "Workers come from
 
 ---
 
+## Reproducible error ordering across sub-streams is the *caller's*, and only `pgdq query` has it
+
+**Fact.** When several sub-streams of one partitioned replay fail, which
+failure the user sees is decided entirely by the code driving them. `pgdq query`
+arranges the file's answer: it records a sub-stream's failure instead of
+raising it, marks every sub-stream at or after it dead, drains the ones before
+it, and raises the lowest-indexed error — index order being file order, since
+sub-stream `k` reads a contiguous run of blocks after `k-1`'s. The **library
+does none of that**. `table_stream_partitions` hands out N independent streams
+and says nothing about their failures' relative order, so an embedder that runs
+them concurrently and propagates the first error it observes gets a different
+row named on each run over an unchanged file.
+
+**Why this phase cares.** It is the same question `batch_source_offset` raises
+one line up, with a sharper edge: file order is a *nicety* an engine may not
+want, but a reproducible error message is something a caller would assume it
+has and cannot get from this API. Three answers are open and this phase picks
+one — promise nothing and document it; publish the ordering key the CLI uses so
+a caller can implement the rule; or offer a merged, ordered entry point beside
+the partitioned one for callers that want the CLI's behaviour. Note that the
+mapping pass's own workers *do* order their errors inside the library
+(`leader::run_region` drains a window in file order), so the asymmetry is
+between the two passes rather than a blanket "the library does not order
+errors".
+
+**Origin.** `P16.11`, 2026-09-07
+([`roadmap-P16.11-error-ordering-notes.md`](roadmap-P16.11-error-ordering-notes.md);
+[`architecture.md`](architecture.md), "`pgdq query` merges the sub-streams back
+into file order").
+
+---
+
 ## A partitioned replay cannot be resumed, and the token says so rather than lying
 
 **Fact.** `table_stream_partitions` takes no `resume` argument, and a

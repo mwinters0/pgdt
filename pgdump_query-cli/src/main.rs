@@ -683,7 +683,9 @@ enum Slot {
     /// the moment it was taken because its sub-stream may since have moved to
     /// a block with a different schema.
     Held { offset: u64, batch: RecordBatch, plans: Vec<NestedPlan> },
-    /// Drained, or stopped at an error already raised. Never polled again.
+    /// Drained, stopped at an error, or sitting at or after one — every row
+    /// past the earliest failure belongs to a serial replay that never got
+    /// there. Never polled again, and a batch it was holding is discarded.
     Done,
 }
 
@@ -1022,18 +1024,41 @@ async fn main() -> Result<()> {
             .map_err(name_taken_verbatim)?;
             let mut announced = false;
             let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
+            // The lowest-indexed sub-stream that has failed, and its error.
+            // **Recorded rather than raised**, which is the whole of the
+            // ordering rule on this side: sub-stream `k` reads a contiguous run
+            // of blocks after `k-1`'s, so a failure in a lower-indexed one is
+            // earlier in the file however much later it arrives, and raising
+            // whichever failed first in time would name a different row on each
+            // run over an unchanged file
+            // (`docs/design/roadmap-P16-parallel-scan.md`, "The lowest-offset
+            // error wins").
+            let mut failed: Option<(usize, pgdump_query::Error)> = None;
             loop {
+                // Everything at or after a failing sub-stream is dead, and
+                // **discarding what those slots hold is the load-bearing
+                // half**: the first round fills every slot, so the sub-streams
+                // after the failing one are routinely holding a batch, and left
+                // there it would print the moment the ones before it drained —
+                // rows past the error that a serial replay never reached. Only
+                // the sub-streams *before* the failure go on being drained, and
+                // one of them failing in turn moves the frontier down again.
+                let live = failed.as_ref().map_or(slots.len(), |(index, _)| *index);
+                for slot in slots.iter_mut().skip(live) {
+                    *slot = Slot::Done;
+                }
                 // Refill every empty slot at once. In the first round that is
                 // every sub-stream; after it, only the one just drained — so
                 // the reads a sub-stream ahead of the printer issues stop at
                 // one batch, which is what makes the merge's bound N × batch
                 // rather than a reorder buffer.
-                let failed = {
+                let round = {
                     let fills = streams
                         .iter_mut()
                         .zip(slots.iter_mut())
-                        .filter(|(_, slot)| matches!(slot, Slot::Empty))
-                        .map(|(stream, slot)| async move {
+                        .enumerate()
+                        .filter(|(index, (_, slot))| *index < live && matches!(slot, Slot::Empty))
+                        .map(|(index, (stream, slot))| async move {
                             match stream.next().await {
                                 Some(Ok(batch)) => {
                                     *slot = Slot::Held {
@@ -1051,7 +1076,7 @@ async fn main() -> Result<()> {
                                 }
                                 Some(Err(err)) => {
                                     *slot = Slot::Done;
-                                    Some(err)
+                                    Some((index, err))
                                 }
                                 None => {
                                     *slot = Slot::Done;
@@ -1062,13 +1087,19 @@ async fn main() -> Result<()> {
                         .collect::<Vec<_>>();
                     // `join_all` answers in argument order, which is partition
                     // order, which is file order — so the first failure in it
-                    // is the earliest in the file *among this round's reads*.
-                    // Draining the partitions before a failing one so that the
-                    // lowest-offset error wins outright is 16.11's.
+                    // is the lowest-indexed of this round's, and every slot
+                    // this round could fill was already below whatever failed
+                    // before it.
                     futures::future::join_all(fills).await.into_iter().flatten().next()
                 };
-                if let Some(err) = failed {
-                    return Err(name_taken_verbatim(err));
+                // Round again rather than printing: the sub-streams this
+                // failure has just killed may be holding batches, and the loop
+                // head is what marks them dead before the merge next picks.
+                // It terminates because a recorded failure strictly lowers
+                // `live` and a new one can only come from a slot below it.
+                if let Some(first) = round {
+                    failed = Some(first);
+                    continue;
                 }
                 // The k-way merge itself: the held batch that begins earliest
                 // in the file is the next one to print.
@@ -1111,6 +1142,14 @@ async fn main() -> Result<()> {
                 }
                 print_batch(&batch, &plans)?;
                 rows += batch.num_rows() as u64;
+            }
+            // Every sub-stream before the failing one is drained, so what is
+            // held now is the earliest error in the file — the one a serial
+            // replay would have stopped at, and the one every re-run gets.
+            // Raised after the rows before it have printed, exactly as the
+            // serial path prints up to the row it dies on.
+            if let Some((_, err)) = failed {
+                return Err(name_taken_verbatim(err));
             }
             // A query that matched a block but selected no rows still
             // resolved a schema, so the announcement is owed either way; it

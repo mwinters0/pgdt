@@ -390,12 +390,27 @@ async fn run_region(
         // decoded it is the thread that parses it
         // (`docs/design/roadmap-P16-parallel-scan.md`, "A worker decodes and
         // parses in one thread").
-        let dispatched = ranges.into_iter().enumerate().map(|(i, range)| {
-            let entry = if i == 0 { entry } else { PieceEntry::Resync };
-            scan_partition(source, options, entry, range, columns, size)
-        });
-        for piece in futures::future::try_join_all(dispatched).await? {
-            scans.extend(piece);
+        let mut dispatched: futures::stream::FuturesOrdered<_> = ranges
+            .into_iter()
+            .enumerate()
+            .map(|(i, range)| {
+                let entry = if i == 0 { entry } else { PieceEntry::Resync };
+                scan_partition(source, options, entry, range, columns, size)
+            })
+            .collect();
+        // **The lowest-offset error is the one raised, and this is what
+        // arranges it** (`docs/design/roadmap-P16-parallel-scan.md`, "The
+        // lowest-offset error wins"). A window's pieces tile the region in
+        // ascending order, so partition order *is* file order, and
+        // [`futures::stream::FuturesOrdered`] hands the results back in that
+        // order however they arrived: the `?` below therefore fires on the
+        // earliest failing piece, after every piece before it has finished or
+        // failed, and drops the ones after it unread. `try_join_all` polls the
+        // same futures concurrently but returns the first error it *observes*,
+        // which is a race between the workers — so a re-run over an unchanged
+        // file could name a different piece each time.
+        while let Some(piece) = futures::StreamExt::next(&mut dispatched).await {
+            scans.extend(piece?);
         }
 
         if let Some(interior) = merge(&scans) {
