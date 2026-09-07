@@ -70,7 +70,7 @@ through.
 | `ResolvedSchema`/`ColumnResolution`/`ColumnNote` — joins a `COPY` header against `DumpMetadata`, and carries each column's comparison plan | `pgdump_query/src/resolve.rs` | L2 |
 | Per-type field decode + render-back | `pgdump_query/src/decode.rs` | L2 |
 | Array / record / range / multirange literal decode + render-back, and the `*_in` supersets a filter literal is read with | `pgdump_query/src/nested.rs` | L2 |
-| Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
+| Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), the retained read chunks a zero-copy view points into (`RetainedChunks`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
 | Pull-mode `table_stream`, `map_forward`, `map_file` (`pgdq parse`'s scan), replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
 | CLI (`pgdq parse` / `info` / `query`), the `--filter` term grammar | `pgdump_query-cli/src/main.rs` | above L4 |
@@ -2917,6 +2917,24 @@ path. Around that:
   block list. Anything adding a new flush trigger must honour this.
 - Non-UTF8 field bytes are a hard `Error::InvalidUtf8`, never a lossy
   conversion.
+
+**The first two of those are `batch::RetainedChunks`', and that is what makes
+this a single layer's mechanism.** A read loop hands it each chunk it read
+(`retain`) and tells it how far the scanner has got (`release_through`); the
+deque, the `Bytes` → `arrow::Buffer` conversion that makes a chunk viewable at
+all, and the `invalidate_block_cache` a flush owes are all its, and
+`SourceChunk` is private to this module. What a read loop is left knowing is
+that chunks are retained and released, and not what a chunk becomes or when a
+view stops being valid.
+
+**What that placement buys, since it is a refactor and owes the statement**
+(`roadmap.md`, "Refactor when the shape stops fitting"): it makes the pinning
+rework a change in one layer rather than one straddling two — the retained unit
+becomes a decoded xz block rather than a read chunk, and `max_source_span`'s
+bound is re-derived against it — and it survives the phases that add readers
+rather than change assembly, since a remote source (P14) and per-row-group
+statistics (P10) both leave the rule about *when a view's bytes may go* exactly
+where it now is.
 
 ### Three flush triggers, and only one of them bounds memory
 

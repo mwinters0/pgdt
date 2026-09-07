@@ -16,7 +16,7 @@ split happening.
 |---|---|---|
 | **L1 — Bytes and structure** | Byte-range I/O, line and `COPY` block structure, COPY TEXT field splitting/escaping/unescaping, DDL text grammar, the on-disk cache format, the full file map, the file-level diagnostic vocabulary | `io.rs`, `copy.rs`, `scan.rs`, `index.rs`, `cache.rs`, `preamble.rs`, `map.rs`, `diagnostic.rs` |
 | **L2 — PostgreSQL semantics** | Declared type string → Arrow `DataType`; domain/enum resolution; joining a `COPY` header against `DumpMetadata`; per-type field decode and render-back, scalar and nested; how two values of a column compare, and whether that is PostgreSQL's order | `pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs` |
-| **L3 — Arrow assembly** | Building Arrow arrays and `RecordBatch`es, including the zero-copy `Utf8View` path into the reader's buffers | `batch.rs` |
+| **L3 — Arrow assembly** | Building Arrow arrays and `RecordBatch`es, including the zero-copy `Utf8View` path into the reader's buffers and the retention of the read chunks those views point into | `batch.rs` |
 | **L4 — Query and planning** | Which blocks to read, cache segment planning, resume, predicate application, the streaming API | `stream.rs`, `predicate.rs` |
 
 `error.rs` and `lib.rs` are cross-cutting and belong to no layer.
@@ -143,15 +143,21 @@ knows about the other, and a seek table is L1 data like the rest of the cache
 
 ## Known deviations
 
-Two pieces of code sit outside their layer. They are recorded so that
-nobody treats them as precedent, and nobody "fixes" them opportunistically —
-move them only as part of work that reworks the module anyway.
+One piece of code sits outside its layer. It is recorded so that nobody treats
+it as precedent, and nobody "fixes" it opportunistically — move it only as part
+of work that reworks the module anyway.
 
-- `stream.rs` (L4) performs the `Bytes` → `arrow::Buffer` conversion and owns
-  the chunk-retention deque that the zero-copy path depends on. That is L3
-  work.
 - `batch.rs` (L3) exposes `read_table`, a public push-mode entry point. That is
   L4 work.
+
+**The chunk-retention deque and the `Bytes` → `arrow::Buffer` conversion are
+not on this list**: they are `batch::RetainedChunks`, in L3
+([`architecture.md`](architecture.md), "Arrow assembly and the zero-copy
+path"). They are named here because a deviation that has been recorded for
+several phases is one a reader learns to expect, and because they are what the
+"work that reworks the module anyway" clause above looks like when it fires —
+the retained unit is being re-derived against decoded blocks rather than read
+chunks, and the move rode in on that rather than standing as a tidying pass.
 
 ## Adding a module
 

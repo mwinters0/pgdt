@@ -56,21 +56,17 @@
 //! decodes a row — see that method's docs and `resolve.rs`'s module docs for
 //! why the `RecordBatch`es this stream yields stay all-`Utf8View` regardless.
 
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatch;
-use arrow::buffer::Buffer;
 use arrow::datatypes::Schema;
 use async_stream::try_stream;
 use bytes::Bytes;
 use futures::Stream;
 
-use crate::batch::{
-    QueryOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
-};
+use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names};
 use crate::cache::{CacheLoad, CacheMode};
 use crate::copy::{CopyHeader, DELIMITER, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -1348,17 +1344,13 @@ pub fn table_stream<'a>(
                 first_scanner.take().unwrap_or_else(|| CopyScanner::resume(seg_start, None));
             let mut read_pos = seg_start;
             let mut carry = ChunkCarry::new();
-            let mut chunks: VecDeque<SourceChunk> = VecDeque::new();
+            let mut chunks = RetainedChunks::new();
 
             loop {
                 let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
                 let chunk = if want > 0 {
                     let bytes = source.read_range(read_pos, want).await?;
-                    chunks.push_back(SourceChunk {
-                        start: read_pos,
-                        buffer: Buffer::from(bytes.clone()),
-                        column_blocks: Vec::new(),
-                    });
+                    chunks.retain(read_pos, &bytes);
                     read_pos += bytes.len() as u64;
                     bytes
                 } else {
@@ -1504,7 +1496,7 @@ pub fn table_stream<'a>(
                                     }
                                     if batcher.should_flush() {
                                         let batch = batcher.flush()?;
-                                        invalidate_block_cache(&mut chunks);
+                                        chunks.invalidate_block_cache();
                                         rows_emitted += batch.num_rows() as u64;
                                         *position_for_stream.lock().unwrap() =
                                             snapshot(&scanner, &active, rows_emitted, fingerprint);
@@ -1518,7 +1510,7 @@ pub fn table_stream<'a>(
                                     && !batcher.is_empty()
                                 {
                                     let batch = batcher.flush()?;
-                                    invalidate_block_cache(&mut chunks);
+                                    chunks.invalidate_block_cache();
                                     rows_emitted += batch.num_rows() as u64;
                                     *position_for_stream.lock().unwrap() =
                                         snapshot(&scanner, &active, rows_emitted, fingerprint);
@@ -1539,17 +1531,10 @@ pub fn table_stream<'a>(
 
                 // Everything before the scanner's new position has already had
                 // its chance to be referenced by a zero-copy view (that happens
-                // synchronously above, before we get here), so it's safe to drop.
-                //
-                // **The chunk the scanner just read is retained even so**, as
-                // it always was: `end() <= floor` holds only once the scanner
-                // has walked past a chunk's last byte, and the row that
-                // straddles the next boundary is carried, not scanned, so it
-                // cannot reach here needing a chunk that has gone.
-                let floor = scanner.position();
-                while chunks.front().is_some_and(|c| c.end() <= floor) {
-                    chunks.pop_front();
-                }
+                // synchronously above, before we get here), so it's safe to
+                // drop. Which chunks that actually releases is
+                // `RetainedChunks`' rule, not this loop's.
+                chunks.release_through(scanner.position());
 
                 if eof {
                     break;

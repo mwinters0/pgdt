@@ -99,7 +99,7 @@ pub trait ByteRangeSource: Send + Sync {
 ///
 /// A scan holds one chunk at a time, so one slot would serve it; the query
 /// replay path retains chunks past the read that produced them
-/// (`crate::batch::SourceChunk`), so the buffer of chunk *N* can still be
+/// (`crate::batch::RetainedChunks`), so the buffer of chunk *N* can still be
 /// alive when chunk *N+1* is read. Four is that depth with room to spare, and
 /// it is what bounds the pool's contribution to RSS: four buffers of at most
 /// `max(POOL_MAX_BYTES, announced)` bytes each. In the steady state those are

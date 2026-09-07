@@ -11,6 +11,13 @@
 //! and the zero-copy path"). Every other mapped type always copies: its decoded value has
 //! its own representation (an `i32`, a `[u8; 16]`, …), not a byte range of
 //! the original field.
+//!
+//! **The chunks those views point into are held here too**, in
+//! [`RetainedChunks`]: a read loop says what it read and how far the scanner
+//! has got, and this module decides when a chunk becomes an Arrow `Buffer`,
+//! how long it is kept, and when a cached builder block index stops being
+//! valid. All three are properties of the assembly, not of the read
+//! (`docs/design/layering.md`, "The layers").
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -33,6 +40,7 @@ use arrow::buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow::datatypes::{
     DataType, FieldRef, Fields, Int32Type, IntervalMonthDayNano, IntervalUnit, SchemaRef, TimeUnit,
 };
+use bytes::Bytes;
 
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, RawRow, RowSplit};
@@ -157,20 +165,20 @@ pub enum ScanExtent {
 
 /// A read chunk retained only long enough for zero-copy views to be taken
 /// into it. Dropped once the scanner has moved past it for good.
-pub(crate) struct SourceChunk {
+struct SourceChunk {
     /// Absolute file offset of `buffer[0]`.
-    pub(crate) start: u64,
-    pub(crate) buffer: Buffer,
+    start: u64,
+    buffer: Buffer,
     /// Cached `StringViewBuilder::append_block` index per column, filled in
     /// the first time a column takes a view into this chunk. Grown lazily
     /// rather than sized up front, since more than one schema (from
     /// sequential or same-name-different-schema blocks) can reference the
     /// same chunk.
-    pub(crate) column_blocks: Vec<Option<u32>>,
+    column_blocks: Vec<Option<u32>>,
 }
 
 impl SourceChunk {
-    pub(crate) fn end(&self) -> u64 {
+    fn end(&self) -> u64 {
         self.start + self.buffer.len() as u64
     }
 
@@ -190,13 +198,62 @@ impl SourceChunk {
     }
 }
 
-/// `StringViewBuilder::finish()` resets its internal block list to build the
-/// next batch, which invalidates every cached block index in `chunks` — a
-/// flush must clear them all, or a later reference to an already-seen chunk
-/// would resolve to the wrong (or out-of-bounds) block in the new batch.
-pub(crate) fn invalidate_block_cache(chunks: &mut VecDeque<SourceChunk>) {
-    for chunk in chunks.iter_mut() {
-        chunk.column_blocks.clear();
+/// The read chunks a batch's zero-copy views may still point into, in file
+/// order. A replay loop hands each chunk it reads to [`Self::retain`] and
+/// tells it where the scanner has got to; everything else about the
+/// arrangement — that a chunk becomes an Arrow `Buffer` at all, that the
+/// buffer is what a view is taken against, when a cached block index stops
+/// being valid — is Arrow assembly's business and is why this type lives
+/// beside the builders rather than beside the read loop
+/// (`docs/design/layering.md`, "The layers").
+pub(crate) struct RetainedChunks {
+    chunks: VecDeque<SourceChunk>,
+}
+
+impl RetainedChunks {
+    pub(crate) fn new() -> Self {
+        Self { chunks: VecDeque::new() }
+    }
+
+    /// Retain one read chunk, `start` being the absolute file offset of its
+    /// first byte.
+    ///
+    /// **This is the one place a read chunk becomes an `arrow::Buffer`.** The
+    /// `Bytes` is cloned rather than consumed because the caller still scans
+    /// it; both refer to the same allocation, which the buffer pool reclaims
+    /// only when the last reference dies (`docs/design/architecture.md`,
+    /// "Execution model and API surface").
+    pub(crate) fn retain(&mut self, start: u64, bytes: &Bytes) {
+        self.chunks.push_back(SourceChunk {
+            start,
+            buffer: Buffer::from(bytes.clone()),
+            column_blocks: Vec::new(),
+        });
+    }
+
+    /// Drop every chunk the scanner has walked entirely past — everything
+    /// before `floor` has already had its chance to be viewed, since that
+    /// happens synchronously as rows are pushed.
+    ///
+    /// **The chunk the scanner is inside is retained**: `end() <= floor` holds
+    /// only once the scanner has walked past a chunk's last byte, and the row
+    /// straddling the next boundary is carried rather than scanned, so it
+    /// cannot arrive needing a chunk that has gone.
+    pub(crate) fn release_through(&mut self, floor: u64) {
+        while self.chunks.front().is_some_and(|c| c.end() <= floor) {
+            self.chunks.pop_front();
+        }
+    }
+
+    /// `StringViewBuilder::finish()` resets its internal block list to build
+    /// the next batch, which invalidates every cached block index held here —
+    /// a flush must clear them all, or a later reference to an already-seen
+    /// chunk would resolve to the wrong (or out-of-bounds) block in the new
+    /// batch.
+    pub(crate) fn invalidate_block_cache(&mut self) {
+        for chunk in self.chunks.iter_mut() {
+            chunk.column_blocks.clear();
+        }
     }
 }
 
@@ -850,7 +907,7 @@ impl RowBatcher {
         row_offset: u64,
         row: RawRow<'_>,
         split: &mut RowSplit,
-        chunks: &mut VecDeque<SourceChunk>,
+        chunks: &mut RetainedChunks,
     ) -> Result<()> {
         let raw = row.bytes();
         let expected = self.field_targets.len();
@@ -898,7 +955,7 @@ impl RowBatcher {
         field_offset: u64,
         row: RawRow<'_>,
         field: Range<usize>,
-        chunks: &mut VecDeque<SourceChunk>,
+        chunks: &mut RetainedChunks,
     ) -> Result<()> {
         let field_len = field.len();
         let decoded = row.decode(field)?;
@@ -961,12 +1018,13 @@ fn push_utf8view_field(
     field_offset: u64,
     field_len: usize,
     text: Cow<'_, str>,
-    chunks: &mut VecDeque<SourceChunk>,
+    chunks: &mut RetainedChunks,
 ) {
     match text {
         Cow::Owned(s) => builder.append_value(s),
         Cow::Borrowed(s) => {
             let view = chunks
+                .chunks
                 .iter_mut()
                 .find_map(|c| c.contains(field_offset, field_len).map(|coords| (c, coords)));
             match view {
@@ -1731,7 +1789,7 @@ mod tests {
     fn an_unprojected_field_is_walked_but_never_decoded() {
         let options = QueryOptions { max_bytes: Some(4), ..Default::default() };
         let mut batcher = one_column_batcher_fed_by(options, vec![None, Some(0)], DataType::Int32);
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         batcher
             .push_row(
                 0,
@@ -1768,7 +1826,7 @@ mod tests {
             DataType::Utf8View,
         );
         assert_eq!(batcher.field_count(), 3, "a resumed stream needs the block's own width");
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         let err = batcher
             .push_row(0, 0, RawRow::unchecked(b"a\t1"), &mut RowSplit::default(), &mut chunks)
             .unwrap_err();
@@ -1795,7 +1853,7 @@ mod tests {
             );
             let mut shared =
                 one_column_batcher_fed_by(QueryOptions::default(), targets, DataType::Utf8View);
-            let mut chunks = VecDeque::new();
+            let mut chunks = RetainedChunks::new();
             let mut split = RowSplit::default();
             fresh.push_row(0, 0, RawRow::unchecked(row), &mut split, &mut chunks).unwrap();
             split.restart();
@@ -1816,7 +1874,7 @@ mod tests {
             vec![None, Some(0)],
             DataType::Utf8View,
         );
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         let err = batcher
             .push_row(
                 0,
@@ -1850,7 +1908,7 @@ mod tests {
             QueryOptions::default(),
             vec![None, None],
         );
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         batcher
             .push_row(0, 0, RawRow::unchecked(b"a\tb"), &mut RowSplit::default(), &mut chunks)
             .unwrap();
@@ -1887,7 +1945,7 @@ mod tests {
             ..Default::default()
         };
         let mut batcher = one_column_batcher(options);
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         assert!(!batcher.should_flush(), "an empty batch never flushes");
 
         // Offsets 0, 4, 8, … each three bytes of row: the span after the row
@@ -1933,7 +1991,7 @@ mod tests {
             ..Default::default()
         };
         let mut batcher = one_column_batcher(options);
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         batcher
             .push_row(
                 0,
@@ -1967,7 +2025,7 @@ mod tests {
             ..Default::default()
         };
         let mut batcher = one_column_batcher(options);
-        let mut chunks = VecDeque::new();
+        let mut chunks = RetainedChunks::new();
         batcher
             .push_row(0, 0, RawRow::unchecked(b"abc"), &mut RowSplit::default(), &mut chunks)
             .unwrap();

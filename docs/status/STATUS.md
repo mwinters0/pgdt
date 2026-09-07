@@ -78,7 +78,7 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**Sixteen of the nineteen figures are stale, and no acknowledgement can
+**Seventeen of the nineteen figures are stale, and no acknowledgement can
 excuse them.** Three rounds of library work did it. Making the buffer pool keep
 the chunk size a read loop announces changed `io.rs`, `scan.rs`, `stream.rs` and
 the CLI; then the compressed-input work reshaped every `ByteRangeSource`
@@ -91,9 +91,13 @@ since the harness took the derived direction of the borrow graph. Those changes
 add executable lines, so neither mechanical oracle applies: reachability excuses
 only a diff no command shape executes, and byte-identity settles generator
 changes alone. `nested-decode-micro` is the one *sweep* figure still green,
-timing decoders that none of it touched; the two figures taken alone are green
-because each was taken after the work — `peak-rss` at `41c96bb` and
-`xz-decode-scaling` at `7d21c6e`. **One published number actually moves**, the
+timing decoders that none of it touched; of the two figures taken alone,
+`xz-decode-scaling` (`7d21c6e`) is green, having been taken after the work, and
+`peak-rss` (`41c96bb`) went red again the moment the chunk-retention move
+touched `stream.rs` — a behaviour-preserving move of a struct between modules,
+which no oracle can say so, so it is red with that reason and nothing else
+([`../design/roadmap-P16.3-chunk-retention-notes.md`](../design/roadmap-P16.3-chunk-retention-notes.md)).
+**One published number actually moves**, the
 `chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
 the buffer pool; that row is called out where it stands. A stale figure obliges
 no sweep ([`../design/measurements.md`](../design/measurements.md), "A stale
@@ -101,12 +105,13 @@ figure does not oblige a sweep"), and a sweep is what re-takes these: seventeen
 of the nineteen tables from one sitting is the property the `af15eac` stamp has
 and a partial sitting would spend.
 
-**`peak-rss`'s staleness was genuine and cost nothing.** `io.rs`, `cache.rs`,
-`map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and `41c96bb`,
-and those are executable changes — but the re-take at `41c96bb` reads 5.90 /
-5.85 / 9.73 / 43.78 MiB against 5.88 / 5.64 / 9.53 / 43.59, every one inside the
-other's spread. Three rounds of read-path, compressed-source and cache work
-changed what a scan holds resident by nothing a three-rep instrument can see.
+**`peak-rss` is the figure whose red says least about its numbers.** `io.rs`,
+`cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and
+`41c96bb`, and those are executable changes — but the re-take at `41c96bb`
+reads 5.90 / 5.85 / 9.73 / 43.78 MiB against 5.88 / 5.64 / 9.53 / 43.59, every
+one inside the other's spread. Three rounds of read-path, compressed-source and
+cache work changed what a scan holds resident by nothing a three-rep instrument
+can see, and the red it carries now is a struct that changed modules.
 
 The two acknowledgements the register carries still stand and still hold for
 what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose
@@ -279,9 +284,13 @@ are worth, and the orderings that do bind are named in
       slope of three allocators. `KD14` (`../design/measurements.md`, "What the per-block
       resident growth is made of"). No library code. Notes:
       [`../design/roadmap-P16.2-rss-attribution-notes.md`](../design/roadmap-P16.2-rss-attribution-notes.md)
-- [ ] **16.3** `layering.md`'s L3 deviation closed — the `Bytes` →
-      `arrow::Buffer` conversion and the chunk-retention deque move from
-      `stream.rs` into `batch.rs`, behaviour-preserving.
+- [x] **16.3** `layering.md`'s L3 deviation closed — the `Bytes` →
+      `arrow::Buffer` conversion, the chunk-retention deque and the
+      block-index invalidation are `batch::RetainedChunks` (L3), and the replay
+      loop says only what it read, how far the scanner got and that a batch
+      flushed. Behaviour-preserving; `SourceChunk` is private to `batch.rs`.
+      Notes:
+      [`../design/roadmap-P16.3-chunk-retention-notes.md`](../design/roadmap-P16.3-chunk-retention-notes.md)
 - [ ] **16.4** The block pool — `io::BufferPool` to budget-sized, block-capable
       slots with backpressure; `max_source_span` re-derived against
       block-shaped pinning.
