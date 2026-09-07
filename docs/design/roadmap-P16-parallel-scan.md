@@ -275,7 +275,7 @@ written and stopped being true at `16.9`. The budget was a bound on what the
 sub-stream costs in both terms, `partition_bytes + max_source_span`, and one
 number bounds a query rather than one number bounding half of it. And the CLI's
 parallel default was set when `--jobs` bought I/O depth at no memory cost;
-until `16.10.1` there is no CPU parallelism to buy, the I/O depth is unmeasured on
+until `16.17` there is no CPU parallelism to buy, the I/O depth is unmeasured on
 every device, and on a HDD N sub-streams read at N separated offsets at once.
 So **`--jobs` defaults to 1 until `16.13` measures a gain**, and the sentence
 above states the intent the figure is asked to license rather than a default
@@ -579,7 +579,9 @@ than straddling two; **16.4 before 16.5, 16.8 and 16.10.1**, all three of which
 run N readers; **16.5 before 16.10.1**, which depends on it; **16.7 before
 16.7.1**, which reads the value it defines; **16.7.1 before 16.9**, which needs
 the flags; **16.10 before 16.10.1**, which is what "the evidence half lands
-first" means here; **16.10.1 before 16.12**. **16.4.1 lands with or after the
+first" means here; **16.10.1 before 16.17**, and **16.17 before 16.12**, whose
+determinism test has nothing to compare until a `--jobs` parse takes a
+different route through the file. **16.4.1 lands with or after the
 first of 16.5 and 16.10.1**, whichever runs first, since a wait with no second
 holder is a
 deadlock rather than a bound — **and after 16.7.1**, which is a second binding
@@ -613,7 +615,8 @@ wait on a number that never arrives. The condition that once also named
 | **16.8** | **Partitioned replay** — `TableStream` splits into N sub-streams over a complete map, each internally in file order, for a plain source and a compressed one alike. |
 | **16.9** | **The CLI's k-way merge** on source offset, holding one batch per partition, so `pgdq query` keeps file order at N × batch rather than an open-ended reorder buffer. |
 | **16.10** | **The interior split** — what one LF-split piece of an open `COPY` block's interior answers on its own (rows, its own census, the `\.` terminator if it held one), and how the pieces fold back into the block's totals. Pure and synchronous: the body a fused worker runs, and the merge the leader performs, with no source, no dispatch and no consumer. Adds a "Relied on by" line to I7 and I15, which are what make LF-splitting sound. |
-| **16.10.1** | **The leader** — the scheduler that cuts an open `COPY` region's interior where the source advises, runs the fused decode-and-parse workers over the pieces, and merges `16.10`'s answer into `map::Builder` and the `DumpIndex` at `CopyEnd`; the first read loop to grant `WaitPolicy::MayWait`; `pgdq parse --jobs`. It reads `partitions()` for the shape of the cut only, never for whether to make one, and declines to cut a region smaller than one partition's own `partition_bytes()` — a floor derived from the source's answer rather than set as a constant, which is what keeps a many-small-block dump from paying scheduling per region. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10 split: the parse, then the scheduler that feeds it"). |
+| **16.10.1** | **The leader's scheduler** — `leader::scan_region` cuts an open `COPY` region's interior where the source advises, runs the fused decode-and-parse workers over the pieces, folds their answers with `16.10`'s `merge` until one holds the terminator, and is the read loop that grants `WaitPolicy::MayWait`. It reads `partitions()` for the shape of the cut only, never for whether to make one, and declines to cut a region smaller than one partition's own `partition_bytes()` — a floor derived from the source's answer rather than set as a constant, which is what keeps a many-small-block dump from paying scheduling per region. No consumer: what folds its answer into `map::Builder` and the `DumpIndex` is `16.17`. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10 split: the parse, then the scheduler that feeds it"), and **rewritten to the scope that landed** when the wiring turned out to be the other half of the same seam ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10.1 split again: the scheduler, then the loop that runs it"). |
+| **16.17** | **The mapping pass runs the leader** — `stream::map_forward` offers each open `COPY` region to `leader::scan_region` and closes a region it took through the same path a serial `CopyEnd` takes: the census onto the `Builder`, `on_copy_end`, the splice, the throttle's save and the target check, with the serial scanner repositioned past the block. `pgdq parse --jobs` then buys something. **Earned, not planned**: `16.10.1` paired a self-contained scheduler with a rework of the loop every `parse` and every query's first pass runs through, which is the seam `../process.md`'s "Size a slice by its review, not by its scope" names ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10.1 split again: the scheduler, then the loop that runs it"). It takes the next free number rather than a fourth level, there being none. |
 | **16.11** | **Error ordering** — a failing worker records and stops, the scheduler drains the partitions before it, and the lowest-offset error is the one raised. Asserted, not documented. |
 | **16.12** | **The determinism test** — `pgdq parse --jobs 1` and `--jobs 8` produce byte-identical `.dqcache` files over every fixture, and both equal what this build produces today. |
 | **16.13** | **`parallel-scan-throughput` and `parallel-peak-rss`** — `parse` and `query` against `--jobs` on the HDD, SATA SSD and NVMe, compressed and plain; RSS against `--jobs` at two block sizes. Both carry an apparatus gate of their own, a figure that occupies 24 threads being unable to inherit the sweep's quiet-machine one. |
@@ -632,6 +635,16 @@ half that can be reviewed against a reference it did not produce, and `16.10.1`
 is the half that reworks a tested core path
 ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
 "16.10 split: the parse, then the scheduler that feeds it").
+
+**And the same seam ran through `16.10.1` too**, which is what `16.17` is. The
+dispatch is a self-contained new function that can be checked against the serial
+scanner's answer exactly as the parse was; the restructure of `map_forward` is
+the rework. Naming a slice "the half that reworks a tested core path" turned out
+not to be the same as it *being* only that — the sentence above described the
+row's centre of gravity and the row still carried both confidences, which is a
+thing to expect of any row a split leaves behind
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
+"16.10.1 split again: the scheduler, then the loop that runs it").
 
 **16.4 earned the phase's first third level, and at a seam this document did not
 predict.** The row paired a sizing change with a *bound*, and a bound is only

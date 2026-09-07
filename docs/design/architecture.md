@@ -393,13 +393,16 @@ nothing — had to call itself retaining in order to select the behaviour it
 wanted, which is a false statement about the loop made in order to reach a true
 one about the pool.
 
-**No read loop in this build grants the permission.** The replay loop cannot:
-`batch::RetainedChunks` pins every chunk a batch has taken a view into and the
-batch then goes to the caller. `scan` and the mapping pass could — the carry
-copies what it keeps and an `Event` borrows only for the callback — and still
-do not, because what a shipped loop's grant buys is exposure rather than
-coverage (below). The first holder that genuinely needs the bound is the fused
-worker, and it is what arms the wait.
+**No top-level read loop grants the permission, and no command shape reaches
+one that does.** The replay loop cannot: `batch::RetainedChunks` pins every
+chunk a batch has taken a view into and the batch then goes to the caller.
+`scan` and the mapping pass could — the carry copies what it keeps and an
+`Event` borrows only for the callback — and still do not, because what a
+shipped loop's grant buys is exposure rather than coverage (below). The holder
+that genuinely needs the bound is the leader's fused worker, which grants it
+for itself and restores `NeverWait` on the way out ("The interior split"); it
+is a loop nested inside the mapping pass rather than one of the three, and
+nothing schedules the leader in this build.
 
 **Granting the permission is a promise about the loop, not a request.** A loop
 that keeps two reads alive at once against a one-slot pool blocks forever, so
@@ -489,8 +492,10 @@ because a pure function's whole contract is its return value, where a blocking
 acquire has no behaviour except its interaction with holders. Against one
 holder the strongest available assertion is "it did not block", which the
 unwaiting take already guaranteed. The test that buys the mechanism is two
-threads against a one-slot pool, and it is where the wait lives until a read
-loop grants one.
+threads against a one-slot pool, and it is where the wait's own contract lives.
+The loop that grants one is the leader's fused worker, whose scheduler test
+runs eight workers against four slots and completes ("The interior split") —
+which is exposure rather than coverage, and is why the bare-pool test stays.
 
 **The block pool's release-before-acquire is not a second discipline, it is a
 property of the `parse` shape.** `XzSource`'s retained blocks ("The compressed
@@ -3495,10 +3500,11 @@ worker — and the pool that budget belongs to now exists and holds the decoded
 blocks ("The compressed source"): a serial `parse` of the 3.00 GiB `.xz`
 control reads **64.7 MiB** resident, which is that budget's two 24 MiB slots
 plus what a plain scan holds. It is a ceiling only for a loop that grants
-`WaitPolicy::MayWait`, and **no loop in this build does** — the fused worker is
-the first that will ("Execution model and API surface"), so today it is a
-steady state everywhere and a `parallel-peak-rss` figure measures against a
-ceiling on a `parse` and two terms on a `query` once that worker lands.
+`WaitPolicy::MayWait`, and **no command shape reaches one** — the leader's
+fused worker grants it and nothing schedules the leader ("Execution model and
+API surface") — so today it is a steady state everywhere, and a
+`parallel-peak-rss` figure measures against a ceiling on a `parse` and two
+terms on a `query` once that worker is scheduled.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it
@@ -3921,17 +3927,25 @@ from the other side. A serial leader that has just scanned
 `COPY … FROM stdin;` knows every byte until `\.` is line-structured rows, so
 the block's interior can be handed out in LF-split ranges to workers that never
 parse *structure* — the leader has already proved there is none in there to
-find. `leader.rs` (L4) is the **parse** half of that arrangement:
-`scan_piece` is what one worker runs and `merge` is what the leader does with
-the answers. Neither reads a source, spawns anything, or knows how the cuts
-were chosen.
+find. `leader.rs` (L4) holds both halves of that arrangement: `scan_piece` is
+what one worker runs and `merge` is what the leader does with the answers —
+neither reads a source, spawns anything, or knows how the cuts were chosen —
+and `scan_region` is the scheduler over them.
 
-**A piece answers four things about itself**: how many rows it owns, its own
-array-shape census, the `\.` terminator if it held one, and the offset it
-consumed through. Nothing above may read a piece's census on its own — it
-describes the rows that piece saw and no others, which is exactly the
-half-censused block "What the census decides, and who may believe it" refuses —
-so it exists only to be merged.
+**A piece answers five things about itself**: how many rows it owns, its own
+array-shape census, the `\.` terminator if it held one, the offset it consumed
+through, and how a piece continuing from that offset must enter. Nothing above
+may read a piece's census on its own — it describes the rows that piece saw and
+no others, which is exactly the half-censused block "What the census decides,
+and who may believe it" refuses — so it exists only to be merged.
+
+**The fifth is reported rather than inferred, and the reason is one case.** A
+piece that consumed a line boundary leaves `through` just past an LF, which is
+a row start; a resyncing piece that found no LF at all leaves it at the end of
+the bytes it was given, which is mid-row. Those two produce the same
+`(rows, through)` pair, so nothing outside `scan_piece` can tell them apart —
+and a continuation that guessed wrong would hand the scanner the mid-row byte
+the resync exists to prevent.
 
 **`merge` folds the pieces in file order and stops at the first terminator.**
 Row counts sum and censuses union, and `ArrayShape`'s merge is min-of-mins,
@@ -3983,6 +3997,69 @@ the two agree.** It leaves the measurement recipe's anchor untouched, which was
 its whole appeal, and it buys that by making a drift *detectable* where sharing
 makes it *impossible* — and the recipe survives the move intact, one sentence
 of `measurements.md` naming the new function.
+
+#### The scheduler over the pieces
+
+`leader::scan_region` is what turns those two functions into a scan of one open
+`COPY` region. It is given the header's offset and width and the file's size,
+and it answers one of three things: the block's totals as the serial scanner
+would have stated them, a **decline** that leaves the region to the serial
+scanner, or a **cancellation**. Nothing calls it — what folds its answer into
+`map::Builder` and the `DumpIndex` is a rework of `stream::map_forward`, which
+is its own slice.
+
+**It reads `partitions()` for the shape of the cut and never for whether to
+make one**, which is that method's own contract. The economics are the
+caller's, stated as `ScanOptions::parallelism`, so a plain file is cut here
+exactly as a compressed one is and the refusal of parallel plain-file discovery
+is `--jobs`' default rather than a branch in the library. The one rule the
+scheduler applies is a **floor**, and it is derived rather than chosen: a region
+smaller than one `partition_bytes()` is declined, because cutting it would hand
+some worker less than the source's own unit and charge the scheduling anyway.
+The region's extent is not known here — finding it *is* the work — so the bound
+available at the header is what is left of the file, which the region cannot
+exceed.
+
+**A window is `workers` partitions wide**, `workers` being
+`stream::worker_count` of the caller's `Parallelism` against the source's
+footprint — the same function the partitioned replay sizes itself with, because
+how many readers may run at once is one rule and the two arrangements differ in
+what they cut rather than in what they can afford. `stream::cut` is shared for
+the same reason. Each window is cut, dispatched, and folded with `merge`; a
+window that holds no terminator is added to the running totals and the next
+begins at its last piece's `through`, which is a row start. A window that
+consumes nothing is a file that ended inside a line, and the loop stops there
+rather than reading the same window forever — the one thing between a truncated
+dump and a hang. Reaching the end of the file with no terminator is
+`Error::UnterminatedCopyBlock`, which is the leader's to raise precisely
+because `scan_piece` never claims end of file.
+
+**A worker is two reads, and the second is why a partition's footprint is a
+block *plus a chunk*.** The first read is the piece exactly,
+`[start, end)`, which on a block-decoding source is one whole block and so a
+zero-copy slice of it. That read can never finish the piece on its own — the
+line ending at or past `end` needs bytes past `end` — so a second,
+**chunk-sized** read follows and is scanned as an ordinary contiguous piece
+starting at a row boundary. Handing several `PieceScan`s back rather than one
+is what keeps `merge` the only fold: the tail is just another piece, in order.
+A row longer than the tail read grows it rather than losing the row, bounded by
+the same `max_line_bytes` the serial loop enforces.
+
+**This is the one read loop that grants `WaitPolicy::MayWait`**, and it is safe
+for the reason the permission documents: each worker holds exactly one read at a
+time, the `Bytes` moving into the `spawn_blocking` closure that parses it and
+dropping when that closure returns, so a worker blocked for a slot is always
+waiting on a sibling that will finish. It **restores `NeverWait` on the way
+out**, unlike the three top-level loops, which each state their own policy and
+leave it stated: this one runs *inside* one of them, and an enclosing loop
+reading on under a permission it never granted is the failure the restoration
+prevents.
+
+`a_scheduled_region_answers_what_the_serial_scanner_answers` is the same
+invisibility property asserted about the schedule rather than the parse — the
+source's own boundaries, its own window size, its own tail reads, still not
+visible in the answer. It runs at eight jobs against the local source's four
+pool slots, so the wait genuinely blocks and the run completes anyway.
 
 ### Projection
 

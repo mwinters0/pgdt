@@ -5,11 +5,12 @@
 //! A serial leader that has just read `COPY … FROM stdin;` knows every byte
 //! until `\.` is line-structured rows, so the interior can be handed out in
 //! LF-split ranges to workers that never parse *structure* — the leader has
-//! already proved there is none in there to find. This module is the **parse**
-//! half of that: [`scan_piece`] is what one worker runs, and [`merge`] is what
-//! the leader does with the answers. Neither reads a source, spawns anything,
-//! or knows how the cuts were chosen; the scheduler that supplies both is
-//! `16.10.1`'s.
+//! already proved there is none in there to find. [`scan_piece`] is what one
+//! worker runs and [`merge`] is what the leader does with the answers; both
+//! are pure and synchronous, taking a `&[u8]` rather than a source.
+//! [`scan_region`] is the scheduler over them: it asks the source where a
+//! range may be cut, hands out a window of pieces at a time, and folds what
+//! comes back until one piece holds the terminator.
 //!
 //! **Two invariants make the split sound, and no third is needed.** I15 puts a
 //! literal LF among exactly seven escaped things in COPY TEXT output, so every
@@ -29,21 +30,25 @@
 //! know nothing about rows — which is what lets `ByteRangeSource::partitions`
 //! advise block boundaries.
 //!
-//! **Nothing calls this yet, deliberately.** The scheduler that cuts the
-//! interior, reads the pieces and folds [`merge`]'s answer into
-//! `map::Builder` is `16.10.1`'s, and it lands after this half so that the
-//! parse is checked against a reference it did not produce
-//! (`docs/process.md`, "Size a slice by its review, not by its scope"). That
-//! is the same shape
-//! `ByteRangeSource::partitions` and `Parallelism` landed in, and it is why
-//! the module allows dead code rather than exporting a surface for the sake of
-//! being called.
+//! **Nothing calls [`scan_region`] yet, deliberately.** What folds its answer
+//! into `map::Builder` and the `DumpIndex` is a rework of `stream::map_forward`
+//! — the loop every `parse` and every query's first pass runs through — and it
+//! lands as its own slice so that the scheduler is reviewed against the serial
+//! scanner's own answer before the path that will consume it moves
+//! (`docs/process.md`, "Size a slice by its review, not by its scope"). That is
+//! the same shape `ByteRangeSource::partitions` and `Parallelism` landed in,
+//! and it is why the module allows dead code rather than exporting a surface
+//! for the sake of being called.
 #![allow(dead_code)]
 
-use crate::Result;
+use std::ops::Range;
+
 use crate::index::ArrayShape;
+use crate::io::{ByteRangeSource, Partitioning, WaitPolicy};
 use crate::map::census_row;
-use crate::scan::{CopyEnd, CopyScanner, Event};
+use crate::scan::{CopyEnd, CopyScanner, Event, ScanOptions};
+use crate::stream::{cut, worker_count};
+use crate::{Error, Result};
 
 /// Where a piece's first byte sits relative to the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +86,18 @@ pub(crate) struct PieceScan {
     /// contiguous next piece's resync would land, and what a caller checks the
     /// tiling against.
     pub through: u64,
+    /// How a piece continuing from [`PieceScan::through`] must enter.
+    ///
+    /// **[`PieceEntry::RowStart`] almost always, and the exception is why this
+    /// is reported rather than inferred.** A piece that consumed at least one
+    /// line boundary leaves `through` just past an LF, which is a row start; a
+    /// [`PieceEntry::Resync`] piece that found no LF at all leaves it at the
+    /// end of the bytes it was given, which is mid-row. Those two cases can
+    /// produce the same `(rows, through)` pair, so nothing outside this
+    /// function can tell them apart — and a continuation that guessed wrong
+    /// would hand the scanner a mid-row byte, which is the one thing the
+    /// resync exists to prevent.
+    pub next: PieceEntry,
 }
 
 /// The block's totals, as the leader states them at `CopyEnd`.
@@ -122,11 +139,12 @@ pub(crate) fn scan_piece(
     limit: u64,
     columns: usize,
 ) -> Result<PieceScan> {
-    let empty = |through: u64| PieceScan {
+    let empty = |through: u64, next: PieceEntry| PieceScan {
         rows: 0,
         census: vec![ArrayShape::default(); columns],
         terminator: None,
         through,
+        next,
     };
 
     // The resync, and it is a real forward read rather than a scanner started
@@ -139,14 +157,16 @@ pub(crate) fn scan_piece(
         PieceEntry::Resync => match memchr::memchr(b'\n', bytes) {
             Some(nl) => (base + nl as u64 + 1, nl + 1),
             // No line boundary anywhere in this piece: one row spans the whole
-            // of it, and that row belongs to the piece before this one.
-            None => return Ok(empty(base + bytes.len() as u64)),
+            // of it, and that row belongs to the piece before this one. The
+            // resync is unfinished, so a continuation must go on looking for
+            // the LF rather than treating this offset as a row start.
+            None => return Ok(empty(base + bytes.len() as u64, PieceEntry::Resync)),
         },
     };
     // Two cuts fell inside one row. The row belongs to the piece before this
     // one, so this piece is empty rather than a duplicate.
     if start > limit {
-        return Ok(empty(start));
+        return Ok(empty(start, PieceEntry::RowStart));
     }
 
     let span = &bytes[skip..];
@@ -186,7 +206,16 @@ pub(crate) fn scan_piece(
         }
     }
 
-    Ok(PieceScan { rows, census, terminator, through: scanner.position() })
+    // The scanner only ever stops just past an LF, so every offset it can
+    // report here is a row start — which is what makes the `Resync`-found-no-LF
+    // arm above the sole exception.
+    Ok(PieceScan {
+        rows,
+        census,
+        terminator,
+        through: scanner.position(),
+        next: PieceEntry::RowStart,
+    })
 }
 
 /// Fold `pieces` — one open `COPY` block's interior, in file order — into the
@@ -205,12 +234,7 @@ pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
     let mut census: Vec<ArrayShape> = Vec::new();
     let mut row_count = 0u64;
     for piece in pieces {
-        if piece.census.len() > census.len() {
-            census.resize(piece.census.len(), ArrayShape::default());
-        }
-        for (slot, shape) in census.iter_mut().zip(&piece.census) {
-            slot.merge(shape);
-        }
+        absorb_census(&mut census, &piece.census);
         row_count += piece.rows;
         if let Some((terminator_offset, end_offset)) = piece.terminator {
             return Some(Interior {
@@ -222,11 +246,275 @@ pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
     None
 }
 
+/// Union `from` into `into`, growing `into` where the piece saw more columns
+/// than anything before it — the census fold, in one place because [`merge`]
+/// and the window accumulator in [`scan_region`] must not be two rules.
+///
+/// Length-tolerant for the same reason `crate::index::union_census` is: a
+/// header-less block states no width, so the rows are what grow the vector and
+/// two pieces of one block can legitimately report different lengths.
+fn absorb_census(into: &mut Vec<ArrayShape>, from: &[ArrayShape]) {
+    if from.len() > into.len() {
+        into.resize(from.len(), ArrayShape::default());
+    }
+    for (slot, shape) in into.iter_mut().zip(from) {
+        slot.merge(shape);
+    }
+}
+
+/// What the leader made of one open `COPY` region.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RegionScan {
+    /// The block closed, and these are its totals — what the serial scanner
+    /// would have stated at its `CopyEnd`.
+    Closed(Interior),
+    /// The region was not cut at all, and the serial scanner still owns it.
+    /// Either the caller allows one worker, or the source declines to be
+    /// split here, or what is left of the file is smaller than one partition.
+    Declined,
+    /// [`ScanOptions::cancel`] was set between two windows. Nothing about the
+    /// region is known, and the caller banks what it had before it.
+    Cancelled,
+}
+
+/// Scan the interior of the `COPY` block that opens at `data_offset` with
+/// concurrent fused workers, and answer the block's totals.
+///
+/// The caller has just read `COPY … FROM stdin;`, so it knows every byte from
+/// `data_offset` until `\.` is line-structured rows — which is the whole
+/// licence for handing them out to workers that never parse structure
+/// (`docs/design/roadmap-P16-parallel-scan.md`, "A serial leader opens each
+/// region; workers never guess").
+///
+/// **Where the file ends is `size`, and `columns` is the header's width.**
+/// `header_offset` is carried only to name the block in
+/// [`Error::UnterminatedCopyBlock`], which is this function's to raise: a
+/// [`scan_piece`] never claims end of file, and the leader is the only party
+/// that knows there is none left.
+///
+/// **It reads `partitions()` for the shape of the cut and never for whether to
+/// make one.** Whether cutting pays is the caller's economics, stated as
+/// `ScanOptions::parallelism` — which is why a plain file is cut here exactly
+/// as a compressed one is, and why the refusal of parallel plain-file
+/// discovery lives in `--jobs`' default rather than in a branch
+/// (`docs/design/roadmap-P16-parallel-scan.md`, "What this phase parallelizes
+/// is what is CPU-bound").
+///
+/// **The one rule it does apply is a floor**, and it is derived rather than
+/// chosen: a region smaller than one `partition_bytes()` is left to the serial
+/// scanner, because cutting it would hand some worker less than the source's
+/// own unit and charge the scheduling anyway. The region's extent is not known
+/// here — finding it *is* the work — so the bound available is what is left of
+/// the file, which the region cannot exceed.
+pub(crate) async fn scan_region(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    header_offset: u64,
+    data_offset: u64,
+    columns: usize,
+    size: u64,
+) -> Result<RegionScan> {
+    let advice = source.partitions(data_offset..size);
+    let partition_bytes = advice.partition_bytes();
+    let workers = worker_count(options.parallelism, partition_bytes);
+    if workers <= 1
+        || partition_bytes == 0
+        || advice.max_partitions() == Some(1)
+        || size.saturating_sub(data_offset) < partition_bytes
+    {
+        return Ok(RegionScan::Declined);
+    }
+
+    // **This loop grants the wait, and it is the only one that does**
+    // (`ByteRangeSource::hint_wait_policy`). Each worker holds exactly one
+    // read at a time — the bytes move into the `spawn_blocking` closure and
+    // drop when it returns — so a worker blocked for a slot is always waiting
+    // on a sibling that will finish, which is the promise the permission is.
+    //
+    // **It is restored on the way out, unlike the three top-level loops.**
+    // Those each state their own policy when they start and leave it stated;
+    // this one runs *inside* one of them and has to leave the source as it
+    // found it, or the enclosing loop would go on reading under a permission
+    // it never granted.
+    source.hint_parallelism(options.parallelism);
+    source.hint_wait_policy(WaitPolicy::MayWait);
+    let scanned = run_region(source, options, &advice, workers, data_offset, columns, size).await;
+    source.hint_wait_policy(WaitPolicy::NeverWait);
+
+    match scanned? {
+        Some(interior) => Ok(RegionScan::Closed(interior)),
+        None if options.cancelled() => Ok(RegionScan::Cancelled),
+        // Every window ran to the end of the file and none of them held the
+        // terminator, which is the serial scanner's `UnterminatedCopyBlock`
+        // reached the parallel way.
+        None => Err(Error::UnterminatedCopyBlock { header_offset }),
+    }
+}
+
+/// The window loop: hand out `workers` pieces at a time until one of them
+/// holds the terminator.
+///
+/// `None` is either cancellation or end of file with no terminator, which
+/// [`scan_region`] tells apart — the two differ in nothing this loop can see,
+/// and folding the test in here would put the error's wording inside the loop
+/// that raises it.
+///
+/// **A window is `workers` partitions wide**, so the memory the region holds
+/// at its peak is the worker count times what the source said one costs —
+/// which is the number `Parallelism::memory_bytes` was divided by to reach
+/// that worker count in the first place.
+#[allow(clippy::too_many_arguments)]
+async fn run_region(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    advice: &Partitioning,
+    workers: usize,
+    data_offset: u64,
+    columns: usize,
+    size: u64,
+) -> Result<Option<Interior>> {
+    let window_bytes = (workers as u64).saturating_mul(advice.partition_bytes());
+    let mut rows = 0u64;
+    let mut census: Vec<ArrayShape> = vec![ArrayShape::default(); columns];
+    let mut frontier = data_offset;
+    let mut entry = PieceEntry::RowStart;
+
+    while frontier < size {
+        // Once per window, on the same argument the mapping loop checks once
+        // per chunk: a `COPY` block can be hundreds of gigabytes, and the
+        // window is the shortest boundary inside one that a stop can be
+        // answered at.
+        if options.cancelled() {
+            return Ok(None);
+        }
+        let ranges = cut(frontier..(frontier + window_bytes).min(size), advice, workers);
+        let mut scans: Vec<PieceScan> = Vec::with_capacity(ranges.len());
+        // One future per piece, each of them a read followed by the parse of
+        // what it read, on the blocking pool. That is the fused worker: a
+        // decoded block never crosses a channel, because the thread that
+        // decoded it is the thread that parses it
+        // (`docs/design/roadmap-P16-parallel-scan.md`, "A worker decodes and
+        // parses in one thread").
+        let dispatched = ranges.into_iter().enumerate().map(|(i, range)| {
+            let entry = if i == 0 { entry } else { PieceEntry::Resync };
+            scan_partition(source, options, entry, range, columns, size)
+        });
+        for piece in futures::future::try_join_all(dispatched).await? {
+            scans.extend(piece);
+        }
+
+        if let Some(interior) = merge(&scans) {
+            absorb_census(&mut census, &interior.census);
+            return Ok(Some(Interior {
+                census,
+                end: CopyEnd { row_count: rows + interior.end.row_count, ..interior.end },
+            }));
+        }
+        for piece in &scans {
+            rows += piece.rows;
+            absorb_census(&mut census, &piece.census);
+        }
+        // The last piece's `through` is where the window's last complete line
+        // ended, so the next window begins there rather than at the window's
+        // own end — which is what keeps the straddling row from being counted
+        // twice or not at all.
+        let Some(last) = scans.last() else { return Ok(None) };
+        // A window that consumed nothing is a file that ended inside a line:
+        // there is no terminator to find and no more bytes to find it in, so
+        // the loop stops here rather than reading the same window forever.
+        // This is the only thing standing between a truncated dump and a hang,
+        // which is why it is a check rather than an argument.
+        if last.through <= frontier {
+            return Ok(None);
+        }
+        frontier = last.through;
+        entry = last.next;
+    }
+    Ok(None)
+}
+
+/// One worker: read a piece and parse it, repeating from where the parse
+/// stopped until the piece has consumed the line that ends at or past its
+/// limit.
+///
+/// **The first read is the piece exactly**, `[range.start, range.end)`, which
+/// on a block-decoding source is one whole block and therefore a zero-copy
+/// slice of it. That read can never complete the piece on its own — the line
+/// that ends at or past `range.end` needs bytes past `range.end` — so a second,
+/// **chunk-sized** read follows it and is scanned as a piece of its own,
+/// starting exactly at a row boundary. That is why a partition's stated
+/// footprint is a block *plus a chunk buffer*: the tail is the read that
+/// straddles the boundary, and it is a chunk rather than a block
+/// (`ByteRangeSource::partitions`).
+///
+/// Handing back several [`PieceScan`]s rather than one is what keeps
+/// [`merge`]'s fold the only fold: the tail is an ordinary contiguous piece,
+/// so the caller concatenates and merges exactly as it does across workers.
+///
+/// **Exactly one read is alive at a time**, which is what makes
+/// [`WaitPolicy::MayWait`] safe here: each `Bytes` moves into the blocking
+/// closure that parses it and drops when that closure returns, so a worker
+/// blocked for a pool slot is never itself holding the slot it waits for.
+async fn scan_partition(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    entry: PieceEntry,
+    range: Range<u64>,
+    columns: usize,
+    size: u64,
+) -> Result<Vec<PieceScan>> {
+    let limit = range.end;
+    let mut out = Vec::new();
+    let mut entry = entry;
+    let mut start = range.start;
+    let mut want = range.end.saturating_sub(range.start).max(1);
+
+    while start < size {
+        let end = (start + want).min(size);
+        let len = usize::try_from(end - start).unwrap_or(usize::MAX);
+        let bytes = source.read_range(start, len).await?;
+        let scan =
+            tokio::task::spawn_blocking(move || scan_piece(&bytes, start, entry, limit, columns))
+                .await??;
+        // The piece is finished when it has read the line ending at or past
+        // its limit, when it found the terminator, or when there is no more
+        // file — the last being the only one that can leave a piece short, and
+        // the leader's to turn into an error.
+        let done = scan.terminator.is_some() || scan.through > limit || end >= size;
+        let advanced = scan.through > start;
+        let (next_start, next_entry) = (scan.through, scan.next);
+        if advanced || done {
+            out.push(scan);
+        }
+        if done {
+            break;
+        }
+        if advanced {
+            start = next_start;
+            entry = next_entry;
+            want = options.chunk_size as u64;
+        } else {
+            // Not one line boundary in `want` bytes. Growing rather than
+            // failing at the first attempt is what lets a legitimately long
+            // row through; `max_line_bytes` is the same ceiling the serial
+            // loop enforces, and it is the caller's number.
+            if want >= options.max_line_bytes as u64 {
+                return Err(Error::LineTooLong { offset: start, limit: options.max_line_bytes });
+            }
+            want = (want * 2).min(options.max_line_bytes as u64);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
 
     use super::*;
+    use crate::io::{LocalFileSource, Parallelism};
     use crate::map::{Builder, DataBlock, SpanBody};
     use crate::scan::ChunkCarry;
 
@@ -234,6 +522,7 @@ mod tests {
     /// split below is checked against.
     #[derive(Debug, PartialEq, Eq)]
     struct Reference {
+        header_offset: u64,
         data_offset: u64,
         end_offset: u64,
         columns: usize,
@@ -278,6 +567,7 @@ mod tests {
             .into_iter()
             .filter_map(|span| match span.body {
                 SpanBody::Data(DataBlock::Copy(block)) => Some(Reference {
+                    header_offset: block.header_offset,
                     data_offset: block.data_offset,
                     end_offset: block.end_offset,
                     columns: widths.next().expect("one header per block"),
@@ -493,6 +783,202 @@ mod tests {
 
         for pieces in 1..=12 {
             assert_eq!(split(&file, block, pieces).as_ref(), Some(&block.interior), "{pieces}");
+        }
+    }
+
+    /// The byte counts a fixture-sized block has to be scheduled against.
+    ///
+    /// A dump fixture is kilobytes and the source's own unit is a read chunk,
+    /// so at the shipped 1 MiB every block here is one partition and the
+    /// scheduler correctly declines every one of them. Announcing 64 bytes as
+    /// the read size makes the source advise 64-byte partitions, which turns a
+    /// 4 KiB block into tens of windows of several workers each — the shape the
+    /// window loop, the tail read and the growth path all need in order to be
+    /// exercised at all.
+    fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
+        source.hint_read_size(64);
+        ScanOptions {
+            chunk_size: 64,
+            parallelism: Parallelism::workers(jobs, crate::io::DEFAULT_MEMORY_BUDGET),
+            ..ScanOptions::default()
+        }
+    }
+
+    /// **The same property [`a_split_interior_answers_what_the_serial_scanner_answers`]
+    /// asserts about the parse, now asserted about the schedule**: the cut the
+    /// leader actually makes — the source's own boundaries, its own window
+    /// size, its own tail reads — is still invisible in the answer.
+    ///
+    /// At eight jobs against the local source's four pool slots this also
+    /// exercises the wait: four workers hold a slot and four block for one,
+    /// and the run completes because a worker's read drops before its parse
+    /// returns (`ByteRangeSource::hint_wait_policy`).
+    #[tokio::test]
+    async fn a_scheduled_region_answers_what_the_serial_scanner_answers() {
+        let files = [
+            edge_cases(),
+            fixture(16, "edge_cases", "default"),
+            fixture(16, "types", "default"),
+            fixture(13, "edge_cases", "default"),
+        ];
+        let mut blocks_checked = 0usize;
+        for path in files {
+            let file = std::fs::read(&path).unwrap();
+            let size = file.len() as u64;
+            let blocks = reference(&file);
+            let source = LocalFileSource::open(&path).unwrap();
+            for block in &blocks {
+                for jobs in [2usize, 3, 8] {
+                    let options = scheduled(&source, jobs);
+                    let got = scan_region(
+                        &source,
+                        &options,
+                        block.header_offset,
+                        block.data_offset,
+                        block.columns,
+                        size,
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(
+                        got,
+                        RegionScan::Closed(block.interior.clone()),
+                        "{} block at {} under {jobs} jobs",
+                        path.display(),
+                        block.data_offset
+                    );
+                }
+                blocks_checked += 1;
+            }
+        }
+        assert!(blocks_checked > 0, "fixture discovery found no COPY blocks");
+    }
+
+    /// **Two ways to be declined, and neither is a branch on the source's
+    /// type.** A caller that states no parallelism keeps the serial path, and
+    /// a region that cannot hold one of the source's own partitions is left
+    /// alone however many jobs were stated — which at the shipped 1 MiB chunk
+    /// is every block any fixture has.
+    #[tokio::test]
+    async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
+        let path = fixture(16, "types", "default");
+        let file = std::fs::read(&path).unwrap();
+        let size = file.len() as u64;
+        let block = &reference(&file)[0];
+        let source = LocalFileSource::open(&path).unwrap();
+
+        let serial = scheduled(&source, 1);
+        assert!(serial.parallelism.is_serial(), "one job is the serial value, not a Workers of 1");
+        let got = scan_region(
+            &source,
+            &serial,
+            block.header_offset,
+            block.data_offset,
+            block.columns,
+            size,
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, RegionScan::Declined);
+
+        let shipped = ScanOptions {
+            parallelism: Parallelism::workers(8, crate::io::DEFAULT_MEMORY_BUDGET),
+            ..ScanOptions::default()
+        };
+        source.hint_read_size(shipped.chunk_size);
+        let got = scan_region(
+            &source,
+            &shipped,
+            block.header_offset,
+            block.data_offset,
+            block.columns,
+            size,
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, RegionScan::Declined, "a kilobyte block against a 1 MiB partition");
+    }
+
+    /// Cancellation is answered between windows, and it is neither a closed
+    /// block nor an error: the caller banks the map it had before the region
+    /// and reports the interruption, exactly as the serial loop does.
+    #[tokio::test]
+    async fn a_cancelled_region_closes_nothing_and_raises_nothing() {
+        let path = fixture(16, "types", "default");
+        let file = std::fs::read(&path).unwrap();
+        let size = file.len() as u64;
+        let block = &reference(&file)[0];
+        let source = LocalFileSource::open(&path).unwrap();
+        let options =
+            ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..scheduled(&source, 4) };
+        let got = scan_region(
+            &source,
+            &options,
+            block.header_offset,
+            block.data_offset,
+            block.columns,
+            size,
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, RegionScan::Cancelled);
+    }
+
+    /// **Only the leader may say a block is unterminated**, which is the other
+    /// half of `scan_piece` never claiming end of file: a piece that runs out
+    /// of bytes reports no terminator, and the party that knows the file ran
+    /// out is the one that raises. The offset named is the header's, as the
+    /// serial scanner names it.
+    #[tokio::test]
+    async fn a_block_the_file_ends_inside_is_unterminated() {
+        let mut file = b"COPY public.t (a) FROM stdin;\n".to_vec();
+        let data_offset = file.len() as u64;
+        for i in 0..500 {
+            file.extend_from_slice(format!("{i}\n").as_bytes());
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("truncated.sql");
+        std::fs::write(&path, &file).unwrap();
+
+        let source = LocalFileSource::open(&path).unwrap();
+        let options = scheduled(&source, 4);
+        let err = scan_region(&source, &options, 0, data_offset, 1, file.len() as u64)
+            .await
+            .expect_err("a COPY block with no terminator");
+        assert!(
+            matches!(err, Error::UnterminatedCopyBlock { header_offset: 0 }),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A row longer than the tail read is read by growing the read, not by
+    /// losing the row — the same ceiling the serial loop enforces bounds it.
+    #[tokio::test]
+    async fn a_row_longer_than_a_tail_read_is_still_one_row() {
+        let wide = "x".repeat(4096);
+        let file =
+            format!("COPY public.t (a) FROM stdin;\n{wide}\n{wide}\n{wide}\n\\.\n\nSELECT 1;\n")
+                .into_bytes();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wide.sql");
+        std::fs::write(&path, &file).unwrap();
+        let block = &reference(&file)[0];
+        assert_eq!(block.interior.end.row_count, 3);
+
+        let source = LocalFileSource::open(&path).unwrap();
+        for jobs in [2usize, 4, 8] {
+            let options = scheduled(&source, jobs);
+            let got = scan_region(
+                &source,
+                &options,
+                block.header_offset,
+                block.data_offset,
+                block.columns,
+                file.len() as u64,
+            )
+            .await
+            .unwrap();
+            assert_eq!(got, RegionScan::Closed(block.interior.clone()), "{jobs} jobs");
         }
     }
 }

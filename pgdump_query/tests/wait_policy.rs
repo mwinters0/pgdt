@@ -1,13 +1,15 @@
 //! What each read loop permits the buffer pool to do to it
 //! (`docs/design/architecture.md`, "Execution model and API surface").
 //!
-//! **The claim these tests exist for**: no read loop in the shipped build
-//! grants [`WaitPolicy::MayWait`], so nothing here can block on a slot. The
-//! wait is real, tested against a bare pool, and armed by the first holder
-//! that needs it — `16.10.1`'s fused worker. Until then a loop that *could*
-//! wait safely still does not, because the two failure directions are not
-//! comparable: a bound that fails to bind costs memory and is visible, and a
-//! wait granted wrongly is a hang with nothing to measure.
+//! **The claim these tests exist for**: none of the three top-level read loops
+//! grants [`WaitPolicy::MayWait`], so nothing a `build_index` or a
+//! `table_stream` does can block on a slot. The one loop that grants it is the
+//! leader's fused worker, which runs *inside* the mapping pass and restores
+//! `NeverWait` on its way out — and nothing schedules the leader in this build,
+//! so no invocation reaches it. A loop that *could* wait safely still does not,
+//! because the two failure directions are not comparable: a bound that fails to
+//! bind costs memory and is visible, and a wait granted wrongly is a hang with
+//! nothing to measure.
 //!
 //! What is asserted is the announcement, not the behaviour. Nothing in a
 //! `read_range` call carries the policy, so the pool cannot see which loop
@@ -101,7 +103,8 @@ async fn a_structural_scan_grants_no_wait() {
 /// A query is two loops over one source, and the second could not grant a wait
 /// even if the build armed the bound: the replay pins every chunk a batch has
 /// taken a view into. Both state the same thing today, which is the property
-/// this records — `16.10.1` is what makes the sequence interesting.
+/// this records — a scheduled leader is what will make the sequence
+/// interesting, by granting a wait inside the first loop and taking it back.
 #[tokio::test]
 async fn a_query_grants_no_wait_in_either_loop() {
     let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());

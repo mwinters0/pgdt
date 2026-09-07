@@ -317,14 +317,16 @@ impl Partitioning {
 /// from it — which is what keeps "is this parallel" a match on the value
 /// instead of a comparison against a magic number.
 ///
-/// **Two mechanisms read it, and neither of them spawns.** `memory_bytes` is
+/// **Three mechanisms read it, and only the third spawns.** `memory_bytes` is
 /// what both pools in a source are sized from, and it is what decides whether
 /// a compressed source can afford to decode a whole block ("The compressed
 /// source"); `jobs` is the block pool's depth, one retained block per
 /// concurrent reader, and — capped by what the bytes afford — how many
 /// sub-streams a partitioned replay is cut into
 /// (`crate::table_stream_partitions`). The caller runs those sub-streams, so
-/// what `jobs` states is a ceiling rather than a request
+/// what `jobs` states is a ceiling rather than a request. The third is
+/// [`crate::leader::scan_region`], which both numbers size a window of fused
+/// workers from — and which nothing in this build calls
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Parallelism {
@@ -1892,9 +1894,11 @@ mod tests {
     ///
     /// Two threads, because a wait has no behaviour except its interaction
     /// with another holder: with one it can only be asserted not to have
-    /// blocked, which the unwaiting take already guaranteed. **No shipped read
-    /// loop grants this permission**, so this is where the mechanism is
-    /// exercised at all until `16.10.1`'s fused worker arrives.
+    /// blocked, which the unwaiting take already guaranteed. **No command
+    /// shape reaches a loop that grants this permission** — the leader's fused
+    /// worker does, and nothing schedules the leader — so this and
+    /// `crate::leader`'s own scheduler tests are where the mechanism is
+    /// exercised at all.
     #[test]
     fn a_permitted_wait_takes_a_slot_rather_than_allocating() {
         let unit = 1 << 20;

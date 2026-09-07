@@ -517,15 +517,16 @@ pub struct ScanOptions {
     /// path this build has rather than a pool of one
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
-    /// **The read path's buffer budget reads it; no worker scheduler does
-    /// yet.** Every read loop announces it to the source
-    /// ([`crate::ByteRangeSource::hint_parallelism`]), which sizes its pools
-    /// from the byte half and — for a compressed source — decides from it
+    /// **The read path's buffer budget reads it, and so does the leader's
+    /// scheduler — which nothing calls.** Every read loop announces it to the
+    /// source ([`crate::ByteRangeSource::hint_parallelism`]), which sizes its
+    /// pools from the byte half and — for a compressed source — decides from it
     /// whether a whole block can be decoded at all. The `jobs` half is that
-    /// source's retention depth, one decoded block per concurrent reader; the
-    /// scheduler that would run those readers is not in this build, so a
-    /// caller that sets this still gets the serial path, executing it inside
-    /// the memory it asked for.
+    /// source's retention depth, one decoded block per concurrent reader, and
+    /// the ceiling on the workers [`crate::leader::scan_region`] would run over
+    /// an open `COPY` block's interior; nothing in this build offers it a
+    /// region, so a caller that sets this still gets the serial scan, executing
+    /// it inside the memory it asked for.
     pub parallelism: Parallelism,
 }
 
@@ -573,9 +574,9 @@ where
     // keeps and an `Event` borrows only for the callback — so it *could* be
     // made to wait safely; what it would buy is exposure rather than coverage,
     // the wait's own test driving a bare pool, and the two failure directions
-    // are not comparable. `16.10.1`'s fused worker is the first holder that
-    // needs the bound and is where it is armed
-    // (`docs/design/architecture.md`, "Execution model and API surface").
+    // are not comparable. The leader's fused worker is the holder that needs
+    // the bound and is where it is granted (`crate::leader::scan_region`, and
+    // `docs/design/architecture.md`, "Execution model and API surface").
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();

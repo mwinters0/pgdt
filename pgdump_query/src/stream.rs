@@ -517,9 +517,12 @@ async fn map_forward(
     source.hint_parallelism(scan_options.parallelism);
     // **This loop grants no wait** (`ByteRangeSource::hint_wait_policy`). It
     // builds spans, not batches, so every chunk is consumed and dropped inside
-    // the iteration that read it and a wait would be safe — but no shipped
-    // loop arms the bound until `16.10.1`'s fused worker needs it
-    // (`docs/design/architecture.md`, "Execution model and API surface").
+    // the iteration that read it and a wait would be safe — but the holder that
+    // needs the bound is the leader's fused worker, which grants it for itself
+    // and takes it back (`crate::leader::scan_region`, and
+    // `docs/design/architecture.md`, "Execution model and API surface"). This
+    // loop is what the leader will run inside, so the policy stated here is
+    // also what it restores.
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
@@ -1513,7 +1516,12 @@ async fn map_for_query(
 /// piece would multiply the allowance by the block count. A source that states
 /// no footprint (the declining default, and every source before this method
 /// existed) is bounded by `jobs` alone.
-fn worker_count(parallelism: Parallelism, partition_bytes: u64) -> usize {
+///
+/// **Shared with the leader**, which asks the same question of an open `COPY`
+/// block's interior (`crate::leader::scan_region`): how many readers may run
+/// at once is one rule, and the cold path and the cached one differ in what
+/// they cut rather than in how many pieces they may afford.
+pub(crate) fn worker_count(parallelism: Parallelism, partition_bytes: u64) -> usize {
     let jobs = parallelism.jobs();
     match parallelism.memory_bytes() {
         Some(budget) if partition_bytes > 0 => {
@@ -1533,7 +1541,12 @@ fn worker_count(parallelism: Parallelism, partition_bytes: u64) -> usize {
 /// makes two readers decode one block twice
 /// (`docs/design/architecture.md`, "The compressed source"). An empty `At` is
 /// the source declining to be split, and it yields the range whole.
-fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
+///
+/// **Shared with the leader** (`crate::leader::scan_region`), which cuts an
+/// open block's interior window with it. One cut rule for the two
+/// arrangements, exactly as the piece semantics are one rule
+/// (`docs/design/architecture.md`, "The interior split").
+pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
     if want <= 1 || range.start >= range.end {
         return vec![range];
     }
