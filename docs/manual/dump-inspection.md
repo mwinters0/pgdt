@@ -117,7 +117,10 @@ diagnostics:
 
 `parse` is unaffected: it only ever reads forwards, so it costs the same on
 such a file as on any other. `query` is where you would feel it, and only on a
-large one. The remedy is in the message — recompressing with `xz -T0` or an
+large one — a single-block file small enough to hold in memory is decoded once
+and read from there, so only one above about 256 MB uncompressed pays the
+decode again on every backward read. The remedy is in the message —
+recompressing with `xz -T0` or an
 explicit `--block-size` produces a file pgdq can seek into. Files that
 `xz` produced with threads, or that were made by concatenating several `.xz`
 files, are already seekable and earn no warning.
@@ -160,6 +163,13 @@ What it already holds does not grow with the *size* of the dump — a 3 GiB file
 costs no more than a 2 MB one, a few megabytes either way — but it does grow
 with the number of tables in it, by roughly 10 KB each. A dump of a few thousand
 tables is tens of megabytes resident before any chunk size is chosen.
+
+**An `.xz` source costs more than a plain one**, and by an amount the *file*
+chooses rather than you: it decodes a whole compressed block at a time and
+keeps a couple of them, so a file of 24 MiB blocks adds about 48 MiB resident
+and one of 128 MiB blocks adds 128 MiB. That is what buys reading the same
+block repeatedly for free; the block size is set when the file is compressed
+(`xz --block-size=`), not when it is read.
 
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.

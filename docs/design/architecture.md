@@ -235,6 +235,16 @@ assertion available is "it did not block" — precisely what the non-waiting
 `take` above already guarantees. The wait therefore arrives with the second
 holder, and with the discipline that makes it safe: one slot per holder.
 
+**The block pool is a second holder already, and it keeps that discipline a
+different way.** `XzSource`'s retained blocks ("The compressed source") sit in
+a pool of their own and can occupy every slot in it, which would look like the
+serial reader's unbounded hold — except that the retention **releases before it
+acquires**: eviction runs down to one below the slot count and then takes, so
+the buffer a decode is about to want is one the cache has already given up.
+A holder that frees a slot before asking for one can wait without deadlocking
+whatever else that pool serves, which is the same property "one slot per
+holder" buys and is the form the block path takes.
+
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
 nothing, deliberately outside the `object_store` surface the other two mirror —
@@ -448,56 +458,91 @@ exported at the crate root rather than through a public `io` module: `mod io` is
 private with its types re-exported, so recognition joins that list and the
 module's privacy boundary is unchanged.
 
-**One decoder, restarted on seek, retaining nothing.** `XzSource` holds a
-single live `xz_seek::Reader` and its current uncompressed position behind a
-`std::sync::Mutex`, because the reader's own positioned read takes `&mut self`
-where the trait's methods take `&self`. A read at the current position keeps
-pulling, which is every read on the forward path; a read anywhere else restarts
-the decoder at the block covering the offset and discards to it. *Rejected:*
-retaining the last decoded block, so repeated reads inside one block are free —
-it costs 24 MiB resident on a file of ~24 MiB blocks and 128 MiB on a
-`--block-size=128MiB` one, to accelerate a pattern this library barely has,
-since every read but the two backward ones is sequential and those are served
-with no waste by the streaming form. *Also rejected:* decoding from the covering
-block on every call, which re-decodes 24–128 MiB per 1 MiB read.
+**A read decodes the blocks it lands in, and the block is what is retained.**
+`XzSource::read_range` turns its range into block indices (`SeekTable::blocks_in`),
+takes an `xz_seek::BlockTask` for each, and decodes the block whole into a slot
+of its own pool. A read inside one block is then a **slice** of that block, so
+the common case copies nothing; a read straddling a boundary is assembled into
+a chunk-pool buffer. A `BlockTask` is `Copy` and owns its block, its resolved
+check and the reader's decode settings, so the decode runs with no lock held —
+which is what makes concurrent `read_range` calls genuinely concurrent, the
+serialization point the parallel-scan work exists to remove.
 
-**A source with two read units takes two pools, not two hints.** `XzSource`
-reads chunk-shaped today and shares one `io::BufferPool` with the read loop
-above it; a per-call block decode gives it a second unit, and `BufferPool`'s
+**Retention is what makes per-call decode affordable, and it is the same bound
+as the pool's.** A read loop asks for `chunk_size` at a time, so a 24 MiB block
+decoded afresh per 1 MiB call would be 24× the decode work; a decoded block is
+therefore kept, least-recently-used first, and the next read inside it is a
+lookup. The retained set is capped at `BufferPool::slots`, and eviction happens
+*before* a slot is taken — so the evicted buffer is what the next decode
+reuses, and the byte budget bounds the retained blocks and the free ones
+together rather than each separately. Measured on the 3.00 GiB `.xz` control
+(129 blocks of 24 MiB): a `parse` holds **64.7 MiB** resident where the
+streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
+produce byte-identical caches. *Rejected:* a retained set with a bound of its
+own — two numbers for one bound, which is what the byte budget replaced.
+
+**A block above 256 MiB is not decoded whole; that file keeps the streaming
+reader.** Every shape `xz` writes is far below it, but a *single block* file's
+one block is the whole plaintext, and decoding koji whole is not a read, it is
+an allocation the size of the file. So `XzSource` keeps
+`xz_seek::Reader::read_at` behind its mutex as the fallback for that shape: one
+live decode, restarted on a backward seek, retaining nothing, exactly as the
+source read before block decode existed. What the cap declines has no
+parallelism to lose either — one block is one decode unit — so nothing is given
+up by it. The reader stays for a second reason as well: it is the only thing
+that can hand out a `BlockTask`, and the block path locks it to *name* a task
+and never across a decode.
+
+**A source with two read units takes two pools, not two hints.** The chunk pool
+is shared with the read loop above; the block pool is the decoder's own, hinted
+at the file's largest block so every slot fits every block. `BufferPool`'s
 announced unit is a single value driving both what it keeps and how it sizes a
-slot ("Execution model and API surface"). One pool set to the chunk length
-drops every decoded block on release, making each decode a fresh `calloc` of
-24 or 128 MiB; set to the block length it keeps blocks and takes the chunk
+slot ("Execution model and API surface"), so one pool set to the chunk length
+would drop every decoded block on release, making each decode a fresh `calloc`
+of 24 or 128 MiB; set to the block length it keeps blocks and takes the chunk
 path's pooling away, which is the **1.83×** a miss costs
-([`measurements.md`](measurements.md), "What the read chunk size is worth"). So
-the block decoder is given its own pool, each keeping the existing derivation
-intact, and how the two budgets sum is the caller's parallelism budget to
-state. *Rejected:* an announced *set* of units, with the keep rule and the slot
-count reasoning over it — it complicates both rules to buy what a second pool
-gives structurally.
+([`measurements.md`](measurements.md), "What the read chunk size is worth").
+Each pool keeps the existing derivation intact, and how the two budgets sum is
+the caller's parallelism budget to state. *Rejected:* an announced *set* of
+units, with the keep rule and the slot count reasoning over it — it complicates
+both rules to buy what a second pool gives structurally.
 
-**Exactly two callers read backwards**, which is what bounds that decision.
-`stream.rs`'s replay loop re-reads a block the mapping pass has already walked
-past (the deliberate double read under "Query: mapping and streaming are
-separate passes"), and `map::attach_text` re-reads the gaps between `Data` spans
-once the scan has finished. Neither is on the `pgdq parse` path, which is purely
-forward.
+**Two concurrent misses on one block decode it twice**, and that is accepted
+rather than coordinated. An in-flight map would put every reader through a
+second lock — serializing the common case, different readers on different
+blocks — to spare a duplicate decode that only a shared block boundary
+produces. What keeps concurrent readers off each other's blocks is how the
+range was split, which is the source's own business to advise on rather than
+the pool's to arbitrate.
 
-**Two file handles, deliberately.** `XzSource::open` walks the file's stream
+**Exactly two callers read backwards**, and both are now cheap where they land
+in a retained block. `stream.rs`'s replay loop re-reads a block the mapping
+pass has already walked past (the deliberate double read under "Query: mapping
+and streaming are separate passes"), and `map::attach_text` re-reads the gaps
+between `Data` spans once the scan has finished. Neither is on the `pgdq parse`
+path, which is purely forward.
+
+**Three file handles, deliberately.** `XzSource::open` walks the file's stream
 footers once to build the seek table and gives that handle to the reader, which
-owns it for decoding; a second handle answers `stored_size()`/`modified()` with
-a plain `stat` and never disturbs the decoder's live position. So `size()` is
-the exact **uncompressed** length, read out of the stream index with no further
-I/O, and `stored_size()` is the compressed file's own on-disk length — the two
-axes the cache needs kept apart. `read_range` wraps the reader's positioned read
-in `spawn_blocking`, through the same `BufferPool` `LocalFileSource` uses, and
+owns it for the fallback decode; a second answers `stored_size()`/`modified()`
+with a plain `stat` and never disturbs the decoder's live position; a third is
+what block decodes read their compressed bytes through, positioned reads only,
+so a decode running outside the mutex shares no cursor with anything. So
+`size()` is
+the exact **uncompressed** length, answered from the seek table the source
+holds beside the reader — no I/O and no lock — and `stored_size()` is the
+compressed file's own on-disk length: the two
+axes the cache needs kept apart. `read_range` runs on a
+`spawn_blocking` task and
 turns a short fill into `UnexpectedEof` to match `read_exact_at`'s contract:
 every read loop already clamps its length against `size()`, so a short read here
 is a caller/source disagreement rather than a normal outcome. Verification is
 the decoder's stronger default — a partly-decoded block's check is completed
 before the reader leaves it — because a scan persists the structure it discovers
 as it goes, so bytes whose check failed two calls later would already have been
-recorded as fact.
+recorded as fact. A whole-block decode is stronger still and needs no setting:
+it compares the check before it returns, so on the block path a failure can
+never arrive from a later call than the one that handed over the bytes.
 
 **`size()` keeps its promise, and the walk is what pays for it.**
 `ByteRangeSource::size()` still means *the exact number of bytes `read_range`
@@ -625,9 +670,9 @@ never pays it.
 from the `.xz` describes the decompressed file equally well, differing only in
 the identity that guards it.
 
-**Concurrent `read_range` calls serialize on the mutex**, and nothing calls
-concurrently today — every read loop in this crate is sequential. Parallel,
-stream-aligned decode is the parallel-scan work's, and that is where the scaling
+**Concurrent `read_range` calls decode concurrently, and nothing calls
+concurrently yet** — every read loop in this crate is still sequential, so what
+exists is the capability and not a consumer of it. That is where the scaling
 is: one core decodes ~435 MB/s of plaintext on koji's 15.70× bytes where four
 concurrent per-stream decodes reach ~1.50 GB/s, and `xz`'s own threaded decoder
 gains nothing on a many-streams file because it parallelises blocks *within* a
@@ -635,7 +680,8 @@ stream. The first two are
 [`measurements.md`](measurements.md), "What a second decode worker buys", and
 the third remains a probe. What that figure does not answer is the number a
 caller actually wants — concurrent decode throughput against the plain path's
-device-bound figures — which stays unreachable until parallel decode exists.
+device-bound figures — which stays unreachable until a scheduler runs N readers
+over one source.
 
 **Scaling stops well short of the worker count.** Both legs of that figure are
 within a few percent of linear to four workers; past that koji flattens hard,
@@ -692,14 +738,16 @@ crate's default `liblzma` backend over its pure-Rust one (unsafe-free, ~2.2×
 slower), pulling vendored C into an otherwise pure-Rust workspace, on the ground
 that the integration being vetted should be the one that ships.
 
-**The snapshot tracks upstream rather than trailing it, and carries work this
-tree does not read.** The copy holds that crate's parallel block decode whole —
-`Reader::read_range` and the worker pool behind it, `Reader::block_task` and the
+**The snapshot tracks upstream rather than trailing it, and still carries work
+this tree does not read.** `XzSource` now consumes the pieces —
+`Reader::block_task`, `BlockTask::decode_into` and `SeekTable::blocks_in` —
+which is the half of that interface this project set out to vet. The rest is
+still unnamed here: `Reader::read_range` and the worker pool behind it, the
 `Window` a worker decodes out of, `plan_range`'s footprint arithmetic, and the
-`&T`/`Arc<T>` source impls that let several readers share one file — and none of
-it is named anywhere in this repo: `XzSource` is still one reader behind one
-mutex, and replacing that is the parallel-scan work's, which is also where
-whether a vendored copy is still the right arrangement gets asked again. Syncing
+`&T`/`Arc<T>` source impls that let several readers share one file. The pool is
+deliberately not used — a fused decode-and-parse worker is the scan's unit, not
+an ordered bulk read — and whether a vendored copy is still the right
+arrangement is asked again with the rest of the parallel-scan work. Syncing
 on the source's cadence rather than on a consumer's is what keeps "a bug is
 fixed upstream and returns at the next sync" a short trip, and makes
 `cargo check --workspace` here a standing test of the interface this project is
@@ -3042,12 +3090,15 @@ trigger changes, because on a chunk-shaped source the original derivation still
 holds exactly; what changes is which mechanism the memory claim is read off
 ("Execution model and API surface").
 
-**What is to be read off instead does not exist yet.** The intended bound is
-the pool's slot budget — `slots × (decoded block + dictionary)`, one slot per
-worker — and it becomes a bound only when a slot acquisition waits, because
-`BufferPool` today bounds what it *keeps* and never what is outstanding. Until
-that lands there is no memory bound on a block-shaped source at all, which is
-the state a `parallel-peak-rss` figure would be measuring against.
+**What is to be read off instead is half there.** The intended bound is the
+block pool's slot budget — `slots × (decoded block + dictionary)`, one slot per
+worker — and the pool that budget belongs to now exists and holds the decoded
+blocks ("The compressed source"): a serial `parse` of the 3.00 GiB `.xz`
+control reads **64.7 MiB** resident, which is that budget's two 24 MiB slots
+plus what a plain scan holds. It is a bound on what is *retained* and not yet on
+what is outstanding, because `BufferPool` still allocates on a miss rather than
+waiting. Until that lands the number is a steady state rather than a ceiling,
+which is what a `parallel-peak-rss` figure would be measuring against.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it

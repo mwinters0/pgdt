@@ -98,7 +98,11 @@ touched `stream.rs`, and redder still when the pool's slot count went
 budget-derived in `io.rs` — a behaviour-preserving move of a struct between
 modules, and a derivation that answers four at every chunk size the register
 measures, neither of which an oracle can say, so it is red with those reasons
-and nothing else
+and nothing else. The block-decode work moved `io.rs` a third time and adds no
+fourth reason: `LocalFileSource`, `BufferPool` and `PooledBuffer` are
+untouched, everything it changed is `XzSource` and a type only `XzSource`
+holds, and **no registered figure has a compressed input** — a claim
+`--verify-additive` cannot settle, since the change is executable
 ([`../design/roadmap-P16.3-chunk-retention-notes.md`](../design/roadmap-P16.3-chunk-retention-notes.md),
 [`../design/roadmap-P16.4-block-pool-notes.md`](../design/roadmap-P16.4-block-pool-notes.md)).
 **One published number actually moves**, the
@@ -152,7 +156,7 @@ edit does not re-stale the stamp it was just given.
 | Register-to-oracle reconciliation | working: `scripts/oracle_register.py` reads the register's arms out of `pgtype.rs` — one per declared base name in `builtin_scalar`, one per `TypeKind` match arm in `comparison_user_type`, the three branches of the walk that are not match arms, and the four branches of `collated_text` — and joins them against the case table both ways, failing on either. **42 arms, 55 cases, nothing uncovered and nothing unplaced.** One arm carries an exemption instead of a case and is reported under its own heading: no oracle case can reach `collation/non-deterministic`, a non-deterministic collation being ICU-only (I42) and an ICU case carrying the `collversion` drift the oracle excludes ICU to avoid. **An exemption names where the arm's evidence is** — `(file, needle)` pointers the check resolves, three unit tests today — because the reason alone says why the oracle cannot cover the arm and nothing about what does; it goes stale from both sides, an exempt arm that acquires a case being a problem and evidence that stops resolving being one too. The pointers name sufficient evidence rather than exhaustive, so the fixture bytes that now carry the shape owe no edit there. Each collation branch is anchored on a string the parse must find, so deleting one is reported rather than shortening the list. The collation is a second dimension: a case's label picks the arm, `C` reaching the bytewise branch and `default` the other two, and the `datcollate` that makes that mapping sound is read out of `meta.tsv` rather than assumed. An oracle pass of `generate_fixtures.py` ends by running it beside the differ ([`../design/architecture.md`](../design/architecture.md), "The register-to-oracle reconciliation") |
 | ADBC floor oracle | `fixtures/<13–18>/adbc/floor.tsv` holds what the Arrow ADBC PostgreSQL driver (`adbc_driver_postgresql` 1.12.0, pinned in `scripts/pyproject.toml`) returns for every declarable `pg_catalog` type — 74 rows at 13, 82 at 14–18, taken from the host over a published port by `scripts/generate_fixtures.py` and committed ([`../design/architecture.md`](../design/architecture.md), "The ADBC floor oracle") |
 | The floor rule, reconciled | working: `scripts/floor_mapping.py` joins the oracle against `builtin_scalar` and fails both ways — every floor row the rule reaches is met or carries a stance, every arm resolves to a floor row, and every stance is about a row that still needs one. **58 of the 82 rows a major are placed by the file's own columns** (`arrow.opaque`, or a driver refusal), 21 of the remaining 24 are simply met, and three carry a stance: `money` below by decision (`KD13`), `regproc` unanswerable because the two encodings denote different values, and `oid` answering `UInt32` where the driver answers `Int32`, which the rule permits. The fourth stance the rule defines — `waiting`, for a row a slice of the open phase closes — is carried by no row now that `interval` and `int2vector` have both closed, and is exercised against a synthetic row in `test_floor_mapping.py`. D8's pin is asserted here — the driver version every row records must equal `scripts/pyproject.toml`'s ([`../design/architecture.md`](../design/architecture.md), "The floor: the ADBC driver's answer bounds ours") |
-| Compressed input (`--source foo.dump.xz`) | **working** — `.xz` reads end to end through `parse`/`info`/`query`, in all three container shapes, the span offsets it produces being uncompressed ones so nothing above L1 knows. `pgdump_query::open_local` recognises a source by **content**, not by name, and hands the CLI's three commands an `XzSource` or a `LocalFileSource`; `XzSource` answers `size()` from the stream index and `stored_size()` from a `stat`, decodes through one streaming reader restarted on seek, and hands its seek table to the cache, which persists it in a `CompressionIndex` envelope field beside a `ContainerKind` that stays `Plain`. **That table is read back**, so the stream-footer walk — one read for a single-stream file, **85 s** for the 31,150-stream koji download — is paid by the command that first parses a file and by nothing after it: `cache::claim` answers a three-state `KnownCompression` before any source exists, `open_local` takes it and builds the source through `XzSource::with_table` without walking, and a claim the file contradicts is `Recognized::Mismatch` — the whole cache unusable, since table and span index were one `save`, and refused by all three commands having read nothing, in a sentence of its own rather than `CacheStatus::Unreadable`'s. **The sibling refusal is free as well**: `claim`'s second outcome is a cache recorded against a file of another stored size, so that too is settled from the envelope and a `stat` and no source is ever opened — one outcome added to the read that was already happening, not a second read, and every other unusable outcome still collapses to `KnownCompression::Unknown`. A file with no more than one block is **warned about, never refused** (`DiagnosticKind::NonSeekableCompressedSource`, naming `xz -T0` and `--block-size=<size>`). The decoder is a frozen read-only vendored copy of `xz-seek` at `vendor/xz-seek/` (`CLAUDE.local.md`), not a published dependency, since this project is its first consumer and that consumption is what vets the interface. gzip/zstd are not read — `pg_dump -Fp --compress=…` output is unreadable today and is P15's (gzip) and P18's (zstd, lz4) ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)) ([`../design/architecture.md`](../design/architecture.md), "The compressed source") |
+| Compressed input (`--source foo.dump.xz`) | **working** — `.xz` reads end to end through `parse`/`info`/`query`, in all three container shapes, the span offsets it produces being uncompressed ones so nothing above L1 knows. `pgdump_query::open_local` recognises a source by **content**, not by name, and hands the CLI's three commands an `XzSource` or a `LocalFileSource`; `XzSource` answers `size()` from the stream index and `stored_size()` from a `stat`, and hands its seek table to the cache, which persists it in a `CompressionIndex` envelope field beside a `ContainerKind` that stays `Plain`. **A read decodes the blocks it lands in**, into a second `BufferPool` of the block unit, with the reader's mutex held only long enough to name an `xz_seek::BlockTask` — so concurrent `read_range` calls decode concurrently, and a read inside one block is a zero-copy slice of it rather than a copy out of a decoder. Decoded blocks are retained LRU-first under that pool's own budget, eviction running *before* a slot is taken so the budget bounds the retained and the free together: a serial `parse` of the 3.00 GiB `.xz` control holds 64.7 MiB against the streaming form's 16.2, and the two produce byte-identical caches. A block above 256 MiB — which in practice means a single-block file, whose one block is the whole plaintext — keeps the streaming reader restarted on seek, that shape having no parallelism to lose anyway. **That table is read back**, so the stream-footer walk — one read for a single-stream file, **85 s** for the 31,150-stream koji download — is paid by the command that first parses a file and by nothing after it: `cache::claim` answers a three-state `KnownCompression` before any source exists, `open_local` takes it and builds the source through `XzSource::with_table` without walking, and a claim the file contradicts is `Recognized::Mismatch` — the whole cache unusable, since table and span index were one `save`, and refused by all three commands having read nothing, in a sentence of its own rather than `CacheStatus::Unreadable`'s. **The sibling refusal is free as well**: `claim`'s second outcome is a cache recorded against a file of another stored size, so that too is settled from the envelope and a `stat` and no source is ever opened — one outcome added to the read that was already happening, not a second read, and every other unusable outcome still collapses to `KnownCompression::Unknown`. A file with no more than one block is **warned about, never refused** (`DiagnosticKind::NonSeekableCompressedSource`, naming `xz -T0` and `--block-size=<size>`). The decoder is a frozen read-only vendored copy of `xz-seek` at `vendor/xz-seek/` (`CLAUDE.local.md`), not a published dependency, since this project is its first consumer and that consumption is what vets the interface. gzip/zstd are not read — `pg_dump -Fp --compress=…` output is unreadable today and is P15's (gzip) and P18's (zstd, lz4) ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)) ([`../design/architecture.md`](../design/architecture.md), "The compressed source") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
@@ -312,12 +316,18 @@ are worth, and the orderings that do bind are named in
       so a wait is a deadlock for the first; it lands with the first concurrent
       consumer because that is what a test needs
       ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4 split:
-      backpressure has no test without a second holder").
-- [ ] **16.5** `XzSource` internally concurrent — per-call block decode over a
-      shared `SeekTable`, replacing the single `Reader` behind a mutex, with a
-      second `BufferPool` for the block unit
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.5 takes a second
-      pool, because a pool describes one unit").
+      backpressure has no test without a second holder"). **16.5 supplied that
+      holder**, and it keeps the discipline in a form 16.4 did not anticipate —
+      release before acquire rather than one slot per holder
+      ([`../design/roadmap-P16.5-xz-concurrency-notes.md`](../design/roadmap-P16.5-xz-concurrency-notes.md)).
+- [x] **16.5** `XzSource` internally concurrent — a read decodes the blocks it
+      lands in, into a second `BufferPool` of its own, with the reader's mutex
+      held to *name* a `BlockTask` and never across a decode; a read inside one
+      block is a slice of it. Decoded blocks are retained under the pool's own
+      budget, eviction running before a slot is taken. A block above 256 MiB —
+      a single-block file's whole plaintext — keeps the streaming reader.
+      Notes:
+      [`../design/roadmap-P16.5-xz-concurrency-notes.md`](../design/roadmap-P16.5-xz-concurrency-notes.md)
 - [ ] **16.6** `ByteRangeSource::partitions` — the defaulted advisory and both
       implementations. No consumer yet.
 - [ ] **16.7** The `Parallelism` surface — the library enum defaulting to
@@ -487,4 +497,31 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-None open.
+- **The streaming reader survives 16.5, as the path a block above 256 MiB
+  takes.** The spec says the mutex-guarded `xz_seek::Reader` "gives way to
+  per-call block decode"; it did for every file `xz` writes, and it did not for
+  one shape the spec does not discuss — a *single-block* file, whose one block
+  is the whole plaintext. Decoding koji whole is an allocation the size of the
+  file, so `BLOCK_DECODE_MAX_BYTES` (256 MiB) is the line, and above it the
+  source reads exactly as it did before this slice. **What is being asked:**
+  whether that shape should instead be *refused* on the block path and left to
+  the existing `NonSeekableCompressedSource` warning, and whether 256 MiB is
+  the right line — it is above every file in hand (the largest is a
+  `--block-size=128MiB` recompression) and below the 512 MB cgroup the
+  measurements run in, but nothing derives it. Reversing it removes the
+  fallback code path and the constant; it also makes a large single-block `.xz`
+  unreadable where today it is merely slow, which is why it was not taken
+  unattended ([`../design/architecture.md`](../design/architecture.md), "The
+  compressed source").
+
+- **A serial `.xz` scan now retains two decoded blocks where it needs one.**
+  Retention is capped at the block pool's `BufferPool::slots` — two at
+  `POOL_BUDGET_BYTES`' 64 MiB against a 24 MiB block — because that number is
+  what N concurrent readers will need and it scales with the budget 16.7 makes
+  caller-set. One reader walking forward needs exactly one, and the cap is what
+  takes a `parse` of the 3.00 GiB `.xz` control from 16.2 MiB resident to 64.7.
+  **What is being asked:** whether the serial path should retain one block
+  until a caller asks for parallelism, at the cost of the retention no longer
+  being one number derived from the pool's own budget. Nothing measures a
+  compressed scan, so no figure decides it
+  ([`../design/roadmap-P16.5-xz-concurrency-notes.md`](../design/roadmap-P16.5-xz-concurrency-notes.md)).
