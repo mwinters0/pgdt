@@ -378,10 +378,7 @@ here rather than reading as a phase nobody has sliced.
   O(blocks²) wherever the save throttle's gate does not close it — which is
   every `--dqcache none` scan, since a no-op save leaves nothing to amortize:
   19.1 s for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of
-  blocks scanned under `--dqcache none`. P16 was its destination while a
-  parallel splitter was expected to rework `splice` anyway; that phase's leader
-  arrangement keeps coverage prefix-shaped, so `splice` runs once per `CopyEnd`
-  exactly as it does today and nothing there forces the fix. Detail:
+  blocks scanned under `--dqcache none`. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
   and saves as it goes".
 
@@ -439,10 +436,7 @@ here rather than reading as a phase nobody has sliced.
   `COPY` block, so a 4,000-block `parse` holds **43.6 MiB** against a one-block
   one's 5.9 MiB, and what accumulates is not attributed. **(c) unowned** — the
   growth itself has no owner; **P16's 16.2 closes the attribution clause
-  only**, being a phase whose central promise is a memory bound and which
-  therefore has to know what a scan already holds before multiplying it by N.
-  Promoted by a dump with tens of thousands of blocks, which nothing in hand is
-  — koji has 74. Detail:
+  only**. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
   and saves as it goes".
 

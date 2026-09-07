@@ -5967,12 +5967,20 @@ a ratio against a *measured* cost, and there is no cost to measure there.
 
 *Rejected:* keeping the frontier's spans appendable rather than rebuilt. It is
 the structurally right fix and it is a rework of an already-tested core path for
-a series the gate has already flattened by 184×; it is also what a parallel
-splitter wants, so it belongs to the phase that reworks `splice` anyway —
-`roadmap.md`'s parallel-scan phase, which owns `KD5`'s remainder.
+a series the gate has already flattened by 184×.
 `map::Builder::snapshot` `debug_assert!`s `Mode::Idle`, so the chunk-top check
 cannot re-derive the spans mid-block — which is why the coupling could not be
 worked around locally and the promise had to move with the fix.
+
+**`KD5`'s remainder is unowned, and the phase that looked like its owner is
+not.** An appendable frontier is what a parallel splitter wants, so the
+parallel-scan phase was its destination for as long as that phase was expected
+to rework `splice` anyway. Its specified leader arrangement does not: the leader
+opens a `COPY` region and merges at `CopyEnd`, which keeps coverage
+prefix-shaped, so `splice` runs once per `CopyEnd` exactly as it does today.
+Nothing in that phase forces the fix, and inheriting it there would have been a
+rework smuggled in under a phase whose spec does not call for one — so the entry
+is `(c) unowned` rather than owned by a phase that would not have closed it.
 
 <!-- deficiency: KD14 -->
 **The same series measured in memory grows too, and by more than the spans
@@ -5988,6 +5996,14 @@ churn of clones frees. That is deficiency `KD14`
 is a dump with tens of thousands of blocks — which nothing in hand is, koji
 having 74. What it already changes is how the design's memory claim reads: the
 ~5.9 MiB every consumer above quotes is the *one-block* reading, and they say so.
+
+**The growth is unowned but its attribution is not.** The parallel-scan phase's
+`16.2` separates the three mechanisms — a reading each for the span list, the
+whole-list clone and the allocator — and closes that clause alone; the growth
+itself stays unowned, because knowing which of the three it is does not fix any
+of them. The phase takes the attribution rather than the fix because its central
+promise is a memory bound, and a bound cannot be multiplied by N workers without
+knowing what one scan already holds.
 
 **A save count is a property of the apparatus, not only of `K`.** The throttle
 is a ratio against the last save's own duration, so a faster machine, libc or
