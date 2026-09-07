@@ -125,6 +125,15 @@ const POOL_DEPTH: usize = 4;
 /// 24 MiB block gets two slots and a 128 MiB block one; a pool that has to
 /// serve N workers a block each is given its budget by the caller rather than
 /// by this number.
+///
+/// **It bounds the free list at or below its own slot size, and not above
+/// it.** [`BufferPool::slots`] clamps to at least one, so a unit larger than
+/// this budget still gets a slot, at that unit's size — a 128 MiB block is
+/// 128 MiB resident against a 64 MiB budget. That floor is deliberate (a pool
+/// that can hold nothing is not a pool), and it means the real ceiling on the
+/// block unit is [`BLOCK_DECODE_MAX_BYTES`] rather than this number. Read the
+/// two together: this one sizes the free list, that one bounds what a single
+/// slot may cost.
 const POOL_BUDGET_BYTES: usize = 64 << 20;
 
 /// The largest buffer worth keeping, in bytes, for a length nobody has
@@ -386,19 +395,27 @@ impl ByteRangeSource for LocalFileSource {
 
 /// The largest block this source decodes whole, in uncompressed bytes.
 ///
-/// **A block is the decode unit only where holding one is affordable.** Every
-/// shape `xz` writes is far below this — its own `--block-size` default is
-/// three times the dictionary, and the largest file in hand is a
-/// `--block-size=128MiB` recompression (`CLAUDE.local.md`) — but a *single
-/// block* file's one block is the whole plaintext, which may be hundreds of
-/// gigabytes. Decoding that whole would turn a streaming read into an
-/// allocation the size of the file.
+/// **A block is the decode unit only where holding one is affordable.** A
+/// *single-block* file's one block is the whole plaintext, which may be
+/// hundreds of gigabytes, so decoding it whole would turn a streaming read
+/// into an allocation the size of the file. That shape is not exotic and the
+/// fallback is not a concession to an edge case: `xz` writes one block per
+/// stream unless it is threading, so plain `xz bigfile` — no `-T`, the
+/// default — produces exactly it.
 ///
 /// So a file whose largest block is above this keeps the streaming reader
 /// ([`XzSource::read_streaming`]): correct, serialized, and exactly what the
-/// source did before block decode existed. It also has no parallelism to lose
-/// — one block is one decode unit — so what the cap declines is only ever a
-/// file that could not have been read concurrently anyway.
+/// source did before block decode existed.
+///
+/// **What the cap declines is memory, not seekability.** Any file with more
+/// than one block is seekable, and decodable block-wise, for a client willing
+/// to allocate a block — so a multi-block file written with large blocks
+/// (`xz -T8 --block-size=512MiB`) is declined here and genuinely *does* have
+/// parallelism to lose. Nothing in hand writes that shape and no tool defaults
+/// to it, which is why one constant still serves; what would make the line
+/// principled rather than merely safe is a caller stating the budget, at which
+/// point this becomes that budget's consequence rather than a second number
+/// beside it (`docs/design/architecture.md`, "The compressed source").
 const BLOCK_DECODE_MAX_BYTES: u64 = 256 << 20;
 
 /// One block's plaintext, decoded whole into a pooled slot.
@@ -453,6 +470,20 @@ impl AsRef<[u8]> for BlockView {
 /// the retained blocks and the free ones together — a set bounded at
 /// [`BufferPool::slots`] and its own budget again would be two numbers for one
 /// bound, which is exactly what the byte budget replaced.
+///
+/// *Rejected: retaining one block on the serial path*, on the ground that one
+/// reader walking forward needs exactly one and that the cap costs a 3.00 GiB
+/// `.xz` `parse` 64.7 MiB resident against the streaming form's 16.2. Two
+/// things answer it. `pgdq parse` is the shape that pins **least** — it builds
+/// no batches, so `crate::batch::RetainedChunks` never runs — while on the
+/// query path a retained chunk is a zero-copy view into a whole block, so a
+/// batch bounded by `max_source_span`'s 64 MiB spans several blocks and pins
+/// every one of them; that is more than this cap holds and is where a
+/// compressed scan's resident cost actually comes from. And a cap of one is
+/// not merely smaller: it makes [`BlockCache::slot`] keep zero and drain
+/// before every decode, so any outstanding view forces a fresh allocation of
+/// the block unit instead of a reuse — the pool stops pooling exactly when a
+/// caller is holding a block.
 struct BlockCache {
     /// Slot size: the file's largest block. Every slot fits every block, which
     /// is what `BlockTask::decode_into` is documented to allow, and it is what

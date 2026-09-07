@@ -36,13 +36,20 @@ of this bounded the two independently and read 89.2 MiB where this one reads
 64.7.
 
 **A block above `BLOCK_DECODE_MAX_BYTES` (256 MiB) keeps the streaming
-reader.** Every shape `xz` writes is far below it — the largest file in hand is
-a `--block-size=128MiB` recompression — but a *single-block* file's one block is
-the whole plaintext, and decoding koji whole is an allocation the size of the
-file rather than a read. Such a file also has no parallelism to lose, one block
-being one decode unit, so the cap declines nothing that could have been read
-concurrently. `BlockCache::for_table` answers `None` there and every read goes
-through `Reader::read_at` exactly as it did before this slice.
+reader.** A *single-block* file's one block is the whole plaintext, and
+decoding koji whole is an allocation the size of the file rather than a read.
+`BlockCache::for_table` answers `None` there and every read goes through
+`Reader::read_at` exactly as it did before this slice.
+
+That fallback is the ordinary path for a large archive, not an edge case: `xz`
+writes one block per stream unless it is threading, so plain `xz bigfile`
+produces it — `xz -0 -T1` over 240 MB gives 1 stream and 1 block, against 8 for
+`xz -0 -T4 --block-size=32MiB`. **What the cap declines is memory, not
+seekability**, and it is keyed on the largest block rather than the block count,
+so a multi-block file written with large blocks is declined by it and does have
+parallelism to lose. Both statements and the alternatives refused with them are
+beside the mechanism ([`architecture.md`](architecture.md), "The compressed
+source").
 
 **Three file handles now.** The reader owns one for the fallback decode,
 `stat_file` answers `stored_size()`/`modified()`, and `data_file` is what block
@@ -99,6 +106,27 @@ workers, each of which needs a block of its own retained or it re-decodes on
 every chunk. 16.7's byte half is what raises it; a `--jobs 8` run against
 today's constant would thrash, and that is the first thing 16.8 or 16.10 will
 see if the budget is still a constant when they land.
+
+**`BLOCK_DECODE_MAX_BYTES` becomes that budget's consequence, not a second
+constant beside it.** The 256 MiB line and `POOL_BUDGET_BYTES`' 64 MiB are
+unrelated numbers today, and the smaller is not a bound above its own slot
+size: `BufferPool::slots` clamps to at least one, so a unit larger than the
+budget still gets a slot at that unit's size — a 128 MiB block is 128 MiB
+resident against a 64 MiB budget. Once a caller states a budget, "a slot must
+fit what the caller allowed" is the line and the constant retires into it,
+which is also what would let a client willing to allocate read a file with
+512 MiB blocks block-wise. 16.7's spec row carries this
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The
+block-decode cap declines memory, not seekability").
+
+**A compressed scan's resident cost must first be measured on a query, not a
+`parse`.** `parse` builds no batches, so `RetainedChunks` never runs and the
+64.7 MiB above is the retention cap and nothing else. On the query path a
+retained chunk is a zero-copy view into a whole decoded block, so retaining
+1 MiB of a 24 MiB block holds all 24 and a batch bounded by `max_source_span`'s
+64 MiB pins several blocks — more than the cap holds, and the thing that
+actually sets the number. 16.13's `parallel-peak-rss` is where that first gets
+one; nothing measures it today.
 
 **A whole-block decode verifies before it returns**, which is stronger than the
 streaming path's `Verify::Full` and needs no setting. On the block path a check

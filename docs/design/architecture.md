@@ -481,17 +481,59 @@ streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
 produce byte-identical caches. *Rejected:* a retained set with a bound of its
 own — two numbers for one bound, which is what the byte budget replaced.
 
+**A retained chunk pins the whole block it views, so `parse` is the shape that
+holds least.** `pgdq parse` builds no batches, so `RetainedChunks` never runs
+and the resident cost above is the retention cap and nothing else. On the query
+path a retained chunk is a zero-copy view into a decoded block, so retaining
+1 MiB of a 24 MiB block holds all 24: a batch bounded by `max_source_span`'s
+64 MiB spans several blocks and pins each of them, which is more than the
+retention cap holds. That is the sharper form of the statement filed beside the
+flush trigger — on a block-shaped source `max_source_span` bounds a batch in
+**blocks**, not in bytes ("Three flush triggers, and only one of them bounds
+memory") — and it is why the first measurement of a compressed scan's resident
+cost has to be taken on a query rather than on a `parse`. *Rejected: retaining
+one block on the serial path*, which one reader walking forward would indeed be
+served by: it cuts the path that already holds least, and a cap of one makes
+eviction keep zero and drain before every decode, so an outstanding view forces
+a fresh allocation of the block unit instead of a reuse — the pool stops
+pooling exactly when a caller is holding a block.
+
 **A block above 256 MiB is not decoded whole; that file keeps the streaming
-reader.** Every shape `xz` writes is far below it, but a *single block* file's
-one block is the whole plaintext, and decoding koji whole is not a read, it is
-an allocation the size of the file. So `XzSource` keeps
-`xz_seek::Reader::read_at` behind its mutex as the fallback for that shape: one
-live decode, restarted on a backward seek, retaining nothing, exactly as the
-source read before block decode existed. What the cap declines has no
-parallelism to lose either — one block is one decode unit — so nothing is given
-up by it. The reader stays for a second reason as well: it is the only thing
-that can hand out a `BlockTask`, and the block path locks it to *name* a task
-and never across a decode.
+reader.** A *single block* file's one block is the whole plaintext, and
+decoding koji whole is not a read, it is an allocation the size of the file. So
+`XzSource` keeps `xz_seek::Reader::read_at` behind its mutex as the fallback
+for that shape: one live decode, restarted on a backward seek, retaining
+nothing, exactly as the source read before block decode existed. The reader
+stays for a second reason as well: it is the only thing that can hand out a
+`BlockTask`, and the block path locks it to *name* a task and never across a
+decode.
+
+**That fallback is the ordinary path for a large archive, not a concession to
+an edge case.** `xz` writes one block per stream unless it is threading, so
+plain `xz bigfile` — no `-T`, which is the default — produces a single-block
+file whose one block is the entire plaintext. Verified by compressing 240 MB
+both ways: `xz -0 -T1` gives 1 stream and 1 block, `xz -0 -T4
+--block-size=32MiB` gives 8. *Rejected: refusing that shape* and leaving it to
+the `NonSeekableCompressedSource` warning. It would retire the fallback path
+and the constant together, which is the whole of its appeal, and it would make
+the most ordinary `.xz` there is unreadable where today it is merely
+serialized.
+
+**What the cap declines is memory, not seekability.** Any file with more than
+one block is seekable, and decodable block-wise, for a client willing to
+allocate a block. The cap is keyed on the file's **largest block**, not on its
+block count, so a multi-block file written with large blocks (`xz -T8
+--block-size=512MiB`) is declined by it and genuinely does have parallelism to
+lose. Nothing in hand writes that shape and no tool defaults to it, so one
+constant still serves; what would make the line principled rather than merely
+safe is a caller stating the budget, which is where the `Parallelism` surface
+takes it ([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md),
+"Slices"). *Rejected: keying the refusal on block count instead*, so that only
+a genuinely single-block file falls back — that sends a 20 × 512 MiB file down
+the block path to allocate 512 MiB a slot, which is the allocation the cap
+exists to prevent. *Rejected: deciding per read rather than per file*, a block
+under the cap decoding whole and one above it streaming — it doubles the read
+paths inside one source to serve a file shape nothing in hand produces.
 
 **A source with two read units takes two pools, not two hints.** The chunk pool
 is shared with the read loop above; the block pool is the decoder's own, hinted
