@@ -2835,7 +2835,7 @@ through, and `resolve_array`, which reads the domain walk's terminal —
 `CREATE DOMAIN d AS integer ARRAY` is as legal as any other spelling and the
 walk stops on whatever the DDL wrote. *Rejected:* normalizing in `preamble.rs`
 at parse time. `ColumnNote::declared` carries the raw declared string so `pgdq
-info --verbose` can print what the file says beside what we made of it, and a
+info --detail` can print what the file says beside what we made of it, and a
 parse-time rewrite would have pgdq quietly editing the user's DDL in the one
 place the raw text is the entire point.
 
@@ -3054,7 +3054,7 @@ that reads them.
 
 *Rejected:* hanging the plan off `ColumnNote`, which is the human-facing
 per-column record and would become two things — the one display that reads a
-plan (`--verbose`'s `Range<T>` substitution, above) reads it positionally
+plan (`info --detail`'s `Range<T>` substitution, above) reads it positionally
 beside the `DataType` it renders, which is where the pairing already puts it;
 and making it a payload on `ColumnResolution::Mapped`, which expresses
 "a plan exists exactly when a column mapped" but breaks the sites that compare
@@ -5131,14 +5131,14 @@ the allocation is the existing price, and keeping the rendering in
 a type from a layer above it.
 
 *Rejected: an uncapped label list.* `accepted_form` prints at most twelve
-labels and then ", and *k* more; see `info --verbose`". A count cap keeps every
+labels and then ", and *k* more; see `info --detail`". A count cap keeps every
 label it prints intact where a length cap on `map.rs`'s `TEXT_CAP` pattern
 would truncate one mid-word and offer a spelling that is not a label; and the
-overflow clause has somewhere to send the reader because `info --verbose`
+overflow clause has somewhere to send the reader because `info --detail`
 prints an enum column's labels and lists every user-defined type's, both
 uncapped ("CLI surface"). Uncapped fails on one real input — a generated schema
 with a few hundred labels — where the message scrolls the error itself off
-screen. The asymmetry with `info --verbose` is the same shape as
+screen. The asymmetry with `info --detail` is the same shape as
 `arrow_type_label`'s elisions: a terse rendering is licensed by a complete one
 existing where the user can reach it.
 
@@ -6941,8 +6941,9 @@ and after this `info` has none. `index::preamble_only` is unchanged; only the
 verb moved, and `info` reads the partial cache it leaves like any other.
 *Rejected:* keeping it on `info` as the one documented exception (a rule with
 one exception is a rule nobody can state), and keeping it as a pure display
-filter against a complete cache (`--verbose`/`--map` already control detail,
-and the name would talk about scanning while doing none).
+filter against a complete cache (`info`'s own `--detail`/`--map` already
+control how much it prints, and the name would talk about scanning while doing
+none).
 
 `query` is untouched, and the asymmetry is deliberate: `query` is asked for
 rows that exist only in the file, where `info` is asked what is known. Its
@@ -7275,13 +7276,13 @@ same way the block listing is. `span_summary` is the one place in the codebase
 that matches every `SpanBody`/`DataBlock` variant for display, and a future
 `--filter-kind` should extend it rather than duplicate the match. 
 
-**`--verbose` lists the user-defined types beneath the count that had been
-their only trace.** `print_metadata` prints `user-defined types: <n>`, and
+**`info --detail` lists the user-defined types beneath the count that had
+been their only trace.** `print_metadata` prints `user-defined types: <n>`, and
 nothing else in `info` names a user-defined type at any verbosity — `object
 kinds:` beneath it counts `TYPE`/`DOMAIN`/`SHELL TYPE` TOC entries, which do
 not even sum to it (`types` is keyed on the type, not the statement). So a user
 could not learn from `info` that `public.mood` exists, let alone what it holds.
-Under `--verbose` the count becomes that listing's heading: one line per type
+Under `--detail` the count becomes that listing's heading: one line per type
 per database, in declaration order, name then `type_kind_summary`'s rendering
 of its `TypeKind`.
 
@@ -7298,7 +7299,7 @@ shape is one `pg_dump` writes, so both are pinned as a unit test on
 
 The name column is padded to the widest name the database declares and the
 right edge is left ragged, an enum's label list being as long as the type is.
-**Uncapped**, for the reason the per-column labels line is: `--verbose` is the
+**Uncapped**, for the reason the per-column labels line is: `--detail` is the
 mode that exists to be the complete rendering. The cost accepted is a wide,
 ragged block for a dump declaring hundreds of types.
 
@@ -7314,11 +7315,11 @@ column per block, and never has to say *where* in a column an enum sits: a
 composite with two enum fields raises a format question a type listing never
 meets.
 
-**`--verbose`'s per-column line is a complete statement of the Arrow schema.**
-One line per column that has something to say: an unmapped column gets
-`resolution_words`' sentence, a mapped one gets its Arrow type — unless that
-type is `Utf8View`, the no-information answer and the only type a non-`Mapped`
-resolution produces, so the two never both fire. `arrow_type_label`
+**`info --detail`'s per-column line is a complete statement of the Arrow
+schema.** One line per column that has something to say: an unmapped column
+gets `resolution_words`' sentence, a mapped one gets its Arrow type — unless
+that type is `Utf8View`, the no-information answer and the only type a
+non-`Mapped` resolution produces, so the two never both fire. `arrow_type_label`
 (`pgdump_query-cli/src/main.rs`) renders it as arrow-schema's own `Display` —
 terse, reversible, carrying a composite's real field names — with one
 substitution: the five-field range struct is identical for every range column
@@ -7345,7 +7346,7 @@ uncapped.** `Dictionary(Int32, Utf8)` says *that* a column is an enum and never
 *which* labels, and the type listing above answers that only for a reader
 willing to carry the type name up to it. This is the in-place answer, and it
 matters most to a user whose `--filter` was refused — a mistyped or wrong-case
-label is the only way to fail an enum term, and `--verbose` is where that
+label is the only way to fail an enum term, and `info --detail` is where that
 error's clause sends them. Duplicating a short list is cheaper than the trip;
 the type listing carries the completeness obligation, this line carries
 locality.
@@ -7371,7 +7372,7 @@ but it spells a PostgreSQL literal in Rust's escape vocabulary, and the double
 quote it produces is the one the filter grammar treats as the *other* quote.
 *Rejected:* the labels inline on the column's own line, which is already four
 fields wide — one eight-label enum would wrap and break the alignment of every
-row around it. *Rejected:* a count cap. `--verbose` is the mode that exists to
+row around it. *Rejected:* a count cap. `--detail` is the mode that exists to
 be the complete rendering, and it is what a capped rendering elsewhere can send
 a reader to; capping here leaves the labels reachable nowhere.
 
@@ -7391,7 +7392,7 @@ restructuring a `DumpIndex` field for internal reasons is free to change the
 JSON with it. It exists so an alpha user can get everything the listing shows,
 and the raw span/TOC detail no text view surfaces, without pgdq committing to a
 flag for their specific need before those needs converge. It is incompatible
-with `--verbose`/`--map`, which only add formatting detail the full struct
+with `--detail`/`--map`, which only add formatting detail the full struct
 already carries.
 
 *Rejected:* a hand-shaped JSON schema (renamed fields, a stable top-level
@@ -7401,9 +7402,9 @@ trials. **No `version` field either**: that is precisely the compatibility shim
 
 ### Machine-readable resolution
 
-`resolution` is what `--verbose` prints per column, in a form a script can
+`resolution` is what `info --detail` prints per column, in a form a script can
 branch on: per column the name, the declared PostgreSQL type, the outcome as a
-stable token, the Arrow type as the *exact string* `--verbose` renders, and the
+stable token, the Arrow type as the *exact string* `--detail` renders, and the
 `NestedPlan` structurally (which is the one thing the Arrow type cannot say —
 `int4range[]` and `int4multirange` share it).
 
@@ -7423,11 +7424,11 @@ pass that `print_index` and `print_index_json` both consume, and
 `resolution_words` returns the token and the sentence from *one* exhaustive
 match, so a new variant cannot be given one spelling without the other —
 a second implementation would drift into describing a different vocabulary from
-the listing. The cross-check reconstructs every expected `--verbose` line out
+the listing. The cross-check reconstructs every expected `--detail` line out
 of the JSON and finds it in the text, which works because **every sentence
 begins with its token's words**, underscores replaced by spaces; a variant
 breaking that property fails the test rather than quietly weakening it. The
-labels are held to the same standard one level up: the `--verbose` type
+labels are held to the same standard one level up: the `--detail` type
 listing and `metadata.databases[].types[]` are checked to name the same types,
 and `public.mood`'s printed list against the exported one.
 

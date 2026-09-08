@@ -49,8 +49,26 @@ reached further than that enumeration by itself:
 - **`CLAUDE.md`'s command reference and its koji wrap-verification
   paragraph** — the same reasoning as the manual: both are literal commands a
   session runs from this file, not commentary about one.
+- **`docs/design/architecture.md`, occurrence by occurrence.** It is the one
+  file that spells *both* flags, so the sweep was a read-and-judge pass rather
+  than a substitution: each of its 25 uses of the word was read in enough
+  surrounding prose to say which program it names. **17 name `info`'s report
+  and are now `--detail`**; **8 name `pg_dump`'s own `--verbose` and are
+  untouched** — the `-- TOC entry`/`-- Dependencies:` lines and the comment
+  block's variable height under "TOC enrichment", and the fixture section's
+  `-- Started on` header lines, `objects/verbose.sql`, the regeneration-noise
+  paragraph, the flag-set table's `verbose` flavor name and the sentence saying
+  that flag is the `objects` set's whole reason. The separating criterion is
+  what the sentence is *about*: a use describing what the dump file contains,
+  or which fixture produced it, is `pg_dump`'s, and a use describing what pgdq
+  prints is ours. Where the rename left a sentence that no longer said which
+  program was meant, the referent was made explicit rather than left bare —
+  `info --detail` in full at the start of the "CLI surface" and
+  "Machine-readable resolution" claims, at the `Range<T>` substitution, at the
+  enum-label error clause, and in the `--preamble-only` rejection, which now
+  says `info`'s own `--detail`/`--map`.
 
-**What was deliberately left alone, and why.** Three categories spell
+**What was deliberately left alone, and why.** Two categories spell
 `--verbose` and were left as found; two more spell it and were retargeted
 anyway, each for its own reason:
 
@@ -59,15 +77,6 @@ anyway, each for its own reason:
   all spell **`pg_dump`'s own** `--verbose` flag — the one that widens a TOC
   comment block, source of the `objects` fixture's `verbose` flavor — which is
   a different flag on a different program and shares only the word.
-- `docs/design/architecture.md` mixes both referents throughout — `pg_dump`'s
-  own `--verbose` (its TOC-comment behaviour, `objects` fixture rationale) and
-  ours (`info --verbose`'s per-column and per-type report) — sometimes within
-  the same paragraph. The spec's own enumeration of this slice's scope does not
-  name it, and a blind sweep risks silently renaming the wrong referent in a
-  7,700-line document with no mechanical way to tell the two apart. It is left
-  spelling `--verbose` for our flag in roughly twenty places; a session that
-  next edits one of those sections should read it against this note before
-  trusting the prose.
 - `docs/design/measurements.md`'s koji narrative and any closed-day history
   entry describe what was literally run *at the time*, under the flag name
   current then. `CLAUDE.md`'s writing-style rule is what draws this line: a
@@ -94,13 +103,18 @@ sentence describes a past run, but whether the document itself is maintained:
   reader who copies `P16.14`'s recovery command should get one that runs, so
   all three lines were retargeted to `info --detail` too.
 
-No judgement call here rose to a maintainer decision: the three exclusions and
-the two retargets above all follow from something already written (the spec's
-own scope, the rule that a dated/historical record is not rewritten to match
-later terminology, or — for `M67` and the notes docs — the distinction between
-a document that states what was true on a closed day and one that is still
-read for what is true now), so nothing went to "Decisions worth another
-look".
+One judgement call did rise to the maintainer, and was reversed:
+`architecture.md` was first held back on the grounds that a 7,700-line document
+mixing two flags of the same name has no mechanical way to tell them apart. The
+answer is that "hard to tell apart" is a reason to read each occurrence, not a
+reason to leave a stale spelling in the project's primary design document, so
+the file was swept by hand and is listed above with the swept files. Every
+other call — the two exclusions and the two retargets — follows from something
+already written (the rule that a dated/historical record is not rewritten to
+match later terminology, or — for `M67` and the notes docs — the distinction
+between a document that states what was true on a closed day and one that is
+still read for what is true now), so nothing else went to "Decisions worth
+another look".
 
 ## What the next slice inherits
 
@@ -109,12 +123,13 @@ CLI flag, struct field, or function parameter in the tree spells it as
 anything but a historical reference now. `16.19`'s `-vvv`/`--quiet` level
 flags can use it without colliding with `info`'s meaning.
 
-**`architecture.md`'s mixed `--verbose` mentions are unresolved**, listed above
-by file. Nothing obliges sweeping them before `16.19` lands, since `16.19`
-introduces new prose of its own rather than editing the existing sections that
-mix the two referents — but a future editor of "CLI surface" or the `objects`
-fixture rationale should expect to find both spellings there and disambiguate
-by content, not by search-and-replace.
+**`architecture.md` still spells `--verbose` in eight places, and every one of
+them is `pg_dump`'s flag.** An editor of "TOC enrichment" or the `objects`
+fixture rationale meets the word there and should leave it: it names the
+external program's flag, and pgdq's report is `--detail` throughout the rest of
+the file. A search for the bare word therefore no longer finds a stale
+spelling of ours — which is what makes the next such rename a search rather
+than a re-read.
 
 ## Figures
 
