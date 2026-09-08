@@ -102,7 +102,9 @@ It is not fixed here, and deliberately: the fix is inside `io.rs`'s buffer pool,
 which is a tested core path and a different confidence from a harness diff
 ([`../process.md`](../process.md), "Working unattended"). It is filed as a
 blocking out-of-band row so the next round takes it before `16.13.1`, which
-cannot take five of its seven legs until it is closed.
+could not take five of its seven legs until it was closed — and the next round
+closed it ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md),
+"`M70`: the block pool is a retaining holder, so nothing grants it a wait").
 
 **Two things this says about the apparatus itself, both good.** The smoke run
 that found it was a deliberately small one — `PGDQ_MEASURE_SIZE_GIB=0.2`,

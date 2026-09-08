@@ -426,10 +426,11 @@ than one of the three, and a scan reaches it whenever the caller states a
 **Granting the permission is a promise about the loop, not a request.** A loop
 that keeps two reads alive at once against a one-slot pool blocks forever, so
 the discipline is *one slot per waiting holder* and it is a property of the
-caller, like one-off-ness is. Where two pools serve one loop the acquisition
-order is fixed as well: a read that needs both takes the chunk slot first and
-the block slot inside it, never the other way round, so two waiting readers
-cannot hold each other's next slot.
+caller, like one-off-ness is. Where two pools serve one loop only one of them
+takes the permission — a compressed source's chunk pool, never its block pool
+(below) — and the acquisition order is fixed the same way round regardless: a
+read that needs both takes the chunk slot first and the block slot inside it,
+so a waiting reader is holding no slot of the pool it is waiting on.
 
 **The two failure directions are not comparable, which is why `NeverWait` is
 the `Default` and why a loop in any doubt grants nothing.** A bound that fails
@@ -516,18 +517,42 @@ The loop that grants one is the leader's fused worker, whose scheduler test
 runs eight workers against four slots and completes ("The interior split") —
 which is exposure rather than coverage, and is why the bare-pool test stays.
 
-**The block pool's release-before-acquire is not a second discipline, it is a
-property of the `parse` shape.** `XzSource`'s retained blocks ("The compressed
-source") sit in a pool of their own and can occupy every slot in it, and the
-retention does release before it acquires: eviction runs down to one below the
-slot count and then takes. On `parse` that is enough, because no batch is built
-and the cache's own reference is the only one — the buffer a decode is about to
-want is one it has already given up, so a `parse`'s block decode would never
-actually wait even where a wait were permitted. On a query it frees nothing:
-the drain drops the cache's reference while the batch's views keep the buffer
-outstanding, so the block pool's holder and the batch-building holder are the
-same slots counted twice. That shape is a query, and a query's replay grants no
-wait, so the two facts meet rather than collide.
+**The block pool is a retaining holder, so no loop's permission reaches it.**
+`XzSource::hint_wait_policy` states the granted policy to the **chunk** pool
+only; the block pool stays at `NeverWait` whatever a loop permits. The holder
+there is `BlockCache`, not the loop: a decoded block is kept past the read that
+took it, and the read that took it is holding a zero-copy view into the same
+buffer — that is what makes a read inside one block a slice rather than a copy.
+So the eviction-before-acquisition the cache does frees nothing for the caller
+waiting on a slot, and the exemption is by holder class exactly as the replay
+loop's is.
+
+*Rejected: letting the granted policy reach both pools*, which is what shipped
+until `M70` and deadlocks. `BlockCache::slot` drains the retention list to
+`slots() - 1` and then acquires, so a caller holding one live view per slot
+sees `slots() - 1` retained charges plus its own — exactly `slots()` — and
+waits for a return only it could cause; `SIGTERM` does not end it, the
+interrupt guard's flag being cooperative and the parked thread never reading it
+again. `--jobs 1` is `Serial`, hence `NeverWait`, and a plain source's one read
+unit is released inside its own `read_range`, which is why nothing on the
+shipped path met it
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "A
+`--jobs` parse of an `.xz` deadlocks on the block pool's retained charges").
+
+**What the block pool's budget bounds is therefore stated in two terms as
+well**, and unlike the chunk pool's second term the library owns both. It
+bounds what is **retained** — `BufferPool::slots` blocks, evicted
+least-recently-used — while what concurrent readers hold live is
+`stream::worker_count` blocks, which is itself `min(jobs, budget /
+partition_bytes)` off the same stated number, a block-decoding source's
+`partition_bytes` being one block plus one chunk ("The compressed source"). So
+the resident cost of a parallel compressed scan is a small multiple of the
+stated budget rather than the budget, and it stops climbing where the budget
+stops affording another worker — which is why it is flat in `--jobs` past that
+point. That is not a regression the wait would have prevented: a wait there
+never completed a scan at all. It is the bound the block pool has always had,
+said correctly, and `parallel-peak-rss` is the figure that will put a number on
+it ([`measurements.md`](measurements.md), "The apparatus").
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
@@ -767,13 +792,13 @@ streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
 produce byte-identical caches. *Rejected:* a retained set with a bound of its
 own — two numbers for one bound, which is what the byte budget replaced.
 
-**Evicting before acquiring is also what would let a waiting holder through
-here.** A read loop that holds no decoded block of its own between reads leaves
-the drain to `slots - 1` free to hand it the slot the decode is about to take,
-so the pool's wait would never fire ("Execution model and API surface"). A
-loop pinning chunks into batches keeps those buffers outstanding past the drain
-— which is why such a loop grants no wait at all, rather than why the order
-matters.
+**Evicting before acquiring is a reuse rule and not a progress guarantee**, and
+reading it as one is what `M70` was. A retained block is normally also the
+block some reader is holding a view into, so the drain to `slots - 1` frees no
+slot for the caller that is waiting on one — which is why the block pool is
+never granted a wait at all ("Execution model and API surface"). What the order
+buys is that the buffer the next decode reuses is the one the drain just
+released, rather than a fresh allocation of the block unit.
 
 **A retained chunk pins the whole block it views, so `parse` is the shape that
 holds least.** `pgdq parse` builds no batches, so `RetainedChunks` never runs
@@ -3518,12 +3543,13 @@ block pool's slot budget — `slots × (decoded block + dictionary)`, one slot p
 worker — and the pool that budget belongs to now exists and holds the decoded
 blocks ("The compressed source"): a serial `parse` of the 3.00 GiB `.xz`
 control reads **64.7 MiB** resident, which is that budget's two 24 MiB slots
-plus what a plain scan holds. It is a ceiling only for a loop that grants
-`WaitPolicy::MayWait`, which is the leader's fused worker — so it binds on a
-`parse` that states a `Parallelism` over a splittable region and is a steady
-state everywhere else, including every `query` replay ("Execution model and API
-surface"). A `parallel-peak-rss` figure therefore measures against a ceiling on
-a `parse` and two terms on a `query`.
+plus what a plain scan holds. It is a **steady state rather than a ceiling**,
+and in every shape: no loop's `WaitPolicy::MayWait` reaches the block pool,
+whose holder is the retention list ("Execution model and API surface"), so
+`slots` bounds what is retained and `stream::worker_count` — off the same
+stated budget — bounds what concurrent readers hold live. A
+`parallel-peak-rss` figure therefore measures two terms on a `parse` as well as
+on a `query`.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it
@@ -4101,7 +4127,10 @@ the same `max_line_bytes` the serial loop enforces.
 for the reason the permission documents: each worker holds exactly one read at a
 time, the `Bytes` moving into the `spawn_blocking` closure that parses it and
 dropping when that closure returns, so a worker blocked for a slot is always
-waiting on a sibling that will finish. It **restores `NeverWait` on the way
+waiting on a sibling that will finish. That is a promise about the *loop*, and
+it is not enough on its own — a compressed source's block pool has a holder the
+loop does not control, so the grant reaches the chunk pool only ("Execution
+model and API surface"). It **restores `NeverWait` on the way
 out**, unlike the three top-level loops, which each state their own policy and
 leave it stated: this one runs *inside* one of them, and an enclosing loop
 reading on under a permission it never granted is the failure the restoration

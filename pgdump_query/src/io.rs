@@ -150,6 +150,14 @@ pub trait ByteRangeSource: Send + Sync {
     /// slot it is waiting on. [`WaitPolicy`] is where a read loop says whether
     /// it may be made to wait.
     ///
+    /// **A source applies it only where the loop is the holder.** The
+    /// permission says what may be done to *this loop*, and it says nothing
+    /// about the source's own caches: a pool whose buffers the source keeps
+    /// past the read that took them has a holder the loop does not control, and
+    /// a wait there blocks on a slot the loop could never free. [`XzSource`] is
+    /// the case in hand — its block pool retains decoded blocks, so it is left
+    /// at [`WaitPolicy::NeverWait`] however a loop announces itself.
+    ///
     /// **Advisory, and it defaults to doing nothing** — which is
     /// [`WaitPolicy::NeverWait`]'s behaviour, so a source nobody announces to
     /// allocates exactly as it would without the method.
@@ -199,7 +207,9 @@ pub enum WaitPolicy {
     /// **Granting it is a promise about the loop**: that it consumes and drops
     /// each read before taking the next, so it holds **one** buffer at a time.
     /// A loop that grants this and then keeps two reads alive at once against
-    /// a one-slot pool blocks forever.
+    /// a one-slot pool blocks forever. The promise binds the loop and nothing
+    /// else, so a source that retains buffers of its own withholds the
+    /// permission from that pool ([`ByteRangeSource::hint_wait_policy`]).
     MayWait,
 }
 
@@ -1071,14 +1081,13 @@ impl BlockCache {
     /// blocks are dropped down to one below the slot count *first*, so the
     /// buffer this take reuses is usually the one that eviction just released.
     ///
-    /// **Eviction before acquisition is what would let a waiting holder
-    /// through here.** A read loop holding no decoded block of its own between
-    /// reads leaves the drain to `slots - 1` free to hand it the slot the
-    /// acquisition below is about to take, so the wait would never fire; a
-    /// loop pinning chunks into batches keeps those buffers outstanding past
-    /// the drain, which is exactly why such a loop grants no wait at all
-    /// ([`BufferPool::obtain`], and `docs/design/architecture.md`, "Execution
-    /// model and API surface").
+    /// **Eviction before acquisition is a reuse rule, not a progress
+    /// guarantee.** It is what makes the buffer this take reuses the one the
+    /// drain just released, and nothing more: a retained block is normally
+    /// also the block some reader is holding a view into, so the drain frees
+    /// no slot at all for the caller that is waiting on one. That is why the
+    /// block pool is never granted a wait ([`XzSource::hint_wait_policy`], and
+    /// `docs/design/architecture.md`, "Execution model and API surface").
     ///
     /// A block evicted while a [`Bytes`] still views it stays alive until that
     /// view drops.
@@ -1536,18 +1545,20 @@ impl ByteRangeSource for XzSource {
         self.apportion();
     }
 
-    /// **Both pools, one policy.** The two units are read by the same loop, so
-    /// where a wait is permitted the chunk assembly and the block decode both
-    /// wait, and where it is not both allocate.
+    /// **The permission reaches the chunk pool only.** A chunk buffer is taken
+    /// and released inside one `read_range`, so the loop that granted the wait
+    /// holds exactly one of them — which is the discipline
+    /// [`BufferPool::obtain`] documents. The **block** pool's holder is
+    /// [`BlockCache`], which *retains*: it is the exempt class, exactly as the
+    /// replay loop is, so it is left at [`WaitPolicy::NeverWait`] whatever a
+    /// loop permits (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
     ///
     /// A read that needs both takes the **chunk** slot first and the block
     /// slot inside it ([`XzSource::read_by_blocks`]), never the other way
-    /// round, so two waiting readers cannot hold each other's next slot.
+    /// round, so a waiting reader holds no block slot at all.
     fn hint_wait_policy(&self, policy: WaitPolicy) {
         self.pool.set_policy(policy);
-        if let Some(blocks) = &self.blocks {
-            blocks.pool.set_policy(policy);
-        }
     }
 
     fn seek_table(&self) -> Option<xz_seek::SeekTable> {
@@ -2432,11 +2443,70 @@ mod tests {
         assert_eq!(held(&one).2, POOL_DEPTH, "serial keeps the pool's own depth");
     }
 
-    /// Two read units, one wait policy: the loop that reads a compressed
-    /// source is the same loop for its chunk assembly and its block decode, so
-    /// a permitted wait applies in both pools and a withheld one in neither.
+    /// **A retained block is storage, not a waiting holder, so no read loop's
+    /// permission reaches the block pool.** Every retained block is also the
+    /// one some reader is holding a view into — that is what zero-copy means
+    /// here — so `BlockCache::slot`'s drain to `slots() - 1` can free nothing
+    /// the waiting reader itself is not holding, and a charged block pool
+    /// reaches `slots()` permanently the moment a caller holds one view per
+    /// slot.
+    ///
+    /// The third read below is what deadlocked: it runs on a detached thread
+    /// against a bounded receive, so a pool that starts charging block slots
+    /// again fails this test rather than hanging the suite.
+    #[test]
+    fn a_permitted_wait_never_reaches_the_block_pool() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        // 12 KiB: four chunk slots of the announced 1 KiB, and the 8 KiB left
+        // over is two 4 KiB block slots.
+        source.hint_read_size(1 << 10);
+        source.hint_parallelism(Parallelism::workers(2, 12 << 10));
+        source.hint_wait_policy(WaitPolicy::MayWait);
+        let cache = Arc::clone(source.blocks.as_ref().expect("4 KiB blocks are decoded whole"));
+        assert_eq!(cache.pool.slots(), 2, "two block slots inside the stated budget");
+
+        let read = |offset: u64| {
+            XzSource::read_by_blocks(
+                offset,
+                100,
+                &source.table,
+                &cache,
+                &source.reader,
+                &source.data_file,
+                &source.pool,
+            )
+        };
+        // One live view per slot, and both blocks are retained as well.
+        let held = vec![read(0).unwrap(), read(4096).unwrap()];
+        assert_eq!(cache.retained.lock().unwrap().len(), 2);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (table, blocks, reader, file, chunks) = (
+            Arc::clone(&source.table),
+            Arc::clone(&cache),
+            Arc::clone(&source.reader),
+            Arc::clone(&source.data_file),
+            Arc::clone(&source.pool),
+        );
+        std::thread::spawn(move || {
+            let got = XzSource::read_by_blocks(8192, 100, &table, &blocks, &reader, &file, &chunks);
+            let _ = tx.send(got.map(|bytes| bytes.to_vec()));
+        });
+        let third = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("a third block decoded while two are held")
+            .unwrap();
+        assert_eq!(&third[..], &payload[8192..8292]);
+        drop(held);
+    }
+
+    /// Two read units, one permission, and it reaches one of them: the chunk
+    /// pool takes what the loop granted and the block pool stays at
+    /// `NeverWait`, its holder being the retention list rather than the loop.
     #[tokio::test]
-    async fn a_compressed_source_states_the_policy_to_both_pools() {
+    async fn a_compressed_source_states_the_policy_to_its_chunk_pool_only() {
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
@@ -2445,11 +2515,12 @@ mod tests {
         };
         assert_eq!(policies(&source), (WaitPolicy::NeverWait, WaitPolicy::NeverWait));
         source.hint_wait_policy(WaitPolicy::MayWait);
-        assert_eq!(policies(&source), (WaitPolicy::MayWait, WaitPolicy::MayWait));
+        assert_eq!(policies(&source), (WaitPolicy::MayWait, WaitPolicy::NeverWait));
+        source.hint_wait_policy(WaitPolicy::NeverWait);
+        assert_eq!(policies(&source), (WaitPolicy::NeverWait, WaitPolicy::NeverWait));
 
-        // And the block path still reads correctly while a wait is permitted:
-        // `BlockCache::slot` evicts before it acquires, so a waiting reader
-        // always finds the slot it is about to want.
+        // And the block path still reads correctly while a wait is permitted.
+        source.hint_wait_policy(WaitPolicy::MayWait);
         source.hint_read_size(1024);
         let got = source.read_range(0, 4096).await.unwrap();
         assert_eq!(&got[..], &payload[..4096]);

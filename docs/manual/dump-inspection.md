@@ -229,12 +229,12 @@ you allowed, if `--parallel-memory` leaves room for them. So on a compressed
 file `--jobs` and `--parallel-memory` are worth raising together: more workers
 with no room to hold what they decode buys less than either number suggests.
 
-> **Do not raise `--jobs` on an `.xz` file in this build.** `parse` at
-> `--jobs 2` or more over a compressed dump stops and never finishes, whatever
-> `--parallel-memory` says, and Ctrl-C will not end it — you have to kill it
-> outright (`kill -9`), and it saves nothing. `--jobs 1`, the default, is
-> unaffected, and so is every setting on a plain file. This is a defect, not a
-> limit; it is being fixed.
+> **On an `.xz` file, expect a parallel scan to hold more than
+> `--parallel-memory` names.** The budget bounds what pgdq *keeps* between
+> reads; each worker also holds the block it is decoding at that moment, and
+> the budget is what decides how many workers there are. So the number to raise
+> when a compressed scan is short of memory is `--parallel-memory`, and raising
+> `--jobs` past what that budget affords adds workers pgdq will not use.
 
 **Two shapes will never get parallelism, whatever you set.** An `.xz` file with
 a single block has no seam to split at — the warning above says so when you hit
