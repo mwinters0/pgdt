@@ -62,21 +62,53 @@ phase's order is bound: cap the process's own overhead first, *then* discover,
 **Origin.** `16.14`, 2026-09-08; previously a roadmap `Future` item, moved into
 this phase.
 
-## `M67` and `M72` are this phase's subject, not out-of-band work
+## `M67` is this phase's subject, not out-of-band work
 
-**Fact.** Two ledger rows are queued and unlanded, and both are "the shipped
-value is wrong and the tool is silent about it": `M67`, the budget-declined
-`.xz` fallback announcing itself with the block size beside the budget that
-declined it; and `M72`, a `--jobs` the stated budget refuses saying so.
+**Fact.** One ledger row is queued and unlanded and is "the shipped value is
+wrong and the tool is silent about it": `M67`, the budget-declined `.xz`
+fallback announcing itself with the block size beside the budget that declined
+it.
 
-**Why this phase cares.** Once this phase's spec records the announcements as
-decisions, they stop meeting the ledger's admission rule — work that changes a
-decision a spec records is not out-of-band. **Strike both rows as part of
-specifying this phase**, with their numbers spent, and cite them from the
-slices that absorb them. `M65`, `M66` and `M71` are measurement-harness
-hygiene, stay out-of-band, and are unaffected.
+**Why this phase cares.** Once this phase's spec records the announcement as a
+decision, it stops meeting the ledger's admission rule — work that changes a
+decision a spec records is not out-of-band. **Strike the row as part of
+specifying this phase**, with its number spent, and cite it from the slice that
+absorbs it.
 
-**Origin.** 2026-09-08, this phase's grilling.
+`M72`, its sibling, is **not** here any more: it blocks P16, because `16.19`
+prints the stated `--jobs` at startup "so a log says what arrangement produced
+it" and at the shipped defaults that sentence is false
+([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "A
+`--jobs` the budget refuses is silent, and that is the defect"). It lands as
+out-of-band work under P16, so this phase inherits it built rather than
+specified. `M66` is measurement-harness hygiene, stays out-of-band, and is
+unaffected; `M65` and `M71` are the same hygiene but carry an ordering this
+phase owns, below.
+
+**Origin.** 2026-09-08, this phase's grilling; the `M72` half revised the same
+day by the review of the ledger's blocking column.
+
+## `M65` and `M71` land before this phase's closing sweep
+
+**Fact.** Two measurement-harness rows are queued: `M65`, which folds
+`scripts/rss_attribution.py` into the register as a figure, and `M71`, which
+stops `Session.input_path` falling through to the *warm* path for a regime it
+does not know. This phase ends in a sweep, because a `mallopt(M_ARENA_MAX, …)`
+re-bases every registered figure's apparatus.
+
+**Why this phase cares.** `M65` cannot be caught up afterwards. The
+attribution's first leg is read against `peak-rss`'s `blocks4000` row and takes
+its instrument from that figure's shape, so registering it creates a `shares`
+or derivation edge — and a figure standing in such an edge may **not** be
+published outside a sweep ([`measurements.md`](measurements.md)). Registered
+after the sweep, it waits for the sweep after that. `M71` is the weaker of the
+two and the same shape: this is the first phase with a reason to add a regime,
+and an unknown regime today reads warm inputs under a cold heading with no
+error.
+
+**Origin.** 2026-09-08, the review of the ledger's blocking column. Neither
+gets `Blocks` today: that column names the *open* phase, and P16's remaining
+slices are a flag rename and a log facade, which neither row touches.
 
 ## The plain path is slower parallel, and that is what makes the default source-dependent
 
