@@ -19,9 +19,11 @@ stamp of 2026-09-05, and **seventeen of its twenty-one tables come from one
 sitting**: sixteen from the scan-performance wrap sweep and `session-drift`,
 which no sweep can take because it is derived *across* two, from that sweep and
 a second begun the minute it finished. The other four are `peak-rss`, taken alone
-at `41c96bb`; `xz-decode-scaling`, taken alone at `7d21c6e`; and
-`parallel-scan-throughput` and `parallel-peak-rss`, both taken alone at
-`e29939c` in `16.13.1`'s sitting, each **saying
+at `41c96bb`; `xz-decode-scaling`, taken alone at `7d21c6e`; `parallel-peak-rss`,
+taken alone at `e29939c` in `16.13.1`'s sitting and unmoved since (`16.15` never
+reaches its command shape); and `parallel-scan-throughput`, re-taken alone at
+`20fd77c` in `16.15.1`'s sitting once `16.15`'s divisor change landed — the two
+no longer share a commit, which was never a `shares` edge between them, each **saying
 so inside its own figure marker**, which is where
 `--stale`, acknowledgement spentness and `--verify-additive` each read the
 commit they argue that figure from; none shares a reading with any other,
@@ -29,8 +31,10 @@ which is the condition under which a figure may be published outside a sweep at
 all. So no table carries a partial-sitting note and no absolute in the
 document is a cross-sitting reading. The fresh
 stamp spent all six of the previous acknowledgements, which were deleted rather
-than kept as sediment; the two the register carries now are
-P7's wrap and keystone, and they are comment-only. Under the previous `ba2fc12`
+than kept as sediment; the register carries three now — P7's wrap and
+keystone, both comment-only, plus `16.15.1`'s `a30cc43`, which is not: it
+excuses `parallel-peak-rss` on reachability, an executable diff that never
+reaches that figure's command shape. Under the previous `ba2fc12`
 stamp ten of the seventeen stood outside the sweep.
 
 **The largest correction the register has carried is `census-arrays`.** Its warm
@@ -228,9 +232,19 @@ legs call `plan_partitions` directly, and the divisor now sums
 `partition_bytes` and `QueryOptions::max_source_span` (64 MiB) rather than
 `partition_bytes` alone, so `worker_count` affords fewer sub-streams at the
 same stated `PARALLEL_BUDGET` — reachable and executable, red on its own
-terms. Both figures are carried into `16.15.1`, which needs a commit to name
-before either can be folded back in
+terms. Both figures were carried into `16.15.1`, which needed a commit to name
+before either could be folded back in
 ([`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)).
+**`16.15.1` closed the split rather than reopening it a second way.**
+`parallel-peak-rss` is discharged by an `ACKNOWLEDGED` entry naming `a30cc43`
+rather than a sitting — the same reachability argument, now recorded rather
+than merely made — and stands unmoved at `e29939c`, still green.
+`parallel-scan-throughput` was re-taken at `20fd77c` — HEAD when the sitting
+launched, `16.15`'s own `a30cc43` already carried well before it — folded into
+`measurements.md` with the rows above four on both typed-`query` legs stating
+the sub-stream count `PARALLEL_BUDGET` actually plans (11 on `.xz`, 14 on
+plain), and is green again
+([`../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md)).
 
 **`peak-rss` is the figure whose red says least about its numbers.** `io.rs`,
 `cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and
@@ -321,21 +335,28 @@ against `measure.NOT_OURS` both ways and held to carrying no figure marker, so
 the session stamp's "every figure below" now claims only what the register
 holds. `session-drift` is derived across that sweep and a second begun the
 minute it finished on the same commit, which is the pair `--drift` reads;
-`peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`) and, since `16.13.1`,
-`parallel-scan-throughput` and `parallel-peak-rss` (both `e29939c`) were each
-taken alone, which their markers declare and `--check` holds to descending from
-the stamp, standing in no borrow edge, and being accounted for in the stamp's
-generated sentence.
+`peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`), `parallel-peak-rss`
+(`e29939c`, since `16.13.1`) and `parallel-scan-throughput` (`20fd77c`, since
+`16.15.1`) were each taken alone, which their markers declare and `--check`
+holds to descending from the stamp, standing in no borrow edge, and being
+accounted for in the stamp's generated sentence.
 `measure.ACKNOWLEDGED` carries the two commits of P7's wrap and keystone, both
-comment-only against a declared path; the previous six were spent by this stamp
-and `--check` named them so they were deleted rather than kept as sediment.
+comment-only against a declared path, plus `16.15.1`'s `a30cc43` — reachability,
+not comment-only, discharging `parallel-peak-rss` from `16.15`'s divisor change
+rather than a declared path moving nothing; the previous six were spent by the
+`af15eac` stamp and `--check` named them so they were deleted rather than kept
+as sediment.
 
 **`16.13.1` took the sitting `16.13` built the apparatus for**, both figures at
 `e29939c` — the commit `16.13`'s apparatus and `M70`'s deadlock fix both already
 carried, so a `--jobs` leg over an `.xz` measured the path that fix moved. Both
-tables are folded into `measurements.md` whole, each declaring `e29939c` inside
+tables were folded into `measurements.md` whole, each declaring `e29939c` inside
 its own marker, and both entries moved out of `measure.UNTAKEN` into
 `measure.FIGURES`, where the doc-side checks now apply to them.
+**`16.15.1` re-took `parallel-scan-throughput` alone**, at `20fd77c`, once
+`16.15`'s divisor change landed; its marker now declares `20fd77c` and
+`parallel-peak-rss`'s stands unmoved at `e29939c`, discharged by the
+acknowledgement above rather than a second sitting.
 `parallel-scan-throughput` gained a `quoted_by` naming
 `roadmap-P16-parallel-scan.md`, whose "What that buys, at 12 physical cores / 24
 threads" is the arithmetic this figure answers; `parallel-peak-rss` gained one
@@ -634,7 +655,7 @@ are worth, and the orderings that do bind are named in
       a commit to name and this round leaves none, the same seam `16.13` split
       on. Notes:
       [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)
-- [ ] **16.15.1** The sitting — re-take **`parallel-scan-throughput` alone**
+- [x] **16.15.1** The sitting — re-take **`parallel-scan-throughput` alone**
       once `16.15`'s diff is committed (`scripts/measure.py` will not stamp a
       figure against an uncommitted measured path, per `16.13.1`'s own
       precedent) and fold its table into
@@ -664,6 +685,16 @@ are worth, and the orderings that do bind are named in
       own ceiling is (`scripts/measure.py`, beside `PARALLEL_BUDGET`). Notes:
       [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md),
       "What `16.15.1` inherits"
+
+      **Landed.** `parallel-peak-rss`'s half is discharged by the
+      `ACKNOWLEDGED` entry for `a30cc43` in `scripts/acknowledged.py`;
+      `e29939c`'s table stands. `parallel-scan-throughput` was re-taken at
+      `20fd77c` (`runs/measure-20260908T183715/tables.md`, 140 invocations,
+      1485 s, none discarded) and folded into `measurements.md` with that
+      commit inside its marker, the rows above four on both typed-`query`
+      legs stating the sub-stream count achieved (11 on `.xz`, 14 on plain —
+      `scripts/measure.py`'s new `QUERY_SUBSTREAM_CAP`). Notes:
+      [`../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md)
 - [x] **16.16** `--jobs` defaults to 1 — `DEFAULT_JOBS`, a constant where
       `available_parallelism()` was, so a person who states neither flag gets
       the arrangement every published figure was taken under. Its help text

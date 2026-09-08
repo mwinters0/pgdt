@@ -33,6 +33,7 @@ cd scripts && uv run python -m unittest test_floor_mapping  # that check's own t
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale
 cd scripts && uv run measure.py --check           # figure markers vs the doc, each figure's consumers, and that every command shape pins a worker count
+cd scripts && uv run measure.py --render <run-dir> # rebuild a past sitting's tables.md from its raw.json, measuring nothing
 cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table, plus what it borrows
 cd scripts && uv run measure.py --figure <id> --alone   # borrowing nothing: a diagnostic sitting, marked NOT PUBLISHABLE
@@ -309,6 +310,18 @@ re-taking** — every re-take before it was a `runs/` script that died with the
 session, so each one re-derived the apparatus from scratch and ended with a
 throwaway parser scraping medians out of a log, which is where the
 transcription errors lived. Its unit tests are `scripts/test_measure.py`.
+**A table is never hand-edited.** A renderer's *presentation* is code and
+changes after readings are taken; folding such a change in means re-rendering
+the sitting (`uv run measure.py --render <run-dir>`, which measures nothing and
+rebuilds `tables.md` from that run's `raw.json`) and pasting the result, never
+editing the section already in `measurements.md`. A pasted table is the one
+artifact here with no oracle — `--check` reads markers, `--stale` reads paths,
+neither reads a cell — so a hand-edit is how the doc comes to disagree with the
+harness that claims to produce it. Prose belongs in the harness for the same
+reason: a sentence the renderer does not emit is the same divergence in slower
+motion. Drop the fold-in note the harness addresses to *you*; `--check` refuses
+it in the document.
+
 **Run `uv run measure.py --stale` before claiming a figure still holds**: every
 figure declares the paths that invalidate it, so the harness answers "which
 figures did this diff make stale" instead of someone remembering to — which is

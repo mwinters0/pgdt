@@ -1809,6 +1809,28 @@ PARALLEL_BUDGET = 1 << 30
 #: container already holds.
 PARALLEL_MEMORY = "3g"
 
+#: The sub-stream count a typed-`query` leg actually gets from `PARALLEL_BUDGET`,
+#: keyed by input — `worker_count`'s `budget / (partition_bytes + max_source_span)`,
+#: floored, at the shipped `QueryOptions::max_source_span` default (64 MiB) and
+#: `pgdq query`'s unhinted `LocalFileSource` (`BufferPool::slot_bytes` answers its
+#: own `POOL_MAX_BYTES` default, 8 MiB, because the mapping pass hints the source
+#: with `scan_options.chunk_size` and `plan_partitions` asks `source.partitions`
+#: before that hint is ever set on the *query* path's source instance).
+#:
+#: **Hand-computed, not derived from a mirrored formula.** A Python
+#: reimplementation of `worker_count`/`plan_partitions` would be a second
+#: authority on the library's own arithmetic and go stale silently the moment
+#: either constant moves; a hardcoded pair, like `PARALLEL_JOBS`'s literal 4
+#: for `POOL_DEPTH`, is checked by hand against the source once and is exactly
+#: as good until the constants it was checked against move, at which point the
+#: figure is stale on the paths already in its `depends`.
+#:  `.xz`:   `24 MiB` block (`control_xz`'s block size) + `1 MiB` chunk buffer
+#:           = `25 MiB`; `+ 64 MiB` span = `89 MiB` divisor;
+#:           `floor(1 GiB / 89 MiB) = 11`.
+#:  plain:   `8 MiB` (`POOL_MAX_BYTES`, unhinted) `+ 64 MiB` span = `72 MiB`
+#:           divisor; `floor(1 GiB / 72 MiB) = 14`.
+QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 14, "control_xz": 11}
+
 #: The worker count every `pgdq` invocation this harness makes states, and the
 #: one every registered figure is taken at **except the two whose axis it is**.
 #:
@@ -2211,6 +2233,11 @@ class Session:
         telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
             {
+                # The figure this reading was taken for. Recorded rather than
+                # re-derived, because `--render` splits the records per figure
+                # to rebuild each apparatus line, and a spec that two figures
+                # share would otherwise be attributed by guess.
+                "figure": self.figure_id,
                 "spec": dataclasses.asdict(spec),
                 "seconds": seconds,
                 "maxrss_kib": self._last_rss,
@@ -3894,9 +3921,15 @@ def run_parallel_scan_throughput(session: Session) -> str:
                 session.input_path(PARALLEL_PLAINTEXT[inp], "warm-parallel"),
                 PARALLEL_PLAINTEXT[inp],
             )
-            cells.append(
-                f"{fmt_median_spread(values)} · {fmt_rate(nbytes, got)} · {base / got:.2f}×"
-            )
+            cell = f"{fmt_median_spread(values)} · {fmt_rate(nbytes, got)} · {base / got:.2f}×"
+            # A budget clamp is not `POOL_DEPTH`'s to footnote once — see
+            # `QUERY_SUBSTREAM_CAP`. Every row above four states what the two
+            # typed-`query` legs actually planned, clamped or not, so a reader
+            # never has to ask whether a given cell is the label or the ceiling.
+            if family == "query-typed" and jobs > 4:
+                achieved = min(jobs, QUERY_SUBSTREAM_CAP[inp])
+                cell += f" · {achieved} sub-stream{'s' if achieved != 1 else ''}"
+            cells.append(cell)
         rows.append(cells)
     table = md_table(["`--jobs`", *(label for _, _, label in PARALLEL_LEGS)], rows)
 
@@ -3920,7 +3953,23 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "**A plain leg's `--jobs` is what is asked for, not what is delivered.** "
         "`POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused worker on a "
         "plain source waits: the rows above four say what that ceiling costs, not that "
-        "the scan stopped scaling.\n"
+        "the scan stopped scaling.\n\n"
+        "**A typed-`query` leg's `--jobs` is clamped a second way, and this one the "
+        "table states per cell rather than footnotes once.** `plan_partitions` caps a "
+        "query's sub-stream count at `--parallel-memory` divided by what one sub-stream "
+        "costs to decode plus what its held batch pins (`docs/design/architecture.md`, "
+        '"Execution model and API surface") — a budget the *harness* chose, '
+        "not a ceiling the library ships, so the rows above four on both typed-`query` "
+        f"legs state the count they actually planned: `{QUERY_SUBSTREAM_CAP['control_xz']}` "
+        f"on `.xz`, `{QUERY_SUBSTREAM_CAP['control']}` on plain "
+        "(`scripts/measure.py`, `QUERY_SUBSTREAM_CAP`). Below that count a cell's "
+        "sub-stream figure equals its row label; at or above it, every further worker "
+        "asked for buys nothing more to plan. "
+        "**The comparison is anchored at four workers and no constant moved to take "
+        "this table**: `PARALLEL_BUDGET` stays 1 GiB (it affords four sub-streams on "
+        "the worst leg, `4 × 89 MiB ≈ 356 MiB`, the count `POOL_DEPTH` itself delivers "
+        "on a plain source), `PARALLEL_MEMORY` stays 3g, and `PARALLEL_JOBS` is "
+        "unchanged.\n"
     )
     return table + notes + "\n" + _per_rep(figure, session, specs)
 
@@ -5339,6 +5388,134 @@ def partial_lead(
     )
 
 
+def recorded_input_sizes(stager: Stager, figures: Sequence[Figure]) -> dict[str, int]:
+    """Every selected figure's inputs, by name, at the size they were on disk.
+
+    Recorded so `--render` can rebuild a table's byte counts and rates without
+    the inputs still existing: warm staging is evicted at the end of a sitting,
+    and the SSD cache is explicitly safe to delete.
+    """
+    sizes: dict[str, int] = {}
+    for fig in figures:
+        for name in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs):
+            path = stager.cfg.cache_dir / input_file(name)
+            if path.exists():
+                sizes[name] = path.stat().st_size
+    return sizes
+
+
+class ReplaySession(Session):
+    """A `Session` that measures nothing and serves a past sitting's readings.
+
+    `--render` exists because a renderer's *presentation* is code, and code
+    changes after the readings are taken. Before it, folding such a change in
+    meant hand-editing the table already pasted into `measurements.md` -- and a
+    hand-edit has no oracle, so a table could come to disagree with the harness
+    that claims to produce it (the sub-stream annotation landed one column left
+    of the leg it described, and nothing caught it).
+
+    So: the readings are the sitting's, and everything derived from them is
+    recomputed by the same renderer that would run during a sweep.
+
+    **A staged input is replaced by a sparse file of the recorded size.** Every
+    renderer asks an input for its size and never for its contents -- the size
+    is what a rate is per -- so a stand-in of the right length reproduces the
+    byte counts exactly while needing no cache, no tmpfs and no disk.
+    `test_measure.py` is what holds renderers to that.
+    """
+
+    def __init__(self, cfg: Config, raw: dict, sizes_dir: Path, log: Callable[[str], None]) -> None:
+        super().__init__(cfg, Stager(cfg, log), log)
+        self.readings = raw["readings"]
+        self.rss = raw.get("rss", {})
+        self.reported = raw.get("reported", {})
+        self.telemetry = raw.get("telemetry", [])
+        self.records = raw.get("runs", [])
+        self._sizes = raw.get("input_sizes", {})
+        self._sizes_dir = sizes_dir
+
+    def sweep(self, figure: str, specs: Sequence[RunSpec], reps: int) -> None:
+        """A no-op: every reading this sitting holds is already loaded."""
+
+    def take(self, spec: RunSpec, rep: int) -> float:
+        raise AssertionError(f"--render must measure nothing, but {spec.label} was run")
+
+    def drop_caches(self) -> None:
+        raise AssertionError("--render must measure nothing, but the page cache was dropped")
+
+    def input_path(self, name: str, regime: str) -> Path:
+        if name not in self._sizes:
+            raise KeyError(
+                f"this sitting recorded no size for input {name!r}, so its table cannot be "
+                "re-rendered. Sittings taken before --render existed carry no `input_sizes`; "
+                "re-take the figure to render it."
+            )
+        path = self._sizes_dir / input_file(name)
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("wb") as fh:  # sparse: costs no blocks
+                fh.truncate(self._sizes[name])
+        return path
+
+
+def render(cfg: Config, run_dir: Path) -> int:
+    """Rebuild one sitting's `tables.md` from its `raw.json`, measuring nothing.
+
+    The header is the sitting's own, verbatim: it describes when and at what
+    commit the readings were taken, which re-rendering does not change. Only
+    the per-figure sections are rebuilt, because those are what a renderer
+    change moves.
+    """
+    raw_path = run_dir / "raw.json"
+    if not raw_path.exists():
+        print(f"no raw.json in {run_dir}", file=sys.stderr)
+        return 2
+    raw = json.loads(raw_path.read_text())
+    missing = [k for k in ("header", "input_sizes", "readings") if k not in raw]
+    if missing:
+        print(
+            f"{raw_path} predates --render and is missing {', '.join(missing)}; "
+            "re-take the figure to render it.",
+            file=sys.stderr,
+        )
+        return 2
+
+    by_id = {f.id: f for f in FIGURES}
+    unknown = [fid for fid in raw["figures"] if fid not in by_id]
+    if unknown:
+        print(f"unknown figure(s) in {raw_path}: {', '.join(unknown)}", file=sys.stderr)
+        return 2
+    figures = [by_id[fid] for fid in raw["figures"]]
+    head, whole_sweep = raw["commit"], raw.get("whole_sweep", False)
+
+    with tempfile.TemporaryDirectory(prefix="pgdq-render-") as tmp:
+        session = ReplaySession(cfg, raw, Path(tmp), lambda msg: None)
+        parts: list[str] = []
+        sections_seen: set[str] = set()
+        for fig in figures:
+            session.figure_id = fig.id
+            body = fig.run(session)
+            apparatus = apparatus_note([r for r in session.records if r.get("figure") == fig.id])
+            consumers = (
+                "\n**The fold-in must also re-read**, because these repeat this figure's "
+                "numbers or the claim it licenses: "
+                + ", ".join(f"`{q}`" for q in fig.quoted_by)
+                + ".\n"
+                if fig.quoted_by
+                else ""
+            )
+            heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
+            sections_seen.add(fig.section)
+            label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
+            marker = figure_marker(fig.id, None if whole_sweep else head)
+            parts.append(f"{heading}{marker}\n\n{label}{body}\n{apparatus}{consumers}")
+
+    out = run_dir / "tables.md"
+    out.write_text("\n".join(raw["header"]) + "\n" + "\n".join(parts))
+    print(f"re-rendered {out} from {raw_path} — {len(figures)} figure(s), nothing measured")
+    return 0
+
+
 def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     out_root = cfg.out_dir / f"measure-{time.strftime('%Y%m%dT%H%M%S')}"
     out_root.mkdir(parents=True, exist_ok=True)
@@ -5537,7 +5714,19 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 "config": {k: str(v) for k, v in dataclasses.asdict(cfg).items()},
                 "figures": [f.id for f in figures],
                 "failures": failures,
+                # Everything below this line exists so `--render` can rebuild
+                # `tables.md` from this file alone, measuring nothing. A
+                # presentation-only change to a renderer is folded in by
+                # re-rendering the sitting, never by hand-editing the pasted
+                # table -- which is how a table came to disagree with the
+                # harness that would have produced it.
+                "allocator": allocator,
+                "whole_sweep": whole_sweep,
+                "header": header,
+                "input_sizes": recorded_input_sizes(stager, figures),
                 "readings": session.readings,
+                "rss": session.rss,
+                "reported": session.reported,
                 "telemetry": session.telemetry,
                 "governor": {
                     "requested": SWEEP_GOVERNOR if cfg.pin_governor else None,
@@ -5935,6 +6124,23 @@ def cmd_profile() -> int:
     return 0
 
 
+#: Lines `tables.md` carries that address the session folding a table in, never
+#: a reader of `measurements.md`. Pasting a whole section drags them along --
+#: which is what happened when the fold-in note landed under a figure and stood
+#: there as though it were part of the table's own commentary.
+SCAFFOLDING = ("**The fold-in must also re-read**",)
+
+
+def scaffolding_in(text: str) -> list[str]:
+    """Harness scaffolding that reached the document."""
+    return [
+        f"{marker} (line {i})"
+        for i, line in enumerate(text.splitlines(), 1)
+        for marker in SCAFFOLDING
+        if line.startswith(marker)
+    ]
+
+
 def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
     marker, which markers name nothing, where the register's boundary runs,
@@ -5959,6 +6165,7 @@ def cmd_check(doc: Path) -> int:
     missing = [f.id for f in ALL_FIGURES if f.id not in found]
     unpinned = worker_count_problems()
     misspinned = pinned_count_problems()
+    scaffolding = scaffolding_in(text)
 
     print(
         f"{doc.relative_to(REPO)} carries {len(set(found))} of {len(ALL_FIGURES)} figure markers.\n"
@@ -6116,6 +6323,14 @@ def cmd_check(doc: Path) -> int:
         for line in spent_ack:
             print(f"  {line}")
         print()
+    if scaffolding:
+        print(
+            "Harness scaffolding pasted into the document — these lines address the\n"
+            "session folding a table in, not a reader of the document; delete them:"
+        )
+        for line in scaffolding:
+            print(f"  {line}")
+        print()
     print("What else a moved figure invalidates:")
     for fig in ALL_FIGURES:
         print(f"  {fig.id}")
@@ -6124,7 +6339,8 @@ def cmd_check(doc: Path) -> int:
     return (
         1
         if (
-            unknown
+            scaffolding
+            or unknown
             or duplicated
             or dangling
             or unpinned
@@ -6437,6 +6653,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="the whole sweep — what the doc's session stamp means")
     parser.add_argument("--stale", action="store_true", help="say which figures a diff has invalidated")
     parser.add_argument(
+        "--render",
+        metavar="RUN_DIR",
+        help="rebuild a past sitting's tables.md from its raw.json, measuring nothing — "
+        "how a presentation-only renderer change is folded in, instead of by hand",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="reconcile the register against measurements.md's figure markers and its "
@@ -6505,6 +6727,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_check(REPO / "docs/design/measurements.md")
     if args.stale:
         return cmd_stale(args.since)
+    if args.render:
+        # A default `Config`: a render reads no input and runs no container, so
+        # nothing the sitting's own paths or sizes would have decided applies.
+        return render(Config(), Path(args.render))
     if args.verify_additive:
         return cmd_verify_additive(args.since)
 

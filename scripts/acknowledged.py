@@ -147,4 +147,24 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "changes; scripts/test_measure.py's 232 assertions pass unchanged."
         ),
     ),
+    Acknowledged(
+        commit="a30cc43",
+        figures=("parallel-peak-rss",),
+        why=(
+            "16.15's divisor change is entirely inside stream.rs's "
+            "plan_partitions and table_stream_partitions, the query replay's "
+            "own sub-stream planner; parallel-peak-rss's command shape is "
+            "`pgdq parse` (parse-rss-jobs-N), which reaches worker_count "
+            "through leader::scan_region and never calls plan_partitions. "
+            "main.rs's hunk is doc comments only, on both files."
+        ),
+        verified=(
+            "git show a30cc43 -- pgdump_query-cli/src/main.rs "
+            "pgdump_query/src/stream.rs: main.rs's two hunks are inside /// "
+            "comments; stream.rs's hunks are plan_partitions gaining a "
+            "max_source_span parameter and table_stream_partitions passing "
+            "it, plus doc comments — no hunk touches leader.rs or "
+            "scan_region."
+        ),
+    ),
 )

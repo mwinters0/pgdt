@@ -3362,3 +3362,212 @@ class Governor(unittest.TestCase):
             pin.restore()
             pin.restore()
             self.assertEqual(len(written), 2)
+
+
+class SubstreamAnnotation(unittest.TestCase):
+    """The sub-stream count belongs to the two typed-`query` legs and no other.
+
+    It is stated per cell rather than footnoted once, so a cell that carries it
+    is making a claim about *that* leg. The count was once hand-applied to a
+    pasted table and landed one column left of the leg it described — on
+    `.xz`, `parse`, which plans no sub-streams at all — which is why the
+    mapping is asserted here rather than read off the table by eye.
+    """
+
+    def test_only_typed_query_legs_are_annotated(self):
+        annotated = {
+            (inp, family)
+            for inp, family, _ in measure.PARALLEL_LEGS
+            if family == "query-typed"
+        }
+        self.assertEqual(annotated, {("control", "query-typed"), ("control_xz", "query-typed")})
+        for inp, family, label in measure.PARALLEL_LEGS:
+            if family != "query-typed":
+                self.assertNotIn(
+                    "typed `query`", label, f"{label} is not a typed-query leg but reads like one"
+                )
+
+    def test_every_annotated_leg_has_a_cap(self):
+        for inp, family, _ in measure.PARALLEL_LEGS:
+            if family == "query-typed":
+                self.assertIn(inp, measure.QUERY_SUBSTREAM_CAP)
+
+    def test_a_cap_is_never_above_the_largest_job_count(self):
+        # A cap at or above the largest `--jobs` would annotate every row with
+        # its own label and say nothing.
+        for inp, cap in measure.QUERY_SUBSTREAM_CAP.items():
+            self.assertLess(cap, measure.PARALLEL_JOBS[-1], inp)
+
+    def test_the_xz_cap_is_below_the_plain_one(self):
+        # A decoded block is larger than a chunk buffer, so the same budget
+        # affords fewer `.xz` sub-streams. If this ever inverts, the arithmetic
+        # in `QUERY_SUBSTREAM_CAP`'s comment has stopped describing the code.
+        self.assertLess(
+            measure.QUERY_SUBSTREAM_CAP["control_xz"], measure.QUERY_SUBSTREAM_CAP["control"]
+        )
+
+
+class Scaffolding(unittest.TestCase):
+    """`tables.md` carries lines addressed to the session folding a table in.
+
+    Pasting a whole section drags them into `measurements.md`, where they read
+    as part of the table's own commentary. `--check` refuses that.
+    """
+
+    def test_a_clean_document_has_none(self):
+        self.assertEqual(measure.scaffolding_in("# doc\n\nsome prose\n"), [])
+
+    def test_a_pasted_fold_in_note_is_caught(self):
+        found = measure.scaffolding_in(
+            "# doc\n\n**The fold-in must also re-read**, because these repeat it: `x`.\n"
+        )
+        self.assertEqual(len(found), 1)
+        self.assertIn("line 3", found[0])
+
+    def test_the_document_carries_none(self):
+        doc = (measure.REPO / "docs/design/measurements.md").read_text()
+        self.assertEqual(measure.scaffolding_in(doc), [])
+
+    def test_every_scaffolding_marker_is_something_emit_writes(self):
+        # A marker that no longer matches what the harness emits would police
+        # nothing, silently.
+        source = inspect.getsource(measure)
+        for marker in measure.SCAFFOLDING:
+            self.assertIn(marker, source)
+
+
+class Render(unittest.TestCase):
+    """`--render` rebuilds a sitting's tables from its `raw.json`, measuring
+    nothing — which is how a presentation-only renderer change is folded in."""
+
+    def test_a_replay_session_refuses_to_measure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = {"readings": {}, "input_sizes": {}, "runs": []}
+            session = measure.ReplaySession(
+                measure.Config(), raw, Path(tmp), lambda _m: None
+            )
+            spec = measure.RunSpec(
+                binary="pgdq", input="control", command="parse", regime="warm", label="x"
+            )
+            with self.assertRaises(AssertionError):
+                session.take(spec, 0)
+            with self.assertRaises(AssertionError):
+                session.drop_caches()
+            # A sweep is a no-op rather than an error: a renderer calls it, and
+            # the readings it would take are already loaded.
+            self.assertIsNone(session.sweep("f", [spec], 5))
+
+    def test_a_staged_input_is_a_sparse_file_of_the_recorded_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = {"readings": {}, "input_sizes": {"control": 4096}, "runs": []}
+            session = measure.ReplaySession(
+                measure.Config(), raw, Path(tmp), lambda _m: None
+            )
+            path = session.input_path("control", "warm")
+            self.assertEqual(path.stat().st_size, 4096)
+            self.assertEqual(
+                measure.file_size(measure.Config(), path, "control"), 4096
+            )
+
+    def test_an_input_the_sitting_never_sized_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(), {"readings": {}, "input_sizes": {}, "runs": []},
+                Path(tmp), lambda _m: None,
+            )
+            with self.assertRaises(KeyError):
+                session.input_path("control", "warm")
+
+    def test_a_sitting_without_the_recorded_fields_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "raw.json").write_text(json.dumps({"figures": [], "commit": "abc"}))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = measure.render(measure.Config(), run_dir)
+            self.assertEqual(rc, 2)
+            self.assertIn("predates --render", err.getvalue())
+
+    def test_a_missing_raw_json_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = measure.render(measure.Config(), Path(tmp))
+            self.assertEqual(rc, 2)
+
+    def test_a_sitting_records_what_a_render_needs(self):
+        # The fields `render` reads must be the fields `emit` writes. Both
+        # lists live in the source, so a field added to one and not the other
+        # is caught here rather than at the next fold-in.
+        source = inspect.getsource(measure.emit)
+        for field in ("allocator", "whole_sweep", "header", "input_sizes", "rss", "reported"):
+            self.assertIn(f'"{field}"', source, f"emit does not record {field}")
+
+
+class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
+    """The renderer itself, over synthetic readings.
+
+    The classes above assert the *mapping*; this one asserts the table. The
+    defect this pins put the `.xz` sub-stream counts in the `.xz`, `parse`
+    column — every number correct, attached to the wrong leg — which no
+    assertion about `PARALLEL_LEGS` alone would have caught.
+    """
+
+    def _render(self):
+        figure = "parallel-scan-throughput"
+        specs = measure._parallel_specs()
+        raw = {
+            "readings": {s.key(figure): [1.0, 1.0, 1.0, 1.0, 1.0] for s in specs},
+            "input_sizes": {"control": 3221227790, "control_xz": 591190020},
+            "runs": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(), raw, Path(tmp), lambda _m: None
+            )
+            session.figure_id = figure
+            return measure.run_parallel_scan_throughput(session)
+
+    def test_the_annotation_is_in_the_typed_query_columns_only(self):
+        body = self._render()
+        rows = [r for r in body.splitlines() if r.startswith("| ")]
+        header = [c.strip() for c in rows[0].strip("|").split("|")]
+        typed = {i for i, c in enumerate(header) if "typed `query`" in c}
+        self.assertEqual(len(typed), 2, header)
+
+        annotated_columns = set()
+        for row in rows[2:]:  # skip header and the |---| separator
+            cells = [c.strip() for c in row.strip("|").split("|")]
+            for i, cell in enumerate(cells):
+                if "sub-stream" in cell:
+                    annotated_columns.add(i)
+        self.assertEqual(
+            annotated_columns,
+            typed,
+            "the sub-stream count must appear in the typed-`query` columns and no others",
+        )
+
+    def test_rows_at_or_below_four_carry_no_annotation(self):
+        body = self._render()
+        for row in body.splitlines():
+            if row.startswith("| 1 ") or row.startswith("| 2 ") or row.startswith("| 4 "):
+                self.assertNotIn("sub-stream", row)
+
+    def test_an_annotated_cell_states_the_lesser_of_jobs_and_the_cap(self):
+        body = self._render()
+        header = None
+        for row in body.splitlines():
+            if not row.startswith("| "):
+                continue
+            cells = [c.strip() for c in row.strip("|").split("|")]
+            if header is None:
+                header = cells
+                continue
+            if cells[0].startswith("-") or not cells[0][0].isdigit():
+                continue
+            jobs = int(cells[0].split()[0])
+            for i, cell in enumerate(cells):
+                if "sub-stream" in cell:
+                    inp = "control_xz" if "`.xz`" in header[i] else "control"
+                    want = min(jobs, measure.QUERY_SUBSTREAM_CAP[inp])
+                    self.assertIn(f"· {want} sub-stream", cell)
