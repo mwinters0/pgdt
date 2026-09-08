@@ -828,8 +828,34 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
     Ok(())
 }
 
+/// Wire the library's `tracing` facade to stderr — on by default, uniformly,
+/// for `parse`, `info` and `query` alike (`docs/design/roadmap-P16-parallel-scan.md`,
+/// "A parse has phases now, so the CLI says which one it is in"). A
+/// per-command default would be a rule the manual has to explain, and gating
+/// on whether stderr is a terminal makes the output depend on invocation
+/// context — which is exactly the case that left `16.14`'s first attempt with
+/// nothing but `dmesg` to diagnose from.
+///
+/// One level, `INFO`, and no way yet to raise or lower it — `-vvv` and
+/// `--quiet` are deferred and unallocated. RFC3339 timestamps
+/// (`UtcTime::rfc_3339`) are the convention the koji orchestrator logs
+/// already use, so a `pgdq` line correlates directly with one from either.
+/// No ANSI color: these lines are as likely to land in a redirected log file
+/// as a terminal, and `query` writes row data to stdout, so stderr is the
+/// only place this can go without corrupting a pipe.
+fn init_status_output() {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_target(false)
+        .with_max_level(tracing::Level::INFO)
+        .with_timer(tracing_subscriber::fmt::time::UtcTime::rfc_3339())
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_status_output();
     let cli = Cli::parse();
     match cli.command {
         Command::Parse {

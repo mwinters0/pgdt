@@ -23,6 +23,12 @@ serde = { version = "1.0.229", features = ["derive"] }
 simdutf8 = "0.1.5"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync"] }
+# The facade only — no subscriber, no output policy. The library names the
+# phases worth watching (the seek-table walk, the scan's start and
+# completion); the CLI decides whether and how to render them
+# (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now, so the
+# CLI says which one it is in").
+tracing = "0.1"
 # A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
 # workspace, not published (`docs/design/architecture.md`, "The compressed
 # source"). The default features (`liblzma`, `fast-checks`) are the manifest's

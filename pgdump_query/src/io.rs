@@ -402,6 +402,26 @@ impl Parallelism {
     }
 }
 
+/// The byte budget actually governing reads under `p`, worded for a status
+/// line rather than for code — [`Parallelism::memory_bytes`] itself, printed
+/// bare, renders [`Parallelism::Serial`] as `None`, which states nothing a
+/// reader can act on. Deliberately a free function rather than a method on
+/// [`Parallelism`]: that type's own `memory_bytes` exists precisely to keep
+/// "the caller said nothing" apart from "the caller said 64 MiB" for a source
+/// that must not have an already-announced budget silently overwritten, and a
+/// status line has no such source to protect — it wants the number actually
+/// in force either way, worded honestly about which one it got: the stated
+/// byte count, or [`DEFAULT_MEMORY_BUDGET`] — what every pool falls back to —
+/// marked `(default)` since nothing was asked for it
+/// (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now, so
+/// the CLI says which one it is in").
+pub(crate) fn memory_budget_display(p: Parallelism) -> String {
+    match p.memory_bytes() {
+        Some(bytes) => bytes.to_string(),
+        None => format!("{DEFAULT_MEMORY_BUDGET} (default)"),
+    }
+}
+
 /// What a source may hold in pooled buffers when the caller has stated no
 /// budget of its own — [`Parallelism::Serial`]'s number, and the CLI's default
 /// for `--parallel-memory`.
@@ -1191,10 +1211,23 @@ impl XzSource {
     /// library-level convenience deliberately outside the trait.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        // The walk this names is the one [`XzSource::with_table`] exists to
+        // skip, so only this constructor emits it — a cached table costs no
+        // footer read and earns no line
+        // (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases
+        // now, so the CLI says which one it is in").
+        tracing::info!(path = %path.display(), "seek table build started");
         let file = std::fs::File::open(&path)?;
         let stat_file = Arc::new(file.try_clone()?);
         let data_file = Arc::new(file.try_clone()?);
         let reader = xz_seek::Reader::new(file)?;
+        let table = reader.index();
+        tracing::info!(
+            path = %path.display(),
+            streams = table.stream_count(),
+            blocks = table.block_count(),
+            "seek table build complete",
+        );
         Ok(Self::assembled(path, stat_file, data_file, reader))
     }
 

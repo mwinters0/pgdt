@@ -277,6 +277,60 @@ file is already faster than any disk we have measured — on that shape the disk
 is what you are waiting for, and raising `--jobs` moves a number that was not
 the bottleneck.
 
+### Status on stderr
+
+`parse`, `info` and `query` all write a line to stderr the moment there is
+something worth watching a long run for: an `.xz` file's seek-table walk, and
+each of the two passes a `parse` (or a `query`'s mapping pass) makes over the
+file — a bounded prepass that reads only far enough to find the header
+metadata, then the real scan. Every line opens with an RFC3339 timestamp, so
+it lines up with anything else read off the same clock — a `dmesg` entry, a
+cgroup sample, an orchestrator's own log:
+
+```
+$ pgdq parse --source koji.dump.xz
+2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
+2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
+2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=1 memory_bytes=67108864 (default)
+2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
+2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=1 memory_bytes=67108864 (default)
+2026-07-23T14:47:52.317660814Z  INFO scan complete bytes=784019857152 reached_eof=true
+```
+
+**The two passes are named apart deliberately.** `preamble scan` is the
+bounded prepass that stops at the first table's data — it is what
+`--preamble-only` runs on its own, and what an ordinary `parse` or `query`
+runs first whenever the header metadata is not already cached. `scan` is the
+real read, the one that can run for an hour. A single uninterrupted `parse`
+prints both, in that order: seeing `preamble scan complete` immediately
+followed by a `scan started` naming a nonzero `resumed_from` is not a resume —
+it is the ordinary shape of a cold run, the second pass picking up where the
+first left off. A **genuine** resume looks different: the header metadata is
+already in the cache, so the preamble pass does not run at all, and the log
+opens straight on `scan started` naming the byte the interrupted run reached.
+
+The seek-table lines only appear on a fresh `.xz` file — the walk they report
+is what a cache's persisted table exists to skip (above, "`.xz` files are read
+directly"). `scan started` names the arrangement `--jobs`/`--parallel-memory`
+resolved to, once, so a log says what produced everything that follows it —
+the byte budget actually governing reads, whether or not you asked for one
+(`memory_bytes=67108864 (default)` above is the 64 MiB every pool falls back
+to when nothing was stated; state `--parallel-memory` and the number changes
+with no `(default)` beside it). A query's mapping pass may print `scan
+complete` at the offset it stopped rather than the file's end, once its
+target table is settled (`reached_eof=false`). Running `parse` against a file
+that is already fully cached is not a scan and prints neither pass, matching
+"costs nothing and says so" above.
+
+**These times are diagnostics, never figures.** This project admits a
+performance number only as a measurement taken under its own stated apparatus
+(`docs/design/measurements.md`); a duration logged here is whatever your
+machine and disk happened to be doing at the time, not something to quote as
+a benchmark.
+
+There is no flag yet to raise, lower, or silence this output — a `-vvv` and a
+`--quiet` are on the list, unallocated.
+
 ## `info`: reporting what is known
 
 ```sh

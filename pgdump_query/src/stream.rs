@@ -492,6 +492,23 @@ async fn map_forward(
         return Ok(MapStop::Reached);
     }
 
+    // The two checks above are "nothing to do" (an already-complete cache, or
+    // a query whose target the cache already settles), which is not a scan
+    // and earns no line — `pgdq parse` against an already-cached file already
+    // says so on its own (`docs/manual/dump-inspection.md`, "`parse`: reading
+    // the dump"). Past here a real scan is about to run, at whatever
+    // arrangement `--jobs` and the stated budget resolved to
+    // (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now,
+    // so the CLI says which one it is in").
+    tracing::info!(
+        bytes = size,
+        resumed_from = index.scanned_through,
+        chunk_size = scan_options.chunk_size,
+        jobs = scan_options.parallelism.jobs(),
+        memory_bytes = %crate::io::memory_budget_display(scan_options.parallelism),
+        "scan started",
+    );
+
     let seg_start = index.scanned_through;
     let prefix: Vec<Span> = index.spans.iter().filter(|s| s.end <= seg_start).cloned().collect();
     // The prefix tiles `[0, seg_start)`, so its last span is the one ending
@@ -670,7 +687,17 @@ async fn map_forward(
                                         resume_at = Some(watermark);
                                         break;
                                     }
-                                    BlockClose::Settled => return Ok(MapStop::Reached),
+                                    BlockClose::Settled => {
+                                        // A query stopping at its own target,
+                                        // not at EOF — [`map_forward`]'s other
+                                        // "scan complete" fires only there.
+                                        tracing::info!(
+                                            bytes = watermark,
+                                            reached_eof = false,
+                                            "scan complete",
+                                        );
+                                        return Ok(MapStop::Reached);
+                                    }
                                     BlockClose::Interrupted => return Ok(MapStop::Interrupted),
                                 }
                             }
@@ -695,6 +722,7 @@ async fn map_forward(
                     Event::Row(row) => builder.on_row(row.raw),
                     Event::CopyEnd(end) => {
                         let targets = std::mem::take(&mut open_block_targets);
+                        let end_offset = end.end_offset;
                         match close_copy_block(
                             source,
                             scan_options,
@@ -712,7 +740,14 @@ async fn map_forward(
                         .await?
                         {
                             BlockClose::Continue => {}
-                            BlockClose::Settled => return Ok(MapStop::Reached),
+                            BlockClose::Settled => {
+                                tracing::info!(
+                                    bytes = end_offset,
+                                    reached_eof = false,
+                                    "scan complete",
+                                );
+                                return Ok(MapStop::Reached);
+                            }
                             BlockClose::Interrupted => return Ok(MapStop::Interrupted),
                         }
                     }
@@ -766,6 +801,11 @@ async fn map_forward(
     index.diagnostics = tiling_diagnostics(&index.spans, size);
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     cache.save(source, index).await?;
+    // The true end of the file, as opposed to the two early
+    // `Ok(MapStop::Reached)`s above that stop a query at its settled target —
+    // this is what a `pgdq parse`, which passes no target, always reaches,
+    // and it is the line that tells a long scan's silence apart from a hang.
+    tracing::info!(bytes = size, reached_eof = true, "scan complete");
     Ok(MapStop::Reached)
 }
 

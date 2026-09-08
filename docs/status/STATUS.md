@@ -210,6 +210,17 @@ So it is unreachable from every registered command shape, which is reachability
 — the one mechanical oracle that settles an executable diff
 ([`history/2026-09-08.md`](history/2026-09-08.md), "`M70`: the block pool is a
 retaining holder, so nothing grants it a wait").
+`16.19` moved `io.rs`, `scan.rs`, `stream.rs` and `main.rs` — all already red on
+every figure declaring them — and, like the CLI merge and the mapping leader
+before it, **changes what every registered command shape executes**: `main()`
+now installs a `tracing_subscriber` at startup, and `XzSource::open`'s footer
+walk and `map_forward`/`scan`'s own start and completion each emit one
+`tracing::info!`. Reachability cannot excuse it, since every registered shape
+runs through `main()` and reaches at least the scan-completion site, so it is
+red on its own terms; what can be said without an oracle is that the new lines
+are a fixed few per invocation rather than one per row or per block, and read
+or write nothing the dump itself did not already require
+([`../design/roadmap-P16.19-status-output-notes.md`](../design/roadmap-P16.19-status-output-notes.md)).
 **One published number actually moves**, the
 `chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
 the buffer pool; that row is called out where it stands. A stale figure obliges
@@ -725,14 +736,34 @@ are worth, and the orderings that do bind are named in
       phases, and nothing says which one it is in"); `16.17` is spent, having
       named what became `16.10.2` for a day. Notes:
       [`../design/roadmap-P16.18-detail-rename-notes.md`](../design/roadmap-P16.18-detail-rename-notes.md)
-- [ ] **16.19** The CLI emits status — `tracing` in the library, a subscriber
-      in the CLI, RFC3339-stamped lines on stderr, on by default for all three
-      commands. Names the phases this phase created: the seek-table build, from
-      `io.rs` rather than the read-only vendored decoder, and the scan's start
-      and completion, with `--jobs` and the stated budget printed once so a log
-      says what arrangement produced it. Its durations are diagnostics and
-      never figures. `-vvv` and `--quiet` are deferred and unallocated. Runs
-      after `16.18`.
+- [x] **16.19** The CLI emits status — `tracing` in the library, a subscriber
+      in the CLI, RFC3339-stamped lines on stderr, on by default for `parse`,
+      `info` and `query` alike. Names the phases this phase created:
+      `XzSource::open` (`io.rs`) emits `seek table build started`/`complete`
+      around the footer walk (`XzSource::with_table` skips it and earns no
+      line); `crate::scan::scan` — the bounded loop behind `--preamble-only`,
+      and behind an ordinary `parse`/`query`'s own internal prepass — emits
+      `preamble scan started`/`preamble scan complete`; `stream::map_forward`
+      — the incremental loop behind `parse` and `query`'s mapping pass — emits
+      `scan started`/`scan complete`, naming `--jobs` and the stated memory
+      budget once so a log says what arrangement produced everything after it.
+      **The two loops were first named identically**, which made an ordinary
+      uninterrupted `parse` print what read as an interrupted-and-resumed one;
+      caught by running the binary rather than by the tests, which asserted
+      lines existed rather than that they were distinguishable, and fixed by
+      naming the preamble pass apart — a fix that also keeps a *genuine*
+      resume recognisable, since it alone skips the preamble pass entirely.
+      **The stated memory budget was first printed as `Option`'s own `None`/
+      `Some(N)`**, also caught by running the binary; `io::memory_budget_display`
+      now states the byte count actually in force either way, marked
+      `(default)` where none was asked for. `M72` landed first, so `pgdq
+      query`'s own `PlanNote` announcement (already on stderr, via
+      `eprintln!`, not `tracing`) is not duplicated here — the two are
+      separate channels, per the library's own diagnostics/plan-notes split.
+      Its durations are diagnostics and never figures, stated once beside the
+      mechanism rather than left to be rediscovered by whoever quotes one.
+      `-vvv` and `--quiet` are deferred and unallocated. Notes:
+      [`../design/roadmap-P16.19-status-output-notes.md`](../design/roadmap-P16.19-status-output-notes.md)
 
 ## Known deficiencies
 

@@ -7248,6 +7248,106 @@ wedges cannot hold the process. `query` shares the loop and the throttle; a
 because rows from the blocks a stopped mapping pass happened to reach are a
 prefix of the answer with nothing saying so.
 
+### Status output
+
+`parse` was one span of work until compressed input and parallel scanning gave
+it three silent phases: an `.xz` source walks its stream footers before the
+first block is scanned — 85 s on the koji download — then a bounded prepass
+reads only far enough to find the header metadata, then the real scan runs,
+sometimes for an hour. A user watching a long run cannot tell any phase from a
+hang, and neither can a session reading the log afterwards, which is how
+`16.14`'s first attempt was diagnosed from `dmesg` rather than from anything
+`pgdq` printed. `16.19` names all three: `XzSource::open` (`io.rs`) emits
+`seek table build started`/`complete` around the footer walk —
+`XzSource::with_table` skips the walk and earns no line, since a persisted
+table exists precisely to make that so (above, "The compressed source") —
+`crate::scan::scan` (the whole-file, non-resumable loop behind `build_index`,
+`build_map` and the bounded `scan_preamble`) emits `preamble scan
+started`/`preamble scan complete`, and `stream::map_forward` (the incremental
+loop behind both `parse` and `query`'s mapping pass) emits `scan
+started`/`scan complete`. `crate::scan::scan`'s only production caller is
+`scan_preamble` — `build_index`/`build_map` never run under a shipped command,
+existing only as the "eager, whole-file producer" tests compare
+`map_forward`'s incremental answer against (above, "`parse` resumes, and
+saves as it goes") — but `scan_preamble` is real, CLI-visible output: it is
+what `pgdq parse --preamble-only` runs on its own, and what an ordinary
+`parse` or `query` runs first whenever the header metadata is not already
+cached, ahead of `map_forward`.
+
+**The two loops do not share a message, because a single uninterrupted `parse`
+runs both, in sequence, and once did.** The first cut of this slice named both
+"scan started"/"scan complete", so one cold run printed a `scan complete` with
+`reached_eof=false` immediately followed by a second `scan started` naming a
+nonzero `resumed_from` — indistinguishable, to a reader, from an interrupted
+scan that got resumed, which is the exact confusion this slice exists to
+prevent. Caught by running the binary rather than by the tests, which asserted
+that lines existed rather than that a reader could tell them apart. Naming the
+preamble pass `preamble scan` and leaving `map_forward`'s alone as `scan`
+fixes it two ways at once: the ordinary cold-run sequence is legible as two
+different things happening once each, and a **genuine** resume is still
+recognisable as one — `stream::map_file`'s own gate only runs the preamble
+pass when `resumed_from == 0`, so a resumed interrupted scan skips it
+entirely and its log opens straight on `scan started` naming the byte the
+prior run reached, with no preceding preamble pair to confuse it with a cold
+start.
+
+`scan started` names the arrangement once: `--jobs` and the stated memory
+budget, in the library's own vocabulary
+([`Parallelism::jobs`]/[`io::memory_budget_display`]) rather than the CLI's
+flag names, the same convention `PlanNote::message` set. `scan complete`
+carries `reached_eof`, since a query's mapping pass may stop at its settled
+target well short of the file's end — that is still the call's own
+completion, just not at EOF, and both are worth telling a reader apart from a
+scan that is still running. The two checks `map_forward` opens with (a cache
+that already covers the file; a target the cache already settles) are "nothing
+to do" and earn no line — a `pgdq parse` against an already-cached file already
+says so on stdout (see "`parse` resumes, and saves as it goes", above).
+
+**The memory budget is printed as a quantity, never as `Option`'s own
+spelling.** `Parallelism::memory_bytes` answers `None` for
+[`Parallelism::Serial`] by design — "the caller said nothing" and "the caller
+said 64 MiB" are different facts a source with an already-announced budget
+must tell apart ("Execution model and API surface", above) — but a status
+line has no such source to protect, and printing that `None` bare left a
+reader unable to
+say what bound actually applied, the first cut of this slice having done
+exactly that. `io::memory_budget_display` is the free function a status line
+calls instead: the stated byte count where the caller gave one, or
+[`DEFAULT_MEMORY_BUDGET`] — what every pool falls back to — marked `(default)`
+where they did not, so the line always reads as a number and never as a claim
+that a caller asked for exactly 64 MiB when nobody did.
+
+**The library carries the facade and no output policy; the CLI carries the
+subscriber.** `tracing::info!` calls live at the three sites above; nothing in
+`pgdump_query` decides whether, where, or how they are rendered. The CLI wires
+`tracing_subscriber::fmt` to stderr once at startup, uniformly for `parse`,
+`info` and `query` alike — a per-command default is a rule the manual would
+have to explain, and gating on whether stderr is a terminal makes the output
+depend on invocation context, which is exactly the case that left `16.14`'s
+first attempt with nothing to read. `query` writes row data to stdout, so
+stderr is the only stream this can use without corrupting a pipe. Lines carry
+an **absolute RFC3339 timestamp** (`UtcTime::rfc_3339`), the convention the
+koji orchestrator logs already use, so a `pgdq` line correlates directly with
+a `dmesg` entry or a cgroup sample — elapsed-since-start is a structured field
+a future slice can add, not a prefix now. One level, `INFO`, is on by default
+and there is no flag yet to change it: `-vvv` and `--quiet` are deferred and
+unallocated.
+
+*Rejected: a progress-sink trait of the library's own.* It hand-rolls what
+`tracing` already does, and turns the structured output this exists to enable
+into a rewrite rather than a subscriber swap.
+
+*Rejected: emitting phase transitions with no durations.* Nothing here can be
+misquoted as a benchmark if it says nothing, but it also gives up the
+per-run timing that is half of why this exists, leaving a reader subtracting
+two timestamps by hand — which is quoting a duration with extra steps. Instead
+the rule is stated once, beside the mechanism, before the first number is
+printed: **these times are diagnostics, never figures.** This project admits a
+performance number only as a registered figure with a stated apparatus
+([`measurements.md`](measurements.md), "koji full scan" is the sibling
+disqualification), so no document may cite a logged duration as a measurement
+and nothing in the register may `depends` on one.
+
 ### Coverage is stated once, at the top
 
 `Scan completion: 76% (12345 bytes)` heads every `info` listing — partial or

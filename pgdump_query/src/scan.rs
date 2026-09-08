@@ -562,6 +562,24 @@ where
     F: FnMut(Event<'_>) -> ControlFlow<()>,
 {
     let size = source.size().await?;
+    // Named "preamble scan", not "scan": this function's only real caller is
+    // `index::scan_preamble` (`build_index`/`build_map` run it too, but
+    // neither is reachable from a shipped command — see their own docs), and
+    // `stream::map_forward` — the loop a `pgdq parse` or `query`'s mapping
+    // pass actually spends most of its time in — announces itself as "scan".
+    // A single, uninterrupted `parse` runs both in sequence: the preamble
+    // scan first, then the real one from wherever the preamble left off. Two
+    // passes sharing one name would make that ordinary sequence unreadable as
+    // anything but an interrupted-and-resumed run
+    // (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now,
+    // so the CLI says which one it is in").
+    tracing::info!(
+        bytes = size,
+        chunk_size = options.chunk_size,
+        jobs = options.parallelism.jobs(),
+        memory_bytes = %crate::io::memory_budget_display(options.parallelism),
+        "preamble scan started",
+    );
     // The chunk length this loop will ask for until EOF, announced once so a
     // buffer-recycling source can keep one of that size whatever it is
     // (`ByteRangeSource::hint_read_size`), and the budget the caller allows it
@@ -597,6 +615,10 @@ where
             let (span, span_eof) = carry.span(pass, &chunk, eof);
             while let Some(event) = scanner.next_event(span, span_eof)? {
                 if on_event(event).is_break() {
+                    // The ordinary outcome for `scan_preamble`, which breaks
+                    // here at the first `COPY` header — still this call's
+                    // completion, just not at EOF, which `reached_eof` says.
+                    tracing::info!(bytes = read_pos, reached_eof = false, "preamble scan complete");
                     return Ok(());
                 }
             }
@@ -604,6 +626,7 @@ where
         }
 
         if eof {
+            tracing::info!(bytes = read_pos, reached_eof = true, "preamble scan complete");
             return Ok(());
         }
         if carry.len() > options.max_line_bytes {
