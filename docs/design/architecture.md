@@ -347,7 +347,15 @@ measurements; the evidence is
 [`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
 16.14 OOM is glibc's arenas, and a CPU limit is not the remedy". Whether the
 stated number ought to bound the *process* rather than the pools is `16.15`'s
-question, not this paragraph's.
+question, not this paragraph's. *Rejected:* capping the arenas from inside the
+binary, with a `mallopt(M_ARENA_MAX, …)` beside the `#[global_allocator]`.
+It would close the ~200 MiB gap without an operator setting anything, and it is
+the binary's decision to make rather than the library's — but it changes the
+apparatus of every registered figure, and capping arenas on a many-core host is
+a plausible contention regression on the parallel shapes that motivate it. So
+it is wanted, unscheduled and owed a figure rather than declined
+([`roadmap.md`](roadmap.md), "Future — wanted, unscheduled"); what must not
+happen is that it is adopted in passing as a fix to the property above.
 
 **The local backend pools its read buffers, and the trait shape is why.**
 `read_range` returns owned `Bytes` because `get_range` does, so the obvious

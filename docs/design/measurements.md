@@ -2702,6 +2702,21 @@ they were taken back to back with no quiet-machine gate and no repetition:
   is charged a 784 GB one above. The sampled `anon` and `VmHWM` columns are
   what to read.
 
+*Rejected:* running the legs untuned, in a cgroup raised far enough to hold an
+uncapped arena set. It is the reading of the apparatus rule that says a 512 MB
+cap at `--jobs 4` is a configuration pgdq must fit with nothing set — a
+requirement no spec states — and it buys nothing here on two counts. What this
+run checks is **determinism**, and the arena count cannot change a cache byte,
+so both knobs are orthogonal to its result: `MALLOC_ARENA_MAX` bounds what
+glibc retains, and `--cpus 4` fixes the thread count for the whole scan, which
+a byte-identical-cache claim is indifferent to. And the untuned number is
+already measured five ways, at a 2 GiB limit so that nothing was killed —
+536 MiB at 24 arenas, 476 at 8, 328 at 1
+([`architecture.md`](architecture.md), "Execution model and API surface"). A
+koji-scale re-take would reproduce the 536 MiB row and would *still* be
+disqualified at the number, a one-rep resident-set reading off an unquieted
+machine being no more a figure with the cgroup raised than with it tuned.
+
 The orchestrator does compare the two caches itself — `cmp`, with the verdict
 in the log — which is the one place this run is stricter than the wrap script
 above. It still only prints the expected counts beside each leg's tail, and it

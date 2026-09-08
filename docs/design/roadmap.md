@@ -935,3 +935,27 @@ this section when it acquires a phase number, not when it acquires a design.
   rather than re-deriving them. Deliberately deferred: it is an optimization
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
+
+- **pgdq caps its own glibc arenas, so the stated budget bounds the process.**
+  Under a memory cap the larger term is not what the pools hold but what
+  glibc's per-thread arenas retain: ~536 MiB anonymous resident against
+  ~328 MiB at `MALLOC_ARENA_MAX=2` on the same scan
+  ([`architecture.md`](architecture.md), "Execution model and API surface").
+  The remedy an operator has today is the environment variable, which is why
+  that is a property rather than a deficiency; the remedy pgdq could have is a
+  `mallopt(M_ARENA_MAX, …)` in `pgdump_query-cli/src/alloc.rs` behind a
+  `target_env = "gnu"` gate, which is the same class of decision as the
+  `#[global_allocator]` already there — the binary's, never the library's
+  ([`architecture.md`](architecture.md), "The allocator is the binary's
+  choice"). Sizing the tokio runtime from `--jobs` instead is the lever it
+  looks like and is not: `--cpus 4` cuts the runtime to four workers and the
+  arenas to eight and still measures ~476 MiB, because what an arena retains is
+  not proportional to how many there are.
+
+  **Two costs are why this is here and not a slice.** It changes the apparatus
+  of every registered figure, so adopting it is a full sweep and not a fix; and
+  arenas exist to cut allocator lock contention, so capping them on a many-core
+  host is a plausible regression on exactly the parallel shapes that motivate
+  it — it needs a figure, not an assertion. It is therefore a decision
+  `architecture.md` currently records the other way, which is what puts it
+  outside the out-of-band ledger's admission rule.

@@ -794,15 +794,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`16.14`'s container now sets `MALLOC_ARENA_MAX=2`, which makes the run fit
-  by configuring the allocator rather than by fixing what pgdq holds.** The
-  512 MB cgroup is apparatus (`CLAUDE.md`, "Long-running processes") and so is
-  the allocator (`measurements.md`, "The apparatus"), so tuning one of them to
-  pass is a call worth seeing. It was made because `16.14` checks determinism
-  rather than throughput — the arena count cannot change a cache byte — and
-  because the alternative reading, that a 512 MB cgroup at `--jobs 4` is a
-  configuration pgdq must fit untuned, is a claim nothing in the spec makes.
-  What would change if reconsidered: the run is re-taken without the setting
-  and the cgroup is raised instead, and the untuned figure (~536 MiB anon for a
-  256 MiB stated budget) becomes something `16.15` is expected to bring down
-  rather than a property the manual documents.
+*(None open.)*
