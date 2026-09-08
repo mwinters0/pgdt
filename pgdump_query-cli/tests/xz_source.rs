@@ -158,7 +158,7 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
     // And the warning itself is D2's, in its rendered text form — the
     // human-readable side of the same diagnostic, naming the cause and the
     // remedy (`docs/design/architecture.md`, "The compressed source").
-    let text = stdout_of(&run(&["info", "--source", xz_path.to_str().unwrap(), "--verbose"]));
+    let text = stdout_of(&run(&["info", "--source", xz_path.to_str().unwrap(), "--detail"]));
     assert!(text.contains("no seek structure"), "{text}");
     assert!(text.contains("xz -T0"), "{text}");
     assert!(text.contains("--block-size=<size>"), "{text}");

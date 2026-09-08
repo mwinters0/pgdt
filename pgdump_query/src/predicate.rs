@@ -1963,7 +1963,7 @@ fn accepted_form(kind: &CompareKind) -> String {
 /// itself off screen.
 ///
 /// **The overflow clause has somewhere to send the reader**: `pgdq info
-/// --verbose` prints every label of an enum column *and* lists every
+/// --detail` prints every label of an enum column *and* lists every
 /// user-defined type with its labels, both uncapped
 /// (`docs/design/architecture.md`, "CLI surface"). A terse rendering is
 /// licensed by a complete one existing where the user can reach it.
@@ -1990,7 +1990,7 @@ fn enum_accepted_form(labels: &[String]) -> String {
     match labels.len() - shown {
         0 => format!("as one of the type's declared labels: {list}"),
         more => format!(
-            "as one of the type's declared labels: {list}, and {more} more; see `info --verbose`"
+            "as one of the type's declared labels: {list}, and {more} more; see `info --detail`"
         ),
     }
 }
@@ -4018,7 +4018,7 @@ mod tests {
         assert!(clause.contains("'l0'"), "{clause}");
         assert!(clause.contains(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
         assert!(!clause.contains(&format!("'l{ENUM_LABELS_SHOWN}'")), "{clause}");
-        assert!(clause.ends_with("and 3 more; see `info --verbose`"), "{clause}");
+        assert!(clause.ends_with("and 3 more; see `info --detail`"), "{clause}");
     }
 
     /// The `numeric(p,s)` clause branches on the sign of the scale, because

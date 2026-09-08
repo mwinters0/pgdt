@@ -2720,7 +2720,7 @@ The orchestrator does compare the two caches itself — `cmp`, with the verdict
 in the log — which is the one place this run is stricter than the wrap script
 above. It still only prints the expected counts beside each leg's tail, and it
 does not read the byte total back at all; that is `pgdq info --dqcache <cache>
---verbose` afterwards on the host.
+--detail` afterwards on the host.
 
 ## The preamble prepass is bounded by the schema, not by the dump
 

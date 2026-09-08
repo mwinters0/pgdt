@@ -5854,7 +5854,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             # keep the trailing line-continuation: the mounts run straight on
             # into the image name below.
             mounts.rstrip("\n"),
-            f"  {cfg.image} /pgdq info --dqcache /out/{name}-wrap.dqcache --verbose \\",
+            f"  {cfg.image} /pgdq info --dqcache /out/{name}-wrap.dqcache --detail \\",
             "  | grep -c 'not declared\\|metadata not scanned'",
             "",
             "# leg 2 — resume the identical command, then compare to a full run's cache",

@@ -338,12 +338,12 @@ public.events (98765 rows)
   row count and column list. This is the view to read when you're deciding
   what to query.
 
-Add `--verbose` to also see each block's byte offsets and, per column, what
+Add `--detail` to also see each block's byte offsets and, per column, what
 it became: the Arrow type it resolved to, or — for a column that came back as
 a string — why (see [type handling](type-handling.md) for what "resolved"
 means and why a column sometimes isn't).
 
-`--verbose` also turns the `user-defined types` count into a listing of the
+`--detail` also turns the `user-defined types` count into a listing of the
 types themselves, one line each, in the order the dump declares them:
 
 ```
@@ -488,7 +488,7 @@ checks on every scan, not just a description of the output. Reach for
 `--map` when you want to see what's actually in a dump beyond its tables (an
 unusually large comment block, a publication you didn't know about, where a
 particular index sits) or to narrow down where something looks off before
-reaching for `--verbose`'s finer detail on one specific block. On a partial
+reaching for `--detail`'s finer detail on one specific block. On a partial
 cache, the bytes past the frontier show up as a single `unscanned` entry.
 
 A dump run with `--inserts`/`--column-inserts` shows a table's data as an
@@ -514,7 +514,7 @@ Alongside the file map it carries two things the text views state differently:
 - **Coverage as components**, not as the rendered percentage —
   `scanned_through` and `total_size`, so you compute whatever ratio you want.
 - **`resolution`**, one record per `COPY` block, with the per-column outcome
-  `--verbose` renders as prose. Each column carries its name, the declared
+  `--detail` renders as prose. Each column carries its name, the declared
   PostgreSQL type, the outcome as a token (`mapped`, `varying_array_shape`,
   `metadata_not_scanned`, …), the Arrow type, and the nested plan. This is the
   only machine-readable form of "why is this column a string".
@@ -535,7 +535,7 @@ and no attempt to make the shape convenient — field names, nesting, and what's
 included can all change as the underlying code does. Reach for it when you need
 something the text views don't show (or don't show in a shape you can parse),
 and expect to adjust your `jq`/script when you upgrade pgdq. `--json` can't be
-combined with `--verbose` or `--map`, since the full object already carries
+combined with `--detail` or `--map`, since the full object already carries
 everything those two format for a human.
 
 ## Inspecting a cache with the dump gone: no `--source`

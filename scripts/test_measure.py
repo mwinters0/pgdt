@@ -2669,7 +2669,7 @@ class KojiRecipe(unittest.TestCase):
 
     def test_the_wrap_recipe_stops_reports_resumes_and_compares(self):
         wrap = self._recipe(wrap=True)
-        for fragment in ("nerdctl stop", "info --dqcache", "--verbose", "cmp "):
+        for fragment in ("nerdctl stop", "info --dqcache", "--detail", "cmp "):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, wrap)
 

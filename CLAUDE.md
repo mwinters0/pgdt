@@ -14,7 +14,7 @@ cargo insta review                                # accept changed snapshots
 cargo clippy --workspace
 cargo fmt --check                                 # config: rustfmt.toml
 cargo run -p pgdump_query-cli -- parse --source <file>       # binary is `pgdq`; the only scanner, resumes
-cargo run -p pgdump_query-cli -- info --source <file> [--verbose]   # never scans; reads the cache
+cargo run -p pgdump_query-cli -- info --source <file> [--detail]   # never scans; reads the cache
 cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no dump file needed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
@@ -148,7 +148,7 @@ it directly: `sudo nerdctl kill -s SIGTERM <name>` (verified: exit 143).
 
 **A wrap-scale verification run is stop-report-resume-compare**, in one
 detached script: start the parse, signal it partway, report the interrupted
-cache (`pgdq info --dqcache <path> --verbose`) and check it comes back typed,
+cache (`pgdq info --dqcache <path> --detail`) and check it comes back typed,
 then resume the same command to completion and compare block/row/byte counts
 against the previous full run. That sequence is what buys the interrupt guard's
 only real-scale test — a signal inside a hundred-gigabyte block, against a cache

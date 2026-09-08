@@ -395,7 +395,7 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 // Machine-readable resolution
 // ---------------------------------------------------------------------------
 
-/// The indented lines `info --verbose` prints under each block, grouped by
+/// The indented lines `info --detail` prints under each block, grouped by
 /// block in file order — minus the four byte-offset lines and the column
 /// summary, which are not per-column resolution.
 ///
@@ -405,10 +405,10 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 /// `an_enum_columns_declared_labels_are_listed_beneath_it` instead of by the
 /// cross-check below.
 ///
-/// The type listing `--verbose` prints under `user-defined types:` is indented
+/// The type listing `--detail` prints under `user-defined types:` is indented
 /// the same way and is not per-column resolution, but it sits in the metadata
 /// header above every block line, so no block is open to collect it.
-fn verbose_column_lines(text: &str) -> Vec<Vec<String>> {
+fn detail_column_lines(text: &str) -> Vec<Vec<String>> {
     const NOT_A_COLUMN: [&str; 5] =
         ["columns:", "header offset:", "data offset:", "terminator:", "end offset:"];
     let mut blocks: Vec<Vec<String>> = Vec::new();
@@ -429,15 +429,15 @@ fn verbose_column_lines(text: &str) -> Vec<Vec<String>> {
 
 /// **One resolution pass, two renderings.** The export must not become a
 /// second implementation of what the listing says, so every per-column line
-/// `--verbose` prints is checked against the JSON record for the same column
+/// `--detail` prints is checked against the JSON record for the same column
 /// of the same block: the Arrow type verbatim, and the outcome through the
 /// token, whose words are the sentence's own opening.
 #[tokio::test]
-async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
+async fn the_json_export_and_the_detail_listing_agree_column_for_column() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
-    let verbose = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--verbose"]));
+    let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
     let json: serde_json::Value = serde_json::from_str(&stdout_of(&run(&[
         "info",
         "--source",
@@ -447,7 +447,7 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
     .expect("--json emits JSON");
 
     let resolution = json["resolution"].as_array().expect("per-block resolution");
-    let per_block = verbose_column_lines(&verbose);
+    let per_block = detail_column_lines(&detail);
     assert_eq!(resolution.len(), per_block.len(), "same blocks, same order");
     assert!(resolution.len() > 1, "sanity: this fixture has several blocks");
 
@@ -457,7 +457,7 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
             let name = column["name"].as_str().unwrap();
             let outcome = column["outcome"].as_str().unwrap();
             let arrow_type = column["arrow_type"].as_str().unwrap();
-            // `--verbose` stays silent for a column that mapped to
+            // `--detail` stays silent for a column that mapped to
             // `Utf8View`: the no-information answer, and the only Arrow type a
             // non-`Mapped` outcome ever produces, so the two arms never both
             // fire.
@@ -476,7 +476,7 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
             };
             assert!(
                 lines.iter().any(|l| l.starts_with(&expected)),
-                "no --verbose line for {expected:?} among {lines:?}"
+                "no --detail line for {expected:?} among {lines:?}"
             );
             checked += 1;
         }
@@ -507,8 +507,8 @@ async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
-    let verbose = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--verbose"]));
-    let lines: Vec<&str> = verbose.lines().collect();
+    let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
+    let lines: Vec<&str> = detail.lines().collect();
     let at = lines
         .iter()
         .position(|l| *l == "    v_mood: Dictionary(Int32, Utf8)")
@@ -555,7 +555,7 @@ fn json_types(json: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
     out
 }
 
-/// **`--verbose` names every user-defined type, beneath the count that had
+/// **`--detail` names every user-defined type, beneath the count that had
 /// been their only trace.** Nothing else in `info` names one at any
 /// verbosity, so a user could not learn from it that `public.mood` exists.
 ///
@@ -567,15 +567,15 @@ fn json_types(json: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
 /// composite body, a range naming no subtype) are pinned as a unit test on
 /// `type_kind_summary` instead.
 #[tokio::test]
-async fn the_verbose_listing_names_every_user_defined_type() {
+async fn the_detail_listing_names_every_user_defined_type() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let plain = stdout_of(&run(&["info", "--source", dump.to_str().unwrap()]));
-    assert!(!plain.contains("public.mood "), "the listing is a --verbose addition: {plain}");
+    assert!(!plain.contains("public.mood "), "the listing is a --detail addition: {plain}");
 
-    let verbose = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--verbose"]));
-    let lines: Vec<&str> = verbose.lines().collect();
+    let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
+    let lines: Vec<&str> = detail.lines().collect();
     let heading = lines
         .iter()
         .position(|l| l.starts_with("user-defined types: "))

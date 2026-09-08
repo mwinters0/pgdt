@@ -80,7 +80,7 @@ fact. `ByteRangeSource::partitions` is already that trait method, and
 arm, so the detection is a comparison between two values `index.rs` already
 holds. The budget default itself was affirmed, including against a per-pass
 split this slice never considered. What a diagnostic must look like, and why
-`info --verbose` reports the file's shape beside it, is
+`info --detail` reports the file's shape beside it, is
 [`architecture.md`](architecture.md), "The compressed source"; the work is
 `M67` ([`roadmap.md`](roadmap.md), "Out-of-band work").
 

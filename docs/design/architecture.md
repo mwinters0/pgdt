@@ -1016,7 +1016,7 @@ would report a decision made under a number the current run never stated, the
 same untruth refused above. What the offline view can answer is the file's
 *shape*, and all of it is already in the persisted table:
 `SeekTable::stream_count`, `block_count` and `max_block_uncompressed` are
-public and serialized with the envelope, so `info --verbose` can report the
+public and serialized with the envelope, so `info --detail` can report the
 largest block a user would have to budget for — and the stream count that
 explains the multistream shape's footer walk — with nothing but a cache.
 

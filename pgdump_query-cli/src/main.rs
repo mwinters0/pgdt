@@ -204,7 +204,7 @@ enum Command {
         #[arg(long, required_unless_present = "source")]
         dqcache: Option<PathBuf>,
         #[arg(long)]
-        verbose: bool,
+        detail: bool,
         /// List every span the map holds (`docs/design/architecture.md`,
         /// "`DumpIndex`: one owner per fact") — DDL objects
         /// and framing included, not just `COPY` blocks — instead of the
@@ -213,11 +213,11 @@ enum Command {
         map: bool,
         /// Print the internal index as JSON instead of the human-readable
         /// listing: the whole `DumpIndex`, its coverage, its diagnostics, and
-        /// the per-`COPY`-block type resolution `--verbose` renders as text.
+        /// the per-`COPY`-block type resolution `--detail` renders as text.
         /// No schema stability is promised — this is a raw dump of our
         /// internal representation, not a supported interchange format
         /// (`docs/design/architecture.md`, "CLI surface"). Incompatible with
-        /// `--verbose`/`--map`, which format detail this already carries in
+        /// `--detail`/`--map`, which format detail this already carries in
         /// full.
         #[arg(long)]
         json: bool,
@@ -891,10 +891,10 @@ async fn main() -> Result<()> {
             println!();
             println!("wrote cache to {}", path.display());
         }
-        Command::Info { source: file, dqcache, verbose, map, json } => {
-            if json && (verbose || map) {
+        Command::Info { source: file, dqcache, detail, map, json } => {
+            if json && (detail || map) {
                 anyhow::bail!(
-                    "--json already carries everything --verbose/--map would add — drop one of them"
+                    "--json already carries everything --detail/--map would add — drop one of them"
                 );
             }
             let Some(file) = file else {
@@ -902,7 +902,7 @@ async fn main() -> Result<()> {
                 // "The cache"): no live dump file at all, so
                 // clap already required `--dqcache` for us.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
-                return info_offline(&path, verbose, map, json).await;
+                return info_offline(&path, detail, map, json).await;
             };
             // `info` never scans, so `--dqcache none` — "ignore the cache" —
             // would leave nothing at all to answer from. The message names the
@@ -953,7 +953,7 @@ async fn main() -> Result<()> {
             if mtime_changed {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
-            report(&index, total_size, verbose, map, json);
+            report(&index, total_size, detail, map, json);
         }
         Command::Query {
             source: file,
@@ -1381,19 +1381,19 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
 /// reported like any other, with its coverage stated — cache-only mode has no
 /// scan to extend it with, but "as far as the scan got" is still an answer,
 /// and refusing it was what this phase removed.
-async fn info_offline(path: &Path, verbose: bool, map: bool, json: bool) -> Result<()> {
+async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {
     let mode = CacheMode::Offline(path.to_path_buf());
     let (index, total_size) = match mode.load_offline().await? {
         CacheStatus::Valid { index, total_size, .. }
         | CacheStatus::Incomplete { index, total_size, .. } => (index, total_size),
         unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
     };
-    report(&index, total_size, verbose, map, json);
+    report(&index, total_size, detail, map, json);
     Ok(())
 }
 
 /// One column's resolution outcome, in both spellings: a stable token for
-/// `--json` and the sentence `info --verbose` prints
+/// `--json` and the sentence `info --detail` prints
 /// (`docs/design/architecture.md`, "CLI surface").
 ///
 /// **One match, two renderings.** Splitting them into two functions is how the
@@ -1432,13 +1432,13 @@ fn resolution_words(r: &ColumnResolution) -> (&'static str, &'static str) {
     }
 }
 
-/// The sentence half of [`resolution_words`] — `info --verbose`'s per-column
+/// The sentence half of [`resolution_words`] — `info --detail`'s per-column
 /// line.
 fn resolution_label(r: &ColumnResolution) -> &'static str {
     resolution_words(r).1
 }
 
-/// What one column became in Arrow — the other half of `info --verbose`'s
+/// What one column became in Arrow — the other half of `info --detail`'s
 /// per-column line (`docs/design/architecture.md`, "CLI surface").
 ///
 /// Arrow's own `Display` is terse and reversible (`List(Utf8View)`,
@@ -1512,7 +1512,7 @@ fn enum_labels(plan: &ComparisonPlan) -> Option<&[String]> {
     }
 }
 
-/// The labels as `info --verbose` prints them: each one single-quoted with any
+/// The labels as `info --detail` prints them: each one single-quoted with any
 /// interior quote doubled, comma-separated.
 ///
 /// **Quoting is forced by the data, and this quoting by two precedents that
@@ -1580,12 +1580,12 @@ impl<'a> DatabaseHeadings<'a> {
 /// common case) is printed with no header line, since one would just be
 /// noise.
 ///
-/// Under `verbose`, the `user-defined types` count becomes the heading of a
+/// Under `detail`, the `user-defined types` count becomes the heading of a
 /// listing of the types themselves, one line each, in the order the dump
 /// declares them. The count is otherwise their only trace: nothing else in
 /// `info` names a user-defined type, so a user cannot learn from it that
 /// `public.mood` exists, let alone what it holds.
-fn print_metadata(metadata: &DumpMetadata, verbose: bool) {
+fn print_metadata(metadata: &DumpMetadata, detail: bool) {
     let multi = metadata.databases.len() > 1;
     for db in &metadata.databases {
         let show_name = multi || db.name.is_some();
@@ -1601,7 +1601,7 @@ fn print_metadata(metadata: &DumpMetadata, verbose: bool) {
         }
         println!("{indent}extensions: {}", db.extensions.len());
         println!("{indent}user-defined types: {}", db.types.len());
-        if verbose {
+        if detail {
             // The name column is padded to the widest name this database
             // declares, so the kinds line up; the right edge stays ragged,
             // an enum's label list being as long as the type is.
@@ -1675,7 +1675,7 @@ fn type_kind_summary(kind: &TypeKind) -> String {
 }
 
 /// One `COPY` block's resolved schema, paired back with the block it came
-/// from — the single resolution pass `--verbose`'s text and `--json`'s export
+/// from — the single resolution pass `--detail`'s text and `--json`'s export
 /// both render (`docs/design/architecture.md`, "CLI surface"). Two passes is
 /// the failure mode here: the export would quietly become a second
 /// implementation of what the listing says.
@@ -1748,7 +1748,7 @@ struct BlockResolutionJson<'a> {
 }
 
 /// One column's resolution: what the DDL declared, what it became, and why.
-/// `arrow_type` is the exact string `info --verbose` prints for the same
+/// `arrow_type` is the exact string `info --detail` prints for the same
 /// column, so the two renderings cannot disagree about the type either.
 #[derive(serde::Serialize)]
 struct ColumnResolutionJson<'a> {
@@ -1806,7 +1806,7 @@ fn completion_line(scanned_through: u64, total_size: u64) -> String {
 
 /// Every `pgdq info` rendering goes through here: the coverage line, then the
 /// listing or the export.
-fn report(index: &DumpIndex, total_size: u64, verbose: bool, map: bool, json: bool) {
+fn report(index: &DumpIndex, total_size: u64, detail: bool, map: bool, json: bool) {
     let complete = index.is_complete(total_size);
     if json {
         print_index_json(index, total_size, complete);
@@ -1814,7 +1814,7 @@ fn report(index: &DumpIndex, total_size: u64, verbose: bool, map: bool, json: bo
     }
     println!("{}", completion_line(index.scanned_through, total_size));
     println!();
-    print_index(index, verbose, map, complete);
+    print_index(index, detail, map, complete);
 }
 
 /// Print the whole listing, below whatever coverage line [`report`] already
@@ -1825,9 +1825,9 @@ fn report(index: &DumpIndex, total_size: u64, verbose: bool, map: bool, json: bo
 /// coverage line above says it once; a partial index's records are each
 /// complete in themselves (see [`completion_line`]), so repeating the caveat
 /// per block would suggest a variation that does not exist.
-fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
+fn print_index(index: &DumpIndex, detail: bool, map: bool, complete: bool) {
     if let Some(metadata) = &index.metadata {
-        print_metadata(metadata, verbose);
+        print_metadata(metadata, detail);
         println!();
     }
 
@@ -1875,7 +1875,7 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
                 })
                 .collect();
             println!("    columns: {}", columns.join(", "));
-            if verbose {
+            if detail {
                 // One line per column that has something to say. A column
                 // that did not map says why; a column that mapped says what
                 // it mapped *to*, unless that is `Utf8View` — the
@@ -1910,7 +1910,7 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
             total_columns += resolved.notes.len();
             total_unmapped += resolved.unmapped_count();
         }
-        if verbose {
+        if detail {
             println!("    header offset: {}", block.header_offset);
             println!("    data offset:   {}", block.data_offset);
             println!("    terminator:    {}", block.terminator_offset);
@@ -1924,7 +1924,7 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     println!("{} COPY block(s), {} row(s)", blocks.len(), index.total_rows());
     if total_unmapped > 0 {
         println!(
-            "{total_unmapped} of {total_columns} columns unmapped — run with --verbose for details"
+            "{total_unmapped} of {total_columns} columns unmapped — run with --detail for details"
         );
     }
 }
@@ -2070,7 +2070,7 @@ fn span_summary(span: &Span) -> String {
 
 /// Short label for a [`TypeKind`] — `--map`'s compact form of the same
 /// six-emission-shape vocabulary `docs/manual/type-handling.md` explains for
-/// readers. [`type_kind_summary`] is the `--verbose` type listing's fuller
+/// readers. [`type_kind_summary`] is the `--detail` type listing's fuller
 /// rendering, payload included.
 fn type_kind_label(kind: &TypeKind) -> &'static str {
     match kind {

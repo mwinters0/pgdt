@@ -16,7 +16,7 @@ each **value**, not of the declared type, so we take it from the values
 themselves as the file is read rather than guessing from the DDL. That happens
 on any query — see "Arrays, composites, ranges, and multiranges" below.
 
-You can see exactly what happened to each column: `pgdq info --verbose` prints
+You can see exactly what happened to each column: `pgdq info --detail` prints
 one line per column, giving the Arrow type it resolved to — or, for a column
 that came back as a string, the reason. A column that is a string because
 that is simply what it is (`text`, `json`, `inet`) gets no line, since
@@ -663,7 +663,7 @@ and `IS NULL`/`IS NOT NULL` still work, since they read no value. The column
 itself still comes back: only comparing it is refused. This is rare: a
 canonical function has to be written in C or in one of the server's internal
 languages, so in practice it comes from an extension or a hand-loaded module.
-`pgdq info --verbose` names the parameter under the type, so you can see
+`pgdq info --detail` names the parameter under the type, so you can see
 whether a dump has one before you write a filter.
 
 #### Four ways one of these columns is still a string
@@ -676,7 +676,7 @@ whether a dump has one before you write a filter.
   inherits its base type's separator while recording nothing about it. Splitting
   such a literal on `,` would invent element boundaries that are not there, and
   the elements it recovered would be opaque text anyway, so the whole value
-  stays one string. `pgdq info --verbose` reports this as `opaque element
+  stays one string. `pgdq info --detail` reports this as `opaque element
   type`.
 - **The array's element type is itself an array.** `CREATE DOMAIN intarr AS
   integer[]` and a column of `intarr[]` is legal, and PostgreSQL writes such a
@@ -684,7 +684,7 @@ whether a dump has one before you write a filter.
   its own right, quoted — rather than as a two-dimensional array. So the
   literal's shape and the column's declared depth say different things, and we
   decline the column rather than guess which. It comes back as text, and `pgdq
-  info --verbose` reports `nested array element`. Unlike an opaque element
+  info --detail` reports `nested array element`. Unlike an opaque element
   type, nothing about this one is unknowable: it is a shape we have not chosen
   to represent, and the lossless array representation planned in the next
   bullet would cover it too.
@@ -698,7 +698,7 @@ whether a dump has one before you write a filter.
   `{1,2}` in one row and `{{1,2},{3,4}}` in the next has no honest Arrow list
   type, and neither does one holding a value with an explicit lower bound
   (`[0:2]={7,8,9}`) — Arrow lists start at 0 and have nowhere to record an
-  index origin. Both come back as text, and `pgdq info --verbose` reports
+  index origin. Both come back as text, and `pgdq info --detail` reports
   `varying array shape`.
 
   A structured representation that is lossless for *every* array — dimensions,
@@ -790,7 +790,7 @@ Error: filter value `furious` for `v_mood = ...` does not parse as the column's 
 ```
 
 A type declaring more than a dozen labels gets the first twelve and a count of
-the rest. `pgdq info --verbose` lists an enum column's declared labels beneath
+the rest. `pgdq info --detail` lists an enum column's declared labels beneath
 it, in full, so you can read the spelling off the dump instead of guessing at
 it — and lists every enum type's labels once, up in the header,
 which is where to look for the ones no column of yours happens to use; see

@@ -32,7 +32,7 @@ which is an artifact nothing produces. So:
 
 Both hold. Serial and `--jobs 4` produced the same 2,144,936-byte cache byte
 for byte, and both reported 74 blocks, 19,575,829,920 rows and — read back with
-`pgdq info --dqcache … --verbose` — `Scan completion: 100% (784019857152
+`pgdq info --dqcache … --detail` — `Scan completion: 100% (784019857152
 bytes)`, which are the three numbers the "koji full scan" table already
 carried.
 
@@ -168,5 +168,5 @@ would put the claim somewhere CI can see it.
 - **The orchestrator compares the caches itself** — it runs `cmp` and logs the
   verdict — but it only *prints* the expected counts beside each leg's tail for
   a reader to compare, and it does not read the byte total back at all. That
-  last one is `pgdq info --dqcache <cache> --verbose`, run afterwards on the
+  last one is `pgdq info --dqcache <cache> --detail`, run afterwards on the
   host, and it is the third of the three cross-format numbers.

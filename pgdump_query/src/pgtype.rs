@@ -2750,7 +2750,7 @@ mod tests {
     }
 
     /// A domain over an enum carries the enum's labels, through any chain —
-    /// which is what lets `pgdq info --verbose` list them beneath such a
+    /// which is what lets `pgdq info --detail` list them beneath such a
     /// column and what lets a `--filter` term name one. **No fixture column
     /// is one**: `public.derived_domain` bottoms out at `integer` and
     /// `public.text_c` at `text`, so the recursion above is the only thing

@@ -52,9 +52,9 @@ fn assert_every_column_maps(dump: &Path, cache: &Path) {
     let cache = cache.to_str().unwrap();
     let report = pgdq(&["parse", "--source", dump, "--dqcache", cache]);
     if report.contains("columns unmapped") {
-        // `--verbose` is what names the columns and says why, which is the
+        // `--detail` is what names the columns and says why, which is the
         // half a failure needs.
-        let detail = pgdq(&["info", "--dqcache", cache, "--verbose"]);
+        let detail = pgdq(&["info", "--dqcache", cache, "--detail"]);
         panic!(
             "the generator declared a column pgdq does not map, so a typed benchmark is \
              measuring it untyped.\n{detail}"

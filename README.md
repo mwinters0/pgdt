@@ -36,7 +36,7 @@ cargo run -p pgdump_query-cli -- parse --source <dump.sql>
 
 # Report what that cache holds. `info` never reads the dump itself, so this
 # is instant however large the file is.
-cargo run -p pgdump_query-cli -- info --source <dump.sql> --verbose
+cargo run -p pgdump_query-cli -- info --source <dump.sql> --detail
 ```
 
 ## Documentation
