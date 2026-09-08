@@ -37,7 +37,10 @@ census-on column, and must be the same number).
 **Each figure declares the paths that invalidate it**, so `--stale` can say
 which figures a diff has made stale. That is the half a harness alone does not
 fix: a one-line change to `map::Builder::on_row` invalidated both census
-figures and nothing announced it.
+figures and nothing announced it. **A section the register does not hold
+declares one too** (`Outside.depends`), and its marker in the doc names the
+commit its readings were taken at: being outside means the harness cannot
+re-take them, not that nothing is told when they go wrong.
 
 **Not every figure times `pgdq`.** `xz-decode-scaling` times the `xz_decode`
 example instead, which reaches past the library to the decoder's own bulk entry
@@ -5112,13 +5115,41 @@ class Outside:
     `scripts/measure.py`" over it. So a section outside the register carries an
     `<!-- outside-register: <id> -->` marker of its own, and `--check`
     reconciles those markers against this register both ways and holds each
-    declared section to carrying no figure marker. A section cannot be both."""
+    declared section to carrying no figure marker. A section cannot be both.
+
+    **What makes staying outside safe rather than merely silent is `depends`.**
+    Being outside the register says the harness cannot re-take the readings; it
+    was also saying, by omission, that nothing would ever be told when they went
+    wrong — `--stale` read `ALL_BY_ID` and could not name a declared section
+    however far its inputs moved. koji went four campaigns that way, and the
+    claim `peak-rss` was registered to rescue had sat in exactly that blind spot
+    for a whole slice. So a declared section carries the same invalidation edge
+    a figure does, and `--stale` reports it beside them. What it cannot carry is
+    the other half of a figure's contract — the harness will not re-take it — so
+    a red here is discharged by a run somebody makes by hand, or by an
+    acknowledgement, exactly as a figure's is.
+
+    **The commit the readings were taken at lives in the doc's marker, not
+    here.** It is the argument the figure sittings already settled
+    (`measurements.md`, "A figure may be published outside the sweep"), one
+    mechanism along: `session-drift` declares `scripts/measure.py`, so recording
+    a koji run's commit in this file would mark a figure stale for recording
+    where another reading came from, every time koji is re-run. The marker is
+    already the doc's convention for provenance, and `outside_sittings` reads it
+    back out."""
 
     id: str
     #: The doc heading it sits under, for `--list` and for the check's report.
     section: str
     #: Why the harness does not own it. Printed by `--list`.
     why: str
+    #: Repo-relative paths whose change invalidates the readings this section
+    #: publishes — a figure's `depends`, for a section that is not one. Empty
+    #: is right only where the section publishes no number the design quotes,
+    #: which is the very thing that puts `benches` outside; `--check` holds a
+    #: section that declares paths to declaring the commit it was taken at, and
+    #: one that declares none to declaring no commit.
+    depends: tuple[str, ...] = ()
 
 
 #: Sections measurements.md carries that this harness deliberately does not
@@ -5132,6 +5163,29 @@ NOT_OURS = {
             "784 GB on the HDD, ~54 minutes, a different medium, and a byte-for-byte regression "
             "check rather than a throughput figure. The harness owns the *invocation* — "
             "`--koji-recipe`, which prints it — and never runs it.",
+            # What a koji run publishes is what a scan *concludes*: the block
+            # list, the per-block offsets, the row and byte totals, and the
+            # `info --detail` report they are compared as text against. So the
+            # read path, the scanner, the map and the cache, which decide the
+            # first four, and the preamble prepass, the type resolution and the
+            # CLI, which decide the fifth — the last of those is not
+            # hypothetical, the 2026-09-05 comparison differing from the
+            # 2026-08-27 one by exactly one line of user-defined-type detail the
+            # report had gained in between. `resolve.rs` and `pgtype.rs` are
+            # named here rather than in a shared constant because this is the
+            # only section in the document whose readings a change to them can
+            # falsify: every figure that resolves a type publishes a duration,
+            # and a duration is not what the report's text identity is.
+            depends=(
+                *READ,
+                *SCAN,
+                *MAP,
+                *CACHE,
+                *PREAMBLE,
+                "pgdump_query/src/resolve.rs",
+                "pgdump_query/src/pgtype.rs",
+                *QUERY_CLI,
+            ),
         ),
         Outside(
             "rss-attribution",
@@ -5142,6 +5196,11 @@ NOT_OURS = {
             "`peak-rss`'s two block-count runs, so it may be published only from a stamped "
             "sweep — `M74`, which deletes this row and the section's `outside-register` marker "
             "together.",
+            # The registered instrument's own edge, read off it rather than
+            # copied: the readings differ from the figure's in provenance, not
+            # in what moves them, and two spellings of one edge would drift in
+            # the window between `M65` and `M74`. It leaves with the row.
+            depends=EVERY_BY_ID["rss-attribution"].depends,
         ),
         Outside(
             "benches",
@@ -5149,6 +5208,12 @@ NOT_OURS = {
             "Tripwires, not figures: they quote no number in the doc, so there is no table to "
             "emit. That is a decision, not an oversight -- `cargo bench -p pgdump_query` runs "
             "them.",
+            # No edge, and the empty tuple is the claim rather than an omission:
+            # this section publishes no reading, so there is nothing a diff
+            # could invalidate. It is the same sentence that puts it outside the
+            # register, said in the field that would otherwise have to be
+            # guessed at.
+            depends=(),
         ),
     ]
 }
@@ -5255,6 +5320,73 @@ def figure_sittings(text: str) -> dict[str, str]:
 #: than off a prose sentence some paragraphs away (`measurements.md`, "The
 #: apparatus").
 OUTSIDE_RE = re.compile(r"<!--\s*outside-register:\s*([a-z0-9-]+)")
+
+#: And how it says when its readings were taken, which is what gives `--stale`
+#: a range to argue a declared section's `depends` over. Same shape as
+#: `SITTING_RE` and for the same reasons: inside the section's own marker, so
+#: it cannot go missing on its own, and in the document rather than in this
+#: file, which `session-drift` declares.
+OUTSIDE_SITTING_RE = re.compile(
+    r"<!--\s*outside-register:\s*([a-z0-9-]+)[^>]*?taken at `([0-9a-f]{7,40})`"
+)
+
+
+def outside_sittings(text: str) -> dict[str, str]:
+    """Each declared section that names the commit its readings were taken at.
+
+    Absent for a section that publishes no reading — `benches` — where there is
+    no run to date and nothing for a range to be measured from."""
+    return dict(OUTSIDE_SITTING_RE.findall(text))
+
+
+def outside_bases(text: str, override: str | None = None) -> dict[str, str | None]:
+    """The commit each declared section's readings are argued from.
+
+    Only the sections that declare an invalidation edge: one that declares none
+    publishes nothing a diff can falsify, so it has no staleness to have a base
+    for. `override` is `--since`, which asks one question of the whole document
+    and so is not per section — the same contract `figure_bases` has."""
+    declared = outside_sittings(text)
+    return {
+        o.id: (override or declared.get(o.id)) for o in NOT_OURS.values() if o.depends
+    }
+
+
+def outside_sitting_problems(
+    text: str,
+    resolve: Callable[[str], str | None] = resolve_commit,
+) -> list[str]:
+    """Why a declared section's provenance line may not stand, one line each.
+
+    The two halves of the field pair have to agree, and neither failure is
+    visible from the document alone. A section declaring paths but no commit
+    reads as a live edge and is inert — `--stale` has no range to intersect,
+    which is the state koji was in before it declared anything, arrived at from
+    the other side. A section declaring a commit but no paths asserts a
+    provenance nothing reads, which is how a field stops being maintained."""
+    declared = outside_sittings(text)
+    out: list[str] = []
+    for oid, outside in sorted(NOT_OURS.items()):
+        sha = declared.get(oid)
+        if outside.depends and sha is None:
+            out.append(
+                f"{oid} declares an invalidation edge and no commit its readings were taken "
+                "at, so nothing can say what they have gone stale against — write "
+                f"`taken at ` inside its `<!-- outside-register: {oid} … -->` marker"
+            )
+        elif sha is not None and not outside.depends:
+            out.append(
+                f"{oid} declares the commit {sha} and no invalidation edge, so nothing reads "
+                "that commit; either give `measure.NOT_OURS` the paths its readings depend on "
+                "or drop the provenance from its marker"
+            )
+        elif sha is not None and resolve(sha) is None:
+            out.append(f"{oid} declares {sha}, which is not a commit in this repository")
+    for oid in sorted(set(declared) - set(NOT_OURS)):
+        out.append(
+            f"{oid} names the commit {declared[oid]} and is no section this harness disowns"
+        )
+    return out
 
 #: An ATX heading. Matched per line rather than with `re.MULTILINE` over the
 #: whole text, because the doc's shell blocks contain comment lines that start
@@ -5476,16 +5608,19 @@ def sitting_accounting(outside: Sequence[tuple[str, str]], total: int | None = N
     return f"**{total - len(outside)} of the {total} figures below come from that sitting.** {rest}: {named}."
 
 
-def declared_hits(fig: Figure, changed: Iterable[str]) -> list[str]:
+def declared_hits(fig: Figure | Outside, changed: Iterable[str]) -> list[str]:
     """The paths in `changed` that `fig` declares. A declared path is a prefix:
     a directory matches everything under it.
 
-    **One predicate, two callers.** `--stale` argues from it that a figure has
-    gone stale, and the census-off binary's stamp check argues from it that a
-    commit moved nothing the figures being taken measure. Writing the second
+    **One predicate, three callers.** `--stale` argues from it that a figure has
+    gone stale, the census-off binary's stamp check argues from it that a
+    commit moved nothing the figures being taken measure, and `--stale` argues
+    the same way over a section the register does not hold. Writing any of them
     separately would make it a second authority over what can move a reading,
     which is exactly the objection that kept the stamp rule at exact equality
-    until the ancestor threshold replaced it."""
+    until the ancestor threshold replaced it — and an `Outside` declares its
+    edge in the same field a `Figure` does precisely so that one predicate
+    still answers for both."""
     return sorted({c for c in changed for d in fig.depends if c == d or c.startswith(d)})
 
 
@@ -5999,7 +6134,9 @@ def cmd_list() -> None:
     print("Not emitted here, deliberately (each declares itself in the doc "
           "with `<!-- outside-register: <id> -->`):\n")
     for outside in NOT_OURS.values():
-        print(f"  {outside.id:<24} {outside.section}\n  {'':<24}  {outside.why}\n")
+        print(f"  {outside.id:<24} {outside.section}\n  {'':<24}  {outside.why}")
+        edge = ", ".join(outside.depends) or "(nothing — it publishes no reading)"
+        print(f"  {'':<24}  invalidated by: {edge}\n")
 
 
 KOJI_DUMP = _env("PGDQ_KOJI_DUMP", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump")
@@ -6443,13 +6580,22 @@ def cmd_check(doc: Path) -> int:
             f"`--workers` for the\ndecode instrument, and `PARALLEL_JOBS` for the "
             f"{len(JOBS_AXIS)} families whose axis it is), so no\nfigure below inherits one.\n"
         )
+    outside_dates = outside_sittings(text)
     if outside:
         print(
             "Declared outside the register — sections whose readings this harness did not\n"
-            "take, and which the session stamp above therefore does not cover:"
+            "take, and which the session stamp above therefore does not cover. Each still\n"
+            "declares what invalidates it, so `--stale` can name it:"
         )
         for oid, _ in outside:
-            print(f"  {oid:<24} {NOT_OURS[oid].section if oid in NOT_OURS else '(unknown)'}")
+            known = NOT_OURS.get(oid)
+            print(f"  {oid:<24} {known.section if known else '(unknown)'}")
+            if known is None:
+                continue
+            edge = ", ".join(known.depends) or "(nothing — it publishes no reading)"
+            print(f"  {'':<24}  invalidated by: {edge}")
+            if known.depends:
+                print(f"  {'':<24}  taken at: {outside_dates.get(oid, '(undeclared)')}")
         print()
     if undeclared:
         print(
@@ -6518,6 +6664,15 @@ def cmd_check(doc: Path) -> int:
         for line in bad_sittings:
             print(f"  {line}")
         print()
+    bad_outside = outside_sitting_problems(text)
+    if bad_outside:
+        print(
+            "Declared sections whose provenance does not stand — an edge nothing can be\n"
+            "measured from, or a commit nothing reads:"
+        )
+        for line in bad_outside:
+            print(f"  {line}")
+        print()
     # Generated, never reconciled: the count beside the stamp was hand-written
     # and was wrong for as long as one figure stood outside the sweep.
     accounting = sitting_accounting(sorted(sittings.items()))
@@ -6529,10 +6684,14 @@ def cmd_check(doc: Path) -> int:
         )
         print(f"  {accounting}\n")
     acks = resolved_acknowledgements()
+    # A declared section is a name an acknowledgement may carry, and a base
+    # spentness is computed against: `--stale` reds it the same way, and the
+    # harness cannot re-take it, so an entry is the *only* discharge that does
+    # not cost an hour on the HDD.
     unknown_ack, spent_ack = acknowledgement_problems(
         acks,
-        ALL_BY_ID,
-        spent_acknowledgements(acks, figure_bases(text)),
+        {**ALL_BY_ID, **NOT_OURS},
+        spent_acknowledgements(acks, {**figure_bases(text), **outside_bases(text)}),
     )
     if acks:
         print("Acknowledged commits — a declared path changed and no reading moved:")
@@ -6578,6 +6737,7 @@ def cmd_check(doc: Path) -> int:
             or unknown_outside
             or both
             or bad_sittings
+            or bad_outside
             or miscounted
             or unknown_ack
             or spent_ack
@@ -6759,7 +6919,8 @@ def cmd_verify_additive(since: str | None) -> int:
 
 
 def cmd_stale(since: str | None) -> int:
-    """Which figures a diff has invalidated, each argued from its own base.
+    """Which figures a diff has invalidated, each argued from its own base —
+    and, in a stanza of its own, which section the register does not hold.
 
     A figure published outside the stamped sweep declares the commit it was
     taken at, and its range starts there: reading the stamp for every figure
@@ -6778,19 +6939,45 @@ def cmd_stale(since: str | None) -> int:
             file=sys.stderr,
         )
         return 2
-    changed_since = {rev: changed_paths(rev) for rev in sorted({*bases.values()})}
+    # A declared section is argued from its own marker, never from the stamp:
+    # the stamp is scoped to the register and says nothing about a section
+    # outside it, so reading it here would date koji's readings to a sweep that
+    # did not take them.
+    obases = outside_bases(text, since)
+    undated = sorted(oid for oid, rev in obases.items() if rev is None)
+    obases = {oid: rev for oid, rev in obases.items() if rev is not None}
+    everything = {**bases, **obases}
+    changed_since = {rev: changed_paths(rev) for rev in sorted({*everything.values()})}
     for rev, changed in changed_since.items():
-        who = sorted(fid for fid, base in bases.items() if base == rev)
-        scope = "every figure" if len(who) == len(bases) else ", ".join(who)
+        who = sorted(fid for fid, base in everything.items() if base == rev)
+        scope = (
+            "every figure and declared section"
+            if len(who) == len(everything)
+            else ", ".join(who)
+        )
         print(f"{len(changed)} path(s) changed since {rev} — {scope}")
     print()
+    if undated:
+        print(
+            "Declared outside the register with an invalidation edge and no commit its\n"
+            "readings were taken at — nothing can say what these have gone stale against\n"
+            "(`--check` names it too):"
+        )
+        for oid in undated:
+            print(f"  {oid}")
+        print()
     touched = [
         (fig, hits)
         for fig in ALL_BY_ID.values()
         if (hits := declared_hits(fig, changed_since[bases[fig.id]]))
     ]
-    if not touched:
-        print("no figure's declared paths were touched.")
+    outside_touched = [
+        (NOT_OURS[oid], hits)
+        for oid, rev in sorted(obases.items())
+        if (hits := declared_hits(NOT_OURS[oid], changed_since[rev]))
+    ]
+    if not touched and not outside_touched:
+        print("no figure's declared paths were touched, and no declared section's.")
         return 0
 
     acks = resolved_acknowledgements()
@@ -6799,21 +6986,35 @@ def cmd_stale(since: str | None) -> int:
     # range starts: the same path is touched by different commits for a figure
     # read from the stamp and one read from its own sitting.
     by_base = {
-        rev: commits_touching({p for fig, hits in touched if bases[fig.id] == rev for p in hits}, rev)
+        rev: commits_touching(
+            {
+                p
+                for who, hits in (*touched, *outside_touched)
+                if everything[who.id] == rev
+                for p in hits
+            },
+            rev,
+        )
         for rev in changed_since
     }
 
     stale: list[tuple[Figure, list[str]]] = []
+    outside_stale: list[tuple[Outside, list[str]]] = []
     excused_by: dict[str, list[str]] = {}
-    for fig, hits in touched:
-        by_path = by_base[bases[fig.id]]
-        ok = excused_paths(fig.id, hits, by_path, dirty, acks)
+    # One loop over both, because an acknowledgement excuses a *commit* and
+    # says nothing about what kind of reading is on the other side of it: a
+    # declared section is discharged by the same entry, in the same register,
+    # and splitting the walk would have been the second authority over that
+    # question.
+    for who, hits in (*touched, *outside_touched):
+        by_path = by_base[everything[who.id]]
+        ok = excused_paths(who.id, hits, by_path, dirty, acks)
         left = [h for h in hits if h not in ok]
         if left:
-            stale.append((fig, left))
+            (outside_stale if isinstance(who, Outside) else stale).append((who, left))
         for path in ok:
             for commit in by_path[path]:
-                excused_by.setdefault(commit, []).append(fig.id)
+                excused_by.setdefault(commit, []).append(who.id)
 
     if excused_by:
         print("Acknowledged — the commit is recorded as moving no reading:\n")
@@ -6825,11 +7026,41 @@ def cmd_stale(since: str | None) -> int:
             print(f"           excuses: {', '.join(sorted(set(ids)))}")
         print()
 
-    if not stale:
-        print("no figure is stale: every touched path is accounted for.")
-        return 0
-
     stamp = stamp_in(text)
+
+    def report_outside() -> None:
+        """The declared sections whose readings a diff has moved.
+
+        Printed apart from the figures because the two ask different things of
+        the reader. A stale figure names a sweep; a stale section names a run
+        nobody here can make — koji is an hour on a different medium — so what
+        this stanza buys is the choice between making that run by hand and
+        writing down why the change cannot have moved it. Silence, which is
+        what this printed before the edge existed, was not one of the two."""
+        if not outside_stale:
+            return
+        print(
+            "\nDeclared outside the register and moved anyway — the harness does not re-take\n"
+            "these, so each is discharged by a run somebody makes by hand or by an\n"
+            "acknowledgement, exactly as a figure's red is:"
+        )
+        for outside, hits in outside_stale:
+            print(f"  {outside.id:<24} stale — {', '.join(hits)} (since {obases[outside.id]})")
+            for path, excused, blocking in inert_excuses(
+                outside.id, hits, by_base[obases[outside.id]], acks
+            ):
+                names = ", ".join(c[:7] for c in excused)
+                held = ", ".join(c[:7] for c in blocking) or "an uncommitted change"
+                print(f"      {path}: {names} excused here but inert — held red by {held}")
+
+    if not stale:
+        if not outside_stale:
+            print("nothing is stale: every touched path is accounted for.")
+            return 0
+        print("no figure is stale: every touched path of one is accounted for.")
+        report_outside()
+        return 1
+
     for fig, hits in stale:
         base = bases[fig.id]
         own = "" if base == stamp or since else f" (since its own sitting {base})"
@@ -6846,6 +7077,7 @@ def cmd_stale(since: str | None) -> int:
             "\nEvery stale figure here is derived: re-take it with "
             "`uv run measure.py --drift <sweep> <sweep>`, which measures nothing."
         )
+        report_outside()
         return 1
     # `--figure` is what takes one on its own, so a derived figure is not in
     # this list however few edges it stands in: `--drift` is how it moves.
@@ -6861,6 +7093,7 @@ def cmd_stale(since: str | None) -> int:
             "These stand in no borrow edge, so each may instead be re-taken on its own and "
             f"declare the sitting in its marker: {', '.join(alone)}."
         )
+    report_outside()
     return 1
 
 

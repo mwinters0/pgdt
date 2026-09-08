@@ -2526,6 +2526,149 @@ class RegisterBoundary(unittest.TestCase):
         self.assertIn("`<!-- figure: … -->` marker, and no other", head)
 
 
+class OutsideInvalidation(unittest.TestCase):
+    """A declared section carries the same invalidation edge a figure does.
+
+    Being outside the register says the harness cannot re-take the readings. It
+    was also saying, by omission, that nothing would ever be told when they
+    went wrong: `--stale` walked `ALL_BY_ID`, so koji could not go red however
+    far the scanner moved under it. `Outside.depends` is that edge, and the
+    commit it is measured from lives in the section's own marker — in the
+    document, because `session-drift` declares `scripts/measure.py` and a run's
+    provenance recorded here would mark a figure stale for saying where another
+    reading came from."""
+
+    DOC = measure.REPO / "docs/design/measurements.md"
+
+    def test_every_section_that_publishes_a_reading_declares_an_edge(self):
+        # `benches` is the one that legitimately declares nothing, and it is
+        # the same sentence that puts it outside the register: it quotes no
+        # number in the doc, so there is nothing a diff could falsify.
+        publishing = {oid for oid, o in measure.NOT_OURS.items() if o.depends}
+        self.assertEqual(publishing, {"koji", "rss-attribution"})
+        self.assertEqual(measure.NOT_OURS["benches"].depends, ())
+
+    def test_koji_s_edge_covers_what_a_koji_run_concludes(self):
+        # The block list, the offsets and the row/byte totals come off the read
+        # path, the scanner, the map and the cache; the `info --detail` report
+        # they are compared as text against comes off the preamble, the type
+        # resolution and the CLI -- and that last one is not hypothetical, the
+        # two compared reports differing by one line of user-defined-type
+        # detail the report had gained in between.
+        for path in (
+            "pgdump_query/src/io.rs",
+            "pgdump_query/src/scan.rs",
+            "pgdump_query/src/map.rs",
+            "pgdump_query/src/cache.rs",
+            "pgdump_query/src/preamble.rs",
+            "pgdump_query/src/resolve.rs",
+            "pgdump_query/src/pgtype.rs",
+            "pgdump_query-cli/src/main.rs",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    measure.declared_hits(measure.NOT_OURS["koji"], [path]), [path]
+                )
+
+    def test_the_attribution_s_edge_is_the_registered_instrument_s(self):
+        # Read off the figure rather than copied: the readings differ from it
+        # in provenance, not in what moves them, and two spellings of one edge
+        # drift in the window between `M65` and `M74`.
+        self.assertEqual(
+            measure.NOT_OURS["rss-attribution"].depends,
+            measure.EVERY_BY_ID["rss-attribution"].depends,
+        )
+
+    def test_one_predicate_answers_for_a_figure_and_a_section(self):
+        # `declared_hits` is what `--stale` intersects a diff with, and an
+        # `Outside` declares its edge in the same field a `Figure` does so that
+        # no second authority over "what moves a reading" is written.
+        self.assertEqual(
+            measure.declared_hits(measure.NOT_OURS["koji"], ["docs/design/roadmap.md"]), []
+        )
+
+    def test_the_marker_carries_the_commit_and_is_read_back(self):
+        text = "<!-- outside-register: koji — taken at `f5768e7` — nothing here is a figure -->"
+        self.assertEqual(measure.outside_sittings(text), {"koji": "f5768e7"})
+        self.assertEqual(measure.OUTSIDE_RE.findall(text), ["koji"])
+
+    def test_a_section_with_no_reading_declares_no_commit(self):
+        text = "<!-- outside-register: benches — tripwires, not figures -->"
+        self.assertEqual(measure.outside_sittings(text), {})
+
+    def test_a_commit_in_the_prose_under_a_section_is_not_its_provenance(self):
+        # Same reason a figure's sitting went inside its marker: a sibling can
+        # go missing on its own, and its absence is silent.
+        text = "<!-- outside-register: koji -->\n\nThe last run was at commit `f5768e7`.\n"
+        self.assertEqual(measure.outside_sittings(text), {})
+
+    def test_the_doc_s_own_declarations_all_stand(self):
+        self.assertEqual(measure.outside_sitting_problems(self.DOC.read_text()), [])
+
+    def _about(self, text: str, oid: str) -> list[str]:
+        """The refusals naming one section. Every declared section is walked on
+        every call — a fragment that omits one is a section declaring nothing —
+        so a test about one of them says which."""
+        return [line for line in measure.outside_sitting_problems(text) if line.startswith(oid)]
+
+    def test_an_edge_with_no_commit_to_measure_it_from_is_refused(self):
+        # The state koji was in before this landed, reached from the other
+        # side: a live-looking edge that `--stale` has no range to intersect.
+        problems = self._about("<!-- outside-register: koji -->", "koji")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("no commit", problems[0])
+
+    def test_a_commit_no_edge_reads_is_refused(self):
+        problems = self._about(
+            "<!-- outside-register: benches — taken at `f5768e7` -->", "benches"
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("no invalidation edge", problems[0])
+
+    def test_a_commit_that_is_not_one_is_refused(self):
+        problems = measure.outside_sitting_problems(
+            self.DOC.read_text(), resolve=lambda rev: None
+        )
+        self.assertEqual(len(problems), 2)
+        for line in problems:
+            self.assertIn("not a commit in this repository", line)
+
+    def test_a_provenance_line_for_a_section_nobody_disowns_is_refused(self):
+        problems = self._about(
+            "<!-- outside-register: koji — taken at `f5768e7` -->\n"
+            "<!-- outside-register: gone — taken at `f5768e7` -->",
+            "gone",
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("no section this harness disowns", problems[0])
+
+    def test_a_declared_section_is_argued_from_its_own_marker(self):
+        # Never from the session stamp, which is scoped to the register and
+        # says nothing about a section outside it.
+        bases = measure.outside_bases(self.DOC.read_text())
+        self.assertEqual(set(bases), {"koji", "rss-attribution"})
+        self.assertNotEqual(bases["koji"], measure.stamp_in(self.DOC.read_text()))
+
+    def test_since_asks_one_question_of_every_section(self):
+        bases = measure.outside_bases(self.DOC.read_text(), "deadbee")
+        self.assertEqual(set(bases.values()), {"deadbee"})
+
+    def test_an_acknowledgement_may_name_a_declared_section(self):
+        # The harness cannot re-take koji, so an entry is the only discharge
+        # that does not cost an hour on the HDD -- and `--check` must not read
+        # that entry as naming nothing.
+        acks = [measure.Acknowledged(commit="aaa", figures=("koji",), why="x")]
+        unknown, _ = measure.acknowledgement_problems(
+            acks, {**measure.ALL_BY_ID, **measure.NOT_OURS}, []
+        )
+        self.assertEqual(unknown, [])
+        typo = [measure.Acknowledged(commit="aaa", figures=("kojii",), why="x")]
+        unknown, _ = measure.acknowledgement_problems(
+            typo, {**measure.ALL_BY_ID, **measure.NOT_OURS}, []
+        )
+        self.assertEqual(len(unknown), 1)
+
+
 class Sittings(unittest.TestCase):
     """A figure may be published outside the sweep, and then its own marker
     carries the commit it was taken at. Every reader of the session stamp

@@ -376,7 +376,10 @@ the harness does not own declares itself the same way**, with an
 the RSS attribution, whose readings predate the harness taking it
 — which `--check` reconciles against `measure.NOT_OURS` both ways and holds to
 carrying no figure marker, since the session stamp's "every figure below" claims
-only what the register holds. **A figure may be published outside the sweep, and
+only what the register holds. **Such a section still declares what invalidates
+it**, and its marker names the commit its readings were taken at, so `--stale`
+reports it in a stanza of its own: outside the register means the harness cannot
+re-take the readings, never that nothing is told when they go wrong. **A figure may be published outside the sweep, and
 then its marker carries the commit it was taken at** — permitted only for a
 figure standing in no `shares` or derivation edge, since what one sitting buys
 is differencing; `--stale`, acknowledgement spentness and `--verify-additive`

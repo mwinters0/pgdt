@@ -47,8 +47,11 @@ harness's is the *readings the section currently carries*, which a standalone
 script printed. `uv run measure.py
 --check` reconciles those declarations against the harness's own list of what it
 does not own, both ways, and fails if a declared section also carries a figure
-marker; `--list` prints each one with why it is outside. See "The apparatus"
-below.
+marker; `--list` prints each one with why it is outside. **A declaration still
+carries an invalidation edge**, and the commit its readings were taken at, so
+`--stale` reports a declared section whose inputs have moved beside the figures
+— being outside the register means the harness cannot re-take the readings, not
+that nothing is told when they go wrong. See "The apparatus" below.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -459,7 +462,8 @@ marker — not the heading — is how the harness addresses it. Headings here ar
 free to quote a number, and a heading whose number the next sweep moves is
 rewritten with it. `uv run measure.py --check` reconciles the markers against
 the harness's register and names, for each figure, the other documents that
-repeat its numbers; `--stale` names the figures a diff has invalidated.
+repeat its numbers; `--stale` names the figures a diff has invalidated, and the
+sections outside the register it has invalidated too.
 
 **A figure taken outside the sweep declares its sitting inside that same
 marker.** The condition is the standing rule above; what the marker adds is
@@ -537,6 +541,37 @@ symmetry says — a figure announces itself with a marker and an apparatus line,
 so a section that is *not* one announces itself as well, instead of relying on a
 sentence some paragraphs from the numbers while the stamp above claims the whole
 document.
+
+**A declaration carries an invalidation edge, which is what makes staying
+outside safe rather than merely silent.** Being outside says the harness cannot
+*re-take* the readings; it was also saying, by omission, that nothing would be
+told when they went wrong — `--stale` walked the register, so a declared section
+could not go red however far its inputs moved, which is the same blind spot the
+koji RSS row sat a megabyte wrong in for a whole slice. So `measure.Outside`
+declares `depends` exactly as a figure does, one predicate (`declared_hits`)
+answers for both, and `--stale` prints the declared sections in a stanza of
+their own — apart, because the two ask different things of the reader: a stale
+figure names a sweep, and a stale section names a run nobody here can make.
+`benches` declares nothing, and the empty tuple is the claim rather than an
+omission: it publishes no number, so there is nothing a diff could falsify,
+which is the same sentence that puts it outside.
+
+**The commit that edge is measured from goes in the section's own marker**, in
+a `taken at` clause naming the sha, for the reasons the figure sittings above
+settled. In
+the marker rather than beside it, so it cannot go missing on its own; and in
+this document rather than in `scripts/measure.py`, because `session-drift`
+declares that path and a koji run's provenance recorded there would mark a
+figure stale for recording where another reading came from — every time koji is
+re-run. `--check` holds the pair together in both directions: a section
+declaring paths and no commit is an edge `--stale` has no range to intersect,
+and a section declaring a commit and no paths is a provenance nothing reads.
+
+*Rejected:* reading the session stamp for a declared section. The stamp is
+scoped to the register and says nothing about a section outside it, so it would
+date koji's readings to a sweep that did not take them — the same defect the
+figure sittings fixed one level up, where a figure taken elsewhere was reported
+stale against commits it postdates.
 
 *Rejected:* leaving the exclusion in prose, which is what it was. The koji
 section had a paragraph saying nothing in it was a figure, and that paragraph
@@ -1235,7 +1270,7 @@ holds resident by nothing a three-rep instrument can see.
 
 ## What the per-block resident growth is made of
 
-<!-- outside-register: rss-attribution — the readings here are not this harness's; see "The apparatus" -->
+<!-- outside-register: rss-attribution — taken at `41c96bb` — the readings here are not this harness's; see "The apparatus" -->
 
 The section above measures the growth; this one attributes it. **The readings
 below are not this harness's, and the marker says so where a reader meets the
@@ -2434,7 +2469,7 @@ Apparatus over every run in this table: CPU stall ≤1.11%, I/O stall ≤1.72%, 
 
 ## koji full scan — the regression check
 
-<!-- outside-register: koji — nothing in this section is a figure; see "The apparatus" -->
+<!-- outside-register: koji — taken at `f5768e7` — nothing in this section is a figure; see "The apparatus" -->
 
 The 784GB real sample (`CLAUDE.local.md` has the path). Roughly an hour on the
 HDD; run it detached per `CLAUDE.md`.
@@ -2443,9 +2478,23 @@ HDD; run it detached per `CLAUDE.md`.
 below.** The marker above says so where a reader meets the section rather than
 eleven paragraphs down, and `--check` holds it: koji carries no
 `<!-- figure: … -->` marker, `--check` reconciles it as a declared section
-instead, `--stale` cannot name it, and no figure's `quoted_by` reaches it —
-the harness owns koji's *invocation* and never runs it, which is the standing it
-also gives the profiling recipe. The throughput rows further down are disk
+instead, and no figure's `quoted_by` reaches it — the harness owns koji's
+*invocation* and never runs it, which is the standing it also gives the
+profiling recipe.
+
+**What it does carry is an invalidation edge, and it reads red today.** The
+marker names `f5768e7`, the commit the counts below were confirmed at, and
+`--stale` intersects a diff with the paths this section's readings depend on
+exactly as it does a figure's — the read path, the scanner, the map and the
+cache, which decide the block list and the totals, and the preamble, the type
+resolution and the CLI, which decide the `info --detail` report those totals are
+compared as text against. The parallel-scan work has moved most of them since,
+so the counts stand on a build that no longer exists and the next koji run is
+what discharges that; there is no acknowledgement to write, because the changes
+are exactly the kind a byte-identity check exists to test. Being outside the
+register says the harness cannot *re-take* this — not that nothing should be
+told when it goes wrong, which is what the section said by omission for as
+long as a declaration carried no edge. The throughput rows further down are disk
 throughputs with no `cat`-to-`/dev/null` floor, so the first standing rule above
 already puts them outside the register on their own terms. This section is
 documented context for a run nobody can repeat cheaply, not a table of figures,
