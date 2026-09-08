@@ -2651,6 +2651,63 @@ it logs the expected value beside the observed one and a reader compares. That
 is deliberate for a run whose whole point is to be read by a later session, but
 it means "the log says done" is not the same as "the checks passed".
 
+**The `.xz` copy scans to the same answer serially and four ways.** The
+2026-09-08 run (`runs/koji-xz-parallel-verify.sh`,
+`runs/koji-xz-verify-20260908-b/orchestrator.log`, 14:19:17 → 15:25:25 UTC,
+both legs `exit=0`) took a `--jobs 1` and a `--jobs 4 --parallel-memory
+268435456` parse of `koji-2026-07-23.dump.multistream.xz` — the upstream
+download's 31,150 one-block streams — in one run, on a `pgdq` built at
+`e29939c`. It is the two-legged shape the paragraph above describes, and it
+answers both halves:
+
+| | |
+|---|---|
+| Caches, leg against leg | **byte-identical**, 2,144,936 bytes each |
+| `COPY` blocks / rows, each leg | 74 / 19,575,829,920 — the table above's |
+| Bytes accounted for, each leg | 784,019,857,152 — `Scan completion: 100%` |
+| Serial leg against the earlier run's serial leg | **byte-identical** |
+
+The last row is free: the day's first attempt lost its parallel leg to the OOM
+killer but finished its serial one on the same binary, and its artifacts were
+archived rather than deleted, so serial-versus-serial across two runs came with
+the comparison this one was taken for.
+
+**This is the phase's `--jobs` determinism claim at a scale no fixture
+reaches** — a block spanning dozens of read windows, cuts landing inside
+multi-gigabyte regions, and a seek table with 31,150 entries — and it is the
+block pool's deadlock fix exercised on a real file rather than on a 200 MiB
+scratch one.
+
+**Every reading below is disqualified as a figure, at the number.** The legs
+ran in `postgres:16` at `-m 512m --memory-swap 512m --cpus 4 -e
+MALLOC_ARENA_MAX=2`, which tunes two things the apparatus rule holds fixed, and
+they were taken back to back with no quiet-machine gate and no repetition:
+
+- **Wall clock, 2644 s serial against 1322 s at `--jobs 4`.** Not a speedup
+  figure and not comparable to the plain-dump rows above: no
+  `cat`-to-`/dev/null` floor, a tuned allocator, a capped CPU count, one rep,
+  and 40 GB off the device against those rows' 784 GB, the difference spent in
+  the decoder. `parallel-scan-throughput` is the registered figure for `--jobs`
+  against throughput.
+- **Resident set, sampled every 60 s** (`runs/pgdq-koji-xz-<leg>-mem.log`):
+  the serial leg held 68–73 MiB anonymous, peak `VmHWM` 78 MiB; the parallel
+  leg plateaued at ~330 MiB with 10–12 threads and **one** arena, peak 404 MiB,
+  leaving ~108 MiB of the cgroup unused. Without `MALLOC_ARENA_MAX` the same
+  leg had been killed at 509 MiB — the arena mechanism is
+  [`architecture.md`](architecture.md), "Execution model and API surface".
+  `peak-rss` and `parallel-peak-rss` are the registered figures for what a scan
+  holds.
+- **`memory.current` reads 503–512 MiB on *both* legs** and describes neither:
+  the cgroup is charged the page cache of a 40 GB read, exactly as `memory.peak`
+  is charged a 784 GB one above. The sampled `anon` and `VmHWM` columns are
+  what to read.
+
+The orchestrator does compare the two caches itself — `cmp`, with the verdict
+in the log — which is the one place this run is stricter than the wrap script
+above. It still only prints the expected counts beside each leg's tail, and it
+does not read the byte total back at all; that is `pgdq info --dqcache <cache>
+--verbose` afterwards on the host.
+
 ## The preamble prepass is bounded by the schema, not by the dump
 
 <!-- figure: preamble-prepass — reproduce with `cd scripts && uv run measure.py --figure preamble-prepass` -->

@@ -328,7 +328,12 @@ scanned. Probed against koji's 24 MiB-block `.xz` at `--jobs 4
 and ~536 MiB anonymous resident, against ~328 MiB and one arena at
 `MALLOC_ARENA_MAX=2`. So roughly 200 MiB of that resident set is arena
 retention rather than anything this library holds, which is the difference
-between fitting a 512 MB cgroup and being killed in one. **A CPU quota is not
+between fitting a 512 MB cgroup and being killed in one. **That holds over a
+whole scan and not just a probe**: the 2026-09-08 koji verification ran the
+same arrangement over the entire 40 GB `.xz` under `MALLOC_ARENA_MAX=2` and
+sampled ~330 MiB anonymous with one arena throughout, peaking at 404 MiB and
+finishing with ~108 MiB of the cgroup unused
+([`measurements.md`](measurements.md), "koji full scan"). **A CPU quota is not
 the lever it looks like**: `--cpus 4` cuts the runtime to four workers and the
 arenas to eight and still reaches ~476 MiB, because what an arena retains is
 not proportional to how many there are. **Nor is the budget**: 128 MiB stated

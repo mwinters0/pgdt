@@ -572,32 +572,25 @@ are worth, and the orderings that do bind are named in
       regime ([`../design/measurements.md`](../design/measurements.md), "The
       HDD is not a fourth regime"). Notes:
       [`../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md)
-- [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
-      cache byte-identical to the serial 784 GB scan. Outside the register.
-      **Blocked, not landed.** The detached job takes both a serial and a
-      `--jobs 4` leg fresh, over `koji-…multistream.xz`, and compares them to
-      each other; each leg's counts are checked against the plain scan's
-      published totals. **Spec row amended by the review of 2026-09-08**
+- [x] **16.14** koji verification — a serial and a `--jobs 4` parse of
+      `koji-…multistream.xz` in one detached run, whose two `.dqcache` files
+      are byte-identical (2,144,936 bytes each) and whose counts both equal the
+      plain 784 GB scan's published totals: 74 blocks, 19,575,829,920 rows,
+      784,019,857,152 bytes at `Scan completion: 100%`. The phase's `--jobs`
+      determinism claim at a scale no fixture reaches, and `M70`'s deadlock fix
+      on a real file rather than a 200 MiB scratch one. A third comparison came
+      free — this run's serial cache is byte-identical to the day's first
+      attempt's, whose serial leg had finished before its parallel leg was
+      OOM-killed. **Spec row amended by the review of 2026-09-08**
       ([`history/2026-09-08.md`](history/2026-09-08.md), "A compressed cache
       and a plain one were never byte-comparable"): the row asked for
       byte-identity against the serial 784 GB scan's cache, which is an
-      artifact nothing produces. **The first 2026-09-08 attempt failed on
-      resources, not on determinism**: leg 1 (serial) completed cleanly at the
-      reference counts, but leg 2 (`--jobs 4 --parallel-memory 268435456`) was
-      OOM-killed by the kernel 180s in, inside the standard 512 MB cgroup. Its
-      `RESULT: caches DIFFER` line compares a complete cache against a partial
-      one and is not evidence against `M70`. **The cause is measured**: glibc
-      keeps one memory arena per runtime worker thread, and the runtime is
-      sized from the CPUs the container can see, so ~200 MiB of the 536 MiB
-      that leg held was arena retention
-      ([`history/2026-09-08.md`](history/2026-09-08.md), "The `16.14` OOM is
-      glibc's arenas, and a CPU limit is not the remedy"). **Relaunched
-      detached at 14:19 UTC** with `MALLOC_ARENA_MAX=2` and `--cpus 4` on both
-      legs and per-leg memory sampling:
-      `runs/koji-xz-verify-20260908-b/orchestrator.log` is what a later session
-      reads (not committed, `runs/` is gitignored — read it from the working
-      tree). `runs/koji-xz-parallel-verify.sh` does not resume a killed leg, so
-      re-running it restarts leg 1 too.
+      artifact nothing produces, so the check is two — across arrangements, and
+      across formats. Outside the register: the run's wall clocks and resident
+      sets are readings off a tuned apparatus, disqualified at the number in
+      [`../design/measurements.md`](../design/measurements.md), "koji full
+      scan". Notes:
+      [`../design/roadmap-P16.14-koji-verification-notes.md`](../design/roadmap-P16.14-koji-verification-notes.md)
 - [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
       divides the stated bytes by `partition_bytes + max_source_span`, so one
       number bounds a query rather than half of one. Admitted after spec time,

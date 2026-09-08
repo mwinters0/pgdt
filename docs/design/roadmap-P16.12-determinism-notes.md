@@ -86,14 +86,18 @@ here as well as in `map.rs`'s tiling sweep.
 **`16.14` is the same claim at real scale**, and it is the one this file cannot
 make: 109 kilobyte-scale fixtures say nothing about a block that spans dozens of
 windows, a cut that lands inside a multi-gigabyte region, or a resumed scan
-crossing one. The koji parse's byte-identity against the serial 784 GB scan's
-cache is what covers that.
+crossing one. What covers that is a serial and a `--jobs 4` parse of koji's
+`.xz` taken in one run and compared to each other — not, as this sentence
+originally said, a comparison against the serial 784 GB plain scan's cache,
+which is an artifact nothing produces
+([`roadmap-P16.14-koji-verification-notes.md`](roadmap-P16.14-koji-verification-notes.md)).
 
 **`.xz` determinism is not asserted here.** The fixture tree is plain `.sql`;
 `xz_source.rs` carries the compressed source's end-to-end parity and
 `parallelism.rs` its budget parity, both on rows rather than on cache bytes. A
-compressed `parse` at two job counts writing one cache is an assertion nobody
-has made, and it is cheap to add wherever a slice next touches that path.
+compressed `parse` at two job counts writing one cache is asserted only by
+`16.14`, once, on a file nobody can rescan cheaply — nothing in the suite makes
+it, and it is cheap to add wherever a slice next touches that path.
 
 ## Figures
 
