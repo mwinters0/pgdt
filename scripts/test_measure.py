@@ -1358,13 +1358,16 @@ class ParallelFigures(unittest.TestCase):
     slow under a heading that looks like the plain leg's.
     """
 
-    def test_both_figures_are_built_and_not_taken(self):
-        # They are apparatus, not readings: the sitting is a slice of its own,
-        # because a figure published outside a stamped sweep names the commit it
-        # was taken at and an uncommitted harness has none to name.
+    def test_both_figures_are_taken_and_no_longer_untaken(self):
+        # `16.13.1` took the sitting at `e29939c`, so both entries moved out of
+        # `UNTAKEN` and into `FIGURES`, where the doc-side checks start
+        # applying.
         untaken = [f.id for f in measure.UNTAKEN]
-        self.assertIn("parallel-scan-throughput", untaken)
-        self.assertIn("parallel-peak-rss", untaken)
+        self.assertNotIn("parallel-scan-throughput", untaken)
+        self.assertNotIn("parallel-peak-rss", untaken)
+        taken = [f.id for f in measure.FIGURES]
+        self.assertIn("parallel-scan-throughput", taken)
+        self.assertIn("parallel-peak-rss", taken)
 
     def test_every_registered_job_count_has_a_shape_in_every_family(self):
         for family in measure.JOBS_AXIS:

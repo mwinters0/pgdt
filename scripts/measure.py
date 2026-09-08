@@ -4334,36 +4334,6 @@ FIGURES: list[Figure] = [
         memory=DECODE_MEMORY,
         run=run_xz_decode_scaling,
     ),
-]
-
-FIGURES_BY_ID = {f.id: f for f in FIGURES}
-
-#: Instruments that are **built but whose figure has not been taken**.
-#:
-#: A sweep does not run these and the doc carries no table for them, which is
-#: why they sit outside `ALL_FIGURES`: the marker reconciliation would
-#: otherwise demand a section with no numbers under it, and `quoted_by` would
-#: have to name consumers of a figure that does not exist yet. `--figure <id>`
-#: still selects one, which is how the reading gets taken — and taking it moves
-#: the entry into `FIGURES`, where the doc-side checks start applying.
-#:
-#: The distinction is worth a list rather than a comment because *built* and
-#: *taken* fail differently. An instrument nobody built is work; an instrument
-#: built and never run is a claim nobody checked, and it is invisible unless
-#: something names it.
-#:
-#: **Empty is the healthy state, not a disused mechanism**, and the two entries
-#: below are here for the reason the list exists: a figure published outside a
-#: stamped sweep declares inside its own marker the commit it was taken at, and
-#: a sitting run from a working tree carrying its own uncommitted apparatus has
-#: no such commit to name. `xz-decode-scaling` waited here for exactly that and
-#: left when the commit existed. Three earlier entries left by the two exits the
-#: list has: `projection-widths` and `xz-decode-scaling` were taken and moved
-#: into `FIGURES`, and `composite-isolated` — which isolated one column by
-#: declaring it two ways over byte-identical rows — was deleted unpublished,
-#: because `projection-widths` makes the same isolation a subtraction between two
-#: adjacent rows of one table over one file.
-UNTAKEN: list[Figure] = [
     # The phase's central throughput claim, and the first figure in the register
     # whose axis is the worker count of `pgdq` itself. `depends` is the union of
     # everything a parallel scan runs through — the scanner, the map, the read
@@ -4386,10 +4356,11 @@ UNTAKEN: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # Nothing yet: an untaken figure's numbers are in no document, so it has
-        # no edge out. The fold-in is what gives it one, and `docs/design/
-        # roadmap-P16-parallel-scan.md`'s projections are what it will answer.
-        quoted_by=(),
+        # `roadmap-P16-parallel-scan.md`'s "What that buys, at 12 physical
+        # cores / 24 threads" is arithmetic over a one-core rate; this figure
+        # is what it projected, so a move here is a move of what that section
+        # argues from.
+        quoted_by=("docs/design/roadmap-P16-parallel-scan.md",),
         warm_inputs=("control", "control_xz"),
         memory=PARALLEL_MEMORY,
         run=run_parallel_scan_throughput,
@@ -4412,12 +4383,44 @@ UNTAKEN: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        quoted_by=(),
+        # STATUS.md's `16.15` row cites this figure's `--jobs` axis going flat
+        # past the point the stated budget stops affording a worker, as the
+        # reason `16.13.1` was taken first rather than held behind that slice.
+        quoted_by=("docs/status/STATUS.md",),
         warm_inputs=("control_xz", "control_xz128"),
         memory=PARALLEL_MEMORY,
         run=run_parallel_peak_rss,
     ),
 ]
+
+FIGURES_BY_ID = {f.id: f for f in FIGURES}
+
+#: Instruments that are **built but whose figure has not been taken**.
+#:
+#: A sweep does not run these and the doc carries no table for them, which is
+#: why they sit outside `ALL_FIGURES`: the marker reconciliation would
+#: otherwise demand a section with no numbers under it, and `quoted_by` would
+#: have to name consumers of a figure that does not exist yet. `--figure <id>`
+#: still selects one, which is how the reading gets taken — and taking it moves
+#: the entry into `FIGURES`, where the doc-side checks start applying.
+#:
+#: The distinction is worth a list rather than a comment because *built* and
+#: *taken* fail differently. An instrument nobody built is work; an instrument
+#: built and never run is a claim nobody checked, and it is invisible unless
+#: something names it.
+#:
+#: **Empty is the healthy state, not a disused mechanism.** A figure published
+#: outside a stamped sweep declares inside its own marker the commit it was
+#: taken at, and a sitting run from a working tree carrying its own uncommitted
+#: apparatus has no such commit to name — so an instrument built ahead of that
+#: commit waits here rather than in `FIGURES`. Four entries have left this list
+#: so far: `projection-widths`, `xz-decode-scaling`, `parallel-scan-throughput`
+#: and `parallel-peak-rss` were each taken and moved into `FIGURES`, and
+#: `composite-isolated` — which isolated one column by declaring it two ways
+#: over byte-identical rows — was deleted unpublished, because
+#: `projection-widths` makes the same isolation a subtraction between two
+#: adjacent rows of one table over one file.
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

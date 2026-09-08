@@ -8,21 +8,28 @@ kept**.
 **Session stamp.** Every figure below — every section carrying a
 `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on
 2026-09-05, against commit `af15eac`, under the `system` allocator. **17 of the
-19 figures below come from that sitting.** The other 2 carry their own sitting
+21 figures below come from that sitting.** The other 4 carry their own sitting
 commits inside their markers, and every reader of this stamp argues from those
-instead: `peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`). One sweep, one
+instead: `parallel-peak-rss` (`e29939c`), `parallel-scan-throughput`
+(`e29939c`), `peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`). One
+sweep, one
 apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads each figure's own commit back and names the figures a diff has
 invalidated since. Of the seventeen, sixteen come from the sweep itself and
 `session-drift` is derived *across* two — that sweep and a second one begun the
-minute it finished — which no sweep can take. The two standing outside are each
-taken alone and say so in their markers, and each is permitted for the same
-reason: neither shares a reading with any other figure here ("A figure may be
-published outside the sweep", below). `peak-rss` is the only figure denominated
-in bytes rather than seconds; `xz-decode-scaling` times no `pgdq` at all, being
-a property of the decoder rather than of the read path.
+minute it finished — which no sweep can take. The four standing outside are
+each taken alone and say so in their markers, and each is permitted for the
+same reason: none shares a reading with any other figure here ("A figure may be
+published outside the sweep", below). `parallel-scan-throughput` and
+`parallel-peak-rss` share a sitting commit because both were taken in the same
+run of the harness, not because either borrows a reading from the other — the
+two are unrelated instruments that happened to be taken together, and `--check`
+holds the difference: sharing a commit is not a `shares` edge. `peak-rss` and
+`parallel-peak-rss` are the only figures denominated in bytes rather than
+seconds; `xz-decode-scaling` times no `pgdq` at all, being a property of the
+decoder rather than of the read path.
 So no table here carries a partial-sitting note, and no absolute in this
 document is a cross-sitting reading — which has not been true since the
 `ba2fc12` stamp, under which ten of the seventeen stood outside the sweep. The
@@ -2299,6 +2306,101 @@ buys essentially nothing over the sixteenth. The control keeps climbing further
 — 10.80× at twenty-four — which is the same ordering its lower density predicts.
 So a worker count read off a linear extrapolation of a one-worker rate is a
 **floor on what will be needed**, not an estimate of what will suffice.
+
+## What a second scan worker buys, and where the plain path stops
+
+<!-- figure: parallel-scan-throughput — taken at `e29939c` — reproduce with `cd scripts && uv run measure.py --figure parallel-scan-throughput` -->
+
+| `--jobs` | Plain, `parse` | Plain, typed `query` | `.xz`, `parse` | `.xz`, typed `query` |
+|---|---|---|---|---|
+| 1 *(serial)* | **0.426 s** (0.420–0.489) · ~7562 MB/s · 1.00× | **4.71 s** (4.67–4.78) · ~683 MB/s · 1.00× | **15.94 s** (15.90–17.66) · ~202 MB/s · 1.00× | **35.25 s** (35.20–35.47) · ~91 MB/s · 1.00× |
+| 2 | **0.478 s** (0.450–0.560) · ~6739 MB/s · 0.89× | **4.75 s** (4.71–5.00) · ~678 MB/s · 0.99× | **9.33 s** (9.30–10.13) · ~345 MB/s · 1.71× | **28.54 s** (28.43–29.76) · ~113 MB/s · 1.24× |
+| 4 | **0.491 s** (0.423–0.522) · ~6561 MB/s · 0.87× | **4.75 s** (4.66–4.75) · ~679 MB/s · 0.99× | **8.48 s** (8.32–8.87) · ~380 MB/s · 1.88× | **28.09 s** (27.03–28.98) · ~115 MB/s · 1.25× |
+| 8 | **0.564 s** (0.547–0.573) · ~5711 MB/s · 0.76× | **4.82 s** (4.78–4.87) · ~668 MB/s · 0.98× | **5.02 s** (4.92–5.53) · ~642 MB/s · 3.18× | **24.61 s** (24.37–25.77) · ~131 MB/s · 1.43× |
+| 12 | **0.560 s** (0.546–0.568) · ~5752 MB/s · 0.76× | **4.78 s** (4.76–4.82) · ~674 MB/s · 0.99× | **3.81 s** (3.48–4.35) · ~846 MB/s · 4.19× | **23.26 s** (23.07–23.55) · ~138 MB/s · 1.52× |
+| 16 | **0.549 s** (0.538–0.569) · ~5867 MB/s · 0.78× | **4.81 s** (4.79–4.85) · ~670 MB/s · 0.98× | **3.13 s** (3.12–3.27) · ~1029 MB/s · 5.10× | **22.56 s** (22.41–22.59) · ~143 MB/s · 1.56× |
+| 24 | **0.561 s** (0.546–0.577) · ~5742 MB/s · 0.76× | **4.82 s** (4.78–4.90) · ~669 MB/s · 0.98× | **2.69 s** (2.54–3.13) · ~1199 MB/s · 5.93× | **22.03 s** (21.77–22.12) · ~146 MB/s · 1.60× |
+
+Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-job row. Both `.xz` legs decode the same 3.00 GiB of plaintext the plain legs read directly (563.8 MB on disk, 5.45×), so a rate is comparable across all four columns.
+
+Every row states `--parallel-memory 1073741824` (1.00 GiB) in a 3g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-job row is the exception and is not an apparatus of its own choosing: `--jobs 1` is `Parallelism::Serial`, which states no budget, so it runs at the library's 64 MiB default — the serial arrangement this project ships, which is what a speedup is a speedup over.
+
+**A plain leg's `--jobs` is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused worker on a plain source waits: the rows above four say what that ceiling costs, not that the scan stopped scaling.
+
+Per-rep readings (s):
+- Plain, `parse`, 1j: 0.426, 0.426, 0.489, 0.420, 0.426
+- Plain, `parse`, 2j: 0.478, 0.476, 0.560, 0.450, 0.526
+- Plain, `parse`, 4j: 0.496, 0.443, 0.491, 0.423, 0.522
+- Plain, `parse`, 8j: 0.570, 0.564, 0.573, 0.563, 0.547
+- Plain, `parse`, 12j: 0.560, 0.546, 0.568, 0.560, 0.560
+- Plain, `parse`, 16j: 0.569, 0.538, 0.549, 0.549, 0.567
+- Plain, `parse`, 24j: 0.561, 0.557, 0.546, 0.577, 0.565
+- Plain, typed `query`, 1j: 4.78, 4.67, 4.72, 4.70, 4.71
+- Plain, typed `query`, 2j: 4.79, 4.73, 4.75, 4.71, 5.00
+- Plain, typed `query`, 4j: 4.75, 4.75, 4.66, 4.75, 4.68
+- Plain, typed `query`, 8j: 4.87, 4.80, 4.78, 4.85, 4.82
+- Plain, typed `query`, 12j: 4.82, 4.76, 4.78, 4.77, 4.78
+- Plain, typed `query`, 16j: 4.85, 4.81, 4.82, 4.79, 4.79
+- Plain, typed `query`, 24j: 4.87, 4.90, 4.78, 4.82, 4.81
+- `.xz`, `parse`, 1j: 17.66, 15.91, 15.90, 15.94, 15.95
+- `.xz`, `parse`, 2j: 10.13, 9.32, 9.30, 9.49, 9.33
+- `.xz`, `parse`, 4j: 8.87, 8.32, 8.48, 8.64, 8.41
+- `.xz`, `parse`, 8j: 5.02, 4.98, 5.53, 4.92, 5.22
+- `.xz`, `parse`, 12j: 4.35, 3.48, 3.81, 3.62, 3.89
+- `.xz`, `parse`, 16j: 3.27, 3.19, 3.12, 3.13, 3.13
+- `.xz`, `parse`, 24j: 2.73, 2.69, 3.13, 2.54, 2.59
+- `.xz`, typed `query`, 1j: 35.25, 35.20, 35.26, 35.21, 35.47
+- `.xz`, typed `query`, 2j: 28.63, 28.43, 28.54, 28.49, 29.76
+- `.xz`, typed `query`, 4j: 28.49, 28.09, 27.03, 27.96, 28.98
+- `.xz`, typed `query`, 8j: 24.73, 24.37, 24.44, 24.61, 25.77
+- `.xz`, typed `query`, 12j: 23.20, 23.32, 23.26, 23.07, 23.55
+- `.xz`, typed `query`, 16j: 22.59, 22.46, 22.41, 22.58, 22.56
+- `.xz`, typed `query`, 24j: 22.03, 22.12, 21.77, 22.05, 21.77
+
+Apparatus over every run in this table: CPU stall ≤1.46%, I/O stall ≤23.90%, machine ≤44% busy, steal ≤0.00%, busiest core ≥3.58 GHz, ≤72°C.
+
+**Decode is the bound past the plain path's own ceiling, exactly as the single-worker decode figure says it should be.** The `.xz` `parse` leg keeps climbing to 5.93× at twenty-four jobs where the plain `parse` leg is already flat past four — the chunk pool's ceiling — so the compressed path's headroom is real and is not the plain path's to share. The fused rate a worker delivers is below `xz-decode-scaling`'s decode-only rate at every job count, which is consistent with a worker paying for parsing on top of decode rather than decode being free.
+
+**Typed `query` on `.xz` gains far less than `parse` does, proportionally** — 1.60× at twenty-four jobs against `parse`'s 5.93× — because the wider row spends more of the fused worker's time in scalar decode and render-back, which this table does not split out further; `nested-decode-micro` and `projection-widths` price that half on plain input already.
+
+## What a parallel scan holds resident, at two block sizes
+
+<!-- figure: parallel-peak-rss — taken at `e29939c` — reproduce with `cd scripts && uv run measure.py --figure parallel-peak-rss` -->
+
+| `--jobs` | 24 MiB blocks | 128 MiB blocks |
+|---|---|---|
+| 1 *(serial)* | **62.93 MiB** (62.50–63.25) | **15.10 MiB** (15.04–15.25) |
+| 2 | **299.61 MiB** (289.86–299.88) · +236.69 MiB | **1044.19 MiB** (1043.85–1044.26) · +1029.09 MiB |
+| 4 | **423.81 MiB** (367.75–431.88) · +360.88 MiB | **1319.11 MiB** (1315.04–1319.66) · +1304.01 MiB |
+| 8 | **640.69 MiB** (624.92–683.32) · +577.76 MiB | **2112.62 MiB** (2110.73–2113.14) · +2097.52 MiB |
+| 12 | **753.46 MiB** (753.27–759.04) · +690.54 MiB | **2111.31 MiB** (2111.17–2112.50) · +2096.21 MiB |
+| 16 | **1026.84 MiB** (1018.43–1035.69) · +963.91 MiB | **2111.37 MiB** (2109.81–2112.14) · +2096.27 MiB |
+| 24 | **1467.00 MiB** (1466.78–1475.98) · +1404.07 MiB | **2111.58 MiB** (2105.72–2112.03) · +2096.48 MiB |
+
+Each cell is peak resident set, and the change from that leg's own one-job row. Every row states `--parallel-memory 1073741824` (1.00 GiB) in a 3g container — an apparatus departure from the register's 512 MB, which is smaller than the budget under test. The one-job row states nothing the library reads: `--jobs 1` is `Parallelism::Serial`, so it runs at the 64 MiB default, and on the 128 MiB leg that is a block it cannot hold — that row reads through the streaming fallback and every row above it block-decodes.
+
+- 24 MiB blocks: `control_xz`, 563.8 MB compressed
+- 128 MiB blocks: `control_xz128`, 560.5 MB compressed
+
+Per-rep readings (peak RSS):
+- 24 MiB blocks, 1j: 62.93 MiB, 63.25 MiB, 62.50 MiB
+- 24 MiB blocks, 2j: 299.61 MiB, 289.86 MiB, 299.88 MiB
+- 24 MiB blocks, 4j: 367.75 MiB, 431.88 MiB, 423.81 MiB
+- 24 MiB blocks, 8j: 640.69 MiB, 683.32 MiB, 624.92 MiB
+- 24 MiB blocks, 12j: 759.04 MiB, 753.27 MiB, 753.46 MiB
+- 24 MiB blocks, 16j: 1026.84 MiB, 1018.43 MiB, 1035.69 MiB
+- 24 MiB blocks, 24j: 1467.00 MiB, 1475.98 MiB, 1466.78 MiB
+- 128 MiB blocks, 1j: 15.25 MiB, 15.04 MiB, 15.10 MiB
+- 128 MiB blocks, 2j: 1044.26 MiB, 1043.85 MiB, 1044.19 MiB
+- 128 MiB blocks, 4j: 1315.04 MiB, 1319.66 MiB, 1319.11 MiB
+- 128 MiB blocks, 8j: 2113.14 MiB, 2112.62 MiB, 2110.73 MiB
+- 128 MiB blocks, 12j: 2111.31 MiB, 2111.17 MiB, 2112.50 MiB
+- 128 MiB blocks, 16j: 2111.37 MiB, 2109.81 MiB, 2112.14 MiB
+- 128 MiB blocks, 24j: 2105.72 MiB, 2111.58 MiB, 2112.03 MiB
+
+Apparatus over every run in this table: CPU stall ≤1.11%, I/O stall ≤1.72%, machine ≤46% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤72°C.
+
+**Resident set past four workers is not linear in `--jobs`, because `POOL_DEPTH` caps decoded-block retention independently of the worker count** — the 128 MiB leg is flat at ~2.11 GiB from eight jobs on, which is the pool's cap on retained blocks rather than a per-worker charge that keeps growing. The 24 MiB leg has not reached that cap by twenty-four jobs, so its curve is still visibly climbing where the 128 MiB leg has already levelled off.
 
 ## koji full scan — the regression check
 
