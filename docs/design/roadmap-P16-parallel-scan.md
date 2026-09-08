@@ -580,6 +580,70 @@ must be byte-identical to the one the serial 784 GB scan already produced.**
 That is the determinism property at the only scale where it is interesting, and
 it costs one detached hour rather than a new apparatus.
 
+### A parse has phases now, so the CLI says which one it is in
+
+**Admitted after this document was written**
+([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "A parse
+has phases, and nothing says which one it is in"). `parse` was one span of work
+until this phase gave it two: an `.xz` source walks the file's stream footers
+before the first block is scanned, and on the koji download that walk is 85 s of
+silence ([`architecture.md`](architecture.md), "The compressed source"). A user
+watching a 44-minute scan cannot tell that phase from a hang, and neither can a
+session reading the log afterwards — which is how `16.14`'s first attempt was
+diagnosed from `dmesg` rather than from anything `pgdq` printed.
+
+So the CLI emits status, through the **`tracing` facade in the library and a
+subscriber in the CLI**. The library takes the facade dependency and no output
+policy: the phases worth naming happen inside it, so a CLI-only scheme cannot
+see the seek-table build at all, and `vendor/xz-seek` is read-only
+([`architecture.md`](architecture.md), "The compressed source"), which puts the
+emission in `io.rs`'s wrapper rather than in the decoder. *Rejected:* a progress-sink
+trait of the library's own — it hand-rolls what the facade already does, and
+makes the structured output this exists to enable a rewrite rather than a
+subscriber swap. Output is **stderr**, since `query` writes data to stdout and
+anything else there corrupts a pipe. Lines carry an **absolute RFC3339
+timestamp**, the convention the koji orchestrator logs already use, because
+correlating a `pgdq` line with a `dmesg` entry or a cgroup sample is the case
+that produced this row; elapsed-since-start is a structured field later, not a
+prefix now.
+
+**The default is on, uniformly, for all three commands.** A per-command default
+is a rule the manual has to explain, and gating on whether stderr is a terminal
+makes the output depend on invocation context — which is precisely the case that
+bit `16.14`, where the redirected log is the only record. Scripted `query` is
+what `--quiet` answers.
+
+**The timings this prints are diagnostics and never figures.** This project
+admits a performance number only as a registered figure with a stated apparatus,
+and the koji section is disqualified reading by reading at the number
+([`measurements.md`](measurements.md), "koji full scan"); a command that prints
+elapsed times by default manufactures numbers with no apparatus behind them,
+taken on whatever machine a user happened to run. So the rule is written beside
+the mechanism before the first number is printed rather than after somebody
+quotes one: no document may cite a logged duration as a measurement, and nothing
+in the register may `depends` on it. *Rejected:* emitting phase transitions with
+no durations, which cannot be misquoted because it says nothing — it gives up
+the per-run timing that is half of why this row exists, and leaves a reader
+subtracting timestamps by hand, which is quoting a duration with extra steps.
+
+**`--verbose` is renamed to `--detail` first, in a slice of its own.** The word
+is already taken on `info`, where it means *report detail* — the per-type
+listing and the per-column schema line — which is a different axis from log
+verbosity, and one binary carrying both meanings of one word is a documentation
+problem that never resolves. The short `-v` was never bound, so what the rename
+frees is the word. It lands as its own slice because it is mechanical and wide —
+`main.rs`, both manual files, `measure.py`'s koji recipe and the test that
+asserts it — where the facade is new design, and
+[`../process.md`](../process.md), "Working unattended", forbids putting two
+confidences in one review cycle. *Rejected:* keeping `-v`/`-vvv` alongside
+`info --verbose` and letting context disambiguate; and renaming nothing and
+spelling log level `--log-level` only, which leaves the conventional short flag
+unusable forever to protect one command's flag.
+
+**The level flags are deferred and unallocated.** What lands is the facade, the
+subscriber and one default level; `-vvv` and `--quiet` take the next free number
+when admitted, per this section's own rule.
+
 ## Slices
 
 **The order after the evidence slices is allocation order, not a schedule.**
@@ -608,7 +672,8 @@ budget *and the pool reads it*, so wired to today's constant it would be a wait
 on the serial path's number, and against a value nothing consumes it would be a
 wait on a number that never arrives. The condition that once also named
 `Parallelism` is gone — the exemption is by holder class (this document's
-`16.4.1` row) — but the budget binding stands on its own.
+`16.4.1` row) — but the budget binding stands on its own. **16.18 before
+16.19**, which needs the word `verbose` the rename frees.
 
 ### Evidence
 
@@ -638,6 +703,8 @@ wait on a number that never arrives. The condition that once also named
 | **16.13** | **`parallel-scan-throughput` and `parallel-peak-rss`, as apparatus** — both figures built, registered in `measure.UNTAKEN` and runnable, with no readings taken. `parse` and typed `query` against `--jobs`, compressed and plain, over four legs of one plaintext; RSS against `--jobs` at two block sizes. Both carry an apparatus gate of their own — `warm-parallel`, which gates on steal alone, a figure that occupies 24 threads being unable to inherit the sweep's quiet-machine one — and both declare a container memory departure, the register's 512 MB being smaller than the budget under test. **On a plain source the curve flattens at four workers because the chunk pool binds, not because the scan stops scaling** — `POOL_DEPTH` clamps `BufferPool::slots()` and a fifth fused worker waits ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The plain-file leader is capped at four workers by the chunk pool"). The job range runs past four so that ceiling is in the table rather than inferred; `16.15` is where the ceiling itself is re-derived. **Rewritten to the scope that landed** when the sitting turned out to be unreachable from the tree the apparatus lives in ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.13 split: the apparatus, then the sitting that needs a commit to name"). |
 | **16.13.1** | **The sitting** — both figures taken at a named commit and folded into [`measurements.md`](measurements.md), each declaring that commit inside its own marker, and both entries moved out of `measure.UNTAKEN` into `FIGURES` where the doc-side checks start applying. **Earned, not planned**: a figure published outside a stamped sweep names the commit it was taken at, and a sitting run from a tree carrying its own uncommitted apparatus has none to name — the parent it could name is a tree where the instrument does not exist. It is the seam `xz-decode-scaling` already waited at, and it is not the mechanism/evidence one: both halves are one confidence and the whole of `16.13` is harness code, but the second half cannot be *taken* from the tree the first half lives in. |
 | **16.14** | **koji verification** — a detached parse of the `.xz` in a 512 MB cgroup, per `CLAUDE.md`'s long-running-process rule, checked two ways because no single artifact can carry both. **Across arrangements**: a `--jobs 1` and a `--jobs N` leg of the *same* file, taken in the same run, whose two `.dqcache` files must be byte-identical to each other. **Across formats**: each leg's reported block, row and byte counts must equal the plain 784 GB scan's, in [`measurements.md`](measurements.md), "koji full scan". **Amended by the review of 2026-09-08** ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "A compressed cache and a plain one were never byte-comparable"): this row asked for byte-identity against the cache the serial 784 GB scan left behind, which is an artifact nothing produces — a compressed source's cache and a plain source's cache of one dump differ in `compression` and `identity` by construction, quite apart from the format bump that had already expired that particular file. Outside the register, with an `<!-- outside-register: … -->` marker. |
+| **16.18** | **`info --verbose` becomes `--detail`** — the flag renamed wherever it is spelled: `main.rs`'s argument and the `--json` conflict message, both manual files, and `measure.py`'s koji recipe with the `scripts/test_measure.py` assertion over it. No behaviour changes and no library code; what it buys is the word `verbose`, which `16.19` needs and which cannot mean two things on one binary. Pre-1.0, so the old spelling is removed rather than aliased ([`roadmap.md`](roadmap.md), "Pre-1.0"). **Admitted after spec time**, taking the next free number rather than a position — and `16.17` is **not** it: that number was allocated for a day to what became `16.10.2`, and commit `f65f9f6`'s body names it, so it is spent ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10.1 split again"). |
+| **16.19** | **The CLI emits status** — `tracing` as a library dependency, a subscriber in the CLI, and one default level on for `parse`, `info` and `query` alike, writing RFC3339-stamped lines to stderr. The phases named are the ones this phase created: the seek-table build, from `io.rs`'s wrapper rather than from the read-only vendored decoder, and the scan's own start and completion, with `--jobs` and the stated budget stated once at startup so a log says what arrangement produced it. The manual gains the output and the sentence saying its durations are diagnostics, never figures; `-vvv` and `--quiet` are deferred and unallocated. Determinism is untouched — stderr carries no cache byte, so `16.12` holds unchanged. |
 
 **16.10 was named here in advance as the row most likely to earn a
 `16.10.1`, and it did** — the prediction being that it is the only row pairing

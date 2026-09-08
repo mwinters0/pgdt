@@ -625,6 +625,23 @@ are worth, and the orderings that do bind are named in
       ([`history/2026-09-07.md`](history/2026-09-07.md), "The parallel default
       is a correction the tree has not made"). Notes:
       [`../design/roadmap-P16.16-jobs-default-notes.md`](../design/roadmap-P16.16-jobs-default-notes.md)
+- [ ] **16.18** `info --verbose` becomes `--detail` — the flag renamed
+      everywhere it is spelled: `main.rs`'s argument and the `--json` conflict
+      message, both manual files, and `measure.py`'s koji recipe plus the
+      `test_measure.py` assertion over it. No behaviour change, no library
+      code; it frees the word `verbose` for `16.19`, which cannot share it.
+      Removed rather than aliased, pre-1.0. **Admitted after spec time**
+      ([`history/2026-09-08.md`](history/2026-09-08.md), "A parse has phases,
+      and nothing says which one it is in"); `16.17` is spent, having named
+      what became `16.10.2` for a day.
+- [ ] **16.19** The CLI emits status — `tracing` in the library, a subscriber
+      in the CLI, RFC3339-stamped lines on stderr, on by default for all three
+      commands. Names the phases this phase created: the seek-table build, from
+      `io.rs` rather than the read-only vendored decoder, and the scan's start
+      and completion, with `--jobs` and the stated budget printed once so a log
+      says what arrangement produced it. Its durations are diagnostics and
+      never figures. `-vvv` and `--quiet` are deferred and unallocated. Runs
+      after `16.18`.
 
 ## Known deficiencies
 
