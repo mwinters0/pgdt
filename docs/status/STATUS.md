@@ -574,16 +574,30 @@ are worth, and the orderings that do bind are named in
       [`../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md)
 - [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
       cache byte-identical to the serial 784 GB scan. Outside the register.
-      **Launched, not landed.** The detached job takes both a serial and a
+      **Blocked, not landed.** The detached job takes both a serial and a
       `--jobs 4` leg fresh, over `koji-…multistream.xz`, and compares them to
       each other; each leg's counts are checked against the plain scan's
       published totals. **Spec row amended by the review of 2026-09-08**
       ([`history/2026-09-08.md`](history/2026-09-08.md), "A compressed cache
       and a plain one were never byte-comparable"): the row asked for
       byte-identity against the serial 784 GB scan's cache, which is an
-      artifact nothing produces. Handoff:
-      `runs/koji-xz-verify-20260908-0203/HANDOFF.md` (not committed, `runs/`
-      is gitignored — read it from the working tree).
+      artifact nothing produces. **The first 2026-09-08 attempt failed on
+      resources, not on determinism**: leg 1 (serial) completed cleanly at the
+      reference counts, but leg 2 (`--jobs 4 --parallel-memory 268435456`) was
+      OOM-killed by the kernel 180s in, inside the standard 512 MB cgroup. Its
+      `RESULT: caches DIFFER` line compares a complete cache against a partial
+      one and is not evidence against `M70`. **The cause is measured**: glibc
+      keeps one memory arena per runtime worker thread, and the runtime is
+      sized from the CPUs the container can see, so ~200 MiB of the 536 MiB
+      that leg held was arena retention
+      ([`history/2026-09-08.md`](history/2026-09-08.md), "The `16.14` OOM is
+      glibc's arenas, and a CPU limit is not the remedy"). **Relaunched
+      detached at 14:19 UTC** with `MALLOC_ARENA_MAX=2` and `--cpus 4` on both
+      legs and per-leg memory sampling:
+      `runs/koji-xz-verify-20260908-b/orchestrator.log` is what a later session
+      reads (not committed, `runs/` is gitignored — read it from the working
+      tree). `runs/koji-xz-parallel-verify.sh` does not resume a killed leg, so
+      re-running it restarts leg 1 too.
 - [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
       divides the stated bytes by `partition_bytes + max_source_span`, so one
       number bounds a query rather than half of one. Admitted after spec time,
@@ -599,7 +613,13 @@ are worth, and the orderings that do bind are named in
       re-derived here, as `16.10.2` and `16.16` already defer to it. It
       **re-takes `parallel-peak-rss`**, whose `--jobs` axis is flat past the
       point the budget stops affording a worker — so `16.13.1` is taken first,
-      against what ships, rather than held behind an unspecified slice.
+      against what ships, rather than held behind an unspecified slice. It has
+      a reading to work against: `16.14`'s OOM probes measure the same 328 MiB
+      anonymous resident at a stated 128 MiB as at 256 MiB, the depth clamp
+      binding at four slots in both, so above the budget that affords four
+      workers the stated number stops changing what the process holds
+      ([`history/2026-09-08.md`](history/2026-09-08.md), "The `16.14` OOM is
+      glibc's arenas, and a CPU limit is not the remedy").
 - [x] **16.16** `--jobs` defaults to 1 — `DEFAULT_JOBS`, a constant where
       `available_parallelism()` was, so a person who states neither flag gets
       the arrangement every published figure was taken under. Its help text
@@ -764,4 +784,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing open.
+- **`16.14`'s container now sets `MALLOC_ARENA_MAX=2`, which makes the run fit
+  by configuring the allocator rather than by fixing what pgdq holds.** The
+  512 MB cgroup is apparatus (`CLAUDE.md`, "Long-running processes") and so is
+  the allocator (`measurements.md`, "The apparatus"), so tuning one of them to
+  pass is a call worth seeing. It was made because `16.14` checks determinism
+  rather than throughput — the arena count cannot change a cache byte — and
+  because the alternative reading, that a 512 MB cgroup at `--jobs 4` is a
+  configuration pgdq must fit untuned, is a claim nothing in the spec makes.
+  What would change if reconsidered: the run is re-taken without the setting
+  and the cgroup is raised instead, and the untuned figure (~536 MiB anon for a
+  256 MiB stated budget) becomes something `16.15` is expected to bring down
+  rather than a property the manual documents.

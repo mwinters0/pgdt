@@ -318,6 +318,32 @@ advisory already does for a *partition*, but here the second term is the one
 that grows: a source could hold twice its stated budget, in a phase whose
 central promise is a number in bytes.
 
+**What no stated budget bounds is the allocator's own retention, and under a
+memory cap that is the larger term.** The budget bounds the pools; the process
+carries, on top of them, whatever glibc keeps in its per-thread arenas — and
+`#[tokio::main]` builds a runtime with one worker thread per CPU the process can
+see, each of which seeds an arena the first time it allocates, before a byte is
+scanned. Probed against koji's 24 MiB-block `.xz` at `--jobs 4
+--parallel-memory 268435456`, sampling the container's `memory.stat`: 24 arenas
+and ~536 MiB anonymous resident, against ~328 MiB and one arena at
+`MALLOC_ARENA_MAX=2`. So roughly 200 MiB of that resident set is arena
+retention rather than anything this library holds, which is the difference
+between fitting a 512 MB cgroup and being killed in one. **A CPU quota is not
+the lever it looks like**: `--cpus 4` cuts the runtime to four workers and the
+arenas to eight and still reaches ~476 MiB, because what an arena retains is
+not proportional to how many there are. **Nor is the budget**: 128 MiB stated
+measures the same ~328 MiB as 256 MiB, since `BufferPool::slots()` clamps to
+`POOL_DEPTH.max(jobs)` at either. This is a property and not a deficiency — the
+remedy is `MALLOC_ARENA_MAX`, which an embedder and an operator both have
+today, and the manual says so ([`../manual/dump-inspection.md`](../manual/dump-inspection.md),
+"`--jobs` and `--parallel-memory`: the workers and the budget"). Those readings
+are probes on one file, not figures, and no document quotes them as
+measurements; the evidence is
+[`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
+16.14 OOM is glibc's arenas, and a CPU limit is not the remedy". Whether the
+stated number ought to bound the *process* rather than the pools is `16.15`'s
+question, not this paragraph's.
+
 **The local backend pools its read buffers, and the trait shape is why.**
 `read_range` returns owned `Bytes` because `get_range` does, so the obvious
 implementation allocates one buffer per chunk — and `vec![0u8; len]` is

@@ -236,6 +236,17 @@ with no room to hold what they decode buys less than either number suggests.
 > when a compressed scan is short of memory is `--parallel-memory`, and raising
 > `--jobs` past what that budget affords adds workers pgdq will not use.
 
+> **Under a container memory limit, leave room for the allocator as well.**
+> pgdq's runtime starts one worker thread per CPU it can see, and glibc gives
+> each thread that allocates its own memory arena, which it keeps rather than
+> returns. On a 24-CPU host, a parallel scan of a 24 MiB-block `.xz` measured
+> about 536 MiB resident where the same scan under `MALLOC_ARENA_MAX=2`
+> measured about 328 MiB — so if you are sizing a cgroup, either set
+> `MALLOC_ARENA_MAX` (2 is enough) or budget a few hundred megabytes above what
+> `--parallel-memory` names. Restricting the container's CPUs is not a
+> substitute: it reduces the thread count without reclaiming most of the
+> memory.
+
 **Two shapes will never get parallelism, whatever you set.** An `.xz` file with
 a single block has no seam to split at — the warning above says so when you hit
 it. And an `INSERT` run — a dump taken with `pg_dump --inserts` — has no
