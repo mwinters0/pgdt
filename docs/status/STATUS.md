@@ -920,21 +920,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A declared section's red may be discharged by an acknowledgement, not only
-  by a re-run.** `M66` gave `measure.Outside` an invalidation edge, and the
-  question that came with it was what clears the red it produces. The
-  acknowledgement register is keyed by id and was already indifferent to what
-  kind of reading sits behind one, so `--check` now resolves an entry's names
-  against `measure.NOT_OURS` as well as the figure register. The argument for:
-  the harness cannot re-take a declared section, and koji costs an hour on the
-  HDD, so refusing the entry leaves exactly one discharge for a red that will
-  recur every campaign — which is the shape of a light that is always on, the
-  decay `measurements.md` built the register against. The argument against, and
-  the reason this is here: koji is a *byte-identity* check, and an entry saying
-  "this commit cannot have moved the block offsets" is the claim koji exists to
-  test, so permitting one at all invites the discharge that skips the check.
-  Reconsidering it means refusing an outside id in `Acknowledged.figures` and
-  saying in `measurements.md` that a declared section's red is cleared only by
-  a run; nothing today depends on the permission — no entry names `koji`, and
-  the koji section says in as many words that none is writable against the
-  current red.
+*(None open.)*

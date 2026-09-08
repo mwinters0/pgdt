@@ -666,14 +666,55 @@ shapes and, where a shape reaches part of the change, says which part and how
 often. The worked case is the `--filter` term grammar: it lives in `main.rs`,
 which five figures declare, and no command shape passes `--filter` at all.
 
+**Comment-only is the third, and it is a syntactic property rather than a
+judgement.** A diff whose every hunk falls inside a `///`, `//!`, `#` or `"""`
+changes nothing the compiler emits, so it moves no reading of any kind — and an
+entry claiming it records the `git diff` that shows it, which is what separates
+the claim from someone's impression of a diff. It is the widest of the three in
+practice and the least interesting: both live entries are of this class, since
+a wrap and a keystone retarget citations across every file the register
+declares.
+
 *Rejected:* letting an acknowledgement cover library or harness changes on a
-reading of the diff. Neither oracle above is a diff read: one regenerates bytes
-and compares them, the other resolves what a fixed set of commands can reach.
-Where neither applies — a change to `map.rs`, or to the harness's own timing
-path, that a published command *does* execute — the only way to know whether a
-number moved is to take it, so the figure stays stale and `--stale` keeps
-saying so. The worked case is `session-drift`, which declares
+reading of the diff. None of the three oracles above is a diff read: one
+regenerates bytes and compares them, the second resolves what a fixed set of
+commands can reach, and the third asks where the hunks fall rather than what
+they say. Where none applies — a change to `map.rs`, or to the harness's own
+timing path, that a published command *does* execute — the only way to know
+whether a number moved is to take it, so the figure stays stale and `--stale`
+keeps saying so. The worked case is `session-drift`, which declares
 `scripts/measure.py` because the harness *is* the apparatus it measures.
+
+**A declared section's red is discharged the same way a figure's is, and the
+same three oracles govern it** — `--stale` walks figures and declared sections
+in one loop, because an acknowledgement excuses a *commit* and says nothing
+about what kind of reading sits on the other side of it. Which oracle is
+*available* differs, though, and for koji only one is. Byte-identity cannot
+apply: `--verify-additive` regenerates a figure's inputs, and koji's input is a
+784 GB sample nothing generates. Reachability is close to vacuous: koji's
+declared paths are the scanner, and its command shape is a full scan of the
+whole file. What is left is comment-only, and it is not hypothetical — the
+keystone commit `6b90905` lands on `pgdump_query/src/index.rs` and
+`pgdump_query-cli/src/alloc.rs`, both inside koji's edge and both inside its
+range. The rule is uniform across declared sections rather than split by what
+they publish, because once a sweep publishes `rss-attribution` koji is the only
+section carrying an edge at all, and a rule with one member on each side is a
+rule written for a mechanism that does not exist.
+
+*Rejected:* refusing an outside id in `Acknowledged.figures`, so that only a
+run clears a declared section's red. It reads as the conservative choice and is
+not: the only class of change it actually refuses is the comment-only one, so a
+docstring edit in `scan.rs` would be dischargeable by nothing but an hour on the
+HDD, and the realistic outcome is koji permanently red — the always-on light
+this register exists against, arriving by the same route one level down. What
+the refusal was reaching for is already structural: every commit touching a path
+must be excused, so one real scanner change holds that path red however many
+entries sit beside it. koji is red on nine paths today, and naming it in
+`6b90905` would clear exactly one of them. The claim that genuinely may not be
+written is a scanner change excused as "this cannot have moved the block
+offsets", which is the claim a byte-identity check exists to test — that is said
+where it binds, in the koji section itself, rather than enforced by refusing the
+whole register to a section that has legitimate use for it.
 
 **A stale figure does not oblige a sweep, and neither does a phase boundary.**
 Red is the honest state for a figure whose evidence nobody has taken, and the
