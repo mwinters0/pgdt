@@ -1119,6 +1119,7 @@ pub struct TableStream<'a> {
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     batch_offset: Arc<Mutex<u64>>,
+    plan_notes: Vec<PlanNote>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -1176,6 +1177,25 @@ impl<'a> TableStream<'a> {
     /// diverge on one block and not on another.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
         self.comparison_notes.lock().unwrap().clone()
+    }
+
+    /// Facts about *this query's plan* rather than about a column or a
+    /// predicate — today, at most one: [`PlanNoteKind::ParallelismBudgetLimited`],
+    /// `--jobs` asking for more sub-streams than the stated memory budget
+    /// affords (`M72`).
+    ///
+    /// **A fourth channel** beside `DumpIndex.diagnostics` (L1),
+    /// `ResolvedSchema.notes` (L2) and [`Self::comparison_notes`] (L4) — see
+    /// [`PlanNote`]'s own docs.
+    ///
+    /// **Settled before any block is read, unlike [`Self::resolved_schema`]
+    /// and [`Self::comparison_notes`]**, because [`plan_partitions`] decides
+    /// it from the map alone — so every sub-stream of a partitioned replay
+    /// carries the same value from construction, and a caller need not poll
+    /// the stream to learn it. Empty for [`table_stream`]'s serial replay,
+    /// which never calls [`plan_partitions`].
+    pub fn plan_notes(&self) -> &[PlanNote] {
+        &self.plan_notes
     }
 
     /// Where in the source the batch [`futures::StreamExt::next`] last
@@ -1384,13 +1404,15 @@ impl Segment {
     }
 }
 
-/// The four values a [`TableStream`] publishes to its owner while it runs.
+/// The values a [`TableStream`] publishes to its owner while it runs, plus
+/// `plan_notes` — settled once, before the stream is built, unlike the rest.
 #[derive(Clone)]
 struct StreamShared {
     position: Arc<Mutex<ResumeToken>>,
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     batch_offset: Arc<Mutex<u64>>,
+    plan_notes: Vec<PlanNote>,
 }
 
 impl StreamShared {
@@ -1400,7 +1422,18 @@ impl StreamShared {
             resolved_schema: Arc::new(Mutex::new(ResolvedSchema::default())),
             comparison_notes: Arc::new(Mutex::new(Vec::new())),
             batch_offset: Arc::new(Mutex::new(0)),
+            plan_notes: Vec::new(),
         }
+    }
+
+    /// Attach the plan-level notes [`plan_partitions`] returned — a plain
+    /// `Vec`, not a `Mutex` slot, because they are known in full before any
+    /// sub-stream is built and never change after (unlike `resolved_schema`
+    /// and `comparison_notes`, which the replay loop updates as it reads
+    /// blocks).
+    fn with_plan_notes(mut self, plan_notes: Vec<PlanNote>) -> Self {
+        self.plan_notes = plan_notes;
+        self
     }
 
     fn into_stream<'a>(
@@ -1413,6 +1446,7 @@ impl StreamShared {
             resolved_schema: self.resolved_schema,
             comparison_notes: self.comparison_notes,
             batch_offset: self.batch_offset,
+            plan_notes: self.plan_notes,
         }
     }
 }
@@ -1733,6 +1767,87 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
     out
 }
 
+/// One fact about *this query's plan*, as opposed to a fact about the file
+/// ([`crate::diagnostic::Diagnostic`]/[`crate::diagnostic::DiagnosticKind`],
+/// L1), about one column (`crate::resolve::ResolvedSchema::notes`, L2) or
+/// about one predicate term ([`ComparisonNote`], L4) — a fourth channel,
+/// deliberately not a widening of any of the other three
+/// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two
+/// types"). See [`TableStream::plan_notes`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanNote {
+    pub kind: PlanNoteKind,
+}
+
+/// What a [`PlanNote`] is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanNoteKind {
+    /// `--jobs` asked for more concurrent sub-streams than the stated memory
+    /// budget affords, once [`worker_count`]'s two divisor terms are counted:
+    /// `footprint` is the widest touched block's decode cost
+    /// (`crate::io::Partitioning::partition_bytes`) and `max_source_span` is
+    /// the second term (`crate::batch::QueryOptions::max_source_span`) —
+    /// `None` when the caller left it unbounded, in which case the footprint
+    /// alone was too big for `memory_bytes`. Never a reason to refuse the
+    /// query: `planned` sub-streams run regardless, this only names why there
+    /// are not `requested` of them and what would raise it (`M72`).
+    ParallelismBudgetLimited {
+        requested: usize,
+        planned: usize,
+        footprint: u64,
+        max_source_span: Option<u64>,
+        memory_bytes: u64,
+    },
+}
+
+impl PlanNote {
+    fn parallelism_budget_limited(
+        requested: usize,
+        planned: usize,
+        footprint: u64,
+        max_source_span: Option<u64>,
+        memory_bytes: u64,
+    ) -> Self {
+        Self {
+            kind: PlanNoteKind::ParallelismBudgetLimited {
+                requested,
+                planned,
+                footprint,
+                max_source_span,
+                memory_bytes,
+            },
+        }
+    }
+
+    /// One sentence naming why the plan fell short of what was asked, and
+    /// what to raise to close the gap — phrased in the library's own
+    /// vocabulary rather than any one caller's flag names, exactly as
+    /// [`ComparisonNote::message`] is.
+    pub fn message(&self) -> String {
+        match &self.kind {
+            PlanNoteKind::ParallelismBudgetLimited {
+                requested,
+                planned,
+                footprint,
+                max_source_span,
+                memory_bytes,
+            } => match max_source_span {
+                Some(span) => format!(
+                    "asked for up to {requested} sub-stream(s), but a memory budget of \
+                     {memory_bytes} byte(s) affords only {planned}: each costs {footprint} \
+                     byte(s) to decode plus {span} byte(s) held by its own batch — raise the \
+                     memory budget, or lower the batch span, to get more"
+                ),
+                None => format!(
+                    "asked for up to {requested} sub-stream(s), but a memory budget of \
+                     {memory_bytes} byte(s) affords only {planned} at {footprint} byte(s) to \
+                     decode each — raise the memory budget to get more"
+                ),
+            },
+        }
+    }
+}
+
 /// Split `matches` into the pieces `parallelism` and the source between them
 /// allow, then group those pieces into sub-streams — each internally in file
 /// order, and the groups themselves in file order, so concatenating them is
@@ -1753,12 +1868,18 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 /// left the span unbounded (`None`) has already opted out of a batch-size
 /// bound, so the divisor falls back to the decode footprint alone — the same
 /// answer a discovery worker's call gets.
+///
+/// **The second return value is `M72`'s: a [`PlanNote`] naming why `workers`
+/// came up short of `parallelism.jobs()`, when it did.** Empty on every path
+/// that does not limit — an empty `matches` included, since a footprint of
+/// zero never trips the budget — so a caller need not special-case "nothing
+/// to say".
 fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
     parallelism: Parallelism,
     max_source_span: Option<usize>,
-) -> Vec<Vec<Segment>> {
+) -> (Vec<Vec<Segment>>, Vec<PlanNote>) {
     // **Announced before the advice is asked for, not when the first
     // sub-stream runs.** A compressed source decides from the stated budget
     // whether it can decode a whole block at all, and that decision is what
@@ -1778,6 +1899,19 @@ fn plan_partitions(
         None => footprint,
     };
     let workers = worker_count(parallelism, divisor).max(1);
+    let requested = parallelism.jobs();
+    let notes = match parallelism.memory_bytes() {
+        Some(memory_bytes) if workers < requested => {
+            vec![PlanNote::parallelism_budget_limited(
+                requested,
+                workers,
+                footprint,
+                max_source_span.map(|span| span as u64),
+                memory_bytes,
+            )]
+        }
+        _ => Vec::new(),
+    };
 
     let mut segments = Vec::new();
     for (block, advice) in matches.iter().zip(&advice) {
@@ -1800,7 +1934,7 @@ fn plan_partitions(
             segments.push(Segment { block: block.clone(), start, limit: piece.end, entry });
         }
     }
-    distribute(segments, workers)
+    (distribute(segments, workers), notes)
 }
 
 /// Group `segments` into at most `streams` contiguous, byte-balanced runs,
@@ -2290,7 +2424,7 @@ pub async fn table_stream_partitions<'a>(
     validate_request(&query_options, None, 0)?;
     let table = table.to_string();
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
-    let groups = plan_partitions(
+    let (groups, plan_notes) = plan_partitions(
         source,
         &mapped.matches,
         query_options.parallelism,
@@ -2308,7 +2442,8 @@ pub async fn table_stream_partitions<'a>(
         .enumerate()
         .map(|(index, segments)| {
             let fingerprint = query_fingerprint(&table, &plan.query_options, Some((index, of)));
-            let shared = StreamShared::new(ResumeToken::start(fingerprint));
+            let shared = StreamShared::new(ResumeToken::start(fingerprint))
+                .with_plan_notes(plan_notes.clone());
             let inner =
                 replay(source, Arc::clone(&plan), segments, shared.clone(), None, fingerprint);
             shared.into_stream(Box::pin(inner))

@@ -707,6 +707,18 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     }
 }
 
+/// `M72`: say, once per query and on stderr, when a stated `--jobs` could not
+/// be delivered in full. Every sub-stream of a partitioned replay carries the
+/// same [`pgdump_query::TableStream::plan_notes`], settled before any of them
+/// runs, so reading it off the first is reading the whole query's answer —
+/// unlike [`announce_comparisons`], this needs no block to have resolved
+/// first.
+fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>) {
+    for note in stream.plan_notes() {
+        eprintln!("warning: {}", note.message());
+    }
+}
+
 /// Case-insensitive suffix strip, for matching `IS NULL`/`IS NOT NULL` at
 /// the end of a `--filter` argument regardless of how the user cased it.
 fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
@@ -1034,6 +1046,12 @@ async fn main() -> Result<()> {
             )
             .await
             .map_err(name_taken_verbatim)?;
+            // Known from the plan alone, before any block is read — unlike
+            // `announce_comparisons` below, which waits on the first
+            // resolved schema.
+            if let Some(first) = streams.first() {
+                announce_plan_notes(first);
+            }
             let mut announced = false;
             let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
             // The lowest-indexed sub-stream that has failed, and its error.

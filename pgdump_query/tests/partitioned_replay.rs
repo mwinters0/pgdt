@@ -23,8 +23,9 @@ use std::process::Command;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, Expr, LocalFileSource, Parallelism, Predicate, PredicateOp, QueryOptions,
-    ScanOptions, XzSource, table_stream, table_stream_partitions,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, LocalFileSource, Parallelism, PlanNoteKind,
+    Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
+    table_stream_partitions,
 };
 
 mod common;
@@ -159,6 +160,63 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
     // `--jobs 1` is the same value, so it is the same one sub-stream.
     let (_, count) = partitioned_rows(&source, "public.widgets", QueryOptions::default(), 1).await;
     assert_eq!(count, 1);
+}
+
+/// `M72`: a stated `--jobs` the memory budget cannot afford in full says so,
+/// naming the numbers that would raise it. The shipped CLI defaults are
+/// exactly this case — `QueryOptions::max_source_span`'s 64 MiB alone meets
+/// `DEFAULT_MEMORY_BUDGET`'s 64 MiB, so any footprint at all pushes the
+/// divisor past the budget and eight workers plan down to one.
+#[tokio::test]
+async fn a_budget_bound_worker_count_announces_why() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let options = QueryOptions {
+        parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
+        ..Default::default()
+    };
+    let streams = table_stream_partitions(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert_eq!(streams.len(), 1, "the budget affords exactly one sub-stream here");
+    let diagnostics = streams[0].plan_notes();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let PlanNoteKind::ParallelismBudgetLimited { requested, planned, memory_bytes, .. } =
+        &diagnostics[0].kind;
+    assert_eq!(*requested, 8);
+    assert_eq!(*planned, 1);
+    assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
+    // Every sub-stream carries the same fact — here there is only the one,
+    // but the property being tested is that the caller need not pick which
+    // sub-stream to ask.
+    for stream in &streams {
+        assert_eq!(stream.plan_notes(), diagnostics);
+    }
+}
+
+/// A budget that affords every requested worker says nothing: the diagnostic
+/// is for the case the budget actually declined a worker, not a running
+/// commentary on every plan.
+#[tokio::test]
+async fn a_budget_that_affords_every_worker_is_silent() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
+    let streams = table_stream_partitions(
+        &source,
+        "public.t_int",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(streams.iter().all(|s| s.plan_notes().is_empty()));
 }
 
 /// A worker count above one really does hand out more than one sub-stream on
@@ -465,6 +523,11 @@ async fn a_single_block_xz_declines_to_be_split() {
 /// chunk-units against a one-chunk span affords two workers, not four, and a
 /// test that left `max_source_span` at its 64 MiB default would need a budget
 /// past that default before the job count ever bound anything.
+///
+/// **The plan says why, too (`M72`)**: [`PlanNoteKind::ParallelismBudgetLimited`]
+/// names the same two divisor terms and the budget that declined them, so this
+/// exact arithmetic is checked against the diagnostic as well as against the
+/// sub-stream count.
 #[tokio::test]
 async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
@@ -489,6 +552,23 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     .await
     .unwrap();
     assert_eq!(streams.len(), 2, "the budget binds before the job count does");
+    match &streams[0].plan_notes() {
+        [d] => {
+            let PlanNoteKind::ParallelismBudgetLimited {
+                requested,
+                planned,
+                footprint,
+                max_source_span,
+                memory_bytes,
+            } = &d.kind;
+            assert_eq!(*requested, 8);
+            assert_eq!(*planned, 2);
+            assert_eq!(*footprint, chunk);
+            assert_eq!(*max_source_span, Some(chunk));
+            assert_eq!(*memory_bytes, 4 * chunk);
+        }
+        other => panic!("expected exactly one plan note, got {other:?}"),
+    }
 
     let mut rows = Rows::new();
     for mut stream in streams {
@@ -505,6 +585,9 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
 /// were zero would silently under-count what a sub-stream can grow to hold.
 /// So the same budget that a stated span would have clamped to one worker
 /// affords two once the span is left unbounded.
+///
+/// The diagnostic agrees: `max_source_span` reads back `None` rather than a
+/// number that was never charged.
 #[tokio::test]
 async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
@@ -526,6 +609,23 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     .await
     .unwrap();
     assert_eq!(streams.len(), 2, "an unbounded span divides by the decode footprint alone");
+    match &streams[0].plan_notes() {
+        [d] => {
+            let PlanNoteKind::ParallelismBudgetLimited {
+                requested,
+                planned,
+                footprint,
+                max_source_span,
+                memory_bytes,
+            } = &d.kind;
+            assert_eq!(*requested, 8);
+            assert_eq!(*planned, 2);
+            assert_eq!(*footprint, chunk);
+            assert_eq!(*max_source_span, None);
+            assert_eq!(*memory_bytes, 2 * chunk);
+        }
+        other => panic!("expected exactly one plan note, got {other:?}"),
+    }
 
     let mut rows = Rows::new();
     for mut stream in streams {

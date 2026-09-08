@@ -48,8 +48,8 @@ pub use scan::{
     LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
 };
 pub use stream::{
-    BlockingTableIter, MapRun, ResumeToken, TableStream, map_file, table_stream,
-    table_stream_partitions,
+    BlockingTableIter, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream, map_file,
+    table_stream, table_stream_partitions,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;

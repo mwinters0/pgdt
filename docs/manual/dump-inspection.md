@@ -226,7 +226,9 @@ can.
 > N` runs one piece — serially — however large `N` is, until you raise
 > `--parallel-memory` past roughly 65 MiB. `parse` does not carry this cost: it
 > builds no batches, so its own `--jobs` is bound by the decode cost alone, as
-> described above.
+> described above. When `--jobs` asks for more pieces than the budget affords,
+> `query` says so on stderr, naming both terms of the sum and the budget that
+> declined them, so you know which number to raise.
 
 For `parse` it cuts the *inside* of a `COPY` block up. Once pgdq has read a
 block's `COPY … FROM stdin;` header it knows everything until the block's end

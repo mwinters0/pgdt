@@ -564,6 +564,25 @@ slice, and **`P19` owns it** — filed in that phase's inbox, which its grilling
 drains ([`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md),
 "One span allowance is charged per sub-stream").
 
+**`M72`: when the divisor declines the requested count, `plan_partitions` says
+so.** At the shipped defaults `max_source_span`'s 64 MiB alone meets
+`DEFAULT_MEMORY_BUDGET`'s 64 MiB, so any footprint at all pushes the divisor
+past the budget and `--jobs N` plans one sub-stream for any `N` — silently,
+before this. `plan_partitions` now returns a `PlanNote`
+(`PlanNoteKind::ParallelismBudgetLimited`) alongside the groups whenever
+`workers < parallelism.jobs()`, naming `requested`, `planned`, and the
+divisor's own two terms — `footprint` and `max_source_span` — plus the
+`memory_bytes` that declined them, so raising the budget or lowering the span
+is stated rather than left to be rediscovered from the arithmetic above. It is
+a **fourth channel**, not a widening of `Diagnostic`/`DiagnosticKind` (L1):
+every `DiagnosticKind` is a property of the *file*, where this is a property of
+*one query's plan* — two queries against the same file with different `--jobs`
+get different answers. `TableStream::plan_notes` is where it surfaces, settled
+once by `plan_partitions` before any block is read and identical across every
+sub-stream of a partitioned replay, and `pgdq query` announces it once on
+stderr, the same way it announces `comparison_notes` ("Diagnostics: one
+severity scale, two types" and "Predicates", the comparison register).
+
 *Rejected: counting every outstanding buffer against the ceiling.* It
 states one number instead of two, and it lets a loop that granted nothing block
 one that granted a wait — which is the deadlock read back in through the
@@ -2086,6 +2105,17 @@ Producers today: `TilingBroken` (`check_tiling`), `CacheMtimeChanged`
 `preamble_only` and `cache::status_from_file` so a `.xz` source with no more
 than one block earns the same warning whether its seek table was just walked
 or read back from a persisted cache).
+
+**Two more channels exist beside this one, and neither widens it.**
+`TableStream::comparison_notes` (`ComparisonNote`, L4) is per predicate term,
+conditional on the filter a query stated ("Predicates", the comparison
+register); `TableStream::plan_notes` (`PlanNote`/`PlanNoteKind`, `M72`) is
+per query *plan* rather than per file, per column or per term — today just
+`ParallelismBudgetLimited`, naming why a partitioned replay's sub-stream count
+fell short of `--jobs` ("Execution model and API surface", "`M72`: when the
+divisor declines the requested count"). Each stays its own type rather than an
+added `DiagnosticKind` variant for the reason `DiagnosticKind` itself gives:
+every existing variant is a property of the file, and neither of these is.
 
 ### Reserved slots
 
