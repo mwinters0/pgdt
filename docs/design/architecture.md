@@ -554,6 +554,19 @@ never completed a scan at all. It is the bound the block pool has always had,
 said correctly, and `parallel-peak-rss` is the figure that will put a number on
 it ([`measurements.md`](measurements.md), "The apparatus").
 
+*Rejected: a per-view acquisition bounding the live term* — a slot held for as
+long as a reader's `Bytes` into the block and released when that view drops,
+which is the shape that would make the stated number bound both terms directly.
+It is the wait under another name, on the one holder that cannot take one: the
+view *is* the retention, so "released when the view drops" is "released when
+that reader stops reading", and a second reader blocking on it reproduces `M70`
+with a different counter. The live term is bounded instead by admitting fewer
+readers — `stream::worker_count` dividing the stated bytes by a per-worker
+footprint — which is `16.15`'s mechanism and works on a retaining holder
+precisely because it never asks one holder to wait on another
+([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
+block pool's bound is a divisor's job, not an acquisition's").
+
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
 nothing, deliberately outside the `object_store` surface the other two mirror —
@@ -785,12 +798,24 @@ decoded afresh per 1 MiB call would be 24× the decode work; a decoded block is
 therefore kept, least-recently-used first, and the next read inside it is a
 lookup. The retained set is capped at `BufferPool::slots`, and eviction happens
 *before* a slot is taken — so the evicted buffer is what the next decode
-reuses, and the byte budget bounds the retained blocks and the free ones
-together rather than each separately. Measured on the 3.00 GiB `.xz` control
+reuses. Measured on the 3.00 GiB `.xz` control
 (129 blocks of 24 MiB): a `parse` holds **64.7 MiB** resident where the
 streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
 produce byte-identical caches. *Rejected:* a retained set with a bound of its
 own — two numbers for one bound, which is what the byte budget replaced.
+
+**The retained cap and the free-list cap are separate counts, so the pool's
+ceiling is their sum.** `BufferPool::release` pools a returned buffer only
+while the free list is below `slots()`, and the retained list is held at
+`slots()` by a count of its own, with nothing shared between them — the
+`charged` counter that could have coupled them bounded retained-plus-live and
+never the free list, and it is disabled on this pool in any case ("Execution
+model and API surface"). So the block pool's ceiling is `2 × slots × unit`:
+**96 MiB** at the default budget's two 24 MiB slots, reached when live views
+release blocks the retained list has already refilled past. It is a ceiling
+rather than a steady state — a forward scan's cycle holds the free list at
+zero or one, which is what the 64.7 MiB above is — and whether to cap the sum
+instead is `16.15`'s, since it changes what the stated number means.
 
 **Evicting before acquiring is a reuse rule and not a progress guarantee**, and
 reading it as one is what `M70` was. A retained block is normally also the

@@ -994,10 +994,19 @@ impl AsRef<[u8]> for BlockView {
 ///
 /// **A retained block occupies a slot rather than adding to the free list.**
 /// Eviction happens *before* a slot is taken ([`BlockCache::slot`]), so the
-/// evicted buffer is what the next decode reuses and the pool's budget bounds
-/// the retained blocks and the free ones together — a set bounded at
+/// evicted buffer is what the next decode reuses — a retained set bounded at
 /// [`BufferPool::slots`] and its own budget again would be two numbers for one
 /// bound, which is exactly what the byte budget replaced.
+///
+/// **The retained cap and the free-list cap are separate counts, so this
+/// pool's ceiling is their sum.** [`BufferPool::release`] pools a returned
+/// buffer only while the free list is below [`BufferPool::slots`], and this
+/// list is held at the same count by a count of its own, with nothing shared
+/// between them — so the ceiling is `2 * slots * unit`, 96 MiB at the default
+/// budget's two 24 MiB slots. It is a ceiling and not a steady state: a
+/// forward scan's cycle holds the free list at zero or one. Capping the sum
+/// instead changes what the stated number means, which is `16.15`'s
+/// (`docs/design/architecture.md`, "The compressed source").
 ///
 /// *Rejected: retaining one block on the serial path*, on the ground that one
 /// reader walking forward needs exactly one and that the cap costs a 3.00 GiB

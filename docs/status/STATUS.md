@@ -571,7 +571,19 @@ are worth, and the orderings that do bind are named in
 - [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
       divides the stated bytes by `partition_bytes + max_source_span`, so one
       number bounds a query rather than half of one. Admitted after spec time,
-      so the number is the next free one rather than a position.
+      so the number is the next free one rather than a position. **Scope
+      amended by the review of 2026-09-08**
+      ([`history/2026-09-08.md`](history/2026-09-08.md), "The block pool's
+      bound is a divisor's job, not an acquisition's"): the divisor counts the
+      **block a worker decodes**, not only a query's retained span, since the
+      live term on an `.xz` source is one whole block per reader; whether
+      `BlockCache`'s retained cap and `BufferPool`'s free-list cap become one
+      count is this row's too, the two being separate today and their sum the
+      pool's real ceiling; and `POOL_DEPTH`'s four-worker plain-file ceiling is
+      re-derived here, as `16.10.2` and `16.16` already defer to it. It
+      **re-takes `parallel-peak-rss`**, whose `--jobs` axis is flat past the
+      point the budget stops affording a worker — so `16.13.1` is taken first,
+      against what ships, rather than held behind an unspecified slice.
 - [x] **16.16** `--jobs` defaults to 1 — `DEFAULT_JOBS`, a constant where
       `available_parallelism()` was, so a person who states neither flag gets
       the arrangement every published figure was taken under. Its help text
@@ -736,18 +748,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`M70` fixed the block pool's deadlock by exempting it from the wait, not by
-  giving it a bound that works.** The decision to weigh is whether the block
-  pool should get a real ceiling on *live* decoded blocks — an acquisition held
-  for as long as a reader's view of the block, released when the `Bytes` drops,
-  which is the only shape that bounds the term the wait was reaching for — or
-  whether the two-term statement now beside the mechanism is the resting place.
-  It was made this way because the exemption is what the spec's own holder-class
-  rule already says about a *retaining* holder (`16.4.1`), so applying it
-  changed no decision and fitted the out-of-band row; a per-view acquisition is
-  a new bounding mechanism, which is a slice. What changes if it is
-  reconsidered: a parallel compressed scan's resident set becomes the stated
-  budget instead of a small multiple of it, and `parallel-peak-rss` — untaken —
-  would be measuring a ceiling rather than a steady state. Nothing is blocked
-  either way: `16.13.1` can take that figure against what ships today, and the
-  reading is what would say whether the multiple is worth closing.
+Nothing open.
