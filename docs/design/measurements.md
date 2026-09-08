@@ -2444,6 +2444,16 @@ the cache left by the 2026-08-25 run was unreadable within days. Nothing plans a
 (`pgdq info`, with or without `--source`) is available only between a scan and
 the next bump, and regaining it costs the full ~54-minute scan.
 
+**So a run that verifies one arrangement against another takes both legs
+itself.** Neither half of the reference it would otherwise want survives: a
+cache from an earlier run dies at the next bump, per the paragraph above, and a
+compressed source's cache is not byte-comparable to a plain one's in any case
+(`architecture.md`, "The cache"). A verification therefore scans the *same file*
+twice in one run, once per arrangement, and compares those two caches to each
+other. What carries across formats instead is the counts in the table above —
+which is what an `.xz` leg is checked against, block for block, row for row and
+byte for byte.
+
 **The regression check is byte-for-byte identity, not throughput**: every
 block's header/data/terminator/end offset must match the previous run. That
 identity over a change touching only what happens *between* blocks is what the

@@ -574,6 +574,16 @@ are worth, and the orderings that do bind are named in
       [`../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md)
 - [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
       cache byte-identical to the serial 784 GB scan. Outside the register.
+      **Launched, not landed.** The detached job takes both a serial and a
+      `--jobs 4` leg fresh, over `koji-…multistream.xz`, and compares them to
+      each other; each leg's counts are checked against the plain scan's
+      published totals. **Spec row amended by the review of 2026-09-08**
+      ([`history/2026-09-08.md`](history/2026-09-08.md), "A compressed cache
+      and a plain one were never byte-comparable"): the row asked for
+      byte-identity against the serial 784 GB scan's cache, which is an
+      artifact nothing produces. Handoff:
+      `runs/koji-xz-verify-20260908-0203/HANDOFF.md` (not committed, `runs/`
+      is gitignored — read it from the working tree).
 - [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
       divides the stated bytes by `partition_bytes + max_source_span`, so one
       number bounds a query rather than half of one. Admitted after spec time,

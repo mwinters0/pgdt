@@ -6776,6 +6776,24 @@ guessing its shape from one instance. Size is not a concern in any shape: the
 motivating file's table is 31,150 entries against a koji cache that is already
 833 spans.
 
+**Two caches of the same dump, one plain and one compressed, are never
+byte-comparable.** The block offsets inside them agree — that is what the
+paragraph above buys — but the envelope around them does not. `compression` is
+`Some(Xz(…))` on one and `None` on the other; `identity` carries the *stored*
+size and mtime of the file actually opened, which is the `.xz`'s 40,397,009,888
+bytes against the plain dump's 784,019,857,152. Only `total_size` agrees, that
+being the addressable length both sources present. So a verification comparing
+*arrangements* — a serial scan against a parallel one — takes both legs over the
+**same file** in one run, and a verification comparing *formats* compares the
+scans' reported block, row and byte counts, never the cache bytes.
+
+*Rejected:* keeping one run's cache as the reference a later run is checked
+against. A format bump discards it, and those are free and frequent pre-1.0
+(above) — but that is the shallower objection, and fixing it would not help:
+within one format version a compressed and a plain cache of the same dump still
+differ by construction, so the artifact such a reference would have to be is one
+nothing produces.
+
 **Anything persisted is expressible in L1's vocabulary** — declared type
 strings, not resolved Arrow types. That is `layering.md`'s rule 5 and it
 applies to everything the cache grows later.
