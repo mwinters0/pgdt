@@ -1773,6 +1773,19 @@ JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-job
 #: `Serial` and `Serial` carrying no budget, so the baseline row runs at
 #: `DEFAULT_MEMORY_BUDGET`. That is the serial arrangement this project ships,
 #: which is what a speedup is a speedup over, and each table says so.
+#:
+#: **A budget clamp and a `POOL_DEPTH` clamp are not the same kind of thing,
+#: which is why this table annotates one and sizes around the other.** Both
+#: deliver fewer workers than a row's label asks for, and the table already
+#: carries a note for the second. The difference is whose ceiling it is.
+#: `POOL_DEPTH` is the shipped library's own, so a reader of the published
+#: figure meets it too and the annotated row states a real property of the
+#: thing measured. This constant is the *harness's* choice; a row clamped by it
+#: publishes an apparatus decision wearing a library ceiling's clothes, and
+#: nothing in the table distinguishes the two. So the annotation that suffices
+#: for `POOL_DEPTH` does not discharge a budget clamp — the budget is sized so
+#: that the clamp does not happen, and where it cannot be, what the figure
+#: measures has to be restated rather than footnoted.
 PARALLEL_BUDGET = 1 << 30
 
 #: What the two `parallel-*` figures' containers are given, against the
@@ -1780,6 +1793,20 @@ PARALLEL_BUDGET = 1 << 30
 #: hold; this is the room the container gives it to hold that, plus the
 #: decoder's own dictionaries and the batches in flight. An apparatus
 #: departure, and each figure's own table says so.
+#:
+#: **It does not rise to keep the top of the `--jobs` axis unclamped, and the
+#: reason is what the extra room would be sized from.** Affording twenty-four
+#: query sub-streams needs a budget of roughly 2.14 GiB and a container well
+#: past this one. The headroom above a stated budget is largely glibc's
+#: per-CPU arenas, whose count follows the host's hardware threads
+#: (`docs/status/history/2026-09-08.md`, "The `16.14` OOM is glibc's arenas"),
+#: so the container would be picked from an allocator artifact of the machine
+#: that took the figure rather than from anything the library asks for — and
+#: `measurements.md`'s contract is that a figure carries the command that
+#: re-takes it. The reading itself would still be a reading about the library;
+#: what would be wrong is an apparatus departure growing with no principle
+#: bounding it. The comparison is anchored at four workers instead, which this
+#: container already holds.
 PARALLEL_MEMORY = "3g"
 
 #: The worker count every `pgdq` invocation this harness makes states, and the
@@ -4383,9 +4410,15 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # STATUS.md's `16.15` row cites this figure's `--jobs` axis going flat
-        # past the point the stated budget stops affording a worker, as the
-        # reason `16.13.1` was taken first rather than held behind that slice.
+        # STATUS.md's `16.15.1` row cites this figure's `--jobs` axis going
+        # flat past the point the stated budget stops affording a worker.
+        #
+        # **What `16.15` changed does not reach this figure.** The two-term
+        # divisor is in `stream::plan_partitions`, and every leg here is
+        # `pgdq parse`, which reaches `worker_count` through
+        # `leader::scan_region` instead — so this figure is excused by
+        # reachability where its sibling is not, though both declare the same
+        # read path.
         quoted_by=("docs/status/STATUS.md",),
         warm_inputs=("control_xz", "control_xz128"),
         memory=PARALLEL_MEMORY,

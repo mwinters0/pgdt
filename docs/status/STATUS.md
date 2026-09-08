@@ -634,24 +634,34 @@ are worth, and the orderings that do bind are named in
       a commit to name and this round leaves none, the same seam `16.13` split
       on. Notes:
       [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)
-- [ ] **16.15.1** The sitting — re-take `parallel-scan-throughput` and
-      `parallel-peak-rss` once `16.15`'s diff is committed
-      (`scripts/measure.py` will not stamp a figure against an uncommitted
-      measured path, per `16.13.1`'s own precedent) and fold both tables into
+- [ ] **16.15.1** The sitting — re-take **`parallel-scan-throughput` alone**
+      once `16.15`'s diff is committed (`scripts/measure.py` will not stamp a
+      figure against an uncommitted measured path, per `16.13.1`'s own
+      precedent) and fold its table into
       [`../design/measurements.md`](../design/measurements.md) with the commit
-      inside each marker. **Wider than the row that admitted `16.15` expected**:
-      `parallel-scan-throughput`'s typed-query legs are reachable from `16.15`'s
-      divisor too, not only `parallel-peak-rss` — `measure.py`'s
-      `PARALLEL_BUDGET` (1 GiB) was sized against the old one-term arithmetic
-      (its own comment computes "24 workers over 24 MiB blocks want ~600 MiB"),
-      and the new divisor wants `24 × (25 MiB + 64 MiB) ≈ 2.1 GiB` for the same
-      row — so the achieved sub-stream count at high `--jobs` is expected to
-      read lower than published unless `PARALLEL_BUDGET` is raised first, which
-      is filed under "Decisions worth another look" below rather than decided
-      here. `parallel-peak-rss` is unreachable from `16.15` (its command shape
-      is `pgdq parse`, which never calls `plan_partitions`) and is expected to
-      reproduce `e29939c`'s numbers; it stays in this row's scope because
-      `16.15`'s own row already committed to re-taking it. Notes:
+      inside the marker. It stands in no `shares` or derivation edge, which is
+      the condition under which a figure may be published outside a sweep at
+      all. **The figure `16.15`'s admitting row named is not the one that
+      moved**: `parallel-scan-throughput`'s two typed-`query` legs — plain and
+      `.xz` alike — reach `plan_partitions` directly, while every leg of
+      `parallel-peak-rss` is `pgdq parse`, which reaches `worker_count` through
+      `leader::scan_region` and never calls the changed function. So this row
+      also owes `parallel-peak-rss` an `ACKNOWLEDGED` entry naming `a30cc43`
+      on reachability grounds — the one mechanical oracle that settles an
+      executable diff — rather than a sitting, and `e29939c`'s table stands.
+      **The comparison is anchored at four workers and no constant moves.**
+      `PARALLEL_BUDGET` stays 1 GiB and `PARALLEL_MEMORY` stays 3g: 1 GiB
+      affords four sub-streams on the worst leg (`4 × (25 MiB + 64 MiB) ≈
+      356 MiB`), which is the count `POOL_DEPTH` actually delivers on a plain
+      source and the one `16.14` ran its parallel leg at. `PARALLEL_JOBS` is
+      unchanged too — three assertions in `test_measure.py` pin its shape and
+      `parallel-peak-rss` shares it. What the sitting owes is the **rows above
+      four on the two typed-`query` legs**, where the budget now clamps to
+      about eleven sub-streams (`.xz`) and fourteen (plain): each such cell
+      states the count it achieved beside its wall clock, derived
+      arithmetically as the existing `POOL_DEPTH` note is, because a clamp
+      the *harness* imposes may not be left footnoted the way the library's
+      own ceiling is (`scripts/measure.py`, beside `PARALLEL_BUDGET`). Notes:
       [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md),
       "What `16.15.1` inherits"
 - [x] **16.16** `--jobs` defaults to 1 — `DEFAULT_JOBS`, a constant where
@@ -835,21 +845,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **Should `measure.py`'s `PARALLEL_BUDGET` (1 GiB) rise now that `16.15`'s
-  two-term divisor prices what a query sub-stream pins as well as what it
-  decodes?** The constant's own comment sizes it against the old one-term
-  arithmetic — "24 workers over 24 MiB blocks want ~600 MiB" — and the new
-  divisor wants roughly 2.1 GiB for that same row, so `parallel-scan-throughput`'s
-  `.xz`-typed-query legs at high `--jobs` will achieve fewer sub-streams than
-  the table's own column labels say once `16.15.1` retakes it. Left as is, the
-  figure honestly shows a real resource constraint — a 1 GiB budget genuinely
-  cannot afford 24 concurrent readers once a batch's pin is priced in, which is
-  arguably the corrected reading `16.15` exists to produce. Raised (to roughly
-  2.2–2.5 GiB, headroom included), the table keeps testing the stated
-  `PARALLEL_JOBS` axis at every row, at the cost of a wider apparatus departure
-  from the register's 512 MB and a number no longer comparable to `16.13.1`'s
-  published one without a footnote. What would change the call: whether the
-  axis's *point* is "how many sub-streams can a stated budget afford" (leave
-  it) or "how does throughput scale with worker count, holding memory
-  irrelevant" (raise it) — which is a reading of what the figure is *for*,
-  not a fact `16.15`'s own work settles.
+*(None open.)*

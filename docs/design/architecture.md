@@ -550,6 +550,20 @@ library's own choice of N multiplies whatever the consumer keeps per stream.
 what one concurrent reader costs the *source*, and a sub-stream's held batch is
 the same kind of per-reader cost arriving from the other side.
 
+**Whether one span allowance should be *divided* among sub-streams rather than
+charged to each is open, and neither `16.15` nor its amendment weighed it.**
+What is settled is the accounting: N sub-streams really do pin N spans, and a
+divisor that charged one was the defect. What is not settled is the default —
+`max_source_span`'s 64 MiB is a per-stream number chosen when there was one
+stream, and charging it per reader is what makes the stated budget dominated by
+pinning rather than by decoding (64 MiB against a 24 MiB block). The
+alternative is N smaller batches whose pinning stays flat in N, which would
+keep a parallel query affordable at the shipped defaults where today it is not.
+It changes a default the phase committed to, so it is a spec question for this
+phase's wrap rather than a slice
+([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "A
+`--jobs` the budget refuses is silent").
+
 *Rejected: counting every outstanding buffer against the ceiling.* It
 states one number instead of two, and it lets a loop that granted nothing block
 one that granted a wait — which is the deadlock read back in through the
