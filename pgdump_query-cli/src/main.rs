@@ -73,6 +73,9 @@ struct ParallelArgs {
     /// structure scan, which splits the interior of every `COPY` block large
     /// enough to cut and folds the answers back into one block list; and how
     /// many decoded `.xz` blocks the source retains, one per would-be reader.
+    ///
+    /// **On `query`, `--parallel-memory` has to cover a second cost before
+    /// this number is delivered at all** — see that flag's own doc.
     #[arg(long, value_name = "N", value_parser = parse_jobs)]
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.
@@ -83,6 +86,15 @@ struct ParallelArgs {
     /// being decoded a block at a time, which is correct but slower on
     /// backward reads. Raise it to buy the block path back on a file written
     /// with large blocks (`xz -9 -T0`, `xz --block-size=`).
+    ///
+    /// **On `query` this budget divides by two terms, not one**: what a
+    /// worker costs to decode, plus the 64 MiB a sub-stream's held batch may
+    /// pin (`docs/design/architecture.md`, "Execution model and API
+    /// surface"). At the default 64 MiB this already exceeds the budget, so
+    /// `query --jobs N` with `--parallel-memory` left at its default runs
+    /// serially however large `N` is — raise `--parallel-memory` past roughly
+    /// 65 MiB to get a second sub-stream at all. `parse` is unaffected: it
+    /// builds no batches, so nothing on that path pins a span.
     #[arg(long, value_name = "BYTES", value_parser = parse_parallel_memory)]
     parallel_memory: Option<u64>,
 }

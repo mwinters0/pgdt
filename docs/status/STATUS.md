@@ -80,8 +80,9 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**Eighteen of the twenty-one figures are stale, and no acknowledgement can
-excuse them.** Three rounds of library work did it. Making the buffer pool keep
+**Twenty of the twenty-one figures are stale, and no acknowledgement can
+excuse them.** Three rounds of library work did it, and `16.15` is a fourth
+that reddens the remaining two. Making the buffer pool keep
 the chunk size a read loop announces changed `io.rs`, `scan.rs`, `stream.rs` and
 the CLI; then the compressed-input work reshaped every `ByteRangeSource`
 signature to a boxed future and added a second implementation, touching `io.rs`,
@@ -93,8 +94,9 @@ since the harness took the derived direction of the borrow graph. Those changes
 add executable lines, so neither mechanical oracle applies: reachability excuses
 only a diff no command shape executes, and byte-identity settles generator
 changes alone. `nested-decode-micro` is the one *sweep* figure still green,
-timing decoders that none of it touched; two of the four figures taken alone are
-now red. `xz-decode-scaling` (`7d21c6e`) was green, having been taken after the work, and
+timing decoders that none of it touched, and it is now also the only figure
+of any kind still green: all four figures taken alone are red, `16.15`
+reddening the last two (below). `xz-decode-scaling` (`7d21c6e`) was green, having been taken after the work, and
 went red when `16.13` gave `scripts/generate_xz_input.py` a `--block-size` flag
 so a second block size could be generated — a generator change, which is the one
 case a mechanical oracle settles, and `--verify-additive` is available to
@@ -214,6 +216,21 @@ and a partial sitting would spend. `16.13.1`'s two new tables join the same
 stamp's exception list rather than its count: `parallel-scan-throughput` and
 `parallel-peak-rss` are taken at `e29939c` itself, so nothing has moved since
 and both are green.
+
+**`16.15` touches `pgdump_query/src/stream.rs` and `pgdump_query-cli/src/main.rs`**
+— nothing since `e29939c` had, so it is what turns both of `16.13.1`'s green
+figures red, and the two split. `parallel-peak-rss` is unreachable: its command
+shape is `pgdq parse` (`parse-rss-jobs-N`), which never calls the changed
+function, `stream::plan_partitions` — the mapping pass's own worker admission
+(`leader::scan_region`) sums no second term, so nothing on that path moved.
+`parallel-scan-throughput` is not excused the same way: its `.xz`-typed-query
+legs call `plan_partitions` directly, and the divisor now sums
+`partition_bytes` and `QueryOptions::max_source_span` (64 MiB) rather than
+`partition_bytes` alone, so `worker_count` affords fewer sub-streams at the
+same stated `PARALLEL_BUDGET` — reachable and executable, red on its own
+terms. Both figures are carried into `16.15.1`, which needs a commit to name
+before either can be folded back in
+([`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)).
 
 **`peak-rss` is the figure whose red says least about its numbers.** `io.rs`,
 `cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and
@@ -591,28 +608,52 @@ are worth, and the orderings that do bind are named in
       [`../design/measurements.md`](../design/measurements.md), "koji full
       scan". Notes:
       [`../design/roadmap-P16.14-koji-verification-notes.md`](../design/roadmap-P16.14-koji-verification-notes.md)
-- [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
-      divides the stated bytes by `partition_bytes + max_source_span`, so one
-      number bounds a query rather than half of one. Admitted after spec time,
-      so the number is the next free one rather than a position. **Scope
-      amended by the review of 2026-09-08**
-      ([`history/2026-09-08.md`](history/2026-09-08.md), "The block pool's
-      bound is a divisor's job, not an acquisition's"): the divisor counts the
-      **block a worker decodes**, not only a query's retained span, since the
-      live term on an `.xz` source is one whole block per reader; whether
-      `BlockCache`'s retained cap and `BufferPool`'s free-list cap become one
-      count is this row's too, the two being separate today and their sum the
-      pool's real ceiling; and `POOL_DEPTH`'s four-worker plain-file ceiling is
-      re-derived here, as `16.10.2` and `16.16` already defer to it. It
-      **re-takes `parallel-peak-rss`**, whose `--jobs` axis is flat past the
-      point the budget stops affording a worker — so `16.13.1` is taken first,
-      against what ships, rather than held behind an unspecified slice. It has
-      a reading to work against: `16.14`'s OOM probes measure the same 328 MiB
-      anonymous resident at a stated 128 MiB as at 256 MiB, the depth clamp
-      binding at four slots in both, so above the budget that affords four
-      workers the stated number stops changing what the process holds
-      ([`history/2026-09-08.md`](history/2026-09-08.md), "The `16.14` OOM is
-      glibc's arenas, and a CPU limit is not the remedy").
+- [x] **16.15** The stated budget bounds both memory terms — `stream::plan_partitions`
+      now caps a query's sub-stream count against `partition_bytes +
+      max_source_span` rather than `partition_bytes` alone, so one number
+      bounds what a sub-stream costs to decode *and* what its held batch pins,
+      not half of it; `None` (an unbounded span) falls back to the decode
+      footprint alone, the caller having already opted out of a batch-size
+      bound. `leader::scan_region`'s own call (the mapping pass, which retains
+      nothing) is unchanged — the second term is a query-replay cost, not
+      `worker_count`'s to know, so it is summed at the query's call site
+      rather than folded into that function. **Two further calls this row
+      owed were made rather than left open**: `BlockCache`'s retained cap and
+      `BufferPool`'s free-list cap stay separate (a hot-path rework for a
+      transient ceiling the divisor fix already addresses from the outside),
+      and `POOL_DEPTH` stays fixed at 4 (the plain-file ceiling it produces is
+      a different call site's property, with no analog to the resident-set
+      argument that would move it). Both filed as rejected alternatives beside
+      the mechanism: [`../design/architecture.md`](../design/architecture.md),
+      "Execution model and API surface". **Consequence for the CLI**: `pgdq
+      query --jobs N` at the 64 MiB `--parallel-memory` default now always
+      runs one sub-stream, the span term alone meeting the budget — raising
+      `--parallel-memory` past roughly 65 MiB is what buys a second one. Both
+      flags' defaults are unchanged, which is what the spec's amendment
+      already commits to. **The figure re-take is `16.15.1`**: a sitting needs
+      a commit to name and this round leaves none, the same seam `16.13` split
+      on. Notes:
+      [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)
+- [ ] **16.15.1** The sitting — re-take `parallel-scan-throughput` and
+      `parallel-peak-rss` once `16.15`'s diff is committed
+      (`scripts/measure.py` will not stamp a figure against an uncommitted
+      measured path, per `16.13.1`'s own precedent) and fold both tables into
+      [`../design/measurements.md`](../design/measurements.md) with the commit
+      inside each marker. **Wider than the row that admitted `16.15` expected**:
+      `parallel-scan-throughput`'s typed-query legs are reachable from `16.15`'s
+      divisor too, not only `parallel-peak-rss` — `measure.py`'s
+      `PARALLEL_BUDGET` (1 GiB) was sized against the old one-term arithmetic
+      (its own comment computes "24 workers over 24 MiB blocks want ~600 MiB"),
+      and the new divisor wants `24 × (25 MiB + 64 MiB) ≈ 2.1 GiB` for the same
+      row — so the achieved sub-stream count at high `--jobs` is expected to
+      read lower than published unless `PARALLEL_BUDGET` is raised first, which
+      is filed under "Decisions worth another look" below rather than decided
+      here. `parallel-peak-rss` is unreachable from `16.15` (its command shape
+      is `pgdq parse`, which never calls `plan_partitions`) and is expected to
+      reproduce `e29939c`'s numbers; it stays in this row's scope because
+      `16.15`'s own row already committed to re-taking it. Notes:
+      [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md),
+      "What `16.15.1` inherits"
 - [x] **16.16** `--jobs` defaults to 1 — `DEFAULT_JOBS`, a constant where
       `available_parallelism()` was, so a person who states neither flag gets
       the arrangement every published figure was taken under. Its help text
@@ -794,4 +835,21 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **Should `measure.py`'s `PARALLEL_BUDGET` (1 GiB) rise now that `16.15`'s
+  two-term divisor prices what a query sub-stream pins as well as what it
+  decodes?** The constant's own comment sizes it against the old one-term
+  arithmetic — "24 workers over 24 MiB blocks want ~600 MiB" — and the new
+  divisor wants roughly 2.1 GiB for that same row, so `parallel-scan-throughput`'s
+  `.xz`-typed-query legs at high `--jobs` will achieve fewer sub-streams than
+  the table's own column labels say once `16.15.1` retakes it. Left as is, the
+  figure honestly shows a real resource constraint — a 1 GiB budget genuinely
+  cannot afford 24 concurrent readers once a batch's pin is priced in, which is
+  arguably the corrected reading `16.15` exists to produce. Raised (to roughly
+  2.2–2.5 GiB, headroom included), the table keeps testing the stated
+  `PARALLEL_JOBS` axis at every row, at the cost of a wider apparatus departure
+  from the register's 512 MB and a number no longer comparable to `16.13.1`'s
+  published one without a footnote. What would change the call: whether the
+  axis's *point* is "how many sub-streams can a stated budget afford" (leave
+  it) or "how does throughput scale with worker count, holding memory
+  irrelevant" (raise it) — which is a reading of what the figure is *for*,
+  not a fact `16.15`'s own work settles.

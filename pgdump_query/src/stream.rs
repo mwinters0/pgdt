@@ -1740,10 +1740,24 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 ///
 /// Never empty: a table with no blocks at all is one sub-stream that yields
 /// nothing, which is what [`table_stream`] does with the same map.
+///
+/// **`max_source_span` is the second term the stated budget divides by, not a
+/// separate cap of its own** (`docs/design/architecture.md`, "Execution model
+/// and API surface"). What one sub-stream costs the caller is its held
+/// batch's pin (`max_source_span`, rounded out to the retained unit by the
+/// source's own per-partition footprint) *on top of* what the source charges
+/// a concurrent reader for decoding (`partition_bytes`) — a discovery worker
+/// pays only the second, but a query's sub-stream is handed its batch and
+/// pays both, which is why this divisor is not `worker_count`'s own to know
+/// and is computed here rather than folded into that function. A caller who
+/// left the span unbounded (`None`) has already opted out of a batch-size
+/// bound, so the divisor falls back to the decode footprint alone — the same
+/// answer a discovery worker's call gets.
 fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
     parallelism: Parallelism,
+    max_source_span: Option<usize>,
 ) -> Vec<Vec<Segment>> {
     // **Announced before the advice is asked for, not when the first
     // sub-stream runs.** A compressed source decides from the stated budget
@@ -1759,7 +1773,11 @@ fn plan_partitions(
     let advice: Vec<Partitioning> =
         matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
     let footprint = advice.iter().map(Partitioning::partition_bytes).max().unwrap_or(0);
-    let workers = worker_count(parallelism, footprint).max(1);
+    let divisor = match max_source_span {
+        Some(span) => footprint.saturating_add(span as u64),
+        None => footprint,
+    };
+    let workers = worker_count(parallelism, divisor).max(1);
 
     let mut segments = Vec::new();
     for (block, advice) in matches.iter().zip(&advice) {
@@ -2253,11 +2271,15 @@ pub fn table_stream<'a>(
 /// `Error::ResumeQueryMismatch` rather than a silent superset of the rows that
 /// partition had left — resuming a partitioned replay is not supported.
 ///
-/// **What N sub-streams cost resident is N times one.** Each holds its own
-/// read chunks for as long as its in-flight batch pins them
-/// (`QueryOptions::max_source_span`), and the source holds
-/// `Partitioning::partition_bytes` per concurrent reader on top — which is the
-/// number `query_options.parallelism`'s byte half is spent against here.
+/// **What N sub-streams cost resident is N times one, and N is chosen against
+/// that whole cost rather than half of it.** Each holds its own read chunks
+/// for as long as its in-flight batch pins them (`QueryOptions::max_source_span`),
+/// and the source holds `Partitioning::partition_bytes` per concurrent reader
+/// on top — so `query_options.parallelism`'s byte half divides by the *sum* of
+/// the two, and N is capped there before `query_options.parallelism`'s job
+/// half is ever consulted
+/// (`docs/design/architecture.md`, "Execution model and API surface", "A
+/// caller-set budget therefore bounds the waiting holders…").
 pub async fn table_stream_partitions<'a>(
     source: &'a dyn ByteRangeSource,
     table: &str,
@@ -2268,7 +2290,12 @@ pub async fn table_stream_partitions<'a>(
     validate_request(&query_options, None, 0)?;
     let table = table.to_string();
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
-    let groups = plan_partitions(source, &mapped.matches, query_options.parallelism);
+    let groups = plan_partitions(
+        source,
+        &mapped.matches,
+        query_options.parallelism,
+        query_options.max_source_span,
+    );
     let plan = Arc::new(ReplayPlan {
         scan_options,
         query_options,

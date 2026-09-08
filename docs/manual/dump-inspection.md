@@ -216,6 +216,18 @@ a time, so on a plain file on a fast disk raising it will not show up on a
 clock. On a compressed file the reading is the expensive part, and there it
 can.
 
+> **A query's `--parallel-memory` covers two costs, not one, and the second is
+> fixed at 64 MiB.** Each piece a query splits into holds its own read buffers
+> for as long as its in-flight batch is still being built — up to 64 MiB worth,
+> the same default `query` always batches to — on top of what its worker costs
+> to decode. So the number of pieces you actually get is `--parallel-memory`
+> divided by *that sum*, not by the decode cost alone: at the 64 MiB default,
+> the batch term alone already accounts for the whole budget, so `query --jobs
+> N` runs one piece — serially — however large `N` is, until you raise
+> `--parallel-memory` past roughly 65 MiB. `parse` does not carry this cost: it
+> builds no batches, so its own `--jobs` is bound by the decode cost alone, as
+> described above.
+
 For `parse` it cuts the *inside* of a `COPY` block up. Once pgdq has read a
 block's `COPY … FROM stdin;` header it knows everything until the block's end
 marker is rows, so it hands that stretch out to this many readers at once and

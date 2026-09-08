@@ -256,10 +256,24 @@ affords 64 — but `hint_parallelism` clamps that pool to `POOL_DEPTH`, so
 for a slot. The wait is doing what it was built for; the consequence is that a
 plain-file `parse` above `--jobs 4` runs four workers and queues the rest, which
 the flag's own help text and the manual both say rather than promising a ceiling
-the shape does not deliver. `POOL_DEPTH` is left where it is: raising it with a
-worker count is the resident-set trade the paragraph on the `jobs` half declines
-below, and moving it belongs with the work that makes one stated number bound
-both memory terms.
+the shape does not deliver.
+
+**`POOL_DEPTH` stays fixed, and `16.15` is the re-derivation that confirms it
+rather than moves it.** The trade the "`jobs` half" paragraph below declines —
+raising the chunk pool's depth with a worker count grows a *query's* resident
+set by `(jobs - POOL_DEPTH)` chunks the moment a flushed batch's buffers
+release — is about the **replay** path's own holder, `batch::RetainedChunks`.
+`16.15`'s fix is scoped to a different call site: `worker_count`'s divisor at
+`stream::plan_partitions`, which caps how many *sub-streams* a query gets, not
+how many slots the chunk pool holds. A leader worker on the mapping pass
+retains nothing past its own `read_range` — `parse` builds no batches — so the
+resident-set argument above has no analog there, and the four-worker plain-file
+ceiling is a property of the chunk pool's own depth, unrelated to what a query's
+sub-stream count divides by. The two numbers are deliberately different
+things: one bounds how many concurrent leader workers a plain-file `parse` (or
+a query's own mapping pass) may run before one queues, the other bounds how many
+sub-streams a query's *replay* is cut into. `16.15` moved the second; the
+first had no accounting gap to fix.
 
 **Two numbers, whichever binds first, mirroring
 `xz_seek::Bulk::new(workers, budget_bytes)`** — the interface a compressed
@@ -345,9 +359,12 @@ today, and the manual says so ([`../manual/dump-inspection.md`](../manual/dump-i
 are probes on one file, not figures, and no document quotes them as
 measurements; the evidence is
 [`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
-16.14 OOM is glibc's arenas, and a CPU limit is not the remedy". Whether the
-stated number ought to bound the *process* rather than the pools is `16.15`'s
-question, not this paragraph's. *Rejected:* capping the arenas from inside the
+16.14 OOM is glibc's arenas, and a CPU limit is not the remedy". **The stated
+number does not bound the process, only the pools** — `16.15`'s divisor is
+`partition_bytes + max_source_span`, both pool costs, and settles nothing about
+the allocator; capping the arenas from inside the stated budget was considered
+there and set aside for the same reason it is rejected below, filed as its own
+Future item rather than folded in. *Rejected:* capping the arenas from inside the
 binary, with a `mallopt(M_ARENA_MAX, …)` beside the `#[global_allocator]`.
 It would close the ~200 MiB gap without an operator setting anything, and it is
 the binary's decision to make rather than the library's — but it changes the
@@ -853,8 +870,23 @@ model and API surface"). So the block pool's ceiling is `2 × slots × unit`:
 **96 MiB** at the default budget's two 24 MiB slots, reached when live views
 release blocks the retained list has already refilled past. It is a ceiling
 rather than a steady state — a forward scan's cycle holds the free list at
-zero or one, which is what the 64.7 MiB above is — and whether to cap the sum
-instead is `16.15`'s, since it changes what the stated number means.
+zero or one, which is what the 64.7 MiB above is.
+
+*Rejected: coupling the two counts so the pool's ceiling is `slots × unit`
+rather than its double.* `16.15` decided this rather than left it, and kept the
+counts separate. What the coupling would buy is a tighter transient ceiling on
+a path that is already the smaller of the two costs a caller's stated budget
+now has to cover — `worker_count`'s divisor (above, "Rejected: a per-view
+acquisition bounding the live term") is what actually admits fewer concurrent
+readers when a query's held batches make the real per-worker cost bigger, and
+that is where the accounting gap `16.15` closes actually was.
+Coupling the counts would touch `BufferPool::release`'s hot path — every
+buffer return would have to check a shared ceiling instead of its own list's
+length — for a ceiling that is reached only in the specific window between a
+live view's release and the next acquisition, not in steady state. That is a
+rework of an already-tested concurrent structure for a bound the caller-facing
+fix already tightens from the outside; left alone unless a reading shows the
+transient itself, not the admitted-worker count, is what a real workload hits.
 
 **Evicting before acquiring is a reuse rule and not a progress guarantee**, and
 reading it as one is what `M70` was. A retained block is normally also the

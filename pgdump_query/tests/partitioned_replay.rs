@@ -458,16 +458,27 @@ async fn a_single_block_xz_declines_to_be_split() {
 /// which is the arithmetic a memory-bounded caller states both numbers for
 /// (`docs/design/architecture.md`, "Execution model and API surface"). The
 /// rows are unaffected.
+///
+/// **The divisor is two terms, not one**: what a concurrent reader costs the
+/// source (`partition_bytes`, one read chunk on a local file) plus what a
+/// sub-stream's held batch pins (`max_source_span`) — so a budget of four
+/// chunk-units against a one-chunk span affords two workers, not four, and a
+/// test that left `max_source_span` at its 64 MiB default would need a budget
+/// past that default before the job count ever bound anything.
 #[tokio::test]
 async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
 
-    // One read chunk per partition on a local file, so a budget of two chunks
-    // affords two workers however many jobs are asked for.
+    // One read chunk per partition on a local file, so a per-worker cost of
+    // two chunk-units (one decoded, one pinned) makes a budget of four such
+    // units afford two workers however many jobs are asked for.
     let chunk = ScanOptions::default().chunk_size as u64;
-    let options =
-        QueryOptions { parallelism: Parallelism::workers(8, 2 * chunk), ..Default::default() };
+    let options = QueryOptions {
+        parallelism: Parallelism::workers(8, 4 * chunk),
+        max_source_span: Some(chunk as usize),
+        ..Default::default()
+    };
     let streams = table_stream_partitions(
         &source,
         "public.t_int",
@@ -478,6 +489,43 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     .await
     .unwrap();
     assert_eq!(streams.len(), 2, "the budget binds before the job count does");
+
+    let mut rows = Rows::new();
+    for mut stream in streams {
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
+    }
+    assert_eq!(rows, expected);
+}
+
+/// **`max_source_span: None` opts a query out of the span term entirely**,
+/// falling back to the decode-footprint-only divisor a discovery worker's own
+/// call uses — an unbounded batch has no number to add, and pretending it
+/// were zero would silently under-count what a sub-stream can grow to hold.
+/// So the same budget that a stated span would have clamped to one worker
+/// affords two once the span is left unbounded.
+#[tokio::test]
+async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
+
+    let chunk = ScanOptions::default().chunk_size as u64;
+    let options = QueryOptions {
+        parallelism: Parallelism::workers(8, 2 * chunk),
+        max_source_span: None,
+        ..Default::default()
+    };
+    let streams = table_stream_partitions(
+        &source,
+        "public.t_int",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert_eq!(streams.len(), 2, "an unbounded span divides by the decode footprint alone");
 
     let mut rows = Rows::new();
     for mut stream in streams {
