@@ -17,6 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P16 — parallel scan and extraction | **Current** | [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md); checklist in [`../status/STATUS.md`](../status/STATUS.md) |
+| P19 — efficient defaults for a parallel scan | Sketched; grilled, spec not yet written | this file, below; [inbox](roadmap-P19-efficient-defaults-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -98,6 +99,23 @@ Two things distinguish this project from existing `pg_dump` tooling
 
 Decisions that apply to all work below, not to any one phase. They are here
 rather than in a phase doc because they outlived the phases that produced them.
+
+### Four workers is the optimization baseline; twenty-four is the guard
+
+**Tune the parallel paths against four workers, and check twenty-four has not
+been made worse per worker.** Four is the count that survives moving between
+machines — it is what `POOL_DEPTH` delivers on a plain source, what `16.14`
+verified koji at, and a plausible allocation almost anywhere — so it is the
+target a future optimization pass aims at. A dev machine with twenty-four
+hardware threads is not something later work may assume.
+
+The guard is the other half and it is what stops the baseline becoming a
+ceiling: an optimization that helps at four and makes twenty-four slower *per
+worker* has over-fitted to the baseline. `parallel-scan-throughput`'s wide
+`--jobs` axis is kept for exactly that reading — a compressed parse scales to
+**5.93×** at twenty-four against 1.88× at four — so the wide numbers keep being
+gathered wherever the machine can give them, and are read as a guard rather
+than as the target.
 
 ### Coverage increases monotonically
 
@@ -350,6 +368,32 @@ takes the speculative-split scheme with it. And **the sparse row index is not
 built here**: splitting an open `COPY` block's interior at LF boundaries costs
 one row's resync, so P10 owns the index and its interval outright rather than
 inheriting them from whichever phase ran first.
+
+## P19 — Efficient defaults for a parallel scan
+
+**Being grilled; no spec yet. Facts already filed for it:**
+[`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md).
+Sketched only to corner-avoidance depth, per this file's rule.
+
+`P16` builds the mechanism; this phase ships it set correctly. The split is
+context rather than subject — `P16`'s spec already carries three amendments and
+nineteen slices, and a phase whose evidence is another phase's completed
+figures is the process's own "evidence first" ordering one level up. **Neither
+row alone means parallelization is finished**: `P16` `Complete` says the
+mechanism exists, and this phase is what makes a person who states no flag get
+a good arrangement.
+
+Three things are settled going in, and the first is a reversal.
+**The tool discovers its own allocation** — `P16` rejected reading the cgroup
+limit and that is reversed, on the deployment case the rejection did not weigh
+(`../status/history/2026-09-08.md`, "The tool discovers what it was
+allocated"). **The parallel default is source-dependent**, registered as a
+source's own answer rather than a test for `.xz`, because the gzip, zstd/lz4
+and format-coverage phases each add a source whose right default is its own.
+And **the order is bound**: the process's own overhead is capped first — the
+glibc arenas, and the tokio runtime sized from the resolved worker count —
+because until the resident set is a bounded function of the stated budget, no
+fraction of a discovered limit is defensible and any constant is this machine's.
 
 ## P10 — Per-row-group column statistics
 
@@ -937,26 +981,4 @@ this section when it acquires a phase number, not when it acquires a design.
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
 
-- **pgdq caps its own glibc arenas, so the stated budget bounds the process.**
-  Under a memory cap the larger term is not what the pools hold but what
-  glibc's per-thread arenas retain: ~536 MiB anonymous resident against
-  ~328 MiB at `MALLOC_ARENA_MAX=2` on the same scan
-  ([`architecture.md`](architecture.md), "Execution model and API surface").
-  The remedy an operator has today is the environment variable, which is why
-  that is a property rather than a deficiency; the remedy pgdq could have is a
-  `mallopt(M_ARENA_MAX, …)` in `pgdump_query-cli/src/alloc.rs` behind a
-  `target_env = "gnu"` gate, which is the same class of decision as the
-  `#[global_allocator]` already there — the binary's, never the library's
-  ([`architecture.md`](architecture.md), "The allocator is the binary's
-  choice"). Sizing the tokio runtime from `--jobs` instead is the lever it
-  looks like and is not: `--cpus 4` cuts the runtime to four workers and the
-  arenas to eight and still measures ~476 MiB, because what an arena retains is
-  not proportional to how many there are.
-
-  **Two costs are why this is here and not a slice.** It changes the apparatus
-  of every registered figure, so adopting it is a full sweep and not a fix; and
-  arenas exist to cut allocator lock contention, so capping them on a many-core
-  host is a plausible regression on exactly the parallel shapes that motivate
-  it — it needs a figure, not an assertion. It is therefore a decision
-  `architecture.md` currently records the other way, which is what puts it
-  outside the out-of-band ledger's admission rule.
+- **pgdq caps its own glibc arenas — moved into `P19`.** It was here because it changes a decision `architecture.md` records and re-bases every registered figure's apparatus. Both are still true; what changed is that a phase now owns "the stated budget bounds the process", which a budget discovered from the cgroup and then blown by arenas seeded at startup does not deliver ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The tool discovers what it was allocated").

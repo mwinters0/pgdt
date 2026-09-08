@@ -559,10 +559,10 @@ stream, and charging it per reader is what makes the stated budget dominated by
 pinning rather than by decoding (64 MiB against a 24 MiB block). The
 alternative is N smaller batches whose pinning stays flat in N, which would
 keep a parallel query affordable at the shipped defaults where today it is not.
-It changes a default the phase committed to, so it is a spec question for this
-phase's wrap rather than a slice
-([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "A
-`--jobs` the budget refuses is silent").
+It changes a default `P16` committed to, so it is a spec question rather than a
+slice, and **`P19` owns it** — filed in that phase's inbox, which its grilling
+drains ([`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md),
+"One span allowance is charged per sub-stream").
 
 *Rejected: counting every outstanding buffer against the ceiling.* It
 states one number instead of two, and it lets a loop that granted nothing block

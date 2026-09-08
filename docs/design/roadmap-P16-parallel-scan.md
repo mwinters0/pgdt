@@ -265,6 +265,15 @@ The defaults split by audience:
 - **The CLI defaults to parallel**, with `--jobs <n>` and `--parallel-memory
   <bytes>` capping it. `--jobs 1` is the serial path.
 
+**What a person who states no flag gets passes to `P19`.** The split above
+survives — the library still defaults to serial, and that half is not reopened —
+but the CLI's default stops being a constant of this phase's choosing: it
+resolves after source recognition, from an allocation the process discovers, and
+`P16`'s figures are the evidence it is set from
+(`roadmap-P19-efficient-defaults-inbox.md`). The library will *offer* the
+discovery mechanism without taking it as a default, so nothing an embedder
+depends on moves. `16.16`'s `DEFAULT_JOBS = 1` stands until then.
+
 **Amended: the stated bytes bound both memory terms, and the CLI's parallel
 default waits on the figure that justifies it**
 ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "What a
@@ -298,12 +307,24 @@ allocator, and no shape stated it while the default changed meaning underneath
 the register. And `--jobs`' own help text stops calling itself a ceiling on
 concurrent workers, which on a plain source is `min(jobs, 4)`.
 
-*Rejected:* deriving the byte budget by reading the cgroup limit. It is
-attractive given that every koji run here is in a 512 MB cgroup, but it makes
-memory behaviour depend on a kernel interface nothing in this project has
-verified, and it would need an entry in `postgres-invariants.md`'s sibling
-position — an assumption register entry for something outside PostgreSQL
-entirely — before it could be honest.
+*Rejected, and since reversed:* deriving the byte budget by reading the cgroup
+limit. It is attractive given that every koji run here is in a 512 MB cgroup,
+but it makes memory behaviour depend on a kernel interface nothing in this
+project has verified, and it would need an entry in `postgres-invariants.md`'s
+sibling position — an assumption register entry for something outside
+PostgreSQL entirely — before it could be honest.
+
+**The reversal stands on the deployment case the rejection did not weigh**
+([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
+tool discovers what it was allocated"). A tool run under an orchestrator is
+*given* a memory and CPU allocation and is the only party that knows it; asking
+the operator to restate it as `--parallel-memory` is asking them to repeat what
+the platform already said, and getting it wrong is the OOM. So the budget's
+default becomes what the process discovers, `xz -T0`'s posture rather than a
+conservative constant. The rejection's own condition is unchanged and is now
+work rather than an objection: the kernel interface it names still has to be
+verified and registered before anything reads it. Which phase carries that is
+settled below.
 
 ### The sparse row index and `KD5` both leave this phase
 
