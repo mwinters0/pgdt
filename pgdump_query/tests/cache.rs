@@ -83,9 +83,10 @@ async fn saved_index_round_trips_exactly() {
     let path = dir.path().join("edge_cases.sql.dqcache");
     cache::save(&path, &source, &index).await.unwrap();
     let loaded = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed, total_size } => {
+        CacheStatus::Valid { index, mtime_changed, total_size, compression } => {
             assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
             assert_eq!(total_size, source.size().await.unwrap());
+            assert_eq!(compression, None, "a plain source sits under no container");
             index
         }
         CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
@@ -148,7 +149,7 @@ async fn save_overwrites_an_existing_cache() {
     let total_size = source.size().await.unwrap();
     assert_eq!(
         cache::load(&path, &source).await.unwrap(),
-        CacheStatus::Valid { index, mtime_changed: false, total_size }
+        CacheStatus::Valid { index, mtime_changed: false, total_size, compression: None }
     );
 }
 
@@ -640,10 +641,21 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let path = dir.path().join("edge_cases.sql.xz.dqcache");
     cache::save(&path, &xz, &xz_index).await.unwrap();
     match cache::load(&path, &xz).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed, total_size } => {
+        CacheStatus::Valid { index, mtime_changed, total_size, compression } => {
             assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
             assert_eq!(total_size, plain.size().await.unwrap());
             assert_eq!(index, plain_index);
+            // `M67`: the shape comes back off the persisted seek table, so a
+            // reader learns what to raise a budget to without `xz --list`.
+            let shape = compression.expect("an .xz source records its container's shape");
+            assert_eq!(shape.container, "xz");
+            assert_eq!(shape.blocks, xz.seek_table().unwrap().block_count());
+            assert_eq!(shape.streams, xz.seek_table().unwrap().stream_count());
+            assert_eq!(
+                shape.max_block_uncompressed,
+                xz.seek_table().unwrap().max_block_uncompressed()
+            );
+            assert!(shape.blocks > 1, "the --block-size=512 fixture is multi-block");
         }
         other => panic!("a freshly saved cache must load, got {other:?}"),
     }

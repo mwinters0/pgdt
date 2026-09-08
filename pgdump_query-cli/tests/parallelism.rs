@@ -94,9 +94,12 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
     assert!(reference.status.success(), "{}", stderr_of(&reference));
     for extra in [
         vec![],
-        // Small enough that a decoded block does not fit beside the chunk
-        // pool's own ceiling: the streaming reader, on a file that has
-        // boundaries to seek by.
+        // Below this fixture's 512-byte block unit, so no whole block can be
+        // held: the streaming reader, on a file that has boundaries to seek
+        // by. **`--jobs 2` is load-bearing here** — at `--jobs 1` the CLI
+        // states no budget at all and the block path is taken whatever
+        // `--parallel-memory` says (`KD16`).
+        vec!["--jobs", "2", "--parallel-memory", "400"],
         vec!["--parallel-memory", "65536"],
         vec!["--jobs", "8", "--parallel-memory", "536870912"],
     ] {
@@ -104,6 +107,39 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
         assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
         assert_eq!(stdout_of(&out), stdout_of(&reference), "{extra:?} changed the rows");
     }
+}
+
+/// `M67` at the CLI: the budget that sent a compressed read down the
+/// streaming path says so on stderr, once, naming the largest block to budget
+/// for — so the flag that says *raise it* also says what to raise it to. The
+/// rows go to stdout and are untouched by it.
+#[test]
+fn a_declined_block_path_is_announced_once_on_stderr() {
+    let (_xz_dir, compressed) = seekable_xz();
+
+    // 400 bytes is below the fixture's 512-byte block unit, and `--jobs 2`
+    // is what makes the CLI state the budget at all (`KD16`).
+    let out = query(&compressed, "public.widgets", &["--jobs", "2", "--parallel-memory", "400"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let err = stderr_of(&out);
+    assert_eq!(err.matches("streaming decoder").count(), 1, "said once, not per sub-stream: {err}");
+    assert!(err.contains("raise the memory budget above 512"), "{err}");
+    assert!(err.contains("memory budget of 400"), "the budget that declined it is named: {err}");
+
+    // A budget that affords a whole block says nothing at all about the read
+    // path.
+    let quiet =
+        query(&compressed, "public.widgets", &["--jobs", "2", "--parallel-memory", "536870912"]);
+    assert!(quiet.status.success(), "{}", stderr_of(&quiet));
+    assert!(!stderr_of(&quiet).contains("streaming decoder"), "{}", stderr_of(&quiet));
+
+    // Neither does a plain file, which has no container to decline.
+    let plain_dir = tempfile::tempdir().unwrap();
+    let plain = plain_dir.path().join("edge_cases.sql");
+    std::fs::copy(edge_cases_sql(), &plain).unwrap();
+    let plain_out = query(&plain, "public.widgets", &["--jobs", "2", "--parallel-memory", "400"]);
+    assert!(plain_out.status.success(), "{}", stderr_of(&plain_out));
+    assert!(!stderr_of(&plain_out).contains("streaming decoder"), "{}", stderr_of(&plain_out));
 }
 
 /// **The merge prints file order, not arrival order.** `pgdq query` holds one

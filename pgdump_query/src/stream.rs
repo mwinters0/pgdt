@@ -75,7 +75,10 @@ use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
     union_census,
 };
-use crate::io::{ByteRangeSource, Parallelism, PartitionBoundaries, Partitioning, WaitPolicy};
+use crate::io::{
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
+    WaitPolicy,
+};
 use crate::leader::{self, RegionScan};
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
@@ -1220,9 +1223,11 @@ impl<'a> TableStream<'a> {
     }
 
     /// Facts about *this query's plan* rather than about a column or a
-    /// predicate — today, at most one: [`PlanNoteKind::ParallelismBudgetLimited`],
-    /// `--jobs` asking for more sub-streams than the stated memory budget
-    /// affords (`M72`).
+    /// predicate — today two, and both are the stated memory budget declining
+    /// something: [`PlanNoteKind::ParallelismBudgetLimited`], `--jobs` asking
+    /// for more sub-streams than that budget affords (`M72`), and
+    /// [`PlanNoteKind::CompressedBlockPathDeclined`], an `.xz` source with
+    /// blocks too large to hold under it (`M67`).
     ///
     /// **A fourth channel** beside `DumpIndex.diagnostics` (L1),
     /// `ResolvedSchema.notes` (L2) and [`Self::comparison_notes`] (L4) — see
@@ -1838,9 +1843,47 @@ pub enum PlanNoteKind {
         max_source_span: Option<u64>,
         memory_bytes: u64,
     },
+    /// The `.xz` source this query reads declined the block-decode path: no
+    /// whole block fits the memory budget in force, so it reads through the
+    /// streaming decoder instead and every **backward** read decodes forward
+    /// from its block's start rather than landing in a retained block
+    /// (`docs/design/architecture.md`, "The compressed source"). Never a
+    /// reason to refuse the query — the rows are the same and the mapping
+    /// pass, which only reads forward, costs the same either way; what it
+    /// names is the number to raise and how far. `max_block_uncompressed` is
+    /// the file's largest block, which is what the budget is compared
+    /// against, and `block_count` says how much seeking the file would
+    /// otherwise offer.
+    ///
+    /// **Not a [`crate::diagnostic::DiagnosticKind`], for the reason its
+    /// sibling above is not one.** The *file* having no seek structure at all
+    /// is one — `NonSeekableCompressedSource`, which a persisted seek table
+    /// replays with no dump present. This is a decline, and a decline is a
+    /// property of the file **and this run's budget**: two queries over one
+    /// file with different `memory_bytes` get different answers, so it
+    /// belongs to a plan and not to a file.
+    CompressedBlockPathDeclined {
+        block_count: usize,
+        max_block_uncompressed: u64,
+        memory_bytes: u64,
+    },
 }
 
 impl PlanNote {
+    fn compressed_block_path_declined(
+        block_count: usize,
+        max_block_uncompressed: u64,
+        memory_bytes: u64,
+    ) -> Self {
+        Self {
+            kind: PlanNoteKind::CompressedBlockPathDeclined {
+                block_count,
+                max_block_uncompressed,
+                memory_bytes,
+            },
+        }
+    }
+
     fn parallelism_budget_limited(
         requested: usize,
         planned: usize,
@@ -1884,8 +1927,63 @@ impl PlanNote {
                      decode each — raise the memory budget to get more"
                 ),
             },
+            PlanNoteKind::CompressedBlockPathDeclined {
+                block_count,
+                max_block_uncompressed,
+                memory_bytes,
+            } => format!(
+                "this .xz source has {block_count} block(s) to seek by, but its largest is \
+                 {max_block_uncompressed} byte(s) and a memory budget of {memory_bytes} byte(s) \
+                 leaves no room to hold one — so it is read through the streaming decoder and \
+                 every backward read decodes forward from its block's start; raise the memory \
+                 budget above {max_block_uncompressed} byte(s) to read it a block at a time"
+            ),
         }
     }
+}
+
+/// `M67`: whether this source is a compressed one that *could* be read a
+/// block at a time and is not, because the budget in force leaves no room to
+/// hold a whole block ([`crate::io::Partitioning`], and
+/// `docs/design/architecture.md`, "The compressed source").
+///
+/// **Read off `partitions()`, not off a budget the caller would have to hand
+/// down.** A source that holds a seek table with more than one block and
+/// still advises a *single* partition over the whole of it has declined —
+/// that is exactly the streaming fallback's answer, and it is a comparison
+/// between two values already in hand rather than a trait method added for a
+/// sentence.
+///
+/// **Asked over the whole file** rather than over the blocks this query
+/// matched: a query whose rows all sit inside one compressed block would be
+/// advised one partition on the block path too, and reading the decline off
+/// that would announce it against a file that never declined anything. The
+/// answer costs one boundary list — `block_count - 1` offsets, collected and
+/// dropped once per query.
+///
+/// `None` for every plain source, which holds no seek table, and for a file
+/// with no more than one block: that shape has nothing to seek by at any
+/// budget and is already `DiagnosticKind::NonSeekableCompressedSource`, a
+/// property of the file that a persisted table replays with no dump present.
+fn compressed_block_path_declined(
+    source: &dyn ByteRangeSource,
+    parallelism: Parallelism,
+) -> Option<PlanNote> {
+    let table = source.seek_table()?;
+    if !table.is_seekable() {
+        return None;
+    }
+    if source.partitions(0..table.uncompressed_size()).max_partitions() != Some(1) {
+        return None;
+    }
+    Some(PlanNote::compressed_block_path_declined(
+        table.block_count(),
+        table.max_block_uncompressed(),
+        // The budget actually in force, which is what the source compared its
+        // block against: `Parallelism::Serial` states no number and every
+        // pool falls back to this one.
+        parallelism.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET),
+    ))
 }
 
 /// Split `matches` into the pieces `parallelism` and the source between them
@@ -1909,9 +2007,11 @@ impl PlanNote {
 /// bound, so the divisor falls back to the decode footprint alone — the same
 /// answer a discovery worker's call gets.
 ///
-/// **The second return value is `M72`'s: a [`PlanNote`] naming why `workers`
-/// came up short of `parallelism.jobs()`, when it did.** Empty on every path
-/// that does not limit — an empty `matches` included, since a footprint of
+/// **The second return value is the plan's own notes: at most one naming why
+/// `workers` came up short of `parallelism.jobs()` (`M72`), and at most one
+/// naming a compressed source that declined the block-decode path under this
+/// budget (`M67`, [`compressed_block_path_declined`]).** Empty on every path
+/// that limits nothing — an empty `matches` included, since a footprint of
 /// zero never trips the budget — so a caller need not special-case "nothing
 /// to say".
 fn plan_partitions(
@@ -1940,18 +2040,22 @@ fn plan_partitions(
     };
     let workers = worker_count(parallelism, divisor).max(1);
     let requested = parallelism.jobs();
-    let notes = match parallelism.memory_bytes() {
-        Some(memory_bytes) if workers < requested => {
-            vec![PlanNote::parallelism_budget_limited(
-                requested,
-                workers,
-                footprint,
-                max_source_span.map(|span| span as u64),
-                memory_bytes,
-            )]
-        }
-        _ => Vec::new(),
-    };
+    // The decline comes first because it is the wider fact: it is about how
+    // every read of this file is served, where the count below is about how
+    // many readers there are.
+    let mut notes: Vec<PlanNote> =
+        compressed_block_path_declined(source, parallelism).into_iter().collect();
+    if let Some(memory_bytes) = parallelism.memory_bytes()
+        && workers < requested
+    {
+        notes.push(PlanNote::parallelism_budget_limited(
+            requested,
+            workers,
+            footprint,
+            max_source_span.map(|span| span as u64),
+            memory_bytes,
+        ));
+    }
 
     let mut segments = Vec::new();
     for (block, advice) in matches.iter().zip(&advice) {

@@ -142,6 +142,47 @@ enum CompressionIndex {
     Xz(xz_seek::SeekTable),
 }
 
+/// The shape of the container a cache's offsets sit under, read off the
+/// persisted [`CompressionIndex`] — `M67`.
+///
+/// **Three numbers, and each answers a question the user is otherwise sent to
+/// `xz --list` for.** `max_block_uncompressed` is what a memory budget is
+/// compared against, so it is the number to raise `--parallel-memory` above
+/// when a query says the block path was declined; `blocks` is how much
+/// seeking the file offers at all; `streams` is what explains a slow first
+/// command, a concatenated file costing one seek per stream to walk
+/// (`docs/design/architecture.md`, "The compressed source").
+///
+/// **Derived, not stored.** It is a projection of the seek table the envelope
+/// already carries, computed on load like the diagnostics beside it, so a
+/// cache written before this existed reports it too and nothing about the
+/// on-disk shape changed. It is a property of the *file*, which is why a
+/// cache can answer it with no dump present — unlike a budget decline, which
+/// depends on the run and reaches a caller through
+/// `crate::PlanNoteKind::CompressedBlockPathDeclined` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CompressionShape {
+    /// The container: `"xz"` today, and the only value there is. A word
+    /// rather than an enum with one variant, because what a reader wants from
+    /// it is the name to print beside the numbers.
+    pub container: &'static str,
+    pub streams: usize,
+    pub blocks: usize,
+    pub max_block_uncompressed: u64,
+}
+
+impl CompressionShape {
+    fn of(index: &CompressionIndex) -> Self {
+        let CompressionIndex::Xz(table) = index;
+        Self {
+            container: "xz",
+            streams: table.stream_count(),
+            blocks: table.block_count(),
+            max_block_uncompressed: table.max_block_uncompressed(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheFile {
     format_version: u32,
@@ -208,7 +249,16 @@ pub enum CacheStatus {
     /// [`Incomplete`](CacheStatus::Incomplete) carries it: a reporting caller
     /// states coverage against it, and a cache-only caller has no live source
     /// to stat.
-    Valid { index: DumpIndex, mtime_changed: bool, total_size: u64 },
+    /// `compression` is the container's shape where one sits under these
+    /// offsets, and `None` for a plain file — read off the persisted seek
+    /// table, so a cache-only caller answers it with no dump present
+    /// ([`CompressionShape`]).
+    Valid {
+        index: DumpIndex,
+        mtime_changed: bool,
+        total_size: u64,
+        compression: Option<CompressionShape>,
+    },
     /// A usable cache whose `index.scanned_through` falls short of
     /// `total_size` — a real, not-yet-finished scan (e.g. a preamble-only
     /// scan, or a query that stopped once its target settled), not a defect
@@ -224,7 +274,15 @@ pub enum CacheStatus {
     /// reached — is already known to equal the live source's addressable
     /// length when one is available, so it serves a cache-only caller (no
     /// live source to stat) the same way it serves a live one.
-    Incomplete { index: DumpIndex, mtime_changed: bool, total_size: u64 },
+    /// `compression` is [`Valid`](CacheStatus::Valid)'s, and means the same
+    /// thing: a partial scan says as much about the container it read through
+    /// as a finished one does.
+    Incomplete {
+        index: DumpIndex,
+        mtime_changed: bool,
+        total_size: u64,
+        compression: Option<CompressionShape>,
+    },
 }
 
 /// What [`CacheMode::load`] answered a caller that holds a live source: an
@@ -446,10 +504,14 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     let table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);
     index.diagnostics.extend(non_seekable_compression_diagnostic(table));
+    // Derived here for the same reason the diagnostics above are: it is a
+    // projection of what the envelope already holds, so a cache written
+    // before it existed answers it too.
+    let compression = file.compression.as_ref().map(CompressionShape::of);
     if index.is_complete(total_size) {
-        CacheStatus::Valid { index, mtime_changed, total_size }
+        CacheStatus::Valid { index, mtime_changed, total_size, compression }
     } else {
-        CacheStatus::Incomplete { index, mtime_changed, total_size }
+        CacheStatus::Incomplete { index, mtime_changed, total_size, compression }
     }
 }
 

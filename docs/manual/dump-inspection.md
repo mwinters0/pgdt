@@ -125,6 +125,20 @@ explicit `--block-size` produces a file pgdq can seek into. Files that
 `xz` produced with threads, or that were made by concatenating several `.xz`
 files, are already seekable and earn no warning.
 
+You can also ask a file what shape it is in, at any time and without reading
+it: `pgdq info --detail` prints one line naming the container's blocks,
+streams and largest block. It comes out of the cache, so it costs nothing and
+works from a `--dqcache` alone:
+
+```
+$ pgdq info --source mydump.sql.xz --detail
+compression: xz — 5700 block(s) in 1 stream(s), largest block 134217728 bytes uncompressed
+```
+
+`largest block` is the number `--parallel-memory` has to clear, and the
+alternative way to learn it is `xz --list`, which on a file of many
+concatenated streams reads every one of their footers.
+
 Note that pgdq has to read the file's block index before it can read anything
 else. On a file built from many concatenated streams — the shape a chunked
 download or a `cat a.xz b.xz` produces — that index costs one disk seek per
@@ -192,10 +206,23 @@ the block again, which `query` does and `parse` never does.
 
 Two ordinary ways of compressing produce blocks larger than the default budget:
 `xz -9 -T0`, whose threaded blocks are about 192 MiB, and any explicit
-`xz --block-size=` above roughly 60 MiB. If you are querying such a file and
-have the memory, `--parallel-memory 256000000` buys the block path back. If you
-do not, nothing is wrong — the file reads fine, just with more decoding on
-backward reads.
+`xz --block-size=` above roughly 60 MiB. **`query` tells you when it happens**,
+once, on stderr, naming the file's largest block beside the budget that
+declined it:
+
+```
+warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room to hold one — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget above 134217728 byte(s) to read it a block at a time
+```
+
+If you have the memory, `--parallel-memory 268435456 --jobs 2` buys the block
+path back. If you do not, nothing is wrong — the file reads fine, just with
+more decoding on backward reads.
+
+> **`--jobs 2` is not optional in that line — this is a known bug.** At
+> `--jobs 1`, which is the default, pgdq ignores `--parallel-memory` entirely
+> and uses 64 MiB; the status line shows it, printing
+> `memory_bytes=67108864 (default)` over whatever you typed. So raising the
+> budget on its own changes nothing. State `--jobs 2` or more beside it.
 
 **`--jobs <n>` is how many workers pgdq may ask for, and it defaults to 1** —
 the single-threaded path. Nothing runs in parallel unless you say so.
@@ -397,7 +424,8 @@ public.events (98765 rows)
 Add `--detail` to also see each block's byte offsets and, per column, what
 it became: the Arrow type it resolved to, or — for a column that came back as
 a string — why (see [type handling](type-handling.md) for what "resolved"
-means and why a column sometimes isn't).
+means and why a column sometimes isn't). On a compressed dump it also prints
+the container's shape, described under "`.xz` files are read directly" above.
 
 `--detail` also turns the `user-defined types` count into a listing of the
 types themselves, one line each, in the order the dump declares them:
@@ -569,6 +597,9 @@ Alongside the file map it carries two things the text views state differently:
 
 - **Coverage as components**, not as the rendered percentage —
   `scanned_through` and `total_size`, so you compute whatever ratio you want.
+- **`compression`**, the container's shape — `container`, `streams`, `blocks`
+  and `max_block_uncompressed` — or `null` for a plain dump. The same three
+  numbers `--detail` prints on one line.
 - **`resolution`**, one record per `COPY` block, with the per-column outcome
   `--detail` renders as prose. Each column carries its name, the declared
   PostgreSQL type, the outcome as a token (`mapped`, `varying_array_shape`,

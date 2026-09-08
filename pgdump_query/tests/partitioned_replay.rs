@@ -187,7 +187,10 @@ async fn a_budget_bound_worker_count_announces_why() {
     let diagnostics = streams[0].plan_notes();
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     let PlanNoteKind::ParallelismBudgetLimited { requested, planned, memory_bytes, .. } =
-        &diagnostics[0].kind;
+        &diagnostics[0].kind
+    else {
+        panic!("{diagnostics:?}")
+    };
     assert_eq!(*requested, 8);
     assert_eq!(*planned, 1);
     assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
@@ -512,6 +515,117 @@ async fn a_single_block_xz_declines_to_be_split() {
     assert_eq!(rows, expected);
 }
 
+/// `M67`: a multi-block `.xz` whose blocks the stated budget cannot hold is
+/// read through the streaming decoder, and the plan says so — naming the
+/// file's largest block beside the budget that declined it, which is the
+/// number `--parallel-memory` has to clear.
+///
+/// **Multi-block on purpose.** The decline is about a file that *does* have
+/// seekability to lose; a single-block file has none at any budget and earns
+/// `DiagnosticKind::NonSeekableCompressedSource` instead, which is a property
+/// of the file and reaches a different channel.
+#[tokio::test]
+async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
+    let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
+    let xz = XzSource::open(compressed.path()).unwrap();
+    let table = xz.seek_table().unwrap();
+    assert!(table.is_seekable(), "the decline is only interesting on a file with blocks to lose");
+
+    // A budget below one block, so no whole block can be held.
+    let budget = table.max_block_uncompressed() - 1;
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
+    let streams = table_stream_partitions(
+        &xz,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    let notes = streams[0].plan_notes();
+    let declined = notes
+        .iter()
+        .find_map(|n| match &n.kind {
+            PlanNoteKind::CompressedBlockPathDeclined {
+                block_count,
+                max_block_uncompressed,
+                memory_bytes,
+            } => Some((*block_count, *max_block_uncompressed, *memory_bytes)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!(declined, (table.block_count(), table.max_block_uncompressed(), budget));
+
+    // The rows are unaffected — the fallback is slower on a backward read,
+    // never a different answer.
+    let plain = LocalFileSource::open(edge_cases()).unwrap();
+    let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
+    let mut rows = Rows::new();
+    for mut stream in streams {
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
+    }
+    assert_eq!(rows, expected);
+}
+
+/// The three shapes that say nothing: a budget that affords a whole block, a
+/// plain source (no container to decline), and a single-block `.xz` (nothing
+/// to seek by at any budget, which is the file-level warning's case and not
+/// this one).
+#[tokio::test]
+async fn a_block_path_that_was_taken_is_silent() {
+    let declines = |notes: &[pgdump_query::PlanNote]| {
+        notes.iter().any(|n| matches!(n.kind, PlanNoteKind::CompressedBlockPathDeclined { .. }))
+    };
+
+    let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
+    let xz = XzSource::open(compressed.path()).unwrap();
+    let affordable =
+        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
+    let streams = table_stream_partitions(
+        &xz,
+        "public.widgets",
+        ScanOptions::default(),
+        affordable.clone(),
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(!declines(streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+
+    let plain = LocalFileSource::open(edge_cases()).unwrap();
+    let streams = table_stream_partitions(
+        &plain,
+        "public.widgets",
+        ScanOptions::default(),
+        affordable.clone(),
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(!declines(streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+
+    // A single-block file, under a budget far too small to hold its one
+    // block: still silent here, because it has nothing to seek by whatever
+    // the budget says.
+    let single = xz_compress(&edge_cases(), &[]);
+    let xz = XzSource::open(single.path()).unwrap();
+    let options = QueryOptions { parallelism: Parallelism::workers(4, 64), ..Default::default() };
+    let streams = table_stream_partitions(
+        &xz,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(!declines(streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+}
+
 /// A stated byte budget caps the sub-stream count below the stated `--jobs`,
 /// which is the arithmetic a memory-bounded caller states both numbers for
 /// (`docs/design/architecture.md`, "Execution model and API surface"). The
@@ -560,7 +674,10 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
                 footprint,
                 max_source_span,
                 memory_bytes,
-            } = &d.kind;
+            } = &d.kind
+            else {
+                panic!("{d:?}")
+            };
             assert_eq!(*requested, 8);
             assert_eq!(*planned, 2);
             assert_eq!(*footprint, chunk);
@@ -617,7 +734,10 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
                 footprint,
                 max_source_span,
                 memory_bytes,
-            } = &d.kind;
+            } = &d.kind
+            else {
+                panic!("{d:?}")
+            };
             assert_eq!(*requested, 8);
             assert_eq!(*planned, 2);
             assert_eq!(*footprint, chunk);

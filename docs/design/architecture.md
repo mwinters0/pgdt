@@ -292,6 +292,24 @@ produces. That is what keeps "is this parallel" a match on the value instead of
 a comparison against a magic number, and it is what makes `--jobs 1` the serial
 path as a property of the value rather than of the CLI.
 
+<!-- deficiency: KD16 -->
+**The collapse takes the stated *budget* down with the worker count, so
+`--parallel-memory` is silently ignored at the default `--jobs`.**
+`ParallelArgs::resolve` builds `Parallelism::workers(jobs, memory_bytes)`, and
+at `jobs == 1` that answers `Serial`, which states no bytes — so every pool
+falls back to `DEFAULT_MEMORY_BUDGET` and the number the user typed reaches
+nothing. It is visible in the status line, which prints `memory_bytes=67108864
+(default)` over a stated 400, and it costs most where the budget is the whole
+point: raising `--parallel-memory` to buy back a compressed file's block path
+does nothing unless `--jobs 2` or more is stated beside it, which is what the
+manual now says and what `pgdump_query-cli/tests/parallelism.rs` pins. The
+worker count and the budget are two independent numbers ("Two numbers,
+whichever binds first"), and only one of them is one at `--jobs 1`. Closing it
+means a shape for "serial, inside a stated budget" that the value does not have
+today — `Serial` carrying an optional budget, or `workers(1, …)` no longer
+collapsing — which is a change to this type's own decision and not a fix to
+make in passing.
+
 **The read path's buffer budget reads it, and so does the replay's split; no
 worker scheduler does yet.** Each
 of the three read loops announces the value to the source through a sixth
@@ -1005,45 +1023,60 @@ untrue in the other direction, which is the defect the derivation was written
 to remove — and a resident set larger than the one the user set is harder to
 attribute than a read that is merely slower.
 
-**The fallback is silent today, and the reason once given for keeping it so
-does not hold.** A file declined for budget reasons is not the shape
-`DiagnosticKind::NonSeekableCompressedSource` warns about — that warning is
-about a *file* with no seek structure at all, which no flag can change, where
-this one is about a number the user set and can raise, so the two want separate
-kinds carrying separate sentences. What was thought to make a second kind
-expensive — that the source's budget would have to reach `index.rs` — is not
-so. `ByteRangeSource::partitions` is already a trait method, synchronous and
-pure, and `XzSource` answers `Partitioning::single` on exactly the
-declined-on-budget arm, so a source advising one partition over a seek table
-that holds many blocks has declined for budget; `index.rs` already has both
-halves in hand at the point where it pushes the sibling warning. The manual
-states the line ([`../manual/dump-inspection.md`](../manual/dump-inspection.md))
-and `--parallel-memory` is the recourse, but nothing at runtime says the
-fallback happened, and `max_block_uncompressed` reaches no reader outside
-`io.rs` — so the flag says *raise it* without saying what to raise it to.
-Closing both is admitted as `M67` ([`roadmap.md`](roadmap.md), "Out-of-band
-work").
+**The fallback announces itself, and it names the number to raise the budget
+to** (`M67`). `stream::plan_partitions` emits a
+`PlanNoteKind::CompressedBlockPathDeclined` carrying the file's block count,
+its largest block and the budget in force, and `pgdq query` prints it once on
+stderr — so the flag that says *raise it* also says what to raise it to, which
+is the same rule `M72` applies to a worker count the budget refuses.
+`max_block_uncompressed` reaches no reader outside `io.rs` any other way, and
+answering it by hand costs an `xz --list` — an 85-second walk on the
+multistream koji file.
 
-**The two warnings differ in a way that decides where each can be raised, and
-it is not obvious from the condition.** `NonSeekableCompressedSource` is a
-property of the *file*: it survives in the persisted seek table, which is why
-`cache::status_from_file` can replay it out of a cache with no dump present. A
-budget decline is a property of the file **and this run's budget**, so no cache
-can hold it and `info --dqcache` will not report it — which is accepted rather
-than worked around. Persisting the budget in force when the cache was written
-would report a decision made under a number the current run never stated, the
-same untruth refused above. What the offline view can answer is the file's
-*shape*, and all of it is already in the persisted table:
-`SeekTable::stream_count`, `block_count` and `max_block_uncompressed` are
-public and serialized with the envelope, so `info --detail` can report the
+**The detection is a comparison between two values already in hand, not a
+budget handed down to a new trait method.** `ByteRangeSource::partitions` is
+already a trait method, synchronous and pure, and `XzSource` answers
+`Partitioning::single` on exactly the declined-on-budget arm — so a source
+holding a seek table of more than one block and still advising *one partition
+over the whole file* has declined for budget. It is asked over the whole file
+rather than over the blocks a query matched, because a query whose rows sit
+inside one compressed block is advised one partition on the block path too;
+that costs one boundary list, built and dropped once per query.
+
+**It is a `PlanNote`, not a `DiagnosticKind`, and that is `M72`'s rule rather
+than a fresh call.** `NonSeekableCompressedSource` is a property of the *file*:
+it survives in the persisted seek table, which is why `cache::status_from_file`
+replays it out of a cache with no dump present. A budget decline is a property
+of the file **and this run's budget** — two queries over one file with
+different budgets get different answers — and every `DiagnosticKind` that
+exists is a property of the file ("Diagnostics: one severity scale, two
+types"). *Rejected: a `DiagnosticKind` of its own*, which is what `M67` was
+admitted describing, before `M72` settled the channel question generally on the
+same distinction: it would put the first run-dependent fact into a channel
+`DumpIndex` serializes around, recomputes on cache load, and exports through
+`--json` from a cache that never saw the run.
+
+**Choosing that channel also settles the push site, which was the awkward half
+of the `DiagnosticKind` shape.** The condition holds identically under `parse`
+and `query`, but only a backward read pays for streaming: `parse` never seeks
+backwards and the fallback is neutral-to-faster for it, so warning there would
+be advice to spend memory for nothing. As a diagnostic that meant `index.rs`
+having to know which verb the user typed — the one diagnostic here whose site
+is a caller's decision. As a plan note it is structural: `plan_partitions` runs
+for `table_stream_partitions` and nothing else, so `parse` cannot reach it.
+
+**No cache can hold the decline, and the offline view answers *shape*
+instead.** Persisting the budget in force when the cache was written would
+report a decision made under a number the current run never stated, the same
+untruth refused above. What the persisted table can answer is the file's shape,
+and all of it is already there: `cache::CompressionShape` projects
+`SeekTable::stream_count`, `block_count` and `max_block_uncompressed` off the
+envelope's own `CompressionIndex` on load, so `info --detail` reports the
 largest block a user would have to budget for — and the stream count that
-explains the multistream shape's footer walk — with nothing but a cache.
-
-The same asymmetry makes the *push site* a caller's decision rather than a
-source's, which no other diagnostic here needs. The condition holds identically
-under `parse` and `query`, but only a backward read pays for streaming: `parse`
-never seeks backwards and the fallback is neutral-to-faster for it, so warning
-there would be advice to spend memory for nothing.
+explains the multistream shape's footer walk — from a `--dqcache` with no dump
+file present ("The cache", and "CLI surface"). *Rejected: a per-block listing*,
+an `xz --list` reimplementation whose worst case is the 31,150-block file it
+would flood.
 
 *Rejected: keying the refusal on block count instead*, so that only a genuinely
 single-block file falls back — that sends a 20 × 512 MiB file down the block
@@ -2110,12 +2143,17 @@ or read back from a persisted cache).
 `TableStream::comparison_notes` (`ComparisonNote`, L4) is per predicate term,
 conditional on the filter a query stated ("Predicates", the comparison
 register); `TableStream::plan_notes` (`PlanNote`/`PlanNoteKind`, `M72`) is
-per query *plan* rather than per file, per column or per term — today just
-`ParallelismBudgetLimited`, naming why a partitioned replay's sub-stream count
-fell short of `--jobs` ("Execution model and API surface", "`M72`: when the
-divisor declines the requested count"). Each stays its own type rather than an
+per query *plan* rather than per file, per column or per term — today two, and
+both are the stated memory budget declining something: `ParallelismBudgetLimited`,
+naming why a partitioned replay's sub-stream count fell short of `--jobs`
+("Execution model and API surface", "`M72`: when the divisor declines the
+requested count"), and `CompressedBlockPathDeclined`, naming an `.xz` file
+whose blocks are too large to hold under that budget (`M67`, "The compressed
+source"). Each stays its own type rather than an
 added `DiagnosticKind` variant for the reason `DiagnosticKind` itself gives:
-every existing variant is a property of the file, and neither of these is.
+every existing variant is a property of the file, and neither of these is —
+which is the test the second one had to be re-decided against, its ledger row
+having been written before the first settled it.
 
 ### Reserved slots
 
@@ -6842,7 +6880,12 @@ live-size check on top, which is the one outcome `load_offline` cannot reach.
 **Diagnostics are recomputed on load, not persisted** (see "`DumpIndex`: one
 owner per fact"): `status_from_file` re-derives the tiling check and the
 TOC-coverage figure from the spans it just read, both pure functions of those
-spans and O(spans). The cost is not close — koji's cache is 833 spans, and a
+spans and O(spans). `CompressionShape` — the container's stream count, block
+count and largest block, which `info --detail` prints and `--json` exports —
+is derived there for the same reason and carried on `Valid`/`Incomplete`
+beside `total_size`: it is a projection of the `CompressionIndex` the envelope
+already holds, so nothing about the on-disk shape changed and a cache written
+before it existed answers it too (`M67`, "The compressed source"). The cost is not close — koji's cache is 833 spans, and a
 whole `pgdq info --dqcache` run against it, load and recompute and render,
 is **3 ms**. What makes it load-bearing rather than an optimization: `pgdq
 info` reports from a cache without ever scanning, so anything not recomputed
@@ -7375,6 +7418,20 @@ span as `[start, end) <one-line label>` in file order, grouped by database the
 same way the block listing is. `span_summary` is the one place in the codebase
 that matches every `SpanBody`/`DataBlock` variant for display, and a future
 `--filter-kind` should extend it rather than duplicate the match. 
+
+**`info --detail` states the compression container's shape, and it is the
+cache that answers.** One line above the diagnostics — `compression: xz — <n>
+block(s) in <m> stream(s), largest block <b> bytes uncompressed` — and nothing
+at all for a plain file, which has no container to describe. It sits above the
+diagnostics because the compression warning below it is *about* that shape, and
+under `--detail` rather than by default because it answers a question only a
+user who has met the slow path asks. All three numbers come from
+`CacheStatus`'s `CompressionShape` ("The cache"), so `info --dqcache` answers
+them with no dump file present, and `largest block` is what
+`--parallel-memory` has to clear for a query to read the file a block at a time
+(`M67`, "The compressed source"). `--json` carries the same object under
+`compression`, `null` for a plain file, because that flag's refusal to combine
+with `--detail` claims it already carries everything `--detail` would add.
 
 **`info --detail` lists the user-defined types beneath the count that had
 been their only trace.** `print_metadata` prints `user-defined types: <n>`, and

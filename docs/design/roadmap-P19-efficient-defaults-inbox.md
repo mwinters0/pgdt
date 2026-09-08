@@ -62,31 +62,36 @@ phase's order is bound: cap the process's own overhead first, *then* discover,
 **Origin.** `16.14`, 2026-09-08; previously a roadmap `Future` item, moved into
 this phase.
 
-## `M67` is this phase's subject, not out-of-band work
+## `M67` and `M72` landed out-of-band, so this phase inherits both built
 
-**Fact.** One ledger row is queued and unlanded and is "the shipped value is
-wrong and the tool is silent about it": `M67`, the budget-declined `.xz`
-fallback announcing itself with the block size beside the budget that declined
-it.
+**Fact.** Both announcements this phase would have specified are shipped.
+`M72` names a `--jobs` the stated budget refuses; `M67` names a
+budget-declined `.xz` block path, carrying the file's largest block beside the
+budget, and adds the container's shape to `info --detail`/`--json` off the
+persisted seek table. Both are `PlanNote`s on `TableStream::plan_notes`, and
+`M67`'s ledger row was written expecting a `DiagnosticKind` — the channel went
+the other way because every `DiagnosticKind` is a property of the file and a
+budget decline is not
+([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "`M67`:
+the declined block path announces itself, and `info --detail` names the
+block").
 
-**Why this phase cares.** Once this phase's spec records the announcement as a
-decision, it stops meeting the ledger's admission rule — work that changes a
-decision a spec records is not out-of-band. **Strike the row as part of
-specifying this phase**, with its number spent, and cite it from the slice that
-absorbs it.
+**Why this phase cares.** Its spec must not re-specify either: they exist, and
+a spec row committing to an announcement that already ships would make the
+phase unmeasurable against what it delivered. What is left for this phase is
+the *defaults* — whether the shipped budget and worker count are the right
+numbers — and both rows now argue for it with a message a user can act on
+rather than with silence. `KD16` is the one live remainder in this area:
+`--parallel-memory` is dropped at the default `--jobs 1`, so the recourse both
+messages name needs `--jobs 2` stated beside it
+([`architecture.md`](architecture.md), "Execution model and API surface").
 
-`M72`, its sibling, is **not** here any more: it blocks P16, because `16.19`
-prints the stated `--jobs` at startup "so a log says what arrangement produced
-it" and at the shipped defaults that sentence is false
-([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "A
-`--jobs` the budget refuses is silent, and that is the defect"). It lands as
-out-of-band work under P16, so this phase inherits it built rather than
-specified. `M66` is measurement-harness hygiene, stays out-of-band, and is
-unaffected; `M74` and `M71` are the same hygiene but carry an ordering this
-phase owns, below.
+`M66` is measurement-harness hygiene, stays out-of-band, and is unaffected;
+`M74` and `M71` are the same hygiene but carry an ordering this phase owns,
+below.
 
-**Origin.** 2026-09-08, this phase's grilling; the `M72` half revised the same
-day by the review of the ledger's blocking column.
+**Origin.** 2026-09-08, this phase's grilling; rewritten the same day as each
+row landed.
 
 ## This phase's closing sweep publishes `rss-attribution`, and closes `M74`
 

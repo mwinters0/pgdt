@@ -97,6 +97,10 @@ fn info_json(path: &Path) -> serde_json::Value {
 /// The seekable shape's index is byte-for-byte the plain file's: same spans,
 /// same per-block resolution, same coverage — **and no diagnostics on either
 /// side**, since a seekable `.xz` earns no D2 warning.
+///
+/// The `compression` object is the one field that legitimately differs, and
+/// it is asserted rather than merely excused: it describes the *container*,
+/// which is the whole of what these two files do not share (`M67`).
 #[test]
 fn seekable_xz_parses_to_the_same_index_as_plain() {
     let (_pd, plain_path) = plain();
@@ -105,20 +109,64 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     parse(&plain_path);
     parse(&xz_path);
 
-    let plain_json = info_json(&plain_path);
-    let xz_json = info_json(&xz_path);
+    let mut plain_json = info_json(&plain_path);
+    let mut xz_json = info_json(&xz_path);
 
     assert!(
         !has_non_seekable_warning(&plain_json),
         "sanity: a plain file never earns a compression warning"
     );
     assert!(!has_non_seekable_warning(&xz_json), "a seekable .xz source earns no D2 warning");
+
+    assert_eq!(plain_json["compression"], serde_json::Value::Null, "a plain file has no container");
+    let shape = xz_json["compression"].clone();
+    assert_eq!(shape["container"], "xz");
+    assert!(shape["blocks"].as_u64().unwrap() > 1, "--block-size=512 splits this fixture: {shape}");
+    assert_eq!(shape["streams"], 1);
+    assert!(shape["max_block_uncompressed"].as_u64().unwrap() > 0, "{shape}");
+
+    plain_json.as_object_mut().unwrap().remove("compression");
+    xz_json.as_object_mut().unwrap().remove("compression");
     assert_eq!(
         plain_json, xz_json,
         "a seekable .xz source parses to exactly the same index as its plain content, \
          diagnostics (e.g. TocCoverage's Info note, which this DDL-less dump always earns) \
          included"
     );
+}
+
+/// `M67`: `info --detail` states the container's shape, and it is answered
+/// from the **cache alone** — `--dqcache` with no `--source` at all, which is
+/// the mode a budget decline deliberately cannot be reported in (it depends
+/// on a run's budget, where this is a property of the file). The three
+/// numbers are what a user would otherwise run `xz --list` for, and
+/// `largest block` is the one `--parallel-memory` has to clear.
+#[test]
+fn info_detail_states_the_container_shape_from_the_cache_alone() {
+    let (_xd, xz_path) = seekable_xz();
+    parse(&xz_path);
+    let cache = xz_path.with_extension("xz.dqcache");
+    assert!(cache.exists(), "parse writes the cache beside the dump: {}", cache.display());
+
+    for args in [
+        vec!["info", "--source", xz_path.to_str().unwrap(), "--detail"],
+        vec!["info", "--dqcache", cache.to_str().unwrap(), "--detail"],
+    ] {
+        let text = stdout_of(&run(&args));
+        assert!(text.contains("compression: xz"), "{args:?}: {text}");
+        assert!(text.contains("block(s) in 1 stream(s)"), "{args:?}: {text}");
+        assert!(text.contains("largest block"), "{args:?}: {text}");
+    }
+
+    // Without `--detail` it is not printed at all, and a plain file has
+    // nothing to print at any verbosity.
+    let terse = stdout_of(&run(&["info", "--source", xz_path.to_str().unwrap()]));
+    assert!(!terse.contains("compression:"), "{terse}");
+    let (_pd, plain_path) = plain();
+    parse(&plain_path);
+    let plain_text =
+        stdout_of(&run(&["info", "--source", plain_path.to_str().unwrap(), "--detail"]));
+    assert!(!plain_text.contains("compression:"), "{plain_text}");
 }
 
 /// Whether an `info --json` document's `diagnostics` array carries D2's
@@ -153,6 +201,11 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
     // `TocCoverage` note) — must agree exactly.
     plain_json.as_object_mut().unwrap().remove("diagnostics");
     xz_json.as_object_mut().unwrap().remove("diagnostics");
+    // The container's shape differs too, and describes the container rather
+    // than the index — a single-block file reports exactly that (`M67`).
+    assert_eq!(xz_json["compression"]["blocks"], 1);
+    plain_json.as_object_mut().unwrap().remove("compression");
+    xz_json.as_object_mut().unwrap().remove("compression");
     assert_eq!(plain_json, xz_json, "the warning is the only thing that may differ");
 
     // And the warning itself is D2's, in its rendered text form — the

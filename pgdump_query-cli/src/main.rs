@@ -8,7 +8,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus};
+use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus, CompressionShape};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
@@ -102,6 +102,12 @@ struct ParallelArgs {
 impl ParallelArgs {
     /// The [`Parallelism`] these flags state, filling in the CLI's own
     /// defaults for whichever was omitted.
+    ///
+    /// deficiency: KD16 — at `jobs == 1` this collapses to
+    /// [`Parallelism::Serial`], which states no bytes, so a stated
+    /// `--parallel-memory` reaches nothing and every pool falls back to
+    /// [`DEFAULT_MEMORY_BUDGET`] (`docs/design/architecture.md`, "Execution
+    /// model and API surface").
     fn resolve(&self) -> Parallelism {
         let jobs = self.jobs.unwrap_or(DEFAULT_JOBS);
         Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET))
@@ -925,7 +931,9 @@ async fn main() -> Result<()> {
                 println!();
             }
             // `map_file` reached EOF, so its censuses cover the whole file.
-            print_index(&run.index, false, false, true);
+            // `--detail` is off, so the container line is not printed and
+            // nothing has to be read for it.
+            print_index(&run.index, None, false, false, true);
             println!();
             println!("wrote cache to {}", path.display());
         }
@@ -981,17 +989,17 @@ async fn main() -> Result<()> {
                 }
             };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
-            let (mut index, mtime_changed, total_size) = match status {
-                CacheStatus::Valid { index, mtime_changed, total_size }
-                | CacheStatus::Incomplete { index, mtime_changed, total_size } => {
-                    (index, mtime_changed, total_size)
+            let (mut index, mtime_changed, total_size, compression) = match status {
+                CacheStatus::Valid { index, mtime_changed, total_size, compression }
+                | CacheStatus::Incomplete { index, mtime_changed, total_size, compression } => {
+                    (index, mtime_changed, total_size, compression)
                 }
                 unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
             };
             if mtime_changed {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
-            report(&index, total_size, detail, map, json);
+            report(&index, total_size, compression, detail, map, json);
         }
         Command::Query {
             source: file,
@@ -1427,12 +1435,14 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
 /// and refusing it was what this phase removed.
 async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {
     let mode = CacheMode::Offline(path.to_path_buf());
-    let (index, total_size) = match mode.load_offline().await? {
-        CacheStatus::Valid { index, total_size, .. }
-        | CacheStatus::Incomplete { index, total_size, .. } => (index, total_size),
+    let (index, total_size, compression) = match mode.load_offline().await? {
+        CacheStatus::Valid { index, total_size, compression, .. }
+        | CacheStatus::Incomplete { index, total_size, compression, .. } => {
+            (index, total_size, compression)
+        }
         unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
     };
-    report(&index, total_size, detail, map, json);
+    report(&index, total_size, compression, detail, map, json);
     Ok(())
 }
 
@@ -1774,6 +1784,10 @@ struct IndexJson<'a> {
     #[serde(flatten)]
     index: &'a DumpIndex,
     total_size: u64,
+    /// The container's shape, `null` for a plain file — the same three
+    /// numbers [`compression_line`] prints, exported because `--json` claims
+    /// to carry everything `--detail` would add and this is part of it.
+    compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
 }
@@ -1803,7 +1817,12 @@ struct ColumnResolutionJson<'a> {
     plan: &'a NestedPlan,
 }
 
-fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
+fn print_index_json(
+    index: &DumpIndex,
+    total_size: u64,
+    compression: Option<CompressionShape>,
+    complete: bool,
+) {
     let resolutions = block_resolutions(index, complete);
     let resolution = resolutions
         .iter()
@@ -1828,7 +1847,8 @@ fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
                 .collect(),
         })
         .collect();
-    let wrapped = IndexJson { index, total_size, diagnostics: &index.diagnostics, resolution };
+    let wrapped =
+        IndexJson { index, total_size, compression, diagnostics: &index.diagnostics, resolution };
     println!("{}", serde_json::to_string_pretty(&wrapped).expect("DumpIndex is always valid JSON"));
 }
 
@@ -1850,15 +1870,38 @@ fn completion_line(scanned_through: u64, total_size: u64) -> String {
 
 /// Every `pgdq info` rendering goes through here: the coverage line, then the
 /// listing or the export.
-fn report(index: &DumpIndex, total_size: u64, detail: bool, map: bool, json: bool) {
+fn report(
+    index: &DumpIndex,
+    total_size: u64,
+    compression: Option<CompressionShape>,
+    detail: bool,
+    map: bool,
+    json: bool,
+) {
     let complete = index.is_complete(total_size);
     if json {
-        print_index_json(index, total_size, complete);
+        print_index_json(index, total_size, compression, complete);
         return;
     }
     println!("{}", completion_line(index.scanned_through, total_size));
     println!();
-    print_index(index, detail, map, complete);
+    print_index(index, compression, detail, map, complete);
+}
+
+/// The container line `info --detail` prints above the listing — `M67`, and
+/// nothing at all for a plain file, which has no container to describe.
+///
+/// **Three numbers a user is otherwise sent to `xz --list` for**, which on the
+/// shape that most wants asking (many concatenated streams) is a walk of every
+/// footer in the file. `largest block` is what `--parallel-memory` has to
+/// clear for a query to read this file a block at a time, so the flag that
+/// says *raise it* is answered here by what to raise it to
+/// (`docs/design/architecture.md`, "The compressed source").
+fn compression_line(shape: &CompressionShape) -> String {
+    format!(
+        "compression: {} — {} block(s) in {} stream(s), largest block {} bytes uncompressed",
+        shape.container, shape.blocks, shape.streams, shape.max_block_uncompressed
+    )
 }
 
 /// Print the whole listing, below whatever coverage line [`report`] already
@@ -1869,9 +1912,22 @@ fn report(index: &DumpIndex, total_size: u64, detail: bool, map: bool, json: boo
 /// coverage line above says it once; a partial index's records are each
 /// complete in themselves (see [`completion_line`]), so repeating the caveat
 /// per block would suggest a variation that does not exist.
-fn print_index(index: &DumpIndex, detail: bool, map: bool, complete: bool) {
+fn print_index(
+    index: &DumpIndex,
+    compression: Option<CompressionShape>,
+    detail: bool,
+    map: bool,
+    complete: bool,
+) {
     if let Some(metadata) = &index.metadata {
         print_metadata(metadata, detail);
+        println!();
+    }
+
+    // Above the diagnostics rather than below them, because the shape is what
+    // the compression warning beneath it is *about*.
+    if let Some(shape) = compression.filter(|_| detail) {
+        println!("{}", compression_line(&shape));
         println!();
     }
 
