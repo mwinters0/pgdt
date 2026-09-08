@@ -12,10 +12,11 @@ is [`../status/STATUS.md`](../status/STATUS.md).
 - **[`measurements.md`](measurements.md), "What the per-block resident growth is
   made of"** — a section *outside* the register, declared in
   `measure.NOT_OURS`, carrying the attribution's nine legs at two block counts.
-- **`scripts/rss_attribution.py`** — the diagnostic that takes them. It imports
-  `measure` rather than copying it — `rss_wrapper`, `Config`, `input_file`,
-  `input_block_count`, `md_table` — so the apparatus is `peak-rss`'s and its
-  first leg is readable against that table. It prints and writes no artifact.
+- **`measure.run_rss_attribution`** — the instrument that takes them, and the
+  `rss-attribution` figure it belongs to. The nine legs landed as a standalone
+  `scripts/rss_attribution.py` importing `measure`'s apparatus; `M65` folded
+  them into the harness itself, where the figure waits in `measure.UNTAKEN`
+  until a sweep publishes its table.
 
 No library code, as the spec's row says.
 
@@ -63,10 +64,10 @@ table, as saying anything about memory.
 
 ## The calls worth knowing about
 
-**The attribution is a diagnostic, not a registered figure**, and that is the
-one call here a reviewer weighed — the review reversed it, and folding the
-attribution into the register is `M65` ([`roadmap.md`](roadmap.md),
-"Out-of-band work"). Three things argued for it. It answers *which of several mechanisms* — a
+**The attribution was landed as a diagnostic, not a registered figure**, and
+that is the one call here a reviewer weighed — the review reversed it, and
+`M65` ([`roadmap.md`](roadmap.md), "Out-of-band work") is folding it into the
+register. Three things argued for it. It answers *which of several mechanisms* — a
 proportion, read once, not a number the design quotes and differences. Its legs
 are diagnostic ones no sweep would take: two more allocators, a scan stopped at
 the preamble, an index merely loaded. And a resident set is not a timing, so
@@ -103,10 +104,10 @@ mount.
 - `runs/measure-20260907T034812/` — the published `peak-rss` sitting's
   `tables.md` and `raw.json`.
 - `runs/pgdq-alloc-{jemalloc,mimalloc}` — rebuilt at `41c96bb` for the two
-  allocator legs, by the same recipe `measure.ensure_allocator_binary` uses.
-  The attribution script does **not** build them; it names the `cargo` line and
-  stops, since which binary a leg is is the `allocator` figure's rule and not
-  this diagnostic's to duplicate.
-- `/dev/shm/pgdq-rss/` — the staging directory, its own rather than the sweep's
-  `warm_dir`, so a sitting running beside a sweep does not fight it for paths.
-  The `info` leg's two `.dqcache` files are built there once, outside the reps.
+  allocator legs, by the same recipe `measure.ensure_allocator_binary` uses,
+  which is what the folded-in figure now calls: which binary a leg is is the
+  `allocator` figure's rule and not this one's to duplicate.
+- `/dev/shm/pgdq-rss/` — the staging directory the standalone script used, its
+  own rather than the sweep's `warm_dir`. The folded-in figure stages through
+  the sweep's own directory like every other, and its `info` leg builds its
+  cache inside its own container instead.

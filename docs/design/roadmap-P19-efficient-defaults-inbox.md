@@ -82,33 +82,48 @@ it" and at the shipped defaults that sentence is false
 `--jobs` the budget refuses is silent, and that is the defect"). It lands as
 out-of-band work under P16, so this phase inherits it built rather than
 specified. `M66` is measurement-harness hygiene, stays out-of-band, and is
-unaffected; `M65` and `M71` are the same hygiene but carry an ordering this
+unaffected; `M74` and `M71` are the same hygiene but carry an ordering this
 phase owns, below.
 
 **Origin.** 2026-09-08, this phase's grilling; the `M72` half revised the same
 day by the review of the ledger's blocking column.
 
-## `M65` and `M71` land before this phase's closing sweep
+## This phase's closing sweep publishes `rss-attribution`, and closes `M74`
 
-**Fact.** Two measurement-harness rows are queued: `M65`, which folds
-`scripts/rss_attribution.py` into the register as a figure, and `M71`, which
-stops `Session.input_path` falling through to the *warm* path for a regime it
-does not know. This phase ends in a sweep, because a `mallopt(M_ARENA_MAX, …)`
-re-bases every registered figure's apparatus.
+**Fact.** `M65` has landed and is closed: `scripts/rss_attribution.py` is
+folded into `scripts/measure.py`, and `rss-attribution` is a registered figure
+in `measure.UNTAKEN` with four command shapes of its own. What has **not**
+landed is its table, and that is `M74` — the nine medians `measurements.md`
+prints under "What the per-block resident growth is made of" were printed by
+the standalone script at `41c96bb`, so the section still carries an
+`outside-register` marker. Its `parse` reference row runs `peak-rss`'s
+`blocks500` and `blocks4000` shapes, and the two must share one reading rather
+than take one each: today they take one each and disagree, 9.58/44.26 MiB here
+against 9.73/43.78 under `peak-rss`. Only a stamped sweep may publish it. The
+`Shared` edge that collapses the two is declared in the change that takes the
+sitting, because declaring it earlier closes no part of `M74` — the marker
+still could not go on — and makes `sitting_problems` refuse `peak-rss`'s own
+`41c96bb` marker with no sweep in between to clear it;
+`test_a_taken_attribution_declares_its_borrow` holds the obligation. `M71` is separate and still queued: `Session.input_path` falls
+through to the *warm* path for a regime it does not know, so a new `cold-*`
+regime would drop the page cache and then read from tmpfs.
 
-**Why this phase cares.** `M65` cannot be caught up afterwards. The
-attribution's first leg is read against `peak-rss`'s `blocks4000` row and takes
-its instrument from that figure's shape, so registering it creates a `shares`
-or derivation edge — and a figure standing in such an edge may **not** be
-published outside a sweep ([`measurements.md`](measurements.md)). Registered
-after the sweep, it waits for the sweep after that. `M71` is the weaker of the
-two and the same shape: this is the first phase with a reason to add a regime,
-and an unknown regime today reads warm inputs under a cold heading with no
-error.
+**Why this phase cares.** This phase ends in a sweep, because a
+`mallopt(M_ARENA_MAX, …)` re-bases every registered figure's apparatus — and
+that sweep is where `M74` closes. In one change it takes `rss-attribution`
+alongside `peak-rss`, pastes the emitted section, deletes the
+`outside-register` marker and the `measure.NOT_OURS` row, re-generates the
+stamp's accounting sentence and fills the ledger row's Date. Land `M71` before
+it for the same reason it was queued: this is the first phase with a reason to
+add a regime, and an unknown one today publishes warm readings under a cold
+heading with no error.
 
-**Origin.** 2026-09-08, the review of the ledger's blocking column. Neither
-gets `Blocks` today: that column names the *open* phase, and P16's remaining
-slices are a flag rename and a log facade, which neither row touches.
+**Origin.** 2026-09-08, the review of the ledger's blocking column; restated
+the same day when `M65` landed its instrument and `M74` was admitted for the
+sitting ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md),
+"`M65` lands its instrument; `M74` owns the sitting"). Neither row gets
+`Blocks`: that column names the *open* phase, and P16's remaining slices touch
+neither.
 
 ## The plain path is slower parallel, and that is what makes the default source-dependent
 

@@ -1913,6 +1913,54 @@ def _script(command: str) -> str:
             f"{q} parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache "
             f"{j} >/dev/null"
         )
+    if command == "parse-preamble-rss":
+        # `rss-attribution`'s per-*table* leg: the same prepass as above,
+        # wrapped so what it holds resident is the reading. It stops at the end
+        # of the schema section, before a data block is read, which is what
+        # separates a cost paid per table from one paid per `COPY` block --
+        # `peak-rss`'s own inputs cannot, since `blocks4000` gives every table
+        # exactly one block and the two coincide in it.
+        return (
+            f"time {rss_wrapper(platform.machine())} /pgdq parse --preamble-only "
+            f"--source /dump.sql --dqcache /tmp/x.dqcache {j} >/dev/null"
+        )
+    if command == "info-cache-rss":
+        # An index *deserialized* rather than built: the second route to the
+        # per-table structures, with no scanner, no census and no splice
+        # anywhere in the timed process.
+        #
+        # **The cache is built in the same container, outside the timer and
+        # outside the wrapper.** A prebuilt one mounted from the host would
+        # have to be staged per input and kept in step with the input's own
+        # stamp; built here it is by construction this input's cache. `time`
+        # and the wrapper both sit on the `info` alone, so `parse_bash_time`
+        # and `parse_maxrss_kib` each still see exactly one report -- and the
+        # wrapper is a fresh process, so its `RUSAGE_CHILDREN` cannot carry the
+        # builder's peak.
+        #
+        # **The worker count is stated on the builder, and `info` states
+        # none**: `info` takes no `--jobs` because it starts no workers, so
+        # there is no default for it to inherit.
+        return (
+            f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} >/dev/null; "
+            f"time {rss_wrapper(platform.machine())} /pgdq info --dqcache /tmp/x.dqcache "
+            ">/dev/null"
+        )
+    if command in ("query-nomatch-cached-rss", "query-nomatch-rss"):
+        # The pair that isolates the un-throttled splice, one flag apart. A
+        # table that never matches maps to EOF and renders no row, so what
+        # differs between them is the save throttle and nothing else: with a
+        # cache path `parse`'s throttle governs, with `--dqcache none` the
+        # whole-list rebuild is paid per block (`KD5`).
+        #
+        # `query` rather than `parse` because `parse` refuses `--dqcache none`
+        # outright -- "cache is disabled, but `parse` requires a cache file" --
+        # so the un-throttled shape is reachable only through `query`.
+        cache = "/tmp/x.dqcache" if command.endswith("cached-rss") else "none"
+        return (
+            f"time {rss_wrapper(platform.machine())} /pgdq query --source /dump.sql "
+            f"--table public.nosuchtable --dqcache {cache} {j} >/dev/null"
+        )
     if command == "parse-cache-out":
         # The cache goes to the mounted tmpfs, not the container's own layer,
         # and the removal is outside the timer.
@@ -2036,10 +2084,14 @@ def command_shapes() -> tuple[str, ...]:
         "parse",
         "parse-rss",
         "parse-preamble",
+        "parse-preamble-rss",
+        "info-cache-rss",
         "parse-cache-out",
         "query-typed",
         "query-strings",
         "query-nomatch",
+        "query-nomatch-cached-rss",
+        "query-nomatch-rss",
         *(f"query-project-{w}" for w in PROJECTION_WIDTHS),
         *(f"query-where-{s}" for s in PREDICATE_SHAPES),
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
@@ -3461,6 +3513,111 @@ def run_peak_rss(session: Session) -> str:
     return table + note + "\nPer-rep readings:\n" + "\n".join(per_rep) + "\n"
 
 
+# -- what that growth is made of --------------------------------------------
+
+#: The two block counts every leg of `rss-attribution` is taken at.
+#:
+#: **Two, not one.** A single absolute at 4,000 blocks folds in a baseline that
+#: differs by 110 MiB between allocators, and jemalloc would read as
+#: catastrophic on absolutes when its *slope* is within 35% of glibc's. Both
+#: are `generate_block_count_bench.py` outputs, so the pair differs in block
+#: count and in nothing else, and each reading the table publishes is a slope
+#: in blocks rather than one number with a fixed baseline inside it.
+_ATTRIBUTION_INPUTS: tuple[str, str] = ("blocks500", "blocks4000")
+
+#: The nine legs, in table order: what the table calls the leg, which binary
+#: runs it, and which command shape it is.
+#:
+#: **The two extra allocators are named, never re-specified.** What a leg's
+#: binary *is* -- `--no-default-features`, its own target dir, `--version` read
+#: back -- is the `allocator` figure's apparatus rule, so this figure calls
+#: `ensure_allocator_binary` rather than carrying a second recipe for the same
+#: builds, which is how two recipes for one binary come to differ. What is
+#: genuinely this figure's own is the two shapes no other figure runs -- the
+#: preamble prepass and `info` over a finished cache -- which are what separate
+#: a cost paid per *table* from one paid per `COPY` block.
+_ATTRIBUTION_LEGS: tuple[tuple[str, str, str], ...] = (
+    ("`parse` — the `peak-rss` row", "pgdq", "parse-rss"),
+    ("`parse`, jemalloc", "alloc:jemalloc", "parse-rss"),
+    ("`parse`, mimalloc", "alloc:mimalloc", "parse-rss"),
+    ("`parse --preamble-only`", "pgdq", "parse-preamble-rss"),
+    ("`info --dqcache` over the finished cache", "pgdq", "info-cache-rss"),
+    ("`query` (no match), cached", "pgdq", "query-nomatch-cached-rss"),
+    ("`query` (no match), `--dqcache none`", "pgdq", "query-nomatch-rss"),
+    ("`query` (no match), `--dqcache none`, jemalloc", "alloc:jemalloc", "query-nomatch-rss"),
+    ("`query` (no match), `--dqcache none`, mimalloc", "alloc:mimalloc", "query-nomatch-rss"),
+)
+
+
+def _attribution_specs() -> list[tuple[str, RunSpec, RunSpec]]:
+    """Each leg's label and its two specs, small block count first.
+
+    A leg is identified by binary *and* shape, never by its label: `RunSpec.key`
+    carries neither the label nor anything else, so two legs differing only in
+    the words the table prints would silently share one reading. A test holds
+    the nine apart."""
+    return [
+        (
+            label,
+            *(
+                RunSpec(binary, name, command, "warm", f"{label} — {name}")
+                for name in _ATTRIBUTION_INPUTS
+            ),
+        )
+        for label, binary, command in _ATTRIBUTION_LEGS
+    ]
+
+
+def run_rss_attribution(session: Session) -> str:
+    """What the per-block resident growth `peak-rss` measures is made of.
+
+    `peak-rss` measures the whole; this attributes it, by holding the block
+    count as the only axis and varying one mechanism at a time. Every reading
+    is a resident set, and the published quantity is the **slope** -- bytes a
+    block -- so an allocator's baseline cannot masquerade as growth.
+    """
+    figure = "rss-attribution"
+    legs = _attribution_specs()
+    # Before the first reading, as the `allocator` figure builds its own: a leg
+    # discovered missing at rep two has already spent the session's first rep
+    # under a different machine state.
+    for _, binary, _ in _ATTRIBUTION_LEGS:
+        if binary.startswith("alloc:"):
+            ensure_allocator_binary(session.cfg, binary.removeprefix("alloc:"), session.log)
+    specs = [spec for _, small, big in legs for spec in (small, big)]
+    session.sweep(figure, specs, session.cfg.reps(3))
+
+    small_n, big_n = (input_block_count(name) for name in _ATTRIBUTION_INPUTS)
+    rows, per_rep = [], []
+    for label, small_spec, big_spec in legs:
+        small_reps = session.get_rss(figure, small_spec)
+        big_reps = session.get_rss(figure, big_spec)
+        small, big = median(small_reps), median(big_reps)
+        rows.append(
+            [
+                label,
+                fmt_mib(small),
+                fmt_mib(big),
+                f"{(big - small) * 1024 / (big_n - small_n):+,.0f} B",
+            ]
+        )
+        per_rep.append(
+            f"- {label}: "
+            + " · ".join(
+                ", ".join(f"{v / 1024:.2f}" for v in reps) for reps in (small_reps, big_reps)
+            )
+        )
+    table = md_table(
+        ["Leg", f"{small_n:,} blocks", f"{big_n:,} blocks", "Per block"], rows
+    )
+    return (
+        table
+        + f"\n\nPer-rep readings (MiB, {small_n:,} then {big_n:,}):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
+
+
 # -- the map's own quadratic ------------------------------------------------
 
 
@@ -4259,6 +4416,14 @@ FIGURES: list[Figure] = [
         #: state the *claim* it licenses to a reader who cannot check it
         #: against the code — which is the one place `docs/process.md` makes a
         #: falsified sentence binding on the change that falsifies it.
+        #:
+        #: **Only half of the manual's sentence is this figure's.** "Does not
+        #: grow with the size of the dump" is these rows; "grows with the
+        #: number of tables, by roughly 10 KB each" is a per-*table* claim this
+        #: figure's inputs cannot license, since `blocks4000` gives every table
+        #: exactly one `COPY` block and the per-table and per-block axes
+        #: coincide in it. That half is `rss-attribution`'s, which separates
+        #: them by stopping a leg at the preamble.
         quoted_by=(
             "docs/design/architecture.md",
             "docs/manual/dump-inspection.md",
@@ -4479,12 +4644,13 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 
 #: Instruments that are **built but whose figure has not been taken**.
 #:
-#: A sweep does not run these and the doc carries no table for them, which is
-#: why they sit outside `ALL_FIGURES`: the marker reconciliation would
-#: otherwise demand a section with no numbers under it, and `quoted_by` would
-#: have to name consumers of a figure that does not exist yet. `--figure <id>`
-#: still selects one, which is how the reading gets taken — and taking it moves
-#: the entry into `FIGURES`, where the doc-side checks start applying.
+#: A sweep does not run these and the doc carries no table *of this harness's*
+#: for them, which is why they sit outside `ALL_FIGURES`: the marker
+#: reconciliation would otherwise demand a section with no numbers under it,
+#: and `quoted_by` would have to name consumers of a figure that does not exist
+#: yet. `--figure <id>` still selects one, which is how the reading gets taken —
+#: and taking it moves the entry into `FIGURES`, where the doc-side checks
+#: start applying.
 #:
 #: The distinction is worth a list rather than a comment because *built* and
 #: *taken* fail differently. An instrument nobody built is work; an instrument
@@ -4502,7 +4668,70 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: over byte-identical rows — was deleted unpublished, because
 #: `projection-widths` makes the same isolation a subtraction between two
 #: adjacent rows of one table over one file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # `M65`: the attribution's instrument, folded in from the standalone script
+    # that took the readings `measurements.md` currently carries. It waits here
+    # rather than standing in `FIGURES` because **those readings are not this
+    # harness's** — the table under that heading was printed by
+    # `scripts/rss_attribution.py`, so the section keeps its
+    # `outside-register` declaration until a sweep takes the figure and
+    # replaces them. Taking it is `M74`.
+    #
+    # **It cannot be taken alone, and that is what decides when it lands.** Its
+    # `parse` reference row runs `peak-rss`'s `blocks500` and `blocks4000`
+    # shapes — same binary, same command, same apparatus — but a reading is
+    # keyed by figure *and* spec, so the two are separate measurements until a
+    # `Shared` edge makes one consume the other. Today they are separate and
+    # they disagree: the doc publishes 9.73/43.78 MiB under `peak-rss` and
+    # 9.58/44.26 MiB here, two numbers for one measurement a section apart.
+    # Collapsing them is what the borrow is for, and a figure standing in a
+    # share may be published only from a stamped sweep (`sitting_problems`;
+    # `measurements.md`, "A figure may be published outside the sweep").
+    #
+    # **The edge is declared in the change that takes the sitting, because
+    # declaring it earlier closes nothing.** The marker still could not go on —
+    # it asserts the stamp's *taken by this harness* clause over numbers the
+    # standalone script printed — so an early edge buys no part of `M74` and
+    # costs `--check` exiting 1 on `peak-rss`'s own `41c96bb` sitting marker
+    # until a sweep cures it. That is a failing gate, not a `--stale` figure
+    # left red with its reason written down. `test_measure.py` holds the two
+    # halves together: an `rss-attribution` in `FIGURES` must declare the
+    # borrow.
+    Figure(
+        id="rss-attribution",
+        section="What the per-block resident growth is made of",
+        stage="warm",
+        # What `peak-rss` declares, plus the two mechanisms only this figure's
+        # own legs reach: the preamble prepass, which is where the per-*table*
+        # structure is paid, and the CLI's `query` path, which the four
+        # no-match legs run. The CLI manifest is here for the reason the
+        # `allocator` figure carries it — three of the nine legs are its legs,
+        # and that file is where they are declared.
+        depends=(
+            *READ,
+            *SCAN,
+            *MAP,
+            *CACHE,
+            *PREAMBLE,
+            *QUERY_CLI,
+            "pgdump_query-cli/Cargo.toml",
+            *GEN_BLOCKS,
+        ),
+        #: The manual's per-*table* claim is here rather than on `peak-rss`,
+        #: which cannot tell per-table from per-block on its own inputs:
+        #: `blocks4000` gives every table exactly one `COPY` block, so the two
+        #: coincide in it and only these legs separate them. The manual's
+        #: sentence carries a second claim — that nothing accumulates per byte
+        #: — which is `peak-rss`'s, so both figures name that file.
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/status/STATUS.md",
+            "docs/manual/dump-inspection.md",
+        ),
+        warm_inputs=_ATTRIBUTION_INPUTS,
+        run=run_rss_attribution,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -4907,12 +5136,12 @@ NOT_OURS = {
         Outside(
             "rss-attribution",
             "What the per-block resident growth is made of",
-            "A diagnostic, not a figure: it attributes `peak-rss`'s growth among mechanisms, "
-            "which is a proportion rather than a number the design quotes, and its legs are a "
-            "second and a third allocator, a scan stopped at the preamble and an index merely "
-            "loaded — none of which a sweep would re-take. Same standing as the profiling "
-            "recipe. `scripts/rss_attribution.py` takes it, reusing this module's "
-            "`rss_wrapper`, `Config` and input names so the legs are this apparatus.",
+            "The *readings* the doc carries are not ours: they were printed by the standalone "
+            "`scripts/rss_attribution.py`, before `M65` folded that instrument in. The figure "
+            "itself is registered and untaken (`measure.UNTAKEN`), and it must share "
+            "`peak-rss`'s two block-count runs, so it may be published only from a stamped "
+            "sweep — `M74`, which deletes this row and the section's `outside-register` marker "
+            "together.",
         ),
         Outside(
             "benches",

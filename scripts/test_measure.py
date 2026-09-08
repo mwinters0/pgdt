@@ -337,17 +337,15 @@ class WorkerCount(unittest.TestCase):
         src = inspect.getsource(measure.count_saves)
         self.assertIn('"--jobs", str(SWEEP_JOBS)', src)
 
-    def test_the_rss_attribution_states_one_on_every_leg_that_takes_it(self):
+    def test_the_rss_attribution_states_one_on_every_leg(self):
         # A resident set is exactly the quantity a worker count moves, each
-        # worker holding read buffers of its own. `info` has no such flag.
-        import rss_attribution
-
-        for leg, (_, args) in rss_attribution.LEGS.items():
-            with self.subTest(leg=leg):
-                if args.startswith("info"):
-                    self.assertNotIn("--jobs", args)
-                else:
-                    self.assertIn(f"--jobs {measure.SWEEP_JOBS}", args)
+        # worker holding read buffers of its own — so a leg inheriting the
+        # CLI's default would attribute a growth this apparatus never measured.
+        # `info` takes no such flag because it starts no workers; its shape
+        # states the count on the builder that precedes it.
+        for _, _, command in measure._ATTRIBUTION_LEGS:
+            with self.subTest(command=command):
+                self.assertIn(f"--jobs {measure.SWEEP_JOBS}", measure._script(command))
 
     def test_the_apparatus_line_states_the_count_the_harness_pins(self):
         """The document's one apparatus line names the worker count, and the
@@ -1039,6 +1037,116 @@ class PeakRss(unittest.TestCase):
         for path in (*measure.READ, *measure.MAP_BUILD, *measure.CACHE):
             with self.subTest(path=path):
                 self.assertIn(path, fig.depends)
+
+
+class RssAttribution(unittest.TestCase):
+    """The nine legs that say what `peak-rss`'s per-block growth is made of.
+
+    Every failure this class covers returns a plausible-looking table of
+    something else, which is the family the allocator legs and the census
+    binary already have tests for. Two matter most. A leg that is not
+    *distinguishable* as a reading silently becomes another leg's number, since
+    `RunSpec.key` carries the binary, the input, the shape and the regime and
+    not the words the table prints. And a leg whose shape carries no RSS
+    wrapper has no reading at all, which surfaces as a `KeyError` a sitting
+    into rather than as a refusal before it.
+    """
+
+    def _fig(self) -> measure.Figure:
+        return measure.EVERY_BY_ID["rss-attribution"]
+
+    def test_every_leg_is_its_own_reading(self):
+        # Two legs differing only in their label would share one key and
+        # publish one measurement as two rows.
+        keys = [
+            spec.key("rss-attribution")
+            for _, small, big in measure._attribution_specs()
+            for spec in (small, big)
+        ]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(len(keys), 2 * len(measure._ATTRIBUTION_LEGS))
+
+    def test_every_leg_reports_a_resident_set(self):
+        # `Session.time_run` keys the RSS capture off `"rss" in spec.command`,
+        # so a shape not spelled that way is timed and never measured.
+        for _, _, command in measure._ATTRIBUTION_LEGS:
+            with self.subTest(command=command):
+                self.assertIn("rss", command)
+                self.assertIn("printf STDERR", measure._script(command))
+
+    def test_each_shape_wraps_and_times_exactly_one_command(self):
+        # `parse_bash_time` and `parse_maxrss_kib` both refuse two reports, and
+        # the `info` leg builds its cache in the same shell — untimed and
+        # unwrapped, or the reading would be the builder's.
+        for _, _, command in measure._ATTRIBUTION_LEGS:
+            with self.subTest(command=command):
+                script = measure._script(command)
+                self.assertEqual(script.count("time "), 1)
+                self.assertEqual(script.count("printf STDERR"), 1)
+
+    def test_the_two_block_counts_differ_in_blocks_alone(self):
+        # Both are `generate_block_count_bench.py` outputs at one seed, so a
+        # slope over the pair is a slope in blocks and not in anything else.
+        small, big = (measure.INPUTS[n] for n in measure._ATTRIBUTION_INPUTS)
+        self.assertEqual(small.generator, big.generator)
+        self.assertLess(
+            measure.input_block_count(measure._ATTRIBUTION_INPUTS[0]),
+            measure.input_block_count(measure._ATTRIBUTION_INPUTS[1]),
+        )
+
+    def test_the_reference_leg_is_the_shape_peak_rss_times(self):
+        # The first row is read against `peak-rss`'s block-count rows, which
+        # only holds while the two run the same command.
+        self.assertEqual(measure._ATTRIBUTION_LEGS[0][1:], ("pgdq", "parse-rss"))
+        self.assertEqual(
+            [s.command for s in _peak_rss_specs()][0], measure._ATTRIBUTION_LEGS[0][2]
+        )
+
+    def test_the_allocator_legs_are_the_allocator_figure_s_own(self):
+        # Borrowed by name, never built by a second recipe: `binary_path`
+        # routes an `alloc:` binary through `ensure_allocator_binary`, which is
+        # where the leg is built and then interrogated.
+        legs = {b.removeprefix("alloc:") for _, b, _ in measure._ATTRIBUTION_LEGS if ":" in b}
+        self.assertEqual(legs, set(measure.ALLOCATOR_LEGS) - {"system"})
+
+    def test_it_declares_the_two_mechanisms_only_its_own_legs_reach(self):
+        # The preamble, where the per-table structure is paid, and the CLI's
+        # `query` path, which the four no-match legs run. Neither is in
+        # `peak-rss`'s declaration, and a figure that cannot say what
+        # invalidates it is one nobody has thought about.
+        fig = self._fig()
+        for path in (*measure.PREAMBLE, *measure.QUERY_CLI):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+
+    def test_the_manual_s_per_table_claim_is_this_figure_s_consumer(self):
+        # `peak-rss` cannot license it: `blocks4000` gives every table exactly
+        # one `COPY` block, so per-table and per-block coincide in its inputs.
+        self.assertIn("docs/manual/dump-inspection.md", self._fig().quoted_by)
+
+    def test_a_taken_attribution_declares_its_borrow(self):
+        """The obligation `M65` leaves for `M74`, the sweep that publishes this.
+
+        Its `parse` reference row runs `peak-rss`'s `blocks500` and
+        `blocks4000` shapes, so the two must share a reading rather than take
+        one each — the doc currently carries both, disagreeing. But declaring
+        the edge while this entry is untaken closes no part of `M74` and would
+        refuse `peak-rss`'s own standalone sitting, a figure the doc already
+        carries, with no sweep yet to cure it. So the edge is declared in the
+        change that moves this entry into `FIGURES`, and that is what this
+        asserts rather than leaves to a comment."""
+        fig = self._fig()
+        if fig in measure.UNTAKEN:
+            self.assertEqual(fig.shares, ())
+        else:
+            self.assertIn("peak-rss", [s.source for s in fig.shares])
+
+
+def _peak_rss_specs() -> list:
+    """`peak-rss`'s specs, without running the figure."""
+    return [
+        measure.RunSpec("pgdq", name, "parse-rss", "warm", name) for name in measure._RSS_ROWS
+    ]
 
 
 class Selection(unittest.TestCase):

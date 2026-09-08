@@ -41,7 +41,10 @@ hand, and `--check` fails a document carrying any other.
 A section outside the register carries an `<!-- outside-register: <id> -->`
 marker under its heading — koji, the `cargo bench` tripwires and the RSS
 attribution are the three — and the stamp above makes no claim about its
-readings. `uv run measure.py
+readings. The third is outside for a different reason from the other two and
+leaves at the next sweep: its instrument is registered, and what is not the
+harness's is the *readings the section currently carries*, which a standalone
+script printed. `uv run measure.py
 --check` reconciles those declarations against the harness's own list of what it
 does not own, both ways, and fails if a declared section also carries a figure
 marker; `--list` prints each one with why it is outside. See "The apparatus"
@@ -506,9 +509,25 @@ is in the register because the same claim sat in the koji section outside it,
 where no `depends` edge could go red, and it stayed a megabyte wrong for a whole
 slice.
 
+**Registering an instrument and publishing its table are two moments, and the
+attribution is why that is written down.** `M65` folded the standalone script
+into the harness, so the figure has an id, a `depends` set and a `quoted_by`
+set; what it does not have is a reading this harness took. It therefore waits in
+`measure.UNTAKEN` and its section keeps the declaration below, because a figure
+marker asserts the stamp's first clause — *taken by `scripts/measure.py`* — and
+the numbers printed there were not. It cannot be caught up by a sitting of its
+own either: its `parse` reference row is `peak-rss`'s two block-count runs, so
+the two share a reading and the rule above admits it only from a stamped sweep.
+The `Shared` edge that records this is declared in the change that takes the
+sitting rather than now, because declaring it against an untaken figure would
+refuse `peak-rss`'s own standalone sitting — a table the document already
+carries — with no sweep in between to cure it; `scripts/test_measure.py` holds
+the two halves together, so an `rss-attribution` promoted into `FIGURES` without
+the borrow fails.
+
 **The register's boundary is declared, not inferred.** A section this harness
 does not own carries an `<!-- outside-register: <id> -->` marker of its own —
-`koji`, `benches` and, until `M65` lands, `rss-attribution` — and `--check`
+`koji`, `benches` and, until a sweep publishes it, `rss-attribution` — and `--check`
 resolves each one against
 `measure.NOT_OURS` in both directions, so a declaration naming nothing and a
 disowned section declaring nothing both fail. A declared section carrying a
@@ -1186,13 +1205,17 @@ the design used to quote was therefore true of one axis and wrong about the
 other, and the axis it was wrong about is the one its own input could not have
 caught.
 
-**What that growth is made of is the next section**, which is a diagnostic
-rather than a figure: this table measures the whole, and attributing it needs
-legs — another allocator, a scan that stops at the preamble, an index merely
-loaded — that no sweep would re-take. The finding is that most of it is *live
+**What that growth is made of is the next section**, which is the register's
+`rss-attribution` — registered, untaken, and published at the next sweep, which
+takes this table with it: this one measures the whole, and attributing it needs
+legs this one does not run — another allocator, a scan that stops at the
+preamble, an index merely loaded. The finding is that most of it is *live
 structure per table* rather than any of the three churn mechanisms `KD14` was
 written against, and that a `parse` at 4,000 blocks holds about 4 KB a block
-more than an `info` over the same finished index does.
+more than an `info` over the same finished index does. **The per-*table* half
+of that is not this figure's to license**: `blocks4000` gives every table
+exactly one `COPY` block, so per-table and per-block coincide in these inputs
+and only the preamble leg next door separates them.
 
 **This figure was taken alone**, on 2026-09-07, not in the sweep the session
 stamp names — and the commit it was taken at is in its marker above rather than
@@ -1212,16 +1235,21 @@ holds resident by nothing a three-rep instrument can see.
 
 ## What the per-block resident growth is made of
 
-<!-- outside-register: rss-attribution — nothing in this section is a figure; see "The apparatus" -->
+<!-- outside-register: rss-attribution — the readings here are not this harness's; see "The apparatus" -->
 
-The section above measures the growth; this one attributes it. **Nothing here is
-a figure**, and the marker says so where a reader meets the section: it answers
-*which of several mechanisms*, read as a proportion, and its legs — a second and
-a third allocator, a scan stopped at the preamble, an index merely loaded from a
-cache — are diagnostic ones no sweep would re-take. It has the standing the
-profiling recipe has ([`architecture.md`](architecture.md), "Where a scan's time
-goes"), and for the same reason: a proportion needs no quiet machine, and a
-resident set is not a timing at all.
+The section above measures the growth; this one attributes it. **The readings
+below are not this harness's, and the marker says so where a reader meets the
+section**: they were printed by a standalone script, before `M65` folded that
+instrument into `scripts/measure.py`. The figure is registered and untaken
+(`measure.UNTAKEN`), and it enters the register at the next sweep — `M74`,
+which is the only sitting that may publish it, because its first row runs
+`peak-rss`'s two block-count shapes and the two must share one reading rather
+than take one each ("A figure may be published outside the sweep", above).
+**They do not yet**, which is the defect that borrow closes: the row below
+reads 9.58 and 44.26 MiB where `peak-rss` reads 9.73 and 43.78, two
+measurements of one command shape. Until the sweep the numbers below stand as
+they were taken, at `41c96bb`, under the apparatus the next paragraph
+describes.
 
 **The instrument is `peak-rss`'s**, which is what lets the first row be read
 against that table: the same `getrusage` wrapper, the same `postgres:16`
@@ -1295,20 +1323,23 @@ than a leg: a full `parse` holds ~4.5 KB a block more than an `info` over the
 same finished index. Spans, census and TOC accrue there, and so does whatever
 the throttled splices leave behind.
 
-Reproduce it with `cd scripts && uv run rss_attribution.py`, which prints the
-table above and writes no artifact. Its legs are nine `nerdctl run`s of the form
+Re-take it with `cd scripts && uv run measure.py --figure rss-attribution`,
+which is what will replace the table above. Its legs are nine `nerdctl run`s of
+the form
 
 ```sh
 sudo nerdctl run --rm -m 512m --memory-swap 512m \
-  -v <binary>:/pgdq:ro -v /dev/shm/pgdq-rss/blocks4000.sql:/dump.sql:ro \
-  -v /dev/shm/pgdq-rss:/out \
+  -v <binary>:/pgdq:ro -v /dev/shm/pgdq/blocks4000.sql:/dump.sql:ro \
   postgres:16 bash -c '<getrusage wrapper> /pgdq <command> >/dev/null'
 ```
 
 where `<binary>` is `target/release/pgdq` or one of the `allocator` figure's
-legs — which the script does not build, since building them is that figure's own
-apparatus rule — and the wrapper is `scripts/measure.py`'s own `rss_wrapper`,
-imported rather than copied.
+legs — borrowed by name through `ensure_allocator_binary`, since which binary a
+leg is is that figure's own apparatus rule — and the wrapper is `rss_wrapper`,
+the same one `peak-rss` is taken through. The one leg that has changed shape
+since these readings were taken is `info`: it now builds its cache inside its
+own container, untimed and unwrapped, where the script staged one per input
+beforehand. What is measured is the same `info` process either way.
 
 ## What the read chunk size is worth
 
