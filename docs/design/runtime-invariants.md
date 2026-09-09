@@ -43,10 +43,35 @@ host booted onto the v1 hierarchy — the entry says so in `Verified against`
 rather than quietly resting on source alone.
 
 Kernel line numbers and quotations below are from **v7.1** and are a starting
-point, not an anchor — grep for the quoted code instead. The files are not
-checked out locally; read them at
-`https://raw.githubusercontent.com/torvalds/linux/v7.1/<path>`, or from a local
-checkout if one is ever made.
+point, not an anchor — grep for the quoted code instead.
+
+**A citation here is a repo-relative path against a stated version, and that is
+the whole of it.** `mm/memcontrol-v1.c` at v7.1 names one file unambiguously
+wherever that tree happens to live, so how you obtain it is not part of the
+citation and no entry below names a location. Today the convenient way is
+`https://raw.githubusercontent.com/torvalds/linux/v7.1/<path>`; a local checkout
+serves identically.
+
+**`RT7` is the exception worth naming, because its source is not Linux and
+ships with the thing it is an invariant about.** `library/std/…` resolves under
+rustup's `rust-src` component, at
+`$(rustc --print sysroot)/lib/rustlib/src/rust/` — which means it is version-locked
+to the toolchain whose behaviour `RT7` claims, and a toolchain bump moves the
+file and the claim together. The component is **optional**: a walk that finds
+the path missing should `rustup component add rust-src` rather than conclude the
+file moved.
+
+*Rejected: a local Linux clone at `/mnt/wd12t/upstream/linux/`, one worktree per
+tag, mirroring how `postgres-invariants.md`'s checkouts are kept.* The sibling
+needs its tree because its walk **is** the grep — 47 entries whose `Re-verify`
+greps `src/bin/pg_dump/`, none of which can run without it. This register's walk
+is seven *runs*, and its source proves the mechanism rather than checking the
+claim, so a tree would be opened only when a run came back unexpected: a
+diagnostic moment, with a known file to fetch and no hurry. Against that, a
+worktree-per-tag convention costs a full clone of Linux on every kernel major,
+which is the register's own walk trigger. The citations above are unaffected
+either way — they name a path and a tag, not a location — so this judgement is
+reversible at the cost of the one paragraph you are reading.
 
 Container invocations are written with `docker`, which is this project's
 convention for the container runtime; see `CLAUDE.local.md` for what it is on
@@ -239,6 +264,14 @@ controller lives in exactly one hierarchy at a time (`RT6`), so it cannot be
 mounted v1 alongside. The proof is therefore source, one rung below the observed
 evidence every other entry here carries, and the `Re-verify` below is the run
 that would close that gap on a host that has one.
+
+**The half that can be checked here is our reader, not the kernel**, and slice
+19.9 checks it: a fixture tree shaped as this entry claims, driven through
+`discover_memory_limit`'s filesystem-root seam. That neither observes a kernel
+nor upgrades `Verified against` — it establishes that the code reads the shape
+`RT4` describes, which is where a bug of ours would live. `RT4` is not a
+deficiency: the unobservable half is a property of this machine, and the
+observable half is a scheduled test.
 
 **Relied on by:**
 [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What

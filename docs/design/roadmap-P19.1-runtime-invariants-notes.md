@@ -63,13 +63,22 @@ arithmetic: a 3.5-CPU allocation buys three workers, not four.
 ## Where the evidence came from
 
 The kernel is **not** checked out under `/mnt/wd12t/upstream/`, and this slice
-did not add one: a shallow Linux clone is hour-scale on the HDD for six files.
-The quoted sources were read at
+did not add one. The quoted sources were read at
 `https://raw.githubusercontent.com/torvalds/linux/v7.1/<path>` — `v7.1` matching
-this machine's kernel line — and the register says that in its preamble so the
-next reader does not go looking for a worktree. Every `Re-verify` block was run
-as written before the entry was filed; the `+memory` line in `RT5`'s scratch
-hierarchy is there because the block failed without it.
+this machine's kernel line.
+
+**A citation here is the path plus the tag, and the register's preamble now says
+so**, along with why no worktree is kept: this register's walk is seven runs
+rather than 47 greps, so it never needs a tree the way its Postgres sibling
+does. The cost argument this slice originally gave for that — that a Linux clone
+is hour-scale for six files — is only true of a *full* clone; `--depth 1
+--filter=blob:none` is minutes. It is not what the answer rests on. Reasoning:
+[2026-09-09](../status/history/2026-09-09.md), "The runtime register cites by
+path and tag".
+
+Every `Re-verify` block was run as written before the entry was filed; the
+`+memory` line in `RT5`'s scratch hierarchy is there because the block failed
+without it.
 
 ## The sigil
 

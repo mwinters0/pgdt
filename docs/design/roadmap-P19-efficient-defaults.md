@@ -227,6 +227,17 @@ the run; an ancestor's limit binds whichever level states it.
 **An unlimited environment falls back to today's constant**, as settled going
 in.
 
+**`discover_memory_limit` takes its filesystem root as a parameter**, so that
+the v1 arm can be driven from a fixture tree. This machine runs a pure v2
+hierarchy and cannot produce a v1 memory controller at all
+([`runtime-invariants.md`](runtime-invariants.md), `RT4`), so without the seam
+the v1 branch ships never having been executed. The seam is 19.7's, the fixture
+tree is 19.9's, and what it establishes is that the reader handles the shape
+`RT4` claims — not that the kernel still produces it, which only a v1 host can
+say. Reasoning:
+[2026-09-09](../status/history/2026-09-09.md), "The runtime register cites by
+path and tag".
+
 **Where the reserve leaves less than the floor, the reserve wins and pgdq says
 so.** On a small allocation the 64 MiB floor and the reserve fight — a 256 MiB
 cgroup against an uncapped reserve of ~200 MiB leaves ~56 MiB — and letting the
@@ -443,7 +454,7 @@ being inserted.
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
 | **19.7** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule. |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
-| **19.9** | Resolution tests, the status line's provenance, and the below-floor `PlanNote`. |
+| **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, and the v1 fixture tree that tests `RT4`'s shape against the reader. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation, the new defaults, and both flags' help text. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`. |
 
