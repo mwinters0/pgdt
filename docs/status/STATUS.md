@@ -570,4 +570,23 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **The apparatus still does not pin `MALLOC_ARENA_MAX`, but the reason it was
+  spared has gone.** The spec's closing-sweep section owes a sweep partly to the
+  apparatus gaining that setting; the 2026-09-09 review dropped it on the ground
+  that "on this evidence there is nothing for it to hold fixed", the evidence
+  being a `--jobs 24` sitting that found the cap inside the spreads at every
+  cell. `M76` has since measured the term at `--jobs 4` — ~50–60 MiB, positive
+  in all fourteen paired reps — and shown why that sitting could not see it: its
+  own per-cell spreads run to 62 MiB over three reps, which is the whole effect.
+  So the setting is *not* inert; it is unresolvable at the one worker count the
+  reserve figure reads. I left the apparatus alone, because pinning it re-bases
+  every registered figure and because the reserve figure already carries capped
+  and uncapped as two legs, which is where the difference is supposed to be
+  read. What would change the call: a decision that resident figures should be
+  taken under a pinned allocator so their absolute numbers mean something to an
+  operator, rather than being read as a pair. A koji-scale re-take of the same
+  probe would say how large the term gets on a real scan and is the other thing
+  that would move this; it is an hour-scale run and `M76` deliberately did not
+  take it. Evidence:
+  [`history/2026-09-09.md`](history/2026-09-09.md), "`M76`: the arena cap is not
+  the runtime's".

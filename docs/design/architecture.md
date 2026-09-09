@@ -450,31 +450,43 @@ either — a flatness that is the *clamp's* and not a property of the budget.
 Above the clamp the budget is very much the lever, `slots()` becoming
 `budget / unit`; a `--jobs 24` sitting reads a block-decoding `.xz` from
 243 MiB to 1242 MiB across a 64–512 MiB budget axis ("The compressed source",
-where the doubled pool ceiling that produces it is filed). **What that remedy is worth on the current runtime is unmeasured**, and the one
-reading taken since cannot see it: a `--jobs 24` diagnostic over a 3.00 GiB
-`.xz` and a plain control finds uncapped, `MALLOC_ARENA_MAX` at the worker
-count plus one, and `MALLOC_ARENA_MAX=2` inside the per-rep spreads at every
-cell, with no direction to read. That is consistent with the 200 MiB above
-having been *idle*-arena retention — twenty arenas seeded by `rt-multi-thread`
-threads that never did work, which the `current_thread` runtime no longer
-creates — leaving only working arenas a cap cannot reclaim. It is a hypothesis
-and not a refutation: the two readings differ in file, scale, worker count and
-runtime at once, and `M76` is the controlled version of the probe that would
-settle it. This is a property and not a deficiency — the
+where the doubled pool ceiling that produces it is filed). **What that remedy is
+worth is not decided by the runtime, and there is no one number for it.** A
+controlled probe ran this same
+arrangement — `--jobs 4 --parallel-memory 268435456` — over a 3.00 GiB
+`.xz`, capped and uncapped, on the current binary and on a pre-`current_thread`
+build: 6 threads against 29, and peak RSS indistinguishable between the two at
+418.7 against 425.4 MiB uncapped and 362.7 against 362.4 MiB capped, the cap
+reclaiming ~50–60 MiB on *both*. So twenty-three extra threads cost nothing
+measurable resident, and the reading that the 200 MiB above was *idle*-arena
+retention the `current_thread` runtime removed is refuted rather than
+confirmed. What is left to explain the 200-against-60 gap is what that probe
+held constant on purpose and the koji probe did not: file, scale and duration —
+an eight-second scan of 3.00 GiB against an hour over 40 GB, whose working
+arenas have that much longer to grow. So the two probes bracket the remedy at
+tens of megabytes and a couple of hundred, and which end a given scan lands at
+is a property of the workload; no large-file reading has been taken on the
+current build. **A `--jobs 24` sitting cannot see the
+term at all**, its per-cell spreads over three reps running to 62 MiB, which is
+the size of the whole effect; that is why the reserve figure's two arena legs
+read alike and not because there is nothing to reclaim. This is a property and not a deficiency — the
 remedy is `MALLOC_ARENA_MAX`, which an embedder and an operator both have
 today, and the manual says so ([`../manual/dump-inspection.md`](../manual/dump-inspection.md),
-"`--jobs` and `--parallel-memory`: the workers and the budget"). Those readings
-are probes on one file, not figures, and no document quotes them as
-measurements; the evidence is
+"`--jobs` and `--parallel-memory`: the workers and the budget"). Every reading
+above is a probe, not a figure, and no document quotes one as a measurement;
+the evidence is
 [`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
-16.14 OOM is glibc's arenas, and a CPU limit is not the remedy". **The stated
+16.14 OOM is glibc's arenas, and a CPU limit is not the remedy" for the koji
+probe and
+[`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "`M76`:
+the arena cap is not the runtime's" for the controlled one. **The stated
 number does not bound the process, only the pools** — the sub-stream divisor is
 `partition_bytes + max_source_span`, both pool costs, and settles nothing about
 the allocator; capping the arenas from inside the stated budget was considered
 with it and set aside for the same reason it is rejected below, filed as its own
 Future item rather than folded in. *Rejected:* capping the arenas from inside the
 binary, with a `mallopt(M_ARENA_MAX, …)` beside the `#[global_allocator]`.
-It would close the ~200 MiB gap without an operator setting anything, and it is
+It would close that gap without an operator setting anything, and it is
 the binary's decision to make rather than the library's — but it changes the
 apparatus of every registered figure, and capping arenas on a many-core host is
 a plausible contention regression on the parallel shapes that motivate it. So
