@@ -519,3 +519,57 @@ sed -n '/^mod cgroups/,/^}/p' \
 ```
 
 (`rustup component add rust-src` if that path is absent.)
+
+## RT8 — `/proc/meminfo` is the host's, not the cgroup's, and `MemAvailable` is the only usable line
+
+**Claim.** `/proc/meminfo` reports the **host's** memory to a containerised
+process: `MemTotal`, `MemFree` and `MemAvailable` are unchanged by a cgroup
+memory limit, and no line in that file reflects one. So a memory limit and free
+memory are read from two different places that never agree, and free memory may
+only be consulted once `RT1`–`RT6` have established that *no* limit binds.
+
+Of the three lines, only `MemAvailable` is usable. `MemFree` excludes
+reclaimable page cache, so on any machine that has read a large file it
+under-reports drastically and would make pgdq time itself down for memory the
+kernel would hand back on demand. `MemAvailable` is the kernel's own estimate
+of what is obtainable without swapping.
+
+**Proof.** Observed on this host, a 32 GiB machine, comparing the host with a
+container given a 512 MiB limit:
+
+| | `MemTotal` | `MemFree` | `MemAvailable` | `memory.max` |
+|---|---|---|---|---|
+| host | 32774304 kB | 2724748 kB | 20143720 kB | — |
+| `nerdctl run -m 512m` | 32774304 kB | 2619956 kB | 20043708 kB | `536870912` |
+
+The container's own limit is reported correctly by `/sys/fs/cgroup/memory.max`
+and is invisible in `/proc/meminfo`; the two `MemFree` readings differ only by
+ordinary drift between the two samples. Note also the 7.4× gap between
+`MemFree` and `MemAvailable` on an otherwise idle host, which is what rules
+`MemFree` out.
+
+`lxcfs` and similar FUSE shims *can* overlay a cgroup-aware `/proc/meminfo`,
+which is why the claim is about what the kernel provides rather than about what
+is always mounted there — a shim makes the reading *more* conservative, never
+less, so it does not break the use below.
+
+**Scope limit.** This says nothing about how much memory pgdq may actually
+obtain: `MemAvailable` is an estimate, it moves second to second, and two
+processes reading it at once each see the whole of it. It is therefore usable
+as a **ceiling** on what to plan for and never as a reservation or a target to
+fill.
+
+**Verified against:** Linux 7.1.4-arch1-1; nerdctl 2.3.5 / containerd v2.3.3;
+`postgres:16`.
+
+**Relied on by:** [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md),
+"What is discovered, and what the default makes of it" — the no-limit branch of
+the budget default, which caps at half of `MemAvailable`.
+
+**Re-verify:**
+
+```sh
+grep -E '^Mem(Total|Free|Available)' /proc/meminfo
+sudo nerdctl run --rm -m 512m postgres:16 sh -c \
+  'grep -E "^Mem(Total|Free|Available)" /proc/meminfo; cat /sys/fs/cgroup/memory.max'
+```

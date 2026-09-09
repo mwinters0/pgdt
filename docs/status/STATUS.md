@@ -399,7 +399,9 @@ the five orderings that bind are in the spec, not here.
       [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
 - [ ] **19.9** Resolution tests, the status line's provenance — `(default: no
       limit found)` saying no limit is being *enforced* — the below-floor
-      `PlanNote`, and a test pinning the below-reserve arrangement.
+      `PlanNote`, a test pinning the below-reserve arrangement, and the fixture
+      tree, which now carries a `meminfo` for the no-limit branch as well as
+      `RT4`'s v1 shape.
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
       whole-block-decode threshold.
@@ -422,9 +424,9 @@ the five orderings that bind are in the spec, not here.
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
       rule, carrying `19.12`'s constant — plus the source's own budget
-      recommendation — `min(cores, 4) × C`, ~236 MiB, where no limit is
-      discovered, without which a corrected divisor makes a flagless `.xz` scan
-      serial on an unlimited host.
+      recommendation, capped at half of `MemAvailable` (`RT8`) where no limit
+      is discovered — without which a corrected divisor makes a flagless `.xz`
+      scan serial on an unlimited host.
 - [ ] **19.14** `XzSource::partition_advice` charges a sub-stream the **two**
       units a reader holds, not one — the divisor `19.12` found out by 2.4× —
       plus `xz_seek::Reader::decode_footprint()`; and `BlockCache::affordable`

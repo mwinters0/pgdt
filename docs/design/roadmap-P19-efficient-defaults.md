@@ -338,26 +338,57 @@ needs no detection: **no limit found already means no limit is enforced**,
 which is complete and true however the process was started, and the status line
 is where it goes.
 
-**Where nothing is discovered, the recommendation is built from four workers,
-not the host's.** `XzSource` recommends `available_parallelism()` for the
-*count*, and its budget recommendation would otherwise be `jobs × C` — ~1.4 GiB
-on this 24-core machine and ~7.5 GiB on a 128-core one, sized from hardware
-nobody said pgdq could have. An unlimited host is a *shared* host until proved
-otherwise ([`roadmap.md`](roadmap.md), "A default runs as fast as the
-allocation permits"), so the unlimited recommendation is `min(cores, 4) × C` —
-**~236 MiB**, four readers. Where a limit *is* discovered it governs and the
-count rises with it, up to `available_parallelism()`: an operator who states an
-allocation has said what pgdq may have, and a host that states nothing has not.
+**Where nothing is discovered, the budget is capped at half of
+`MemAvailable`.** `XzSource` recommends `available_parallelism()` for the count,
+so its budget recommendation is `jobs × C` — and on the no-limit path that is
+capped: `budget = min(jobs × C, ½ × MemAvailable)`. Because resident saturates
+at `jobs × C`, the cap **costs nothing wherever there is room**: half of this
+host's ~20 GiB available is ~10 GiB, which plans the same twenty-four workers a
+1.4 GiB budget does, every byte above `jobs × C` being structurally inert. It
+binds only on a machine too small to afford the full worker count, which is
+exactly where it should. Fast where the machine allows it, bounded where it
+does not.
 
-Four rather than some other small number because the roadmap already fixes it
-as the count that survives moving between machines, and it is what a plain
-source's `POOL_DEPTH` already delivers. It is well clear of the failure `19.8`
-would otherwise hit — 236 MiB is four sub-streams, not the one that a 64 MiB
-constant admits — while being about a sixth of what the host's core count would
-have taken. *Rejected:* reading `MemTotal` as a last-resort cap. It reverses
-the going-in refusal, needs a `runtime-invariants.md` entry, and answers the
-wrong question — total memory is not this process's memory on a machine it
-shares.
+**Half, and `MemAvailable`, and only after no limit was found — each for its own
+reason** ([`runtime-invariants.md`](runtime-invariants.md), `RT8`).
+`/proc/meminfo` is the **host's** even inside a container, so consulting it
+before `RT1`–`RT6` have ruled out a limit would read 20 GiB against a 512 MiB
+allocation. `MemFree` is unusable: it excludes reclaimable page cache and reads
+7.4× lower than `MemAvailable` on an idle host, so pgdq would throttle itself
+for memory the kernel would hand straight back. And half rather than all
+because `MemAvailable` is an estimate that two processes reading at once each
+see the whole of — it is a ceiling to plan under, never a reservation.
+
+**This reverses the going-in refusal to size from physical memory, deliberately
+and with an invariant behind it.** That refusal kept discovery "strictly
+additive" when the fallback was a 64 MiB constant that could not hurt anyone.
+The fallback now scales with the core count, so an unbounded one would size
+pgdq's appetite from hardware nobody granted — and the cheapest thing that
+bounds it is the machine's own answer about what is left. `RT8` is what makes
+that a read with stated semantics rather than a guess.
+
+*Rejected: a modest constant instead — `min(cores, 4) × C`, about 236 MiB.* It
+was taken briefly and is wrong on the "fast" half of the posture: it caps a
+roomy twenty-four-core host at four readers with nothing contended, buying
+safety that the `MemAvailable` cap provides for free. A constant cannot tell a
+128-core server with 256 GiB from a 128-core one with 8.
+
+*Rejected: detecting a container and softening the default when we are not in
+one.* It sounds like the same idea and is a weaker version of it. What binds a
+process is the **limit**, not the namespace, and "was an allocation stated" is
+already read completely (`RT1`–`RT6`) and is right in all four combinations: in
+a container with a limit, fill it; in a container *without* one, fall to the
+`MemAvailable` cap, since nothing said what we may take; on a bare host with a
+systemd `MemoryMax`, fill it, since somebody did; on a bare host with nothing,
+the cap again. Container-ness changes the answer only in the two middle rows,
+and in both it changes it to the wrong one. As a *diagnostic* it is the
+incomplete-environment check this spec already refused for the arena cap —
+`/.dockerenv` is docker's and absent under containerd, `/proc/self/cgroup`
+reads `0::/` in some containers and a real path in others — and a false alarm
+on the budget channel costs more than the silence. The actionable sentence
+needs no detection: **no limit found already means no limit is enforced**,
+which is complete and true however the process was started, and the status line
+is where it goes.
 
 **The composition is not a `min`, and the difference is one `Option`.** Written
 as `min(source_recommendation, discovered)` it breaks the case it exists for:
@@ -678,7 +709,7 @@ being inserted.
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
 | **19.7** | `BufferPool`'s accounting, and nothing else: the under-report whenever `keeps` admits a buffer larger than `slot_bytes` ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The plain partition's cap, reviewed"); the **coupling of the block pool's free and retained counts**, without which a stated budget bounds half of what that pool holds; and `BlockCache::affordable` requiring room for **two** units rather than one, since a coupled count of one is the un-poolable shape that pool rejects by name. Re-scoped after the spec was written — see the row below and [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries, closed". |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
-| **19.9** | Resolution tests, the status line's provenance — `(default: no limit found)` saying what it *means*, that no limit is being enforced — the below-floor `PlanNote`, the v1 fixture tree that tests `RT4`'s shape against the reader, and a test pinning the below-reserve arrangement so no floor can silently change it. |
+| **19.9** | Resolution tests, the status line's provenance — `(default: no limit found)` saying what it *means*, that no limit is being enforced — the below-floor `PlanNote`, the v1 fixture tree that tests `RT4`'s shape against the reader — carrying a `meminfo` too, so the no-limit branch's `MemAvailable` cap is driven from the same seam — and a test pinning the below-reserve arrangement so no floor can silently change it. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`'s reading leaves it, the new defaults, both flags' help text, and the moved whole-block-decode threshold — `19.7` declines a file whose blocks exceed half the budget, where today it declines one whose blocks exceed the budget. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures against `19.14`'s raised `PARALLEL_BUDGET`. |
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |

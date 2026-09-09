@@ -157,9 +157,12 @@ Four bounds, and they are what keep this from being "take everything":
   and `BufferPool::slots`' clamp are this bound in code: resident saturates at
   the worker count times what one reader holds, so budget above that is taken
   by nothing.
-- **Unstated is not unlimited.** Absent a discovered limit the default is built
-  from a modest worker count rather than the host's, because the alternative is
-  sizing pgdq's appetite from hardware nobody said it could have.
+- **Unstated is not unlimited.** Absent a discovered limit the default is
+  capped at half of what the machine reports available, because the alternative
+  is sizing pgdq's appetite from hardware nobody said it could have. That cap
+  costs no speed where there is room — resident saturates at the worker count
+  regardless — and binds only on a machine too small for the count it asked
+  for.
 
 **Each source answers for its own defaults, worker count and budget alike.**
 That is why `ByteRangeSource::default_workers` is a trait method rather than a
@@ -834,6 +837,20 @@ inside that item rather than as a second one. It survives a keystone untouched:
 no phase doc holds it, and nothing but acquiring a phase number takes an item
 out. An option left only in a phase spec or a slice notes doc does not survive,
 which is what makes the difference worth minding at the moment one is found.
+
+- **A "safe mode" that deliberately under-fills a stated allocation.** The
+  defaults fill a discovered cgroup limit, on the reasoning that a limit is
+  somebody saying what pgdq may have. That is wrong for an operator who knows
+  they *share* the cgroup — a sidecar in the same pod, two pgdq invocations in
+  one container — and who would rather take a fraction of the allocation than
+  all of it. The obvious shape is a flag taking the same half-of-available
+  fraction the no-limit path already caps at and applying it to the discovered
+  limit instead. What needs grilling before it is written is what it composes
+  with rather than the number: `--parallel-memory` stated explicitly, the
+  reserve, and the below-floor path, which is where a fraction of a small
+  allocation lands immediately. Raised while settling `P19`'s defaults —
+  [2026-09-09](../status/history/2026-09-09.md), "Fast by default, and the
+  no-limit cap".
 
 - **A two-unit plain source, so the partition read is pooled at all and a
   raised `--chunk-size` keeps its multiple.** `LocalFileSource` runs one
