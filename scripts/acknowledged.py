@@ -70,8 +70,16 @@ class Acknowledged:
     #: Any spelling `git rev-parse` resolves. Normalised before comparison, so
     #: the short sha that `--stale` prints is what gets recorded.
     commit: str
-    #: The figure ids this excuses. Empty means every figure — right only for a
-    #: change no figure's subject can see, and rare enough to be suspicious.
+    #: The ids this excuses: figures, and the declared sections `measure.NOT_OURS`
+    #: holds, which the same register discharges. Empty means **every figure and
+    #: no declared section** — right only for a change no figure's subject can
+    #: see, and rare enough to be suspicious. A declared section is reached only
+    #: by naming it: the blanket case is written about the readings its author
+    #: had in mind, which are the durations a sweep takes, and a section's
+    #: readings are something else. koji's are a byte-for-byte comparison of
+    #: what a scan concludes, so excusing it is a claim about block offsets and
+    #: row totals — one that has to be made deliberately rather than inherited
+    #: from an entry about timings.
     figures: tuple[str, ...]
     #: What changed and why no reading moves, in one line.
     why: str

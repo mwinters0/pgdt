@@ -701,6 +701,20 @@ they publish, because once a sweep publishes `rss-attribution` koji is the only
 section carrying an edge at all, and a rule with one member on each side is a
 rule written for a mechanism that does not exist.
 
+**A declared section is reached only by being named, and that is what the empty
+tuple means.** `Acknowledged.figures` left empty covers **every figure and no
+declared section**. The blanket claim is that no figure's subject can see the
+change, and what a figure publishes is a duration a sweep takes; a section's
+readings are something else, and koji's are a byte-for-byte comparison of what a
+scan concludes — block offsets, row and byte totals, and the `info --detail`
+report they are compared as text against. Excusing those is a claim about that
+comparison, so it is made by writing `koji` into the tuple rather than inherited
+from an entry someone wrote about timings. Both halves of the machinery hold it:
+`excuses` matches an empty tuple against a figure only, and
+`spent_acknowledgements` computes a blanket entry's coverage over the figure
+bases alone, though `--check` still passes the union so that an entry naming a
+section is spent against that section's own marker.
+
 *Rejected:* refusing an outside id in `Acknowledged.figures`, so that only a
 run clears a declared section's red. It reads as the conservative choice and is
 not: the only class of change it actually refuses is the comment-only one, so a

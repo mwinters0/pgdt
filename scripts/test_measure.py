@@ -2037,6 +2037,33 @@ class Acknowledgements(unittest.TestCase):
         )
         self.assertEqual(got, ["scripts/measure.py"])
 
+    def test_a_blanket_entry_does_not_reach_a_declared_section(self):
+        # Empty means every figure and no declared section. A blanket entry is
+        # written about the readings a sweep takes, which are durations; koji's
+        # are a byte-for-byte comparison of what a scan concludes, so excusing
+        # it has to be its author's decision rather than an inheritance.
+        got = measure.excused_paths(
+            "koji",
+            ["scripts/measure.py"],
+            {"scripts/measure.py": ["bbb"]},
+            set(),
+            self.ACKS,
+        )
+        self.assertEqual(got, [])
+
+    def test_a_declared_section_is_excused_by_being_named(self):
+        # The permission itself is unchanged: the harness cannot re-take koji,
+        # so an entry naming it is the only discharge short of an hour on the HDD.
+        acks = (*self.ACKS, measure.Acknowledged(commit="ddd", figures=("koji",), why="comments"))
+        got = measure.excused_paths(
+            "koji",
+            ["scripts/measure.py"],
+            {"scripts/measure.py": ["ddd"]},
+            set(),
+            acks,
+        )
+        self.assertEqual(got, ["scripts/measure.py"])
+
     def test_one_unexamined_commit_keeps_the_path_stale(self):
         # The failure this exists against: a path changed by an excused commit
         # and an unexamined one is stale on the strength of the second.
@@ -2141,6 +2168,23 @@ class Acknowledgements(unittest.TestCase):
         )
         self.assertEqual(
             measure.spent_acknowledgements(acks, bases, ancestor=lambda c, rev: True), ["aaa"]
+        )
+
+    def test_a_blanket_entry_s_spentness_ignores_the_declared_sections(self):
+        # `--check` passes the union of both bases, so an entry *naming* koji is
+        # spent against koji's own marker. A blanket entry covers no section, so
+        # a section left behind may not hold it alive past every figure.
+        bases = {fid: "later" for fid in measure.ALL_BY_ID}
+        bases |= {oid: "stamp" for oid in measure.NOT_OURS}
+        acks = (measure.Acknowledged(commit="aaa", figures=(), why="x"),)
+        self.assertEqual(
+            measure.spent_acknowledgements(acks, bases, ancestor=lambda c, rev: rev == "later"),
+            ["aaa"],
+        )
+        named = (measure.Acknowledged(commit="aaa", figures=("koji",), why="x"),)
+        self.assertEqual(
+            measure.spent_acknowledgements(named, bases, ancestor=lambda c, rev: rev == "later"),
+            [],
         )
 
     def test_a_figure_with_no_base_spends_nothing(self):

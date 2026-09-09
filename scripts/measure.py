@@ -5072,9 +5072,25 @@ def resolved_acknowledgements(
 
 
 def excuses(acks: Sequence[Acknowledged], commit: str, figure_id: str) -> Acknowledged | None:
-    """The acknowledgement covering this commit for this figure, if any."""
+    """The acknowledgement covering this commit for this id, if any.
+
+    **A blanket entry reaches every figure and no declared section.** An empty
+    `figures` tuple is the claim that no figure's subject can see the change,
+    and the readings a figure publishes are durations a sweep takes; a declared
+    section's are not, so the blanket claim is not about them. koji's readings
+    are a byte-for-byte comparison of what a scan concludes, and excusing those
+    is a claim about block offsets and row totals — reachable only by naming
+    `koji`, so that its author decided it rather than inheriting it from an
+    entry written about timings. The permission itself is unchanged: an entry
+    that *names* a declared section still excuses it, which is the discharge
+    `measurements.md`, "A commit can be acknowledged" settled, since the
+    harness cannot re-take a section it does not own."""
     for ack in acks:
-        if ack.commit == commit and (not ack.figures or figure_id in ack.figures):
+        if ack.commit != commit:
+            continue
+        if figure_id in ack.figures:
+            return ack
+        if not ack.figures and figure_id not in NOT_OURS:
             return ack
     return None
 
@@ -6907,11 +6923,18 @@ def spent_acknowledgements(
     commit — and still live for every figure read from the stamp. So an entry
     goes only when every figure it covers has moved past it; going on the stamp
     alone would delete an excuse that is still doing work, and the next diff
-    under that path would read stale with the reason gone."""
+    under that path would read stale with the reason gone.
+
+    **`bases` carries the declared sections too, and a blanket entry covers
+    none of them.** The mapping is the union of both, so that an entry naming
+    `koji` is spent against koji's own marker rather than against the stamp —
+    but an empty `figures` tuple means every figure and no declared section
+    (`excuses`), and reading it as the whole mapping would have made a section
+    hold a blanket entry alive that never reached it."""
     ancestor = ancestor or is_ancestor
     out = []
     for ack in acks:
-        covered = ack.figures or tuple(bases)
+        covered = ack.figures or tuple(fid for fid in bases if fid not in NOT_OURS)
         revs = [bases.get(fid) for fid in covered]
         if revs and all(rev is not None and ancestor(ack.commit, rev) for rev in revs):
             out.append(ack.commit)
