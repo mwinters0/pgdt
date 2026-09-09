@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P16, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P19 — efficient defaults for a parallel scan | Sketched; grilled, spec not yet written | this file, below; [inbox](roadmap-P19-efficient-defaults-inbox.md) |
+| P19 — efficient defaults for a parallel scan | **Current** | [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -354,29 +354,14 @@ item; see below.
 
 ## P19 — Efficient defaults for a parallel scan
 
-**Being grilled; no spec yet. Facts already filed for it:**
-[`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md).
-Sketched only to corner-avoidance depth, per this file's rule.
+**Specified and sliced:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md). Its
+inbox was drained into that spec and deleted.
 
-The parallel scan mechanism exists; this phase ships it set correctly. The
-split is context rather than subject — the phase that built it carried nineteen
-slices and three amendments, and a phase whose evidence is another's completed
-figures is the process's own "evidence first" ordering one level up. **The
+The parallel scan mechanism exists; this phase ships it set correctly. **The
 mechanism existing is not parallelization being finished**: this phase is what
-makes a person who states no flag get a good arrangement.
-
-Three things are settled going in, and the first is a reversal.
-**The tool discovers its own allocation** — reading the cgroup limit was
-rejected when the mechanism was built and that is reversed, on the deployment
-case the rejection did not weigh
-(`../status/history/2026-09-08.md`, "The tool discovers what it was
-allocated"). **The parallel default is source-dependent**, registered as a
-source's own answer rather than a test for `.xz`, because the gzip, zstd/lz4
-and format-coverage phases each add a source whose right default is its own.
-And **the order is bound**: the process's own overhead is capped first — the
-glibc arenas, and the tokio runtime sized from the resolved worker count —
-because until the resident set is a bounded function of the stated budget, no
-fraction of a discovered limit is defensible and any constant is this machine's.
+makes a person who states no flag get a good arrangement, on the file they have
+and inside the memory they were allocated.
 
 ## P10 — Per-row-group column statistics
 
@@ -958,4 +943,4 @@ this section when it acquires a phase number, not when it acquires a design.
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
 
-- **pgdq caps its own glibc arenas — moved into `P19`.** It was here because it changes a decision `architecture.md` records and re-bases every registered figure's apparatus. Both are still true; what changed is that a phase now owns "the stated budget bounds the process", which a budget discovered from the cgroup and then blown by arenas seeded at startup does not deliver ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The tool discovers what it was allocated").
+- **pgdq caps its own glibc arenas — declined.** It was here, then moved into `P19`, which refused it: `mallopt` bounds arena *creation* only, and the count worth keying it to is resolved after source recognition, so the one shape worth having is mechanically unreachable and what is left is a constant that re-bases every registered figure. The cap is published as a deployment setting instead, and the CLI's `current_thread` runtime is what keeps the thread count — and so the arena count — following the work rather than the host ([`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "The arena cap is a deployment setting, not a mechanism this binary ships").

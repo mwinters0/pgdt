@@ -317,21 +317,45 @@ heading — is beside the mechanism
 ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes").
 
+## P19 progress
+
+Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
+**The numbers after the evidence slices are allocation order, not schedule** —
+the four orderings that bind are in the spec, not here.
+
+- [ ] **19.1** `runtime-invariants.md` — the register, and `CLAUDE.md`'s
+      read-trigger beside the Postgres one. No code.
+- [ ] **19.2** The plain-path account — a profile of `--jobs 1` against
+      `--jobs 2`, and a `--alone` sitting against a raised-`POOL_DEPTH` scratch
+      build. No shipped code.
+- [ ] **19.3** The CLI runs a `current_thread` runtime.
+- [ ] **19.4** `Serial` carries an optional budget — closes `KD16`.
+- [ ] **19.5** `Partitioning` states its retained unit; the span term is added
+      only for a chunk-shaped source.
+- [ ] **19.6** The reserve figure registered and taken diagnostically to choose
+      the constant. No published table.
+- [ ] **19.7** `discover_memory_limit`, `Parallelism::discover`, the budget rule.
+- [ ] **19.8** The source's own worker default; `DEFAULT_JOBS` removed.
+- [ ] **19.9** Resolution tests, the status line's provenance, the below-floor
+      `PlanNote`.
+- [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation, the new
+      defaults, both flags' help text.
+- [ ] **19.11** The closing sweep — publishes the reserve figure and
+      `rss-attribution`, closing `M74`.
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** The parallel scan and extraction work is complete and
-  struck; its mechanisms are in
-  [`../design/architecture.md`](../design/architecture.md) by subject, and git
-  holds its spec and notes. Seven phases remain
-  sketched — P19, P10, P14, P6, P15, P18, P8, in the roadmap table's schedule
-  order; a `P<k>` is an identifier, so the numbers say nothing about the order
-  they run in. Each gets its own full grilling when it becomes current, and
-  every one that carries an inbox must have it drained as part of that
-  grilling. **P19 is grilled but not yet specified**, so the next phase is
-  specified and sliced before any of its code is written.
+- **P19 is open and none of its code is written.** Its checklist is above and
+  its spec is
+  [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
+  Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
+  table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
+  about the order they run in. Each gets its own full grilling when it becomes
+  current, and every one that carries an inbox must have it drained as part of
+  that grilling.
 
 ## Known deficiencies
 
@@ -470,8 +494,8 @@ here rather than reading as a phase nobody has sliced.
 - **KD16** — the CLI drops a stated `--parallel-memory` at the default
   `--jobs 1`, `Parallelism::workers(1, …)` being `Serial`, which states no
   bytes: every pool falls back to 64 MiB, so the recourse both budget messages
-  name needs `--jobs 2` beside it. **(c) unowned**; promoted by a phase that
-  reworks `Parallelism`'s two-number shape. Detail:
+  name needs `--jobs 2` beside it. **(b) owned by P19**, slice **19.4**, which
+  gives `Serial` an optional budget. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Execution model
   and API surface".
 

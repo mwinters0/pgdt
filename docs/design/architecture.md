@@ -585,18 +585,21 @@ what one concurrent reader costs the *source*, and a sub-stream's held batch is
 the same kind of per-reader cost arriving from the other side.
 
 **Whether one span allowance should be *divided* among sub-streams rather than
-charged to each is open, and the divisor that charges it did not weigh it.**
-What is settled is the accounting: N sub-streams really do pin N spans, and a
-divisor that charged one was the defect. What is not settled is the default —
-`max_source_span`'s 64 MiB is a per-stream number chosen when there was one
-stream, and charging it per reader is what makes the stated budget dominated by
-pinning rather than by decoding (64 MiB against a 24 MiB block). The
-alternative is N smaller batches whose pinning stays flat in N, which would
-keep a parallel query affordable at the shipped defaults where today it is not.
-It changes a shipped default, so it is a spec question rather than a slice, and
-**`P19` owns it** — filed in that phase's inbox, which its grilling
-drains ([`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md),
-"One span allowance is charged per sub-stream").
+charged to each is decided and not yet built, and the divisor that charges it
+did not weigh it.** What ships is the accounting: N sub-streams really do pin N
+spans, and a divisor that charged one was the defect. What that accounting gets
+wrong is that the span is a cost of the *chunk-shaped* source only — a batch
+confined to one worker's range inside one block pins exactly that block whatever
+the cap says ("Three flush triggers, and only one of them bounds memory"), which
+`partition_bytes` has already charged, so on a block-shaped source the two terms
+count the same bytes twice. **`P19` owns the repair**, and its answer is that
+the retained unit is the source's own to state, the span term being added only
+where that unit is the read chunk
+([`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "The
+span term is charged per source, not universally"). Charging one allowance
+divided among sub-streams was the alternative and is refused there: it leaves
+the double-count in place, and at the shipped 64 MiB budget it plans one
+sub-stream either way.
 
 **When the divisor declines the requested count, `plan_partitions` says
 so.** At the shipped defaults `max_source_span`'s 64 MiB alone meets
