@@ -1011,6 +1011,18 @@ division over published tables, so the question is answerable before a sitting
 is spent rather than after — which is the whole point, a sitting being an hour
 of a quiet machine.
 
+**A regime the harness does not declare is refused, not defaulted.** Admitting
+one means a `measure.REGIMES` row naming the staging area it reads from and
+whether the page cache is dropped, and a `CONTENTION_LIMITS` row saying what
+disqualifies one of its readings; `scripts/test_measure.py` reconciles both
+against the regimes the registered figures' own `stage` declarations name, in
+both directions, so a regime cannot land in one of the three and not the other.
+What that is against is a plausible table rather than a crash: the dispatch
+once matched two names and fell through to the *warm* path, while the cache
+drop fired on any name beginning `cold` — so the cheap `cold-parallel` the
+paragraph below rejects would have dropped the page cache and then read from
+tmpfs, publishing warm readings under a cold heading with nothing to say so.
+
 **Neither cold device is a parallel regime.** *Rejected: `cold-parallel` and
 `cold-nvme-parallel` legs of the two `parallel-*` figures, which are registered
 `warm-parallel` only.* Applying the test leg by leg answers all four without a

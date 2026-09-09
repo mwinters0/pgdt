@@ -578,6 +578,87 @@ class Sampler:
 #: re-sweep.
 SWEEP_GOVERNOR = "performance"
 
+
+#: The staging areas a regime can read from, and the only values a `Regime`
+#: may name. Three devices, three areas: the SSD cache, the NVMe copy of it,
+#: and the tmpfs staging.
+STAGING_AREAS = ("cold", "nvme", "warm")
+
+
+@dataclass(frozen=True)
+class Regime:
+    """One regime: which staging area its input is read from, and whether the
+    page cache is dropped before every reading.
+
+    **Two declared facts rather than one declared and one read off the name.**
+    Both were once inferred from the string: `Session.input_path` matched
+    `cold` and `cold-nvme` and returned the *warm* path for everything else,
+    while the cache drop fired on any name starting with `cold`. Those two
+    guesses disagree for exactly the regime nobody had added yet -- a
+    `cold-parallel` row would have dropped the page cache and then read from
+    tmpfs, publishing warm readings under a cold heading with no error, since
+    each half is separately plausible and neither is checked against the other.
+    Declaring them makes the pair the row's business.
+
+    *Rejected: deriving `drops_caches` from `area`.* Today `area != "warm"`
+    gives the same four answers, so the field looks redundant. It is not: the
+    two are separate questions, and a figure wanting a **second** read off a
+    device with the page cache left intact is a regime that declares a device
+    area and no drop. Under the derivation that row cannot be written at all
+    without first unpicking the rule that forbids it, which is the cost of
+    every "these always agree" shortcut -- it holds until the case it was
+    meant to describe arrives.
+    """
+
+    #: One of `STAGING_AREAS`.
+    area: str
+    #: Whether `time_run` drops the page cache before the reading. True of
+    #: every regime reading a device, because what "cold" means is that the
+    #: bytes come off the disk -- a `cold-nvme` reading taken out of page cache
+    #: would measure RAM and read as a device with no floor at all.
+    drops_caches: bool
+
+
+#: Every regime the harness knows. **A name with no row here is refused**, not
+#: defaulted: `regime_spec` raises, so a regime added to a figure's `stage` and
+#: nowhere else fails at the first reading rather than quietly taking one off
+#: the wrong device. `test_measure.py` reconciles these names against the
+#: regimes the registered figures declare and against `CONTENTION_LIMITS`,
+#: both ways, so a new regime cannot land half-declared.
+REGIMES: dict[str, Regime] = {
+    "cold": Regime(area="cold", drops_caches=True),
+    "cold-nvme": Regime(area="nvme", drops_caches=True),
+    "warm": Regime(area="warm", drops_caches=False),
+    #: The same tmpfs staging as `warm`; what differs is the contention gate
+    #: below, the reading deliberately occupying every hardware thread.
+    "warm-parallel": Regime(area="warm", drops_caches=False),
+}
+
+#: Stage values that name no regime, so the reconciliation does not ask them
+#: for a contention row. `criterion` is a `cargo bench` tripwire, which reads
+#: no staged input at all; `derived` is a table computed across two sittings
+#: rather than measured in one.
+NON_REGIME_STAGES = frozenset({"criterion", "derived"})
+
+
+def regime_spec(name: str) -> Regime:
+    """The regime by that name, or a refusal.
+
+    Never a fallback. The defect this exists against is not a crash but a
+    plausible table: an unknown regime that resolves to *some* path takes a
+    perfectly good reading of the wrong thing, and no column in the emitted
+    table says which device it came off.
+    """
+    try:
+        return REGIMES[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown regime {name!r}: declare it in `REGIMES` with the staging area it "
+            f"reads from, and give it a `CONTENTION_LIMITS` row saying what contention "
+            f"disqualifies one of its readings"
+        ) from None
+
+
 #: A reading whose window shows contention above these limits is not a
 #: reading: it is discarded and taken again.
 #:
@@ -608,7 +689,10 @@ SWEEP_GOVERNOR = "performance"
 #: `cold-nvme` is the same regime on a faster device, so it is gated on the
 #: same three limits. Naming it rather than falling back to `cold`'s row is
 #: deliberate: a regime with no entry gates *nothing*, so a typo'd or newly
-#: added regime would silently take every reading it was given.
+#: added regime would silently take every reading it was given. That is held
+#: mechanically rather than by discipline -- `test_measure.py` reconciles these
+#: keys against `REGIMES` and against the regimes the registered figures'
+#: `stage` declarations name, in both directions.
 #:
 #: **`warm-parallel` is a fourth regime with a gate of its own, and it gates on
 #: almost nothing.** It reads from tmpfs exactly as `warm` does; what differs is
@@ -2204,11 +2288,21 @@ class Session:
         raise ValueError(f"unknown binary {which!r}")
 
     def input_path(self, name: str, regime: str) -> Path:
-        if regime == "cold":
+        """Where this regime's copy of that input lives.
+
+        Resolved through `REGIMES`, which raises on a name it does not carry.
+        The branch below has no fallback for the same reason: an unrecognised
+        regime must not resolve to a path, because a reading off the wrong
+        device is a table nobody can tell from a right one.
+        """
+        area = regime_spec(regime).area
+        if area == "cold":
             return self.stager.cold_path(name)
-        if regime == "cold-nvme":
+        if area == "nvme":
             return self.stager.nvme_path(name)
-        return self.stager.warm_path(name, self.figure_index)
+        if area == "warm":
+            return self.stager.warm_path(name, self.figure_index)
+        raise ValueError(f"regime {regime!r} names an unknown staging area {area!r}")
 
     def drop_caches(self) -> None:
         argv = shlex.split(self.cfg.sudo) + ["sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"]
@@ -2238,11 +2332,11 @@ class Session:
             argv += ["-v", m]
         argv += [self.cfg.image, "bash", "-c", _script(spec.command)]
 
-        # Every cold regime drops the cache, whichever device it names: what
-        # "cold" means is that the bytes come off the disk, and a `cold-nvme`
-        # reading taken out of page cache would measure RAM and read as a
-        # device with no floor at all.
-        if spec.regime.startswith("cold"):
+        # Whether the cache is dropped is the regime's own declaration, not a
+        # prefix on its name: the name and the staging area are two facts, and
+        # a regime that read the second off the first would drop caches for
+        # anything called `cold-*` however it was staged.
+        if regime_spec(spec.regime).drops_caches:
             self.drop_caches()
         if self.cfg.dry_run:
             self.log("  [dry-run] " + " ".join(shlex.quote(a) for a in argv))
@@ -2788,7 +2882,12 @@ class Figure:
     #: number moves without desynchronising anything. `--check` reconciles the
     #: two.
     section: str
-    stage: str  # "cold" | "warm" | "criterion"
+    #: The regimes this figure is taken in, `+`-separated — every token a key
+    #: of `REGIMES`, or one of `NON_REGIME_STAGES` for a figure that reads no
+    #: staged input. `--stage` selects on it, and `registered_regimes` is what
+    #: the harness's regime vocabulary is reconciled against, so a token here
+    #: that nothing declares is an error rather than a silent fourth regime.
+    stage: str
     #: Repo-relative paths whose change invalidates this figure. `--stale`
     #: intersects these with a diff. A figure that cannot say what invalidates
     #: it is one nobody has thought about.
@@ -4768,6 +4867,29 @@ EVERY_FIGURE = FIGURES + UNTAKEN + DERIVED
 EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
 
 
+def registered_regimes() -> tuple[str, ...]:
+    """Every regime the registered figures are taken in, read off their own
+    `stage` declarations.
+
+    One list, not two. The regimes a sweep actually runs in are already stated
+    per figure -- `--stage` selects on them -- so anything that has to iterate
+    them derives the set from there rather than repeating it. The tuple that
+    used to be written out by hand omitted `warm-parallel` from the day it was
+    added, which is the failure a second list has every time: the copy nobody
+    has to touch to add a regime is the copy that goes stale.
+    """
+    return tuple(
+        sorted(
+            {
+                token
+                for fig in EVERY_FIGURE
+                for token in fig.stage.split("+")
+                if token not in NON_REGIME_STAGES
+            }
+        )
+    )
+
+
 # --------------------------------------------------------------------------
 # The borrow graph: what a re-take drags with it.
 # --------------------------------------------------------------------------
@@ -5808,6 +5930,11 @@ class ReplaySession(Session):
         raise AssertionError("--render must measure nothing, but the page cache was dropped")
 
     def input_path(self, name: str, regime: str) -> Path:
+        # The regime decides nothing here -- every renderer asks an input for
+        # its size and never for its device -- but it is still resolved, so a
+        # renderer naming a regime nothing declares fails under `--render` as
+        # it would under a sweep, at a second's cost instead of an hour's.
+        regime_spec(regime)
         if name not in self._sizes:
             raise KeyError(
                 f"this sitting recorded no size for input {name!r}, so its table cannot be "

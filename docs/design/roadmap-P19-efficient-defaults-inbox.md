@@ -87,8 +87,8 @@ messages name needs `--jobs 2` stated beside it
 ([`architecture.md`](architecture.md), "Execution model and API surface").
 
 `M66` is measurement-harness hygiene, stays out-of-band, and is unaffected;
-`M74` and `M71` are the same hygiene but carry an ordering this phase owns,
-below.
+`M74` is the same hygiene but carries an ordering this phase owns, below.
+`M71` was too, and has landed.
 
 **Origin.** 2026-09-08, this phase's grilling; rewritten the same day as each
 row landed.
@@ -109,18 +109,19 @@ against 9.73/43.78 under `peak-rss`. Only a stamped sweep may publish it. The
 sitting, because declaring it earlier closes no part of `M74` — the marker
 still could not go on — and makes `sitting_problems` refuse `peak-rss`'s own
 `41c96bb` marker with no sweep in between to clear it;
-`test_a_taken_attribution_declares_its_borrow` holds the obligation. `M71` is separate and still queued: `Session.input_path` falls
-through to the *warm* path for a regime it does not know, so a new `cold-*`
-regime would drop the page cache and then read from tmpfs.
+`test_a_taken_attribution_declares_its_borrow` holds the obligation. `M71` was
+separate and has landed: a regime is a declared `measure.REGIMES` row, and one
+the harness does not carry is refused rather than resolved to the warm path.
 
 **Why this phase cares.** This phase ends in a sweep, because a
 `mallopt(M_ARENA_MAX, …)` re-bases every registered figure's apparatus — and
 that sweep is where `M74` closes. In one change it takes `rss-attribution`
 alongside `peak-rss`, pastes the emitted section, deletes the
 `outside-register` marker and the `measure.NOT_OURS` row, re-generates the
-stamp's accounting sentence and fills the ledger row's Date. Land `M71` before
-it for the same reason it was queued: this is the first phase with a reason to
-add a regime, and an unknown one today publishes warm readings under a cold
+stamp's accounting sentence and fills the ledger row's Date. `M71` landed
+ahead of it for the reason it was queued: this is the first phase with a reason
+to add a regime, and adding one now costs a `REGIMES` row and a
+`CONTENTION_LIMITS` row rather than publishing warm readings under a cold
 heading with no error.
 
 **Origin.** 2026-09-08, the review of the ledger's blocking column; restated

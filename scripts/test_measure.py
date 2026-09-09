@@ -3204,14 +3204,83 @@ class ColdNvme(unittest.TestCase):
     def test_every_regime_is_gated_for_contention(self):
         # A regime with no limits gates nothing, so a new one nobody added a
         # row for would take every reading it was handed, however busy the
-        # machine was.
-        for regime in ("cold", "cold-nvme", "warm"):
+        # machine was. The set is derived rather than written out: the tuple
+        # this used to iterate was missing `warm-parallel` from the day that
+        # regime landed, so the fourth regime went unchecked by the test whose
+        # whole subject it is.
+        for regime in measure.registered_regimes():
             with self.subTest(regime=regime):
                 self.assertTrue(measure.CONTENTION_LIMITS.get(regime))
+        self.assertIn("warm-parallel", measure.registered_regimes())
         self.assertIsNotNone(
             measure.contention_verdict({"cpu_busy_pct": 99.0}, "cold-nvme")
         )
         self.assertIsNone(measure.contention_verdict({"cpu_busy_pct": 1.0}, "cold-nvme"))
+
+    def test_the_regime_vocabulary_reconciles_both_ways(self):
+        """`REGIMES`, `CONTENTION_LIMITS` and the figures' own `stage`
+        declarations name the same four regimes.
+
+        Each of the three is the one a half-landed regime would be missing
+        from, and each fails silently on its own: a `stage` token nothing
+        declares takes a reading off the wrong device, a `REGIMES` row with no
+        gate takes one off a busy machine, and a gate for a regime no figure
+        runs is a row nobody will ever notice is wrong."""
+        declared = set(measure.REGIMES)
+        self.assertEqual(set(measure.registered_regimes()), declared)
+        self.assertEqual(set(measure.CONTENTION_LIMITS), declared)
+        for name, regime in measure.REGIMES.items():
+            with self.subTest(regime=name):
+                self.assertIn(regime.area, measure.STAGING_AREAS)
+
+    def test_a_stage_that_names_no_regime_is_declared_as_such(self):
+        # `criterion` and `derived` are exempt because they read no staged
+        # input; anything else exempted by hand would be a regime hidden from
+        # the reconciliation above.
+        for name in measure.NON_REGIME_STAGES:
+            with self.subTest(stage=name):
+                self.assertNotIn(name, measure.REGIMES)
+                # And each is a stage some figure actually carries, so an
+                # exemption cannot outlive the thing it exempts.
+                self.assertTrue(
+                    any(name in f.stage.split("+") for f in measure.EVERY_FIGURE)
+                )
+
+    def test_an_unknown_regime_is_refused_rather_than_resolved(self):
+        """The defect `M71` closed: `input_path` matched two names and returned
+        the *warm* path for everything else, while the cache drop fired on any
+        name starting with `cold` — so a `cold-parallel` regime added to a
+        figure and nowhere else would have dropped the page cache and then read
+        from tmpfs, publishing warm readings under a cold heading."""
+        with self.assertRaises(ValueError) as raised:
+            measure.regime_spec("cold-parallel")
+        self.assertIn("cold-parallel", str(raised.exception))
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(dry_run=True, cache_dir=Path(tmp) / "ssd")
+            session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+            with self.assertRaises(ValueError):
+                session.input_path("control", "cold-parallel")
+
+    def test_the_staging_area_a_regime_reads_is_the_one_it_declares(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = measure.Config(
+                dry_run=True,
+                cache_dir=root / "ssd",
+                nvme_dir=root / "nvme",
+                warm_dir=root / "shm",
+                warm_budget=8.0,
+            )
+            session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+            areas = {
+                "cold": root / "ssd",
+                "cold-nvme": root / "nvme",
+                "warm": root / "shm",
+                "warm-parallel": root / "shm",
+            }
+            for regime, parent in areas.items():
+                with self.subTest(regime=regime):
+                    self.assertEqual(session.input_path("control", regime).parent, parent)
 
     def test_the_nvme_area_being_full_is_refused_before_any_run(self):
         # An empty staging area, so the check is against what still has to be
