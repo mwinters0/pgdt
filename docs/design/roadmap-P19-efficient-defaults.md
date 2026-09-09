@@ -274,9 +274,12 @@ reserve, which puts a 600 MiB cgroup below the floor — so the alternative is a
 proportional term reintroduced for a *measured* reason rather than as the
 unmeasured ceiling dropped above. That is not taken now: it would pick a number
 from four cells of a diagnostic sitting on a build `19.14` is about to replace.
-**`19.15` is the trigger.** It runs at 256 MiB, 512 MiB and 1 GiB, either side
-of the worst band, against the shipped rule; if the headroom does not survive,
-the reserve is reopened and the proportional term is what it reopens to.
+**`19.15` is the gate, not a follow-up.** It runs at 256 MiB, 512 MiB and
+1 GiB, either side of the worst band, against a **scratch build** of the rule
+and *before* `19.13` lands; if the headroom does not survive, the constant is
+chosen differently or the proportional term returns. Either way `19.13` ships a
+number this phase has watched survive a real cgroup, which under the container
+premise is the case it will actually meet.
 Reasoning: [2026-09-09](../status/history/2026-09-09.md), "The reserve's
 headroom is thin where variance is widest".
 
@@ -317,6 +320,23 @@ answers with one worker today. A count nothing can afford is not a
 recommendation, which is the general form
 ([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
 permits").
+
+*Rejected: detecting a container and softening the default when we are not in
+one.* It sounds like the modest unlimited default and is a weaker version of
+it. What binds a process is the **limit**, not the namespace, and "was an
+allocation stated" is already read completely (`RT1`–`RT6`) and is right in all
+four combinations: in a container with a limit, fill it; in a container
+*without* one, stay modest, since nothing said what we may take; on a bare host
+with a systemd `MemoryMax`, fill it, since somebody did; on a bare host with
+nothing, stay modest. Container-ness changes the answer only in the two middle
+rows, and in both it changes it to the wrong one. As a *diagnostic* it is the
+incomplete-environment check this spec already refused for the arena cap —
+`/.dockerenv` is docker's and absent under containerd, `/proc/self/cgroup`
+reads `0::/` in some containers and a real path in others — and a false alarm
+on the budget channel costs more than the silence. The actionable sentence
+needs no detection: **no limit found already means no limit is enforced**,
+which is complete and true however the process was started, and the status line
+is where it goes.
 
 **Where nothing is discovered, the recommendation is built from four workers,
 not the host's.** `XzSource` recommends `available_parallelism()` for the
@@ -600,7 +620,12 @@ Five orderings bind, and nothing else does:
   `19.12` found the compressed charge out by 2.4×: a rule whose constant is
   read off a plan that under-charges is a rule compensating for an accounting
   error with a safety margin, which is the shape this phase exists to remove.
-  `19.15` follows `19.13`, having nothing to run until the rule ships.
+  **`19.15` runs before `19.13` lands, against a scratch build of the rule** —
+  the pattern `19.2` used against a clamp-lifted build and `19.6`/`19.12` used
+  `--alone`. The reserve's headroom is thinnest through the 1.25–1.5 GiB band,
+  which under the container premise is an ordinary allocation size rather than
+  a point on an axis, so checking after the rule ships puts the check behind
+  the risk. `19.13`'s code is written first and its box ticked second.
   **`19.14` owes no reserve sitting of its own**, which is what keeps it out of
   that chain's evidence half: `19.12` fitted `resident(n) = 180 + 59.4n` over
   sub-stream *counts*, and `19.14` changes only the map from budget to count,
@@ -653,7 +678,7 @@ being inserted.
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
 | **19.7** | `BufferPool`'s accounting, and nothing else: the under-report whenever `keeps` admits a buffer larger than `slot_bytes` ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The plain partition's cap, reviewed"); the **coupling of the block pool's free and retained counts**, without which a stated budget bounds half of what that pool holds; and `BlockCache::affordable` requiring room for **two** units rather than one, since a coupled count of one is the un-poolable shape that pool rejects by name. Re-scoped after the spec was written — see the row below and [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries, closed". |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
-| **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, the v1 fixture tree that tests `RT4`'s shape against the reader, and a test pinning the below-reserve arrangement so no floor can silently change it. |
+| **19.9** | Resolution tests, the status line's provenance — `(default: no limit found)` saying what it *means*, that no limit is being enforced — the below-floor `PlanNote`, the v1 fixture tree that tests `RT4`'s shape against the reader, and a test pinning the below-reserve arrangement so no floor can silently change it. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`'s reading leaves it, the new defaults, both flags' help text, and the moved whole-block-decode threshold — `19.7` declines a file whose blocks exceed half the budget, where today it declines one whose blocks exceed the budget. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures against `19.14`'s raised `PARALLEL_BUDGET`. |
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |

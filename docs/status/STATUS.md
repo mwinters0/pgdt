@@ -397,7 +397,8 @@ the five orderings that bind are in the spec, not here.
       record that nobody stated one — the slot `19.9`'s provenance work already
       owns. Notes:
       [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
-- [ ] **19.9** Resolution tests, the status line's provenance, the below-floor
+- [ ] **19.9** Resolution tests, the status line's provenance — `(default: no
+      limit found)` saying no limit is being *enforced* — the below-floor
       `PlanNote`, and a test pinning the below-reserve arrangement.
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
@@ -435,10 +436,10 @@ the five orderings that bind are in the spec, not here.
       with nothing stated, plus one `--jobs` leg on a plain file — the shape
       whose arena retention no reading has put against a real limit — and the
       unlimited arm, as a unit test over a no-limit fixture root plus a
-      high-limit container rather than an unbounded run on a shared machine. **First job is the reserve's headroom** — ~7%
+      high-limit container rather than an unbounded run on a shared machine.
+      **Runs before `19.13` lands**, against a scratch build of the rule. **First job is the reserve's headroom** — ~7%
       through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%, and a
-      failure there reopens the reserve. A `runs/` probe, not a figure. Follows
-      `19.13`.
+      failure there reopens the reserve. A `runs/` probe, not a figure.
 
 ## Not started
 
