@@ -413,10 +413,10 @@ the five orderings that bind are in the spec, not here.
       instead. The arena null goes with it — a plain scan is now
       `16 MiB + 8.0 MiB` a worker uncapped and **flat** at `MALLOC_ARENA_MAX=2`.
       The constant is **256 MiB**, the uncapped compressed leg's fixed term
-      rather than its worst cell. Reviewed since: the rule ships unamended and
-      the fraction stays a ceiling, because what the sitting actually found is
-      a **divisor** charging 25 MiB for a sub-stream that holds 59.4 — `19.14`,
-      which lands before `19.13`. Notes:
+      rather than its worst cell. Reviewed since: what the sitting actually
+      found is a **divisor** charging 25 MiB for a sub-stream that holds 59.4,
+      so `19.14` corrects the charge and the rule's fraction is dropped as
+      structurally inert. Notes:
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
       rule, carrying `19.12`'s constant — plus the source's own budget

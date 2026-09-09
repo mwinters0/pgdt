@@ -98,41 +98,38 @@ The harness's renderer calls the constant "the uncapped leg's worst cell", which
 would be **+836 MiB**. That reading is right only where resident is flat in the
 stated budget, and it is flat on neither source now. What the rule actually
 needs is the part of resident the budget does **not** name — the intercept, 180
-MiB — because the part that scales with the budget is what
-`min(fraction × limit, limit − reserve)` has a fraction for. The spec asks for
-"one constant, taken from the compressed leg"; the intercept is that constant
-and the worst cell is the intercept plus a term the rule already has a slot for.
+MiB — because the part that scales with the budget is what a corrected divisor
+removes rather than what the reserve absorbs. The spec asks for "one constant,
+taken from the compressed leg"; the intercept is that constant, and the worst
+cell is the intercept plus a term that scales because the plan was
+under-charging.
 256 MiB is 180 rounded up past the fit's residuals, which reach ±36 MiB at the
 256 MiB cell where the per-rep spread is 732–892.
 
-**The fraction is now the term that binds, and `19.13` has to give it a number.**
-The spec calls it "a ceiling only" that "bounds nothing anyone has measured";
-against this line it is the only thing bounding a compressed parallel scan.
-Substituting resident ≈ 180 + 2.376 × budget (MiB, while the sub-stream count is
-below `--jobs`) into `resident ≤ limit` with `budget = f × limit`:
+**The fraction was read here as the term that binds; the review that followed
+found the divisor, and the fraction is dropped.** Resident scaled at
+~2.376 × budget only because `partition_advice` charged 25 MiB for a sub-stream
+holding 59.4 — so this sitting's line describes a *plan* that under-charges,
+not a cost the budget rule has to absorb. `19.14` corrects the charge, which
+makes resident the budget plus a constant and leaves the reserve doing the work
+the spec gave it. What the fraction would have asserted — that we do not take
+an allocation we cannot show we use — is enforced structurally instead, by
+`worker_count`'s `min(jobs, budget / C)` against `slots()`' clamp at
+`POOL_DEPTH.max(jobs)`. Reasoning:
+[2026-09-09](../status/history/2026-09-09.md), "The reserve entries, reviewed:
+the divisor is wrong, not the rule".
 
-| limit | largest safe `f` |
-|---|---|
-| 512 MiB | 0.27 |
-| 1 GiB | 0.35 |
-| 3 GiB | 0.40 |
-| unbounded | 0.42 |
-
-The count saturates at `--jobs`, so resident tops out near 180 + 24 × 59.4 ≈
-1.6 GiB and every limit above that is safe at any fraction. **The binding region
-is a limit between about 256 MiB and 1.6 GiB**, and a fraction around **0.25**
-covers all of it with margin.
-
-**Below about 300 MiB no fraction saves it**, and `19.13` should decide what
-that means rather than discover it: at a 256 MiB limit the 64 MiB floor plans
-two sub-streams and reads ~300 MiB resident, so a 24-worker compressed parse
-does not fit however the budget is set. The fixed 180 MiB term is what does not
-fit, and the lever that reaches it is the *worker count*, not the budget —
-`worker_count` already divides, but the intercept is charged whether one
-sub-stream runs or twenty. The below-floor `PlanNote` `19.9` owns is what tells
-that user their allocation bound the scan; whether the discovered default should
-also refuse to go parallel at all under such a limit is a decision this reading
-raises and does not settle.
+**What survives from this reading is the fit and the floor problem.** The line
+`180 MiB + 59.4` a sub-stream is what `19.13`'s constant is read from and what
+`19.14`'s corrected charge is checked against, and it is re-derived rather than
+re-measured, `19.14` changing the map from budget to count and not what a reader
+holds. And below roughly a 300 MiB limit a twenty-four-worker compressed parse
+does not fit however the budget is set, the fixed ~180 MiB term being what does
+not fit and the *worker count* being the only lever that reaches it. The
+below-floor `PlanNote` `19.9` owns is what tells that user their allocation
+bound the scan; whether the discovered default should also refuse to go
+parallel at all under such a limit is a decision this reading raises and does
+not settle.
 
 ## The harness change
 

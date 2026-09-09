@@ -35,8 +35,11 @@ apparatus is the one that took it.
 **`budget = limit − reserve` therefore cannot bound a compressed parallel scan
 under any constant, on this build.** Substituting the worst cell — 730 MiB — into a 3 GiB
 limit gives a 2.3 GiB budget, which by the same line reads about 5 GiB
-resident. The term that actually bounds the process is the *fraction ceiling*
-the spec calls a number that "bounds nothing anyone has measured".
+resident. The reason is the divisor rather than the rule — `partition_advice`
+charged 25 MiB for a sub-stream holding ~59 — and `19.14` corrects it, after
+which `limit − reserve` bounds this path as the spec intended and no fraction
+is needed ([2026-09-09](../status/history/2026-09-09.md), "The reserve entries,
+reviewed: the divisor is wrong, not the rule").
 
 **What the growth is made of, and it is not the allocator.**
 `stream::worker_count` divides the stated budget by `partition_bytes`, which

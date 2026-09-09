@@ -483,7 +483,19 @@ either — a flatness that is the *clamp's* and not a property of the budget.
 Above the clamp the budget is very much the lever, `slots()` becoming
 `budget / unit`; a `--jobs 24` sitting reads a block-decoding `.xz` from
 243 MiB to 1242 MiB across a 64–512 MiB budget axis ("The compressed source",
-where the doubled pool ceiling that produces it is filed). **What that remedy is
+where the doubled pool ceiling that produces it is filed).
+
+**The clamp is what makes a large budget inert, and the memory-budget rule
+rests on that rather than on a ceiling of its own.** Because `slots()` caps at
+`POOL_DEPTH.max(jobs)` and `stream::worker_count` is `min(jobs, budget / C)`
+for a per-reader cost `C`, resident saturates at `jobs × C` plus the fixed
+term and every byte of budget above that is taken by nothing — at 256 cores
+against a 128 GiB limit, ~15 GiB, bounded by the worker count and not by the
+allocation. That is why the discovered default is `limit − reserve` with **no
+fractional ceiling** over it: the property a fraction would assert is one this
+clamp already proves. **So a change that unclamps `slots()` makes a large
+budget suddenly real**, and it has to price that against the rule, not only
+against the pool. **What that remedy is
 worth is not decided by the runtime, and there is no one number for it.** A
 controlled probe ran this same
 arrangement — `--jobs 4 --parallel-memory 268435456` — over a 3.00 GiB

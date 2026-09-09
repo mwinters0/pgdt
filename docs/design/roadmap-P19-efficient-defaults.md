@@ -222,17 +222,41 @@ nothing shared between them — so a block-decoding source's resident set tracks
 constant below the clamp and proportional above it, which no subtraction
 describes. **`19.7` therefore couples the two counts** so that one stated
 number bounds the pool ("[`architecture.md`](architecture.md), The compressed
-source"), and the rule below is correct as written once it does; without that
-repair `limit − reserve` bounds nothing on the compressed path and the fraction
-is doing undeclared work.
+source"); without that repair `limit − reserve` bounds nothing on the
+compressed path.
+
+**The coupling was necessary and not sufficient, which this spec did not
+foresee.** It predicted the rule would be correct as written once the counts
+were coupled. `19.12` measured the coupled build and found resident *up* a
+tenth rather than halved: the pools were bounded, and what the readers
+themselves hold was never in them. `19.14`'s corrected divisor is the other
+half, and only with both does `limit − reserve` bound the compressed path.
+Evidence: [2026-09-09](../status/history/2026-09-09.md), "The reserve entries,
+reviewed: the divisor is wrong, not the rule".
 Evidence: [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's
 two entries, closed".
 
 So the rule is `budget = limit − reserve`, floored at today's 64 MiB constant,
-with a **fraction as a ceiling only** — `min(fraction × limit, limit −
-reserve)`. The ceiling exists so that a very large allocation is not handed to
-the pools whole; it bounds nothing anyone has measured, and it is defensible as
-"we do not take an allocation we cannot show we use" rather than as a number.
+and **there is no fraction**. `Parallelism::discover()` returns that, and
+`ParallelArgs::resolve` narrows it by what the source says it can use.
+
+**The fraction was specified as a ceiling and is dropped, because the ceiling
+is structural.** "We do not take an allocation we cannot show we use" has an
+exact expression once the divisor charges honestly — `jobs × C`, for a
+per-reader cost `C` — and the mechanism already enforces it from two sides:
+`stream::worker_count` is `min(jobs, budget / C)`, and `BufferPool::slots`
+clamps at `POOL_DEPTH.max(jobs)`. So resident saturates at `180 + jobs × C` and
+every byte of budget above that is inert, at any limit and on any machine — at
+256 cores against a 128 GiB limit it is ~15 GiB, bounded by the worker count
+and not by the budget. A number that provably never binds is worse than no
+number, because it reads as a safety margin and is not one.
+
+**What that costs is a coupling, stated rather than hedged against.** The
+inertness rests on `slots()` clamping at `POOL_DEPTH.max(jobs)`; a change that
+unclamps it makes a large budget suddenly real. That consequence is recorded
+beside the clamp ([`architecture.md`](architecture.md), "Execution model and
+API surface") rather than guarded by a fraction hedging against a change nobody
+has proposed.
 
 **The reserve is one constant, taken from the compressed leg, and it
 over-reserves the plain path by roughly the difference.** The two paths' fixed
@@ -562,11 +586,11 @@ being inserted.
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
 | **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, and the v1 fixture tree that tests `RT4`'s shape against the reader. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`'s reading leaves it, the new defaults, both flags' help text, and the moved whole-block-decode threshold — `19.7` declines a file whose blocks exceed half the budget, where today it declines one whose blocks exceed the budget. |
-| **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`. |
+| **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures against `19.14`'s raised `PARALLEL_BUDGET`. |
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |
 | **19.13** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule, carrying `19.12`'s constant — plus the source's own budget recommendation, which `ParallelArgs::resolve` asks for when `--parallel-memory` is absent as it already asks for a worker count when `--jobs` is. One slice because they are one review question: what a flagless invocation ends up with for a budget. |
-| **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
-| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds. A `runs/` probe, not a figure. |
+| **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. Raises `measure.PARALLEL_BUDGET` 1 GiB → 2 GiB with the harness prose that explains it, the old value no longer admitting the widest row's twenty-four workers; the readings follow at `19.11`. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
+| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. A `runs/` probe, not a figure. |
 
 **`19.14` and `19.15` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
