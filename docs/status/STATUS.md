@@ -364,8 +364,17 @@ the four orderings that bind are in the spec, not here.
       constants moved with it and `determinism.rs`'s shipped-configuration leg
       now sizes its dump off the source. Notes:
       [`../design/roadmap-P19.5-retained-unit-notes.md`](../design/roadmap-P19.5-retained-unit-notes.md)
-- [ ] **19.6** The reserve figure registered and taken diagnostically to choose
-      the constant. No published table.
+- [x] **19.6** The reserve figure is registered (`measure.UNTAKEN`, no marker in
+      the doc) and taken diagnostically — `runs/measure-20260909T084032`,
+      `--alone`, NOT PUBLISHABLE. **A constant exists on the plain path and not
+      on the compressed one**: plain holds 37.4 MiB whatever is stated, while a
+      block-decoding `.xz` at `--jobs 24` reads `160 MiB + 54 MiB` a sub-stream
+      against a divisor charging 25 MiB — 243 MiB resident at a 64 MiB budget
+      and 1242 MiB at 512 MiB — so `limit − reserve` bounds nothing there under
+      any constant. The three `MALLOC_ARENA_MAX` legs agree within the spreads,
+      the one disjoint pair reversing sign, which is `19.3`'s runtime rather
+      than a null instrument. Notes:
+      [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md)
 - [ ] **19.7** `discover_memory_limit`, `Parallelism::discover`, the budget
       rule, and `BufferPool`'s accounting, which under-reports whenever
       `keeps` admits a buffer larger than `slot_bytes`.
@@ -553,4 +562,33 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **`19.6` refutes `limit − reserve` on the compressed path, and `19.7` is the
+  slice that implements it.** The spec's rule is `budget = min(fraction ×
+  limit, limit − reserve)`, with the fraction described as a ceiling that
+  "bounds nothing anyone has measured". The sitting says the opposite: on a
+  24 MiB-block `.xz` at `--jobs 24` a decoding worker holds about 2.2× what
+  `stream::worker_count`'s divisor charges it, so resident is `160 MiB + 54 MiB`
+  a sub-stream and no constant subtraction bounds the process — the fraction is
+  the only term that does. **The call made was to leave the spec alone and land
+  the evidence**, because reversing a spec rationale is outside what an
+  unattended session may settle. What the maintainer is being asked to decide
+  is which of three `19.7` becomes: ship the rule as written and let the
+  fraction do the work (and then choose the fraction, which nothing has
+  measured); charge a compressed worker what it actually holds first, and
+  re-take the reserve against that; or re-grill the section. The plain path
+  needs none of this — its reserve is a flat 37.4 MiB. Evidence:
+  [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md).
+- **The arena cap has no measurable price, so two decisions resting on one are
+  unsupported.** The spec's "The reserve is a figure, and it is measured
+  uncapped" section decides that the shipped constant comes from the uncapped
+  leg *because* the two differ by roughly the 200 MiB the arenas hold, and calls
+  the operator who capped them getting a smaller budget "the strongest argument
+  for reversing" the in-binary-`mallopt` refusal. On this shape, after `19.3`,
+  uncapped and both capped legs agree inside the per-rep spreads at all eight
+  cells. **The call made was to change nothing** — the sitting is a diagnostic
+  on one 3.00 GiB file and is not a controlled refutation of the koji probe that
+  produced the 200 MiB. What the maintainer is being asked to decide is whether
+  `19.10` still recommends `MALLOC_ARENA_MAX` in the manual at all, and whether
+  the price paragraph stands, given that the only reading taken since the
+  runtime changed cannot see the effect it prices. Evidence:
+  [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md).

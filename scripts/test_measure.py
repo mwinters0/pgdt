@@ -301,7 +301,11 @@ class WorkerCount(unittest.TestCase):
         # while a whole family of shapes went unenumerated, which is precisely
         # the drift it exists to catch.
         for name in re.findall(r"command\.startswith\((_?[A-Z][A-Z_0-9]*)\)", src):
-            prefixes |= set(getattr(measure, name))
+            named = getattr(measure, name)
+            # A named prefix is one string or a tuple of them; `set()` over the
+            # first would enumerate its *characters*, which resolves to a set of
+            # single letters and fails this reconciliation on every one of them.
+            prefixes |= {named} if isinstance(named, str) else set(named)
         shapes = set(measure.command_shapes())
         self.assertTrue(exact)
         self.assertTrue(prefixes)
@@ -1653,6 +1657,143 @@ class ParallelFigures(unittest.TestCase):
                 )
 
 
+class Reserve(unittest.TestCase):
+    """The instrument behind the budget rule's one number.
+
+    Every assertion here is a way to get a plausible table of the wrong thing,
+    which is the family this module already covers for the `--jobs` axis. Four
+    matter most and each fails silently. An **arena setting that never
+    reached the process** — written where the wrapper takes it as an argument
+    rather than as its environment — gives three legs that agree, which reads as
+    "the cap buys nothing" rather than as an instrument that set nothing. A
+    **budget the shape does not carry** would run at whatever was typed and be
+    read as the row it is labelled with. A **worker count drifting onto
+    `SWEEP_JOBS`** would size the reserve for an arrangement the discovered
+    default never produces. And a **`Shared` edge declared while the figure is
+    untaken** entangles `peak-rss`, which the doc carries from a standalone
+    sitting, and fails `--check` with no sweep yet to cure it.
+    """
+
+    def _fig(self):
+        return measure.SELECTABLE_BY_ID["reserve"]
+
+    def _shape(self, token="unset", budget=None):
+        return f"{measure.RESERVE_FAMILY}{token}-{budget or measure.RESERVE_BUDGETS[0]}"
+
+    def test_every_registered_leg_has_a_shape(self):
+        shapes = set(measure.command_shapes())
+        for token, _, _ in measure.RESERVE_ARENAS:
+            for budget in measure.RESERVE_BUDGETS:
+                with self.subTest(arena=token, budget=budget):
+                    self.assertIn(self._shape(token, budget), shapes)
+
+    def test_the_arena_setting_is_the_processs_environment(self):
+        # `perl` is `exec`ed by the wrapper, so an assignment in front of it is
+        # inherited by pgdq. In front of `/pgdq` it would be a further argument
+        # to `perl` and would set nothing at all.
+        for token, value, _ in measure.RESERVE_ARENAS:
+            with self.subTest(arena=token):
+                script = measure._script(self._shape(token))
+                if not value:
+                    self.assertNotIn("MALLOC_ARENA_MAX", script)
+                    continue
+                self.assertIn(f"time MALLOC_ARENA_MAX={value} perl", script)
+
+    def test_one_leg_sets_nothing_and_it_is_the_one_the_constant_comes_from(self):
+        # The shipped default has to survive the operator who followed no
+        # recommendation, so an uncapped leg is not optional decoration.
+        unset = [token for token, value, _ in measure.RESERVE_ARENAS if not value]
+        self.assertEqual(unset, ["unset"])
+
+    def test_the_recommended_cap_is_the_worker_count_the_spec_publishes(self):
+        recommended = dict((t, v) for t, v, _ in measure.RESERVE_ARENAS)["recommended"]
+        self.assertEqual(recommended, str(measure.RESERVE_JOBS + 1))
+
+    def test_a_budget_or_arena_the_figure_does_not_carry_is_an_error(self):
+        # Parsed rather than matched, so an unregistered value has to be
+        # refused explicitly or it runs and is read as a row of the table.
+        with self.assertRaises(ValueError):
+            measure._script(self._shape(budget=99))
+        with self.assertRaises(ValueError):
+            measure._script(self._shape(token="sixteen"))
+
+    def test_the_axis_starts_at_the_librarys_own_default(self):
+        # The smallest budget is the conservative end -- resident being roughly
+        # flat in the stated budget makes the reserve fall as the budget rises
+        # -- and it is also the number a run that states nothing gets.
+        self.assertEqual(measure.RESERVE_BUDGETS[0], measure.LIBRARY_DEFAULT_BUDGET)
+        self.assertEqual(sorted(measure.RESERVE_BUDGETS), list(measure.RESERVE_BUDGETS))
+
+    def test_every_budget_is_a_whole_mebibyte(self):
+        for budget in measure.RESERVE_BUDGETS:
+            with self.subTest(budget=budget):
+                self.assertEqual(measure._fmt_budget(budget), f"{budget >> 20} MiB")
+
+    def test_every_shape_states_the_figures_own_worker_count(self):
+        for token, _, _ in measure.RESERVE_ARENAS:
+            with self.subTest(arena=token):
+                script = measure._script(self._shape(token))
+                self.assertIn(f"--jobs {measure.RESERVE_JOBS} ", script)
+                self.assertEqual(script.count("time "), 1)
+        self.assertNotEqual(measure.RESERVE_JOBS, measure.SWEEP_JOBS)
+        self.assertEqual(measure.RESERVE_JOBS, measure.PARALLEL_JOBS[-1])
+
+    def test_the_family_is_a_declared_axis_rather_than_an_unpinned_shape(self):
+        # Both halves of the worker-count reconciliation: the family states a
+        # count, and it is exempt from `SWEEP_JOBS` because it declares itself.
+        self.assertEqual(measure.worker_count_problems(), [])
+        self.assertEqual(measure.pinned_count_problems(), [])
+
+    def test_the_shape_name_says_it_carries_a_resident_reading(self):
+        # `time_run` reads the wrapper's report only for a shape whose name
+        # contains `rss`; without it every reading here would come back `None`
+        # and the table would fail on a missing key rather than on a wrong one.
+        self.assertIn("rss", measure.RESERVE_FAMILY)
+
+    def test_both_sources_are_read(self):
+        # A reserve that is a property of the source is not a constant, so the
+        # loosest shape is read beside the tightest.
+        self.assertEqual([n for n, _ in measure.RESERVE_INPUTS], ["control_xz", "control"])
+
+    def test_the_serial_baseline_is_peak_rsss_own_row(self):
+        # Spec for spec, which is what makes it the borrow this figure declares
+        # when it is published rather than a second reading of one measurement.
+        base = measure._RESERVE_BASELINE
+        # By key, which is what identifies a reading: the label is what the
+        # table prints and is free to differ between two figures naming one run.
+        keys = [s.key("peak-rss") for s in _peak_rss_specs()]
+        self.assertIn(base.key("peak-rss"), keys)
+        self.assertEqual(base.input, "control")
+        self.assertIn("control", measure._RSS_ROWS)
+
+    def test_it_declares_no_share_while_it_is_untaken(self):
+        """The same obligation `rss-attribution` carries, and for the same reason.
+
+        Declaring the edge from `UNTAKEN` entangles `peak-rss`, whose table the
+        doc carries from a standalone `41c96bb` sitting, so `--check` would
+        refuse that marker with no sweep yet to cure it. The edge is declared in
+        the change that moves this entry into `FIGURES` -- and that change owes
+        a harness change with it, `Session.borrow` copying wall clock only."""
+        fig = self._fig()
+        if fig in measure.UNTAKEN:
+            self.assertEqual(fig.shares, ())
+        else:
+            self.assertIn("peak-rss", [s.source for s in fig.shares])
+
+    def test_the_baselines_input_is_staged(self):
+        # It is one of the two already; naming it anyway is what survives the
+        # day it is not.
+        self.assertIn(measure._RESERVE_BASELINE.input, self._fig().warm_inputs)
+        self.assertEqual(
+            len(self._fig().warm_inputs), len(set(self._fig().warm_inputs))
+        )
+
+    def test_it_carries_no_marker_in_the_document(self):
+        # An untaken instrument has no table in the doc, so a marker for it
+        # would be a section with no numbers under it.
+        doc = (measure.REPO / "docs/design/measurements.md").read_text()
+        self.assertNotIn("<!-- figure: reserve ", doc)
+
 class PinnedWorkerCount(unittest.TestCase):
     """The other half of the `JOBS_AXIS` exemption.
 
@@ -1854,6 +1995,10 @@ class XzDecodeScaling(unittest.TestCase):
         "xz-decode-scaling",
         "parallel-scan-throughput",
         "parallel-peak-rss",
+        # The reserve's largest stated budget is itself larger than the
+        # recorded 512 MB, so the container that holds a run of it cannot be
+        # the recorded one; its `.xz` legs hold N decoded blocks besides.
+        "reserve",
     }
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):

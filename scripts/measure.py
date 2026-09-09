@@ -1968,6 +1968,81 @@ SWEEP_JOBS = 1
 #: apparatus departure and the figure's own table says so.
 DECODE_MEMORY = "2g"
 
+#: `pgdump_query::io::DEFAULT_MEMORY_BUDGET`, mirrored.
+#:
+#: Hardcoded rather than read out of the source, on `QUERY_SUBSTREAM_CAP`'s
+#: argument: a second authority on the library's own constants goes stale
+#: silently, and a literal checked by hand once is exactly as good until the
+#: constant moves — at which point the figure is stale on paths its `depends`
+#: already names. It is what a run that states no budget gets, which is the one
+#: reading `reserve` takes off the budget axis.
+LIBRARY_DEFAULT_BUDGET = 64 << 20
+
+#: The stated budgets `reserve` reads a resident set across: its one axis.
+#:
+#: **Four, spanning an order of magnitude either side of the library's own
+#: `DEFAULT_MEMORY_BUDGET`**, because the quantity that figure publishes is a
+#: *difference* from the number stated and one reading of it cannot say whether
+#: the difference is a constant or a fraction — which is exactly the question
+#: the budget rule turns on (`roadmap-P19-efficient-defaults.md`, "What is
+#: discovered, and what the default makes of it").
+#:
+#: **The axis has already earned itself.** A plain source reads flat across all
+#: four, so its reserve is a constant and the smallest budget is the
+#: conservative end; a block-decoding `.xz` reads a line in the *sub-stream
+#: count* the budget affords, so no cell of it is a constant at all
+#: (`roadmap-P19.6-reserve-figure-notes.md`). One reading could have said
+#: neither.
+RESERVE_BUDGETS: tuple[int, ...] = (64 << 20, 128 << 20, 256 << 20, 512 << 20)
+
+#: The worker count every reserve reading states.
+#:
+#: The top of `PARALLEL_JOBS`, which is this machine's `available_parallelism()`
+#: and so the count `Parallelism::discover()` resolves here. A reserve is a
+#: reserve *for* a thread count — glibc seeds an arena per thread that allocates
+#: — so reading it at a smaller count would size the shipped constant for an
+#: arrangement the discovered default does not produce.
+#:
+#: **This is a declared axis for `pinned_count_problems`, not an inherited
+#: count.** The family states it on every shape; what makes it exempt from
+#: `SWEEP_JOBS` is that the figure holds the count fixed and varies the budget,
+#: which is the same exemption `JOBS_AXIS` takes with the two swapped.
+RESERVE_JOBS = PARALLEL_JOBS[-1]
+
+#: The three arena settings each budget is read at: token, `MALLOC_ARENA_MAX`
+#: value (empty = set nothing), and what the table calls the leg.
+#:
+#: **Three, because the shipped constant and the recommendation are different
+#: questions.** `unset` is where the constant comes from: the default has to
+#: survive the operator who did not follow the recommendation, since that is the
+#: case that kills the process. `recommended` is the value the spec publishes —
+#: the worker count, or that count plus one — and prices what following it buys.
+#: `two` is the floor the manual publishes today and what the koji probes used;
+#: it bounds how much of the resident set is arena retention at all, which
+#: neither of the other two can say on its own.
+RESERVE_ARENAS: tuple[tuple[str, str, str], ...] = (
+    ("unset", "", "arenas uncapped"),
+    ("recommended", str(RESERVE_JOBS + 1), f"`MALLOC_ARENA_MAX={RESERVE_JOBS + 1}`"),
+    ("two", "2", "`MALLOC_ARENA_MAX=2`"),
+)
+
+#: The two sources each leg is read over, and what the table calls each.
+#:
+#: **Both, because a reserve that is a property of the source is not a
+#: constant.** The budget binds the pools on a block-decoding `.xz` and barely
+#: binds anything on a plain source, so a rule stating one number has to be
+#: read against the shape where it is loosest as well as the one where it is
+#: tightest.
+RESERVE_INPUTS: tuple[tuple[str, str], ...] = (
+    ("control_xz", "`.xz`"),
+    ("control", "plain"),
+)
+
+#: The command-shape prefix the reserve family answers to. It carries `rss`
+#: because `Session.time_run` reads the wrapper's report only for a shape whose
+#: name says it has one.
+RESERVE_FAMILY = "parse-rss-reserve-"
+
 
 def fmt_chunk(size: int) -> str:
     """A chunk size as the table spells it — KiB below a mebibyte, else MiB.
@@ -2115,6 +2190,28 @@ def _script(command: str) -> str:
             f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
             f"--chunk-size {size} {j} >/dev/null"
         )
+    if command.startswith(RESERVE_FAMILY):
+        # The reserve family: one stated budget, one stated worker count, and
+        # an arena setting in front of the wrapper rather than on `nerdctl
+        # run`, so the whole leg is visible in the recorded argv the way every
+        # other apparatus choice is.
+        #
+        # **The assignment goes before `perl`, not before `/pgdq`.** The
+        # wrapper `exec`s its arguments, so the child inherits the environment
+        # it was started with; an assignment written on the inner command would
+        # be a further argument to `perl` and would set nothing.
+        token, _, budget = command.removeprefix(RESERVE_FAMILY).rpartition("-")
+        arenas = {name: value for name, value, _ in RESERVE_ARENAS}
+        if token not in arenas:
+            raise ValueError(f"{command!r} names an arena setting the figure does not carry")
+        if not budget.isdigit() or int(budget) not in RESERVE_BUDGETS:
+            raise ValueError(f"{command!r} names a budget the figure does not carry")
+        arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
+        return (
+            f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
+            f"--source /dump.sql --dqcache /tmp/x.dqcache "
+            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} >/dev/null"
+        )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Everything else about them is the shape they are
@@ -2193,6 +2290,11 @@ def command_shapes() -> tuple[str, ...]:
         *(f"query-where-{s}" for s in PREDICATE_SHAPES),
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
+        *(
+            f"{RESERVE_FAMILY}{token}-{budget}"
+            for token, _, _ in RESERVE_ARENAS
+            for budget in RESERVE_BUDGETS
+        ),
         *(f"decode-{w}" for w in DECODE_WORKERS),
         "dd",
     )
@@ -2240,7 +2342,9 @@ def pinned_count_problems() -> list[str]:
     """
     bad = []
     for command in command_shapes():
-        if command in _NO_WORKERS or command.startswith(("decode-", *JOBS_AXIS)):
+        if command in _NO_WORKERS or command.startswith(
+            ("decode-", RESERVE_FAMILY, *JOBS_AXIS)
+        ):
             continue
         stated = set(_WORKER_COUNT.findall(_script(command)))
         if stated != {f"--jobs {SWEEP_JOBS}"}:
@@ -4334,6 +4438,122 @@ def run_parallel_peak_rss(session: Session) -> str:
     return table + notes
 
 
+# -- what a scan holds above the budget it was given ------------------------
+
+
+def _fmt_budget(n: int) -> str:
+    """A stated budget, in MiB.
+
+    Not `_fmt_bytes`, which labels a mebibyte-scale value `MB`: that reads
+    correctly for a file whose size nobody chose and wrongly for a number
+    someone typed on a command line as `--parallel-memory 67108864`. Every
+    registered budget is a whole mebibyte, which a test holds."""
+    if n % MIB:
+        raise ValueError(f"budget {n} is not a whole number of MiB")
+    return f"{n >> 20} MiB"
+
+
+#: The one reading this figure does not take on the budget axis: the shipped
+#: serial arrangement, at the library's own `DEFAULT_MEMORY_BUDGET`.
+#:
+#: **It is `peak-rss`'s `control` row, spec for spec**, which is what makes it
+#: the `Shared` edge this figure declares when it is published — the same
+#: binary, command, input and regime, so measuring it twice would put two
+#: numbers in the doc for one measurement. It is measured here while the figure
+#: is untaken, for the reason `rss-attribution` declares no edge either: an edge
+#: declared from `UNTAKEN` entangles `peak-rss`, which the doc carries from a
+#: standalone sitting, and refuses that sitting's marker with no sweep yet to
+#: cure it.
+_RESERVE_BASELINE = RunSpec("pgdq", "control", "parse-rss", "warm", "plain, serial default")
+
+
+def _reserve_specs() -> list[RunSpec]:
+    """One spec per source, arena setting and stated budget.
+
+    A leg is identified by its command shape, which carries both the arena
+    token and the budget, so two legs differing only in the words the table
+    prints cannot share a reading -- the failure `_attribution_specs` names."""
+    return [
+        RunSpec(
+            "pgdq",
+            name,
+            f"{RESERVE_FAMILY}{token}-{budget}",
+            "warm-parallel",
+            f"{source} {arena}, {_fmt_budget(budget)} stated",
+        )
+        for name, source in RESERVE_INPUTS
+        for token, _, arena in RESERVE_ARENAS
+        for budget in RESERVE_BUDGETS
+    ]
+
+
+def run_reserve(session: Session) -> str:
+    """What a scan holds resident **above** the budget it was told it could have.
+
+    The budget rule the phase ships is `limit - reserve`, and this is the one
+    number in it. Neither existing resident figure answers it: `peak-rss`
+    measures the whole against nothing, and `rss-attribution` decomposes growth
+    per `COPY` block. Here the stated budget is the axis and the published
+    quantity is the subtraction, so a leg whose reserve grows with the budget is
+    a rule that cannot be a constant at all.
+
+    **The shipped constant comes from the uncapped leg**, because the default
+    has to survive the operator who did not set `MALLOC_ARENA_MAX` -- that being
+    the case that kills the process -- and from the smallest budget, the reserve
+    falling as the budget rises wherever resident is flat in it.
+    """
+    figure = "reserve"
+    specs = _reserve_specs()
+    session.sweep(figure, [*specs, _RESERVE_BASELINE], session.cfg.reps(3))
+
+    by_key = {
+        (spec.input, spec.command.removeprefix(RESERVE_FAMILY).rpartition("-")[0],
+         int(spec.command.rpartition("-")[2])): spec
+        for spec in specs
+    }
+    rows, per_rep, worst = [], [], {}
+    for name, source in RESERVE_INPUTS:
+        for token, _, arena in RESERVE_ARENAS:
+            cells = [f"{source}, {arena}"]
+            for budget in RESERVE_BUDGETS:
+                spec = by_key[(name, token, budget)]
+                readings = session.get_rss(figure, spec)
+                reserve = median(readings) - budget / 1024
+                worst[token] = max(worst.get(token, reserve), reserve)
+                cells.append(f"{fmt_mib_median_spread(readings)} · {fmt_rss_delta(reserve)}")
+                per_rep.append(
+                    f"- {spec.label}: " + ", ".join(fmt_mib(v) for v in readings)
+                )
+            rows.append(cells)
+    table = md_table(
+        ["Leg", *(_fmt_budget(b) + " stated" for b in RESERVE_BUDGETS)], rows
+    )
+
+    base = session.get_rss(figure, _RESERVE_BASELINE)
+    base_reserve = median(base) - (LIBRARY_DEFAULT_BUDGET / 1024)
+    per_rep.append(
+        f"- {_RESERVE_BASELINE.label}: " + ", ".join(fmt_mib(v) for v in base)
+    )
+    notes = (
+        f"\n\nEach cell is peak resident set, then that reading **minus the budget the run "
+        f"stated** — the reserve. Every row states `--jobs {RESERVE_JOBS}` in a "
+        f"{PARALLEL_MEMORY} container, an apparatus departure from the register's "
+        f"512 MB, which is smaller than the largest budget under test.\n\n"
+        "**The constant the budget rule takes is the uncapped leg's worst cell**, since the "
+        "default must survive an operator who set no arena cap: "
+        + ", ".join(
+            f"{arena} **{fmt_rss_delta(worst[token])}**" for token, _, arena in RESERVE_ARENAS
+        )
+        + ".\n\n"
+        f"**The shipped serial arrangement is read beside it and not on the axis**: "
+        f"`control` at `--jobs 1` with no budget stated runs at the library's "
+        f"{_fmt_budget(LIBRARY_DEFAULT_BUDGET)} default and holds "
+        f"{fmt_mib_median_spread(base)}, a reserve of **{fmt_rss_delta(base_reserve)}**. That "
+        "run is `peak-rss`'s own `control` row — the same binary, command, input and regime — "
+        "so publishing this table means declaring it a shared reading rather than measuring "
+        "it twice.\n"
+    )
+    return table + notes + "\nPer-rep readings (peak RSS):\n" + "\n".join(per_rep) + "\n"
 def _fmt_ns(ns: float) -> str:
     return f"{ns / 1000:.2f} µs" if ns >= 1000 else f"{ns:.0f} ns"
 
@@ -4843,6 +5063,50 @@ UNTAKEN: list[Figure] = [
         ),
         warm_inputs=_ATTRIBUTION_INPUTS,
         run=run_rss_attribution,
+    ),
+    # The budget rule's one number, and the third resident-set instrument. It
+    # waits here rather than in `FIGURES` because the sitting that chooses the
+    # constant is **diagnostic** — the phase spec gives it no published table
+    # until the closing sweep, which is also the sitting that can afford it the
+    # `Shared` edge below.
+    #
+    # **It declares no share while it is untaken, for `rss-attribution`'s
+    # reason.** Its serial-default row is `peak-rss`'s `control` row spec for
+    # spec, so the two must eventually share a reading rather than take one
+    # each; declaring that edge from here would entangle `peak-rss`, which the
+    # doc carries from a standalone `41c96bb` sitting, and fail `--check` on
+    # that sitting's marker with no sweep yet to cure it. **Whichever sweep
+    # declares it owes a harness change with it**: `Session.borrow` copies wall
+    # clock only, so an RSS reading cannot cross a share today.
+    Figure(
+        id="reserve",
+        section="What a scan holds above the budget it was given",
+        # Two regimes: the budget axis occupies every hardware thread and is
+        # gated as `warm-parallel`, while the serial-default row is the shape
+        # `peak-rss` takes and is gated as that figure gates it.
+        stage="warm+warm-parallel",
+        # What `parallel-peak-rss` declares, which is where a resident set
+        # under a stated budget is decided, plus the map and the cache — a
+        # per-block cost accumulates in those and would read here as reserve.
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *CACHE,
+            *QUERY_CLI,
+            "pgdump_query/src/leader.rs",
+            "vendor/xz-seek/src/",
+            "scripts/generate_xz_input.py",
+            *GEN_PERF,
+        ),
+        # The baseline's input is one of the two already, and is named anyway:
+        # the day it is not, a staging list built off `RESERVE_INPUTS` alone
+        # would leave that row's file unstaged.
+        warm_inputs=tuple(
+            dict.fromkeys((*(name for name, _ in RESERVE_INPUTS), _RESERVE_BASELINE.input))
+        ),
+        memory=PARALLEL_MEMORY,
+        run=run_reserve,
     ),
 ]
 
