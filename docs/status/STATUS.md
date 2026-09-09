@@ -323,8 +323,9 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the four orderings that bind are in the spec, not here.
 
-- [ ] **19.1** `runtime-invariants.md` — the register, and `CLAUDE.md`'s
-      read-trigger beside the Postgres one. No code.
+- [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
+      `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
+      [`../design/roadmap-P19.1-runtime-invariants-notes.md`](../design/roadmap-P19.1-runtime-invariants-notes.md)
 - [ ] **19.2** The plain-path account — a profile of `--jobs 1` against
       `--jobs 2`, and a `--alone` sitting against a raised-`POOL_DEPTH` scratch
       build. No shipped code.
@@ -516,4 +517,18 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **`runtime-invariants.md` cites the kernel by URL, not from a local
+  checkout.** `postgres-invariants.md`'s every entry greps a worktree under
+  `/mnt/wd12t/upstream/postgres/`, and the natural sibling move was to clone
+  Linux beside it so `RT1`–`RT6`'s proofs are local greps too. That was not
+  done: the six files needed were read at
+  `https://raw.githubusercontent.com/torvalds/linux/v7.1/<path>`, and the
+  register's preamble says so. The reasoning is that a Linux clone is
+  hour-scale on the HDD and multi-gigabyte for six files, and that the spec
+  makes each entry's `Re-verify` a **container invocation** rather than a grep
+  — so unlike the Postgres register, the walk ritual never needs the source
+  tree; it is proof-of-mechanism only. **What changes if reconsidered:** a
+  `/mnt/wd12t/upstream/linux/` worktree per kernel tag, `Proof` fields
+  rewritten to name local paths, and the preamble's "not checked out locally"
+  paragraph deleted. It is a convention for a register that is one slice old,
+  so it is cheap to reverse now and steadily less so.

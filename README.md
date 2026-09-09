@@ -48,6 +48,7 @@ cargo run -p pgdump_query-cli -- info --source <dump.sql> --detail
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.
 - [`docs/design/layering.md`](docs/design/layering.md) — the four-layer module constraint and the greps that enforce it.
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.
+- [`docs/design/runtime-invariants.md`](docs/design/runtime-invariants.md) — the same, for the environment the process is given: the cgroup memory and CPU interfaces, and `std`'s reading of them.
 - [`docs/design/measurements.md`](docs/design/measurements.md) — every performance figure the design relies on, each with the command that reproduces it.
 - [`docs/design/pg-dump-compatibility.md`](docs/design/pg-dump-compatibility.md) — tracked `pg_dump` option support matrix.
 - [`docs/design/historical/initial.md`](docs/design/historical/initial.md) — frozen original design handoff.

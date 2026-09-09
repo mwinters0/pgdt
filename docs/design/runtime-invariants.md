@@ -1,0 +1,488 @@
+# Runtime-environment invariants we rely on
+
+Every entry is a property of the environment the process is *given* — the
+kernel's cgroup interface, and the standard library's reading of it — that some
+design decision treats as guaranteed. Each records what the invariant is, the
+source that proves it, the versions it was verified against, and how to
+re-verify it.
+
+**This is [`postgres-invariants.md`](postgres-invariants.md)'s sibling, and it
+exists for the same reason**: a kernel release, a container runtime, or a
+toolchain bump can quietly invalidate one of these, and the resulting bug
+surfaces as a process that sized itself wrongly rather than as an error — an OOM
+kill under an orchestrator, or a scan that took a fifth of the machine it was
+given. The trigger to walk this file is therefore three-sided, and each side has
+its own entries: a **kernel major**, a **container-runtime upgrade**, and a
+**Rust toolchain bump** (`RT7` only, whose behaviour is `std`'s).
+
+**It is named for the runtime environment rather than for Linux or for
+cgroups.** The mechanism these entries serve — a process discovering its own
+allocation — has an answer on a machine with no container runtime and on an
+operating system with no cgroups, and that answer belongs in the same file as
+this one. Naming the file after the evidence it happens to hold today would send
+the next such entry somewhere else.
+
+**Identifiers are `RT<n>`**, allocated on discovery and never reused, for the
+reason every register here numbers its entries: an entry gets cited, and a
+citation that renumbers is a citation that lies. Two letters rather than one is
+`docs/process.md`'s advice under "Known deficiencies", and here it is not
+merely advice — `R<n>` is already spoken for in this tree by the `xz-seek`
+crate's requirements register, which two phase inboxes cite by number
+([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md), "The
+seekable-xz crate reads its compressed bytes through a trait, on purpose").
+
+**`RT1`–`RT7` are allocated**, and nothing at or below `RT7` is reused.
+
+**The `Re-verify` field is a container invocation, not a citation.** Reading the
+kernel source proves what the kernel *does*; what a decision here rests on is
+that the value a deployment asks for is the value this process reads back, and
+only a run establishes that. That is the same ritual `postgres-invariants.md`
+runs across six server images, and an entry without one is an entry nobody
+checks. Where a claim cannot be produced on this machine — `RT4`, which needs a
+host booted onto the v1 hierarchy — the entry says so in `Verified against`
+rather than quietly resting on source alone.
+
+Kernel line numbers and quotations below are from **v7.1** and are a starting
+point, not an anchor — grep for the quoted code instead. The files are not
+checked out locally; read them at
+`https://raw.githubusercontent.com/torvalds/linux/v7.1/<path>`, or from a local
+checkout if one is ever made.
+
+Container invocations are written with `docker`, which is this project's
+convention for the container runtime; see `CLAUDE.local.md` for what it is on
+this machine.
+
+---
+
+## RT1 — `/proc/self/cgroup` locates the process's own cgroup, and `/sys/fs/cgroup` is where it is mounted
+
+**Claim.** A process can find the cgroup directory that governs it by reading
+`/proc/self/cgroup` and joining the path it reports onto the cgroup filesystem's
+mount point. The file holds one line per hierarchy, each
+`<hierarchy-id>:<controllers>:<path>`; the cgroup v2 entry is **always**
+`0::<path>`, with an empty controller field. The v2 mount point is
+`/sys/fs/cgroup` by convention (`file-hierarchy(7)`), and `/proc/self/mountinfo`
+is the authority where it is not.
+
+**Proof.** `proc_cgroup_show()` in `kernel/cgroup/cgroup.c` prints
+`root->hierarchy_id`, then a `:`, then the controller names — skipped entirely
+for the default hierarchy (`if (root != &cgrp_dfl_root)`) — then a `:`, then the
+path. `cgroup_setup_root(&cgrp_dfl_root, 0)` allocates the default root's id
+from `cgroup_hierarchy_idr` starting at 0, which is why the v2 line reads `0::`.
+`Documentation/admin-guide/cgroup-v2.rst` states it flatly: *"The entry for
+cgroup v2 is always in the format `0::$PATH`."*
+
+**Scope limit.** Three, and each is a parse hazard rather than a nicety:
+
+- **The path is namespace-relative.** `proc_cgroup_show()` renders it through
+  `cgroup_path_ns_locked(…, current->nsproxy->cgroup_ns)`, so a process inside
+  a cgroup namespace sees its cgroupns root as `/`. That is *correct* for our
+  use — the runtime mounts that same cgroup at `/sys/fs/cgroup` — but it means
+  the string is not a host path and must never be reported as one. Observed:
+  `docker run --memory 512m` gives `0::/`, while the same container with
+  `--cgroupns=host` gives
+  `0::/system.slice/nerdctl-<id>.scope`.
+- **A dead cgroup's path carries a ` (deleted)` suffix**, for a zombie on the
+  default hierarchy (`if (cgroup_on_dfl(cgrp) && cgroup_is_dead(cgrp))
+  seq_puts(m, " (deleted)\n")`). A reader that joins the raw path onto the mount
+  point opens a path that does not exist.
+- **Line order is not specified.** Where both hierarchies exist the v2 line may
+  come last; observed here as `<n>:name=pgdqprobe:/` above
+  `0::/user.slice/…`. Select the line by its shape, never by its position — and
+  not by the hierarchy id either, which `idr_alloc_cyclic` hands out cyclically
+  and which came back as `1` on one run of the check below and `2` on the next.
+
+**Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1, nerdctl 2.3.5 /
+containerd v2.3.3, cgroup driver systemd, cgroup version 2 (observed).
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
+is discovered, and what the default makes of it" — `discover_memory_limit`
+begins here. When P19 wraps this retargets at the mechanism's
+`architecture.md` section.
+
+**Re-verify.**
+
+```sh
+docker run --rm --memory 512m alpine:3 sh -c \
+  'cat /proc/self/cgroup; grep -E " cgroup2? " /proc/self/mountinfo'
+docker run --rm --memory 512m --cgroupns=host alpine:3 cat /proc/self/cgroup
+```
+
+The first prints `0::/` and one `cgroup2` mount at `/sys/fs/cgroup`; the second
+prints the container's full host path under the same `0::` shape.
+
+---
+
+## RT2 — cgroup v2 `memory.max` is a byte count or the literal string `max`
+
+**Claim.** `<cgroup>/memory.max` on a v2 hierarchy holds either a decimal byte
+count or the four bytes `max`, and nothing else. `max` means *no hard limit set
+at this level*. A byte count read back is the requested value floored to a whole
+page, so it is never larger than what was asked for and is equal whenever the
+request was page-aligned. The file exists on a **non-root** cgroup whose parent
+has the memory controller enabled in its `cgroup.subtree_control`, and never on
+the root.
+
+**Proof.** `seq_puts_memcg_tunable()` in `mm/memcontrol.c` is the whole of the
+read side:
+
+```c
+if (value == PAGE_COUNTER_MAX)
+        seq_puts(m, "max\n");
+else
+        seq_printf(m, "%llu\n", (u64)value * PAGE_SIZE);
+```
+
+The write side is `page_counter_memparse(buf, "max", …)` in `mm/page_counter.c`,
+which maps the literal string to `PAGE_COUNTER_MAX` and otherwise stores
+`min(bytes / PAGE_SIZE, PAGE_COUNTER_MAX)` — an integer division, which is the
+page floor. `Documentation/admin-guide/cgroup-v2.rst`: *"A read-write single
+value file which exists on non-root cgroups. The default is `max`. … Memory
+usage hard limit."*
+
+**Scope limit.** `max` is a *sentinel for this level*, not a statement that the
+process is unlimited — an ancestor may still bind (`RT5`). The floor is
+observable: `--memory 100000001b` reads back `99999744`, which is
+`floor(100000001 / 4096) × 4096`.
+
+**Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1, nerdctl 2.3.5 /
+containerd v2.3.3 (observed: `--memory 512m` → `536870912`, exactly 512 MiB;
+`--memory 100000001b` → `99999744`; the root cgroup has no `memory.max` file at
+all).
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
+is discovered, and what the default makes of it".
+
+**Re-verify.**
+
+```sh
+docker run --rm --memory 512m       alpine:3 cat /sys/fs/cgroup/memory.max
+docker run --rm --memory 100000001b alpine:3 cat /sys/fs/cgroup/memory.max
+docker run --rm                     alpine:3 cat /sys/fs/cgroup/memory.max
+```
+
+`536870912`, then `99999744`, then `max`.
+
+---
+
+## RT3 — cgroup v2 `memory.high` binds throughput where `memory.max` binds survival
+
+**Claim.** `<cgroup>/memory.high` has exactly `RT2`'s shape — a byte count or
+the literal `max`, page-floored, present on non-root cgroups only — and it may
+be set **below** `memory.max`. Exceeding it never invokes the OOM killer;
+instead the cgroup's processes are throttled and put under heavy reclaim. It is
+therefore a limit that binds a scan even though it cannot end one.
+
+**Proof.** `memory_high_show()` in `mm/memcontrol.c` reads through the same
+`seq_puts_memcg_tunable()` as `memory.max`, and `memory_high_write()` through
+the same `page_counter_memparse(buf, "max", …)`.
+`Documentation/admin-guide/cgroup-v2.rst`: *"Memory usage throttle limit. If a
+cgroup's usage goes over the high boundary, the processes of the cgroup are
+throttled and put under heavy reclaim pressure. Going over the high limit never
+invokes the OOM killer."*
+
+**Scope limit.** `memory.high` throttles, so a process that ignores it still
+finishes — it finishes slowly. That is what makes it a limit *this* project must
+read rather than one it may skip: sustained reclaim ends a scan's throughput as
+surely as an OOM ends the run. Nothing orders the two files; take the minimum
+(`RT5`).
+
+**Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1, nerdctl 2.3.5 /
+containerd v2.3.3 (observed: `--memory 512m --cgroup-conf
+memory.high=268435456` → `memory.max` `536870912`, `memory.high` `268435456`).
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
+is discovered, and what the default makes of it" — specifically the sentence
+that reads the minimum over every limit that binds.
+
+**Re-verify.**
+
+```sh
+docker run --rm --memory 512m --cgroup-conf memory.high=268435456 alpine:3 \
+  sh -c 'echo max=$(cat /sys/fs/cgroup/memory.max) high=$(cat /sys/fs/cgroup/memory.high)'
+```
+
+`max=536870912 high=268435456`.
+
+---
+
+## RT4 — cgroup v1 `memory.limit_in_bytes` is always a number, and "unlimited" is a page-size-dependent value near `LONG_MAX`
+
+**Claim.** On a v1 memory hierarchy, `<cgroup>/memory.limit_in_bytes` holds a
+decimal byte count and **never** a sentinel string. An unset limit reads as
+`PAGE_COUNTER_MAX × PAGE_SIZE`, which on 64-bit with 4 KiB pages is
+**9223372036854771712**. The value is page-floored on write exactly as `RT2`'s
+is.
+
+**Proof.** The file's `read_u64` is `mem_cgroup_read_u64()` in
+`mm/memcontrol-v1.c`, whose `RES_LIMIT` arm is `return (u64)counter->max *
+PAGE_SIZE;` — no sentinel branch anywhere on the path. `counter->max` is
+initialised to `PAGE_COUNTER_MAX` by `page_counter_init()`, and
+`include/linux/page_counter.h` defines that as `LONG_MAX / PAGE_SIZE` on 64-bit
+(and `LONG_MAX` on 32-bit). Writes go through the same
+`page_counter_memparse()` as `RT2`.
+
+**Scope limit.** **Do not test for equality with a constant.** The unset value
+is a function of `PAGE_SIZE` and of `BITS_PER_LONG`: 9223372036854771712 at 4
+KiB pages, 9223372036854759424 at 16 KiB, 9223372036854710272 at 64 KiB
+(arm64's `CONFIG_ARM64_64K_PAGES`), and 8796093018112 on a 32-bit kernel. Read
+it as a **threshold** — a value at or above what the machine could possibly have
+is "no limit" — which is correct at every page size and on both word widths.
+
+**Verified against:** kernel v7.1 (source) only. **Not observed here**: this
+machine runs a pure v2 unified hierarchy, so producing a v1 memory controller
+would mean rebooting with `systemd.unified_cgroup_hierarchy=0` — the memory
+controller lives in exactly one hierarchy at a time (`RT6`), so it cannot be
+mounted v1 alongside. The proof is therefore source, one rung below the observed
+evidence every other entry here carries, and the `Re-verify` below is the run
+that would close that gap on a host that has one.
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
+is discovered, and what the default makes of it" — the v1 arm of
+`discover_memory_limit`.
+
+**Re-verify.** On a host booted with `systemd.unified_cgroup_hierarchy=0`:
+
+```sh
+docker run --rm --memory 512m alpine:3 sh -c \
+  'cat /proc/self/cgroup;
+   cat /sys/fs/cgroup/memory/memory.limit_in_bytes'
+docker run --rm alpine:3 cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+```
+
+`/proc/self/cgroup` carries a line whose controller list contains `memory`; the
+limited container reads `536870912`, the unlimited one a value at or above
+`9223372036854710272`. On a v2 host the second path does not exist, and that
+absence is itself the check that `RT6`'s "exactly one hierarchy" still holds.
+
+---
+
+## RT5 — an ancestor's limit binds, and is invisible in the leaf's own file
+
+**Claim.** A memory limit set on any ancestor cgroup constrains a process in a
+descendant, and the descendant's own `memory.max` says nothing about it. The
+**effective** limit is therefore the minimum over the process's own cgroup and
+every ancestor up to the hierarchy root, and a reader that consults only the
+leaf will believe an unlimited process is unlimited when it is not.
+
+**Proof.** `Documentation/admin-guide/cgroup-v2.rst`: *"The limits and other
+settings of all resource controllers are hierarchical and regardless of what
+happens in the delegated sub-hierarchy, nothing can escape the resource
+restrictions imposed by the parent."* The v1 documentation states the accounting
+side of the same thing: *"all memory usage of e, is accounted to its ancestors
+up until the root (i.e, c and root). If one of the ancestors goes over its
+limit, the reclaim algorithm reclaims from the tasks in the ancestor…"*
+Structurally it is `struct page_counter`'s `parent` pointer: a charge walks it
+to the root.
+
+Observed directly. With `/pgdq-probe` limited to 256 MiB and an unlimited child
+under it, a process in the child reports:
+
+```
+0::/pgdq-probe/child
+max                      # its own memory.max
+268435456                # /pgdq-probe/memory.max — the limit that actually binds
+```
+
+**Scope limit.** Three:
+
+- **The root cgroup has no `memory.max` or `memory.high` file at all**, so the
+  walk must treat "file absent" as "no limit here" and not as an error.
+  Observed: `/sys/fs/cgroup/memory.max` does not exist on this host.
+- **A cgroup namespace truncates the walk**, and correctly so: inside one, the
+  namespace root is what is mounted at `/sys/fs/cgroup`, so walking up from the
+  `0::` path never leaves it. Limits set on cgroups *outside* the namespace
+  still bind and are simply not readable — which is a property of the
+  environment, not a defect to work around, and it is why the walk is bounded by
+  the mount point rather than by counting `/`s.
+- **`memory.high` and `memory.max` are minimised together**, across levels and
+  across the two files: nothing orders them, and a `memory.high` two levels up
+  may be the smallest number in the walk.
+
+**Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1 (observed, via
+the scratch hierarchy in the `Re-verify` below).
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
+is discovered, and what the default makes of it" — *"every ancestor cgroup
+rather than the nearest"*.
+
+**Re-verify.** The container form shows the walk; the scratch-hierarchy form
+shows that an ancestor's limit is invisible at the leaf.
+
+```sh
+docker run --rm --cgroupns=host --memory 512m alpine:3 sh -c \
+  'p=$(sed -n "s/^0:://p" /proc/self/cgroup)
+   while [ -n "$p" ]; do echo "$p: $(cat /sys/fs/cgroup$p/memory.max 2>/dev/null)"; p=${p%/*}; done
+   cat /sys/fs/cgroup/memory.max 2>&1'
+```
+
+The leaf reads `536870912`, its parent `max`, and the root reports no such file.
+
+```sh
+sudo sh -c '
+  mkdir -p /sys/fs/cgroup/pgdq-probe
+  echo "+memory" > /sys/fs/cgroup/pgdq-probe/cgroup.subtree_control
+  echo 268435456 > /sys/fs/cgroup/pgdq-probe/memory.max
+  mkdir -p /sys/fs/cgroup/pgdq-probe/child
+  sh -c "echo \$\$ > /sys/fs/cgroup/pgdq-probe/child/cgroup.procs
+         cat /proc/self/cgroup
+         cat /sys/fs/cgroup/pgdq-probe/child/memory.max"'
+sudo rmdir /sys/fs/cgroup/pgdq-probe/child /sys/fs/cgroup/pgdq-probe
+```
+
+The process reports `0::/pgdq-probe/child` and its own limit as `max`, while
+256 MiB binds one level up. **Remove the scratch cgroups**; the `rmdir` is part
+of the check, not cleanup after it. The `+memory` line is load-bearing and is
+the first scope limit made concrete: without the controller enabled in the
+parent's `cgroup.subtree_control` the child has no `memory.max` file at all,
+which is the "file absent, limit still binding" case rather than an error.
+
+---
+
+## RT6 — a controller lives in exactly one hierarchy, so `/proc/self/cgroup` says which files to read
+
+**Claim.** The `memory` controller is bound to the v2 hierarchy **or** to a v1
+hierarchy, never to both at once. So `/proc/self/cgroup` decides, unambiguously,
+which of `RT2`/`RT3` and `RT4` applies: if any line's controller field contains
+`memory`, the limit is v1 and lives under that hierarchy's mount point;
+otherwise the `0::` line's path under the v2 mount is where it is. A machine may
+carry both hierarchies at once, so finding a `0::` line is not by itself
+evidence that the memory limit is a v2 one.
+
+**Proof.** `Documentation/admin-guide/cgroup-v2.rst`: *"All controllers which
+support v2 and are not bound to a v1 hierarchy are automatically bound to the v2
+hierarchy and show up at the root. Controllers which are not in active use in
+the v2 hierarchy can be bound to other hierarchies. This allows mixing v2
+hierarchy with the legacy v1 multiple hierarchies in a fully backward compatible
+way."* And: *"A controller can be moved across hierarchies only after the
+controller is no longer referenced in its current hierarchy."*
+
+**Scope limit.** **The controller field is a comma-separated list and must be
+matched by membership, never by substring.** A v1 hierarchy may carry *no*
+controllers and only a name, in which case the field reads `name=<x>` — so a
+hierarchy named `memory` would satisfy a substring test and hold no memory
+controller at all. Observed here, alongside the live v2 line:
+
+```
+2:name=pgdqprobe:/
+0::/user.slice/user-1000.slice/user@1000.service/…
+```
+
+This is also the rule `std` follows for the CPU quota (`RT7`), splitting on `,`
+and comparing each element — the two readers agree by construction rather than
+by coincidence.
+
+A second limit, from the same paragraph: moving a controller between hierarchies
+is possible at runtime and *"strongly discouraged for production use"*. A
+long-running process may therefore, in principle, outlive the arrangement it
+read. Discovery happens once at startup and this is not defended against.
+
+**Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1 (observed: a
+named v1 hierarchy mounted in a private mount namespace produces the two-line
+file above, with the v2 line **second**).
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
+is discovered, and what the default makes of it" — which of the two file shapes
+`discover_memory_limit` reads.
+
+**Re-verify.** The hybrid shape, produced without touching the host:
+
+```sh
+sudo unshare -m sh -c '
+  mkdir -p /tmp/cg1probe
+  mount -t cgroup -o none,name=pgdqprobe cgroup /tmp/cg1probe
+  cat /proc/self/cgroup
+  umount /tmp/cg1probe'
+```
+
+Two lines: `<n>:name=pgdqprobe:/` — the id is whatever `idr_alloc_cyclic` next
+hands out — and the machine's `0::` line. The mount lives in
+a private mount namespace and leaves nothing behind. On this machine the v2
+hierarchy owns `memory`, which the presence of `/sys/fs/cgroup/memory.max` on a
+non-root cgroup and the *absence* of `/sys/fs/cgroup/memory/` together confirm.
+
+---
+
+## RT7 — `std::thread::available_parallelism` already reads the cgroup CPU quota
+
+**Claim.** On Linux, `available_parallelism()` returns
+`min(CPU_COUNT(sched_getaffinity), cgroup CPU quota)`, where the quota is
+`cpu.max`'s `limit / period` on v2 or `cpu.cfs_quota_us / cpu.cfs_period_us` on
+v1, minimised over every ancestor, rounded **down**, and floored at 1. An
+unset quota (`max` in v2, an unparseable or absent value in v1) leaves the
+affinity count alone. So the CPU half of "discover the allocation we were
+given" needs no code here.
+
+**Proof.** `library/std/src/sys/thread/unix.rs`. The entry point takes
+`quota = cgroups::quota().max(1)` and then `CPU_COUNT(&set).min(quota)`, with
+the `sysconf(_SC_NPROCESSORS_ONLN)` fallback also `.min(quota)`. `cgroups::quota()`
+reads `/proc/self/cgroup`, distinguishes the hierarchies exactly as `RT6`
+describes — `Some(b"") => Cgroup::V2`, otherwise a `,`-split membership test for
+`"cpu"` — and dispatches to `quota_v2` or `quota_v1`. `quota_v2` walks upward
+(`while path.starts_with(cgroup_mount)`) taking `quota.min(limit / period)` at
+each level; `quota_v1` does the same over `cpu.cfs_quota_us` /
+`cpu.cfs_period_us`. `limit / period` is integer division, which is the
+round-down.
+
+Observed, on a 24-CPU host where `nproc` (which reads only the affinity mask)
+answers 24 throughout:
+
+| run | `cpu.max` | `available_parallelism` |
+|---|---|---|
+| `--cpus=2` | `200000 100000` | `Ok(2)` |
+| `--cpus=3.5` | `350000 100000` | `Ok(3)` |
+| no flag | `max 100000` | `Ok(24)` |
+
+**Scope limit.** `std`'s own module comment names two: *"cgroup v2 in
+non-standard mountpoints"* (it hardcodes `/sys/fs/cgroup` for v2, falling back
+to a `/proc/self/mountinfo` scan for v1 only) and *"paths containing control
+characters or spaces, since those would be escaped in procfs output and we don't
+unescape"*. Two more follow from the code: a v2 `cpu.max` of `max 100000` leaves
+the quota unbounded because `"max".parse::<usize>()` simply fails, and the
+result is a **quota**, not a share — `cpu.weight` and `cpuset.cpus.partition`
+are not read, though `cpuset.cpus` is, through the affinity mask.
+
+**This entry exists against what the P19 inbox filed**, which argued the
+behaviour is `std`'s and therefore not ours. The register's trigger is a
+decision depending on external behaviour *we do not control*, and someone else's
+code is more external, not less: this project's whole CPU default rests on it,
+the proof is cheap, and without an entry a future toolchain moves that default
+silently.
+
+**Verified against:** Rust 1.98.0 (source and observed); Linux 7.1.4-arch1-1,
+nerdctl 2.3.5 / containerd v2.3.3.
+
+**Relied on by:**
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "The
+source states its own worker default" (`.xz` taking
+`available_parallelism()` clamped by the budget) and "What is settled going in"
+(*"the CPU side needs no work"*).
+
+**Re-verify.** Build the one-line probe and run it under a quota:
+
+```sh
+cat > /tmp/ap.rs <<'EOF'
+fn main() { println!("{:?}", std::thread::available_parallelism()); }
+EOF
+rustc -O /tmp/ap.rs -o /tmp/ap
+for c in --cpus=2 --cpus=3.5; do
+  docker run --rm $c -v /tmp/ap:/ap:ro debian:stable-slim \
+    sh -c 'cat /sys/fs/cgroup/cpu.max; nproc; /ap'
+done
+```
+
+`Ok(2)` then `Ok(3)`, with `nproc` answering the host's CPU count in both. Read
+the implementation alongside it:
+
+```sh
+sed -n '/^mod cgroups/,/^}/p' \
+  "$(rustc --print sysroot)/lib/rustlib/src/rust/library/std/src/sys/thread/unix.rs"
+```
+
+(`rustup component add rust-src` if that path is absent.)

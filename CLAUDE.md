@@ -314,6 +314,18 @@ when a new PostgreSQL major lands. **Add an entry whenever a decision starts
 depending on `pg_dump` behaving a particular way**, and walk the file when a
 new major is released. `architecture.md` cites its `I<n>` numbers throughout.
 
+`docs/design/runtime-invariants.md` is that register's sibling for the
+environment the process is *given* rather than the file it reads: the cgroup
+memory and CPU interfaces, and `std`'s reading of them. **Read it before writing
+anything that discovers the process's own allocation** — how a limit is located,
+which of two hierarchy shapes states it, why the effective limit is a minimum
+over ancestors, and what "unlimited" looks like in each — and **add an entry
+whenever a decision starts depending on the runtime environment behaving a
+particular way**. Its `Re-verify` steps are container invocations rather than
+citations, so the walk is a run; walk it at a **kernel major**, a
+**container-runtime upgrade**, and — for `RT7` alone, whose behaviour is
+`std`'s — a **Rust toolchain bump**.
+
 `docs/design/measurements.md` holds every performance figure the design relies
 on, each with the command that reproduces it. **Read it before making a
 performance claim, and add to it rather than to a notes doc when you measure
