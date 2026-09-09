@@ -126,6 +126,33 @@ Eighteen standing rules for reading anything below:
   replacements are worth, is "Which allocator a figure was taken under" below;
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
+
+  **The apparatus stops at which allocator, and does not pin how many arenas it
+  keeps.** `MALLOC_ARENA_MAX` is unset in every recipe here, and that was
+  reconsidered once a controlled probe put a number on the term — ~50–60 MiB at
+  `--jobs 4`, positive in all fourteen paired reps
+  ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "`M76`:
+  the arena cap is not the runtime's"). Pinning it is refused because **capping
+  arenas buys resident bytes by paying allocator contention**, and the figures
+  with enough threads for that term to exist are the parallel ones, which sweep
+  to 24 workers — so a pin motivated by a resident reading would measure this
+  library's parallel scaling under a deliberately contended allocator. The
+  magnitude of that cost is unmeasured; its sign is not in question, contention
+  being what the setting trades against. It follows that **any pin worth having
+  would have to be scoped to the resident figures**, the way the resolution
+  floors above are scoped per regime, rather than set once for the document.
+  What is *not* the reason is that pinning re-bases every table: `SWEEP_JOBS` is
+  1, so seventeen of the tables run one worker on a `current_thread` runtime,
+  and whether the cap binds a process of that shape at all has never been
+  measured. The difference an operator wants is read **inside** a sitting
+  instead, which is what this doc's own rule prescribes for resolving something
+  fine: the reserve figure carries an uncapped leg and a `MALLOC_ARENA_MAX=2`
+  leg and publishes the uncapped one, the operator who set nothing being the
+  case that kills the process. One consequence to know before re-opening this:
+  the harness pins no CPU count, so the arena ceiling standing behind every
+  figure is `8 x ncores` of the host named in `CLAUDE.local.md`, and it is the
+  blanket hardware sentence at the top of this section that covers it rather
+  than any rule of its own.
 - **A worker count is apparatus too, so every invocation states one.** A command
   that says nothing measures whatever `pgdq --jobs` defaults to that day rather
   than an arrangement anybody chose — and that default has already moved

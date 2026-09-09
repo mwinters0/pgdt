@@ -491,8 +491,13 @@ re-generates the stamp's accounting sentence and fills the ledger row's Date.
 
 **Why a sweep is owed is now a different reason than when the phase was
 allocated.** It was owed because a `mallopt` in the binary re-bases every
-figure's apparatus; that is declined above, so what owes it is the apparatus
-gaining `MALLOC_ARENA_MAX` and whatever the defaults themselves move.
+figure's apparatus; that is declined above. The apparatus gaining
+`MALLOC_ARENA_MAX` was the replacement reason and is declined too — reviewed
+against `M76`'s reading and refused, because capping arenas would buy resident
+bytes at the cost of contending the allocator under the parallel figures
+([2026-09-09](../status/history/2026-09-09.md), "The arena cap stays off the
+apparatus"). So what owes the sweep is whatever the defaults themselves move,
+and nothing else.
 
 ## Slices
 
