@@ -450,7 +450,7 @@ being inserted.
 | **19.2** | The plain-path account: a profile of `--jobs 1` against `--jobs 2`, and a `--alone` sitting against a raised-`POOL_DEPTH` scratch build. No shipped code. |
 | **19.3** | The CLI runs a `current_thread` runtime; `rt-multi-thread` leaves its manifest. |
 | **19.4** | `Serial` carries an optional budget — closes **`KD16`**. |
-| **19.5** | `Partitioning` states its retained unit; `plan_partitions` adds `max_source_span` only for a chunk-shaped source. |
+| **19.5** | `Partitioning` states its retained unit; `plan_partitions` adds `max_source_span` only for a chunk-shaped source; and a plain source's partition stops being exactly one read chunk, which is 19.2's repair 1 folded in. |
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
 | **19.7** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule. |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
@@ -458,16 +458,27 @@ being inserted.
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation, the new defaults, and both flags' help text. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`. |
 
-**If 19.2's account lands on the pool depth**, the repair is **folded into 19.5**
-rather than admitted as a number of its own. 19.5 already opens `Partitioning`
-to state its retained unit, and a plain source's partition sizing is the same
-decision seen from the other side; two slices editing that type's meaning
-separately is how the second contradicts the first's rejected alternatives. If
-the account lands on coordination the leader pays per worker, it takes a `KD<k>`
-instead and 19.8 ships the plain default with the reason written down.
+**19.2's account has been taken, and it lands on both branches rather than one.**
+The fork above asks which of two causes the account lands on; it names three,
+and they route differently. The **sizing** term (a plain partition is exactly one
+read chunk) and the **depth** term (four slots whatever `--jobs` states) are the
+first branch — both are arguments of `pool.set_limits` — and their repair is
+**folded into 19.5**, which already opens `Partitioning` to state its retained
+unit, rather than admitted as a number of its own. The **unattributed 4→8 step**
+and the **refuted typed-`query` suspect** are the second branch: out of this
+phase, `KD17` allocated for the second of them, and 19.8 ships the plain default
+with the reason written down.
 
-**A repair reaching `leader::scan_partition` is out of this phase whichever way
-the account lands** — it changes what the leader does per piece for every
-source, which is the second branch's shape, not a default.
+**A repair reaching `leader::scan_partition` is out of this phase** — it changes
+what the leader does per piece for every source, which is the second branch's
+shape, not a default.
+
+**The plain source's own worker default is `Serial`, and 19.8 is not blocked on
+anything further.** A plain `parse` is slower than serial at every worker count
+in both builds the sitting timed, reaching 0.87× at its best point with the
+pool-depth clamp lifted; the first branch's repair shrinks a cost rather than
+making the shape scale. That is the defensible default this section demanded in
+place of "serial, because the number is bad and we do not know why". Only a
+reading showing a plain parallel `parse` beating serial reopens it.
 ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
-plain-`parse` fork is not routed yet".)
+plain-path fork routes to both branches".)

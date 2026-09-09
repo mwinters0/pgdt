@@ -6332,15 +6332,32 @@ sub-stream count capped at eleven by the stated budget's divisor. A plain
 device-bound — which is the refusal of parallel plain-file discovery, arrived
 at as a measurement rather than as a branch. And a plain typed `query` is
 **flat at 0.98×** across the whole range although the rule says it is
-CPU-bound: the cores are asked for and not delivered, a plain source's chunk
-pool clamping to `POOL_DEPTH` whatever `--jobs` states ("Execution model and
-API surface").
+CPU-bound: the cores are asked for and not delivered.
+
+**A plain `parse` is slower than serial at every worker count, and that is what
+sets the plain source's own default.** A diagnostic sitting against a build
+whose plain source lifts the pool-depth clamp reaches 0.87× at its best point,
+still below one worker — so the sizing and depth terms named below are real
+costs to shrink and not a route to a plain `parse` that scales. What that scan
+is made of is beside its mechanism ("The interior split").
+
+<!-- deficiency: KD17 -->
+**What makes a plain typed `query` flat is not known, and the obvious suspect is
+spent.** The clamp was the named suspect — `POOL_DEPTH` bounding a plain
+source's chunk pool whatever `--jobs` states ("Execution model and API
+surface") — and the same sitting refutes it: lifting it moves no cell by more
+than 0.8%, and both builds plan identical sub-stream counts. What the readings
+point at instead is that the planned sub-streams never run concurrently at all,
+total CPU staying under one core where a four-slot pool would still have shown
+four workers' worth of work. That is `KD17`, unowned: a stage every row passes
+through serially, not yet identified, and no session should re-derive the pool
+as its cause.
 
 So the rule picks the right stages and the arithmetic was a floor on what would
 be needed rather than an estimate of what would suffice. **Converting cores
-into extraction throughput on a plain source is unfinished**, and what it waits
-on is defaults rather than mechanism — how much memory a scan may assume, and
-how the span allowance is charged across sub-streams
+into extraction throughput on a plain source is unfinished**, and it waits on
+mechanism rather than on defaults — the defaults question this was once
+attributed to has been measured and is not what holds it
 ([`roadmap.md`](roadmap.md), "P19 — Efficient defaults for a parallel scan").
 
 <!-- section: parse-profile -->

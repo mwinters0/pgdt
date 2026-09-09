@@ -2,16 +2,16 @@
 
 The spec owes an account of `parallel-scan-throughput`'s two bad plain numbers
 before any plain default is set, and it names two instruments because only one
-half is a discovery. **Both halves are settled and are written below**; where
-the account leaves the spec's fork is not, and that is under "What is still
-open: the fork".
+half is a discovery. **Both halves are settled and are written below**, and so
+is where the account leaves the spec's fork — both branches, on different terms,
+under "Where the account lands".
 
 No library code changes here. What lands is a harness change: the profile
 recipe now prints a *pair* of profiles read against each other
 (`measure.PROFILE_AXIS`), which is what a "where do the extra 41 ms go" question
 needs and what a single profile could not answer.
 
-## The `parse` regression is a double read, and it is not either branch the spec drew
+## The `parse` regression is a double read
 
 **A plain `parse` at `--jobs ≥ 2` reads every byte of the file exactly twice.**
 Measured on the 3.00 GiB warm control, by summing `pread64` returns:
@@ -257,32 +257,58 @@ The recipe's own "the worker count, stated rather than inherited" bullet no
 longer says every invocation states `SWEEP_JOBS`: the pair states the count in
 its own name, which is the whole of what separates its two profiles.
 
-## What is still open: the fork
+## Where the account lands: both branches, on different terms
 
-The slice's contract is the account, and the account is written. **Routing it is
-not this slice's**, and the readings do not settle the spec's fork either way,
-so it is a call for the maintainer — filed under `STATUS.md`'s "Decisions worth
-another look". What each arm now rests on:
+**The fork is not exclusive, and reading it as a choice between two arms is what
+made the readings look contradictory.** The spec's sentence is *"only one of the
+two branches is this phase's"* — a claim about which **repair** the phase owns,
+not a claim that the account has a single cause. The account names three costs,
+and they route differently:
 
-- **The pool depth.** The depth term is real and measured. It is the only thing
-  separating two builds that differ in one expression, it appears only where the
-  clamp binds, and it grows with the worker count. Read that way the account
-  lands on the pool depth, both its terms are `pool.set_limits`' two arguments,
-  and repair 1 folds into `19.5`.
-- **The second branch.** The 4→8 step the depth term was charged with survives
-  the clamp being lifted, and the plain typed `query` is flat with the clamp
-  gone. Neither of the two terms this account names explains either fact. Read
-  that way the plain path's remaining cost is not a defaults question, it takes
-  a `KD<k>`, and `19.8` ships the plain default with the reason written down.
+- **The sizing term** (partition equals chunk, the 1→2 step) and **the depth
+  term** (four slots whatever is stated, real above four workers) are the spec's
+  **first branch**: both are arguments of `pool.set_limits`, which is what "how a
+  stated budget is turned into slots" names. Repair 1 folds into `19.5`.
+- **The unattributed 4→8 step**, which survives the clamp being lifted, and the
+  **refuted typed-`query` suspect** are the **second branch**: not a defaults
+  question, out of this phase, and `19.8` ships the plain default with the
+  reason written down.
 
-**The typed-`query` half owes a `KD<k>` on either arm**, since its suspect is
-refuted outright. It is not allocated here: the parse fork may produce a sibling
-entry or absorb it, and an entry written before the routing is settled would be
-rewritten by the change that settles it.
+**Attributing the 4→8 step does not gate anything and needs no re-sitting.**
+Whatever it is, it is already outside the phase. The natural suspect is the
+per-worker coordination term, and the instrument that would settle it is the one
+this slice already used — `futex` counts and system time by worker count — run
+at 8, 12, 16 and 24, where the step is. It was run only at 1–4, which is exactly
+where the step is not.
 
-Repair 2 is out of this phase either way — a `KD<k>` if it is wanted, and it may
-not be, since amortizing the tail under repair 1 makes `.xz`'s 4% smaller still.
+## The plain source's worker default is serial, and this settles it
 
-**Nothing is blocked.** No plain default may be set before the routing is
-settled, and the two slices the routing reaches — `19.5` and `19.8` — are both
-unstarted. The two legs are on disk and the sitting need not be re-taken.
+**A plain `parse` is slower than serial at every worker count in both builds.**
+Stock's best above four is 0.560 s at twenty-four against 0.432 s serial; the
+clamp-lifted leg's best is 0.510 s at sixteen — **0.87×**, still below one
+worker. Repair 1 shrinks the sizing term; it does not turn 0.87× into 1.0×.
+
+So `19.8`'s plain arm is **serial**, decided by evidence rather than by how the
+fork routes, and it is not blocked on the routing. This is what the spec asked
+for: it refuses a plain default of *"serial, because the number is bad and we do
+not know why"*, and what stands in its place is "serial, because parallel is
+measurably slower at every count on both builds, and here is what the cost is
+made of". Only a new reading showing a plain parallel `parse` beating serial
+would reopen it.
+
+## What this leaves
+
+**`KD17`** — the typed-`query` half, allocated here rather than deferred. Its
+suspect is refuted and the finding is stable, so nothing the parse routing
+decides changes its text: they are different mechanisms, read sizing and pool
+depth on `LocalFileSource` against a stage every row passes through serially in
+the query path. `(c) unowned`; detail beside its mechanism
+([`architecture.md`](architecture.md), "What parallelism buys, and where it
+stops").
+
+**Repair 2** is out of this phase either way — a `KD<k>` if it is wanted, and it
+may not be, since amortizing the tail under repair 1 makes `.xz`'s 4% smaller
+still.
+
+The two legs are on disk (`runs/measure-20260909T041637`,
+`runs/measure-20260909T044346`) and the sitting need not be re-taken.

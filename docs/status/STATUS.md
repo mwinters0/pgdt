@@ -335,14 +335,15 @@ the four orderings that bind are in the spec, not here.
       `POOL_DEPTH` outright as the cause of the typed-`query` flatness. The
       harness change that buys the first half landed: the profile recipe now
       prints a *pair* of profiles read against each other
-      (`measure.PROFILE_AXIS`). **Routing the repair is not this slice's** and
-      the readings split the spec's fork — see "Decisions worth another look".
+      (`measure.PROFILE_AXIS`). The account is routed: both of the spec's
+      branches fire, on different terms, and the plain arm's default is serial.
       Notes:
       [`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md)
 - [ ] **19.3** The CLI runs a `current_thread` runtime.
 - [ ] **19.4** `Serial` carries an optional budget — closes `KD16`.
 - [ ] **19.5** `Partitioning` states its retained unit; the span term is added
-      only for a chunk-shaped source.
+      only for a chunk-shaped source; and a plain source's partition stops being
+      exactly one read chunk — `19.2`'s repair 1, folded in here.
 - [ ] **19.6** The reserve figure registered and taken diagnostically to choose
       the constant. No published table.
 - [ ] **19.7** `discover_memory_limit`, `Parallelism::discover`, the budget rule.
@@ -392,8 +393,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD16 -->
-**`KD1`–`KD16` are allocated, and nothing at or below `KD16` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD17 -->
+**`KD1`–`KD17` are allocated, and nothing at or below `KD17` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -510,6 +511,15 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Execution model
   and API surface".
 
+- **KD17** — a plain typed `query` is flat at 0.98× across the whole `--jobs`
+  axis: the sub-streams it plans never run concurrently, total CPU staying under
+  one core. The named suspect — `POOL_DEPTH` clamping the chunk pool — is
+  refuted by a build that lifts it, so what serializes them is unidentified.
+  **(c) unowned**; promoted by a phase that takes up plain-source extraction
+  throughput, since no defaults change reaches it. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "What parallelism
+  buys, and where it stops".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -527,26 +537,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **Which arm of `P19`'s fork the plain-path account lands on, and therefore
-  whether repair 1 folds into `19.5`.** `19.2`'s sitting has been read
-  ([`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md),
-  "What the sitting says") and it splits the fork rather than choosing an arm,
-  so the closing session declined to route it — the notes doc reserves the call
-  ("that is a call for the maintainer, not for the closing session") and the
-  evidence reads both ways. Lifting `POOL_DEPTH` on the plain source alone
-  **confirms** the depth term: the lifted leg is 4–10% faster above four
-  workers, on per-rep ranges disjoint from the stock leg's at 12, 16 and 24, and
-  unchanged where the clamp cannot bind. It **does not** remove the 4→8 step the
-  term was charged with (+0.076 s lifted against +0.087 s stock, inside the
-  spreads), the column stays below serial at every count, and the same sitting
-  refutes `POOL_DEPTH` outright for the typed-`query` half, which owes a `KD<k>`
-  on either arm and has not been allocated one. **What changes if
-  reconsidered:** reading it as landing on the pool depth makes both terms
-  `pool.set_limits`' two arguments, and repair 1 folds into `19.5` under the
-  spec's first branch; reading the surviving step and the refuted suspect as the
-  second branch sends the plain path's remaining cost out of the phase under a
-  `KD<k>`, and `19.8` ships the plain default with the reason written down.
-  Nothing is blocked — `19.5` and `19.8` are unstarted, no plain default may be
-  set before the routing is settled, no code is written either way, and both
-  legs are on disk (`runs/measure-20260909T041637`,
-  `runs/measure-20260909T044346`) so nothing must be re-measured.
+*(None open.)*
