@@ -1196,8 +1196,7 @@ INPUTS["control_xz"] = InputSpec(
 #: file, not about the library.** A compressed reader's per-worker footprint is
 #: one decoded block, so the same stated budget admits a different number of
 #: concurrent readers at each size, and a figure taken at one would publish that
-#: file's shape as the library's bound
-#: (`docs/design/roadmap-P16-parallel-scan.md`, "Two memory figures").
+#: file's shape as the library's bound.
 #:
 #: 128 MiB is the size the locally recompressed koji copy has and what
 #: `xz --block-size=128MiB` writes (`CLAUDE.local.md`), so it is a shape a user
@@ -1821,7 +1820,7 @@ DECODE_BASELINE = 1
 #: `POOL_DEPTH` clamps `BufferPool::slots()` to four, so a fifth fused worker on
 #: a plain file waits; the rows above four are what puts that ceiling in the
 #: table rather than leaving a reader to infer that the scan stopped scaling
-#: (`docs/design/roadmap-P16-parallel-scan.md`, "Slices").
+#: (`docs/design/architecture.md`, "Execution model and API surface").
 PARALLEL_JOBS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 
 #: The row every other parallel row is a ratio against: `--jobs 1`, which the
@@ -4106,12 +4105,11 @@ def run_xz_decode_scaling(session: Session) -> str:
 #:
 #: **Two axes crossed, both of which the phase argues about separately.**
 #: Plain against `.xz` is whether there is a decoder in front of the scan;
-#: `parse` against a typed `query` is discovery against extraction. The phase's
-#: rule is one line over those two — *parallelize what is CPU-bound* — and it
-#: predicts three of the four columns to scale and the plain `parse` one to be
-#: bound elsewhere (`docs/design/roadmap-P16-parallel-scan.md`, "What this phase
-#: parallelizes is what is CPU-bound"). A table missing a column cannot check
-#: that rule; it would confirm whichever half it kept.
+#: `parse` against a typed `query` is discovery against extraction. The rule
+#: the design argues from is one line over those two — *parallelize what is CPU-bound*
+#: (`docs/design/architecture.md`, "What parallelism buys, and where it stops").
+#: A table missing a column cannot check that rule; it would confirm whichever
+#: half it kept.
 PARALLEL_LEGS: tuple[tuple[str, str, str], ...] = (
     ("control", "parse", "Plain, `parse`"),
     ("control", "query-typed", "Plain, typed `query`"),
@@ -4671,7 +4669,6 @@ FIGURES: list[Figure] = [
         ),
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P16-parallel-scan.md",
             "docs/status/STATUS.md",
         ),
         warm_inputs=("control_xz", "koji_xz"),
@@ -4700,11 +4697,11 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # `roadmap-P16-parallel-scan.md`'s "What that buys, at 12 physical
-        # cores / 24 threads" is arithmetic over a one-core rate; this figure
-        # is what it projected, so a move here is a move of what that section
-        # argues from.
-        quoted_by=("docs/design/roadmap-P16-parallel-scan.md",),
+        # `architecture.md`'s "What parallelism buys, and where it stops"
+        # reads all four of this figure's legs against the rule the design
+        # argues from, two of which do not behave as the arithmetic projected,
+        # so a move here is a move of what that section concludes.
+        quoted_by=("docs/design/architecture.md",),
         warm_inputs=("control", "control_xz"),
         memory=PARALLEL_MEMORY,
         run=run_parallel_scan_throughput,
@@ -4772,7 +4769,7 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: `projection-widths` makes the same isolation a subtraction between two
 #: adjacent rows of one table over one file.
 UNTAKEN: list[Figure] = [
-    # `M65`: the attribution's instrument, folded in from the standalone script
+    # The attribution's instrument, folded in from the standalone script
     # that took the readings `measurements.md` currently carries. It waits here
     # rather than standing in `FIGURES` because **those readings are not this
     # harness's** — the table under that heading was printed by
@@ -5330,7 +5327,7 @@ NOT_OURS = {
             "rss-attribution",
             "What the per-block resident growth is made of",
             "The *readings* the doc carries are not ours: they were printed by the standalone "
-            "`scripts/rss_attribution.py`, before `M65` folded that instrument in. The figure "
+            "`scripts/rss_attribution.py`, before that instrument was folded in. The figure "
             "itself is registered and untaken (`measure.UNTAKEN`), and it must share "
             "`peak-rss`'s two block-count runs, so it may be published only from a stamped "
             "sweep — `M74`, which deletes this row and the section's `outside-register` marker "
@@ -5338,7 +5335,7 @@ NOT_OURS = {
             # The registered instrument's own edge, read off it rather than
             # copied: the readings differ from the figure's in provenance, not
             # in what moves them, and two spellings of one edge would drift in
-            # the window between `M65` and `M74`. It leaves with the row.
+            # the window before `M74` lands. It leaves with the row.
             depends=EVERY_BY_ID["rss-attribution"].depends,
         ),
         Outside(

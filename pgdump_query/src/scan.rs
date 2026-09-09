@@ -571,8 +571,7 @@ where
     // scan first, then the real one from wherever the preamble left off. Two
     // passes sharing one name would make that ordinary sequence unreadable as
     // anything but an interrupted-and-resumed run
-    // (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now,
-    // so the CLI says which one it is in").
+    // (`docs/design/architecture.md`, "Status output").
     tracing::info!(
         bytes = size,
         chunk_size = options.chunk_size,

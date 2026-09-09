@@ -166,7 +166,8 @@ to read from and can execute garbage. Let it finish, or kill it first.
 subject. **Read the section for the mechanism you are touching** — the scanner,
 the byte sources, the compressed source, the file map, `DumpIndex`, the preamble
 grammar, type resolution, the decoders,
-the zero-copy Arrow path, the query passes, the cache, the CLI, fixtures, the
+the zero-copy Arrow path, the query passes, partitioned replay, the interior
+split, the cache, the CLI, fixtures, the
 comparison oracle, or the testing approach — before changing that mechanism.
 Each section carries its own *Rejected:* paragraphs, which are the part that
 cannot be recovered from the code, **and that mechanism's known deficiencies** — a register entry's
@@ -230,7 +231,10 @@ read it before touching a timed path.** "Execution model and API surface"
 holds the buffer pool, the chunk-size constant and the three I/O schemes that
 were measured and refused; "The scanner never owns the bytes it scans" holds
 the carry; "Where a scan's time goes" holds the decomposition, which is what
-says whether a proposed change is aimed at anything. A change to any of them
+says whether a proposed change is aimed at anything, and its "What parallelism
+buys, and where it stops" is what says whether adding workers can help a shape
+at all — three of the four measured legs are already at a ceiling, so a
+proposal to parallelize something starts there. A change to any of them
 re-reads the library's own per-row budget in the same change, the way it
 re-takes a figure — that budget is what an embedder pays and no figure states
 it. **Read the mechanism's section before proposing an optimization to the
@@ -257,6 +261,18 @@ parallel block decode nothing here reads, and a sync ends in `cargo check
 the trait's own shape — a method added, a signature moved — is
 "Execution model and API surface", which says which of the defaulted methods
 exist for a source the local file is not.
+
+**A parallel scan has two arrangements, not one, and `architecture.md` files
+them apart — read the right one before touching `leader.rs`, `stream::cut`,
+`plan_partitions` or the CLI's merge.** "The interior split" is the *cold*
+side: a serial leader opens a `COPY` region and hands its interior to fused
+decode-and-parse workers, and it is the one read loop that grants a wait.
+"Partitioned replay" is the *cached* side: a complete map means there is no
+scanner state to establish, so a query splits blocks it has already seen. They
+share `stream::cut` and `worker_count` and differ in what they cut, and both
+are invisible in the answer — a `--jobs` parse writes the byte-identical cache
+a serial one does, which is asserted over every fixture. Each carries what it
+refused, speculative splitting and cross-block pipelining among them.
 
 **Reshaping `SourceIdentity`, `total_size` or the cache envelope means reading
 `architecture.md`, "The cache" first.** The staleness check reads

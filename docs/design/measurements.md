@@ -522,7 +522,7 @@ where no `depends` edge could go red, and it stayed a megabyte wrong for a whole
 slice.
 
 **Registering an instrument and publishing its table are two moments, and the
-attribution is why that is written down.** `M65` folded the standalone script
+attribution is why that is written down.** The standalone script was folded
 into the harness, so the figure has an id, a `depends` set and a `quoted_by`
 set; what it does not have is a reading this harness took. It therefore waits in
 `measure.UNTAKEN` and its section keeps the declaration below, because a figure
@@ -1349,8 +1349,8 @@ holds resident by nothing a three-rep instrument can see.
 
 The section above measures the growth; this one attributes it. **The readings
 below are not this harness's, and the marker says so where a reader meets the
-section**: they were printed by a standalone script, before `M65` folded that
-instrument into `scripts/measure.py`. The figure is registered and untaken
+section**: they were printed by a standalone script, before that instrument
+was folded into `scripts/measure.py`. The figure is registered and untaken
 (`measure.UNTAKEN`), and it enters the register at the next sweep — `M74`,
 which is the only sitting that may publish it, because its first row runs
 `peak-rss`'s two block-count shapes and the two must share one reading rather

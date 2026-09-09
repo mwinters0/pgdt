@@ -348,8 +348,8 @@ pub enum Parallelism {
     Workers {
         /// The ceiling on concurrent workers — a ceiling rather than a
         /// request, since three input shapes admit no parallelism at all
-        /// (`docs/design/roadmap-P16-parallel-scan.md`, "`--jobs` is a
-        /// ceiling, not a request").
+        /// (`docs/design/architecture.md`, "Execution model and API
+        /// surface").
         jobs: NonZeroUsize,
         /// What those workers may hold resident between them, in bytes. This
         /// is the number a memory cgroup is denominated in, and the one a
@@ -413,8 +413,7 @@ impl Parallelism {
 /// in force either way, worded honestly about which one it got: the stated
 /// byte count, or [`DEFAULT_MEMORY_BUDGET`] — what every pool falls back to —
 /// marked `(default)` since nothing was asked for it
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now, so
-/// the CLI says which one it is in").
+/// (`docs/design/architecture.md`, "Status output").
 pub(crate) fn memory_budget_display(p: Parallelism) -> String {
     match p.memory_bytes() {
         Some(bytes) => bytes.to_string(),
@@ -1214,8 +1213,7 @@ impl XzSource {
         // The walk this names is the one [`XzSource::with_table`] exists to
         // skip, so only this constructor emits it — a cached table costs no
         // footer read and earns no line
-        // (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases
-        // now, so the CLI says which one it is in").
+        // (`docs/design/architecture.md`, "Status output").
         tracing::info!(path = %path.display(), "seek table build started");
         let file = std::fs::File::open(&path)?;
         let stat_file = Arc::new(file.try_clone()?);

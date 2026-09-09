@@ -9,8 +9,8 @@ entry into the spec or discard it as stale, then delete this file.
 
 **Fact.** `QueryOptions::max_source_span` defaults to 64 MiB and is charged to
 *each* sub-stream: every one holds its own batcher pinning its own chunks, so N
-sub-streams pin N × 64 MiB. `16.15` made `plan_partitions` divide the stated
-budget by `partition_bytes + max_source_span` accordingly, which is right as
+sub-streams pin N × 64 MiB. `plan_partitions` divides the stated budget by
+`partition_bytes + max_source_span` accordingly, which is right as
 accounting. The consequence is that the divisor is dominated by pinning rather
 than by decoding — 64 MiB against a 24 MiB block — and at the shipped defaults
 (`--parallel-memory` 64 MiB) the span term alone meets the budget, so
@@ -18,20 +18,20 @@ than by decoding — 64 MiB against a 24 MiB block — and at the shipped defaul
 
 **Why this phase cares.** It is the difference between a parallel query being
 affordable at the defaults and being unreachable at them, which is this phase's
-subject. The alternative not weighed by `16.15` or its amendment: *divide* one
+subject. The alternative the divisor's own review did not weigh: *divide* one
 span allowance among sub-streams instead of charging it to each, so pinning
-stays flat in N. That changes a default `P16` committed to, so it is a spec
-question rather than a slice.
+stays flat in N. That changes a shipped default, so it is a spec question
+rather than a slice.
 
-**Origin.** `16.15`'s review, 2026-09-08 — the grilling of the
+**Origin.** The stated-budget review, 2026-09-08 — the grilling of the
 `PARALLEL_BUDGET` entry under STATUS's "Decisions worth another look". Detail
 beside the mechanism: [`architecture.md`](architecture.md), "Execution model
 and API surface".
 
 ## Half of resource discovery is `std`'s already
 
-**Fact.** Rust's `available_parallelism` reads the cgroup CPU quota. `16.14`'s
-probe at `--cpus 4` seeded eight glibc arenas rather than the twenty-four a
+**Fact.** Rust's `available_parallelism` reads the cgroup CPU quota. The koji
+verification's probe at `--cpus 4` seeded eight glibc arenas rather than the twenty-four a
 24-CPU host would give, which is what demonstrated it. There is no `std`
 equivalent for the memory limit.
 
@@ -41,7 +41,7 @@ needs all of it — cgroup v2 `memory.max` and `memory.high`, v1
 `memory.limit_in_bytes`, the unlimited sentinel, and what a nested or hybrid
 hierarchy reports.
 
-**Origin.** `16.14`, 2026-09-08 ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md),
+**Origin.** The koji verification, 2026-09-08 ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md),
 "The `16.14` OOM is glibc's arenas, and a CPU limit is not the remedy").
 
 ## The arenas are seeded before a byte is read, and `--jobs` does not size them
@@ -59,44 +59,41 @@ phase's order is bound: cap the process's own overhead first, *then* discover,
 *then* set the default from what was discovered. Note the price — a
 `mallopt(M_ARENA_MAX, …)` re-bases the apparatus of every registered figure.
 
-**Origin.** `16.14`, 2026-09-08; previously a roadmap `Future` item, moved into
-this phase.
+**Origin.** The koji verification, 2026-09-08; previously a roadmap `Future`
+item, moved into this phase.
 
-## `M67` and `M72` landed out-of-band, so this phase inherits both built
+## Both budget announcements are already shipped, so this phase inherits them built
 
-**Fact.** Both announcements this phase would have specified are shipped.
-`M72` names a `--jobs` the stated budget refuses; `M67` names a
-budget-declined `.xz` block path, carrying the file's largest block beside the
-budget, and adds the container's shape to `info --detail`/`--json` off the
-persisted seek table. Both are `PlanNote`s on `TableStream::plan_notes`, and
-`M67`'s ledger row was written expecting a `DiagnosticKind` — the channel went
-the other way because every `DiagnosticKind` is a property of the file and a
-budget decline is not
-([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "`M67`:
-the declined block path announces itself, and `info --detail` names the
-block").
+**Fact.** Both announcements this phase would have specified exist. One names a
+`--jobs` the stated budget refuses; the other names a budget-declined `.xz`
+block path, carrying the file's largest block beside the budget, and adds the
+container's shape to `info --detail`/`--json` off the persisted seek table.
+Both are `PlanNote`s on `TableStream::plan_notes` rather than the
+`DiagnosticKind` the second was first expected to be — the channel went the
+other way because every `DiagnosticKind` is a property of the file and a budget
+decline is not ([`architecture.md`](architecture.md), "Execution model and API
+surface").
 
 **Why this phase cares.** Its spec must not re-specify either: they exist, and
 a spec row committing to an announcement that already ships would make the
 phase unmeasurable against what it delivered. What is left for this phase is
 the *defaults* — whether the shipped budget and worker count are the right
-numbers — and both rows now argue for it with a message a user can act on
-rather than with silence. `KD16` is the one live remainder in this area:
+numbers — and both announcements now argue for it with a message a user can act
+on rather than with silence. `KD16` is the one live remainder in this area:
 `--parallel-memory` is dropped at the default `--jobs 1`, so the recourse both
 messages name needs `--jobs 2` stated beside it
 ([`architecture.md`](architecture.md), "Execution model and API surface").
 
-`M66` is measurement-harness hygiene, stays out-of-band, and is unaffected;
-`M74` is the same hygiene but carries an ordering this phase owns, below.
-`M71` was too, and has landed.
+The harness-hygiene work around them stays out-of-band and is unaffected, with
+one exception: `M74` carries an ordering this phase owns, below.
 
 **Origin.** 2026-09-08, this phase's grilling; rewritten the same day as each
-row landed.
+piece landed.
 
 ## This phase's closing sweep publishes `rss-attribution`, and closes `M74`
 
-**Fact.** `M65` has landed and is closed: `scripts/rss_attribution.py` is
-folded into `scripts/measure.py`, and `rss-attribution` is a registered figure
+**Fact.** The instrument has landed: `scripts/rss_attribution.py` is folded
+into `scripts/measure.py`, and `rss-attribution` is a registered figure
 in `measure.UNTAKEN` with four command shapes of its own. What has **not**
 landed is its table, and that is `M74` — the nine medians `measurements.md`
 prints under "What the per-block resident growth is made of" were printed by
@@ -125,18 +122,18 @@ to add a regime, and adding one now costs a `REGIMES` row and a
 heading with no error.
 
 **Origin.** 2026-09-08, the review of the ledger's blocking column; restated
-the same day when `M65` landed its instrument and `M74` was admitted for the
+the same day the instrument landed and `M74` was admitted for the
 sitting ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md),
-"`M65` lands its instrument; `M74` owns the sitting"). Neither row gets
-`Blocks`: that column names the *open* phase, and P16's remaining slices touch
-neither.
+"`M65` lands its instrument; `M74` owns the sitting"). `M74` carries no
+`Blocks`: that column names the open phase, and there is none.
 
 ## The plain path is slower parallel, and that is what makes the default source-dependent
 
-**Fact.** `parallel-scan-throughput` at `e29939c`: a plain `parse` reads
-**0.76×** its own serial row at twenty-four workers and is already negative at
-two — 0.426 s serial against 0.561 s — while the same scan on `.xz` reads
-**5.93×**. A plain typed `query` is flat at 0.98–0.99×.
+**Fact.** `parallel-scan-throughput`: a plain `parse` reads **0.81×** its own
+serial row at twenty-four workers and is already negative at two — 0.471 s
+serial against 0.512 s — while the same scan on `.xz` reads **5.82×**. A plain
+typed `query` is flat at 0.98× across the whole range, and a compressed one
+reaches only 1.60×.
 
 **Why this phase cares.** It is the evidence that one `--jobs` default cannot
 be right, and it is the reason the default resolves after source recognition.
@@ -144,18 +141,20 @@ The regression at *two* workers, below `POOL_DEPTH`'s four-slot clamp, also
 says the plain-path cost is not only the pool — something this phase should
 account for before choosing the plain default.
 
-**Contingent on** the `16.15.1` re-take: that sitting re-measures this figure
-with the two-term divisor, and the two typed-`query` columns will move. The
-`parse` columns will not — `pgdq parse` never reaches `plan_partitions`.
+The contingency this was filed under is **discharged**: the figure has since
+been re-taken under the two-term divisor, which moved the two typed-`query`
+columns and left the `parse` ones alone, `pgdq parse` never reaching
+`plan_partitions`. The numbers above are the published ones.
 
-**Origin.** `16.13.1`'s sitting, 2026-09-08.
+**Origin.** The parallel figures' sitting, 2026-09-08.
 
 ## Discovery is a library mechanism whose default the library does not take
 
-**Fact.** `P16` settled that the library defaults to serial — "an embeddable
-component does not spawn threads by surprise" — with embeddability a project
-goal. That decision is **not** reversed, and it does not have to be for the CLI
-to discover: the library *offers* the mechanism, and the library's own default
+**Fact.** The library defaults to serial — "an embeddable component does not
+spawn threads by surprise" — with embeddability a project goal
+([`architecture.md`](architecture.md), "Execution model and API surface"). That
+decision is **not** reversed, and it does not have to be for the CLI to
+discover: the library *offers* the mechanism, and the library's own default
 stays serial. The CLI is what calls it.
 
 **Why this phase cares.** It decides where the code goes and prevents the
@@ -170,11 +169,12 @@ them, with `ParallelArgs::resolve` the one caller in this repo.
 
 ## Changing the `--jobs` default is free of the figure register
 
-**Fact.** `M69` made every registered figure's command shape, the profile
-recipe and the koji recipe state `--jobs` explicitly, and `--check` refuses a
-shape that pins no count. So no figure inherits the CLI default any more.
+**Fact.** Every registered figure's command shape, the profile recipe and the
+koji recipe state `--jobs` explicitly, and `--check` refuses a shape that pins
+no count ([`measurements.md`](measurements.md), "The apparatus"). So no figure
+inherits the CLI default any more.
 
-**Why this phase cares.** `16.16` set `DEFAULT_JOBS = 1` and gave as its reason
+**Why this phase cares.** `DEFAULT_JOBS` is 1, and the reason given for it was
 that a person stating no flag gets "the arrangement every published figure was
 taken under" — a measurement rationale standing in for a user-facing default.
 That rationale is spent: this phase may set the default from what the evidence
@@ -182,4 +182,5 @@ says a user should get, and no figure moves underneath it. What *would* move a
 figure is the arena cap, which is a separate obligation and is why this phase
 ends in a sweep.
 
-**Origin.** `M69`, 2026-09-07; restated here 2026-09-08.
+**Origin.** The worker-count apparatus rule, 2026-09-07; restated here
+2026-09-08.

@@ -109,7 +109,7 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
     }
 }
 
-/// `M67` at the CLI: the budget that sent a compressed read down the
+/// The budget at the CLI: the one that sent a compressed read down the
 /// streaming path says so on stderr, once, naming the largest block to budget
 /// for — so the flag that says *raise it* also says what to raise it to. The
 /// rows go to stdout and are untouched by it.
@@ -192,8 +192,8 @@ fn dump_with_two_bad_rows(dir: &Path, rows: u32, early: u32, late: u32) -> PathB
 }
 
 /// **The lowest-offset error is the one raised, at every job count**
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "The lowest-offset error
-/// wins"). Two rows fail to decode; the later one is in a sub-stream that
+/// (`docs/design/architecture.md`, "`pgdq query` merges the sub-streams back
+/// into file order"). Two rows fail to decode; the later one is in a sub-stream that
 /// reaches it in its very first batch, while the earlier one is three batches
 /// into the sub-stream before it. A merge that raised whichever failure arrived
 /// first would name `zzzLATE` at `--jobs 2` and `zzzEARLY` serially, so a user

@@ -103,8 +103,7 @@ pub(crate) struct Interior {
     pub census: Vec<ArrayShape>,
     /// The `CopyEnd` the serial scanner would have emitted — byte for byte,
     /// which is what makes a parallel scan's cache equal a serial one's
-    /// (`docs/design/roadmap-P16-parallel-scan.md`, "A parallel scan's cache is
-    /// byte-identical to a serial one").
+    /// (`docs/design/architecture.md`, "The interior split").
     pub end: CopyEnd,
 }
 
@@ -125,8 +124,7 @@ pub(crate) struct Interior {
 /// `spawn_blocking` worker runs, so it takes a slice rather than a source: the
 /// decode that produced the slice and the parse of it are then one thread's
 /// work, which is the whole argument for a fused worker
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "A worker decodes and parses in
-/// one thread").
+/// (`docs/design/architecture.md`, "The interior split").
 pub(crate) fn scan_piece(
     bytes: &[u8],
     base: u64,
@@ -278,8 +276,7 @@ pub(crate) enum RegionScan {
 /// The caller has just read `COPY … FROM stdin;`, so it knows every byte from
 /// `data_offset` until `\.` is line-structured rows — which is the whole
 /// licence for handing them out to workers that never parse structure
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "A serial leader opens each
-/// region; workers never guess").
+/// (`docs/design/architecture.md`, "The interior split").
 ///
 /// **Where the file ends is `size`, and `columns` is the header's width.**
 /// `header_offset` is carried only to name the block in
@@ -292,8 +289,8 @@ pub(crate) enum RegionScan {
 /// `ScanOptions::parallelism` — which is why a plain file is cut here exactly
 /// as a compressed one is, and why the refusal of parallel plain-file
 /// discovery lives in `--jobs`' default rather than in a branch
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "What this phase parallelizes
-/// is what is CPU-bound").
+/// (`docs/design/architecture.md`, "What parallelism buys, and where it
+/// stops").
 ///
 /// **The one rule it does apply is a floor**, and it is derived rather than
 /// chosen: a region smaller than one `partition_bytes()` is left to the serial
@@ -388,8 +385,7 @@ async fn run_region(
         // what it read, on the blocking pool. That is the fused worker: a
         // decoded block never crosses a channel, because the thread that
         // decoded it is the thread that parses it
-        // (`docs/design/roadmap-P16-parallel-scan.md`, "A worker decodes and
-        // parses in one thread").
+        // (`docs/design/architecture.md`, "The interior split").
         let mut dispatched: futures::stream::FuturesOrdered<_> = ranges
             .into_iter()
             .enumerate()
@@ -399,8 +395,8 @@ async fn run_region(
             })
             .collect();
         // **The lowest-offset error is the one raised, and this is what
-        // arranges it** (`docs/design/roadmap-P16-parallel-scan.md`, "The
-        // lowest-offset error wins"). A window's pieces tile the region in
+        // arranges it** (`docs/design/architecture.md`, "The interior
+        // split"). A window's pieces tile the region in
         // ascending order, so partition order *is* file order, and
         // [`futures::stream::FuturesOrdered`] hands the results back in that
         // order however they arrived: the `?` below therefore fires on the

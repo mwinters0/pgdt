@@ -37,8 +37,7 @@ tracing = "0.1"
 # `fmt` for the subscriber itself; `time` for RFC3339 timestamps
 # (`tracing_subscriber::fmt::time::UtcTime::rfc_3339`), the convention the
 # koji orchestrator logs already use
-# (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now, so the
-# CLI says which one it is in"). No `ansi`: these lines are as likely to land
+# (`docs/design/architecture.md`, "Status output"). No `ansi`: these lines are as likely to land
 # in a redirected log file as a terminal.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "time"] }
 

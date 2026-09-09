@@ -1,8 +1,7 @@
 //! `pgdq`'s status output — the `tracing` lines `parse`, `info` and `query`
 //! write to stderr for the two phases worth watching a long run for: an
 //! `.xz` file's seek-table walk, and the scan itself starting and finishing
-//! (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now, so
-//! the CLI says which one it is in"). What only the binary can say is that
+//! (`docs/design/architecture.md`, "Status output"). What only the binary can say is that
 //! the subscriber is actually wired up and that these lines reach real
 //! stderr — the library's own tests exercise the `tracing::info!` call sites
 //! directly, with no subscriber installed, and see nothing.

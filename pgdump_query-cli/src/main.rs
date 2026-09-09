@@ -124,8 +124,8 @@ impl ParallelArgs {
 /// unmeasured everywhere, and N sub-streams on a HDD are N separated offsets
 /// read at once. So the default is the arrangement every published figure was
 /// taken under, and raising it is a decision `parallel-scan-throughput` is
-/// asked to license (`docs/design/roadmap-P16-parallel-scan.md`, "The caller
-/// sets workers or bytes, whichever binds first").
+/// asked to license (`docs/design/architecture.md`, "Execution model and API
+/// surface").
 const DEFAULT_JOBS: usize = 1;
 
 /// A `--jobs` value: a worker count, and never zero. Zero would read as one
@@ -713,7 +713,7 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     }
 }
 
-/// `M72`: say, once per query and on stderr, when a stated `--jobs` could not
+/// Say, once per query and on stderr, when a stated `--jobs` could not
 /// be delivered in full. Every sub-stream of a partitioned replay carries the
 /// same [`pgdump_query::TableStream::plan_notes`], settled before any of them
 /// runs, so reading it off the first is reading the whole query's answer —
@@ -835,8 +835,8 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
 }
 
 /// Wire the library's `tracing` facade to stderr — on by default, uniformly,
-/// for `parse`, `info` and `query` alike (`docs/design/roadmap-P16-parallel-scan.md`,
-/// "A parse has phases now, so the CLI says which one it is in"). A
+/// for `parse`, `info` and `query` alike (`docs/design/architecture.md`,
+/// "Status output"). A
 /// per-command default would be a rule the manual has to explain, and gating
 /// on whether stderr is a terminal makes the output depend on invocation
 /// context — which is exactly the case that left the koji verification's
@@ -1095,8 +1095,8 @@ async fn main() -> Result<()> {
             // earlier in the file however much later it arrives, and raising
             // whichever failed first in time would name a different row on each
             // run over an unchanged file
-            // (`docs/design/roadmap-P16-parallel-scan.md`, "The lowest-offset
-            // error wins").
+            // (`docs/design/architecture.md`, "`pgdq query` merges the
+            // sub-streams back into file order").
             let mut failed: Option<(usize, pgdump_query::Error)> = None;
             loop {
                 // Everything at or after a failing sub-stream is dead, and
@@ -1888,7 +1888,7 @@ fn report(
     print_index(index, compression, detail, map, complete);
 }
 
-/// The container line `info --detail` prints above the listing — `M67`, and
+/// The container line `info --detail` prints above the listing, and
 /// nothing at all for a plain file, which has no container to describe.
 ///
 /// **Three numbers a user is otherwise sent to `xz --list` for**, which on the

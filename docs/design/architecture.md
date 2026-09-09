@@ -45,6 +45,7 @@ through.
 | splitting a replay into sub-streams, how a piece finds its first and last row, how the caller's two numbers bound them | [Partitioned replay](#partitioned-replay) |
 | `leader.rs`, splitting an open `COPY` block's interior, what a piece answers and how the pieces fold back | [The interior split](#the-interior-split) |
 | where a scan's time actually goes, before proposing to make one faster | [Where a scan's time goes](#where-a-scans-time-goes) |
+| whether adding workers can help a shape at all, before proposing to parallelize one | [What parallelism buys, and where it stops](#what-parallelism-buys-and-where-it-stops) |
 | `alloc.rs`, a `#[global_allocator]`, what a figure's apparatus line names | [The allocator is the binary's choice](#the-allocator-is-the-binarys-choice) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
@@ -245,9 +246,22 @@ goals"). **The CLI makes the same default**, `--jobs` being 1: it defaulted to
 and it now buys CPU parallelism that no figure prices on any device class, so
 what a person who states nothing gets is the arrangement every published table
 was taken under. Raising it is a decision `parallel-scan-throughput` is asked to
-license, not a default shipped ahead of the evidence
-([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The caller
-sets workers or bytes, whichever binds first").
+license, not a default shipped ahead of the evidence.
+
+**Workers are `spawn_blocking` tasks, and no runtime flavour is imposed.** The
+library keeps `tokio` at `features = ["rt", "sync"]` — **`rt-multi-thread` is
+not added** — and dispatches through `tokio::task::spawn_blocking`, the same
+mechanism every positioned read already uses. The blocking pool is separate
+from the reactor, so the work runs under a `current_thread` runtime as readily
+as under a multi-threaded one and how much parallelism actually exists stays
+the embedder's own choice. *Rejected: a `std::thread` pool of our own*, which
+spawns threads an embedder did not ask for and needs channels to bridge back to
+the async `Stream`; *and `rayon`*, a dependency that mixes awkwardly with
+async. The consequence worth knowing is that **a `spawn_blocking` task cannot
+be cancelled from outside**, so the interrupt guard rests entirely on the
+cooperative flag — which is why `xz-seek` is asked to poll one inside its
+decode loop, and why a join is bounded by a decoder call rather than by a whole
+block.
 
 **A stated `--jobs` is what is asked for, not what is delivered**, and on a
 plain file the chunk pool is what binds first: `LocalFileSource::partitions`
@@ -579,12 +593,12 @@ stream, and charging it per reader is what makes the stated budget dominated by
 pinning rather than by decoding (64 MiB against a 24 MiB block). The
 alternative is N smaller batches whose pinning stays flat in N, which would
 keep a parallel query affordable at the shipped defaults where today it is not.
-It changes a default `P16` committed to, so it is a spec question rather than a
-slice, and **`P19` owns it** — filed in that phase's inbox, which its grilling
+It changes a shipped default, so it is a spec question rather than a slice, and
+**`P19` owns it** — filed in that phase's inbox, which its grilling
 drains ([`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md),
 "One span allowance is charged per sub-stream").
 
-**`M72`: when the divisor declines the requested count, `plan_partitions` says
+**When the divisor declines the requested count, `plan_partitions` says
 so.** At the shipped defaults `max_source_span`'s 64 MiB alone meets
 `DEFAULT_MEMORY_BUDGET`'s 64 MiB, so any footprint at all pushes the divisor
 past the budget and `--jobs N` plans one sub-stream for any `N` — silently,
@@ -636,8 +650,7 @@ So the eviction-before-acquisition the cache does frees nothing for the caller
 waiting on a slot, and the exemption is by holder class exactly as the replay
 loop's is.
 
-*Rejected: letting the granted policy reach both pools*, which is what shipped
-until `M70` and deadlocks. `BlockCache::slot` drains the retention list to
+*Rejected: letting the granted policy reach both pools*, which deadlocks. `BlockCache::slot` drains the retention list to
 `slots() - 1` and then acquires, so a caller holding one live view per slot
 sees `slots() - 1` retained charges plus its own — exactly `slots()` — and
 waits for a return only it could cause; `SIGTERM` does not end it, the
@@ -668,8 +681,8 @@ long as a reader's `Bytes` into the block and released when that view drops,
 which is the shape that would make the stated number bound both terms directly.
 It is the wait under another name, on the one holder that cannot take one: the
 view *is* the retention, so "released when the view drops" is "released when
-that reader stops reading", and a second reader blocking on it reproduces `M70`
-with a different counter. The live term is bounded instead by admitting fewer
+that reader stops reading", and a second reader blocking on it reproduces the
+same deadlock with a different counter. The live term is bounded instead by admitting fewer
 readers — `stream::worker_count` dividing the stated bytes by a per-worker
 footprint — which is the divisor's mechanism and works on a retaining holder
 precisely because it never asks one holder to wait on another
@@ -942,7 +955,8 @@ fix already tightens from the outside; left alone unless a reading shows the
 transient itself, not the admitted-worker count, is what a real workload hits.
 
 **Evicting before acquiring is a reuse rule and not a progress guarantee**, and
-reading it as one is what `M70` was. A retained block is normally also the
+reading it as one is the mistake behind the deadlock filed under "Execution
+model and API surface". A retained block is normally also the
 block some reader is holding a view into, so the drain to `slots - 1` frees no
 slot for the caller that is waiting on one — which is why the block pool is
 never granted a wait at all ("Execution model and API surface"). What the order
@@ -968,6 +982,15 @@ served by: it cuts the path that already holds least, and a cap of one makes
 eviction keep zero and drain before every decode, so an outstanding view forces
 a fresh allocation of the block unit instead of a reuse — the pool stops
 pooling exactly when a caller is holding a block.
+
+*Rejected: copying a field's bytes on the compressed extraction path*, so that
+a batch owns what it holds and the block is freed the moment its worker is
+done. It bounds memory just as exactly, and it costs roughly +7% at
+extraction's ~680 MB/s — but it gives up the zero-copy view for an entire
+source class, one of the four decisions that keep later phases additive
+([`roadmap.md`](roadmap.md), "Four decisions that keep later phases additive"),
+to solve a bounding problem this pool's own backpressure solves while giving up
+nothing.
 
 **A block the caller's budget cannot hold is not decoded whole; that file keeps
 the streaming reader.** A *single block* file's one block is the whole
@@ -1029,11 +1052,11 @@ to remove — and a resident set larger than the one the user set is harder to
 attribute than a read that is merely slower.
 
 **The fallback announces itself, and it names the number to raise the budget
-to** (`M67`). `stream::plan_partitions` emits a
+to.** `stream::plan_partitions` emits a
 `PlanNoteKind::CompressedBlockPathDeclined` carrying the file's block count,
 its largest block and the budget in force, and `pgdq query` prints it once on
 stderr — so the flag that says *raise it* also says what to raise it to, which
-is the same rule `M72` applies to a worker count the budget refuses.
+is the same rule applied to a worker count the budget refuses.
 `max_block_uncompressed` reaches no reader outside `io.rs` any other way, and
 answering it by hand costs an `xz --list` — an 85-second walk on the
 multistream koji file.
@@ -1048,16 +1071,16 @@ rather than over the blocks a query matched, because a query whose rows sit
 inside one compressed block is advised one partition on the block path too;
 that costs one boundary list, built and dropped once per query.
 
-**It is a `PlanNote`, not a `DiagnosticKind`, and that is `M72`'s rule rather
-than a fresh call.** `NonSeekableCompressedSource` is a property of the *file*:
+**It is a `PlanNote`, not a `DiagnosticKind`, and that is the general rule
+rather than a fresh call.** `NonSeekableCompressedSource` is a property of the *file*:
 it survives in the persisted seek table, which is why `cache::status_from_file`
 replays it out of a cache with no dump present. A budget decline is a property
 of the file **and this run's budget** — two queries over one file with
 different budgets get different answers — and every `DiagnosticKind` that
 exists is a property of the file ("Diagnostics: one severity scale, two
-types"). *Rejected: a `DiagnosticKind` of its own*, which is what `M67` was
-admitted describing, before `M72` settled the channel question generally on the
-same distinction: it would put the first run-dependent fact into a channel
+types"). *Rejected: a `DiagnosticKind` of its own*, which is what this note was first
+expected to be, before the channel question was settled generally on the same
+distinction: it would put the first run-dependent fact into a channel
 `DumpIndex` serializes around, recomputes on cache load, and exports through
 `--json` from a cache that never saw the run.
 
@@ -2172,13 +2195,13 @@ or read back from a persisted cache).
 **Two more channels exist beside this one, and neither widens it.**
 `TableStream::comparison_notes` (`ComparisonNote`, L4) is per predicate term,
 conditional on the filter a query stated ("Predicates", the comparison
-register); `TableStream::plan_notes` (`PlanNote`/`PlanNoteKind`, `M72`) is
+register); `TableStream::plan_notes` (`PlanNote`/`PlanNoteKind`) is
 per query *plan* rather than per file, per column or per term — today two, and
 both are the stated memory budget declining something: `ParallelismBudgetLimited`,
 naming why a partitioned replay's sub-stream count fell short of `--jobs`
-("Execution model and API surface", "`M72`: when the divisor declines the
+("Execution model and API surface", "When the divisor declines the
 requested count"), and `CompressedBlockPathDeclined`, naming an `.xz` file
-whose blocks are too large to hold under that budget (`M67`, "The compressed
+whose blocks are too large to hold under that budget ("The compressed
 source"). Each stays its own type rather than an
 added `DiagnosticKind` variant for the reason `DiagnosticKind` itself gives:
 every existing variant is a property of the file, and neither of these is —
@@ -4174,8 +4197,7 @@ replay prints up to the row it dies on. What this buys is that a person
 re-running to confirm a failure gets the same message: raising whichever
 sub-stream failed first *in time* would name a different row on each run over
 an unchanged file. It costs nothing where there is no error — the bookkeeping
-is one comparison per slot per round
-([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The lowest-offset error wins").
+is one comparison per slot per round.
 
 **Discarding those sub-streams' held batches is the load-bearing half, not a
 tidy-up.** Every sub-stream is filled in the first round, so when sub-stream `i`
@@ -4231,6 +4253,38 @@ find. `leader.rs` (L4) holds both halves of that arrangement: `scan_piece` is
 what one worker runs and `merge` is what the leader does with the answers —
 neither reads a source, spawns anything, or knows how the cuts were chosen —
 and `scan_region` is the scheduler over them.
+
+*Rejected:* **a split decode pool and a parse pool**, each feeding the other
+over a channel. It has a ratio to be tuned to, and the right ratio is a
+property of the *command* rather than of the machine: against decode's ~435 MB/s
+a core it is **~16 decode workers per discovery thread** and **~1.5 per
+typed-extraction thread**, an order of magnitude apart and not a number any
+caller could state. A worker that decodes and parses its own range spends its
+time in whatever proportion the two stages demand and lands on both without
+anyone computing either ("What parallelism buys, and where it stops"). Two
+costs come with the fused shape and are accepted: this code owns block
+scheduling on top of the row scheduling it already owned, where `xz-seek`'s own
+bulk pool would have been free ("The compressed source"); and
+`BlockTask::decode_into` fills its caller's buffer with a block's *entire*
+output, so a worker's retained unit is a whole block where the read path's is
+one chunk.
+
+*Rejected:* **speculative splitting** — a worker guessing it is inside a `COPY`
+block, resyncing at the next LF, and being validated when the serial prefix
+catches up. A seekable compressed source hands over **byte ranges, not scanner
+state**: a block boundary lands mid-row and mid-statement exactly as a
+speculative cut does, so a seek table does not by itself say whether a worker
+starts inside a block. The leader makes speculation unnecessary rather than
+cheap — a worker is never wrong, so there is no validation path, no rollback,
+and no window in which a bad guess sits in the map. What it costs is a dump of
+many small blocks, where the leader crosses a boundary per block and the scan
+is serial; that shape is the 4000-block fixture, and being serial on 1.9 MB is
+not a cost.
+
+*Rejected:* **pipelining across blocks**, keeping workers busy inside block `k`
+while the leader runs ahead to `k+1`. Finding block `k`'s end *is* the work the
+workers are doing, so getting ahead of them needs either speculation past an
+unscanned block or a second leader.
 
 **A piece answers five things about itself**: how many rows it owns, its own
 array-shape census, the `\.` terminator if it held one, the offset it consumed
@@ -4343,8 +4397,9 @@ piece before it has finished or failed, and the pieces after it are dropped
 unread. `try_join_all` returns the first error it *observes* instead, which is a
 race between the workers — so the same truncated or unreadable file could name a
 different offset on each run, and a user re-running to confirm a failure would
-be told about a different byte
-([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The lowest-offset error wins").
+be told about a different byte. *Rejected: first-to-fail-wins, with the
+nondeterminism documented.* A reproducible error message is worth more than the
+sibling drain it costs, which is one comparison per piece.
 Windows need no rule of their own: a window is folded before the next is
 dispatched, so a later window cannot outrun an earlier one's failure.
 
@@ -4390,6 +4445,17 @@ the source's partitions is declined and read serially, so a scan of a
 block-rich file alternates between the two paths without anything having to
 choose.
 
+**One region is open at a time, and how that degrades is a property rather
+than a deficiency** — the remedy is in the writer's hands, `xz --block-size=`,
+and the shape gets worse gradually rather than failing. Workers cover the
+interior of one open `COPY` block and whichever finds `\.` reports the end, so
+a `COPY` block smaller than *jobs* × the source's compressed block size —
+roughly 336 MiB at fourteen workers over 24 MiB blocks — cannot fill every
+worker, and one under a single compressed block gets no parallelism at all.
+koji's 74 blocks over 784 GB fill every worker; a 500 GB dump of 5,000 tables
+at ~100 MB each gets about four workers a block, which keeps the whole
+compression win and roughly a quarter of the parallel one.
+
 **A block the leader closed is closed through the same code a serial `CopyEnd`
 is**, `stream::close_copy_block` — the splice, the throttled save, the settled
 test, in that order. It is a free function with two callers rather than an arm
@@ -4414,6 +4480,20 @@ banked, the index is saved at the last spliced watermark, and the scan reports
 itself interrupted, which is exactly the state the loop's own per-chunk check
 saves at. So a region is a fourth place `ScanOptions::cancel` is read, and the
 only one that can abandon a block already partly scanned.
+
+*Rejected:* **banking the workers' finished pieces**, so that an interrupted
+scan of a hundred-gigabyte block keeps most of it. It would record a partially
+censused block, and a partial census is a *wrong* answer rather than a weak
+one: a worker that saw only a column's 2-D rows records `(2, 2)`, which
+resolves to `List<List<T>>` and then hard-fails on every 1-D value in the half
+it never read — the confidently-wrong schema the both-bounds census exists to
+prevent ("What the census decides, and who may believe it"). Banking it means
+making census partiality representable and keeping it away from
+`resolve_columns`, which is a larger change than the one that would benefit;
+discarding the pieces is what keeps the census totality invariant true by
+construction, leaves `splice` untouched, and makes byte-identical resume
+survive with no new machinery. What an interrupt costs is therefore unchanged —
+the block in flight — and re-scanning it is what got faster.
 
 Two tests carry this. `a_parallel_mapping_pass_builds_the_index_a_serial_one_does`
 runs `map_file` over four fixtures at two chunk sizes and three job counts and
@@ -6209,6 +6289,57 @@ and prose and never string literals, because a citation is something written to
 a reader; the grammars it has to survive, and the one thing it cannot see, are
 in its own module docstring.
 
+### What parallelism buys, and where it stops
+
+The profiles below are one core's. What a *second* core buys is decided by
+which stage binds, and the rule the parallel scan was built on is one line:
+**parallelize what is CPU-bound**. Three cases fall out of it rather than being
+enumerated, and each rate is a figure in [`measurements.md`](measurements.md):
+
+- **Decode: always.** One core decodes ~435 MB/s of plaintext ("What a second
+  decode worker buys, and what the twenty-fourth does not"), which is below
+  every device this project owns and still below the HDD's offer at twenty-four
+  workers. A compressed source hands the parser roughly 19.4 plaintext bytes
+  for each byte the device delivers — koji is 784 GB against 40,397,009,888 —
+  so serial decode is the only thing standing between that offer and the
+  parser.
+- **Extraction: on any source.** A typed `query` runs at ~680 MB/s and a string
+  one at ~940, under the NVMe's 2602 MB/s floor and the second under the SATA
+  SSD's 561, so extraction is CPU-bound on every device here whatever the
+  source is.
+- **Discovery: only with a decoder in front of it.** `parse` runs at
+  7049 MB/s warm ("Scan throughput by input shape"), above every device, so on
+  a plain file it is device-bound — cold on the NVMe it is 1.06× the `dd`
+  floor, and the entire prize for splitting it is the 0.076 s by which a
+  1.314 s scan exceeds that floor.
+
+**The worker is fused — one thread decodes and parses its own range — because
+those rates make any split arrangement a tuning problem.** That argument and
+what it refuses are beside the mechanism ("The interior split").
+
+**Where the rule and the readings disagree, the readings stand.** Before
+`parallel-scan-throughput` existed this design projected by multiplying a
+one-core rate by a worker count; two of that figure's four legs behave as the
+projection said and two do not ([`measurements.md`](measurements.md), "What a
+second scan worker buys, and where the plain path stops"). A compressed `parse`
+reaches **5.82×** at twenty-four workers, sublinearly, which is the decode
+figure's own shape. A compressed typed `query` reaches **1.60×**, its
+sub-stream count capped at eleven by the stated budget's divisor. A plain
+`parse` *falls* to **0.81×**, paying coordination for a scan that was already
+device-bound — which is the refusal of parallel plain-file discovery, arrived
+at as a measurement rather than as a branch. And a plain typed `query` is
+**flat at 0.98×** across the whole range although the rule says it is
+CPU-bound: the cores are asked for and not delivered, a plain source's chunk
+pool clamping to `POOL_DEPTH` whatever `--jobs` states ("Execution model and
+API surface").
+
+So the rule picks the right stages and the arithmetic was a floor on what would
+be needed rather than an estimate of what would suffice. **Converting cores
+into extraction throughput on a plain source is unfinished**, and what it waits
+on is defaults rather than mechanism — how much memory a scan may assume, and
+how the span allowance is charged across sub-streams
+([`roadmap.md`](roadmap.md), "P19 — Efficient defaults for a parallel scan").
+
 <!-- section: parse-profile -->
 
 ### `parse`: three-quarters of the wall is the kernel, and the rest is two SIMD passes
@@ -6943,7 +7074,7 @@ count and largest block, which `info --detail` prints and `--json` exports —
 is derived there for the same reason and carried on `Valid`/`Incomplete`
 beside `total_size`: it is a projection of the `CompressionIndex` the envelope
 already holds, so nothing about the on-disk shape changed and a cache written
-before it existed answers it too (`M67`, "The compressed source"). The cost is not close — koji's cache is 833 spans, and a
+before it existed answers it too ("The compressed source"). The cost is not close — koji's cache is 833 spans, and a
 whole `pgdq info --dqcache` run against it, load and recompute and render,
 is **3 ms**. What makes it load-bearing rather than an optimization: `pgdq
 info` reports from a cache without ever scanning, so anything not recomputed
@@ -7487,7 +7618,7 @@ user who has met the slow path asks. All three numbers come from
 `CacheStatus`'s `CompressionShape` ("The cache"), so `info --dqcache` answers
 them with no dump file present, and `largest block` is what
 `--parallel-memory` has to clear for a query to read the file a block at a time
-(`M67`, "The compressed source"). `--json` carries the same object under
+("The compressed source"). `--json` carries the same object under
 `compression`, `null` for a plain file, because that flag's refusal to combine
 with `--detail` claims it already carries everything `--detail` would add.
 

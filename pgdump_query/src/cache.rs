@@ -143,7 +143,7 @@ enum CompressionIndex {
 }
 
 /// The shape of the container a cache's offsets sit under, read off the
-/// persisted [`CompressionIndex`] — `M67`.
+/// persisted [`CompressionIndex`].
 ///
 /// **Three numbers, and each answers a question the user is otherwise sent to
 /// `xz --list` for.** `max_block_uncompressed` is what a memory budget is

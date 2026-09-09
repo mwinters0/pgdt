@@ -50,8 +50,7 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
 ///
 /// Draining them sequentially is deliberate: it is the arrangement the design
 /// says must be indistinguishable from the serial path
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "The library hands out
-/// partitions; the CLI merges them"), and running them concurrently would test
+/// (`docs/design/architecture.md`, "Partitioned replay"), and running them concurrently would test
 /// the executor rather than the split.
 async fn partitioned_rows(
     source: &dyn ByteRangeSource,
@@ -162,7 +161,7 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
     assert_eq!(count, 1);
 }
 
-/// `M72`: a stated `--jobs` the memory budget cannot afford in full says so,
+/// A stated `--jobs` the memory budget cannot afford in full says so,
 /// naming the numbers that would raise it. The shipped CLI defaults are
 /// exactly this case — `QueryOptions::max_source_span`'s 64 MiB alone meets
 /// `DEFAULT_MEMORY_BUDGET`'s 64 MiB, so any footprint at all pushes the
@@ -515,7 +514,7 @@ async fn a_single_block_xz_declines_to_be_split() {
     assert_eq!(rows, expected);
 }
 
-/// `M67`: a multi-block `.xz` whose blocks the stated budget cannot hold is
+/// A multi-block `.xz` whose blocks the stated budget cannot hold is
 /// read through the streaming decoder, and the plan says so — naming the
 /// file's largest block beside the budget that declined it, which is the
 /// number `--parallel-memory` has to clear.
@@ -638,7 +637,7 @@ async fn a_block_path_that_was_taken_is_silent() {
 /// test that left `max_source_span` at its 64 MiB default would need a budget
 /// past that default before the job count ever bound anything.
 ///
-/// **The plan says why, too (`M72`)**: [`PlanNoteKind::ParallelismBudgetLimited`]
+/// **The plan says why, too**: [`PlanNoteKind::ParallelismBudgetLimited`]
 /// names the same two divisor terms and the budget that declined them, so this
 /// exact arithmetic is checked against the diagnostic as well as against the
 /// sub-stream count.

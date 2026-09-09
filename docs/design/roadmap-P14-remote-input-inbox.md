@@ -287,8 +287,9 @@ the `xz-seek-1d` session.
 
 ## `ByteRangeSource` now advises its own partitioning, and a remote source has to answer
 
-**Fact.** P16 adds a defaulted `ByteRangeSource` method by which a source says
-how it would like a range split and what each partition costs resident.
+**Fact.** `ByteRangeSource` carries a defaulted `partitions` method by which a
+source says how it would like a range split and what each partition costs
+resident.
 `LocalFileSource` answers "anywhere, one buffer each"; `XzSource` answers "at
 these block boundaries, 32 MiB each". The scheduler above asks the source and
 never learns what is underneath, which is what keeps the fused decode-and-parse
@@ -305,6 +306,6 @@ compressed source in the way this phase already has to think about: an
 a ranged GET per partition, so the two answers multiply rather than one
 overriding the other.
 
-**Origin.** P16's grilling, 2026-09-06
-([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The source
-advises its own partitioning, and L4 never learns what it is").
+**Origin.** The parallel-scan work's grilling, 2026-09-06; the shipped
+mechanism is [`architecture.md`](architecture.md), "Execution model and API
+surface".

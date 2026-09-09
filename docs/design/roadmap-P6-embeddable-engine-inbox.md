@@ -411,9 +411,9 @@ proportion without moving what the library costs.
 
 ## The partitioned scan surface exists, and it was shaped against `TableProvider::scan`
 
-**Fact.** P16 splits `TableStream` into N sub-streams over a complete map, each
-internally in file order, and the library hands those out rather than merging
-them — `pgdq query` does its own k-way merge on source offset when a human
+**Fact.** `table_stream_partitions` splits `TableStream` into N sub-streams
+over a complete map, each internally in file order, and the library hands those
+out rather than merging them — `pgdq query` does its own k-way merge on source offset when a human
 wants file order. Running the partitions sequentially *is* the serial path, so
 the parallelism knob's "off" setting is not a second implementation. The
 library defaults to `Parallelism::Serial` and adds no `rt-multi-thread`
@@ -442,15 +442,14 @@ surface kept for one consumer is a surface this phase decides whether the
 embedded API promises.
 
 **Why the ordering still holds.** This phase's reason for going last is that it
-presents surfaces over mechanisms that are still moving. P16 has now settled
-the one beneath it — the byte source's shape, its partitioning advisory, and
-what a parallel read promises in bytes — which is one fewer moving part rather
-than a reason to bring this phase forward.
+presents surfaces over mechanisms that are still moving. The one beneath it is
+now settled — the byte source's shape, its partitioning advisory, and what a
+parallel read promises in bytes — which is one fewer moving part rather than a
+reason to bring this phase forward.
 
-**Origin.** P16's grilling, 2026-09-06
-([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The library
-hands out partitions; the CLI merges them" and "Workers come from
-`spawn_blocking`").
+**Origin.** The parallel-scan work's grilling, 2026-09-06; the shipped
+mechanisms are [`architecture.md`](architecture.md), "Partitioned replay" and
+"Execution model and API surface".
 
 ---
 

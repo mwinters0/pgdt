@@ -501,8 +501,7 @@ async fn map_forward(
     // says so on its own (`docs/manual/dump-inspection.md`, "`parse`: reading
     // the dump"). Past here a real scan is about to run, at whatever
     // arrangement `--jobs` and the stated budget resolved to
-    // (`docs/design/roadmap-P16-parallel-scan.md`, "A parse has phases now,
-    // so the CLI says which one it is in").
+    // (`docs/design/architecture.md`, "Status output").
     tracing::info!(
         bytes = size,
         resumed_from = index.scanned_through,
@@ -1225,9 +1224,9 @@ impl<'a> TableStream<'a> {
     /// Facts about *this query's plan* rather than about a column or a
     /// predicate — today two, and both are the stated memory budget declining
     /// something: [`PlanNoteKind::ParallelismBudgetLimited`], `--jobs` asking
-    /// for more sub-streams than that budget affords (`M72`), and
+    /// for more sub-streams than that budget affords, and
     /// [`PlanNoteKind::CompressedBlockPathDeclined`], an `.xz` source with
-    /// blocks too large to hold under it (`M67`).
+    /// blocks too large to hold under it.
     ///
     /// **A fourth channel** beside `DumpIndex.diagnostics` (L1),
     /// `ResolvedSchema.notes` (L2) and [`Self::comparison_notes`] (L4) — see
@@ -1835,7 +1834,7 @@ pub enum PlanNoteKind {
     /// `None` when the caller left it unbounded, in which case the footprint
     /// alone was too big for `memory_bytes`. Never a reason to refuse the
     /// query: `planned` sub-streams run regardless, this only names why there
-    /// are not `requested` of them and what would raise it (`M72`).
+    /// are not `requested` of them and what would raise it.
     ParallelismBudgetLimited {
         requested: usize,
         planned: usize,
@@ -1942,7 +1941,7 @@ impl PlanNote {
     }
 }
 
-/// `M67`: whether this source is a compressed one that *could* be read a
+/// Whether this source is a compressed one that *could* be read a
 /// block at a time and is not, because the budget in force leaves no room to
 /// hold a whole block ([`crate::io::Partitioning`], and
 /// `docs/design/architecture.md`, "The compressed source").
@@ -2008,9 +2007,9 @@ fn compressed_block_path_declined(
 /// answer a discovery worker's call gets.
 ///
 /// **The second return value is the plan's own notes: at most one naming why
-/// `workers` came up short of `parallelism.jobs()` (`M72`), and at most one
+/// `workers` came up short of `parallelism.jobs()`, and at most one
 /// naming a compressed source that declined the block-decode path under this
-/// budget (`M67`, [`compressed_block_path_declined`]).** Empty on every path
+/// budget ([`compressed_block_path_declined`]).** Empty on every path
 /// that limits nothing — an empty `matches` included, since a footprint of
 /// zero never trips the budget — so a caller need not special-case "nothing
 /// to say".

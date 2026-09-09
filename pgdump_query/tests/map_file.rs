@@ -583,8 +583,7 @@ impl ByteRangeSource for FailsOutOfOrder<'_> {
 }
 
 /// **The lowest-offset error is the one a split region raises**
-/// (`docs/design/roadmap-P16-parallel-scan.md`, "The lowest-offset error
-/// wins"). Four workers each fail on their own piece of one `COPY` block's
+/// (`docs/design/architecture.md`, "The interior split"). Four workers each fail on their own piece of one `COPY` block's
 /// interior, and the *earliest* piece is deliberately the last to answer — so a
 /// scheduler that raised whichever failure arrived first would report the
 /// second worker's offset, and a user re-running to confirm the failure would

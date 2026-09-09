@@ -100,7 +100,7 @@ fn info_json(path: &Path) -> serde_json::Value {
 ///
 /// The `compression` object is the one field that legitimately differs, and
 /// it is asserted rather than merely excused: it describes the *container*,
-/// which is the whole of what these two files do not share (`M67`).
+/// which is the whole of what these two files do not share.
 #[test]
 fn seekable_xz_parses_to_the_same_index_as_plain() {
     let (_pd, plain_path) = plain();
@@ -135,7 +135,7 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     );
 }
 
-/// `M67`: `info --detail` states the container's shape, and it is answered
+/// `info --detail` states the container's shape, and it is answered
 /// from the **cache alone** — `--dqcache` with no `--source` at all, which is
 /// the mode a budget decline deliberately cannot be reported in (it depends
 /// on a run's budget, where this is a property of the file). The three
@@ -202,7 +202,7 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
     plain_json.as_object_mut().unwrap().remove("diagnostics");
     xz_json.as_object_mut().unwrap().remove("diagnostics");
     // The container's shape differs too, and describes the container rather
-    // than the index — a single-block file reports exactly that (`M67`).
+    // than the index — a single-block file reports exactly that.
     assert_eq!(xz_json["compression"]["blocks"], 1);
     plain_json.as_object_mut().unwrap().remove("compression");
     xz_json.as_object_mut().unwrap().remove("compression");

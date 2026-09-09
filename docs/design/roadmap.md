@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11–P13, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P16 — parallel scan and extraction | **Complete** | [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md) and [its notes](roadmap-P16-parallel-scan-notes.md); the mechanisms are in [`architecture.md`](architecture.md), by subject |
+| P1–P5, P7, P9, P11–P13, P16, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P19 — efficient defaults for a parallel scan | Sketched; grilled, spec not yet written | this file, below; [inbox](roadmap-P19-efficient-defaults-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -43,7 +42,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P18`** — nothing at or below it
+centering"). **Phase numbering continues from `P19`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -353,40 +352,23 @@ and "Execution model and API surface").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P16 — Parallel scan and extraction
-
-**Specified and in flight: [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md).**
-Carved out of the scan-performance work, which stayed single-threaded
-throughout.
-
-Its grilling narrowed it sharply, and two of the results reach beyond the
-phase. **What it parallelizes is what is CPU-bound** — decode always,
-extraction always (plain input included), and discovery only where a decoder
-sits in front of it — so **parallel plain-file discovery is refused rather than
-deferred**, on the cold-NVMe reading that a whole-file `parse` there is 1.06×
-the `dd` floor and the entire prize is 0.076 s of a 1.314 s scan. That refusal
-takes the speculative-split scheme with it. And **the sparse row index is not
-built here**: splitting an open `COPY` block's interior at LF boundaries costs
-one row's resync, so P10 owns the index and its interval outright rather than
-inheriting them from whichever phase ran first.
-
 ## P19 — Efficient defaults for a parallel scan
 
 **Being grilled; no spec yet. Facts already filed for it:**
 [`roadmap-P19-efficient-defaults-inbox.md`](roadmap-P19-efficient-defaults-inbox.md).
 Sketched only to corner-avoidance depth, per this file's rule.
 
-`P16` builds the mechanism; this phase ships it set correctly. The split is
-context rather than subject — `P16`'s spec already carries three amendments and
-nineteen slices, and a phase whose evidence is another phase's completed
-figures is the process's own "evidence first" ordering one level up. **Neither
-row alone means parallelization is finished**: `P16` `Complete` says the
-mechanism exists, and this phase is what makes a person who states no flag get
-a good arrangement.
+The parallel scan mechanism exists; this phase ships it set correctly. The
+split is context rather than subject — the phase that built it carried nineteen
+slices and three amendments, and a phase whose evidence is another's completed
+figures is the process's own "evidence first" ordering one level up. **The
+mechanism existing is not parallelization being finished**: this phase is what
+makes a person who states no flag get a good arrangement.
 
 Three things are settled going in, and the first is a reversal.
-**The tool discovers its own allocation** — `P16` rejected reading the cgroup
-limit and that is reversed, on the deployment case the rejection did not weigh
+**The tool discovers its own allocation** — reading the cgroup limit was
+rejected when the mechanism was built and that is reversed, on the deployment
+case the rejection did not weigh
 (`../status/history/2026-09-08.md`, "The tool discovers what it was
 allocated"). **The parallel default is source-dependent**, registered as a
 source's own answer rather than a test for `.xz`, because the gzip, zstd/lz4
@@ -414,10 +396,10 @@ where it sits in the table above:
 - **It owns the addressing scheme outright, and it is the only consumer left.**
   Statistics attach to row groups, the row group is the sparse row index's
   checkpoint interval, and `CopyBlock::sparse_index` is a reserved `None`. That
-  field was expected to be filled by P16 for the sake of parallel splits, and
-  that phase's grilling found it does not need one — an open `COPY` block's
-  interior splits at LF boundaries for a single row's resync, which is what
-  `memchr` already gives. So the interval is settled here, against statistics'
+  field was expected to be filled for the sake of parallel splits, and the
+  parallel scan turned out not to need one — an open `COPY` block's interior
+  splits at LF boundaries for a single row's resync, which is what `memchr`
+  already gives. So the interval is settled here, against statistics'
   needs, with no second phase to reconcile against. It is not only an
   addressing question: this phase's best outcome — sortedness plus the sparse
   index turning a range predicate into a binary search for a byte range, below
@@ -771,34 +753,25 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M63 are struck**, and nothing at or below `M63` is reused. That is a
+**M1–M75 are struck**, and nothing at or below `M75` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
-absorbed into a neighbour or folded into a phase slice, and their numbers are
-spent all the same. What each struck item did is filed by subject —
+absorbed into a neighbour or folded into a phase slice, one is admitted and
+still queued, and their numbers are spent all the same. What each struck item did is filed by subject —
 [`architecture.md`](architecture.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
 in the dated history entry it was filed under.
 
-**The table below was written again by the first item admitted after this
-keystone**, which took `M64`. A row whose Date is still empty belongs here as
-readily as one that has landed, since a number is allocated on admission.
+**The table below carries what is still outstanding**, and is written on by
+the next item admitted. A landed row is provenance and went with the rest of
+the centering; a row whose Date is still empty is a live obligation and stays,
+since a number is allocated on admission and the unattended loop reads this
+table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| `M64` | 2026-09-06 | The vendored `xz-seek` copy is re-synced to `5b549d7`, which carries that crate's parallel block decode whole — pool, pieces, `plan_range`, `SeekTable::blocks_in`, `&T`/`Arc<T>` sources — and the copy now tracks upstream rather than waiting for the consumer that needs it; no library code changed, nothing here names any of the new surface, and the P16 and P10 inbox entries written against the older snapshot are restated against this one | | [2026-09-06](../status/history/2026-09-06.md), "`M64`: the vendored decoder tracks upstream" |
-| `M65` | 2026-09-08 | The RSS attribution's **instrument** becomes a registered figure: `scripts/rss_attribution.py` folds into `measure.py` as `rss-attribution` with `depends` and `quoted_by` edges and four new command shapes, and `docs/manual/dump-inspection.md`'s per-*table* claim is licensed by it rather than by `peak-rss`, which cannot tell per-table from per-block on its own inputs — both figures name that file, each register comment saying which half of the sentence it answers for. The figure sits in `measure.UNTAKEN`, its readings still the standalone script's; publishing them is `M74` | | [2026-09-08](../status/history/2026-09-08.md), "`M65` lands its instrument; `M74` owns the sitting" |
-| `M66` | 2026-09-08 | `Outside` gains an invalidation edge, so `--stale` can report an outside-register section whose inputs have moved — `koji` has never had one, and that field is what makes staying outside the register safe rather than merely silent | | [2026-09-08](../status/history/2026-09-08.md), "`M66`: a declared section carries an invalidation edge" |
-| `M67` | 2026-09-08 | The budget-declined `.xz` fallback announces itself: a `PlanNoteKind::CompressedBlockPathDeclined` — a plan note and not a `DiagnosticKind`, `M72` having settled that channel on the same file-property test the row was written before — detected from `partitions()` advising one partition over a many-block seek table, naming the file's largest block beside the budget that declined it, and reached only by `plan_partitions`, so `parse` cannot raise it; plus stream count, block count and largest block on `info --detail` and `--json`, projected off the persisted seek table as `cache::CompressionShape` so `--dqcache` answers them — so the flag that says *raise it* also says what to raise it to | | [2026-09-08](../status/history/2026-09-08.md), "`M67`: the declined block path announces itself, and `info --detail` names the block" |
-| `M68` | 2026-09-07 | The holder class becomes a permission rather than a description: `HolderClass`/`hint_holder_class` are `WaitPolicy`/`hint_wait_policy`, spelled `NeverWait` (the `Default`) and `MayWait`, and all three read loops now state `NeverWait`, so no loop in the shipped build arms the wait until `16.10.1`'s fused worker does | | [2026-09-07](../status/history/2026-09-07.md), "The holder class is a permission, and the shipped loops take the exempt one" |
-| `M69` | 2026-09-07 | The worker count becomes apparatus: every registered figure's command shape, the profile recipe and the koji recipe state `--jobs` explicitly instead of inheriting the CLI default, `--check` reconciles that each shape pins a count, and `measurements.md` gains the rule beside the one that makes the allocator apparatus — the default moved underneath nineteen figures at `16.7.1` and nothing noticed for three slices | | [2026-09-07](../status/history/2026-09-07.md), "The parallel default is a correction the tree has not made" |
-| `M70` | 2026-09-08 | The block pool is classed as the **retaining** holder it is, so no read loop's `WaitPolicy` reaches it: `XzSource::hint_wait_policy` states the granted policy to the chunk pool alone, which ends the `--jobs` 2-or-more deadlock over a block-decoding `.xz` — a retained block was charged, and `BlockCache::slot`'s drain to `slots() - 1` could not discharge the one the waiting reader itself held. What the block pool's budget bounds is now stated in two terms, retained blocks and `worker_count` live ones | | [2026-09-08](../status/history/2026-09-08.md), "`M70`: the block pool is a retaining holder, so nothing grants it a wait" |
-| `M71` | 2026-09-08 | `measure.py`'s regime dispatch stops falling through: `Session.input_path` resolves a regime through a declared table and raises on an unknown one instead of returning the *warm* path, and `test_every_regime_is_gated_for_contention` derives its regime list from the registered figures' specs rather than a hardcoded tuple that omits `warm-parallel` — a `cold-*` regime added to a figure and nowhere else would have dropped the page cache and then read from tmpfs, publishing warm readings under a cold heading with no error |  | [2026-09-08](../status/history/2026-09-08.md), "`M71`: a regime is a declared row, and an undeclared one is refused" |
-| `M72` | 2026-09-08 | A `--jobs` the stated budget refuses says so: `stream::plan_partitions` returns a `PlanNote` alongside the plan whenever it cuts fewer sub-streams than `--jobs` asked for, naming the divisor's two terms and the budget that declined them — `TableStream::plan_notes`, a fourth channel beside `Diagnostic`/`DiagnosticKind` (L1), `ResolvedSchema.notes` (L2) and `ComparisonNote` (L4), since the fact is a property of one query's plan rather than of the file — `M67`'s rule applied to the worker count rather than to the `.xz` block fallback. `pgdq query` announces it once on stderr, so the flag that says *raise it* also says what to raise it to | | [2026-09-08](../status/history/2026-09-08.md), "`M72` lands: `plan_partitions` names why a plan fell short" |
-| `M73` | 2026-09-08 | A sitting's tables can be rebuilt from its readings: `raw.json` records what a render needs (header, allocator, input sizes, RSS, reported lines, and each run's figure id) and `measure.py --render <run-dir>` re-emits `tables.md` from it, measuring nothing — so a presentation-only renderer change is folded in by re-rendering rather than by hand-editing the pasted table, which is how a table came to disagree with the harness that claims to produce it. `--check` also refuses harness scaffolding pasted into the document |  | [2026-09-08](../status/history/2026-09-08.md), "A hand-edited table has no oracle" |
 | `M74` | | The sweep publishes `rss-attribution`: the `Shared` edge onto `peak-rss` is declared, the section's `outside-register` marker and `measure.NOT_OURS` row are deleted, the figure marker goes on and the stamp's accounting sentence is re-generated. It cannot be done before then — the doc's two tables carry two disagreeing readings of one command shape, which is what the borrow exists to collapse, and declaring the edge early only fails `--check` without letting the marker on | | [2026-09-08](../status/history/2026-09-08.md), "`M65` lands its instrument; `M74` owns the sitting" |
-| `M75` | 2026-09-09 | An acknowledgement reaches a declared section only by naming it: `Acknowledged.figures` with an empty tuple means every *figure* and no declared section, so a blanket entry written about durations can no longer excuse koji's byte-identity check without its author deciding to — `spent_acknowledgements` had unioned the outside bases into `covered`, and the field's docstring said "every figure" while meaning more than that. `--check` still passes the union, since an entry that names a section is spent against that section's own marker | | [2026-09-09](../status/history/2026-09-09.md), "`M75`: a blanket acknowledgement reaches every figure and no declared section" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

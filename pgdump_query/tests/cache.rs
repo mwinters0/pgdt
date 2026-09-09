@@ -645,7 +645,7 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
             assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
             assert_eq!(total_size, plain.size().await.unwrap());
             assert_eq!(index, plain_index);
-            // `M67`: the shape comes back off the persisted seek table, so a
+            // The shape comes back off the persisted seek table, so a
             // reader learns what to raise a budget to without `xz --list`.
             let shape = compression.expect("an .xz source records its container's shape");
             assert_eq!(shape.container, "xz");

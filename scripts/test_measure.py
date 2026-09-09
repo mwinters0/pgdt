@@ -1125,12 +1125,12 @@ class RssAttribution(unittest.TestCase):
         self.assertIn("docs/manual/dump-inspection.md", self._fig().quoted_by)
 
     def test_a_taken_attribution_declares_its_borrow(self):
-        """The obligation `M65` leaves for `M74`, the sweep that publishes this.
+        """The obligation the instrument leaves for `M74`, the sweep that publishes this.
 
         Its `parse` reference row runs `peak-rss`'s `blocks500` and
         `blocks4000` shapes, so the two must share a reading rather than take
         one each — the doc currently carries both, disagreeing. But declaring
-        the edge while this entry is untaken closes no part of `M74` and would
+        the edge while this entry is untaken closes no part of that item and would
         refuse `peak-rss`'s own standalone sitting, a figure the doc already
         carries, with no sweep yet to cure it. So the edge is declared in the
         change that moves this entry into `FIGURES`, and that is what this
@@ -1461,8 +1461,8 @@ class ParallelFigures(unittest.TestCase):
     reduces because the budget cannot hold that many partitions — is a lower
     count wearing a higher label, and the resulting table is monotone and wrong.
     A **shape drifting off `SWEEP_JOBS`** puts a second worker count in the
-    register with nothing saying so, which is the defect `M69` closed one level
-    up. And a **leg whose rate is per compressed byte** reads five times too
+    register with nothing saying so, which is the defect the worker-count
+    apparatus rule closed one level up. And a **leg whose rate is per compressed byte** reads five times too
     slow under a heading that looks like the plain leg's.
     """
 
@@ -2616,7 +2616,7 @@ class OutsideInvalidation(unittest.TestCase):
     def test_the_attribution_s_edge_is_the_registered_instrument_s(self):
         # Read off the figure rather than copied: the readings differ from it
         # in provenance, not in what moves them, and two spellings of one edge
-        # drift in the window between `M65` and `M74`.
+        # drift in the window before `M74` lands.
         self.assertEqual(
             measure.NOT_OURS["rss-attribution"].depends,
             measure.EVERY_BY_ID["rss-attribution"].depends,
@@ -3290,7 +3290,7 @@ class ColdNvme(unittest.TestCase):
                 )
 
     def test_an_unknown_regime_is_refused_rather_than_resolved(self):
-        """The defect `M71` closed: `input_path` matched two names and returned
+        """The defect this closed: `input_path` matched two names and returned
         the *warm* path for everything else, while the cache drop fired on any
         name starting with `cold` — so a `cold-parallel` regime added to a
         figure and nowhere else would have dropped the page cache and then read
