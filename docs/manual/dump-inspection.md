@@ -117,9 +117,9 @@ diagnostics:
 
 `parse` is unaffected: it only ever reads forwards, so it costs the same on
 such a file as on any other. `query` is where you would feel it, and only on a
-large one — a single-block file that fits inside `--parallel-memory` (64 MiB by
-default) is decoded once and read from there, so only a bigger one pays the
-decode again on every backward read. The remedy is in the message —
+large one — a single-block file the budget has room for twice over (about
+30 MiB at the 64 MiB default) is decoded once and read from there, so only a
+bigger one pays the decode again on every backward read. The remedy is in the message —
 recompressing with `xz -T0` or an
 explicit `--block-size` produces a file pgdq can seek into. Files that
 `xz` produced with threads, or that were made by concatenating several `.xz`
@@ -135,8 +135,8 @@ $ pgdq info --source mydump.sql.xz --detail
 compression: xz — 5700 block(s) in 1 stream(s), largest block 134217728 bytes uncompressed
 ```
 
-`largest block` is the number `--parallel-memory` has to clear, and the
-alternative way to learn it is `xz --list`, which on a file of many
+`largest block` is what `--parallel-memory` has to clear **twice over**, and
+the alternative way to learn it is `xz --list`, which on a file of many
 concatenated streams reads every one of their footers.
 
 Note that pgdq has to read the file's block index before it can read anything
@@ -183,8 +183,9 @@ chooses as much as you: it decodes a whole compressed block at a time and keeps
 as many of them as the budget affords, so at the default a file of 24 MiB
 blocks adds about 48 MiB resident. That is what buys reading the same block
 repeatedly for free; the block size is set when the file is compressed
-(`xz --block-size=`), not when it is read. A file whose blocks are too large to
-fit the budget is read a different way — see `--parallel-memory` below.
+(`xz --block-size=`), not when it is read. A file whose blocks are too large
+for the budget to hold two of is read a different way — see `--parallel-memory`
+below.
 
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.
@@ -198,23 +199,24 @@ bound on what those may hold in memory.
 and it defaults to 64 MiB.** It is a bound rather than a target: pgdq will not
 exceed it by allocating a buffer bigger than you allowed. The one place that
 bites is `.xz` input. A compressed file is normally read a whole block at a
-time, which is what makes reading the same block twice free — but a block that
-does not fit inside the budget cannot be held, so such a file is read through
-the streaming decoder instead. That is still correct and still complete; what
+time, which is what makes reading the same block twice free — but that needs
+room for **two** blocks, one being held while the next is decoded, so a file
+whose blocks are more than half the budget is read through the streaming
+decoder instead. That is still correct and still complete; what
 it costs is that reading *backwards* means decoding forward from the start of
 the block again, which `query` does and `parse` never does.
 
-Two ordinary ways of compressing produce blocks larger than the default budget:
-`xz -9 -T0`, whose threaded blocks are about 192 MiB, and any explicit
-`xz --block-size=` above roughly 60 MiB. **`query` tells you when it happens**,
+Two ordinary ways of compressing produce blocks too large for the default
+budget: `xz -9 -T0`, whose threaded blocks are about 192 MiB, and any explicit
+`xz --block-size=` above roughly 30 MiB. **`query` tells you when it happens**,
 once, on stderr, naming the file's largest block beside the budget that
 declined it:
 
 ```
-warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room to hold one — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget above 134217728 byte(s) to read it a block at a time
+warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room to hold two — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget above 268435456 byte(s) to read it a block at a time
 ```
 
-If you have the memory, `--parallel-memory 268435456` buys the block path back.
+If you have the memory, `--parallel-memory 536870912` buys the block path back.
 That is the whole of it: the budget is a separate number from `--jobs`, so
 raising it works at the default single worker and you do not have to ask for a
 second one to make it count. If you do not have the memory, nothing is wrong —

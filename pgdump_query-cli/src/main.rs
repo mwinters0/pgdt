@@ -1926,7 +1926,8 @@ fn report(
 /// **Three numbers a user is otherwise sent to `xz --list` for**, which on the
 /// shape that most wants asking (many concatenated streams) is a walk of every
 /// footer in the file. `largest block` is what `--parallel-memory` has to
-/// clear for a query to read this file a block at a time, so the flag that
+/// clear **twice over** for a query to read this file a block at a time — the
+/// block path holds one block while it decodes the next — so the flag that
 /// says *raise it* is answered here by what to raise it to
 /// (`docs/design/architecture.md`, "The compressed source").
 fn compression_line(shape: &CompressionShape) -> String {

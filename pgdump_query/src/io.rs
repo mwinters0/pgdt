@@ -557,15 +557,16 @@ const POOL_DEPTH: usize = 4;
 /// "What a scan holds resident") for an allocation nothing is going to ask for
 /// twice.
 ///
-/// **Size stands in for one-off-ness, which is why it is not the only rule.**
-/// A chunk buffer at the configured size is asked for once per chunk for the
+/// **Size stands in for one-off-ness, and the caller is what overrides it.** A
+/// chunk buffer at the configured size is asked for once per chunk for the
 /// whole scan — the thing the pool is for — and by length alone it is
-/// indistinguishable from a span read, so this ceiling on its own turns
+/// indistinguishable from a span read, so this ceiling on its own would turn
 /// pooling off for any chunk above it. What tells the two apart is the caller
 /// saying so: [`ByteRangeSource::hint_read_size`] names the length a read loop
-/// is about to repeat, and a buffer of exactly that length is kept however
-/// large it is (`docs/design/architecture.md`, "Execution model and API
-/// surface").
+/// is about to repeat, and *becomes* the pool's slot size
+/// ([`BufferPool::slot_bytes`]), so a buffer of that length is kept however
+/// large it is and this constant governs only a pool nobody has announced to
+/// (`docs/design/architecture.md`, "Execution model and API surface").
 const POOL_MAX_BYTES: usize = 8 << 20;
 
 /// How many read chunks a plain file's partition holds
@@ -585,19 +586,22 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// percent of the read while it halves how finely a region can be cut and how
 /// many readers a stated budget affords.
 ///
-/// **The product is capped at [`POOL_MAX_BYTES`], and that cap is a
-/// consequence of this pool having one read unit rather than a ceiling chosen
-/// on its merits.** [`BufferPool`] keeps exactly one announced length
-/// ([`ByteRangeSource::hint_read_size`]) and the parallel plain path has two —
-/// this partition read and `scan_partition`'s chunk-sized tail read — so the
-/// partition read cannot be the announced one and survives release
-/// ([`BufferPool::keeps`]) only by being under the ceiling; uncapped it would
-/// hand back a fresh `calloc` per partition. What it costs is that the
-/// multiple shrinks as the announced chunk grows, reaching **one** at
+/// **The product is capped at [`POOL_MAX_BYTES`], which bounds what one worker
+/// allocates and no longer buys it any pooling.** [`BufferPool`] serves
+/// exactly one read unit ([`ByteRangeSource::hint_read_size`]) and the parallel
+/// plain path has two — this partition read and `scan_partition`'s chunk-sized
+/// tail read — so the partition read is not the announced one and
+/// [`BufferPool::keeps`] drops it on release whatever its size: a worker pays
+/// a fresh `calloc` per partition, and the cap is what keeps that allocation
+/// from following a raised `ScanOptions::chunk_size` to hundreds of megabytes.
+/// It cost pooling before `19.7` too — the free list held these buffers only
+/// because the pool was under-reporting them eightfold, which is the
+/// accounting that change repaired. What the cap costs is that the multiple
+/// shrinks as the announced chunk grows, reaching **one** at
 /// [`POOL_MAX_BYTES`] and above — the double read this constant exists to
 /// remove, returned to the caller who raised `ScanOptions::chunk_size`. The
-/// fix is not a different ceiling but the two-unit arrangement [`XzSource`]
-/// already runs; see `docs/design/architecture.md`, "The interior split".
+/// fix for both is the two-unit arrangement [`XzSource`] already runs; see
+/// `docs/design/architecture.md`, "The interior split".
 ///
 /// **The shipped default sits exactly on the cap** — 1 MiB × 8 is
 /// [`POOL_MAX_BYTES`] — and the two constants are justified independently, so
@@ -677,6 +681,10 @@ struct BufferPool {
     /// [`POOL_DEPTH`] until a caller states a worker count, and then one slot
     /// per concurrent reader.
     depth: AtomicUsize,
+    /// How many of [`BufferPool::slots`] are held by a holder outside the free
+    /// list — `0` for every pool but [`BlockCache`]'s, whose retained blocks
+    /// own slots of this pool's own unit ([`BufferPool::reserve`]).
+    reserved: AtomicUsize,
     /// The read length a caller announced through
     /// [`ByteRangeSource::hint_read_size`], or `0` for none — the pool's slot
     /// size, and a buffer of exactly this length is kept past
@@ -730,6 +738,7 @@ impl Default for BufferPool {
             returned: Condvar::new(),
             budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
             depth: AtomicUsize::new(POOL_DEPTH),
+            reserved: AtomicUsize::new(0),
             hinted: AtomicUsize::new(0),
             policy: AtomicUsize::new(WaitPolicy::NeverWait as usize),
         }
@@ -851,8 +860,24 @@ impl BufferPool {
         (self.budget() / self.slot_bytes()).clamp(1, depth)
     }
 
-    /// The most this pool can hold in free buffers: its slot count at its own
-    /// slot size.
+    /// How many of those slots the free list may take: the rest are held by a
+    /// reserving holder that accounts for them itself
+    /// ([`BufferPool::reserve`]).
+    fn free_slots(&self) -> usize {
+        self.slots().saturating_sub(self.reserved.load(Ordering::Relaxed))
+    }
+
+    /// The most this pool can hold at once, in bytes: its slot count at its
+    /// own slot size, counting the free list and whatever a reserving holder
+    /// retains **together**.
+    ///
+    /// **It is a true bound because [`BufferPool::keeps`] refuses anything
+    /// above a slot and [`BufferPool::reserve`] takes the retained blocks out
+    /// of the free list's share.** Neither was so before `19.7`: `keeps`
+    /// admitted every buffer under [`POOL_MAX_BYTES`], so a free list of four
+    /// 8 MiB partition reads was 32 MiB this called 4, and the retained list
+    /// was held at [`BufferPool::slots`] beside a free list held at the same
+    /// count, so a block pool's real ceiling was twice this.
     ///
     /// This is what a source with **two** read units subtracts before handing
     /// the remainder to the second pool, so that one stated budget bounds the
@@ -862,20 +887,43 @@ impl BufferPool {
         self.slots().saturating_mul(self.slot_bytes())
     }
 
-    /// Whether a released buffer is worth keeping: anything under the ceiling,
-    /// plus a buffer of exactly the announced read length.
+    /// Whether a released buffer is worth keeping: **anything that fits a
+    /// slot**, which is the announced read length or [`POOL_MAX_BYTES`] where
+    /// nothing has been announced ([`BufferPool::slot_bytes`]).
     ///
-    /// **The hint clause matches exactly, not "up to", and it only bites above
-    /// the ceiling.** Past [`POOL_MAX_BYTES`] the announced length is the only
-    /// thing kept, so a coalesced span read is dropped even when it is
-    /// *smaller* than a raised chunk size — which is the pair the hint exists
-    /// to tell apart. Below the ceiling nothing is told apart: a span read
-    /// under 8 MiB is pooled like any other buffer, exactly as it was before a
-    /// hint existed. That is a deliberate floor rather than an oversight —
-    /// [`BufferPool::slots`] bounds what it can cost, and the ceiling has to
-    /// keep working for a source no caller ever announced to.
+    /// **One rule, so that [`BufferPool::held_bytes`] is true.** A pool
+    /// describes one read unit, and a buffer larger than that unit occupying a
+    /// slot counted at the unit is exactly the under-report the byte budget
+    /// exists to prevent: the free list would hold `slots × POOL_MAX_BYTES`
+    /// while `held_bytes` reported `slots × slot_bytes`, and that number is
+    /// what [`XzSource::apportion`] divides a budget with.
+    ///
+    /// **What it costs is the second read unit a single-unit pool could never
+    /// account for.** The parallel plain path releases a partition-sized body
+    /// read into a pool whose slot is a *chunk* ([`PLAIN_PARTITION_CHUNKS`]),
+    /// and that buffer is now dropped rather than pooled — the under-report
+    /// was what made it look pooled. The fix is the two-unit arrangement
+    /// [`XzSource`] already runs, filed as the roadmap Future item "A two-unit
+    /// plain source"; a ceiling here would only hide it again
+    /// (`docs/design/architecture.md`, "The interior split").
     fn keeps(&self, len: usize) -> bool {
-        len <= POOL_MAX_BYTES || len == self.hinted.load(Ordering::Relaxed)
+        len <= self.slot_bytes()
+    }
+
+    /// State how many slots a holder outside the free list is accounting for.
+    ///
+    /// The only one is [`BlockCache`]'s retained list, whose blocks hold
+    /// [`PooledBuffer`]s of this pool's own slot size: without the reservation
+    /// the two lists are held at [`BufferPool::slots`] each with nothing
+    /// shared between them, and the pool's ceiling is twice what its budget
+    /// states (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// `Relaxed` for the same reason [`BufferPool::hinted`] is: the holder
+    /// writes it whenever its list changes length and [`BufferPool::release`]
+    /// reads it once per returned buffer, nothing is published through it, and
+    /// a value that arrives a buffer late costs one keep or one drop.
+    fn reserve(&self, slots: usize) {
+        self.reserved.store(slots, Ordering::Relaxed);
     }
 
     /// Seed the free list with a buffer nobody took, which only a test has
@@ -908,7 +956,7 @@ impl BufferPool {
     /// and eventually block every transient reader.
     fn release(&self, buf: Vec<u8>, charged: bool) {
         let keeps = self.keeps(buf.len());
-        let slots = self.slots();
+        let slots = self.free_slots();
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if keeps && state.free.len() < slots {
             state.free.push(buf);
@@ -1156,15 +1204,19 @@ impl AsRef<[u8]> for BlockView {
 /// [`BufferPool::slots`] and its own budget again would be two numbers for one
 /// bound, which is exactly what the byte budget replaced.
 ///
-/// **The retained cap and the free-list cap are separate counts, so this
-/// pool's ceiling is their sum.** [`BufferPool::release`] pools a returned
-/// buffer only while the free list is below [`BufferPool::slots`], and this
-/// list is held at the same count by a count of its own, with nothing shared
-/// between them — so the ceiling is `2 * slots * unit`, 96 MiB at the default
-/// budget's two 24 MiB slots. It is a ceiling and not a steady state: a
-/// forward scan's cycle holds the free list at zero or one. Capping the sum
-/// instead changes what the stated number means, which is the sub-stream
-/// divisor's job (`docs/design/architecture.md`, "The compressed source").
+/// **The retained cap and the free-list cap are one count, so this pool's
+/// ceiling is `slots * unit`.** This list reserves what it holds
+/// ([`BufferPool::reserve`]), so [`BufferPool::release`] pools a returned
+/// buffer only while free-plus-retained is below [`BufferPool::slots`] —
+/// 48 MiB at the default budget's two 24 MiB slots, where two independent
+/// counts made it 96. *Rejected: leaving them independent*, on the ground that
+/// coupling touches [`BufferPool::release`]'s hot path for a window only a
+/// serial forward scan's zero-or-one free list closes. Under N readers one
+/// worker's release refills the free list while another retains, so the window
+/// is open for the length of the run; and the sub-stream divisor cannot bound
+/// it from outside, because [`BufferPool::slots`] is `budget / unit` once the
+/// depth clamp is slack and so does not move with the admitted worker count
+/// (`docs/design/architecture.md`, "The compressed source").
 ///
 /// *Rejected: retaining one block on the serial path*, on the ground that one
 /// reader walking forward needs exactly one and that the cap costs a 3.00 GiB
@@ -1209,9 +1261,20 @@ impl BlockCache {
         Some(BlockCache { unit, pool, retained: Mutex::new(Vec::new()) })
     }
 
-    /// Whether a whole block fits the budget this pool was given — the line
-    /// that decides between block decode and the streaming reader
+    /// Whether the budget this pool was given affords **two** whole blocks —
+    /// the line that decides between block decode and the streaming reader
     /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// **Two, because a coupled count of one is the shape this pool rejects by
+    /// name.** [`BlockCache::slot`] drains the retention list to
+    /// `slots() - 1` before taking a slot, so a one-slot pool retains nothing
+    /// and drains before every decode — it stops pooling exactly when a caller
+    /// is holding a block. Asking whether the budget affords two units is the
+    /// same sentence as "the coupled count is at least two" and introduces no
+    /// constant of its own. What it moves for a reader is where whole-block
+    /// decode is declined: a file whose largest block exceeds **half** the
+    /// budget, where it used to be one whose largest block exceeded the whole
+    /// of it.
     ///
     /// **This is where a constant used to be.** The refusal was a fixed
     /// 256 MiB beside a fixed 64 MiB budget, two unrelated numbers of which
@@ -1231,7 +1294,7 @@ impl BlockCache {
     /// `--parallel-memory` or `Parallelism::Workers`, rather than a constant's
     /// to permit.
     fn affordable(&self) -> bool {
-        self.unit <= self.pool.budget()
+        self.unit.saturating_mul(2) <= self.pool.budget()
     }
 
     /// The retained block at `index`, promoted to most-recently-used.
@@ -1258,13 +1321,22 @@ impl BlockCache {
     ///
     /// A block evicted while a [`Bytes`] still views it stays alive until that
     /// view drops.
+    ///
+    /// **The reservation is lowered before the evicted blocks drop**, and the
+    /// order is load-bearing rather than tidy: a dropped block releases its
+    /// buffer straight into the pool, and a release seeing the pre-eviction
+    /// reservation would find no room and discard the very buffer this take is
+    /// about to reuse.
     fn slot(&self) -> PooledBuffer {
         let keep = self.pool.slots().saturating_sub(1);
-        {
+        let evicted = {
             let mut retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
             let over = retained.len().saturating_sub(keep);
-            retained.drain(..over);
-        }
+            let evicted: Vec<_> = retained.drain(..over).collect();
+            self.pool.reserve(retained.len());
+            evicted
+        };
+        drop(evicted);
         self.pool.obtain(self.unit)
     }
 
@@ -1274,6 +1346,7 @@ impl BlockCache {
         let mut retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
         retained.retain(|(i, _)| *i != index);
         retained.push((index, block));
+        self.pool.reserve(retained.len());
     }
 }
 
@@ -1946,10 +2019,9 @@ mod tests {
         assert_eq!(pool.free_len(), 1);
     }
 
-    /// The announced read length is the one thing that survives the ceiling,
-    /// and only at exactly that length: a scan configured with a large chunk
-    /// keeps its pooling, while a span read of some other oversized length is
-    /// still dropped.
+    /// The announced read length is what raises the ceiling: a scan configured
+    /// with a large chunk keeps its pooling, and a span read longer than that
+    /// chunk is still dropped.
     #[test]
     fn the_pool_keeps_a_buffer_of_the_announced_read_length() {
         let chunk = 16 << 20;
@@ -1967,11 +2039,60 @@ mod tests {
         assert_eq!(pool.free_len(), 0);
         drop(taken);
 
-        // A one-off span read at another oversized length is still dropped,
-        // even one *smaller* than the announced chunk.
+        // A buffer that fits a slot is kept and occupies one; one larger than
+        // a slot is dropped, which is what makes `held_bytes` a bound.
         pool.give(vec![0u8; chunk - 1]);
+        assert_eq!(pool.free_len(), 2);
         pool.give(vec![0u8; chunk + 1]);
-        assert_eq!(pool.free_len(), 1);
+        assert_eq!(pool.free_len(), 2);
+    }
+
+    /// **The free list holds no more bytes than the pool reports.** Every
+    /// buffer it keeps fits a slot and every slot is counted, so
+    /// `held_bytes()` is an upper bound rather than the eightfold under-report
+    /// it was — which matters because that number is what divides one stated
+    /// budget between a source's two pools (`XzSource::apportion`).
+    ///
+    /// The buffer it now refuses is the parallel plain path's *second* read
+    /// unit, a whole partition against a pool whose slot is a chunk. Nothing
+    /// but a second pool can hold that honestly ("A two-unit plain source"),
+    /// and the under-report was what made it look held.
+    #[test]
+    fn the_free_list_holds_no_more_than_it_reports() {
+        let chunk = 1 << 20;
+        let pool = Arc::new(BufferPool::default());
+        pool.hint(chunk);
+        for _ in 0..8 {
+            pool.give(vec![0u8; chunk * PLAIN_PARTITION_CHUNKS]);
+        }
+        assert_eq!(pool.free_len(), 0, "a partition read is larger than this pool's slot");
+        for _ in 0..8 {
+            pool.give(vec![0u8; chunk]);
+        }
+        assert_eq!(pool.free_len(), POOL_DEPTH);
+        assert_eq!(pool.free_len() * chunk, pool.held_bytes());
+    }
+
+    /// **A reservation comes out of the free list's share, not beside it.**
+    /// The one holder that takes slots without leaving them on the free list
+    /// is `BlockCache`'s retained list; without this the two are held at
+    /// `slots()` each and the pool's ceiling is twice what its budget states.
+    #[test]
+    fn a_reservation_takes_the_free_list_share() {
+        let chunk = 1 << 20;
+        let pool = Arc::new(BufferPool::default());
+        pool.hint(chunk);
+        assert_eq!(pool.slots(), POOL_DEPTH);
+
+        pool.reserve(POOL_DEPTH - 1);
+        for _ in 0..POOL_DEPTH {
+            pool.give(vec![0u8; chunk]);
+        }
+        assert_eq!(pool.free_len(), 1, "free plus reserved is one slot count, not two");
+
+        pool.reserve(0);
+        pool.give(vec![0u8; chunk]);
+        assert_eq!(pool.free_len(), 2, "a released reservation is the free list's again");
     }
 
     /// The hint reaches the pool through the trait method, which is the only
@@ -2362,26 +2483,7 @@ mod tests {
     /// *does* have boundaries.
     #[test]
     fn a_streaming_fallback_source_advises_one_partition() {
-        let block = |i: u64| xz_seek::BlockEntry {
-            compressed_offset: 12 + i * 128,
-            uncompressed_offset: i * 4096,
-            unpadded_size: 64,
-            uncompressed_size: 4096,
-        };
-        let table = xz_seek::SeekTable {
-            compressed_file_size: 1 << 20,
-            streams: vec![xz_seek::StreamEntry {
-                compressed_offset: 0,
-                uncompressed_offset: 0,
-                compressed_size: 1 << 20,
-                uncompressed_size: 4 * 4096,
-                check: xz_seek::Check::Crc64,
-                padding: 0,
-                first_block: 0,
-                block_count: 4,
-            }],
-            blocks: (0..4).map(block).collect(),
-        };
+        let table = four_block_table();
         assert!(table.is_seekable(), "the table has boundaries to advise");
 
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
@@ -2397,6 +2499,81 @@ mod tests {
             RetainedUnit::ReadChunk,
             "a streaming read is assembled into a chunk buffer, so chunks are what a batch pins"
         );
+    }
+
+    /// A four-block seek table over 4 KiB blocks, built by hand rather than by
+    /// `xz`: the block *cache* only ever reads a table's block lengths, so a
+    /// synthetic one lets a slot be small enough for a budget to be stated in
+    /// whole slots.
+    fn four_block_table() -> xz_seek::SeekTable {
+        let block = |i: u64| xz_seek::BlockEntry {
+            compressed_offset: 12 + i * 128,
+            uncompressed_offset: i * 4096,
+            unpadded_size: 64,
+            uncompressed_size: 4096,
+        };
+        xz_seek::SeekTable {
+            compressed_file_size: 1 << 20,
+            streams: vec![xz_seek::StreamEntry {
+                compressed_offset: 0,
+                uncompressed_offset: 0,
+                compressed_size: 1 << 20,
+                uncompressed_size: 4 * 4096,
+                check: xz_seek::Check::Crc64,
+                padding: 0,
+                first_block: 0,
+                block_count: 4,
+            }],
+            blocks: (0..4).map(block).collect(),
+        }
+    }
+
+    /// **Whole-block decode is declined unless the budget affords two blocks.**
+    /// A pool of one slot retains nothing — `BlockCache::slot` drains to
+    /// `slots() - 1` before every decode — so it stops pooling exactly when a
+    /// caller is holding a block, and the streaming reader is the honest answer
+    /// there. What moves for a reader is the threshold: half the budget, where
+    /// it used to be the whole of it.
+    #[test]
+    fn the_block_path_wants_room_for_two_blocks() {
+        let table = four_block_table();
+        let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
+
+        cache.pool.set_limits(cache.unit * 2, POOL_DEPTH);
+        assert!(cache.affordable(), "exactly two units is the coupled count of two");
+        assert_eq!(cache.pool.slots(), 2);
+
+        cache.pool.set_limits(cache.unit * 2 - 1, POOL_DEPTH);
+        assert!(!cache.affordable(), "one unit is the un-poolable shape, so it is declined");
+    }
+
+    /// **One slot count covers the retained blocks and the free ones
+    /// together**, so a block pool's ceiling is its stated budget rather than
+    /// twice it. Driven through the two calls the decode path makes — a slot,
+    /// then a retention — with the most recent block held live, which is what a
+    /// reader does with the `Bytes` it sliced out of it.
+    #[test]
+    fn a_block_pool_holds_one_slot_count_across_both_lists() {
+        let table = four_block_table();
+        let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
+        cache.pool.set_limits(cache.unit * 3, POOL_DEPTH);
+        assert_eq!(cache.pool.slots(), 3);
+
+        let mut live = None;
+        for index in 0..12 {
+            let slot = cache.slot();
+            let block = Arc::new(DecodedBlock { slot, len: cache.unit });
+            cache.retain(index, Arc::clone(&block));
+            live = Some(block);
+            let retained = cache.retained.lock().unwrap().len();
+            let free = cache.pool.free_len();
+            assert!(
+                retained + free <= cache.pool.slots(),
+                "read {index}: {retained} retained + {free} free exceeds {} slots",
+                cache.pool.slots(),
+            );
+        }
+        drop(live);
     }
 
     /// `xz` is not `mise`-pinned (`docs/design/architecture.md`, "Testing

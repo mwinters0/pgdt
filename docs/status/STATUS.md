@@ -376,10 +376,16 @@ the four orderings that bind are in the spec, not here.
       the one disjoint pair reversing sign, and `M76` takes the controlled
       reading that says whether the manual's 200 MiB survived `19.3`. Notes:
       [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md)
-- [ ] **19.7** `BufferPool`'s accounting alone: the `keeps`/`slot_bytes`
-      under-report, the block pool's free and retained counts coupled, and
-      `BlockCache::affordable` requiring room for two units. Re-scoped and
-      split — the discovery primitives and the budget rule moved to `19.13`.
+- [x] **19.7** `BufferPool`'s accounting alone. `keeps` is one sentence —
+      `len <= slot_bytes()` — so `held_bytes()` is a bound rather than an
+      eightfold under-report; the block pool's free and retained lists share
+      one slot count through `BufferPool::reserve`, halving a ceiling that was
+      `2 × slots × unit`; and `BlockCache::affordable` wants room for **two**
+      units, which moves the whole-block-decode decline to a largest block
+      above *half* the budget (~30 MiB at the default, koji's 24 MiB still
+      decoding). The parallel plain path lost its partition-buffer pooling
+      with the under-report that hid it — flagged below. Notes:
+      [`../design/roadmap-P19.7-pool-accounting-notes.md`](../design/roadmap-P19.7-pool-accounting-notes.md)
 - [ ] **19.8** The source's own worker default; `DEFAULT_JOBS` removed.
 - [ ] **19.9** Resolution tests, the status line's provenance, the below-floor
       `PlanNote`.
@@ -570,4 +576,22 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **`19.7` let the plain parallel path lose its partition-buffer pooling rather
+  than keeping a ceiling that hid the under-report.** `leader::scan_partition`
+  reads a whole partition — up to `POOL_MAX_BYTES` — into a pool whose slot is
+  a chunk, so the repaired `keeps` drops that buffer on release and each
+  partition becomes a fresh `calloc` of up to 8 MiB. No ceiling avoids it: a
+  single-unit pool cannot account for a second unit, and the free list only
+  ever held those buffers because the count under-reported them eightfold. The
+  decision is whether that is acceptable to land unmeasured. It was taken
+  because the alternative is an accounting `19.13`'s budget rule would rest on
+  and that is false by a factor of eight; because the affected shape is
+  `--jobs ≥ 2` on a *plain* file, which `19.8` makes non-default and which the
+  spec already records as slower than serial at every worker count; and because
+  admission was never a hit rate — `BufferPool::pick` takes the smallest
+  fitting buffer out of four slots shared with the tail reads, so nothing knows
+  how often the pooling happened. Reconsidering it means either pricing the
+  loss on the plain `--jobs` axis before `19.8` ships the serial default, or
+  promoting the roadmap Future item "A two-unit plain source" into this phase,
+  which is a mechanism change inside a phase about defaults. Detail:
+  [`../design/roadmap-P19.7-pool-accounting-notes.md`](../design/roadmap-P19.7-pool-accounting-notes.md).

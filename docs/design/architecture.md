@@ -514,10 +514,11 @@ is what returns it**, which is what makes this safe for the query replay path:
 that path retains a chunk in `batch::SourceChunk` for as long as a zero-copy
 `Utf8View` points into it ("Arrow assembly and the zero-copy path"), so the
 buffer must not be recycled on the read loop's schedule. And **the pool is
-bounded at both ends** — a byte budget, and nothing above 8 MiB kept unless a
-caller announced it as its read size — because `map::attach_text`'s coalesced
-span read can be far larger than a chunk and happens once per map, and holding
-one of those for the life of the process would trade a scan's ~5.9 MiB resident
+bounded at both ends** — a byte budget, and nothing kept that does not fit a
+slot, which is 8 MiB until a caller announces its read size — because
+`map::attach_text`'s coalesced span read can be far larger than a chunk and
+happens once per map, and holding one of those for the life of the process
+would trade a scan's ~5.9 MiB resident
 set ([`measurements.md`](measurements.md), "What a scan holds resident") for an
 allocation nothing asks for twice. The bound that follows is
 `slots × max(8 MiB, announced)`, not four chunks: **below the ceiling a one-off
@@ -717,9 +718,9 @@ one that granted a wait — which is the deadlock read back in through the
 counter after the exemption removed it from the wait.
 
 *Rejected: discharging a slot only where the released buffer is kept.* The
-ceiling refuses a buffer above `POOL_MAX_BYTES` that nobody announced, and a
-charge tied to the keep would leak one slot per refused release until every
-waiting reader blocked. The charge is discharged the moment its holder lets
+ceiling refuses a buffer that does not fit a slot, and a charge tied to the
+keep would leak one slot per refused release until every waiting reader
+blocked. The charge is discharged the moment its holder lets
 go, whether the buffer is pooled or dropped.
 
 **A wait was not landable before its second holder existed**, which is why this
@@ -787,12 +788,20 @@ block pool's bound is a divisor's job, not an acquisition's").
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
 nothing, deliberately outside the `object_store` surface the other two mirror —
 through which each of the three read loops announces its `chunk_size` once
-before it starts. `LocalFileSource` keeps a buffer of exactly that length
-however large it is, and applies the 8 MiB ceiling to every other length,
-including a span read *smaller* than a large chunk. Nothing else in a
-`read_range` call distinguishes a chunk read, which repeats for the whole scan,
-from a span read that happens once per map; length alone stood in for that
-distinction and caught a deliberately large chunk as collateral.
+before it starts. That length *becomes* the pool's slot size, so a buffer of
+it is kept however large it is and everything above it is dropped; the 8 MiB
+ceiling is the slot size a pool nobody announced to falls back to. Nothing else
+in a `read_range` call distinguishes a chunk read, which repeats for the whole
+scan, from a span read that happens once per map; length alone stood in for
+that distinction and caught a deliberately large chunk as collateral.
+
+**One rule, because two made the pool's own ceiling a fiction.** The announced
+length used to *add* to a ceiling that still admitted everything under 8 MiB,
+so the free list could hold `slots × 8 MiB` while `held_bytes()` reported
+`slots × slot_bytes` — an eightfold under-report at the 1 MiB default, on the
+number `XzSource::apportion` divides one stated budget with. Keeping only what
+fits a slot is what makes that number true, and its cost is filed beside the
+mechanism that pays it ("The interior split").
 
 *Rejected:* a `LocalFileSource`-only setter the CLI calls when `--chunk-size` is
 given, which leaves the trait untouched. `ScanOptions::chunk_size` is where the
@@ -1020,51 +1029,50 @@ streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
 produce byte-identical caches. *Rejected:* a retained set with a bound of its
 own — two numbers for one bound, which is what the byte budget replaced.
 
-**The retained cap and the free-list cap are separate counts, so the pool's
-ceiling is their sum.** `BufferPool::release` pools a returned buffer only
-while the free list is below `slots()`, and the retained list is held at
-`slots()` by a count of its own, with nothing shared between them — the
-`charged` counter that could have coupled them bounded retained-plus-live and
-never the free list, and it is disabled on this pool in any case ("Execution
-model and API surface"). So the block pool's ceiling is `2 × slots × unit`:
-**96 MiB** at the default budget's two 24 MiB slots, reached when live views
-release blocks the retained list has already refilled past. It is a ceiling
-rather than a steady state — a forward scan's cycle holds the free list at
-zero or one, which is what the 64.7 MiB above is.
+**The retained cap and the free-list cap are one count, so the pool's ceiling
+is `slots × unit`.** `BlockCache` reserves what its retention list holds
+(`BufferPool::reserve`), and `BufferPool::release` pools a returned buffer only
+while free-plus-reserved is below `slots()` — so the block pool's ceiling is
+**48 MiB** at the default budget's two 24 MiB slots, where two independent
+counts made it 96. The reservation is lowered *before* an eviction's blocks
+drop, which is not tidiness: a dropped block releases its buffer straight into
+the pool, and a release seeing the pre-eviction reservation would discard the
+very buffer the take about to follow means to reuse.
 
-**The counts are separate today, and coupling them is `19.7`'s** — the
-rejection that kept them apart named its own reversing condition and that
-condition has since been met. The rejection ran: coupling would touch
-`BufferPool::release`'s hot path for a ceiling reached only in the window
-between a live view's release and the next acquisition, and `worker_count`'s
-divisor (above, "Rejected: a per-view acquisition bounding the live term") is
-what actually admits fewer concurrent readers, so leave it alone *unless a
-reading shows the transient itself, not the admitted-worker count, is what a
-real workload hits*. Two facts overturn it. **The divisor cannot do that job
-here**, because `slots()` is `budget / unit` once `POOL_DEPTH.max(jobs)` is
-slack, so the pool sizes itself from the stated budget and not from how many
-readers were admitted — halving the worker count leaves the ceiling exactly
-where it was. And **the window is not a transient under concurrency**: the
-"free list at zero or one" cycle is a *serial* forward scan's, and with N
-readers one worker's release refills the free list while another retains, so a
-parallel `parse` sits near `2 × slots × unit` for the length of the run. A
-diagnostic sitting reads a block-decoding `.xz` at 243 MiB resident against a
-64 MiB budget and 1242 MiB against 512 MiB, tracking the doubled ceiling across
-the axis. Until `19.7` lands, the stated number bounds half of what this pool
-may hold. Evidence:
+*Rejected: leaving the two counts independent*, which is what shipped until
+`19.7` — the rejection named its own reversing condition and that condition was
+met. It ran: coupling would touch `BufferPool::release`'s hot path for a
+ceiling reached only in the window between a live view's release and the next
+acquisition, and `worker_count`'s divisor (above, "Rejected: a per-view
+acquisition bounding the live term") is what actually admits fewer concurrent
+readers, so leave it alone *unless a reading shows the transient itself, not
+the admitted-worker count, is what a real workload hits*. Two facts overturn
+it. **The divisor cannot do that job here**, because `slots()` is
+`budget / unit` once `POOL_DEPTH.max(jobs)` is slack, so the pool sizes itself
+from the stated budget and not from how many readers were admitted — halving
+the worker count leaves the ceiling exactly where it was. And **the window is
+not a transient under concurrency**: the "free list at zero or one" cycle is a
+*serial* forward scan's, and with N readers one worker's release refills the
+free list while another retains, so a parallel `parse` sat near
+`2 × slots × unit` for the length of the run. A diagnostic sitting read a
+block-decoding `.xz` at 243 MiB resident against a 64 MiB budget and 1242 MiB
+against 512 MiB, tracking the doubled ceiling across the axis; re-reading it on
+the coupled build is `19.12`'s, and the reserve constant is chosen from that
+sitting. Evidence:
 [`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
 reserve rule's two entries, closed".
 
-**`BlockCache::affordable` moves with it, from one unit to two**, because a
+**`BlockCache::affordable` moved with it, from one unit to two**, because a
 coupled count of one is precisely the un-poolable shape rejected above — a
 retained cap of zero, drained before every decode. Asking whether the budget
 affords *two* units is the same sentence as "the coupled count is at least two"
 and needs no new constant. What it changes for a reader is where whole-block
-decode is declined: today a file whose largest block exceeds the budget, after
-`19.7` one whose largest block exceeds half of it. Koji's 24 MiB blocks still
-decode at the 64 MiB default, which leaves 60 MiB to the block pool against the
-48 two units need; `--parallel-memory` remains the lever that reverses a
-decline.
+decode is declined: a file whose largest block exceeds **half** the budget,
+where it used to be one whose largest block exceeded the whole of it. Koji's
+24 MiB blocks still decode at the 64 MiB default, which leaves 60 MiB to the
+block pool against the 48 two units need; `--parallel-memory` remains the lever
+that reverses a decline, and `PlanNoteKind::CompressedBlockPathDeclined` names
+twice the largest block as the number to clear.
 
 **Evicting before acquiring is a reuse rule and not a progress guarantee**, and
 reading it as one is the mistake behind the deadlock filed under "Execution
@@ -1133,12 +1141,13 @@ so the question was never "is this file seekable" but "did the caller leave
 room for a block". It is keyed on the file's **largest block**, not on its
 block count, so a multi-block file written with large blocks is declined and
 genuinely does have parallelism to lose; what changed is that the caller can
-now say so. `BlockCache::affordable` compares that unit against the block
-pool's share of `Parallelism`'s bytes, and the refusal is what keeps the
-budget's own one-slot floor from making the stated number a fiction ("Execution
-model and API surface").
+now say so. `BlockCache::affordable` compares **twice** that unit against the
+block pool's share of `Parallelism`'s bytes — two because a coupled count of
+one retains nothing — and the refusal is what keeps the budget's own one-slot
+floor from making the stated number a fiction ("Execution model and API
+surface").
 
-**Under the default budget that line sits at ~60 MiB, and the shapes it
+**Under the default budget that line sits at ~30 MiB, and the shapes it
 declines are ordinary ones.** `xz --block-size=128MiB` and `xz -9 -T0` — whose
 threaded block size is three times its 64 MiB dictionary, so ~192 MiB — both
 fall back where a flat 256 MiB constant took them down the block path at 128 or
@@ -4537,33 +4546,36 @@ is what fixes it — eight chunks caps the waste at 12.5%, and each doubling pas
 that buys under a percent of the read while halving how finely a region can be
 cut and how many readers a stated budget affords.
 
-**The `POOL_MAX_BYTES` cap on that product is a consequence of the pool having
-one read unit, not a ceiling chosen on its merits.** `BufferPool` keeps exactly
-one announced length (`hint_read_size`), and the parallel plain path has *two*
-read units — a partition-sized body read and a chunk-sized tail read — so the
-partition read cannot be the announced one and survives release only by being
-under the ceiling. Hence the cap, and hence its cost: the multiple shrinks as
-the stated chunk grows (four chunks at `--chunk-size 2m`, two at `4m`, **one**
-at `8m` and above), so a caller who tuned that flag gets the 100% double read
-back. The fix is not a different ceiling — every ceiling is a workaround for
-the single-unit pool — but the two-unit arrangement `XzSource` already runs, a
-partition pool and a chunk pool dividing one stated budget through
-`held_bytes()` ("The compressed source"). That is a mechanism change rather
-than a default, so it is filed as a roadmap Future item ("A two-unit plain
-source") rather than taken inside a phase about defaults.
+**The partition read is not pooled at all, and the `POOL_MAX_BYTES` cap on
+that product is what bounds it instead.** `BufferPool` serves exactly one read
+unit — the announced one (`hint_read_size`) — and the parallel plain path has
+*two*: a partition-sized body read and a chunk-sized tail read. The partition
+read is not the announced one, so `BufferPool::keeps` drops it on release and
+every worker pays a fresh `calloc` per partition; the cap is what keeps that
+allocation from following a raised `--chunk-size` to hundreds of megabytes. Its
+own cost is that the multiple shrinks as the stated chunk grows (four chunks at
+`--chunk-size 2m`, two at `4m`, **one** at `8m` and above), so a caller who
+tuned that flag gets the 100% double read back. The fix for both is the
+two-unit arrangement `XzSource` already runs, a partition pool and a chunk pool
+dividing one stated budget through `held_bytes()` ("The compressed source").
+That is a mechanism change rather than a default, so it is filed as a roadmap
+Future item ("A two-unit plain source") rather than taken inside a phase about
+defaults.
 
-**Two properties of the capped arrangement are worth knowing before trusting
-it.** Admission to the free list is not a hit on it: `BufferPool::pick` takes
-the smallest free buffer with `buf.len() >= len`, and four slots are shared
-between 8 MiB partition reads and 1 MiB tail reads across every worker, so a
-partition read that finds only tail buffers free allocates anyway — the cap
-makes pooling *possible*, and nothing has measured how often it happens. And
-the pool's accounting under-reports what this path holds: `slots()` is a count
-at `slot_bytes()`, which is the announced *chunk*, while `keeps` admits
-anything up to the ceiling, so a free list of four 8 MiB partition buffers is
-32 MiB that `held_bytes()` reports as 4 MiB. That number is what divides a
-budget between two pools, so `19.7` fixes it in the change that writes the
-budget rule.
+**It *looked* pooled until `19.7`, and that was the accounting lying.** `keeps`
+admitted every buffer under `POOL_MAX_BYTES` while `slots()` counted at
+`slot_bytes()` — the announced *chunk* — so a free list of four 8 MiB partition
+buffers was 32 MiB that `held_bytes()` reported as 4 MiB, on the number
+`XzSource::apportion` divides one stated budget with. `19.7` made `keeps` the
+same sentence as the slot size, which is what makes that number a bound, and
+the partition buffer went with it. Even before, admission was not a hit:
+`BufferPool::pick` takes the smallest free buffer with `buf.len() >= len` and
+four slots were shared between 8 MiB partition reads and 1 MiB tail reads
+across every worker, so a partition read that found only tail buffers free
+allocated anyway — pooling was *possible* and nothing ever measured how often
+it happened, which is why what this costs the shape is unmeasured in both
+directions. The slot count still bounds what is outstanding, so `--jobs 4`
+remains the ceiling on plain-file readers whatever is kept.
 
 *Rejected: sizing the tail read to a row instead.* It reaches
 every source and would shrink the compressed 4% too, but it changes what the

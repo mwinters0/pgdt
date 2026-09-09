@@ -110,9 +110,10 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
 }
 
 /// The budget at the CLI: the one that sent a compressed read down the
-/// streaming path says so on stderr, once, naming the largest block to budget
-/// for — so the flag that says *raise it* also says what to raise it to. The
-/// rows go to stdout and are untouched by it.
+/// streaming path says so on stderr, once, naming the file's largest block and
+/// the twice-that the block path wants room for — so the flag that says *raise
+/// it* also says what to raise it to. The rows go to stdout and are untouched
+/// by it.
 #[test]
 fn a_declined_block_path_is_announced_once_on_stderr() {
     let (_xz_dir, compressed) = seekable_xz();
@@ -122,7 +123,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     assert!(out.status.success(), "{}", stderr_of(&out));
     let err = stderr_of(&out);
     assert_eq!(err.matches("streaming decoder").count(), 1, "said once, not per sub-stream: {err}");
-    assert!(err.contains("raise the memory budget above 512"), "{err}");
+    assert!(err.contains("raise the memory budget above 1024"), "{err}");
     assert!(err.contains("memory budget of 400"), "the budget that declined it is named: {err}");
 
     // A budget that affords a whole block says nothing at all about the read
@@ -160,7 +161,7 @@ fn a_stated_budget_decides_the_read_path_at_the_default_job_count() {
     assert!(declined.status.success(), "{}", stderr_of(&declined));
     let err = stderr_of(&declined);
     assert!(err.contains("memory budget of 400"), "the stated budget declined it: {err}");
-    assert!(err.contains("raise the memory budget above 512"), "{err}");
+    assert!(err.contains("raise the memory budget above 1024"), "{err}");
 
     // And raising it alone takes the block path back — the recourse the
     // message names, with nothing else stated beside it.

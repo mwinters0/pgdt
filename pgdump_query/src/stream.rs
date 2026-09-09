@@ -1845,17 +1845,18 @@ pub enum PlanNoteKind {
         max_source_span: Option<u64>,
         memory_bytes: u64,
     },
-    /// The `.xz` source this query reads declined the block-decode path: no
-    /// whole block fits the memory budget in force, so it reads through the
-    /// streaming decoder instead and every **backward** read decodes forward
-    /// from its block's start rather than landing in a retained block
-    /// (`docs/design/architecture.md`, "The compressed source"). Never a
-    /// reason to refuse the query — the rows are the same and the mapping
-    /// pass, which only reads forward, costs the same either way; what it
-    /// names is the number to raise and how far. `max_block_uncompressed` is
-    /// the file's largest block, which is what the budget is compared
-    /// against, and `block_count` says how much seeking the file would
-    /// otherwise offer.
+    /// The `.xz` source this query reads declined the block-decode path: the
+    /// memory budget in force does not afford two whole blocks, so it reads
+    /// through the streaming decoder instead and every **backward** read
+    /// decodes forward from its block's start rather than landing in a
+    /// retained block (`docs/design/architecture.md`, "The compressed
+    /// source"). Never a reason to refuse the query — the rows are the same
+    /// and the mapping pass, which only reads forward, costs the same either
+    /// way; what it names is the number to raise and how far.
+    /// `max_block_uncompressed` is the file's largest block, and the budget is
+    /// compared against **twice** it, a block pool holding one block being the
+    /// un-poolable shape it rejects by name ([`crate::io`], `BlockCache`);
+    /// `block_count` says how much seeking the file would otherwise offer.
     ///
     /// **Not a [`crate::diagnostic::DiagnosticKind`], for the reason its
     /// sibling above is not one.** The *file* having no seek structure at all
@@ -1936,9 +1937,10 @@ impl PlanNote {
             } => format!(
                 "this .xz source has {block_count} block(s) to seek by, but its largest is \
                  {max_block_uncompressed} byte(s) and a memory budget of {memory_bytes} byte(s) \
-                 leaves no room to hold one — so it is read through the streaming decoder and \
+                 leaves no room to hold two — so it is read through the streaming decoder and \
                  every backward read decodes forward from its block's start; raise the memory \
-                 budget above {max_block_uncompressed} byte(s) to read it a block at a time"
+                 budget above {} byte(s) to read it a block at a time",
+                max_block_uncompressed.saturating_mul(2)
             ),
         }
     }

@@ -147,8 +147,9 @@ enum CompressionIndex {
 ///
 /// **Three numbers, and each answers a question the user is otherwise sent to
 /// `xz --list` for.** `max_block_uncompressed` is what a memory budget is
-/// compared against, so it is the number to raise `--parallel-memory` above
-/// when a query says the block path was declined; `blocks` is how much
+/// compared against — twice it, the block path holding one block while it
+/// decodes the next — so it is the number to raise `--parallel-memory` past
+/// twice over when a query says the block path was declined; `blocks` is how much
 /// seeking the file offers at all; `streams` is what explains a slow first
 /// command, a concatenated file costing one seek per stream to walk
 /// (`docs/design/architecture.md`, "The compressed source").
