@@ -288,7 +288,9 @@ pub(crate) enum RegionScan {
 /// make one.** Whether cutting pays is the caller's economics, stated as
 /// `ScanOptions::parallelism` — which is why a plain file is cut here exactly
 /// as a compressed one is, and why the refusal of parallel plain-file
-/// discovery lives in `--jobs`' default rather than in a branch
+/// discovery lives in the plain source's own worker recommendation
+/// (`ByteRangeSource::default_workers`), reaching an unstated `--jobs`, rather
+/// than in a branch
 /// (`docs/design/architecture.md`, "What parallelism buys, and where it
 /// stops").
 ///

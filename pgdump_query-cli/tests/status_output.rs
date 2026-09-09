@@ -283,13 +283,14 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
 }
 
 /// **`(default)` says nobody asked, not that nobody could ask.** The serial
-/// path carries a stated budget like any other, so `--parallel-memory` at the
-/// default `--jobs` prints the number that was asked for, bare — which is what
+/// path carries a stated budget like any other, so `--parallel-memory` over a
+/// plain file — whose own recommendation is the serial path — prints the number
+/// that was asked for, bare, which is what
 /// makes the flag's own recourse ("raise the memory budget") readable from the
 /// log without a second worker being stated beside it
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 #[test]
-fn a_stated_memory_budget_at_the_default_job_count_is_not_marked_default() {
+fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
     let dir = tempfile::tempdir().unwrap();
     let cache = dir.path().join("out.dqcache");
     let out = run(&[
@@ -429,4 +430,38 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
     ]);
     assert!(second.status.success(), "{}", stderr_of(&second));
     assert!(!stderr_of(&second).contains("seek table build"), "{}", stderr_of(&second));
+}
+
+/// **The shipped default is the source's, and the status line is where a user
+/// sees which one they got.** A plain `parse` with no `--jobs` says `jobs=1`
+/// (above); the same command over an `.xz` file says the cores this process was
+/// given, because decode is the one shape that scales
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// Asserted against `available_parallelism()` rather than a literal — the count
+/// is the machine's, and on a one-CPU runner it legitimately *is* 1, which is
+/// why the plain leg is asserted beside it rather than the `.xz` leg alone: what
+/// this pins is that the two commands can differ, and by which number.
+#[test]
+fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    let (_dir, xz_path) = seekable_xz();
+    let cache_dir = tempfile::tempdir().unwrap();
+
+    let started_of = |source: &str, cache: PathBuf| -> String {
+        let out = run(&["parse", "--source", source, "--dqcache", cache.to_str().unwrap()]);
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let stderr = stderr_of(&out);
+        main_scan_lines(&stderr)
+            .into_iter()
+            .find(|l| l.contains("started"))
+            .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"))
+            .to_string()
+    };
+
+    let compressed = started_of(xz_path.to_str().unwrap(), cache_dir.path().join("xz.dqcache"));
+    assert!(compressed.contains(&format!("jobs={cores}")), "{compressed}");
+
+    let plain = started_of(plain_dump().to_str().unwrap(), cache_dir.path().join("plain.dqcache"));
+    assert!(plain.contains("jobs=1"), "{plain}");
 }

@@ -267,12 +267,45 @@ It is a two-state enum — `Serial`, or `Workers { jobs, memory_bytes }` — and
 **the library defaults to `Serial`**, which is the serial code path this build
 has rather than a pool of one: an embeddable component does not spawn threads by
 surprise, so parallelism is opted into ([`roadmap.md`](roadmap.md), "Project
-goals"). **The CLI makes the same default**, `--jobs` being 1: it defaulted to
-`available_parallelism()` while the number bought read depth at no memory cost,
-and it now buys CPU parallelism that no figure prices on any device class, so
-what a person who states nothing gets is the arrangement every published table
-was taken under. Raising it is a decision `parallel-scan-throughput` is asked to
-license, not a default shipped ahead of the evidence.
+goals"). **The CLI asks the source instead of holding a constant**, which is
+`ByteRangeSource::default_workers`: an omitted `--jobs` is filled in from the
+open file, a stated one wins outright, and there is no third spelling — `--jobs
+0` is refused, zero already reading as one through `Parallelism::workers`.
+`LocalFileSource` inherits the defaulted answer of **one**, the serial path,
+because a plain `parse` is slower than serial at every worker count measured
+and the pool-depth clamp is not what makes it so ("Where a scan's time goes");
+`XzSource` answers `available_parallelism()`, which is already the minimum of
+the affinity mask and every ancestor cgroup's CPU quota
+([`runtime-invariants.md`](runtime-invariants.md), `RT7`). Decode is the one
+shape that demonstrably scales — a compressed `parse` reaches 5.82× at
+twenty-four workers, still climbing — so a small constant such as four would
+leave the machine's own answer unspent on the only path that can use it, and
+the standing rule's four-and-twenty-four baseline already buys predictability
+by a different route ([`roadmap.md`](roadmap.md), "Standing rules").
+
+**The recommendation is a raw count, and the budget binds after it.** What a
+caller's bytes afford is `stream::worker_count`'s question, asked of every count
+alike against the source's own per-partition footprint, so a source answering
+here reasons about the work rather than about the memory and cannot make the
+budget bind twice. A source's block count binds after that: a single-block `.xz`
+has no seam to cut whatever the recommendation says.
+
+**A worker default can be a source's answer because it is downstream of
+recognition**, which the CLI has already paid for by the time it has a source to
+ask. Nothing in the library reads the method — a caller that states a count gets
+that count, and `Parallelism` is where a count is stated — so it is the CLI's
+`ParallelArgs::resolve` that asks, which is what keeps the library's own default
+`Parallelism::default()` and its promise not to spawn threads by surprise
+intact. *Rejected: reading the recommendation inside the library*, which would
+make an embedder's silence mean concurrency and put a source lookup inside every
+scan entry point.
+
+**The asymmetry the default ships is stated rather than smoothed over.** The
+same count gives a compressed `parse` 5.82× and a compressed typed `query` only
+1.60×, its sub-stream count capped by the divisor below. That is a count asked
+for and partly not delivered, and `PlanNoteKind::ParallelismBudgetLimited` is
+what says so to the user rather than leaving it to be read off the arithmetic
+("When the divisor declines the requested count", below).
 
 **Workers are `spawn_blocking` tasks, and no runtime flavour is imposed.** The
 library keeps `tokio` at `features = ["rt", "sync"]` — **`rt-multi-thread` is
@@ -363,7 +396,7 @@ only the count is one at `--jobs 1` — so `Serial` carries `memory_bytes:
 Option<u64>` and `Parallelism::workers(1, 400 << 20)` answers a serial state
 holding 400 MiB. Every pool is sized from `memory_bytes()`, which reads the
 field through either variant, so a stated `--parallel-memory` reaches a
-compressed source's block-decode line at the default `--jobs` and needs no
+compressed source's block-decode line at a serial `--jobs` and needs no
 second worker asked for beside it; `pgdump_query-cli/tests/parallelism.rs`
 pins that at the CLI, where a budget carried in the value and dropped on the
 way down would leave the unit tests passing.
@@ -4486,7 +4519,9 @@ scanner, or a **cancellation**. `stream::map_forward` is what calls it — see
 make one**, which is that method's own contract. The economics are the
 caller's, stated as `ScanOptions::parallelism`, so a plain file is cut here
 exactly as a compressed one is and the refusal of parallel plain-file discovery
-is `--jobs`' default rather than a branch in the library. The one rule the
+is the plain source's own worker recommendation
+(`ByteRangeSource::default_workers`) reaching an unstated `--jobs`, rather than
+a branch in the library. The one rule the
 scheduler applies is a **floor**, and it is derived rather than chosen: a region
 smaller than one `partition_bytes()` is declined, because cutting it would hand
 some worker less than the source's own unit and charge the scheduling anyway.

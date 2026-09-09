@@ -121,6 +121,33 @@ pub trait ByteRangeSource: Send + Sync {
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
+    /// How many concurrent readers this source recommends to a caller that has
+    /// stated no count of its own — a **recommendation**, never a bound
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **The default is one, which is the serial path**, and it is the same
+    /// convention [`ByteRangeSource::partitions`] follows for the same reason:
+    /// a source that has not thought about being read concurrently must not be
+    /// read concurrently by a caller who took its silence for consent. Nothing
+    /// in the library reads this — a caller that states a count gets that
+    /// count, and [`Parallelism`] is where a count is stated. It exists for the
+    /// layer above, which has a person's flags to fill in
+    /// (`pgdump_query-cli`'s `ParallelArgs::resolve`).
+    ///
+    /// **It is a raw count, not a budgeted one.** What the caller's byte budget
+    /// affords is `crate::stream::worker_count`'s question and is asked of
+    /// every count alike, stated or recommended, against the source's own
+    /// per-partition footprint — so a source answering here reasons about the
+    /// work rather than about the memory, and cannot make the budget bind
+    /// twice.
+    ///
+    /// [`LocalFileSource`] inherits the default: a plain `parse` is slower than
+    /// serial at every worker count measured, including with the pool-depth
+    /// clamp lifted ("Where a scan's time goes"). [`XzSource`] overrides it,
+    /// decode being the one shape that demonstrably scales.
+    fn default_workers(&self) -> usize {
+        1
+    }
     /// How much concurrency this caller allows, and how many bytes the source
     /// may hold while serving it — announced once before a read loop starts,
     /// exactly where [`ByteRangeSource::hint_read_size`] is
@@ -1832,6 +1859,29 @@ impl ByteRangeSource for XzSource {
             range,
         )
     }
+
+    /// **The cores this process was given** — `available_parallelism()`, which
+    /// is already the minimum of the affinity mask and every ancestor cgroup's
+    /// CPU quota, rounded down and floored at one
+    /// (`docs/design/runtime-invariants.md`, `RT7`). So a container told
+    /// `--cpus=3.5` recommends three, and nothing here re-derives what `std`
+    /// already reads.
+    ///
+    /// **Decode is the one shape that demonstrably scales** — a compressed
+    /// `parse` reaches 5.82× at twenty-four workers and is still climbing
+    /// (`docs/design/measurements.md`, "What a second scan worker buys") — so
+    /// a small constant such as four would leave the machine's own answer
+    /// unspent on the only path that can use it. What the caller's budget affords still
+    /// binds afterwards, through the divisor every count passes
+    /// (`crate::stream::worker_count`), and this source's own block count binds
+    /// after that: a single-block file has no seam to cut, whatever this says.
+    ///
+    /// A failure to read the count answers **one** rather than propagating: the
+    /// caller asked what this source would like, and "the serial path" is a
+    /// usable answer where an error is not.
+    fn default_workers(&self) -> usize {
+        std::thread::available_parallelism().map_or(1, NonZeroUsize::get)
+    }
 }
 
 /// The six bytes every `.xz` stream opens with
@@ -2377,6 +2427,19 @@ mod tests {
         assert_eq!(advice.partition_bytes(), 0);
     }
 
+    /// **Silence recommends the serial path**, the same convention
+    /// `partitions` above answers with — and [`LocalFileSource`] inherits it
+    /// rather than overriding, because a plain `parse` is slower than serial at
+    /// every worker count measured ("Where a scan's time goes"). Only a reading
+    /// showing a plain parallel `parse` beating serial reopens that, and this
+    /// is where it would be reopened.
+    #[test]
+    fn a_source_that_does_not_advise_recommends_the_serial_path() {
+        assert_eq!(BareSource.default_workers(), 1);
+        let (_file, source) = source_of(b"0123456789abcdef");
+        assert_eq!(source.default_workers(), 1);
+    }
+
     /// A plain file prefers no split point to another, and a partition costs
     /// [`PLAIN_PARTITION_CHUNKS`] read chunks — the caller's own announced
     /// number where it announced one, so the size scales with the unit the
@@ -2658,6 +2721,26 @@ mod tests {
         let table = source.seek_table().expect("an XzSource always has a table");
         assert!(table.is_seekable(), "block_count = {}", table.block_count());
         assert_eq!(table.uncompressed_size(), payload.len() as u64);
+    }
+
+    /// **A compressed source recommends the cores it was given**, which is the
+    /// one override of the defaulted recommendation, and the whole of what an
+    /// omitted `--jobs` is filled in from.
+    ///
+    /// Asserted against `available_parallelism()` rather than against a
+    /// literal: the count is the machine's, and the property being pinned is
+    /// that this source asks `std` rather than carrying a constant of its own
+    /// — which is what makes a container's CPU quota reach the default
+    /// (`docs/design/runtime-invariants.md`, `RT7`). A `1` here would be a
+    /// single-CPU machine agreeing with the plain path by accident, so the
+    /// floor is asserted too.
+    #[test]
+    fn an_xz_source_recommends_the_cores_it_was_given() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        assert_eq!(source.default_workers(), cores);
     }
 
     /// Reading forward in chunks that each land inside one block, straddle a

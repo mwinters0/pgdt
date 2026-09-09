@@ -47,6 +47,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "time"] }
 
 [dev-dependencies]
+# The one type `ByteRangeSource`'s signature names that the library does not
+# re-export, and a unit test here implements that trait to pin what an omitted
+# `--jobs` asks the source for (`ParallelArgs::resolve`). The version tracks
+# `pgdump_query`'s own, since the two `Bytes` must be one type.
+bytes = "1.12.1"
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 tempfile = "3.27.0"
 # `rt` here too, and not only for symmetry: every `#[tokio::test]` in this

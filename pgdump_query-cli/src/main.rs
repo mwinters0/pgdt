@@ -12,10 +12,10 @@ use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus, CompressionShape};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, CompareKind, ComparisonPlan, DEFAULT_MEMORY_BUDGET, DataBlock, Diagnostic,
-    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
-    PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody, TypeKind,
-    open_local, preamble_only, render_field_into,
+    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DEFAULT_MEMORY_BUDGET, DataBlock,
+    Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism,
+    Predicate, PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody,
+    TypeKind, open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -54,13 +54,18 @@ impl From<CliSchemaMode> for SchemaMode {
 /// scanning commands (`docs/design/architecture.md`, "Execution model and API
 /// surface").
 ///
-/// **The CLI defaults to the serial path, as the library does**: a person who
-/// states neither flag gets the arrangement every published figure was taken
-/// under, and parallelism is asked for. `--jobs 1` is that path as a property
-/// of `Parallelism::workers` rather than of anything here.
+/// **An omitted `--jobs` is the source's own recommendation**, not a constant
+/// here: [`ByteRangeSource::default_workers`] answers the serial path for a
+/// plain file and this machine's core count for an `.xz` one, which is why
+/// [`ParallelArgs::resolve`] takes the open source. The library still defaults
+/// to `Parallelism::default()` — it is the *CLI* that is a program a person ran
+/// on purpose. `--jobs 1` is the serial path as a property of
+/// `Parallelism::workers` rather than of anything here.
 #[derive(Args)]
 struct ParallelArgs {
-    /// How many workers pgdq may ask for. Defaults to 1, the serial path.
+    /// How many workers pgdq may ask for. Left unstated, the file decides: a
+    /// plain dump reads serially, and an `.xz` one takes the CPUs this process
+    /// was given.
     ///
     /// **It states what is asked for, not what is delivered.** Two input
     /// shapes admit no parallelism whatever this says: a `.xz` file with one
@@ -100,21 +105,37 @@ struct ParallelArgs {
 }
 
 impl ParallelArgs {
-    /// The [`Parallelism`] these flags state, filling in the CLI's own
-    /// defaults for whichever was omitted.
+    /// The [`Parallelism`] these flags state over `source`, filling in what was
+    /// omitted.
+    ///
+    /// **A stated flag wins outright; absence is what asks the source.** There
+    /// is no spelling for "discover" — `--jobs 0` is refused by
+    /// [`parse_jobs`], since zero already reads as one through
+    /// `Parallelism::workers` and a third meaning at the CLI would diverge from
+    /// what the library makes of the same number.
+    ///
+    /// **The source is asked for a count, never for a budget.** A worker
+    /// default can be a source's own answer because it is downstream of
+    /// recognition, which the caller has already paid for by the time it has a
+    /// source to hand here (`docs/design/architecture.md`, "Execution model and
+    /// API surface"). What the budget affords still binds afterwards, through
+    /// the divisor every count passes alike.
     ///
     /// **A stated budget reaches the library at every worker count**, the
     /// serial state carrying one of its own — so `--parallel-memory` is worth
-    /// stating beside the default `--jobs`, which is what buys back a
-    /// compressed file's block path without also asking for a second worker
+    /// stating beside a serial `--jobs`, which is what buys back a compressed
+    /// file's block path without also asking for a second worker
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
-    /// **Stating neither flag is the one case that must state no budget**, so
-    /// that the status line can say `(default)` truthfully: the CLI's own
-    /// fallback and the library's are the same number, and printing it as
-    /// though it had been asked for is the only way that line can lie.
-    fn resolve(&self) -> Parallelism {
-        let jobs = self.jobs.unwrap_or(DEFAULT_JOBS);
+    /// **Only a resolved-serial arrangement can state no budget**, which is
+    /// what lets the status line say `(default)` truthfully there: the CLI's
+    /// own fallback and the library's are the same number, and printing it as
+    /// though it had been asked for is the only way that line can lie. A
+    /// `Workers` arrangement has nowhere to put "nobody stated one" —
+    /// `memory_bytes` is not an `Option` on that variant — so it carries
+    /// `DEFAULT_MEMORY_BUDGET` bare, exactly as a stated `--jobs 8` always did.
+    fn resolve(&self, source: &dyn ByteRangeSource) -> Parallelism {
+        let jobs = self.jobs.unwrap_or_else(|| source.default_workers());
         let stated =
             Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET));
         match (self.parallel_memory, stated) {
@@ -123,20 +144,6 @@ impl ParallelArgs {
         }
     }
 }
-
-/// What `--jobs` states when nobody states it: **one**, which
-/// `Parallelism::workers` reads as the serial path.
-///
-/// It was this machine's `available_parallelism()` while `--jobs` bought only
-/// read depth at no memory cost. It buys CPU parallelism now — a query's replay
-/// and a `parse`'s interior split both — and no figure prices that on any of
-/// the three device classes, while two costs are known to exist: read depth is
-/// unmeasured everywhere, and N sub-streams on a HDD are N separated offsets
-/// read at once. So the default is the arrangement every published figure was
-/// taken under, and raising it is a decision `parallel-scan-throughput` is
-/// asked to license (`docs/design/architecture.md`, "Execution model and API
-/// surface").
-const DEFAULT_JOBS: usize = 1;
 
 /// A `--jobs` value: a worker count, and never zero. Zero would read as one
 /// through `Parallelism::workers`, but a person who typed it meant something,
@@ -362,11 +369,16 @@ fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
 
 /// The [`ScanOptions`] one scanning command runs under: the default, with
 /// `--chunk-size` applied where it was given and the parallelism flags
-/// resolved.
-fn scan_options(chunk_size: Option<usize>, parallel: &ParallelArgs) -> ScanOptions {
+/// resolved against the source they will read
+/// ([`ParallelArgs::resolve`]).
+fn scan_options(
+    chunk_size: Option<usize>,
+    parallel: &ParallelArgs,
+    source: &dyn ByteRangeSource,
+) -> ScanOptions {
     ScanOptions {
         chunk_size: chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
-        parallelism: parallel.resolve(),
+        parallelism: parallel.resolve(source),
         ..ScanOptions::default()
     }
 }
@@ -921,9 +933,12 @@ async fn main() -> Result<()> {
             // answers with the library's own error before opening anything.
             let source = open_for_scan(&file, &mode)?;
             if preamble_only_flag {
-                let (metadata, diagnostics) =
-                    preamble_only(source.as_ref(), &scan_options(chunk_size, &parallel), &mode)
-                        .await?;
+                let (metadata, diagnostics) = preamble_only(
+                    source.as_ref(),
+                    &scan_options(chunk_size, &parallel, source.as_ref()),
+                    &mode,
+                )
+                .await?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -933,8 +948,10 @@ async fn main() -> Result<()> {
             let size = source.size().await?;
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
-            let scan_options =
-                ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size, &parallel) };
+            let scan_options = ScanOptions {
+                cancel: Some(cancel),
+                ..scan_options(chunk_size, &parallel, source.as_ref())
+            };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: the user asked the scan to stop, not for a
@@ -1085,7 +1102,7 @@ async fn main() -> Result<()> {
                 // The same flags on both passes: `pgdq query` runs one mapping
                 // scan and one replay over one source, so the number a person
                 // typed is the number both of them work inside.
-                parallelism: parallel.resolve(),
+                parallelism: parallel.resolve(source.as_ref()),
                 ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to
@@ -1106,7 +1123,7 @@ async fn main() -> Result<()> {
             let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
-                scan_options(chunk_size, &parallel),
+                scan_options(chunk_size, &parallel, source.as_ref()),
                 query_options,
                 mode,
             )
@@ -2243,51 +2260,110 @@ mod tests {
         }
     }
 
-    /// **Stating neither flag is the serial path**, which is the one thing
-    /// about `--jobs` no integration test can see: the whole design promise is
-    /// that a partitioned run and a serial one produce the same bytes, so
-    /// nothing in the output distinguishes them and a default that drifted
-    /// back to `available_parallelism()` would pass every other test in the
-    /// tree. That drift is exactly what happened to the measurement harness
-    /// (`docs/design/measurements.md`, "The apparatus"), so the default is
-    /// pinned here rather than left to the constant's doc comment.
-    #[test]
-    fn stating_no_parallelism_flag_is_the_serial_path() {
-        let stated = ParallelArgs { jobs: None, parallel_memory: None };
-        assert_eq!(stated.resolve(), Parallelism::default());
-        assert!(stated.resolve().is_serial());
-        // Nothing was asked for, so nothing is claimed: this is what the
-        // status line renders `(default)`.
-        assert_eq!(stated.resolve().memory_bytes(), None);
-        assert_eq!(DEFAULT_JOBS, 1);
+    /// A source recommending whatever it is built with, so that
+    /// [`ParallelArgs::resolve`]'s two halves — ask the source, or honour the
+    /// flag — can be told apart without a real file of either shape. The three
+    /// required methods answer nothing: `resolve` reads exactly one method and
+    /// never touches a byte.
+    struct Recommends(usize);
 
-        // And a stated count above one is not: the flag still reaches the
-        // value, so this pins the default rather than the plumbing.
-        let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
-        assert_eq!(asked.resolve(), Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET));
+    impl ByteRangeSource for Recommends {
+        fn read_range(
+            &self,
+            _offset: u64,
+            _len: usize,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = pgdump_query::Result<bytes::Bytes>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(bytes::Bytes::new()) })
+        }
+        fn size(
+            &self,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = pgdump_query::Result<u64>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(0) })
+        }
+        fn modified(
+            &self,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = pgdump_query::Result<Option<std::time::SystemTime>>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+        fn default_workers(&self) -> usize {
+            self.0
+        }
     }
 
-    /// **A stated budget survives the default worker count.** `--jobs 1` is
-    /// the serial path as a property of the value, and the collapse that makes
-    /// it one takes the *worker count* down and not the bytes beside it — so
+    /// **Stating neither flag asks the source**, which is the one thing about
+    /// `--jobs` no integration test can see: the whole design promise is that a
+    /// partitioned run and a serial one produce the same bytes, so nothing in
+    /// the output distinguishes them and a default that silently reverted to a
+    /// constant would pass every other test in the tree. That drift is exactly
+    /// what happened to the measurement harness
+    /// (`docs/design/measurements.md`, "The apparatus"), so the wiring is
+    /// pinned here rather than left to a doc comment.
+    ///
+    /// The two counts are the two shipped sources' answers — one for a plain
+    /// file, the machine's cores for an `.xz` one — and which source gives
+    /// which is `ByteRangeSource::default_workers`'s own test.
+    #[test]
+    fn stating_no_parallelism_flag_asks_the_source() {
+        let stated = ParallelArgs { jobs: None, parallel_memory: None };
+        assert_eq!(stated.resolve(&Recommends(1)), Parallelism::default());
+        assert!(stated.resolve(&Recommends(1)).is_serial());
+        // Nothing was asked for, so nothing is claimed: this is what the
+        // status line renders `(default)`.
+        assert_eq!(stated.resolve(&Recommends(1)).memory_bytes(), None);
+
+        // A source that recommends more gets it, with the CLI's own budget
+        // filled in beside it — `Parallelism::Workers` has nowhere to record
+        // that nobody stated one.
+        assert_eq!(
+            stated.resolve(&Recommends(8)),
+            Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET)
+        );
+
+        // And a stated flag wins outright, over a recommendation in either
+        // direction: this pins the precedence rather than the plumbing.
+        let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
+        assert_eq!(
+            asked.resolve(&Recommends(1)),
+            Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET)
+        );
+        let serial = ParallelArgs { jobs: Some(1), parallel_memory: None };
+        assert_eq!(serial.resolve(&Recommends(24)), Parallelism::default());
+    }
+
+    /// **A stated budget survives a serial worker count.** `--jobs 1` is the
+    /// serial path as a property of the value, and the collapse that makes it
+    /// one takes the *worker count* down and not the bytes beside it — so
     /// `--parallel-memory` alone is the whole recourse for a compressed file
     /// whose blocks the 64 MiB default cannot hold, with no second worker
     /// needing to be asked for
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     #[test]
-    fn a_stated_budget_reaches_the_library_at_the_default_job_count() {
+    fn a_stated_budget_reaches_the_library_at_a_serial_job_count() {
         let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
-        assert!(stated.resolve().is_serial(), "one worker is still the serial path");
-        assert_eq!(stated.resolve().memory_bytes(), Some(400 << 20));
+        let serial = Recommends(1);
+        assert!(stated.resolve(&serial).is_serial(), "one worker is still the serial path");
+        assert_eq!(stated.resolve(&serial).memory_bytes(), Some(400 << 20));
 
-        // Stated explicitly rather than defaulted: the same value either way.
+        // Stated explicitly rather than taken from the source: the same value
+        // either way, and the source's own recommendation cannot change it.
         let one = ParallelArgs { jobs: Some(1), parallel_memory: Some(400 << 20) };
-        assert_eq!(one.resolve(), stated.resolve());
+        assert_eq!(one.resolve(&Recommends(24)), stated.resolve(&serial));
 
         // A stated count with no budget beside it is the other half of the
         // pair, and it keeps the CLI's own fallback.
         let jobs_only = ParallelArgs { jobs: Some(1), parallel_memory: None };
-        assert_eq!(jobs_only.resolve().memory_bytes(), None);
+        assert_eq!(jobs_only.resolve(&serial).memory_bytes(), None);
     }
 
     /// The bare spelling, unchanged: no whitespace anywhere means nothing to

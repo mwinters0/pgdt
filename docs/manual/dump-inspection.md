@@ -218,16 +218,24 @@ warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217
 
 If you have the memory, `--parallel-memory 536870912` buys the block path back.
 That is the whole of it: the budget is a separate number from `--jobs`, so
-raising it works at the default single worker and you do not have to ask for a
-second one to make it count. If you do not have the memory, nothing is wrong —
+raising it works at any worker count and you do not have to ask for a second
+worker to make it count. If you do not have the memory, nothing is wrong —
 the file reads fine, just with more decoding on backward reads.
 
-**`--jobs <n>` is how many workers pgdq may ask for, and it defaults to 1** —
-the single-threaded path. Nothing runs in parallel unless you say so.
+**`--jobs <n>` is how many workers pgdq may ask for. Left unstated, the file
+decides.** A plain (uncompressed) dump reads serially, because splitting one is
+slower than not splitting it. An `.xz` dump takes the CPUs this process was
+given — the machine's cores, or fewer where a container quota says so, since
+decompression is the one part of the work that a second core reliably finishes
+sooner. Whatever the file would choose, a `--jobs` you type wins outright, in
+both directions: `--jobs 1` reads a compressed dump serially, and `--jobs 8`
+splits a plain one.
 
 It states what is asked for rather than what you get: two input shapes admit no
 parallelism at all whatever you set, and a plain file gets fewer workers than
-you named. Both are below.
+you named. Both are below. The `scan started` line says the count that was
+resolved (below, "Status on stderr"), which is where to look if you want to know
+what a flagless run chose.
 
 For `query` it cuts the row reading up: the parts of the file holding the rows
 you asked for are split into at most this many pieces, read at the same time,
@@ -286,9 +294,11 @@ with no room to hold what they decode buys less than either number suggests.
 > for the reason in the callout above. `MALLOC_ARENA_MAX` bounds the arena
 > count if you want to set it, and 2 is the smallest useful value; how much it
 > saves on a given workload is not something we can currently quote you a
-> number for. Restricting the container's CPUs is not a substitute: pgdq sizes
-> its threads from `--jobs` and not from the CPU count, and arena memory does
-> not fall away in proportion to the thread count in any case.
+> number for. Restricting the container's CPUs is a partial substitute at best:
+> it lowers the count an `.xz` file picks when you state no `--jobs`, because
+> that count is read from the CPU quota — but it does nothing to a `--jobs` you
+> typed, and arena memory does not fall away in proportion to the thread count
+> in any case.
 
 **Two shapes will never get parallelism, whatever you set.** An `.xz` file with
 a single block has no seam to split at — the warning above says so when you hit
@@ -320,9 +330,9 @@ cgroup sample, an orchestrator's own log:
 $ pgdq parse --source koji.dump.xz
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
-2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=1 memory_bytes=67108864 (default)
+2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=67108864
 2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
-2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=1 memory_bytes=67108864 (default)
+2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=67108864
 2026-07-23T14:47:52.317660814Z  INFO scan complete bytes=784019857152 reached_eof=true
 ```
 
@@ -341,13 +351,17 @@ opens straight on `scan started` naming the byte the interrupted run reached.
 The seek-table lines only appear on a fresh `.xz` file — the walk they report
 is what a cache's persisted table exists to skip (above, "`.xz` files are read
 directly"). `scan started` names the arrangement `--jobs`/`--parallel-memory`
-resolved to, once, so a log says what produced everything that follows it —
-the byte budget actually governing reads, whether or not you asked for one
-(`memory_bytes=67108864 (default)` above is the 64 MiB every pool falls back
-to when nothing was stated; state `--parallel-memory` and the number changes
-with no `(default)` beside it). A query's mapping pass may print `scan
-complete` at the offset it stopped rather than the file's end, once its
-target table is settled (`reached_eof=false`). Running `parse` against a file
+resolved to, once, so a log says what produced everything that follows it. This
+is where a flagless run says what the file chose: `jobs=24` above is an `.xz`
+dump taking the CPUs the process was given, where a plain dump would say
+`jobs=1`. `memory_bytes` is the byte budget actually governing reads, whether or
+not you asked for one — 67108864 here is the 64 MiB every pool falls back to
+when nothing was stated. It is marked `(default)` on a run that also resolved to
+a single worker, which is the case where pgdq can tell "nobody asked" from "you
+asked for exactly that"; a stated `--parallel-memory` is always printed bare.
+
+A query's mapping pass may print `scan complete` at the offset it stopped
+rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file
 that is already fully cached is not a scan and prints neither pass, matching
 "costs nothing and says so" above.
 

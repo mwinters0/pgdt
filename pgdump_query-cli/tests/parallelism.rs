@@ -142,11 +142,11 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     assert!(!stderr_of(&plain_out).contains("streaming decoder"), "{}", stderr_of(&plain_out));
 }
 
-/// **The budget is stated at the default worker count too**, which is the
-/// whole of what a serial caller can ask for: `--jobs` defaults to 1, the
-/// serial path, and the value carrying that path carries the stated bytes with
-/// it — so the same decline and the same silence follow from
-/// `--parallel-memory` alone, with no `--jobs 2` beside it
+/// **The budget is stated with no `--jobs` beside it**, which is the whole of
+/// what a caller who does not want to think about workers can ask for: the
+/// worker count is filled in from the source and the stated bytes ride through
+/// whatever it comes back as — so the same decline and the same silence follow
+/// from `--parallel-memory` alone, with no `--jobs 2` typed
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
 /// Driven through the CLI rather than through the value, because what this
@@ -154,7 +154,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 /// source: a budget carried in the value and dropped on the way down would
 /// leave the unit tests passing.
 #[test]
-fn a_stated_budget_decides_the_read_path_at_the_default_job_count() {
+fn a_stated_budget_decides_the_read_path_with_no_jobs_flag() {
     let (_xz_dir, compressed) = seekable_xz();
 
     let declined = query(&compressed, "public.widgets", &["--parallel-memory", "400"]);
