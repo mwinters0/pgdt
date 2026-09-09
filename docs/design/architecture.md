@@ -1089,11 +1089,30 @@ not a transient under concurrency**: the "free list at zero or one" cycle is a
 free list while another retains, so a parallel `parse` sat near
 `2 × slots × unit` for the length of the run. A diagnostic sitting read a
 block-decoding `.xz` at 243 MiB resident against a 64 MiB budget and 1242 MiB
-against 512 MiB, tracking the doubled ceiling across the axis; re-reading it on
-the coupled build is `19.12`'s, and the reserve constant is chosen from that
-sitting. Evidence:
+against 512 MiB, tracking the doubled ceiling across the axis. Evidence:
 [`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
 reserve rule's two entries, closed".
+
+**Coupling the counts returned no bytes, and what that leaves is a per-reader
+term outside both pools.** Re-read on the coupled build, the uncapped line
+moved from `160 MiB + 54.3` a sub-stream to `180 MiB + 59.4` — both terms up
+about a tenth, against a removed ceiling that was arithmetically the right
+size for the excess. The pools are now genuinely bounded by the stated number,
+so what remains is held by the readers themselves, and it tracks the **worker
+count** rather than the budget: the plain leg saturates at twenty-four workers
+and goes flat at 208.96 → 208.38 MiB while the budget doubles from 256 to 512.
+That falsifies the premise the rejection above rests on — *the pool sizes
+itself from the stated budget and not from how many readers were admitted* is
+true of the pool and not of the resident set — so the divisor is the only
+thing that bounds the per-reader term, and it is what has to charge honestly.
+**It charges one unit where `affordable` and `slot` both say two**: 25 MiB a
+sub-stream against a measured 59.4, where the plain path charges
+`POOL_MAX_BYTES` and measures 8.03 against 8. Correcting it makes resident the
+budget plus a constant, which is what the budget rule was written for.
+`dict_size` is on the block header and the seek-table walk reads none, so
+`2 × unit + chunk_bytes` is what a table alone affords. Evidence:
+[`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+reserve entries, reviewed: the divisor is wrong, not the rule".
 
 **`BlockCache::affordable` moved with it, from one unit to two**, because a
 coupled count of one is precisely the un-poolable shape rejected above — a
@@ -4608,9 +4627,25 @@ the partition buffer went with it. Even before, admission was not a hit:
 four slots were shared between 8 MiB partition reads and 1 MiB tail reads
 across every worker, so a partition read that found only tail buffers free
 allocated anyway — pooling was *possible* and nothing ever measured how often
-it happened, which is why what this costs the shape is unmeasured in both
-directions. The slot count still bounds what is outstanding, so `--jobs 4`
+it happened. The slot count still bounds what is outstanding, so `--jobs 4`
 remains the ceiling on plain-file readers whatever is kept.
+
+<!-- deficiency: KD18 -->
+**What it costs is now measured, and it is `KD18`.** A plain parallel `parse`
+was flat at 37.4 MiB across the whole worker axis before `19.7`; it is
+**16 MiB + 8.03 MiB a worker** after, reaching 209 MiB at twenty-four — 8 MiB
+being `POOL_MAX_BYTES` exactly, the partition buffer the tightened `keeps` now
+drops. The bytes are not lost to a pool but retained by the releasing thread's
+glibc arena, which is why `MALLOC_ARENA_MAX=2` takes the same shape **flat at
+78–86 MiB** across that axis: two arenas recycle what one per thread does not.
+So the remedy an operator has today is that setting, and the fix in the tree is
+the two-unit arrangement the Future item names. `19.8` made plain `--jobs`
+default to serial, so nobody meets this without stating the flag — which bounds
+who pays it and does not make it a property, the remedy being one no document
+told the reader about until now
+([`../manual/dump-inspection.md`](../manual/dump-inspection.md)). Readings:
+[`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "`19.12`:
+the coupling did not return the bytes".
 
 *Rejected: sizing the tail read to a row instead.* It reaches
 every source and would shrink the compressed 4% too, but it changes what the
@@ -4633,10 +4668,12 @@ spans in one call, which on any dump whose schema run exceeds a chunk put a
 multi-megabyte buffer on the free list counted as one slot, on the **serial**
 default path. Weighed against that, what the tightening costs is pooling nothing
 ever demonstrated was happening, on a shape measured at 0.81× serial and made
-non-default in the same phase. Pricing the loss first was considered and buys
-nothing decidable: the plain worker default's stated reopening condition is a
-reading showing plain parallel *beating* serial, and a change that makes it
-slower can only move further from it.
+non-default in the same phase. Pricing the loss first was considered and would
+not have changed the call: the plain worker default's stated reopening
+condition is a reading showing plain parallel *beating* serial, and a change
+that makes it slower can only move further from it. What the price bought when
+it was eventually taken is a register entry rather than a reversal — the
+resident cost above, `KD18`.
 
 **This is the one read loop that grants `WaitPolicy::MayWait`**, and it is safe
 for the reason the permission documents: each worker holds exactly one read at a

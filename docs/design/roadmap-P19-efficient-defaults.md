@@ -258,6 +258,20 @@ the run; an ancestor's limit binds whichever level states it.
 **An unlimited environment falls back to today's constant**, as settled going
 in.
 
+**`19.14` puts that in tension with the source's own worker default, and
+`19.13` cannot be written without resolving it.** A corrected charge is at
+least 49 MiB a sub-stream, so the 64 MiB `DEFAULT_MEMORY_BUDGET` admits
+**one** — which overrides `XzSource::default_workers`' `available_parallelism()`
+to serial. An unlimited host discovers nothing, falls back to that constant,
+and gets a serial flagless `.xz` scan: the phase would have shipped a
+source-dependent worker default that never fires on the machine most likely to
+run it. Three levers reach it — a larger `DEFAULT_MEMORY_BUDGET`, an unlimited
+fallback that is not today's constant, or a source stating a budget floor as it
+now states a worker count — and each reverses or qualifies something above, so
+none is `19.13`'s to take unreviewed. Found while closing `19.12`'s entries:
+[2026-09-09](../status/history/2026-09-09.md), "The reserve entries, reviewed:
+the divisor is wrong, not the rule".
+
 **`discover_memory_limit` takes its filesystem root as a parameter**, so that
 the v1 arm can be driven from a fixture tree. This machine runs a pure v2
 hierarchy and cannot produce a v1 memory controller at all
@@ -465,7 +479,7 @@ at all, and the reserve measurement decides the budget rule's one number — so 
 list ordered in advance would order the work against the guesses the phase was
 convened to replace.
 
-Four orderings bind, and nothing else does:
+Five orderings bind, and nothing else does:
 
 - **the runtime-invariants register before anything reads `/sys/fs/cgroup`** —
   it is the condition the original rejection named, and it survived the reversal
@@ -475,11 +489,23 @@ Four orderings bind, and nothing else does:
 - **the plain-path account before any plain default is set**;
 - **the closing sweep last, and after `KD16`**, since closing `KD16` re-bases a
   row that sweep publishes;
-- **the pool accounting, then the reserve re-take, then the budget rule** —
-  `19.7`, `19.12`, `19.13`. The accounting change moves every cell of the
-  reserve reading, and the rule's one constant comes from that reading, so
-  taking either out of order prices a build about to be replaced or ships a
-  number nothing measured.
+- **the pool accounting, then the reserve re-take, then the divisor, then the
+  budget rule** — `19.7`, `19.12`, `19.14`, `19.13`. The accounting change
+  moves every cell of the reserve reading, and the rule's one constant comes
+  from that reading, so taking either out of order prices a build about to be
+  replaced or ships a number nothing measured. `19.14` joined that chain when
+  `19.12` found the compressed charge out by 2.4×: a rule whose constant is
+  read off a plan that under-charges is a rule compensating for an accounting
+  error with a safety margin, which is the shape this phase exists to remove.
+  `19.15` follows `19.13`, having nothing to run until the rule ships.
+  **`19.14` waits on `xz-seek` and the re-vendor, and so therefore does the
+  rest of the phase** — a charge assembled from a constant standing in for the
+  decoder's own retention is the same approximation one slice further along,
+  and the phase is for removing it rather than relocating it. What that costs
+  is a cross-repo dependency and an idle frontier; what it buys is that the
+  rule's constant is read off a plan that charges what the file actually
+  costs. Reasoning: [2026-09-09](../status/history/2026-09-09.md), "The
+  reserve entries, reviewed: the divisor is wrong, not the rule".
 
 ## The closing sweep
 
@@ -502,7 +528,7 @@ and nothing else.
 ## Slices
 
 **These numbers after the evidence slices are allocation order, not schedule**
-— see "Slice order: allocation, not schedule" above for the four orderings that
+— see "Slice order: allocation, not schedule" above for the five orderings that
 bind. A slice admitted after this spec takes the next free number rather than
 being inserted.
 
@@ -521,6 +547,21 @@ being inserted.
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`. |
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |
 | **19.13** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule, carrying `19.12`'s constant. |
+| **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units and the chunk, the same sentence `BlockCache::affordable` and `BlockCache::slot` already say — rather than one, plus what a concurrent decode allocates. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
+| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds. A `runs/` probe, not a figure. |
+
+**`19.14` and `19.15` were admitted after this spec was written**, and take the
+next free numbers rather than being inserted. `19.14` reverses a repair this
+spec's evidence section rejected: charging a compressed worker what it holds
+was refused because "it would admit fewer readers for exactly the same resident
+set", which rested on resident being a function of the stated budget rather
+than of the worker count — falsified by `19.12`'s plain leg, which saturates at
+twenty-four workers and goes flat while the budget doubles. `19.15` exists
+because every reserve reading this phase took was made at `-m 3g` with the
+budget *stated*, while discovery's whole purpose is the small allocation
+nothing has ever run in. Reasoning:
+[2026-09-09](../status/history/2026-09-09.md), "The reserve entries, reviewed:
+the divisor is wrong, not the rule".
 
 **`19.7` was re-scoped and split after this spec was written, and the two new
 rows take the next free numbers rather than being inserted.** As specified it

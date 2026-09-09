@@ -324,7 +324,7 @@ goes").
 
 Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
 **The numbers after the evidence slices are allocation order, not schedule** —
-the four orderings that bind are in the spec, not here.
+the five orderings that bind are in the spec, not here.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -413,11 +413,20 @@ the four orderings that bind are in the spec, not here.
       instead. The arena null goes with it — a plain scan is now
       `16 MiB + 8.0 MiB` a worker uncapped and **flat** at `MALLOC_ARENA_MAX=2`.
       The constant is **256 MiB**, the uncapped compressed leg's fixed term
-      rather than its worst cell, and the fraction ceiling is what now bounds a
-      compressed parallel scan — both flagged below. Notes:
+      rather than its worst cell. Reviewed since: the rule ships unamended and
+      the fraction stays a ceiling, because what the sitting actually found is
+      a **divisor** charging 25 MiB for a sub-stream that holds 59.4 — `19.14`,
+      which lands before `19.13`. Notes:
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
       rule, carrying `19.12`'s constant.
+- [ ] **19.14** `XzSource::partition_advice` charges a sub-stream the **two**
+      units a reader holds, not one — the divisor `19.12` found out by 2.4× —
+      plus what a concurrent decode allocates. **Blocked on `xz-seek`** and the
+      re-vendor, and the rest of the phase waits behind it. Lands before
+      `19.13`.
+- [ ] **19.15** The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB
+      with nothing stated. A `runs/` probe, not a figure. Follows `19.13`.
 
 ## Not started
 
@@ -459,8 +468,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD17 -->
-**`KD1`–`KD17` are allocated, and nothing at or below `KD17` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD18 -->
+**`KD1`–`KD18` are allocated, and nothing at or below `KD18` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -578,6 +587,15 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "What parallelism
   buys, and where it stops".
 
+- **KD18** — a plain `parse` at `--jobs ≥ 2` holds **16 MiB + 8.03 MiB a
+  worker**, reaching 209 MiB at twenty-four, where before `19.7` it was flat at
+  37.4 MiB: the partition buffer the tightened `keeps` stops pooling is
+  retained by the releasing thread's glibc arena instead. **(c) unowned**;
+  promoted by the roadmap Future item "A two-unit plain source", which is the
+  fix, and `MALLOC_ARENA_MAX=2` takes the shape flat in the meantime. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "The interior
+  split".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -595,33 +613,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The reserve constant is read as the compressed leg's *fixed term*, not as
-  its worst cell.** `19.12`'s sitting reads resident as a line in the sub-stream
-  count on both sources, so "resident minus the budget stated" is not one number
-  — it is +199 MiB at a 64 MiB budget and +836 MiB at 512. The harness's
-  renderer names the worst cell; the spec asks only for "one constant, taken
-  from the compressed leg". I took the **intercept, 180 MiB, rounded up to 256**,
-  on the argument that the part scaling with the budget is what
-  `min(fraction × limit, limit − reserve)` already has a fraction for, and that
-  subtracting it twice would reserve for it in both terms. **Reconsidering it**
-  means either taking the worst cell (836 MiB, which makes `limit − reserve`
-  negative below a gigabyte and hands every small cgroup to the below-floor
-  path) or making the reserve a function of the budget, which is the one shape
-  `Parallelism::discover()` cannot have — it answers before anything is open.
-  Detail:
-  [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md),
-  "The constant `19.13` carries".
-- **`19.7` did not do what the phase expected, and `19.13`'s rule now rests on
-  the fraction the spec called unmeasured.** The pool coupling was predicted to
-  halve the compressed legs; they rose a tenth instead, because a pool that
-  declines to keep a buffer frees it into a per-thread arena that keeps it. So
-  the spec's "a fraction as a ceiling only … it bounds nothing anyone has
-  measured" is now false: the fraction is the only term bounding a compressed
-  parallel scan, and `19.12`'s arithmetic says it must be about **0.25**. **The
-  decision is whether that reopens the spec** — the rule's *shape* is unchanged
-  and needs no amendment, but its stated rationale for the fraction is, and
-  `19.13` would otherwise ship a number under a sentence that says the number
-  bounds nothing. I left the spec untouched, an unattended session not being the
-  place to rewrite a rationale the phase was grilled on. Evidence:
-  [`history/2026-09-09.md`](history/2026-09-09.md), "`19.12`: the coupling did
-  not return the bytes".
+_Nothing open._

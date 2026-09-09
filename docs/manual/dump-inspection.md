@@ -294,7 +294,11 @@ with no room to hold what they decode buys less than either number suggests.
 > for the reason in the callout above. `MALLOC_ARENA_MAX` bounds the arena
 > count if you want to set it, and 2 is the smallest useful value; how much it
 > saves on a given workload is not something we can currently quote you a
-> number for. Restricting the container's CPUs is a partial substitute at best:
+> number for. **This is not only a compressed-file concern**: a plain file
+> read with `--jobs` set holds roughly 8 MB more for each worker you allow,
+> and that is arena retention rather than anything the budget names, so it is
+> the one case where `MALLOC_ARENA_MAX=2` removes essentially all of it.
+> Restricting the container's CPUs is a partial substitute at best:
 > it lowers the count an `.xz` file picks when you state no `--jobs`, because
 > that count is read from the CPU quota — but it does nothing to a `--jobs` you
 > typed, and arena memory does not fall away in proportion to the thread count
