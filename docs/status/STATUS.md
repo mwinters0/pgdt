@@ -419,10 +419,13 @@ the five orderings that bind are in the spec, not here.
       which lands before `19.13`. Notes:
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
-      rule, carrying `19.12`'s constant.
+      rule, carrying `19.12`'s constant — plus the source's own budget
+      recommendation, without which a corrected divisor makes a flagless `.xz`
+      scan serial on an unlimited host.
 - [ ] **19.14** `XzSource::partition_advice` charges a sub-stream the **two**
       units a reader holds, not one — the divisor `19.12` found out by 2.4× —
-      plus what a concurrent decode allocates. **Blocked on `xz-seek`** and the
+      plus `xz_seek::Reader::decode_footprint()`; and `BlockCache::affordable`
+      restated against that same cost. **Blocked on `xz-seek`** and the
       re-vendor, and the rest of the phase waits behind it. Lands before
       `19.13`.
 - [ ] **19.15** The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB

@@ -117,6 +117,34 @@ worker* has over-fitted to the baseline. `parallel-scan-throughput`'s wide
 gathered wherever the machine can give them, and are read as a guard rather
 than as the target.
 
+### A default runs as fast as the machine or the cgroup permits
+
+**Where a caller states nothing, the defaults are read from what the
+environment actually allows — the CPU quota, the memory limit — rather than
+from a constant chosen to be portable.** The posture to match is `xz -T0`. The
+deployment case is what settles it: under an orchestrator the process is
+*given* an allocation, is the only party that knows it, and cannot be asked to
+have it restated on a command line.
+
+Three bounds, and they are what keep this from being "take everything":
+
+- **A stated flag wins outright**, in both directions. This governs the absence
+  of a flag, never its presence.
+- **The library's own default stays `Serial`.** What this rule sets is what the
+  *CLI* resolves and what a *source* recommends for itself; an embedder is
+  handed the mechanism and takes it deliberately.
+- **We do not take an allocation we cannot show we use.** The budget rule's
+  fraction is this bound in code, and it is why the rule is a ceiling over a
+  subtraction rather than a share of the machine.
+
+**Each source answers for its own defaults, worker count and budget alike.**
+That is why `ByteRangeSource::default_workers` is a trait method rather than a
+test for `.xz`: the gzip, zstd/lz4 and format-coverage phases each add a source
+whose right default is its own, and a conditional written against the one
+compressed source in the tree would be reopened by every one of them. A source
+that recommends a worker count also says what budget that count needs, since a
+count nothing can afford is not a recommendation.
+
 ### Coverage increases monotonically
 
 **A later change may subdivide a span or attach detail to it, never reduce
