@@ -404,9 +404,18 @@ the four orderings that bind are in the spec, not here.
       whole-block-decode threshold.
 - [ ] **19.11** The closing sweep — publishes the reserve figure and
       `rss-attribution`, closing `M74`.
-- [ ] **19.12** The reserve re-taken diagnostically against `19.7`'s build, the
-      constant chosen from it, and the figure's inert worker-count-plus-one
-      arena leg dropped. No shipped code.
+- [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build —
+      `runs/measure-20260909T171423`, `--alone`, NOT PUBLISHABLE — with the
+      inert worker-count-plus-one arena leg dropped. **`19.7`'s prediction is
+      refuted**: the compressed legs did not halve, the line moving from
+      `160 MiB + 54.3` a sub-stream to `180 MiB + 59.4`, and the bytes a
+      tighter pool declines to keep are retained by the calling thread's arena
+      instead. The arena null goes with it — a plain scan is now
+      `16 MiB + 8.0 MiB` a worker uncapped and **flat** at `MALLOC_ARENA_MAX=2`.
+      The constant is **256 MiB**, the uncapped compressed leg's fixed term
+      rather than its worst cell, and the fraction ceiling is what now bounds a
+      compressed parallel scan — both flagged below. Notes:
+      [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
       rule, carrying `19.12`'s constant.
 
@@ -586,4 +595,33 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **The reserve constant is read as the compressed leg's *fixed term*, not as
+  its worst cell.** `19.12`'s sitting reads resident as a line in the sub-stream
+  count on both sources, so "resident minus the budget stated" is not one number
+  — it is +199 MiB at a 64 MiB budget and +836 MiB at 512. The harness's
+  renderer names the worst cell; the spec asks only for "one constant, taken
+  from the compressed leg". I took the **intercept, 180 MiB, rounded up to 256**,
+  on the argument that the part scaling with the budget is what
+  `min(fraction × limit, limit − reserve)` already has a fraction for, and that
+  subtracting it twice would reserve for it in both terms. **Reconsidering it**
+  means either taking the worst cell (836 MiB, which makes `limit − reserve`
+  negative below a gigabyte and hands every small cgroup to the below-floor
+  path) or making the reserve a function of the budget, which is the one shape
+  `Parallelism::discover()` cannot have — it answers before anything is open.
+  Detail:
+  [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md),
+  "The constant `19.13` carries".
+- **`19.7` did not do what the phase expected, and `19.13`'s rule now rests on
+  the fraction the spec called unmeasured.** The pool coupling was predicted to
+  halve the compressed legs; they rose a tenth instead, because a pool that
+  declines to keep a buffer frees it into a per-thread arena that keeps it. So
+  the spec's "a fraction as a ceiling only … it bounds nothing anyone has
+  measured" is now false: the fraction is the only term bounding a compressed
+  parallel scan, and `19.12`'s arithmetic says it must be about **0.25**. **The
+  decision is whether that reopens the spec** — the rule's *shape* is unchanged
+  and needs no amendment, but its stated rationale for the fraction is, and
+  `19.13` would otherwise ship a number under a sentence that says the number
+  bounds nothing. I left the spec untouched, an unattended session not being the
+  place to rewrite a rationale the phase was grilled on. Evidence:
+  [`history/2026-09-09.md`](history/2026-09-09.md), "`19.12`: the coupling did
+  not return the bytes".

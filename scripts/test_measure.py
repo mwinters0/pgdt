@@ -1664,7 +1664,7 @@ class Reserve(unittest.TestCase):
     which is the family this module already covers for the `--jobs` axis. Four
     matter most and each fails silently. An **arena setting that never
     reached the process** — written where the wrapper takes it as an argument
-    rather than as its environment — gives three legs that agree, which reads as
+    rather than as its environment — gives two legs that agree, which reads as
     "the cap buys nothing" rather than as an instrument that set nothing. A
     **budget the shape does not carry** would run at whatever was typed and be
     read as the row it is labelled with. A **worker count drifting onto
@@ -1705,9 +1705,23 @@ class Reserve(unittest.TestCase):
         unset = [token for token, value, _ in measure.RESERVE_ARENAS if not value]
         self.assertEqual(unset, ["unset"])
 
-    def test_the_recommended_cap_is_the_worker_count_the_spec_publishes(self):
-        recommended = dict((t, v) for t, v, _ in measure.RESERVE_ARENAS)["recommended"]
-        self.assertEqual(recommended, str(measure.RESERVE_JOBS + 1))
+    def test_no_leg_caps_at_or_above_the_worker_count(self):
+        # A cap at or above the concurrency actually dispatched cannot bind --
+        # after the `current_thread` runtime the arenas already follow it -- so
+        # such a leg prices a setting inert by construction and reads as "the
+        # cap buys nothing". That is a mechanism rather than a reading, which is
+        # why it is asserted here instead of being re-discovered in a sitting.
+        for token, value, _ in measure.RESERVE_ARENAS:
+            if value:
+                with self.subTest(arena=token):
+                    self.assertLess(int(value), measure.RESERVE_JOBS)
+
+    def test_the_capped_leg_is_the_tightest_an_operator_would_set(self):
+        # The pair is uncapped against the tightest plausible cap, and both are
+        # load-bearing: a one-leg figure cannot report a null.
+        capped = [value for _, value, _ in measure.RESERVE_ARENAS if value]
+        self.assertEqual(capped, ["2"])
+        self.assertEqual(len(measure.RESERVE_ARENAS), 2)
 
     def test_a_budget_or_arena_the_figure_does_not_carry_is_an_error(self):
         # Parsed rather than matched, so an unregistered value has to be

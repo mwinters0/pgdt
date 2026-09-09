@@ -2009,20 +2009,28 @@ RESERVE_BUDGETS: tuple[int, ...] = (64 << 20, 128 << 20, 256 << 20, 512 << 20)
 #: which is the same exemption `JOBS_AXIS` takes with the two swapped.
 RESERVE_JOBS = PARALLEL_JOBS[-1]
 
-#: The three arena settings each budget is read at: token, `MALLOC_ARENA_MAX`
+#: The two arena settings each budget is read at: token, `MALLOC_ARENA_MAX`
 #: value (empty = set nothing), and what the table calls the leg.
 #:
-#: **Three, because the shipped constant and the recommendation are different
-#: questions.** `unset` is where the constant comes from: the default has to
-#: survive the operator who did not follow the recommendation, since that is the
-#: case that kills the process. `recommended` is the value the spec publishes —
-#: the worker count, or that count plus one — and prices what following it buys.
-#: `two` is the floor the manual publishes today and what the koji probes used;
-#: it bounds how much of the resident set is arena retention at all, which
-#: neither of the other two can say on its own.
+#: **Two, and the pair is what the shipped constant is sized against.** `unset`
+#: is where the constant comes from: the default has to survive the operator who
+#: capped nothing, since that is the case that kills the process. `two` is the
+#: tightest value an operator would plausibly set — the floor the manual
+#: publishes and what the koji probes used — so it bounds how much of the
+#: resident set is arena retention at all, which the uncapped leg cannot say on
+#: its own. **Neither can be dropped**: a one-leg figure cannot report a null,
+#: and this phase has twice found an arena claim outliving the build it was
+#: measured on.
+#:
+#: **A third leg at the worker count plus one was registered and dropped**, and
+#: not because a reading came back flat. After the `current_thread` runtime the
+#: threads are the blocking pool's and are created on demand, so the arena count
+#: already follows the concurrency actually dispatched: a cap set at or above it
+#: cannot bind. That is a mechanism, not a measurement, so the leg was priced at
+#: an inert setting by construction
+#: (`../docs/status/history/2026-09-09.md`, "The figure keeps two arena legs").
 RESERVE_ARENAS: tuple[tuple[str, str, str], ...] = (
     ("unset", "", "arenas uncapped"),
-    ("recommended", str(RESERVE_JOBS + 1), f"`MALLOC_ARENA_MAX={RESERVE_JOBS + 1}`"),
     ("two", "2", "`MALLOC_ARENA_MAX=2`"),
 )
 
