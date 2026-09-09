@@ -126,6 +126,16 @@ deployment case is what settles it: under an orchestrator the process is
 *given* an allocation, is the only party that knows it, and cannot be asked to
 have it restated on a command line.
 
+**The expected deployment is a container, so the discovered-limit path is the
+normal one and the unlimited path is an anomaly.** pgdq is built assuming it
+runs with an allocation somebody chose for it. That is why filling a discovered
+limit is the default rather than an option — and why "no limit found" is not a
+second supported mode to tune for, but a state in which nothing has said what
+pgdq may take while it shares the host with whatever else runs there. The
+status line reports which case applied, so an operator who expected a container
+and reads `(default: no limit found)` has learned their allocation is not being
+enforced.
+
 **An allocation stated is permission; a machine merely observed is not.** A
 cgroup limit is somebody telling pgdq what it may have, so taking it is what
 they asked for. A host with *no* limit has told us nothing — it is a shared
