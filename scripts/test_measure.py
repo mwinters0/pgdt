@@ -1467,9 +1467,8 @@ class ParallelFigures(unittest.TestCase):
     """
 
     def test_both_figures_are_taken_and_no_longer_untaken(self):
-        # `16.13.1` took the sitting at `e29939c`, so both entries moved out of
-        # `UNTAKEN` and into `FIGURES`, where the doc-side checks start
-        # applying.
+        # The sitting at `e29939c` moved both entries out of `UNTAKEN` and
+        # into `FIGURES`, where the doc-side checks start applying.
         untaken = [f.id for f in measure.UNTAKEN]
         self.assertNotIn("parallel-scan-throughput", untaken)
         self.assertNotIn("parallel-peak-rss", untaken)

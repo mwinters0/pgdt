@@ -23,8 +23,8 @@ minute it finished — which no sweep can take. The four standing outside are
 each taken alone and say so in their markers, and each is permitted for the
 same reason: none shares a reading with any other figure here ("A figure may be
 published outside the sweep", below). `parallel-scan-throughput` and
-`parallel-peak-rss` no longer share a sitting commit — `16.15.1` re-took only
-the first, `parallel-peak-rss` being unreachable from that change and
+`parallel-peak-rss` no longer share a sitting commit — the sub-stream
+divisor's re-take took only the first, `parallel-peak-rss` being unreachable from that change and
 discharged by an acknowledgement instead (`scripts/acknowledged.py`, `a30cc43`)
 — which is no loss: sharing a commit was never a `shares` edge, the two being
 unrelated instruments that merely happened to be taken together at `e29939c`.
@@ -293,7 +293,15 @@ Eighteen standing rules for reading anything below:
   remembered: `--check` fails a sitting marker on a figure that shares or is
   derived from, and one that does not descend from the stamp; `--figure`
   refuses such a sitting before the measurement is spent; and the stamp's
-  accounting sentence is generated from the markers. A figure that declares
+  accounting sentence is generated from the markers.
+
+  **The consequence for whoever builds an instrument is that the work lands in
+  two commits**, and it is a property of the rule rather than an accident of
+  any one figure: a sitting run from a tree carrying its own uncommitted
+  apparatus has no commit to name — the parent it could name is a tree where
+  the instrument does not exist, so its marker would report the figure stale
+  against the very change that lands it. Commit the apparatus, then take the
+  readings from that commit. Three figures have been published this way. A figure that declares
   nothing came from the sweep, which is why the datum is present only where it
   differs — the alternative puts the stamp's commit in the document eighteen
   times, in eighteen places it can disagree with the stamp.

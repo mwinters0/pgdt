@@ -839,8 +839,8 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
 /// "A parse has phases now, so the CLI says which one it is in"). A
 /// per-command default would be a rule the manual has to explain, and gating
 /// on whether stderr is a terminal makes the output depend on invocation
-/// context — which is exactly the case that left `16.14`'s first attempt with
-/// nothing but `dmesg` to diagnose from.
+/// context — which is exactly the case that left the koji verification's
+/// first attempt with nothing but `dmesg` to diagnose from.
 ///
 /// One level, `INFO`, and no way yet to raise or lower it — `-vvv` and
 /// `--quiet` are deferred and unallocated. RFC3339 timestamps

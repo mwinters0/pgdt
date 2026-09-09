@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P16 — parallel scan and extraction | **Current** | [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md); checklist in [`../status/STATUS.md`](../status/STATUS.md) |
+| P16 — parallel scan and extraction | **Complete** | [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md) and [its notes](roadmap-P16-parallel-scan-notes.md); the mechanisms are in [`architecture.md`](architecture.md), by subject |
 | P19 — efficient defaults for a parallel scan | Sketched; grilled, spec not yet written | this file, below; [inbox](roadmap-P19-efficient-defaults-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -104,10 +104,11 @@ rather than in a phase doc because they outlived the phases that produced them.
 
 **Tune the parallel paths against four workers, and check twenty-four has not
 been made worse per worker.** Four is the count that survives moving between
-machines — it is what `POOL_DEPTH` delivers on a plain source, what `16.14`
-verified koji at, and a plausible allocation almost anywhere — so it is the
-target a future optimization pass aims at. A dev machine with twenty-four
-hardware threads is not something later work may assume.
+machines — it is what `POOL_DEPTH` delivers on a plain source, what the koji
+verification ran its parallel leg at, and a plausible allocation almost
+anywhere — so it is the target a future optimization pass aims at. A dev
+machine with twenty-four hardware threads is not something later work may
+assume.
 
 The guard is the other half and it is what stops the baseline becoming a
 ceiling: an optimization that helps at four and makes twenty-four slower *per

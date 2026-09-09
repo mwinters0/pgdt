@@ -275,7 +275,7 @@ def koji_slice(source: Path, out: Path, streams: int, offset: int) -> tuple[int,
     No offset is representative either — koji sampled at twelve depths runs
     from 5.02× to 33.05× — so the slice is one draw from a wide distribution
     and the rate it produces is quoted with its density rather than as the
-    file's (`roadmap-P16.1-xz-decode-scaling-notes.md`).
+    file's (`docs/design/architecture.md`, "The compressed source").
 
     Returns the slice's `(start, end)` offsets in the source.
     """

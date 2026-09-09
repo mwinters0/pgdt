@@ -1232,7 +1232,8 @@ INPUTS["control_xz128"] = InputSpec(
 #: single offset stands for the file; 20 GB yields 15.70x, a little denser than
 #: the middle. What that costs is confined to the absolute rates -- the scaling
 #: curve is a within-leg ratio and barely moves -- and it is why the ratio is
-#: gated rather than assumed (`roadmap-P16.1-xz-decode-scaling-notes.md`).
+#: gated rather than assumed (`docs/design/architecture.md`, "The compressed
+#: source").
 KOJI_XZ = _env(
     "PGDQ_KOJI_XZ", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump.multistream.xz"
 )
@@ -1820,7 +1821,7 @@ DECODE_BASELINE = 1
 #: `POOL_DEPTH` clamps `BufferPool::slots()` to four, so a fifth fused worker on
 #: a plain file waits; the rows above four are what puts that ceiling in the
 #: table rather than leaving a reader to infer that the scan stopped scaling
-#: (`docs/design/roadmap-P16-parallel-scan.md`, "Slices", `16.13`).
+#: (`docs/design/roadmap-P16-parallel-scan.md`, "Slices").
 PARALLEL_JOBS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 
 #: The row every other parallel row is a ratio against: `--jobs 1`, which the
@@ -4726,11 +4727,11 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # STATUS.md's `16.15.1` row cites this figure's `--jobs` axis going
-        # flat past the point the stated budget stops affording a worker.
+        # STATUS.md cites this figure's `--jobs` axis going flat past the
+        # point the stated budget stops affording a worker.
         #
-        # **What `16.15` changed does not reach this figure.** The two-term
-        # divisor is in `stream::plan_partitions`, and every leg here is
+        # **The two-term divisor does not reach this figure.** It is in
+        # `stream::plan_partitions`, and every leg here is
         # `pgdq parse`, which reaches `worker_count` through
         # `leader::scan_region` instead — so this figure is excused by
         # reachability where its sibling is not, though both declare the same

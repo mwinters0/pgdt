@@ -12,7 +12,9 @@ P1–P5, P7, P9, P11–P13 and P17 are complete and were struck at keystone
 reviews; how each mechanism works is
 [`../design/architecture.md`](../design/architecture.md), filed by subject,
 which is where a session touching one meets its rejected alternatives and its
-limitations. The capability table below says what state each is in.
+limitations. **P16 is complete and not yet struck** — its mechanisms are filed
+there beside the rest, and its spec and consolidated notes stand until the next
+keystone. The capability table below says what state each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
 stamp of 2026-09-05, and **seventeen of its twenty-one tables come from one
@@ -20,9 +22,9 @@ sitting**: sixteen from the scan-performance wrap sweep and `session-drift`,
 which no sweep can take because it is derived *across* two, from that sweep and
 a second begun the minute it finished. The other four are `peak-rss`, taken alone
 at `41c96bb`; `xz-decode-scaling`, taken alone at `7d21c6e`; `parallel-peak-rss`,
-taken alone at `e29939c` in `16.13.1`'s sitting and unmoved since (`16.15` never
+taken alone at `e29939c` and unmoved since (the sub-stream divisor never
 reaches its command shape); and `parallel-scan-throughput`, re-taken alone at
-`20fd77c` in `16.15.1`'s sitting once `16.15`'s divisor change landed — the two
+`20fd77c` once that divisor change landed — the two
 no longer share a commit, which was never a `shares` edge between them, each **saying
 so inside its own figure marker**, which is where
 `--stale`, acknowledgement spentness and `--verify-additive` each read the
@@ -32,7 +34,7 @@ all. So no table carries a partial-sitting note and no absolute in the
 document is a cross-sitting reading. The fresh
 stamp spent all six of the previous acknowledgements, which were deleted rather
 than kept as sediment; the register carries three now — P7's wrap and
-keystone, both comment-only, plus `16.15.1`'s `a30cc43`, which is not: it
+keystone, both comment-only, plus `a30cc43`, which is not: it
 excuses `parallel-peak-rss` on reachability, an executable diff that never
 reaches that figure's command shape. Under the previous `ba2fc12`
 stamp ten of the seventeen stood outside the sweep.
@@ -85,177 +87,56 @@ directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
 **Twenty of the twenty-one figures are stale, and no acknowledgement can
-excuse them.** Three rounds of library work did it, and `16.15` is a fourth
-that reddens the remaining two. Making the buffer pool keep
-the chunk size a read loop announces changed `io.rs`, `scan.rs`, `stream.rs` and
-the CLI; then the compressed-input work reshaped every `ByteRangeSource`
-signature to a boxed future and added a second implementation, touching `io.rs`,
-`cache.rs`, `index.rs`, `diagnostic.rs` and the CLI again; then the
-cache-replacement work put a refusal in front of all three scan entry points,
-touching `cache.rs`, `index.rs`, `stream.rs` and the CLI once more. So every figure that
-times a run is red, and `session-drift` has been red on `scripts/measure.py`
-since the harness took the derived direction of the borrow graph. Those changes
-add executable lines, so neither mechanical oracle applies: reachability excuses
+excuse them.** Four rounds of library work did it. The read-path work made the
+buffer pool keep the chunk size a read loop announces, touching `io.rs`,
+`scan.rs`, `stream.rs` and the CLI; the compressed-input work reshaped every
+`ByteRangeSource` signature to a boxed future and added a second
+implementation, touching `io.rs`, `cache.rs`, `index.rs`, `diagnostic.rs` and
+the CLI again; the cache-replacement work put a refusal in front of all three
+scan entry points, touching `cache.rs`, `index.rs`, `stream.rs` and the CLI
+once more; and the parallel-scan work moved `io.rs`, `scan.rs`, `stream.rs`,
+`batch.rs`, `map.rs` and the CLI again on top of that. All of them add
+executable lines, so neither mechanical oracle applies: reachability excuses
 only a diff no command shape executes, and byte-identity settles generator
-changes alone. `nested-decode-micro` is the one *sweep* figure still green,
-timing decoders that none of it touched, and it is now also the only figure
-of any kind still green: all four figures taken alone are red, `16.15`
-reddening the last two (below). `xz-decode-scaling` (`7d21c6e`) was green, having been taken after the work, and
-went red when `16.13` gave `scripts/generate_xz_input.py` a `--block-size` flag
-so a second block size could be generated — a generator change, which is the one
-case a mechanical oracle settles, and `--verify-additive` is available to
-whichever change commits it: by hand on a 77 MiB input the pre- and post-change
-generators write byte-identical `.xz` files at the default
-([`../design/roadmap-P16.13-parallel-figures-notes.md`](../design/roadmap-P16.13-parallel-figures-notes.md)).
-`peak-rss` (`41c96bb`) went red again the moment the chunk-retention move
-touched `stream.rs`, and redder still when the pool's slot count went
-budget-derived in `io.rs` — a behaviour-preserving move of a struct between
-modules, and a derivation that answers four at every chunk size the register
-measures, neither of which an oracle can say, so it is red with those reasons
-and nothing else. The block-decode work moved `io.rs` a third time and adds no
-fourth reason: `LocalFileSource`, `BufferPool` and `PooledBuffer` are
-untouched, everything it changed is `XzSource` and a type only `XzSource`
-holds, and **no registered figure has a compressed input** — a claim
-`--verify-additive` cannot settle, since the change is executable
-([`../design/roadmap-P16.3-chunk-retention-notes.md`](../design/roadmap-P16.3-chunk-retention-notes.md),
-[`../design/roadmap-P16.4-block-pool-notes.md`](../design/roadmap-P16.4-block-pool-notes.md)).
-The partitioning advisory moved `io.rs` a fourth time and adds no reason at
-all: **no command shape reaches `partitions`**, which is reachability, the one
-mechanical oracle that settles an executable diff, and the figures it would have
-staled were already red. The caller-stated budget moved `io.rs` a fifth time —
-and `scan.rs`, `stream.rs`, `batch.rs` and the CLI with it — and **is executed
-by every registered command shape**, so reachability does not apply and it is
-red on its own terms; what can be said without an oracle is that no registered
-figure's *numbers* are implicated, since the CLI's defaults resolve to the pool
-sizes the constants gave (`POOL_DEPTH` chunk slots at every chunk size the
-register measures) and no registered figure has a compressed input, which is
-where the budget decides anything else
-([`../design/roadmap-P16.7.1-stated-budget-notes.md`](../design/roadmap-P16.7.1-stated-budget-notes.md)).
-The backpressure slice moved `io.rs` a sixth time — and `scan.rs` and
-`stream.rs` with it — and is likewise **executed by every registered command
-shape**, so reachability does not apply and it is red on its own terms; what
-can be said without an oracle is that no read in this build takes the wait's
-slow path, since every transient loop holds one buffer against a `slots()` of
-at least one, and no read allocates that did not allocate before
-([`../design/roadmap-P16.4.1-backpressure-notes.md`](../design/roadmap-P16.4.1-backpressure-notes.md)).
-The partitioned-replay slice moved `stream.rs`, which every figure declaring it
-was already red on, and adds no reason of its own: reachability does not apply,
-`stream.rs`'s replay loop being executed by every registered `query` shape, but
-`table_stream`'s own path through it is the segment list it always had — one
-per matching block, its limit at `end_offset`, so the new stop check never
-fires — and no registered command shape reaches `table_stream_partitions`
-([`../design/roadmap-P16.8-partitioned-replay-notes.md`](../design/roadmap-P16.8-partitioned-replay-notes.md)).
-The CLI merge moved `stream.rs` and `batch.rs` again and, unlike every slice
-before it, **changed what a registered `query` shape executes**: `pgdq query`
-runs the partitioned entry point at whatever `--jobs` allows. Reachability
-therefore cannot excuse it and
-neither can anything else — it is red on its own terms, and the reason is
-stated rather than argued away
-([`../design/roadmap-P16.9-cli-merge-notes.md`](../design/roadmap-P16.9-cli-merge-notes.md)).
-The interior split moved `map.rs` — which every figure declaring it was already
-red on — and adds no reason of its own: the new module is unreachable from every
-registered command shape, which is reachability, and the `map.rs` hunk is
-`Builder::on_row`'s body moving into the free `census_row` it now calls, one
-call deep, which no oracle settles and which is red on that file's own terms
-along with everything else
-([`../design/roadmap-P16.10-interior-split-notes.md`](../design/roadmap-P16.10-interior-split-notes.md)).
-The leader's scheduler moved `stream.rs`, `scan.rs` and `io.rs` — all three
-already red on every figure declaring them — and adds no reason of its own: the
-new code is unreachable from every registered command shape, which is
-reachability, and the three hunks in those files are a comment each plus
-`cut` and `worker_count` gaining `pub(crate)`, which changes no executable line
-([`../design/roadmap-P16.10.1-leader-scheduler-notes.md`](../design/roadmap-P16.10.1-leader-scheduler-notes.md)).
-The mapping leader moved `stream.rs`, `map.rs` and `scan.rs` — all already red
-on every figure declaring them — and, like the CLI merge before it, **changed
-what a registered command shape executes**: `pgdq parse` now splits every
-`COPY` block large enough to cut at whatever `--jobs` allows, and every
-`query` figure's mapping pass does too. Reachability therefore cannot excuse it
-and neither can anything else — it is red on its own terms
-([`../design/roadmap-P16.10.2-mapping-leader-notes.md`](../design/roadmap-P16.10.2-mapping-leader-notes.md)).
-**`M69` closed that exposure without moving a number**: every command shape now
-states `--jobs 1` rather than inheriting the CLI default, so a `parse` or
-`query` figure re-taken today measures the serial arrangement the published
-tables were taken under — and `16.16`'s flip has since landed, moving what a
-person who states no flag gets and **nothing the register measures**, since no
-shape inherits the default any more. It adds no reason of its own: the two
-declared paths it touches are `pgdump_query-cli/src/main.rs`, which every figure
-declaring it was already red on, and `scripts/measure.py`, which `session-drift`
-already held red — and no figure that does not declare the CLI went red
-([`../design/roadmap-P16.16-jobs-default-notes.md`](../design/roadmap-P16.16-jobs-default-notes.md)).
-The error-ordering slice touched two files and adds no reason of its own:
-`pgdump_query/src/leader.rs`, which **no figure declares**, and
-`pgdump_query-cli/src/main.rs`, which every figure declaring it was already red
-on. Its leader hunk is unreachable from every registered command shape —
-`M69` made every one of them state `--jobs 1`, so `scan_region` declines before
-the window loop runs — and its CLI hunk is reachable but is one comparison per
-slot per fill round on the path where nothing fails
-([`../design/roadmap-P16.11-error-ordering-notes.md`](../design/roadmap-P16.11-error-ordering-notes.md)).
-The determinism slice is the first of this phase to touch **no declared path at
-all** — two test files and `architecture.md`, which is a `quoted_by` edge rather
-than a `depends` one — so it needs no excuse and gets none
-([`../design/roadmap-P16.12-determinism-notes.md`](../design/roadmap-P16.12-determinism-notes.md)).
-The parallel figures' apparatus touches **one** declared path,
-`scripts/generate_xz_input.py`, which only `xz-decode-scaling` declares and which
-that figure's own entry above accounts for; the rest of it — the two new register
-entries, three command-shape families and their tests — is `scripts/measure.py`,
-which `session-drift` already held red
-([`../design/roadmap-P16.13-parallel-figures-notes.md`](../design/roadmap-P16.13-parallel-figures-notes.md)).
-`M70` touches **one** declared path, `pgdump_query/src/io.rs`, which every
-figure declaring it was already red on, and adds no reason of its own on two
-independent grounds. Its one behavioural hunk is inside `XzSource`, and **no
-registered figure has a compressed input**; and the announcement it stops
-making is `set_policy(NeverWait)` on a pool already at `NeverWait`, since every
-registered shape states `--jobs 1` and a `Serial` scan grants no wait anywhere.
-So it is unreachable from every registered command shape, which is reachability
-— the one mechanical oracle that settles an executable diff
-([`history/2026-09-08.md`](history/2026-09-08.md), "`M70`: the block pool is a
-retaining holder, so nothing grants it a wait").
-`16.19` moved `io.rs`, `scan.rs`, `stream.rs` and `main.rs` — all already red on
-every figure declaring them — and, like the CLI merge and the mapping leader
-before it, **changes what every registered command shape executes**: `main()`
-now installs a `tracing_subscriber` at startup, and `XzSource::open`'s footer
-walk and `map_forward`/`scan`'s own start and completion each emit one
-`tracing::info!`. Reachability cannot excuse it, since every registered shape
-runs through `main()` and reaches at least the scan-completion site, so it is
-red on its own terms; what can be said without an oracle is that the new lines
-are a fixed few per invocation rather than one per row or per block, and read
-or write nothing the dump itself did not already require
-([`../design/roadmap-P16.19-status-output-notes.md`](../design/roadmap-P16.19-status-output-notes.md)).
+changes alone.
+
+**Three of the parallel-scan changes are red on their own terms rather than
+inheriting another change's red**, because each moved what a *registered*
+command shape executes. `pgdq query` runs the partitioned entry point at
+whatever `--jobs` allows. `pgdq parse`'s mapping pass offers every `COPY`
+region large enough to cut to the leader's scheduler, and every query's mapping
+pass with it. And `main()` installs a `tracing_subscriber` on every invocation,
+with one event around the seek-table build and one at each scan's start and
+completion — every registered shape reaches at least the completion site. What
+can be said without an oracle is that those lines are a fixed few per
+invocation rather than one per row or per block, and that they read and write
+nothing belonging to the dump. **`M69` is what bounds the exposure**: every
+command shape states `--jobs 1` rather than inheriting the CLI default, so a
+figure re-taken today measures the serial arrangement the published tables were
+taken under — and the CLI default's own fall to 1 therefore moved what a person
+who states no flag gets and nothing the register measures.
+
+**The rest are red on paths they share with those changes, and three carry a
+reason of their own.** `xz-decode-scaling` is red on
+`scripts/generate_xz_input.py`, which gained a `--block-size` flag: a generator
+change, the one case a mechanical oracle settles, so `--verify-additive` is
+available to whichever change spends it — checked by hand meanwhile on a 77 MiB
+input, where the pre- and post-change generators write byte-identical `.xz`
+files at the default. `session-drift` has been red on `scripts/measure.py`
+since the harness took the derived direction of the borrow graph.
+`parallel-peak-rss` is red on the read path since its own `e29939c` sitting,
+with one change excused: `a30cc43`'s sub-stream divisor is inside
+`stream::plan_partitions`, which its `pgdq parse` command shape never calls.
+`nested-decode-micro` is the one figure of any kind still green, timing
+decoders none of this touched.
+
 **One published number actually moves**, the
 `chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
 the buffer pool; that row is called out where it stands. A stale figure obliges
 no sweep ([`../design/measurements.md`](../design/measurements.md), "A stale
 figure does not oblige a sweep"), and a sweep is what re-takes these: seventeen
 of the twenty-one tables from one sitting is the property the `af15eac` stamp has
-and a partial sitting would spend. `16.13.1`'s two new tables join the same
-stamp's exception list rather than its count: `parallel-scan-throughput` and
-`parallel-peak-rss` are taken at `e29939c` itself, so nothing has moved since
-and both are green.
-
-**`16.15` touches `pgdump_query/src/stream.rs` and `pgdump_query-cli/src/main.rs`**
-— nothing since `e29939c` had, so it is what turns both of `16.13.1`'s green
-figures red, and the two split. `parallel-peak-rss` is unreachable: its command
-shape is `pgdq parse` (`parse-rss-jobs-N`), which never calls the changed
-function, `stream::plan_partitions` — the mapping pass's own worker admission
-(`leader::scan_region`) sums no second term, so nothing on that path moved.
-`parallel-scan-throughput` is not excused the same way: its `.xz`-typed-query
-legs call `plan_partitions` directly, and the divisor now sums
-`partition_bytes` and `QueryOptions::max_source_span` (64 MiB) rather than
-`partition_bytes` alone, so `worker_count` affords fewer sub-streams at the
-same stated `PARALLEL_BUDGET` — reachable and executable, red on its own
-terms. Both figures were carried into `16.15.1`, which needed a commit to name
-before either could be folded back in
-([`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)).
-**`16.15.1` closed the split rather than reopening it a second way.**
-`parallel-peak-rss` is discharged by an `ACKNOWLEDGED` entry naming `a30cc43`
-rather than a sitting — the same reachability argument, now recorded rather
-than merely made — and stands unmoved at `e29939c`, still green.
-`parallel-scan-throughput` was re-taken at `20fd77c` — HEAD when the sitting
-launched, `16.15`'s own `a30cc43` already carried well before it — folded into
-`measurements.md` with the rows above four on both typed-`query` legs stating
-the sub-stream count `PARALLEL_BUDGET` actually plans (11 on `.xz`, 14 on
-plain), and is green again
-([`../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md)).
+and a partial sitting would spend.
 
 **`peak-rss` is the figure whose red says least about its numbers.** `io.rs`,
 `cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and
@@ -313,7 +194,7 @@ scheduler, which the mapping pass offers every open `COPY` region to
 API surface"). A file with no more than one block is **warned about, never refused** (`DiagnosticKind::NonSeekableCompressedSource`, naming `xz -T0` and `--block-size=<size>`). The decoder is a frozen read-only vendored copy of `xz-seek` at `vendor/xz-seek/` (`CLAUDE.local.md`), not a published dependency, since this project is its first consumer and that consumption is what vets the interface. gzip/zstd are not read — `pg_dump -Fp --compress=…` output is unreadable today and is P15's (gzip) and P18's (zstd, lz4) ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)) ([`../design/architecture.md`](../design/architecture.md), "The compressed source") |
 | Partitioned replay | **working, and `pgdq query` is its consumer** — `table_stream_partitions` runs the mapping pass once and hands back N `TableStream`s over the blocks it settled, each internally in file order and the groups themselves in file order, so **concatenating them is the serial stream**. That is a property of the code rather than a claim about it: both entry points are `map_for_query` (pass 1 whole) then `replay` (pass 2 over a segment list), and `table_stream` is `replay` over one segment per block. A piece's first row is the one starting past the first LF at or after its `start` and its last is the one *ending* at or past its `limit`, so a row straddling a cut belongs to the piece before it and **no cut has to land on a row boundary** — which is what lets `ByteRangeSource::partitions` advise cuts that know nothing about rows, this being its first consumer. The data range is what is cut, the first piece extended back over the header it takes its schema from; every later piece takes the header off the map's own `CopyBlock`. The resync is a real forward read rather than a scanner started one byte early, because I7's guarantee is about a *line start* and a row's own tail can be `\.`. Both of the caller's numbers bind and the bytes bind on the **sub-stream** count — `jobs` capped by `memory_bytes / partition_bytes`, computed once over the largest footprint any matched block advised — and `Parallelism::Serial` is one sub-stream. A sub-stream's resume token is stamped with its partition, so feeding one to `table_stream` is `Error::ResumeQueryMismatch` rather than a silent superset. Nothing spawns: the sub-streams are `Send` and the caller runs them. **`pgdq query` is that caller**, and it prints file order out of them — one batch held per sub-stream, the earliest-starting one printed, only the drained slot refilled, so the reorder buffer is N × batch rather than an open-ended one. The key is `TableStream::batch_source_offset`, a fourth value a stream publishes about itself: `RowBatcher`'s existing span lower bound, which is the batch's **first row** rather than the end the resume token already carried, so the ordering does not rest on a batch ending where its scanner stood. A held batch carries its block's `NestedPlan`s, taken when it was taken; the comparison notes are announced off sub-stream 0, whose first segment is a `COPY` header. **A failure is recorded rather than raised**: index order is file order, so the merge keeps the lowest-indexed failure, marks every sub-stream at or after it dead — **discarding the batches they are holding**, which the first fill round gave them and whose rows are past the error — and goes on draining the ones before it, raising when the held batches run out. So the message is the serial path's message at every job count, where raising whichever sub-stream failed first in time would name a different row on each run ([`../design/architecture.md`](../design/architecture.md), "Partitioned replay" and "`pgdq query` merges the sub-streams back into file order") |
 | The interior split | **working, and the mapping pass is its consumer** — `leader.rs` (L4) holds `scan_piece`, the body one fused worker runs over an LF-split piece of an open `COPY` block's interior, and `merge`, the fold performed over the pieces. A piece answers its row count, its own array-shape census, the `\.` terminator if it held one, the offset it consumed through, and how a piece continuing from there must enter — the fifth reported rather than inferred, since a resyncing piece that found no LF leaves that offset mid-row and nothing outside can tell that from a row start. `merge` sums and unions in file order and stops at the first terminator, answering `None` where the window did not reach one. Both are **pure and synchronous** — a `&[u8]` and an absolute base offset, not a source — because that is the body a `spawn_blocking` worker runs, decode and parse in one thread. The cut semantics are the replay's, not a second set: a piece's `limit` is not where reading stops but the line ending at the first LF at or after it, and a piece that does not begin on a row start resyncs by a real forward read, since I7 is about a **line start**. A piece past the block's end may report a terminator of its own, and it costs nothing — every piece before the true one is inside the block, so the earliest report is always real. `map::census_row` is the one fold both the serial mapping pass and a worker call, and it is the census-off binary's patch point. **`scan_region` is the scheduler over those two**: it asks the source where the region may be cut, hands out a window of `workers` partitions at a time through the same `stream::cut` and `stream::worker_count` the partitioned replay uses, and folds until a piece holds the terminator — answering the block's totals, a **decline** that leaves the region serial, or a **cancellation**. It reads `partitions()` for the shape of the cut and never for whether to make one; the one rule it applies is a floor derived from the source's own `partition_bytes()`, checked against what is left of the file, since the region's extent is what the scan is for. A worker is two reads — the piece exactly, which on a block-decoding source is a zero-copy slice of one block, then a **chunk-sized tail** scanned as an ordinary contiguous piece, which is why a partition's stated footprint is a block plus a chunk. Reaching EOF with no terminator is `Error::UnterminatedCopyBlock`, the leader's to raise because `scan_piece` never claims end of file. **A window is drained in file order** through a `futures::stream::FuturesOrdered` — polled concurrently exactly as `try_join_all` polls it, but answered in argument order — so the error raised is the earliest failing piece, after every piece before it has finished or failed, rather than whichever failure a race delivered first. **It is the one read loop that grants `WaitPolicy::MayWait`**, safe because a worker holds exactly one read at a time, and it restores `NeverWait` on the way out, being nested inside another loop rather than one of the three top-level ones. `a_split_interior_answers_what_the_serial_scanner_answers` cuts every `COPY` block of six fixtures ten ways and `a_scheduled_region_answers_what_the_serial_scanner_answers` asserts the same invisibility about the schedule, at eight jobs against four pool slots so the wait really blocks. **`stream::map_forward` is the leader**: its `CopyStart` arm offers each open region to `scan_region`, closes one it took through `close_copy_block` — the `CopyEnd` arm's body made a free function, so the splice/settled/save ordering is one copy and not two — folds the workers' census in through `Builder::absorb_census` (`&[ArrayShape]`, since `map.rs` is L1), and then resumes the serial scanner at `end_offset` with a **fresh** `ChunkCarry`, whatever it held having been the front edge of a chunk the workers read whole. A cancelled region banks nothing and is a resume point like any other. `a_parallel_mapping_pass_builds_the_index_a_serial_one_does` asserts the index against `build_index`'s over four fixtures at two chunk sizes and three job counts — 360 regions scheduled and 126 declined, so both paths are in it — and, since an equality proves nothing where every region was declined, `a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_back` asserts from outside that the leader was reached, off the `MayWait` announcement only its scheduler makes ([`../design/architecture.md`](../design/architecture.md), "The interior split") |
-| Caller-stated parallelism | **working end to end: the read path's memory budget, the replay's split and the leader's scheduler all read it, and the mapping pass calls the leader** — `Parallelism` is `Serial` or `Workers { jobs, memory_bytes }`, mirroring `xz_seek::Bulk::new(workers, budget_bytes)`, with `Serial` the library default and one worker spelled `Serial` rather than as a `Workers` of one, so `--jobs 1` is the serial path as a property of the value. It sits on `ScanOptions` and `QueryOptions` both, and each of the three read loops announces it to the source through a sixth defaulted trait method, `hint_parallelism` — the mapping pass and `scan` from `ScanOptions`, the replay from `QueryOptions`, so a query's two passes are bounded separately. **The stated bytes can be made a ceiling on what is outstanding and not only on what is idle**: `BufferPool::obtain` waits while `slots()` buffers taken under a granted wait are out, and whether a loop's reads may be blocked is a **seventh** defaulted method, `hint_wait_policy` — a **permission** rather than a description of the holder, since what the pool needs to know is whether it may block this loop. **All three top-level read loops state `WaitPolicy::NeverWait`**, which is also the `Default`: the replay loop cannot grant a wait, `RetainedChunks` pinning every chunk a batch has taken a view into before the batch goes to the caller, and `scan` and the mapping pass could but do not, the wait's own test driving a bare pool so a shipped loop's grant would buy exposure rather than coverage. **The one loop that grants it is the leader's fused worker**, which holds exactly one read at a time and restores `NeverWait` on the way out, and a `parse` or a query's mapping pass reaches it whenever the caller states a `Parallelism` over a region the source is willing to cut — which is a thing asked for, the CLI's `--jobs` defaulting to 1. **A granted permission reaches a compressed source's chunk pool only** (`M70`): the block pool's holder is the retention list rather than the loop, so `BlockCache::slot`'s drain frees no slot for a caller holding a view into what it evicts, and a grant there deadlocked. The charge rides on the buffer rather than on the pool's current policy, and is discharged whether or not the ceiling keeps the buffer. So the bound is two terms in both pools, and the block pool is the one where the library owns both: the chunk pool's are the waiting holders' slots and what in-flight batches pin, the block pool's are `slots` retained blocks and `stream::worker_count` live ones ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"). The **bytes** size every pool: `LocalFileSource`'s one free list, and `XzSource`'s two, divided chunks-first so one stated number bounds the source rather than each pool; and they draw the block-decode line, `BLOCK_DECODE_MAX_BYTES`' flat 256 MiB having retired into `BlockCache::affordable`, which is what stops the pool's one-slot floor from making the stated number a fiction. The **jobs** half is the block pool's retention depth, one decoded block per would-be reader, floored at `POOL_DEPTH`, and — since 16.9 — the ceiling on how many sub-streams `pgdq query`'s replay is cut into; the chunk pool's depth is deliberately untouched by it. `DEFAULT_MEMORY_BUDGET` is 64 MiB — the serial path's number, under which every published figure was taken — so `xz -9 -T0`'s ~192 MiB blocks and `xz --block-size=128MiB` now fall back to the streaming reader where a flat cap took them down the block path over budget; the recourse is `--parallel-memory`, and the fallback **says so on a query** (`M67`, above) ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface" and "The compressed source"). The CLI states both: `--jobs` (defaulting to **1**, the serial path, since a raise is what `parallel-scan-throughput` is asked to license and two of its costs are known while none of its gains is measured) and `--parallel-memory` (defaulting to 64 MiB), zero refused for each. A stated `--jobs` is **what is asked for, not what is delivered** — two shapes admit no parallelism at all, and on a plain file the chunk pool's `POOL_DEPTH` binds first, so a `parse` above `--jobs 4` runs four workers and queues the rest, which the flag's help text and the manual both say ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--jobs` and `--parallel-memory`") |
+| Caller-stated parallelism | **working end to end: the read path's memory budget, the replay's split and the leader's scheduler all read it, and the mapping pass calls the leader** — `Parallelism` is `Serial` or `Workers { jobs, memory_bytes }`, mirroring `xz_seek::Bulk::new(workers, budget_bytes)`, with `Serial` the library default and one worker spelled `Serial` rather than as a `Workers` of one, so `--jobs 1` is the serial path as a property of the value. It sits on `ScanOptions` and `QueryOptions` both, and each of the three read loops announces it to the source through a sixth defaulted trait method, `hint_parallelism` — the mapping pass and `scan` from `ScanOptions`, the replay from `QueryOptions`, so a query's two passes are bounded separately. **The stated bytes can be made a ceiling on what is outstanding and not only on what is idle**: `BufferPool::obtain` waits while `slots()` buffers taken under a granted wait are out, and whether a loop's reads may be blocked is a **seventh** defaulted method, `hint_wait_policy` — a **permission** rather than a description of the holder, since what the pool needs to know is whether it may block this loop. **All three top-level read loops state `WaitPolicy::NeverWait`**, which is also the `Default`: the replay loop cannot grant a wait, `RetainedChunks` pinning every chunk a batch has taken a view into before the batch goes to the caller, and `scan` and the mapping pass could but do not, the wait's own test driving a bare pool so a shipped loop's grant would buy exposure rather than coverage. **The one loop that grants it is the leader's fused worker**, which holds exactly one read at a time and restores `NeverWait` on the way out, and a `parse` or a query's mapping pass reaches it whenever the caller states a `Parallelism` over a region the source is willing to cut — which is a thing asked for, the CLI's `--jobs` defaulting to 1. **A granted permission reaches a compressed source's chunk pool only** (`M70`): the block pool's holder is the retention list rather than the loop, so `BlockCache::slot`'s drain frees no slot for a caller holding a view into what it evicts, and a grant there deadlocked. The charge rides on the buffer rather than on the pool's current policy, and is discharged whether or not the ceiling keeps the buffer. So the bound is two terms in both pools, and the block pool is the one where the library owns both: the chunk pool's are the waiting holders' slots and what in-flight batches pin, the block pool's are `slots` retained blocks and `stream::worker_count` live ones ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"). The **bytes** size every pool: `LocalFileSource`'s one free list, and `XzSource`'s two, divided chunks-first so one stated number bounds the source rather than each pool; and they draw the block-decode line, `BLOCK_DECODE_MAX_BYTES`' flat 256 MiB having retired into `BlockCache::affordable`, which is what stops the pool's one-slot floor from making the stated number a fiction. The **jobs** half is the block pool's retention depth, one decoded block per would-be reader, floored at `POOL_DEPTH`, and the ceiling on how many sub-streams `pgdq query`'s replay is cut into; the chunk pool's depth is deliberately untouched by it. `DEFAULT_MEMORY_BUDGET` is 64 MiB — the serial path's number, under which every published figure was taken — so `xz -9 -T0`'s ~192 MiB blocks and `xz --block-size=128MiB` now fall back to the streaming reader where a flat cap took them down the block path over budget; the recourse is `--parallel-memory`, and the fallback **says so on a query** (`M67`, above) ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface" and "The compressed source"). The CLI states both: `--jobs` (defaulting to **1**, the serial path, since a raise is what `parallel-scan-throughput` is asked to license and two of its costs are known while none of its gains is measured) and `--parallel-memory` (defaulting to 64 MiB), zero refused for each. A stated `--jobs` is **what is asked for, not what is delivered** — two shapes admit no parallelism at all, and on a plain file the chunk pool's `POOL_DEPTH` binds first, so a `parse` above `--jobs 4` runs four workers and queues the rest, which the flag's help text and the manual both say ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--jobs` and `--parallel-memory`") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
@@ -351,37 +232,37 @@ next koji run rather than by an acknowledgement, and `benches` declares no edge
 because it publishes no number. `session-drift` is derived across that sweep and a second begun the
 minute it finished on the same commit, which is the pair `--drift` reads;
 `peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`), `parallel-peak-rss`
-(`e29939c`, since `16.13.1`) and `parallel-scan-throughput` (`20fd77c`, since
-`16.15.1`) were each taken alone, which their markers declare and `--check`
+(`e29939c`) and `parallel-scan-throughput` (`20fd77c`) were each taken alone,
+which their markers declare and `--check`
 holds to descending from the stamp, standing in no borrow edge, and being
 accounted for in the stamp's generated sentence.
 `measure.ACKNOWLEDGED` carries the two commits of P7's wrap and keystone, both
-comment-only against a declared path, plus `16.15.1`'s `a30cc43` — reachability,
-not comment-only, discharging `parallel-peak-rss` from `16.15`'s divisor change
-rather than a declared path moving nothing; the previous six were spent by the
+comment-only against a declared path, plus `a30cc43` — reachability,
+not comment-only, discharging `parallel-peak-rss` from the sub-stream divisor's
+change rather than a declared path moving nothing; the previous six were spent by the
 `af15eac` stamp and `--check` named them so they were deleted rather than kept
 as sediment.
 
-**`16.13.1` took the sitting `16.13` built the apparatus for**, both figures at
-`e29939c` — the commit `16.13`'s apparatus and `M70`'s deadlock fix both already
-carried, so a `--jobs` leg over an `.xz` measured the path that fix moved. Both
-tables were folded into `measurements.md` whole, each declaring `e29939c` inside
-its own marker, and both entries moved out of `measure.UNTAKEN` into
-`measure.FIGURES`, where the doc-side checks now apply to them.
-**`16.15.1` re-took `parallel-scan-throughput` alone**, at `20fd77c`, once
-`16.15`'s divisor change landed; its marker now declares `20fd77c` and
-`parallel-peak-rss`'s stands unmoved at `e29939c`, discharged by the
-acknowledgement above rather than a second sitting.
-`parallel-scan-throughput` gained a `quoted_by` naming
-`roadmap-P16-parallel-scan.md`, whose "What that buys, at 12 physical cores / 24
-threads" is the arithmetic this figure answers; `parallel-peak-rss` gained one
-naming `STATUS.md` itself, whose `16.15` row already cites its `--jobs` axis
-going flat past the point the stated budget stops affording a worker
-([`../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md)).
+**The two parallel figures were built as apparatus and taken afterwards**,
+which is what a figure published outside a stamped sweep costs: it names the
+commit it was taken at inside its own marker, and a sitting run from a tree
+carrying its own uncommitted apparatus has no such commit to name
+([`../design/measurements.md`](../design/measurements.md), "A figure may be
+published outside the sweep"). `parallel-peak-rss` stands at `e29939c`, the
+commit that carried the apparatus and `M70`'s deadlock fix both, so a `--jobs`
+leg over an `.xz` measured the path that fix moved; `parallel-scan-throughput`
+was re-taken alone at `20fd77c` once the sub-stream divisor landed, and the two
+therefore no longer share a commit. `parallel-scan-throughput`'s `quoted_by`
+names `roadmap-P16-parallel-scan.md`, whose "What that buys, at 12 physical
+cores / 24 threads" is the arithmetic it answers; `parallel-peak-rss`'s names
+`STATUS.md` itself, for the claim that its `--jobs` axis goes flat past the
+point the stated budget stops affording another worker — confirmed on the
+128 MiB-block leg, which plateaus at ~2.11 GiB from eight jobs on while the
+24 MiB-block leg is still climbing at twenty-four.
 
 **`measure.UNTAKEN` is empty again, which is its healthy state.** Four entries
 have left it so far: `projection-widths` and `xz-decode-scaling` earlier, then
-`parallel-scan-throughput` and `parallel-peak-rss` in `16.13.1`, each waiting
+`parallel-scan-throughput` and `parallel-peak-rss`, each waiting
 only for a **commit to name** as its sitting, since a figure published outside a
 stamped sweep declares one inside its own marker and a sweep is the thing none
 of these four could be part of, deliberately occupying the quiet machine a sweep
@@ -442,332 +323,18 @@ goes").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P16 is open**, specified and sliced; its checklist is below, and the
-  roadmap's out-of-band ledger carries no row blocking it — `M70`, the `.xz`
-  `--jobs` deadlock, landed on 2026-09-08. Six phases
-  remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap table's schedule
+- **No phase is open.** P16 (parallel scan and extraction) is complete; its
+  mechanisms are in [`../design/architecture.md`](../design/architecture.md) by
+  subject, its intent in
+  [`../design/roadmap-P16-parallel-scan.md`](../design/roadmap-P16-parallel-scan.md),
+  and what neither holds in
+  [its notes](../design/roadmap-P16-parallel-scan-notes.md). Seven phases remain
+  sketched — P19, P10, P14, P6, P15, P18, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
   they run in. Each gets its own full grilling when it becomes current, and
   every one that carries an inbox must have it drained as part of that
-  grilling.
-
-## P16 progress
-
-**The order after 16.1–16.2 is allocation order, not a schedule** — this
-phase's opening slices produce the evidence that decides what the later ones
-are worth, and the orderings that do bind are named in
-[`../design/roadmap-P16-parallel-scan.md`](../design/roadmap-P16-parallel-scan.md),
-"Slices".
-
-- [x] **16.1** `xz-decode-scaling` — the decode probe is a registered figure, at
-      1/2/4/8/12/16/24 workers over two legs, taken at `7d21c6e` and published
-      with that commit inside its own marker. Scaling is near-linear to four
-      workers and sublinear past it — 7.78× at twenty-four on koji, 10.80× on
-      the control — so the phase's worker counts are floors, not estimates. No
-      library code. Notes:
-      [`../design/roadmap-P16.1-xz-decode-scaling-notes.md`](../design/roadmap-P16.1-xz-decode-scaling-notes.md)
-- [x] **16.2** `KD14`'s attribution, and `peak-rss` re-taken at HEAD — the
-      figure is re-taken at `41c96bb` and moved by nothing, and the growth is
-      attributed: three fifths is live structure per *table*, the un-throttled
-      whole-list clone is one to two kilobytes a block, and glibc has the lowest
-      slope of three allocators. `KD14` (`../design/measurements.md`, "What the per-block
-      resident growth is made of"). No library code. Notes:
-      [`../design/roadmap-P16.2-rss-attribution-notes.md`](../design/roadmap-P16.2-rss-attribution-notes.md)
-- [x] **16.3** `layering.md`'s L3 deviation closed — the `Bytes` →
-      `arrow::Buffer` conversion, the chunk-retention deque and the
-      block-index invalidation are `batch::RetainedChunks` (L3), and the replay
-      loop says only what it read, how far the scanner got and that a batch
-      flushed. Behaviour-preserving; `SourceChunk` is private to `batch.rs`.
-      Notes:
-      [`../design/roadmap-P16.3-chunk-retention-notes.md`](../design/roadmap-P16.3-chunk-retention-notes.md)
-- [x] **16.4** The block pool's sizing — `io::BufferPool`'s slot count is
-      derived from a 64 MiB byte budget rather than fixed at four, so a slot
-      may be a decoded 24 or 128 MiB xz block where four fixed ones would have
-      been the whole cgroup; the count is unchanged at every chunk size the
-      register measures. `max_source_span` is re-derived and unmoved: on a
-      block-shaped source the cap is a batch-size knob, and the bound it stops
-      being is the pool's slot budget once `16.4.1` makes that budget bound
-      what is outstanding. Notes:
-      [`../design/roadmap-P16.4-block-pool-notes.md`](../design/roadmap-P16.4-block-pool-notes.md)
-- [x] **16.4.1** Backpressure — `BufferPool::obtain` waits while `slots()`
-      buffers taken under a granted wait are out, the buffer carries the
-      charge, and whether a loop may be blocked is a **permission** stated
-      through a seventh defaulted method, `hint_wait_policy`; all three read
-      loops state `WaitPolicy::NeverWait`, which is also the `Default`, so
-      nothing in the shipped build arms the wait (`M68`). The row's
-      option-validation commitment was **withdrawn** before the slice
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "The wait is
-      exempted by holder class, not validated by an option pair"). Notes:
-      [`../design/roadmap-P16.4.1-backpressure-notes.md`](../design/roadmap-P16.4.1-backpressure-notes.md)
-- [x] **16.5** `XzSource` internally concurrent — a read decodes the blocks it
-      lands in, into a second `BufferPool` of its own, with the reader's mutex
-      held to *name* a `BlockTask` and never across a decode; a read inside one
-      block is a slice of it. Decoded blocks are retained under the pool's own
-      budget, eviction running before a slot is taken. A block too large to
-      hold — a single-block file's whole plaintext — keeps the streaming
-      reader. Notes:
-      [`../design/roadmap-P16.5-xz-concurrency-notes.md`](../design/roadmap-P16.5-xz-concurrency-notes.md)
-- [x] **16.6** `ByteRangeSource::partitions` — a fifth defaulted method,
-      synchronous and pure, answering where a source is willing to be split and
-      what one concurrent reader costs it resident. `LocalFileSource` says
-      anywhere, one read chunk each; a block-decoding `XzSource` says at these
-      block boundaries, a block plus a chunk buffer each; the streaming
-      fallback says one partition however many boundaries its table has; the
-      default declines to advise. No consumer. Notes:
-      [`../design/roadmap-P16.6-partitioning-advisory-notes.md`](../design/roadmap-P16.6-partitioning-advisory-notes.md)
-- [x] **16.7** The `Parallelism` value — the L1 enum, `Serial` or
-      `Workers { jobs, memory_bytes }`, defaulting to `Serial` and spelling one
-      worker as `Serial` rather than as a `Workers` nobody can tell from it, on
-      `ScanOptions` and `QueryOptions` both. No consumer: nothing reads either
-      field, which the doc comments say. Notes:
-      [`../design/roadmap-P16.7-parallelism-surface-notes.md`](../design/roadmap-P16.7-parallelism-surface-notes.md)
-- [x] **16.7.1** What the stated budget decides, and the flags that state it —
-      a sixth defaulted method, `hint_parallelism`, carries the value from each
-      read loop to the source; the stated bytes size every pool, divided
-      chunks-first so one number bounds a source rather than each of its pools,
-      and `BLOCK_DECODE_MAX_BYTES`' flat 256 MiB retires into
-      `BlockCache::affordable`. `jobs` is the block pool's retention depth and
-      not the chunk pool's. `DEFAULT_MEMORY_BUDGET` stays at 64 MiB, so
-      `xz -9 -T0`'s ~192 MiB blocks now stream and `--parallel-memory` is the
-      recourse. CLI: `--jobs`, `--parallel-memory`, and the manual section.
-      Notes:
-      [`../design/roadmap-P16.7.1-stated-budget-notes.md`](../design/roadmap-P16.7.1-stated-budget-notes.md)
-- [x] **16.8** Partitioned replay — `table_stream_partitions` maps once and
-      hands back N `TableStream`s, each a contiguous run of the blocks that
-      pass settled, cut where the source advised and no finer than the
-      caller's two numbers allow. A piece's first row is the one past the
-      first LF at or after its start and its last is the one ending at or
-      past its limit, so a cut needs to know nothing about rows; the resync
-      is a real forward read, because I7 is about a *line start*.
-      Concatenating the sub-streams is the serial stream, which is a property
-      of the code — both entry points are `map_for_query` then `replay`.
-      Library only; the CLI is 16.9. Notes:
-      [`../design/roadmap-P16.8-partitioned-replay-notes.md`](../design/roadmap-P16.8-partitioned-replay-notes.md)
-- [x] **16.9** The CLI's k-way merge on source offset, one batch per partition
-      — `pgdq query` consumes `table_stream_partitions`, holds one batch per
-      sub-stream, prints whichever begins earliest in the file and refills only
-      the slot it drained, so the reorder buffer is N × batch. The key is
-      `TableStream::batch_source_offset`, a fourth published value read off
-      `RowBatcher`'s existing span. `--jobs 1` is one sub-stream, so the serial
-      path is the same call. Error ordering is still one round's, which is
-      16.11's. Notes:
-      [`../design/roadmap-P16.9-cli-merge-notes.md`](../design/roadmap-P16.9-cli-merge-notes.md)
-- [x] **16.10** The interior split — `leader.rs` (L4) holds what one LF-split
-      piece of an open `COPY` block's interior answers on its own (rows, its own
-      census, the `\.` terminator if it held one) and how the pieces fold back
-      into the block's totals. Pure and synchronous, and nothing calls it: the
-      scheduler is `16.10.1`, so the parse is checked against the serial
-      scanner's own answer over every `COPY` block of six fixtures, cut ten
-      ways. `map::census_row` becomes the one fold both callers share. I7 and
-      I15 gain a "Relied on by" line. Notes:
-      [`../design/roadmap-P16.10-interior-split-notes.md`](../design/roadmap-P16.10-interior-split-notes.md)
-- [x] **16.10.1** The leader's scheduler — `leader::scan_region` cuts an open
-      `COPY` region's interior where the source advises, runs the fused
-      decode-and-parse workers a window at a time, and folds their answers with
-      `16.10`'s `merge` until one holds the terminator. It reads `partitions()`
-      for the shape of the cut only, takes its economics from `--jobs`, and
-      declines a region smaller than one `partition_bytes()`. **The one read
-      loop that grants `WaitPolicy::MayWait`**, restoring `NeverWait` on the
-      way out. No consumer: the wiring into `map_forward` is `16.10.2`, earned
-      when the row turned out to carry both confidences
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.10.1 split again:
-      the scheduler, then the loop that runs it"). Notes:
-      [`../design/roadmap-P16.10.1-leader-scheduler-notes.md`](../design/roadmap-P16.10.1-leader-scheduler-notes.md)
-- [x] **16.10.2** The mapping pass runs the leader — `map_forward`'s
-      `CopyStart` arm offers each open `COPY` region to `leader::scan_region`
-      and closes one it took through `close_copy_block`, the `CopyEnd` arm's
-      body made a free function so the two paths close a block identically;
-      then the serial scanner, the carry and `read_pos` are put back down at
-      `end_offset`. `pgdq parse --jobs` now buys something. Notes:
-      [`../design/roadmap-P16.10.2-mapping-leader-notes.md`](../design/roadmap-P16.10.2-mapping-leader-notes.md)
-- [x] **16.11** Error ordering — the lowest-offset error is the one raised, at
-      both concurrent sites. The leader's window is drained through a
-      `futures::stream::FuturesOrdered` instead of `try_join_all`, so the
-      earliest failing piece is the one raised and the pieces after it are
-      dropped unread; `pgdq query`'s merge **records** a sub-stream's failure
-      instead of raising it, marks every sub-stream at or after it dead, and
-      goes on draining the ones before it, raising when the held batches run
-      out. Both assertions were shown to fail on the previous code first.
-      Notes:
-      [`../design/roadmap-P16.11-error-ordering-notes.md`](../design/roadmap-P16.11-error-ordering-notes.md)
-- [x] **16.12** The determinism test — `pgdq parse` writes one `.dqcache`, byte
-      for byte, whatever `--jobs` says: all 109 fixtures against a stated
-      `--jobs 1` reference, over five legs including the flagless one, plus a
-      generated dump past four shipped chunks parsed at `--jobs` 1/4/8/24 with
-      no chunk size stated. **The parallel legs state a chunk size because
-      otherwise they are the serial path compared to itself** — every fixture
-      block sits under `scan_region`'s floor at the shipped 1 MiB — and both
-      tests were shown to fail on an injected `leader::merge` fold first. No
-      library code. Notes:
-      [`../design/roadmap-P16.12-determinism-notes.md`](../design/roadmap-P16.12-determinism-notes.md)
-- [x] **16.13** The two parallel figures' apparatus — both built, registered in
-      `measure.UNTAKEN` and runnable, with no readings taken.
-      `parallel-scan-throughput` is `parse` and typed `query` against `--jobs`
-      over four legs of one 3.00 GiB plaintext, plain and `.xz`;
-      `parallel-peak-rss` is peak resident set against `--jobs` at two block
-      sizes, `generate_xz_input.py` gaining a two-value `--block-size` for the
-      second. Both run under `warm-parallel` and declare a 3 GiB container. Three
-      new command-shape families open `SWEEP_JOBS`' first exemption, declared in
-      `measure.JOBS_AXIS` and bounded from the other side by
-      `pinned_count_problems`, which `--check` fails on. No library code.
-      **Rewritten to the scope that landed**, the sitting being unreachable from
-      the tree the apparatus lives in
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.13 split: the
-      apparatus, then the sitting that needs a commit to name"). Notes:
-      [`../design/roadmap-P16.13-parallel-figures-notes.md`](../design/roadmap-P16.13-parallel-figures-notes.md)
-- [x] **16.13.1** The sitting — both figures taken at `e29939c`, the commit
-      carrying `M70`'s fix as well as `16.13`'s apparatus, and folded into
-      `measurements.md` with that commit inside each marker. Both entries moved
-      out of `measure.UNTAKEN` into `FIGURES`, `parallel-scan-throughput`
-      gaining a `quoted_by` naming `roadmap-P16-parallel-scan.md` and
-      `parallel-peak-rss` one naming `STATUS.md`. The sitting is the four
-      `warm-parallel` legs and nothing else: neither cold device is a parallel
-      regime ([`../design/measurements.md`](../design/measurements.md), "The
-      HDD is not a fourth regime"). Notes:
-      [`../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.13.1-parallel-figures-sitting-notes.md)
-- [x] **16.14** koji verification — a serial and a `--jobs 4` parse of
-      `koji-…multistream.xz` in one detached run, whose two `.dqcache` files
-      are byte-identical (2,144,936 bytes each) and whose counts both equal the
-      plain 784 GB scan's published totals: 74 blocks, 19,575,829,920 rows,
-      784,019,857,152 bytes at `Scan completion: 100%`. The phase's `--jobs`
-      determinism claim at a scale no fixture reaches, and `M70`'s deadlock fix
-      on a real file rather than a 200 MiB scratch one. A third comparison came
-      free — this run's serial cache is byte-identical to the day's first
-      attempt's, whose serial leg had finished before its parallel leg was
-      OOM-killed. **Spec row amended by the review of 2026-09-08**
-      ([`history/2026-09-08.md`](history/2026-09-08.md), "A compressed cache
-      and a plain one were never byte-comparable"): the row asked for
-      byte-identity against the serial 784 GB scan's cache, which is an
-      artifact nothing produces, so the check is two — across arrangements, and
-      across formats. Outside the register: the run's wall clocks and resident
-      sets are readings off a tuned apparatus, disqualified at the number in
-      [`../design/measurements.md`](../design/measurements.md), "koji full
-      scan". Notes:
-      [`../design/roadmap-P16.14-koji-verification-notes.md`](../design/roadmap-P16.14-koji-verification-notes.md)
-- [x] **16.15** The stated budget bounds both memory terms — `stream::plan_partitions`
-      now caps a query's sub-stream count against `partition_bytes +
-      max_source_span` rather than `partition_bytes` alone, so one number
-      bounds what a sub-stream costs to decode *and* what its held batch pins,
-      not half of it; `None` (an unbounded span) falls back to the decode
-      footprint alone, the caller having already opted out of a batch-size
-      bound. `leader::scan_region`'s own call (the mapping pass, which retains
-      nothing) is unchanged — the second term is a query-replay cost, not
-      `worker_count`'s to know, so it is summed at the query's call site
-      rather than folded into that function. **Two further calls this row
-      owed were made rather than left open**: `BlockCache`'s retained cap and
-      `BufferPool`'s free-list cap stay separate (a hot-path rework for a
-      transient ceiling the divisor fix already addresses from the outside),
-      and `POOL_DEPTH` stays fixed at 4 (the plain-file ceiling it produces is
-      a different call site's property, with no analog to the resident-set
-      argument that would move it). Both filed as rejected alternatives beside
-      the mechanism: [`../design/architecture.md`](../design/architecture.md),
-      "Execution model and API surface". **Consequence for the CLI**: `pgdq
-      query --jobs N` at the 64 MiB `--parallel-memory` default now always
-      runs one sub-stream, the span term alone meeting the budget — raising
-      `--parallel-memory` past roughly 65 MiB is what buys a second one. Both
-      flags' defaults are unchanged, which is what the spec's amendment
-      already commits to. **The figure re-take is `16.15.1`**: a sitting needs
-      a commit to name and this round leaves none, the same seam `16.13` split
-      on. Notes:
-      [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md)
-- [x] **16.15.1** The sitting — re-take **`parallel-scan-throughput` alone**
-      once `16.15`'s diff is committed (`scripts/measure.py` will not stamp a
-      figure against an uncommitted measured path, per `16.13.1`'s own
-      precedent) and fold its table into
-      [`../design/measurements.md`](../design/measurements.md) with the commit
-      inside the marker. It stands in no `shares` or derivation edge, which is
-      the condition under which a figure may be published outside a sweep at
-      all. **The figure `16.15`'s admitting row named is not the one that
-      moved**: `parallel-scan-throughput`'s two typed-`query` legs — plain and
-      `.xz` alike — reach `plan_partitions` directly, while every leg of
-      `parallel-peak-rss` is `pgdq parse`, which reaches `worker_count` through
-      `leader::scan_region` and never calls the changed function. So this row
-      also owes `parallel-peak-rss` an `ACKNOWLEDGED` entry naming `a30cc43`
-      on reachability grounds — the one mechanical oracle that settles an
-      executable diff — rather than a sitting, and `e29939c`'s table stands.
-      **The comparison is anchored at four workers and no constant moves.**
-      `PARALLEL_BUDGET` stays 1 GiB and `PARALLEL_MEMORY` stays 3g: 1 GiB
-      affords four sub-streams on the worst leg (`4 × (25 MiB + 64 MiB) ≈
-      356 MiB`), which is the count `POOL_DEPTH` actually delivers on a plain
-      source and the one `16.14` ran its parallel leg at. `PARALLEL_JOBS` is
-      unchanged too — three assertions in `test_measure.py` pin its shape and
-      `parallel-peak-rss` shares it. What the sitting owes is the **rows above
-      four on the two typed-`query` legs**, where the budget now clamps to
-      about eleven sub-streams (`.xz`) and fourteen (plain): each such cell
-      states the count it achieved beside its wall clock, derived
-      arithmetically as the existing `POOL_DEPTH` note is, because a clamp
-      the *harness* imposes may not be left footnoted the way the library's
-      own ceiling is (`scripts/measure.py`, beside `PARALLEL_BUDGET`). Notes:
-      [`../design/roadmap-P16.15-stated-budget-notes.md`](../design/roadmap-P16.15-stated-budget-notes.md),
-      "What `16.15.1` inherits"
-
-      **Landed.** `parallel-peak-rss`'s half is discharged by the
-      `ACKNOWLEDGED` entry for `a30cc43` in `scripts/acknowledged.py`;
-      `e29939c`'s table stands. `parallel-scan-throughput` was re-taken at
-      `20fd77c` (`runs/measure-20260908T183715/tables.md`, 140 invocations,
-      1485 s, none discarded) and folded into `measurements.md` with that
-      commit inside its marker, the rows above four on both typed-`query`
-      legs stating the sub-stream count achieved (11 on `.xz`, 14 on plain —
-      `scripts/measure.py`'s new `QUERY_SUBSTREAM_CAP`). Notes:
-      [`../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md`](../design/roadmap-P16.15.1-parallel-figures-sitting-notes.md)
-- [x] **16.16** `--jobs` defaults to 1 — `DEFAULT_JOBS`, a constant where
-      `available_parallelism()` was, so a person who states neither flag gets
-      the arrangement every published figure was taken under. Its help text
-      states what is asked for rather than a ceiling on concurrent workers,
-      naming the plain-file `min(jobs, 4)` the chunk pool imposes, and the
-      manual says the same. The flags are unchanged and no library code moved;
-      the default is pinned by a unit test, since a partitioned run and a serial
-      one produce the same bytes and nothing outside the binary can see it.
-      **Moved ahead of `16.11`** by the review of 2026-09-07
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "The parallel default
-      is a correction the tree has not made"). Notes:
-      [`../design/roadmap-P16.16-jobs-default-notes.md`](../design/roadmap-P16.16-jobs-default-notes.md)
-- [x] **16.18** `info --verbose` becomes `--detail` — the flag renamed
-      everywhere it is spelled: `main.rs`'s argument and the `--json` conflict
-      message, both manual files, `measure.py`'s koji recipe plus the
-      `test_measure.py` assertion over it, the CLI's own integration tests
-      (which invoke the binary by flag name and would fail at the process
-      boundary otherwise), two prose spellings in library error/doc-comment
-      text (`predicate.rs`'s enum-overflow message and its test, a `pgtype.rs`
-      doc comment), and the two live, present-tense invocations in
-      `README.md` and `STATUS.md`'s own capability row. No behaviour changed —
-      every touched library line is a string literal or a doc comment, not
-      logic — and it frees the word `verbose` for `16.19`, which cannot share
-      it. Removed rather than aliased, pre-1.0. `docs/design/architecture.md`
-      still mixes `pg_dump`'s own `--verbose` with ours in prose and was left
-      alone deliberately — detail in the notes doc. **Admitted after spec
-      time** ([`history/2026-09-08.md`](history/2026-09-08.md), "A parse has
-      phases, and nothing says which one it is in"); `16.17` is spent, having
-      named what became `16.10.2` for a day. Notes:
-      [`../design/roadmap-P16.18-detail-rename-notes.md`](../design/roadmap-P16.18-detail-rename-notes.md)
-- [x] **16.19** The CLI emits status — `tracing` in the library, a subscriber
-      in the CLI, RFC3339-stamped lines on stderr, on by default for `parse`,
-      `info` and `query` alike. Names the phases this phase created:
-      `XzSource::open` (`io.rs`) emits `seek table build started`/`complete`
-      around the footer walk (`XzSource::with_table` skips it and earns no
-      line); `crate::scan::scan` — the bounded loop behind `--preamble-only`,
-      and behind an ordinary `parse`/`query`'s own internal prepass — emits
-      `preamble scan started`/`preamble scan complete`; `stream::map_forward`
-      — the incremental loop behind `parse` and `query`'s mapping pass — emits
-      `scan started`/`scan complete`, naming `--jobs` and the stated memory
-      budget once so a log says what arrangement produced everything after it.
-      **The two loops were first named identically**, which made an ordinary
-      uninterrupted `parse` print what read as an interrupted-and-resumed one;
-      caught by running the binary rather than by the tests, which asserted
-      lines existed rather than that they were distinguishable, and fixed by
-      naming the preamble pass apart — a fix that also keeps a *genuine*
-      resume recognisable, since it alone skips the preamble pass entirely.
-      **The stated memory budget was first printed as `Option`'s own `None`/
-      `Some(N)`**, also caught by running the binary; `io::memory_budget_display`
-      now states the byte count actually in force either way, marked
-      `(default)` where none was asked for. `M72` landed first, so `pgdq
-      query`'s own `PlanNote` announcement (already on stderr, via
-      `eprintln!`, not `tracing`) is not duplicated here — the two are
-      separate channels, per the library's own diagnostics/plan-notes split.
-      Its durations are diagnostics and never figures, stated once beside the
-      mechanism rather than left to be rediscovered by whoever quotes one.
-      `-vvv` and `--quiet` are deferred and unallocated. Notes:
-      [`../design/roadmap-P16.19-status-output-notes.md`](../design/roadmap-P16.19-status-output-notes.md)
+  grilling. **P19 is grilled but not yet specified**, so the next phase is
+  specified and sliced before any of its code is written.
 
 ## Known deficiencies
 

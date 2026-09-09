@@ -159,7 +159,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         commit="a30cc43",
         figures=("parallel-peak-rss",),
         why=(
-            "16.15's divisor change is entirely inside stream.rs's "
+            "The sub-stream divisor change is entirely inside stream.rs's "
             "plan_partitions and table_stream_partitions, the query replay's "
             "own sub-stream planner; parallel-peak-rss's command shape is "
             "`pgdq parse` (parse-rss-jobs-N), which reaches worker_count "

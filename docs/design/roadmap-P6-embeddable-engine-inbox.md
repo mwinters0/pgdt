@@ -479,9 +479,8 @@ mapping pass's own workers *do* order their errors inside the library
 between the two passes rather than a blanket "the library does not order
 errors".
 
-**Origin.** `P16.11`, 2026-09-07
-([`roadmap-P16.11-error-ordering-notes.md`](roadmap-P16.11-error-ordering-notes.md);
-[`architecture.md`](architecture.md), "`pgdq query` merges the sub-streams back
+**Origin.** The parallel-scan work's error-ordering slice, 2026-09-07
+([`architecture.md`](architecture.md), "`pgdq query` merges the sub-streams back
 into file order").
 
 ---
@@ -506,5 +505,5 @@ about the replay. It is worth deciding before the surface is frozen, because
 `ResumeToken` is opaque today and adding a field to it is free, where changing
 what a token means after an embedder holds one is not.
 
-**Origin.** P16.8, 2026-09-07
-([`roadmap-P16.8-partitioned-replay-notes.md`](roadmap-P16.8-partitioned-replay-notes.md)).
+**Origin.** The parallel-scan work's partitioned-replay slice, 2026-09-07
+([`architecture.md`](architecture.md), "Partitioned replay").

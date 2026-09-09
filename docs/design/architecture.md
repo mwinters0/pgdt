@@ -113,6 +113,7 @@ trait ByteRangeSource: Send + Sync {
         Partitioning::single(0)
     }
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
+    fn hint_wait_policy(&self, _policy: WaitPolicy) {}
 }
 ```
 
@@ -258,12 +259,13 @@ plain-file `parse` above `--jobs 4` runs four workers and queues the rest, which
 the flag's own help text and the manual both say rather than promising a ceiling
 the shape does not deliver.
 
-**`POOL_DEPTH` stays fixed, and `16.15` is the re-derivation that confirms it
-rather than moves it.** The trade the "`jobs` half" paragraph below declines —
-raising the chunk pool's depth with a worker count grows a *query's* resident
-set by `(jobs - POOL_DEPTH)` chunks the moment a flushed batch's buffers
-release — is about the **replay** path's own holder, `batch::RetainedChunks`.
-`16.15`'s fix is scoped to a different call site: `worker_count`'s divisor at
+**`POOL_DEPTH` stays fixed, and the sub-stream divisor is the re-derivation
+that confirms it rather than moves it.** The trade the "`jobs` half" paragraph
+below declines — raising the chunk pool's depth with a worker count grows a
+*query's* resident set by `(jobs - POOL_DEPTH)` chunks the moment a flushed
+batch's buffers release — is about the **replay** path's own holder,
+`batch::RetainedChunks`.
+That fix is scoped to a different call site: `worker_count`'s divisor at
 `stream::plan_partitions`, which caps how many *sub-streams* a query gets, not
 how many slots the chunk pool holds. A leader worker on the mapping pass
 retains nothing past its own `read_range` — `parse` builds no batches — so the
@@ -272,7 +274,7 @@ ceiling is a property of the chunk pool's own depth, unrelated to what a query's
 sub-stream count divides by. The two numbers are deliberately different
 things: one bounds how many concurrent leader workers a plain-file `parse` (or
 a query's own mapping pass) may run before one queues, the other bounds how many
-sub-streams a query's *replay* is cut into. `16.15` moved the second; the
+sub-streams a query's *replay* is cut into. The divisor moved the second; the
 first had no accounting gap to fix.
 
 **Two numbers, whichever binds first, mirroring
@@ -378,10 +380,10 @@ are probes on one file, not figures, and no document quotes them as
 measurements; the evidence is
 [`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
 16.14 OOM is glibc's arenas, and a CPU limit is not the remedy". **The stated
-number does not bound the process, only the pools** — `16.15`'s divisor is
+number does not bound the process, only the pools** — the sub-stream divisor is
 `partition_bytes + max_source_span`, both pool costs, and settles nothing about
 the allocator; capping the arenas from inside the stated budget was considered
-there and set aside for the same reason it is rejected below, filed as its own
+with it and set aside for the same reason it is rejected below, filed as its own
 Future item rather than folded in. *Rejected:* capping the arenas from inside the
 binary, with a `mallopt(M_ARENA_MAX, …)` beside the `#[global_allocator]`.
 It would close the ~200 MiB gap without an operator setting anything, and it is
@@ -569,7 +571,7 @@ what one concurrent reader costs the *source*, and a sub-stream's held batch is
 the same kind of per-reader cost arriving from the other side.
 
 **Whether one span allowance should be *divided* among sub-streams rather than
-charged to each is open, and neither `16.15` nor its amendment weighed it.**
+charged to each is open, and the divisor that charges it did not weigh it.**
 What is settled is the accounting: N sub-streams really do pin N spans, and a
 divisor that charged one was the defect. What is not settled is the default —
 `max_source_span`'s 64 MiB is a per-stream number chosen when there was one
@@ -669,7 +671,7 @@ view *is* the retention, so "released when the view drops" is "released when
 that reader stops reading", and a second reader blocking on it reproduces `M70`
 with a different counter. The live term is bounded instead by admitting fewer
 readers — `stream::worker_count` dividing the stated bytes by a per-worker
-footprint — which is `16.15`'s mechanism and works on a retaining holder
+footprint — which is the divisor's mechanism and works on a retaining holder
 precisely because it never asks one holder to wait on another
 ([`../status/history/2026-09-08.md`](../status/history/2026-09-08.md), "The
 block pool's bound is a divisor's job, not an acquisition's").
@@ -924,13 +926,13 @@ rather than a steady state — a forward scan's cycle holds the free list at
 zero or one, which is what the 64.7 MiB above is.
 
 *Rejected: coupling the two counts so the pool's ceiling is `slots × unit`
-rather than its double.* `16.15` decided this rather than left it, and kept the
-counts separate. What the coupling would buy is a tighter transient ceiling on
+rather than its double.* This was decided rather than left open, and the
+counts stay separate. What the coupling would buy is a tighter transient ceiling on
 a path that is already the smaller of the two costs a caller's stated budget
 now has to cover — `worker_count`'s divisor (above, "Rejected: a per-view
 acquisition bounding the live term") is what actually admits fewer concurrent
 readers when a query's held batches make the real per-worker cost bigger, and
-that is where the accounting gap `16.15` closes actually was.
+that is where the accounting gap actually was.
 Coupling the counts would touch `BufferPool::release`'s hot path — every
 buffer return would have to check a shared ceiling instead of its own list's
 length — for a ceiling that is reached only in the specific window between a
@@ -945,7 +947,10 @@ block some reader is holding a view into, so the drain to `slots - 1` frees no
 slot for the caller that is waiting on one — which is why the block pool is
 never granted a wait at all ("Execution model and API surface"). What the order
 buys is that the buffer the next decode reuses is the one the drain just
-released, rather than a fresh allocation of the block unit.
+released, rather than a fresh allocation of the block unit — and, with it, that
+one byte budget bounds the retained blocks and the free ones together. Bounding
+the two independently was the first shape of this, and it reads **89.2 MiB** on
+the 3.00 GiB control where this one reads 64.7.
 
 **A retained chunk pins the whole block it views, so `parse` is the shape that
 holds least.** `pgdq parse` builds no batches, so `RetainedChunks` never runs
@@ -1318,12 +1323,37 @@ density.** koji is not a file with a compression ratio but one with a ratio
 whole-file 19.41×. The figure's koji leg is taken on one slice of that range,
 and the legs themselves show what the range is worth — the control's 5.45×
 bytes decode at ~205 MB/s on one core where koji's 15.70× bytes decode at ~435.
-So a rate stated here names the density it was measured
-at, and the two legs are chosen to bracket the corpus rather than to contrast
-synthetic bytes with real ones; the slice's density is gated at the generator
-rather than remembered, so a rate cannot be published without it. The profile and what it settles are beside the
-slice
-([`roadmap-P16.1-xz-decode-scaling-notes.md`](roadmap-P16.1-xz-decode-scaling-notes.md)).
+So a rate stated here names the density it was measured at, and nothing may
+say "koji decodes at 435 MB/s" unqualified: fitting the two legs gives
+rate ∝ ratio^0.71, which would put the file's 19.41×-average bytes nearer
+~500 MB/s.
+
+**The two legs bracket the corpus rather than contrasting synthetic bytes with
+real ones**, and that is what makes two enough. koji's regions differ from one
+another by 6.6× — the head compresses 56.19× over its first 3 GiB and the
+sampled floor is 5.02× — so the koji leg's 15.70× is one draw from a wide
+distribution rather than "the file's own neighbourhood", and the *control*'s
+5.45× sits on top of that sampled floor. The floor a worker count should be
+sized against is therefore the control's ~205 MB/s, not koji's ~435.
+*Rejected: a third koji column at a second offset.* It re-measures a spread the
+control already spans, and a table of one file at three depths says something
+about koji rather than about the decoder. Moving the offset moves the absolute
+rates and changes nothing else, which is what makes it cheap to reconsider and
+pointless to agonise over — a within-leg scaling ratio is barely touched by it.
+
+**The density is asserted at the cut, not at the emit.** The offset is a bare
+constant, and a moved one — or a koji sample refreshed next year — could land
+in a 31.74× band and republish a rate for quite different bytes under the same
+heading, which is the instrument's characteristic failure of producing a
+plausible table rather than an error. So `generate_xz_input.py` divides the
+slice's plaintext by its compressed size the moment it has cut it and refuses
+anything outside 14–18×, and the table quotes the ratio beside the band.
+*Rejected: gating inside the measuring run instead*, where the claim is
+actually made: it would throw away a sitting's readings to report what the
+generator could have refused before the first one, and no path reaches a
+sitting with a slice the gated generator did not cut — the generator's bytes
+and its offset argument are both hashed into the input's stamp, so a moved
+offset, a changed band or a changed generator all regenerate the slice.
 
 **The decoder is a vendored crate, not a published dependency.** No published
 crate answers a positioned read over an `.xz` file — `liblzma`'s safe Rust
@@ -3658,6 +3688,26 @@ all, and the `invalidate_block_cache` a flush owes are all its, and
 that chunks are retained and released, and not what a chunk becomes or when a
 view stops being valid.
 
+**The release rule is `end() <= floor`, and rounding it the other way breaks
+exactly one row.** A chunk goes only once the scanner has walked past its
+**last** byte, never once the scanner has entered the next chunk: the row
+straddling a boundary is *carried* rather than scanned, so it arrives after the
+scanner is already inside the following chunk and asks for a view into the one
+before it. A release keyed on the scanner having entered the next chunk would
+lose that row's bytes and nothing else's, which is the hardest kind of bug to
+see.
+
+`retain` takes `&Bytes` and clones inside, because the caller still needs the
+`Bytes` to scan; taking it by value would push the clone — and the `Buffer`
+conversion it feeds — back into the read loop, which is the half of the old
+layering deviation easiest to reintroduce without noticing. *Rejected: an
+accessor for the deque, so that `push_utf8view_field` need not reach
+`chunks.chunks` directly.* It is a free function in the same module and the
+search is an `iter_mut().find_map`, so wrapping it means either handing out
+`&mut SourceChunk` — the same coupling with a method call in front of it — or
+moving the view-taking inside `RetainedChunks`, which puts `StringViewBuilder`
+in a type whose job is retention.
+
 **What that placement buys, since it is a refactor and owes the statement**
 (`roadmap.md`, "Refactor when the shape stops fitting"): it makes the pinning
 rework a change in one layer rather than one straddling two — the retained unit
@@ -4085,6 +4135,14 @@ therefore stops one batch in, so the reorder buffer is N × batch rather than
 whatever it takes for the laggard to catch up. The fills are one `join_all`, so
 the reads of every sub-stream that wants one are in flight together; nothing is
 spawned, and the CPU work of turning rows into output stays on the one task.
+
+**Steady state is therefore one read in flight, not N.** Only the first round
+fills every slot; after it exactly one slot is empty, so what this exposes is a
+burst at the start plus one lookahead batch per sub-stream. The merge is an
+**ordering** mechanism, and the throughput it does not buy is what the leader's
+workers are for — `--jobs 24` does not turn a plain-file query into
+twenty-four interleaved sequential reads, which is the thing a reader of "N
+sub-streams" would otherwise assume it does.
 
 **The merge key is `TableStream::batch_source_offset`**, published beside the
 resume token, the resolved schema and the comparison notes as a fourth value a
@@ -7298,9 +7356,9 @@ it three silent phases: an `.xz` source walks its stream footers before the
 first block is scanned — 85 s on the koji download — then a bounded prepass
 reads only far enough to find the header metadata, then the real scan runs,
 sometimes for an hour. A user watching a long run cannot tell any phase from a
-hang, and neither can a session reading the log afterwards, which is how
-`16.14`'s first attempt was diagnosed from `dmesg` rather than from anything
-`pgdq` printed. `16.19` names all three: `XzSource::open` (`io.rs`) emits
+hang, and neither can a session reading the log afterwards, which is how the
+koji verification's first attempt was diagnosed from `dmesg` rather than from
+anything `pgdq` printed. The CLI names all three: `XzSource::open` (`io.rs`) emits
 `seek table build started`/`complete` around the footer walk —
 `XzSource::with_table` skips the walk and earns no line, since a persisted
 table exists precisely to make that so (above, "The compressed source") —
@@ -7366,8 +7424,8 @@ subscriber.** `tracing::info!` calls live at the three sites above; nothing in
 `tracing_subscriber::fmt` to stderr once at startup, uniformly for `parse`,
 `info` and `query` alike — a per-command default is a rule the manual would
 have to explain, and gating on whether stderr is a terminal makes the output
-depend on invocation context, which is exactly the case that left `16.14`'s
-first attempt with nothing to read. `query` writes row data to stdout, so
+depend on invocation context, which is exactly the case that left the koji
+verification's first attempt with nothing to read. `query` writes row data to stdout, so
 stderr is the only stream this can use without corrupting a pipe. Lines carry
 an **absolute RFC3339 timestamp** (`UtcTime::rfc_3339`), the convention the
 koji orchestrator logs already use, so a `pgdq` line correlates directly with

@@ -77,3 +77,30 @@ rather than shape — whether the accessor that hands a table to the cache reads
 as xz-specific once a second codec is in.
 
 **Origin.** 2026-09-02, grilling the compressed-input work.
+
+---
+
+## No test in the tree asserts that a compressed `parse` is deterministic in `--jobs`
+
+**Fact.** `pgdump_query-cli/tests/determinism.rs` asserts that `pgdq parse`
+writes one byte-identical `.dqcache` at every stated `--jobs`, and its whole
+input tree is plain `.sql`. The compressed source's own suites assert something
+weaker: `xz_source.rs` carries end-to-end row and `info --json` parity across
+container shapes, and `parallelism.rs` carries budget parity, neither on cache
+bytes. So the claim "a compressed parse at two job counts writes one cache"
+holds in exactly one place — the 2026-09-08 koji run
+([`measurements.md`](measurements.md), "koji full scan"), once, on one machine,
+over a 40 GB file nobody can rescan cheaply. Nothing in CI can see it.
+
+**Why this phase cares.** It adds the second decompressing source, so it either
+inherits this gap or closes it — and closing it is cheap at fixture scale, the
+compressed helpers and the determinism sweep both already existing. Two things
+make it worth deciding at spec time rather than discovering later: a compressed
+source is the one where `--jobs` changes which *decode* work happens (blocks
+decoded whole, retained, possibly twice), so it is where a determinism defect
+would live if there is one; and a gzip index is checkpoints rather than
+independently decodable blocks, so whatever the assertion is for `.xz` may not
+transfer unchanged.
+
+**Origin.** The parallel-scan work's determinism and koji slices, 2026-09-08
+([`architecture.md`](architecture.md), "Testing philosophy").

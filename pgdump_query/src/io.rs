@@ -1025,8 +1025,8 @@ impl AsRef<[u8]> for BlockView {
 /// between them — so the ceiling is `2 * slots * unit`, 96 MiB at the default
 /// budget's two 24 MiB slots. It is a ceiling and not a steady state: a
 /// forward scan's cycle holds the free list at zero or one. Capping the sum
-/// instead changes what the stated number means, which is `16.15`'s
-/// (`docs/design/architecture.md`, "The compressed source").
+/// instead changes what the stated number means, which is the sub-stream
+/// divisor's job (`docs/design/architecture.md`, "The compressed source").
 ///
 /// *Rejected: retaining one block on the serial path*, on the ground that one
 /// reader walking forward needs exactly one and that the cap costs a 3.00 GiB
