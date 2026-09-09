@@ -32,7 +32,12 @@ pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
 tikv-jemallocator = { version = "0.6.0", optional = true }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal"] }
+# `rt`, not `rt-multi-thread`: the binary runs a `current_thread` runtime and
+# dispatches every unit of work through `spawn_blocking`, so the multi-threaded
+# flavour would only buy reactor threads nothing runs on -- one per visible CPU,
+# each seeding a glibc arena before a byte is read. See `main`, and
+# `docs/design/architecture.md`, "Execution model and API surface".
+tokio = { version = "1.53.1", features = ["rt", "macros", "signal"] }
 tracing = "0.1"
 # `fmt` for the subscriber itself; `time` for RFC3339 timestamps
 # (`tracing_subscriber::fmt::time::UtcTime::rfc_3339`), the convention the
@@ -44,4 +49,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 [dev-dependencies]
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+# `rt` here too, and not only for symmetry: every `#[tokio::test]` in this
+# crate takes the default `current_thread` flavour, and a dev-dependency
+# naming `rt-multi-thread` would unify the feature back onto the binary
+# whenever the test targets are built -- so `cargo test` would stop
+# exercising the feature set the shipped binary is compiled with.
+tokio = { version = "1.53.1", features = ["rt", "macros"] }

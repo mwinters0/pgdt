@@ -859,7 +859,29 @@ fn init_status_output() {
         .init();
 }
 
-#[tokio::main]
+/// **A `current_thread` runtime, not a multi-threaded one.** Every unit of work
+/// this binary dispatches is a `spawn_blocking` task — the positioned reads,
+/// the fused decode-and-parse workers, and the sub-streams of a partitioned
+/// replay alike (`docs/design/architecture.md`, "Execution model and API
+/// surface") — so the reactor never runs any of it, and a pool of reactor
+/// threads sized from the host's CPU count is threads the work never touches.
+/// The blocking pool tokio creates on demand is what actually carries the
+/// scan, so the process's thread count follows the concurrency dispatched
+/// rather than the number of CPUs it can see.
+///
+/// **Claimed as a thread-count result, not a memory one.** Fewer threads means
+/// fewer glibc arenas seeded, but an arena's retention is not proportional to
+/// how many there are — cutting a probe from 24 arenas to 8 moved anonymous
+/// resident only ~536 to ~476 MiB — so this does not on its own make the
+/// process smaller, and no reading here says it does. What it buys is that the
+/// process no longer sizes itself from a number nobody stated.
+///
+/// The `signal` handlers of [`install_interrupt_guard`] are ordinary
+/// `tokio::spawn` tasks and run on this thread: the scan loop awaits a
+/// `spawn_blocking` join at every piece, so the runtime is parked in
+/// `block_on` — driving the signal driver — for all of the time the work is
+/// actually running.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_status_output();
     let cli = Cli::parse();

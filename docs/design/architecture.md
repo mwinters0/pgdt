@@ -263,6 +263,29 @@ cooperative flag — which is why `xz-seek` is asked to poll one inside its
 decode loop, and why a join is bounded by a decoder call rather than by a whole
 block.
 
+**The CLI takes that choice and answers `current_thread`.** `pgdq`'s `main` is
+`#[tokio::main(flavor = "current_thread")]` and its manifest names `rt` rather
+than `rt-multi-thread`, because every unit of work this binary dispatches is a
+`spawn_blocking` task: a reactor pool sized from the host's CPU count would be
+threads nothing runs on, each seeding a glibc arena before a byte is read. What
+exists instead is the blocking pool, which tokio creates on demand, so **the
+process's thread count follows the concurrency dispatched rather than the
+number of CPUs it can see** — 8 threads at `--jobs 4` on this 24-CPU machine,
+against 34 under the multi-threaded flavour, over the 3.00 GiB plain control.
+The interrupt guard's `tokio::spawn`ed signal handlers still run, because the
+scan loop awaits a `spawn_blocking` join at every piece and the runtime is
+therefore parked in `block_on` — driving the signal driver — for the whole of
+the time the work is running; verified by `SIGTERM` mid-scan, which saves the
+cache and exits 143 as before.
+
+**It is a thread-count result and is not claimed as a memory one.** Fewer
+threads is fewer arenas, but an arena's retention is not proportional to how
+many there are (the `--cpus 4` probe below), and the plain control is too small
+a shape for the arena set to show at all: ~10.5 MiB peak resident before,
+~9.8 MiB after, which says nothing. What the change buys is that the process no
+longer sizes itself from a number nobody stated; what that is worth in bytes,
+no reading here states.
+
 **A stated `--jobs` is what is asked for, not what is delivered**, and on a
 plain file the chunk pool is what binds first: `LocalFileSource::partitions`
 answers one read chunk per partition, so `worker_count` at the 64 MiB default
@@ -368,10 +391,12 @@ central promise is a number in bytes.
 
 **What no stated budget bounds is the allocator's own retention, and under a
 memory cap that is the larger term.** The budget bounds the pools; the process
-carries, on top of them, whatever glibc keeps in its per-thread arenas — and
-`#[tokio::main]` builds a runtime with one worker thread per CPU the process can
-see, each of which seeds an arena the first time it allocates, before a byte is
-scanned. Probed against koji's 24 MiB-block `.xz` at `--jobs 4
+carries, on top of them, whatever glibc keeps in its per-thread arenas — one
+seeded by each thread the first time it allocates. **The readings below were
+taken when that thread count was the host's CPU count**, before the CLI moved
+to a `current_thread` runtime; they are what the arena *mechanism* costs, and
+the count pgdq reaches by default is now the blocking pool's rather than the
+machine's. Probed against koji's 24 MiB-block `.xz` at `--jobs 4
 --parallel-memory 268435456`, sampling the container's `memory.stat`: 24 arenas
 and ~536 MiB anonymous resident, against ~328 MiB and one arena at
 `MALLOC_ARENA_MAX=2`. So roughly 200 MiB of that resident set is arena
@@ -382,10 +407,13 @@ same arrangement over the entire 40 GB `.xz` under `MALLOC_ARENA_MAX=2` and
 sampled ~330 MiB anonymous with one arena throughout, peaking at 404 MiB and
 finishing with ~108 MiB of the cgroup unused
 ([`measurements.md`](measurements.md), "koji full scan"). **A CPU quota is not
-the lever it looks like**: `--cpus 4` cuts the runtime to four workers and the
-arenas to eight and still reaches ~476 MiB, because what an arena retains is
-not proportional to how many there are. **Nor is the budget**: 128 MiB stated
-measures the same ~328 MiB as 256 MiB, since `BufferPool::slots()` clamps to
+the lever it looks like, and cutting the thread count is not either**: `--cpus
+4` took that probe's runtime to four workers and the arenas to eight and it
+still reached ~476 MiB, because what an arena retains is not proportional to
+how many there are. That is why the `current_thread` runtime above is claimed
+as a thread-count result and not as a memory one. **Nor is the budget the
+lever**: 128 MiB stated measures the same ~328 MiB as 256 MiB, since
+`BufferPool::slots()` clamps to
 `POOL_DEPTH.max(jobs)` at either. This is a property and not a deficiency — the
 remedy is `MALLOC_ARENA_MAX`, which an embedder and an operator both have
 today, and the manual says so ([`../manual/dump-inspection.md`](../manual/dump-inspection.md),

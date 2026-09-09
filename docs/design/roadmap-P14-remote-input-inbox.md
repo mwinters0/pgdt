@@ -214,8 +214,12 @@ would put an executor in the dependency graph of a crate whose distinguishing
 claim is a four-crate unsafe-free build. That costs this project nothing today,
 because every byte it reads already crosses a `spawn_blocking` boundary
 (`io::LocalFileSource::read_range` *is* a blocking `read_exact_at` on a blocking
-thread) and the library depends on `tokio` with `rt` + `sync` only, leaving
-`rt-multi-thread` to the binary.
+thread) and the library depends on `tokio` with `rt` + `sync` only. **Nothing
+in the tree adds `rt-multi-thread`** — the CLI runs a `current_thread` runtime
+for the same reason ([`architecture.md`](architecture.md), "Execution model and
+API surface") — so "the runtime it already has", below, is a single-threaded
+one: concurrent ranged GETs compose on it, a thread parked on a future does
+not.
 
 It costs **this phase** something specific: `CompressedSource::read_at` is
 synchronous and an `object_store` backend is async, so composing them means

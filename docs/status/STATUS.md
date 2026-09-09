@@ -339,7 +339,13 @@ the four orderings that bind are in the spec, not here.
       branches fire, on different terms, and the plain arm's default is serial.
       Notes:
       [`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md)
-- [ ] **19.3** The CLI runs a `current_thread` runtime.
+- [x] **19.3** The CLI runs a `current_thread` runtime, and `rt-multi-thread`
+      is gone from the workspace. At `--jobs 4` on this 24-CPU machine the
+      process holds **8 threads against 34**, writing a byte-identical cache;
+      the interrupt guard still saves and exits 143 under `SIGTERM`. Claimed as
+      a thread-count result only — the plain control is too small a shape for
+      the arena set to show. Notes:
+      [`../design/roadmap-P19.3-current-thread-runtime-notes.md`](../design/roadmap-P19.3-current-thread-runtime-notes.md)
 - [ ] **19.4** `Serial` carries an optional budget — closes `KD16`.
 - [ ] **19.5** `Partitioning` states its retained unit; the span term is added
       only for a chunk-shaped source; and a plain source's partition stops being
