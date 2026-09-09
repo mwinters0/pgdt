@@ -458,7 +458,16 @@ being inserted.
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation, the new defaults, and both flags' help text. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`. |
 
-**If 19.2's account lands on the pool depth**, the repair is admitted as the
-next free number and run before 19.8, per the binding above. If it lands on
-coordination the leader pays per worker, it takes a `KD<k>` instead and 19.8
-ships the plain default with the reason written down.
+**If 19.2's account lands on the pool depth**, the repair is **folded into 19.5**
+rather than admitted as a number of its own. 19.5 already opens `Partitioning`
+to state its retained unit, and a plain source's partition sizing is the same
+decision seen from the other side; two slices editing that type's meaning
+separately is how the second contradicts the first's rejected alternatives. If
+the account lands on coordination the leader pays per worker, it takes a `KD<k>`
+instead and 19.8 ships the plain default with the reason written down.
+
+**A repair reaching `leader::scan_partition` is out of this phase whichever way
+the account lands** — it changes what the leader does per piece for every
+source, which is the second branch's shape, not a default.
+([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+plain-`parse` fork is not routed yet".)

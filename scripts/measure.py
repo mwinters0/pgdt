@@ -6458,6 +6458,31 @@ PROFILE_SHAPES: tuple[str, ...] = ("parse", "query-strings", "query-typed")
 #: `--arrays --composite` file is where the nested path is reached at all.
 PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 
+#: The profiles read as a **pair** rather than against a baseline table, each
+#: named with the input it is taken on rather than crossed with every input.
+#:
+#: `parallel-scan-throughput`'s plain `parse` is *negative* at two workers —
+#: 0.471 s serial against 0.512 s — which is below the `POOL_DEPTH` clamp, so
+#: the clamp is not what that reading measures and nothing in the tree names
+#: what is. "Where do the extra 41 ms go" is a proportion question, so it is a
+#: profile, and the only way a profile answers it is as a difference: the two
+#: shapes are read against each other, bucket by bucket.
+#:
+#: **Explicitly paired, not a second cross product.** The three shapes above
+#: are crossed with both inputs because each is asking what a *path* costs and
+#: the two files reach different paths. This one is asking what one figure's
+#: one anomalous row is made of, and that row is on `control`; profiling the
+#: same pair over `arrays` would take two readings nothing reads.
+#:
+#: **The shapes are the figure's own**, `-jobs-<n>` and all, so each states
+#: `--parallel-memory` exactly as the timed row does — including on the
+#: one-worker leg, where `Serial` makes it inert. The reconciliation against
+#: `_script` covers these the same way it covers the three above.
+PROFILE_AXIS: tuple[tuple[str, str], ...] = (
+    ("parse-jobs-1", "control"),
+    ("parse-jobs-2", "control"),
+)
+
 
 def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[str]:
     """The `pgdq` arguments one profiled shape runs.
@@ -6487,6 +6512,22 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "--schema-mode", mode,
             "--jobs", str(SWEEP_JOBS),
         ]
+    if command.startswith(JOBS_AXIS):
+        # A shape whose worker count is a figure's axis states that count and
+        # the budget the axis is taken under, exactly as `_script` does. The
+        # count comes from the shape's own name, which is what makes a pair of
+        # profiles nameable as two rows of one table.
+        shape, _, jobs = command.rpartition("-jobs-")
+        if not jobs.isdigit() or int(jobs) not in PARALLEL_JOBS:
+            raise ValueError(f"{command!r} names a job count the figure does not carry")
+        if shape == "parse":
+            return [
+                "parse",
+                "--source", str(source),
+                "--dqcache", str(cache),
+                "--jobs", jobs,
+                "--parallel-memory", str(PARALLEL_BUDGET),
+            ]
     raise ValueError(f"unknown profile shape {command!r}")
 
 
@@ -6523,14 +6564,16 @@ def profile_recipe(cfg: Config) -> str:
       there reaches the `debuginfod` fetch. It prints which of the two it took,
       because both a skew and a failed fetch otherwise surface as a profile
       that looks entirely plausible -- see `DEBUGINFOD` above.
-    * **the worker count, stated rather than inherited.** `profile_argv` carries
-      `--jobs SWEEP_JOBS` for the same reason `_script` does, and here the
-      consequence is sharper than a moved number: a sampling profile's buckets
-      are per *thread*, so a profile taken at the machine's available
-      parallelism attributes a scan among workers the figure it explains never
-      ran. The shape-equality assertion is what holds the two together, and it
-      compares two shapes that each pin a count rather than two that each
-      inherit one.
+    * **the worker count, stated rather than inherited.** `profile_argv` states
+      one for the same reason `_script` does, and here the consequence is
+      sharper than a moved number: a sampling profile's buckets are per
+      *thread*, so a profile taken at the machine's available parallelism
+      attributes a scan among workers the figure it explains never ran. The
+      three cross-product shapes state `SWEEP_JOBS`; the `PROFILE_AXIS` pair
+      states the count in its own name, which is the whole of what separates
+      those two profiles. The shape-equality assertion is what holds this
+      function and `_script` together, and it compares two shapes that each
+      pin a count rather than two that each inherit one.
 
     And one thing that is not a mistake but reads like one: **no container.**
     A profile is about proportions, and the cgroup adds capability plumbing
@@ -6592,17 +6635,23 @@ def profile_recipe(cfg: Config) -> str:
             "",
         ]
 
+    # Every input any profile below reads, in declaration order and without
+    # repetition: the cross product's, then the paired shapes'. Computed rather
+    # than restated, so a pair taken on an input the cross product does not
+    # carry is staged and torn down without a second edit.
+    staged = list(PROFILE_INPUTS) + [n for _, n in PROFILE_AXIS if n not in PROFILE_INPUTS]
+
     head("Stage the inputs warm, on the host.")
     lines.append(f"mkdir -p {warm} {out}")
-    for name in PROFILE_INPUTS:
+    for name in staged:
         lines.append(f"cp -n {cfg.cache_dir / f'{name}.sql'} {warm / f'{name}.sql'}")
     lines.append("")
-    head("The profiles. Each is a runs/ artifact, not a figure.")
-    for name in PROFILE_INPUTS:
-        for shape in PROFILE_SHAPES:
-            stem = f"profile-{shape}-{name}"
-            argv = " ".join(profile_argv(shape, warm / f"{name}.sql", cache))
-            lines += [
+
+    def record(shape: str, name: str) -> None:
+        stem = f"profile-{shape}-{name}"
+        argv = " ".join(profile_argv(shape, warm / f"{name}.sql", cache))
+        lines.extend(
+            [
                 "",
                 f"rm -f {cache}",
                 f"{PERF} record -F {PERF_FREQ} --call-graph fp "
@@ -6611,11 +6660,25 @@ def profile_recipe(cfg: Config) -> str:
                 f"{PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
                 f"  --percent-limit 0.5 > {out / (stem + '.txt')}",
             ]
+        )
+
+    head("The profiles. Each is a runs/ artifact, not a figure.")
+    for name in PROFILE_INPUTS:
+        for shape in PROFILE_SHAPES:
+            record(shape, name)
     lines.append("")
-    head("Tear down: tmpfs is 16 G and six inputs do not fit beside a sweep's.")
-    lines.append(
-        f"rm -f {' '.join(str(warm / f'{n}.sql') for n in PROFILE_INPUTS)} {cache}"
+    head(
+        "The pair read against each other rather than against a table:",
+        "`parallel-scan-throughput`'s plain `parse` at one worker and at two,",
+        "which is where that figure goes negative below the POOL_DEPTH clamp.",
+        "Read as a difference, bucket by bucket -- a single profile of either",
+        "one answers nothing.",
     )
+    for shape, name in PROFILE_AXIS:
+        record(shape, name)
+    lines.append("")
+    head("Tear down: tmpfs is 16 G and these inputs do not fit beside a sweep's.")
+    lines.append(f"rm -f {' '.join(str(warm / f'{n}.sql') for n in staged)} {cache}")
     return "\n".join(lines)
 
 

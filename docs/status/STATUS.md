@@ -328,7 +328,19 @@ the four orderings that bind are in the spec, not here.
       [`../design/roadmap-P19.1-runtime-invariants-notes.md`](../design/roadmap-P19.1-runtime-invariants-notes.md)
 - [ ] **19.2** The plain-path account — a profile of `--jobs 1` against
       `--jobs 2`, and a `--alone` sitting against a raised-`POOL_DEPTH` scratch
-      build. No shipped code.
+      build. No shipped code. **Half landed.** The `parse` half is settled: a
+      plain `parse` at `--jobs ≥ 2` reads every byte **twice** (3.02 GiB off a
+      3.00 GiB file serially, 6.02 GiB parallel, flat in the worker count),
+      because a plain source's partition is exactly one read chunk and
+      `leader::scan_partition`'s mandatory tail read is another whole chunk.
+      That is the smaller of two terms — it explains the 1→2 step only, and the
+      4→8 step is charged to `POOL_DEPTH` — so **the fork is not yet routed**.
+      The harness change that buys it landed: the profile recipe now prints a
+      *pair* of profiles read against each other (`measure.PROFILE_AXIS`). The
+      sitting that discriminates both terms is **measured and unread** — two
+      `--alone` legs running detached,
+      `runs/19.2-pooldepth-20260909-0416/HANDOFF.md`. Notes:
+      [`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md)
 - [ ] **19.3** The CLI runs a `current_thread` runtime.
 - [ ] **19.4** `Serial` carries an optional budget — closes `KD16`.
 - [ ] **19.5** `Partitioning` states its retained unit; the span term is added
