@@ -326,20 +326,18 @@ the four orderings that bind are in the spec, not here.
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
       [`../design/roadmap-P19.1-runtime-invariants-notes.md`](../design/roadmap-P19.1-runtime-invariants-notes.md)
-- [ ] **19.2** The plain-path account — a profile of `--jobs 1` against
-      `--jobs 2`, and a `--alone` sitting against a raised-`POOL_DEPTH` scratch
-      build. No shipped code. **Half landed.** The `parse` half is settled: a
-      plain `parse` at `--jobs ≥ 2` reads every byte **twice** (3.02 GiB off a
+- [x] **19.2** The plain-path account — both instruments run and read. A plain
+      `parse` at `--jobs ≥ 2` reads every byte **twice** (3.02 GiB off a
       3.00 GiB file serially, 6.02 GiB parallel, flat in the worker count),
-      because a plain source's partition is exactly one read chunk and
-      `leader::scan_partition`'s mandatory tail read is another whole chunk.
-      That is the smaller of two terms — it explains the 1→2 step only, and the
-      4→8 step is charged to `POOL_DEPTH` — so **the fork is not yet routed**.
-      The harness change that buys it landed: the profile recipe now prints a
-      *pair* of profiles read against each other (`measure.PROFILE_AXIS`). The
-      sitting that discriminates both terms is **measured and unread** — two
-      `--alone` legs running detached,
-      `runs/19.2-pooldepth-20260909-0416/HANDOFF.md`. Notes:
+      which is the 1→2 step; the `--alone` sitting against a clamp-lifted
+      scratch build confirms a second, *depth* term above four workers but does
+      **not** account for the 4→8 step it was charged with, and refutes
+      `POOL_DEPTH` outright as the cause of the typed-`query` flatness. The
+      harness change that buys the first half landed: the profile recipe now
+      prints a *pair* of profiles read against each other
+      (`measure.PROFILE_AXIS`). **Routing the repair is not this slice's** and
+      the readings split the spec's fork — see "Decisions worth another look".
+      Notes:
       [`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md)
 - [ ] **19.3** The CLI runs a `current_thread` runtime.
 - [ ] **19.4** `Serial` carries an optional budget — closes `KD16`.
@@ -529,4 +527,26 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*(None open.)*
+- **Which arm of `P19`'s fork the plain-path account lands on, and therefore
+  whether repair 1 folds into `19.5`.** `19.2`'s sitting has been read
+  ([`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md),
+  "What the sitting says") and it splits the fork rather than choosing an arm,
+  so the closing session declined to route it — the notes doc reserves the call
+  ("that is a call for the maintainer, not for the closing session") and the
+  evidence reads both ways. Lifting `POOL_DEPTH` on the plain source alone
+  **confirms** the depth term: the lifted leg is 4–10% faster above four
+  workers, on per-rep ranges disjoint from the stock leg's at 12, 16 and 24, and
+  unchanged where the clamp cannot bind. It **does not** remove the 4→8 step the
+  term was charged with (+0.076 s lifted against +0.087 s stock, inside the
+  spreads), the column stays below serial at every count, and the same sitting
+  refutes `POOL_DEPTH` outright for the typed-`query` half, which owes a `KD<k>`
+  on either arm and has not been allocated one. **What changes if
+  reconsidered:** reading it as landing on the pool depth makes both terms
+  `pool.set_limits`' two arguments, and repair 1 folds into `19.5` under the
+  spec's first branch; reading the surviving step and the refuted suspect as the
+  second branch sends the plain path's remaining cost out of the phase under a
+  `KD<k>`, and `19.8` ships the plain default with the reason written down.
+  Nothing is blocked — `19.5` and `19.8` are unstarted, no plain default may be
+  set before the routing is settled, no code is written either way, and both
+  legs are on disk (`runs/measure-20260909T041637`,
+  `runs/measure-20260909T044346`) so nothing must be re-measured.

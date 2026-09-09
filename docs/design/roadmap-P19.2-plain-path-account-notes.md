@@ -2,8 +2,9 @@
 
 The spec owes an account of `parallel-scan-throughput`'s two bad plain numbers
 before any plain default is set, and it names two instruments because only one
-half is a discovery. **The `parse` half is settled and is written below; the
-typed-`query` half is measured and not yet read** — see "What is still open".
+half is a discovery. **Both halves are settled and are written below**; where
+the account leaves the spec's fork is not, and that is under "What is still
+open: the fork".
 
 No library code changes here. What lands is a harness change: the profile
 recipe now prints a *pair* of profiles read against each other
@@ -97,15 +98,11 @@ branch: futex counts do grow per worker, but wall is flat from 8 to 24 where
 that term would still be climbing, so per-worker coordination is not what the
 plateau is made of.
 
-**This is provisional until the sitting's plain `parse` column is read**, and
-that column is the discriminator. The scratch build is `POOL_DEPTH.max(jobs)` in
-`LocalFileSource::hint_parallelism` — the plain source's own clamp — so the
-sitting is an instrument for *both* halves of this slice, not only the
-typed-`query` one, and it carries the only measurement in the apparatus that
-reaches the 4→8 step. If the plain `parse` leg improves above four workers under
-the lifted clamp, the depth term is confirmed and the account lands on the pool
-depth. If it does not, the 4→8 step is something else and the second branch is
-back in play.
+**The sitting has been read, and it confirms the depth term without accounting
+for the step that term was charged with.** The depth term is real and it is
+measured; the 4→8 step survives the clamp being lifted. Everything above stands
+except that one attribution — see "What the sitting says" below, which is why
+this slice's fork is not routed here.
 
 *Rejected:* routing the repair on the sizing defect alone, before the sitting is
 read. That was this slice's first call and it was reversed on review: the
@@ -150,47 +147,89 @@ the footprint accounting is right and the *sizing* is what is wrong. Nothing
 about the interior split's contract, the piece semantics or the fold is touched
 by either repair.
 
-## What is still open
+## What the sitting says
 
-The typed-`query` half. The spec's named suspect is `POOL_DEPTH` clamping the
-chunk pool to four slots, and its instrument is a `--figure
-parallel-scan-throughput --alone` sitting against a scratch build with that
-clamp lifted. **That sitting serves both halves**, which was not the intent when
-it was launched: the figure carries a plain `parse` column too, and the clamp it
-lifts is the one the `parse` account's second term is charged to. **The sitting was launched and not read** — it is two legs, a
-stock control at this commit and the scratch build, because the published table
-was taken at `20fd77c` and `stream.rs` and `main.rs` have moved since, so the
-scratch build has nothing at this commit to be read against. Both legs are
-`--alone` and NOT PUBLISHABLE by construction.
+Two `--alone` legs of `parallel-scan-throughput`, both **NOT PUBLISHABLE** and
+read against each other rather than against `measurements.md`: a stock control
+(`runs/measure-20260909T041637`) and a scratch build whose
+`LocalFileSource::hint_parallelism` passes `POOL_DEPTH.max(jobs)` instead of
+`POOL_DEPTH` (`runs/measure-20260909T044346`). Two legs rather than one because
+the published table was taken at `20fd77c` and `stream.rs` and `main.rs` have
+moved since, so the scratch build has nothing published to be read against. The
+clamp is lifted on the plain source alone and not by raising the constant, which
+also floors the `.xz` source's block pool — so the two compressed columns are a
+control on the sitting itself.
 
-`runs/19.2-pooldepth-20260909-0416/HANDOFF.md` says how to read it.
+Median wall over five reps, plain columns, seconds:
 
-**The scratch build is `POOL_DEPTH.max(jobs)` in `LocalFileSource::hint_parallelism`,
-not a raised `POOL_DEPTH` constant.** Raising the constant reaches the `.xz`
-source's chunk pool and, through `POOL_DEPTH.max(jobs)` in `apportion`, its
-*block* pool floor — so it would move the two compressed legs the plain legs are
-being read against. Lifting the clamp where the suspect is leaves those two legs
-byte-identical, and it is also the shape the repair would take.
+| `--jobs` | 1 | 2 | 4 | 8 | 12 | 16 | 24 |
+|---|---|---|---|---|---|---|---|
+| `parse`, stock | 0.432 | 0.457 | 0.482 | 0.569 | 0.564 | 0.567 | 0.560 |
+| `parse`, clamp lifted | 0.443 | 0.498 | 0.470 | 0.546 | 0.522 | 0.510 | 0.522 |
+| typed `query`, stock | 4.75 | 4.85 | 4.80 | 4.82 | 4.81 | 4.87 | 4.85 |
+| typed `query`, clamp lifted | 4.79 | 4.88 | 4.78 | 4.84 | 4.82 | 4.83 | 4.87 |
 
-**Host probes predict the sitting will come back "not the pool depth", and that
-is an answer the spec already provides for** — *"a profile that comes back
-inconclusive is itself the answer"*. What they show is that a plain typed
-`query` never runs concurrently at all, whatever the pool depth:
+### The typed-`query` suspect is refuted
 
-| `--jobs` | wall | user | CPU used |
-|---|---|---|---|
-| 1 | 4.68 s | 3.78 | 0.81 |
-| 4 | 4.75 s | 4.01 | 0.85 |
-| 8 | 4.77 s | 4.13 | 0.87 |
-| 16 | 4.79 s | 4.18 | 0.87 |
+**`POOL_DEPTH` is not what makes a plain typed `query` flat.** Lifting it moves
+no cell by more than 0.04 s (0.8%), every difference is inside the per-rep
+spread, the ratio stays 0.98–1.00× across the whole axis exactly as the
+published table reads, and the two legs plan identical sub-stream counts (8, 12,
+14, 14). The spec's named suspect for this half is spent, and the host probes'
+prediction is confirmed inside the apparatus.
 
-Fifteen sub-streams are *planned* at `--jobs 16` — the budget note names the
-number — and total CPU never reaches one core. A pool of four slots would still
-have shown roughly four workers' worth of decode; ~0.87 cores says the
-sub-streams are not overlapping, which points at the serialised stage every row
-passes through rather than at the pool. These are host probes outside the
-apparatus and no document may quote them; the sitting is what answers it inside
-one.
+**What it is short of, host probes say, is any concurrency at all.** At
+`--jobs 16` a plain typed `query` plans fifteen sub-streams — the budget note
+names the number — and total CPU never reaches one core: 3.78 s of user in
+4.68 s of wall at one worker, 4.18 s in 4.79 s at sixteen. A four-slot pool
+would still have shown roughly four workers' worth of decode, so ~0.87 cores
+points at a stage every row passes through serially rather than at the pool.
+These are host readings, uncontained and ungated: **no document may quote them
+as measurements**, and they are kept here only because they name where to look
+next.
+
+### The depth term is real, and it is not the 4→8 step
+
+**Where the clamp binds, lifting it helps; where it cannot bind, it changes
+nothing.** Below five workers `POOL_DEPTH.max(jobs)` *is* `POOL_DEPTH`, and the
+1-, 2- and 4-job rows differ by no more than the sitting's noise — the lifted
+leg is the *slower* of the two at one and two workers. Above four it is faster
+at every count, and by more as the count rises: 4.0%, 7.4%, 10.1% and 6.8% at 8,
+12, 16 and 24. The per-rep ranges are **disjoint** at 12 (0.557–0.577 against
+0.504–0.528), at 16 (0.551–0.580 against 0.500–0.521) and at 24 (0.554–0.582
+against 0.520–0.529); they overlap only at 8. A leg-level offset does not
+explain it — the plain typed `query` column, taken in the same two sittings,
+shows none at all (±0.8%, unsigned), and an offset would be flat in the worker
+count where this grows with it.
+
+**What lifting the clamp does not do is remove the step.** Measured against each
+leg's own four-job row, which is what the depth term was charged with:
+
+| above-four penalty (s) | 8 | 12 | 16 | 24 |
+|---|---|---|---|---|
+| stock | +0.087 | +0.082 | +0.085 | +0.078 |
+| clamp lifted | +0.076 | +0.052 | +0.040 | +0.052 |
+
+The stock leg is flat: workers past four buy nothing and cost a fixed ~0.08 s.
+The lifted leg *recovers* as workers are added, which is the shape of a clamp
+being released and is the whole of the evidence that the depth term exists. But
+the 4→8 step itself is +0.076 s with the clamp lifted against +0.087 s with it
+in place — a difference inside the spreads — and the column never turns
+positive: its best point above four is **0.87× at sixteen workers**, still worse
+than four workers and worse than serial.
+
+So the depth term removes between a third and a half of the above-four penalty
+from twelve workers up, and nothing measurable at eight. It is not what the 4→8
+step is made of.
+
+**Apparatus.** Both legs passed the harness's contention gate; the lifted leg
+ran on the noisier machine of the two (CPU stall ≤8.10% against ≤1.20%, I/O
+stall ≤21.15% against ≤9.63%), which biases against the effect reported rather
+than for it. Two `.xz` typed-`query` reps in the lifted leg are outliers
+(31.30 s and 33.27 s) and sit at the top of their ranges; medians are unmoved.
+Neither table may be folded into `measurements.md` — `--alone` marks a
+diagnostic sitting by construction, and the lifted leg is a build this project
+does not ship.
 
 ## The harness change
 
@@ -218,19 +257,32 @@ The recipe's own "the worker count, stated rather than inherited" bullet no
 longer says every invocation states `SWEEP_JOBS`: the pair states the count in
 its own name, which is the whole of what separates its two profiles.
 
-## For the session that closes this slice
+## What is still open: the fork
 
-1. Read `runs/19.2-pooldepth-20260909-0416/HANDOFF.md` and both legs'
-   `tables.md`. **Read the plain `parse` column as well as the typed-`query`
-   one** — the scratch build lifts the plain source's own clamp, so that column
-   is what discriminates the fork, and it is the only reading here that reaches
-   past four workers.
-2. Write both halves of the account into this doc, then tick `19.2`.
-3. **Then** route the repair, which this slice deliberately does not do. If the
-   plain `parse` leg improves above four workers, the account lands on the pool
-   depth and repair 1 is **folded into `19.5`**, whose spec row already opens
-   `Partitioning` — not admitted as a new number ahead of `19.8`. If it does
-   not, the 4→8 step is unaccounted for and the second branch is live again;
-   that is a call for the maintainer, not for the closing session.
-4. Repair 2 is out of this phase either way — a `KD<k>` if it is wanted, and it
-   may not be.
+The slice's contract is the account, and the account is written. **Routing it is
+not this slice's**, and the readings do not settle the spec's fork either way,
+so it is a call for the maintainer — filed under `STATUS.md`'s "Decisions worth
+another look". What each arm now rests on:
+
+- **The pool depth.** The depth term is real and measured. It is the only thing
+  separating two builds that differ in one expression, it appears only where the
+  clamp binds, and it grows with the worker count. Read that way the account
+  lands on the pool depth, both its terms are `pool.set_limits`' two arguments,
+  and repair 1 folds into `19.5`.
+- **The second branch.** The 4→8 step the depth term was charged with survives
+  the clamp being lifted, and the plain typed `query` is flat with the clamp
+  gone. Neither of the two terms this account names explains either fact. Read
+  that way the plain path's remaining cost is not a defaults question, it takes
+  a `KD<k>`, and `19.8` ships the plain default with the reason written down.
+
+**The typed-`query` half owes a `KD<k>` on either arm**, since its suspect is
+refuted outright. It is not allocated here: the parse fork may produce a sibling
+entry or absorb it, and an entry written before the routing is settled would be
+rewritten by the change that settles it.
+
+Repair 2 is out of this phase either way — a `KD<k>` if it is wanted, and it may
+not be, since amortizing the tail under repair 1 makes `.xz`'s 4% smaller still.
+
+**Nothing is blocked.** No plain default may be set before the routing is
+settled, and the two slices the routing reaches — `19.5` and `19.8` — are both
+unstarted. The two legs are on disk and the sitting need not be re-taken.
