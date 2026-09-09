@@ -48,7 +48,9 @@ follow, and each is why the formula has three terms rather than one:
 - the cap keeps the partition read a buffer `BufferPool::keeps`, since above
   8 MiB only a buffer of exactly the announced read length survives release,
   and an uncapped multiple would hand back a fresh `calloc` per partition and
-  lose the pool on the path being sized;
+  lose the pool on the path being sized — but see "The cap, reviewed" below,
+  which is where that ceiling stopped being a term of the formula and became a
+  symptom of the pool having one read unit;
 - the floor means a caller whose chunk is already at or past the ceiling gets
   the answer this source gave before, which the hint clause keeps pooled.
 
@@ -123,3 +125,49 @@ of this phase and now buys less: it would shrink the compressed source's 4% and
 the plain source's remaining 12.5%, where before it faced 100%. It is filed as a
 rejected alternative beside the mechanism ("The interior split") rather than as
 a `KD<k>`, since nothing is now wrong that it would fix.
+
+## The cap, reviewed
+
+The partition size was filed under "Decisions worth another look" and has been
+reviewed. **The code stands; the reason recorded for it does not.** Five facts
+came out of reading the mechanism cold, and the last two are what `19.7`
+inherits.
+
+**The partition read really is one buffer.** `leader::scan_partition` reads
+`[start, end)` in a single `read_range` (`want = end - start`) and only then
+falls to `want = chunk_size` for the tail, so `partition_bytes` is a length
+this source allocates rather than an accounting unit.
+
+**The cap is a consequence, not a choice.** `BufferPool` holds one announced
+length and the parallel plain path has two read units, so the partition read
+cannot be the announced one and survives release only under the ceiling. Every
+alternative ceiling the original entry weighed — cap on the stated budget, or
+eat the `calloc` — answers the wrong question; the arrangement that answers it
+is the two-pool one `XzSource` already runs, now a roadmap Future item ("A
+two-unit plain source"). The doc comment and
+[`architecture.md`](architecture.md), "The interior split", say this rather
+than presenting the ceiling as a merit.
+
+**The cap makes pooling possible and does not make it happen.**
+`BufferPool::pick` takes the smallest free buffer with `buf.len() >= len`, and
+`POOL_DEPTH` slots are shared between 8 MiB partition reads and 1 MiB tail
+reads across every worker — so a partition read finding only tail buffers free
+allocates anyway. Nothing has measured the hit rate, and the 1.83× pool-miss
+figure the entry reasoned from is a *chunk* reading.
+
+**The pool's accounting under-reports this path by 8×, and `19.7` owns it.**
+`slots()` is a count at `slot_bytes()` — the announced chunk, 1 MiB — while
+`keeps` admits anything up to `POOL_MAX_BYTES`, and `release` tests
+`free.len() < slots` without rescaling by bytes. So the free list can hold four
+8 MiB partition buffers, 32 MiB, which `held_bytes()` reports as 4 MiB.
+`held_bytes()` is exactly what `XzSource::apportion` subtracts to divide one
+budget between two pools, so this is the number a budget rule would trust. The
+spec's `19.7` row was amended to cover it.
+
+**The shipped default sits exactly on the cap.** `DEFAULT_CHUNK_SIZE * 8` is
+`POOL_MAX_BYTES` to the byte, and the three constants are justified
+independently, so a later change to any one of them would silently cap the
+default configuration with no test failing.
+`a_shipped_plain_partition_is_eight_whole_chunks` is the guard; deriving one
+constant from another was rejected, because it reads as though one *causes* the
+other and buries two independent justifications in one expression.

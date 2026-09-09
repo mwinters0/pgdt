@@ -452,7 +452,7 @@ being inserted.
 | **19.4** | `Serial` carries an optional budget — closes **`KD16`**. |
 | **19.5** | `Partitioning` states its retained unit; `plan_partitions` adds `max_source_span` only for a chunk-shaped source; and a plain source's partition stops being exactly one read chunk, which is 19.2's repair 1 folded in. |
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
-| **19.7** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule. |
+| **19.7** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule — including `BufferPool`'s own accounting, which under-reports whenever `keeps` admits a buffer larger than `slot_bytes` ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The plain partition's cap, reviewed"). |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
 | **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, and the v1 fixture tree that tests `RT4`'s shape against the reader. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation, the new defaults, and both flags' help text. |

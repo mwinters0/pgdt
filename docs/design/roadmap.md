@@ -774,6 +774,22 @@ payloads").
 Work we intend to do without committing it to a phase. An item moves out of
 this section when it acquires a phase number, not when it acquires a design.
 
+- **A two-unit plain source, so a raised `--chunk-size` keeps its partition
+  multiple.** `LocalFileSource` runs one `BufferPool` with one announced read
+  length, while the parallel plain path has two read units — a partition-sized
+  body read and a chunk-sized tail read. Only one of them can be the announced
+  length, so the partition read survives release only by sitting under
+  `POOL_MAX_BYTES`, and `io::PLAIN_PARTITION_CHUNKS` is capped there. The
+  consequence is that the multiple shrinks as the stated chunk grows and
+  reaches one at `--chunk-size 8m`, handing back the 100% double read the
+  multiple exists to remove. `XzSource` already runs the arrangement that fixes
+  it — two pools dividing one stated budget through `BufferPool::held_bytes` —
+  so this is applying a shape the tree already has, not inventing one. It is
+  here rather than in a phase because it changes what a source *is* rather than
+  what it defaults to, and P19 is about defaults; it wants grilling and a spec
+  before any of it is written
+  ([`architecture.md`](architecture.md), "The interior split").
+
 - **TOC attribution across an intervening statement, so `--disable-triggers`
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and
   a `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first entry — between a

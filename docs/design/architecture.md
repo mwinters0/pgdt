@@ -4491,11 +4491,37 @@ read every byte of a 3.00 GiB control twice, flat in the worker count because
 the cost is charged per partition rather than per worker. `io::PLAIN_PARTITION_CHUNKS`
 is what fixes it — eight chunks caps the waste at 12.5%, and each doubling past
 that buys under a percent of the read while halving how finely a region can be
-cut and how many readers a stated budget affords. The product is capped at
-`POOL_MAX_BYTES` so the partition read stays a buffer `BufferPool::keeps`,
-since above that ceiling only a buffer of exactly the announced read length
-survives release and an uncapped multiple would lose the pool on the very path
-it is sizing. *Rejected: sizing the tail read to a row instead.* It reaches
+cut and how many readers a stated budget affords.
+
+**The `POOL_MAX_BYTES` cap on that product is a consequence of the pool having
+one read unit, not a ceiling chosen on its merits.** `BufferPool` keeps exactly
+one announced length (`hint_read_size`), and the parallel plain path has *two*
+read units — a partition-sized body read and a chunk-sized tail read — so the
+partition read cannot be the announced one and survives release only by being
+under the ceiling. Hence the cap, and hence its cost: the multiple shrinks as
+the stated chunk grows (four chunks at `--chunk-size 2m`, two at `4m`, **one**
+at `8m` and above), so a caller who tuned that flag gets the 100% double read
+back. The fix is not a different ceiling — every ceiling is a workaround for
+the single-unit pool — but the two-unit arrangement `XzSource` already runs, a
+partition pool and a chunk pool dividing one stated budget through
+`held_bytes()` ("The compressed source"). That is a mechanism change rather
+than a default, so it is filed as a roadmap Future item ("A two-unit plain
+source") rather than taken inside a phase about defaults.
+
+**Two properties of the capped arrangement are worth knowing before trusting
+it.** Admission to the free list is not a hit on it: `BufferPool::pick` takes
+the smallest free buffer with `buf.len() >= len`, and four slots are shared
+between 8 MiB partition reads and 1 MiB tail reads across every worker, so a
+partition read that finds only tail buffers free allocates anyway — the cap
+makes pooling *possible*, and nothing has measured how often it happens. And
+the pool's accounting under-reports what this path holds: `slots()` is a count
+at `slot_bytes()`, which is the announced *chunk*, while `keeps` admits
+anything up to the ceiling, so a free list of four 8 MiB partition buffers is
+32 MiB that `held_bytes()` reports as 4 MiB. That number is what divides a
+budget between two pools, so `19.7` fixes it in the change that writes the
+budget rule.
+
+*Rejected: sizing the tail read to a row instead.* It reaches
 every source and would shrink the compressed 4% too, but it changes what the
 leader does per piece for every caller rather than what one source says about
 itself — a mechanism change, not a default — and amortizing the tail here makes

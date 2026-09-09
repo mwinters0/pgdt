@@ -585,14 +585,24 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// percent of the read while it halves how finely a region can be cut and how
 /// many readers a stated budget affords.
 ///
-/// **The product is capped at [`POOL_MAX_BYTES`] so the partition read stays a
-/// buffer the pool keeps** ([`BufferPool::keeps`]): above that ceiling only a
-/// buffer of exactly the announced read length survives release, so an
-/// uncapped multiple would hand back a fresh `calloc` per partition and lose
-/// the pool on the very path this is sizing. Where the announced chunk is
-/// itself at or past the ceiling the partition is that one chunk, which the
-/// hint clause keeps — the same answer this source gave before the multiple
-/// existed.
+/// **The product is capped at [`POOL_MAX_BYTES`], and that cap is a
+/// consequence of this pool having one read unit rather than a ceiling chosen
+/// on its merits.** [`BufferPool`] keeps exactly one announced length
+/// ([`ByteRangeSource::hint_read_size`]) and the parallel plain path has two —
+/// this partition read and `scan_partition`'s chunk-sized tail read — so the
+/// partition read cannot be the announced one and survives release
+/// ([`BufferPool::keeps`]) only by being under the ceiling; uncapped it would
+/// hand back a fresh `calloc` per partition. What it costs is that the
+/// multiple shrinks as the announced chunk grows, reaching **one** at
+/// [`POOL_MAX_BYTES`] and above — the double read this constant exists to
+/// remove, returned to the caller who raised `ScanOptions::chunk_size`. The
+/// fix is not a different ceiling but the two-unit arrangement [`XzSource`]
+/// already runs; see `docs/design/architecture.md`, "The interior split".
+///
+/// **The shipped default sits exactly on the cap** — 1 MiB × 8 is
+/// [`POOL_MAX_BYTES`] — and the two constants are justified independently, so
+/// nothing but [`a_shipped_plain_partition_is_eight_whole_chunks`] stops a
+/// later change to either from silently capping the default configuration.
 const PLAIN_PARTITION_CHUNKS: usize = 8;
 
 /// Read buffers, reused rather than allocated per chunk.
@@ -2282,6 +2292,27 @@ mod tests {
 
         source.hint_read_size(16 << 20);
         assert_eq!(source.partitions(0..16).partition_bytes(), 16 << 20);
+    }
+
+    /// **The shipped configuration must sit *inside* the cap, not on it.**
+    /// `DEFAULT_CHUNK_SIZE * PLAIN_PARTITION_CHUNKS` is exactly
+    /// [`POOL_MAX_BYTES`] today, and the three constants are justified
+    /// independently — the chunk by the read-chunk sweep, the multiple by
+    /// where the tail's returns flatten, the ceiling by one-off-ness. So
+    /// nothing but this assertion stops a later change to any one of them from
+    /// silently converting the default from "eight whole chunks" to "capped",
+    /// which is the case [`PLAIN_PARTITION_CHUNKS`] exists to prevent and the
+    /// one no other test would notice.
+    #[test]
+    fn a_shipped_plain_partition_is_eight_whole_chunks() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let source = LocalFileSource::open(file.path()).unwrap();
+        source.hint_read_size(crate::DEFAULT_CHUNK_SIZE);
+        assert_eq!(
+            source.partitions(0..16).partition_bytes(),
+            (PLAIN_PARTITION_CHUNKS as u64) * (crate::DEFAULT_CHUNK_SIZE as u64),
+            "the shipped chunk size must yield a whole multiple, uncapped"
+        );
     }
 
     /// A block-decoding `.xz` advises its block boundaries, so a partition is

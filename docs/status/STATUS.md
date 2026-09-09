@@ -366,7 +366,9 @@ the four orderings that bind are in the spec, not here.
       [`../design/roadmap-P19.5-retained-unit-notes.md`](../design/roadmap-P19.5-retained-unit-notes.md)
 - [ ] **19.6** The reserve figure registered and taken diagnostically to choose
       the constant. No published table.
-- [ ] **19.7** `discover_memory_limit`, `Parallelism::discover`, the budget rule.
+- [ ] **19.7** `discover_memory_limit`, `Parallelism::discover`, the budget
+      rule, and `BufferPool`'s accounting, which under-reports whenever
+      `keeps` admits a buffer larger than `slot_bytes`.
 - [ ] **19.8** The source's own worker default; `DEFAULT_JOBS` removed.
 - [ ] **19.9** Resolution tests, the status line's provenance, the below-floor
       `PlanNote`.
@@ -551,20 +553,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A plain partition is eight read chunks capped at `POOL_MAX_BYTES`, and the
-  cap undoes the repair for anyone who raised `--chunk-size`.** `19.5` had to
-  pick a size and the spec named none. Eight caps a worker's tail read at 12.5%
-  of a partition; the 8 MiB cap keeps the partition read a buffer
-  `BufferPool::keeps`, since above that ceiling only a buffer of exactly the
-  announced read length survives release and an uncapped multiple would pay a
-  fresh `calloc` per partition. The consequence is that the multiple shrinks as
-  the stated chunk grows — two chunks at `--chunk-size 4m`, and **one** at 8 MiB
-  and above, which is the 100% double read this slice exists to remove, for the
-  caller who tuned the flag. The alternatives are to cap on the stated *budget*
-  rather than on the pool ceiling, or to let the partition read fall out of the
-  pool above it and pay the `calloc` — the first spends budget the sub-stream
-  divisor also spends, the second trades a measured 1.83× pool miss for a
-  12.5% read. Nothing was measured for any of the three; `19.11`'s sweep prices
-  only the shipped one. Reversing it is one expression in
-  `LocalFileSource::partitions` plus the constant's doc comment.
-  ([`../design/roadmap-P19.5-retained-unit-notes.md`](../design/roadmap-P19.5-retained-unit-notes.md))
+*(None open.)*
