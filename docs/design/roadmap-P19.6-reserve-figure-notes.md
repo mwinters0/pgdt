@@ -33,7 +33,7 @@ borrowed, for the reason under "What `19.11` inherits"; that it lands on
 apparatus is the one that took it.
 
 **`budget = limit − reserve` therefore cannot bound a compressed parallel scan
-under any constant.** Substituting the worst cell — 730 MiB — into a 3 GiB
+under any constant, on this build.** Substituting the worst cell — 730 MiB — into a 3 GiB
 limit gives a 2.3 GiB budget, which by the same line reads about 5 GiB
 resident. The term that actually bounds the process is the *fraction ceiling*
 the spec calls a number that "bounds nothing anyone has measured".
@@ -48,9 +48,17 @@ against `parallel-scan-throughput`'s published 16.00 s serial is 1.6× / 2.2× /
 3.6× / 5.5×, which lands between that figure's 2-, 4-/8-, 8-/12- and 16-/24-job
 rows.
 
-So **a decoding worker holds about 2.2× what the divisor charges it**. The
-divisor charges the decoded block and a chunk buffer; the worker also holds an
-8 MiB LZMA2 dictionary, its compressed input window and the batch in flight.
+So **the pool holds about 2.2× what the divisor charges a worker** — and the
+mechanism is the block pool's own ceiling rather than anything a worker carries.
+`BufferPool::release` pools while the free list is below `slots()` and
+`BlockCache` retains up to `slots()` by a count of its own, so the ceiling is
+`2 × slots × unit`: 2 × 24 MiB against a charged 24 + 1, which is the 54 with no
+further term. (An earlier reading of this sitting attributed the excess to an
+8 MiB LZMA2 dictionary, a compressed input window and a batch in flight; `parse`
+builds no batches, and the doubled ceiling accounts for it without the other
+two. `19.7` couples the counts —
+[`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+reserve rule's two entries, closed".)
 This is not a defect — the manual already tells a user that an `.xz` parallel
 scan holds more than `--parallel-memory` names
 ([`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--jobs` and
@@ -139,10 +147,11 @@ cross a share today. The three resident figures the closing sweep collapses
 first of them to declare a borrow has to carry `self.rss` across too. It is not
 done here because nothing calls it yet.
 
-**A re-take is owed after `19.7`, not before.** `19.7` fixes `BufferPool`'s
-accounting, which under-reports whenever `keeps` admits a buffer larger than
-`slot_bytes`; that is the number a budget rule trusts, so every cell above may
-move. Re-taking now would price a build the phase is about to replace.
+**A re-take is owed after `19.7`, not before, and it is `19.12`'s.** `19.7`
+fixes `BufferPool`'s accounting — the `keeps`/`slot_bytes` under-report, and the
+block pool's free and retained counts coupled — which is the number a budget
+rule trusts, so every cell above moves. Re-taking now would price a build the
+phase is about to replace.
 
 ## The apparatus
 
@@ -156,10 +165,24 @@ departure from the register's 512 MB and named as one in
 `test_measure.MEMORY_DEPARTURES`: the largest budget under test is itself
 larger than 512 MB.
 
-## What this leaves open
+## What this settled, once it was reviewed
 
-Two entries under `STATUS.md`'s "Decisions worth another look", both about the
-spec's reserve section rather than about anything built here: whether `19.7`
-ships `limit − reserve` as specified now that the compressed path refutes it,
-and whether the "measured both ways, ship the uncapped number" decision and
-`19.10`'s manual recommendation still stand with no arena effect to price.
+Both consequences went to the maintainer under `STATUS.md`'s "Decisions worth
+another look" and were closed the same day
+([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+reserve rule's two entries, closed").
+
+**The rule ships unamended, because the multiple is repairable.** The excess is
+the block pool's doubled ceiling, which `19.7` couples; once it is coupled,
+resident is the budget plus a constant and `limit − reserve` is what that
+constant is. `19.7` was re-scoped to the accounting alone, **`19.12` re-takes
+this sitting against its build** — the re-take this doc says is owed — and
+`19.13` ships discovery and the rule with the constant `19.12` chooses. The
+constant is one number, taken from the compressed leg, and it over-reserves the
+plain path by roughly the difference between the two fixed terms.
+
+**The arena price came out of the spec rather than into it.** The 200 MiB it
+rested on was measured under `rt-multi-thread`, where twenty of twenty-four
+arenas belonged to threads that did no work and `19.3` has since deleted them;
+the manual's 536/328 numbers were removed on the spot, that rule binding
+absolutely, and `M76` takes the controlled reading `19.10` will write from.

@@ -212,11 +212,42 @@ roughly **constant**, not proportional. A percentage under-reserves at a small
 limit and over-reserves at a large one, which is backwards: the small cgroup is
 where being wrong kills the process.
 
+**That evidence holds only below the clamp, and the rule is sound only once the
+block pool's ceiling is its stated budget.** The reading above was taken at
+`--jobs 4`, where `POOL_DEPTH.max(jobs)` is 4 and binds at both budgets; at
+`--jobs 24` the clamp is slack, `slots()` becomes `budget / unit`, and the
+block pool's free list and retained list are each held at that count with
+nothing shared between them — so a block-decoding source's resident set tracks
+**twice** the stated budget rather than a constant above it. The overhead is
+constant below the clamp and proportional above it, which no subtraction
+describes. **`19.7` therefore couples the two counts** so that one stated
+number bounds the pool ("[`architecture.md`](architecture.md), The compressed
+source"), and the rule below is correct as written once it does; without that
+repair `limit − reserve` bounds nothing on the compressed path and the fraction
+is doing undeclared work.
+Evidence: [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's
+two entries, closed".
+
 So the rule is `budget = limit − reserve`, floored at today's 64 MiB constant,
 with a **fraction as a ceiling only** — `min(fraction × limit, limit −
 reserve)`. The ceiling exists so that a very large allocation is not handed to
 the pools whole; it bounds nothing anyone has measured, and it is defensible as
 "we do not take an allocation we cannot show we use" rather than as a number.
+
+**The reserve is one constant, taken from the compressed leg, and it
+over-reserves the plain path by roughly the difference.** The two paths' fixed
+terms are a factor of thirty apart — a plain `parse` holds 5.86 MiB above its
+pool, which is `peak-rss`'s published 5.85 and the cheapest check that the
+instrument is the right one, where the block-decoding path's fixed term is a few
+hundred megabytes. A per-source reserve is not available where the number is
+needed: `Parallelism::discover()` is the primitive an embedder calls with
+nothing open, and a source's own answer is downstream of recognition, which is
+I/O — the same argument that makes the *worker* default source-dependent makes
+the reserve not. Over-reserving is the safe direction, and an operator who wants
+a plain scan's real headroom states `--parallel-memory`. *Rejected:* having
+`discover()` answer a range, or a closure over a source, which puts recognition
+inside the primitive that exists to serve a caller who has already made half
+their allocation decision.
 
 **What is read is the minimum over every limit that binds**: cgroup v2
 `memory.max` and `memory.high`, v1 `memory.limit_in_bytes`, and every ancestor
@@ -391,17 +422,38 @@ re-takes the set together, which is the same collapse `M74` exists to make.
 
 **It is measured both ways and the shipped default uses the uncapped number.**
 Having declined the in-binary cap there are two reserves — one with
-`MALLOC_ARENA_MAX` at the recommended value, one without — differing by roughly
-the 200 MiB the arenas hold. The default has to survive the case where the
-recommendation was not followed, because that is the case that kills the
-process.
+`MALLOC_ARENA_MAX` at the recommended value, one without — and the shipped
+number comes from the uncapped leg because that is the **safe direction**: the
+default has to survive the case where the recommendation was not followed,
+because that is the case that kills the process. It is measured both ways so
+that the difference is a reading rather than an assumption, not because the
+difference is expected to be large.
 
-**The price is real and is written here so that it is met as a cost rather than
-rediscovered as a defect**: the operator who *did* cap arenas gets a smaller
-budget than their machine could support, because the shipped reserve is sized
-for the operator who did not. That is what the cap being a recommendation rather
-than a mechanism buys and costs, and it is the strongest argument for reversing
-the decision at the top of this spec. It is not reopened here.
+**The two legs were expected to differ by roughly the 200 MiB the arenas hold,
+and on the one shape measured so far they do not differ measurably at all.**
+The 200 MiB came from a koji probe under `rt-multi-thread`, where twenty of the
+process's twenty-four arenas belonged to runtime threads that did no work;
+`19.3` deleted those threads. So the price this section used to state — that an
+operator who capped arenas gets a budget sized for one who did not — is
+proportional to a difference nobody can currently measure, and it is **not** an
+argument for reversing the decision at the top of this spec. `M76` takes the
+controlled reading that would restore a number to it, and `19.10` writes
+whatever that reading says. Evidence:
+[2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries,
+closed".
+
+**The published figure carries two arena legs, not three.** `19.6` registered
+uncapped, the worker count plus one, and `2`; the middle leg is dropped at
+`19.12`, and the argument against it does not wait on `M76`: a cap set at or
+above the concurrency actually dispatched cannot bind, which after `19.3` is a
+mechanism rather than a reading, so that leg measures a setting inert by
+construction. The pair that remains is what the default is sized for against the
+tightest value an operator would plausibly set. **Both are kept even if `M76`
+finds no effect at all** — a figure with one leg cannot report a null, and it is
+what would notice the day a later allocator or runtime change brings the effect
+back. That is the second time in this phase an arena claim has outlived the
+build it was measured on, which is the whole argument for keeping the
+instrument pointed at it.
 
 ## Slice order: allocation, not schedule
 
@@ -422,7 +474,12 @@ Four orderings bind, and nothing else does:
   changes the thread count the reserve is a reserve for;
 - **the plain-path account before any plain default is set**;
 - **the closing sweep last, and after `KD16`**, since closing `KD16` re-bases a
-  row that sweep publishes.
+  row that sweep publishes;
+- **the pool accounting, then the reserve re-take, then the budget rule** —
+  `19.7`, `19.12`, `19.13`. The accounting change moves every cell of the
+  reserve reading, and the rule's one constant comes from that reading, so
+  taking either out of order prices a build about to be replaced or ships a
+  number nothing measured.
 
 ## The closing sweep
 
@@ -452,11 +509,28 @@ being inserted.
 | **19.4** | `Serial` carries an optional budget — closes **`KD16`**. |
 | **19.5** | `Partitioning` states its retained unit; `plan_partitions` adds `max_source_span` only for a chunk-shaped source; and a plain source's partition stops being exactly one read chunk, which is 19.2's repair 1 folded in. |
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
-| **19.7** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule — including `BufferPool`'s own accounting, which under-reports whenever `keeps` admits a buffer larger than `slot_bytes` ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The plain partition's cap, reviewed"). |
+| **19.7** | `BufferPool`'s accounting, and nothing else: the under-report whenever `keeps` admits a buffer larger than `slot_bytes` ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The plain partition's cap, reviewed"); the **coupling of the block pool's free and retained counts**, without which a stated budget bounds half of what that pool holds; and `BlockCache::affordable` requiring room for **two** units rather than one, since a coupled count of one is the un-poolable shape that pool rejects by name. Re-scoped after the spec was written — see the row below and [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries, closed". |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
 | **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, and the v1 fixture tree that tests `RT4`'s shape against the reader. |
-| **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation, the new defaults, and both flags' help text. |
+| **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`'s reading leaves it, the new defaults, both flags' help text, and the moved whole-block-decode threshold — `19.7` declines a file whose blocks exceed half the budget, where today it declines one whose blocks exceed the budget. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`. |
+| **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |
+| **19.13** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule, carrying `19.12`'s constant. |
+
+**`19.7` was re-scoped and split after this spec was written, and the two new
+rows take the next free numbers rather than being inserted.** As specified it
+carried the accounting change, the discovery primitives and the budget rule at
+once; the accounting change grew when the block pool's coupling joined it, and
+the rule cannot pick its constant until the reserve has been re-read on the
+build the accounting change produces — a loop the row could not contain. The
+three now land in order: `19.7`, then `19.12`, then `19.13`. The alternative
+was one slice taking its own mid-slice diagnostic sitting, which keeps the
+review question whole ("does the stated number now bound the pool") at the cost
+of asking it over a diff that also introduces discovery; the split was taken
+because the accounting half is a rework of an already-tested concurrent
+structure and earns its own review. Reasoning:
+[2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries,
+closed".
 
 **19.2's account has been taken, and it lands on both branches rather than one.**
 The fork above asks which of two causes the account lands on; it names three,

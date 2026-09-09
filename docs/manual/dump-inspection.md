@@ -278,15 +278,15 @@ with no room to hold what they decode buys less than either number suggests.
 > **Under a container memory limit, leave room for the allocator as well.**
 > glibc gives each thread that allocates its own memory arena, which it keeps
 > rather than returns. pgdq runs a thread for each piece of work it has in
-> flight, so raising `--jobs` raises the arena count with it. A scan of a
-> 24 MiB-block `.xz` on a 24-CPU host measured about 536 MiB resident with 24
-> arenas, where the same scan under `MALLOC_ARENA_MAX=2` measured about 328 MiB
-> — so if you are sizing a cgroup, either set `MALLOC_ARENA_MAX` (2 is
-> enough) or budget a few hundred megabytes above what `--parallel-memory`
-> names. Restricting the container's CPUs is not a substitute: pgdq sizes its
-> threads from `--jobs` and not from the CPU count, and arena memory does not
-> fall away in proportion to the thread count in any case — the same scan with
-> its threads cut to a third still measured about 476 MiB.
+> flight, so raising `--jobs` raises the arena count with it. So size a cgroup
+> above what `--parallel-memory` names rather than at it — on a compressed file
+> the headroom you need is a multiple of the budget rather than a fixed margin,
+> for the reason in the callout above. `MALLOC_ARENA_MAX` bounds the arena
+> count if you want to set it, and 2 is the smallest useful value; how much it
+> saves on a given workload is not something we can currently quote you a
+> number for. Restricting the container's CPUs is not a substitute: pgdq sizes
+> its threads from `--jobs` and not from the CPU count, and arena memory does
+> not fall away in proportion to the thread count in any case.
 
 **Two shapes will never get parallelism, whatever you set.** An `.xz` file with
 a single block has no seam to split at — the warning above says so when you hit

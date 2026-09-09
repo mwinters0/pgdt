@@ -757,6 +757,7 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | `M74` | | The sweep publishes `rss-attribution`: the `Shared` edge onto `peak-rss` is declared, the section's `outside-register` marker and `measure.NOT_OURS` row are deleted, the figure marker goes on and the stamp's accounting sentence is re-generated. It cannot be done before then — the doc's two tables carry two disagreeing readings of one command shape, which is what the borrow exists to collapse, and declaring the edge early only fails `--check` without letting the marker on | | [2026-09-08](../status/history/2026-09-08.md), "`M65` lands its instrument; `M74` owns the sitting" |
+| `M76` | | The controlled arena reading: `control_xz` at `--jobs 4 --parallel-memory 268435456` — the koji probe's own arrangement — capped and uncapped, on the current binary and on a pre-`19.3` build from a temporary worktree, to say whether the manual's 200 MiB was idle arenas the `current_thread` runtime removed. A `runs/` probe, not a figure | `P19` | [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries, closed" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

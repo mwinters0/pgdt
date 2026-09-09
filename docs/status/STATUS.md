@@ -370,21 +370,29 @@ the four orderings that bind are in the spec, not here.
       on the compressed one**: plain holds 37.4 MiB whatever is stated, while a
       block-decoding `.xz` at `--jobs 24` reads `160 MiB + 54 MiB` a sub-stream
       against a divisor charging 25 MiB — 243 MiB resident at a 64 MiB budget
-      and 1242 MiB at 512 MiB — so `limit − reserve` bounds nothing there under
-      any constant. The three `MALLOC_ARENA_MAX` legs agree within the spreads,
-      the one disjoint pair reversing sign, which is `19.3`'s runtime rather
-      than a null instrument. Notes:
+      and 1242 MiB at 512 MiB. Reviewed since: the multiple is the block pool's
+      doubled ceiling, `19.7` couples the two counts and the budget rule ships
+      unamended. The three `MALLOC_ARENA_MAX` legs agree within the spreads,
+      the one disjoint pair reversing sign, and `M76` takes the controlled
+      reading that says whether the manual's 200 MiB survived `19.3`. Notes:
       [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md)
-- [ ] **19.7** `discover_memory_limit`, `Parallelism::discover`, the budget
-      rule, and `BufferPool`'s accounting, which under-reports whenever
-      `keeps` admits a buffer larger than `slot_bytes`.
+- [ ] **19.7** `BufferPool`'s accounting alone: the `keeps`/`slot_bytes`
+      under-report, the block pool's free and retained counts coupled, and
+      `BlockCache::affordable` requiring room for two units. Re-scoped and
+      split — the discovery primitives and the budget rule moved to `19.13`.
 - [ ] **19.8** The source's own worker default; `DEFAULT_JOBS` removed.
 - [ ] **19.9** Resolution tests, the status line's provenance, the below-floor
       `PlanNote`.
-- [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation, the new
-      defaults, both flags' help text.
+- [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
+      leaves it, the new defaults, both flags' help text, and the moved
+      whole-block-decode threshold.
 - [ ] **19.11** The closing sweep — publishes the reserve figure and
       `rss-attribution`, closing `M74`.
+- [ ] **19.12** The reserve re-taken diagnostically against `19.7`'s build, the
+      constant chosen from it, and the figure's inert worker-count-plus-one
+      arena leg dropped. No shipped code.
+- [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
+      rule, carrying `19.12`'s constant.
 
 ## Not started
 
@@ -562,33 +570,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.6` refutes `limit − reserve` on the compressed path, and `19.7` is the
-  slice that implements it.** The spec's rule is `budget = min(fraction ×
-  limit, limit − reserve)`, with the fraction described as a ceiling that
-  "bounds nothing anyone has measured". The sitting says the opposite: on a
-  24 MiB-block `.xz` at `--jobs 24` a decoding worker holds about 2.2× what
-  `stream::worker_count`'s divisor charges it, so resident is `160 MiB + 54 MiB`
-  a sub-stream and no constant subtraction bounds the process — the fraction is
-  the only term that does. **The call made was to leave the spec alone and land
-  the evidence**, because reversing a spec rationale is outside what an
-  unattended session may settle. What the maintainer is being asked to decide
-  is which of three `19.7` becomes: ship the rule as written and let the
-  fraction do the work (and then choose the fraction, which nothing has
-  measured); charge a compressed worker what it actually holds first, and
-  re-take the reserve against that; or re-grill the section. The plain path
-  needs none of this — its reserve is a flat 37.4 MiB. Evidence:
-  [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md).
-- **The arena cap has no measurable price, so two decisions resting on one are
-  unsupported.** The spec's "The reserve is a figure, and it is measured
-  uncapped" section decides that the shipped constant comes from the uncapped
-  leg *because* the two differ by roughly the 200 MiB the arenas hold, and calls
-  the operator who capped them getting a smaller budget "the strongest argument
-  for reversing" the in-binary-`mallopt` refusal. On this shape, after `19.3`,
-  uncapped and both capped legs agree inside the per-rep spreads at all eight
-  cells. **The call made was to change nothing** — the sitting is a diagnostic
-  on one 3.00 GiB file and is not a controlled refutation of the koji probe that
-  produced the 200 MiB. What the maintainer is being asked to decide is whether
-  `19.10` still recommends `MALLOC_ARENA_MAX` in the manual at all, and whether
-  the price paragraph stands, given that the only reading taken since the
-  runtime changed cannot see the effect it prices. Evidence:
-  [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md).
+_Nothing open._

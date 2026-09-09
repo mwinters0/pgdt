@@ -444,9 +444,23 @@ the lever it looks like, and cutting the thread count is not either**: `--cpus
 still reached ~476 MiB, because what an arena retains is not proportional to
 how many there are. That is why the `current_thread` runtime above is claimed
 as a thread-count result and not as a memory one. **Nor is the budget the
-lever**: 128 MiB stated measures the same ~328 MiB as 256 MiB, since
-`BufferPool::slots()` clamps to
-`POOL_DEPTH.max(jobs)` at either. This is a property and not a deficiency — the
+lever at that worker count**: 128 MiB stated measures the same ~328 MiB as
+256 MiB, since `BufferPool::slots()` clamps to `POOL_DEPTH.max(jobs)` at
+either — a flatness that is the *clamp's* and not a property of the budget.
+Above the clamp the budget is very much the lever, `slots()` becoming
+`budget / unit`; a `--jobs 24` sitting reads a block-decoding `.xz` from
+243 MiB to 1242 MiB across a 64–512 MiB budget axis ("The compressed source",
+where the doubled pool ceiling that produces it is filed). **What that remedy is worth on the current runtime is unmeasured**, and the one
+reading taken since cannot see it: a `--jobs 24` diagnostic over a 3.00 GiB
+`.xz` and a plain control finds uncapped, `MALLOC_ARENA_MAX` at the worker
+count plus one, and `MALLOC_ARENA_MAX=2` inside the per-rep spreads at every
+cell, with no direction to read. That is consistent with the 200 MiB above
+having been *idle*-arena retention — twenty arenas seeded by `rt-multi-thread`
+threads that never did work, which the `current_thread` runtime no longer
+creates — leaving only working arenas a cap cannot reclaim. It is a hypothesis
+and not a refutation: the two readings differ in file, scale, worker count and
+runtime at once, and `M76` is the controlled version of the probe that would
+settle it. This is a property and not a deficiency — the
 remedy is `MALLOC_ARENA_MAX`, which an embedder and an operator both have
 today, and the manual says so ([`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--jobs` and `--parallel-memory`: the workers and the budget"). Those readings
@@ -1006,21 +1020,39 @@ release blocks the retained list has already refilled past. It is a ceiling
 rather than a steady state — a forward scan's cycle holds the free list at
 zero or one, which is what the 64.7 MiB above is.
 
-*Rejected: coupling the two counts so the pool's ceiling is `slots × unit`
-rather than its double.* This was decided rather than left open, and the
-counts stay separate. What the coupling would buy is a tighter transient ceiling on
-a path that is already the smaller of the two costs a caller's stated budget
-now has to cover — `worker_count`'s divisor (above, "Rejected: a per-view
-acquisition bounding the live term") is what actually admits fewer concurrent
-readers when a query's held batches make the real per-worker cost bigger, and
-that is where the accounting gap actually was.
-Coupling the counts would touch `BufferPool::release`'s hot path — every
-buffer return would have to check a shared ceiling instead of its own list's
-length — for a ceiling that is reached only in the specific window between a
-live view's release and the next acquisition, not in steady state. That is a
-rework of an already-tested concurrent structure for a bound the caller-facing
-fix already tightens from the outside; left alone unless a reading shows the
-transient itself, not the admitted-worker count, is what a real workload hits.
+**The counts are separate today, and coupling them is `19.7`'s** — the
+rejection that kept them apart named its own reversing condition and that
+condition has since been met. The rejection ran: coupling would touch
+`BufferPool::release`'s hot path for a ceiling reached only in the window
+between a live view's release and the next acquisition, and `worker_count`'s
+divisor (above, "Rejected: a per-view acquisition bounding the live term") is
+what actually admits fewer concurrent readers, so leave it alone *unless a
+reading shows the transient itself, not the admitted-worker count, is what a
+real workload hits*. Two facts overturn it. **The divisor cannot do that job
+here**, because `slots()` is `budget / unit` once `POOL_DEPTH.max(jobs)` is
+slack, so the pool sizes itself from the stated budget and not from how many
+readers were admitted — halving the worker count leaves the ceiling exactly
+where it was. And **the window is not a transient under concurrency**: the
+"free list at zero or one" cycle is a *serial* forward scan's, and with N
+readers one worker's release refills the free list while another retains, so a
+parallel `parse` sits near `2 × slots × unit` for the length of the run. A
+diagnostic sitting reads a block-decoding `.xz` at 243 MiB resident against a
+64 MiB budget and 1242 MiB against 512 MiB, tracking the doubled ceiling across
+the axis. Until `19.7` lands, the stated number bounds half of what this pool
+may hold. Evidence:
+[`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+reserve rule's two entries, closed".
+
+**`BlockCache::affordable` moves with it, from one unit to two**, because a
+coupled count of one is precisely the un-poolable shape rejected above — a
+retained cap of zero, drained before every decode. Asking whether the budget
+affords *two* units is the same sentence as "the coupled count is at least two"
+and needs no new constant. What it changes for a reader is where whole-block
+decode is declined: today a file whose largest block exceeds the budget, after
+`19.7` one whose largest block exceeds half of it. Koji's 24 MiB blocks still
+decode at the 64 MiB default, which leaves 60 MiB to the block pool against the
+48 two units need; `--parallel-memory` remains the lever that reverses a
+decline.
 
 **Evicting before acquiring is a reuse rule and not a progress guarantee**, and
 reading it as one is the mistake behind the deadlock filed under "Execution
