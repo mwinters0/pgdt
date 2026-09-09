@@ -294,8 +294,8 @@ the `xz-seek-1d` session.
 **Fact.** `ByteRangeSource` carries a defaulted `partitions` method by which a
 source says how it would like a range split and what each partition costs
 resident.
-`LocalFileSource` answers "anywhere, one buffer each"; `XzSource` answers "at
-these block boundaries, 32 MiB each". The scheduler above asks the source and
+`LocalFileSource` answers "anywhere, eight read chunks each"; `XzSource`
+answers "at these block boundaries, 32 MiB each". The scheduler above asks the source and
 never learns what is underneath, which is what keeps the fused decode-and-parse
 worker inside [`layering.md`](layering.md)'s rules rather than putting decode
 scheduling in L4.
@@ -313,3 +313,29 @@ overriding the other.
 **Origin.** The parallel-scan work's grilling, 2026-09-06; the shipped
 mechanism is [`architecture.md`](architecture.md), "Execution model and API
 surface".
+
+---
+
+## A `Partitioning` states a **retained unit** as well as a size, and the default is the charging one
+
+**Fact.** `Partitioning::retained_unit` answers `RetainedUnit::ReadChunk` or
+`RetainedUnit::Partition`, and `stream::plan_partitions` adds a query's held
+batch span (`QueryOptions::max_source_span`, 64 MiB by default) to the
+sub-stream divisor **only** for the first. A source that says nothing gets
+`ReadChunk` and is charged the span, which is the conservative arm.
+`LocalFileSource` answers `ReadChunk`; a block-decoding `XzSource` answers
+`Partition`, because a batch holding zero-copy views into a decoded block pins
+the block `partition_bytes` already charged for.
+
+**Why this phase cares.** P14 writes the second `partitions` implementation,
+and the term is defaulted — so a remote source that never mentions it is
+silently charged 64 MiB per sub-stream on top of its ranged-GET size, which at
+the shipped 64 MiB budget plans exactly one sub-stream however many workers are
+asked for. Whether that is right is a real question for a remote source rather
+than a formality: it depends on whether a ranged GET's bytes are retained in a
+unit a batch's views sit inside, the way a decoded xz block is, or handed over
+per read the way a chunk buffer is. Answer it deliberately when the source is
+specified.
+
+**Origin.** `P19.5`, 2026-09-09; the shipped mechanism is
+[`architecture.md`](architecture.md), "Execution model and API surface".

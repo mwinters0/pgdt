@@ -1897,26 +1897,36 @@ PARALLEL_BUDGET = 1 << 30
 PARALLEL_MEMORY = "3g"
 
 #: The sub-stream count a typed-`query` leg actually gets from `PARALLEL_BUDGET`,
-#: keyed by input — `worker_count`'s `budget / (partition_bytes + max_source_span)`,
-#: floored, at the shipped `QueryOptions::max_source_span` default (64 MiB) and
-#: `pgdq query`'s unhinted `LocalFileSource` (`BufferPool::slot_bytes` answers its
-#: own `POOL_MAX_BYTES` default, 8 MiB, because the mapping pass hints the source
-#: with `scan_options.chunk_size` and `plan_partitions` asks `source.partitions`
-#: before that hint is ever set on the *query* path's source instance).
+#: keyed by input — `worker_count`'s floored `budget / divisor` — **for the legs
+#: a budget clamp reaches at all**. A leg absent from this dict is one the
+#: budget never clamps inside `PARALLEL_JOBS`, and it carries no per-cell
+#: annotation, there being nothing to say.
+#:
+#: **The divisor is per source, not universal.** `plan_partitions` adds the
+#: held batch's `max_source_span` only where the source retains by the read
+#: chunk (`crate::io::RetainedUnit`); a block-decoding `XzSource` retains by the
+#: partition, whose decoded block `partition_bytes` has already charged, so its
+#: divisor is the decode footprint alone.
 #:
 #: **Hand-computed, not derived from a mirrored formula.** A Python
 #: reimplementation of `worker_count`/`plan_partitions` would be a second
 #: authority on the library's own arithmetic and go stale silently the moment
-#: either constant moves; a hardcoded pair, like `PARALLEL_JOBS`'s literal 4
+#: either constant moves; a hardcoded value, like `PARALLEL_JOBS`'s literal 4
 #: for `POOL_DEPTH`, is checked by hand against the source once and is exactly
 #: as good until the constants it was checked against move, at which point the
 #: figure is stale on the paths already in its `depends`.
 #:  `.xz`:   `24 MiB` block (`control_xz`'s block size) + `1 MiB` chunk buffer
-#:           = `25 MiB`; `+ 64 MiB` span = `89 MiB` divisor;
-#:           `floor(1 GiB / 89 MiB) = 11`.
-#:  plain:   `8 MiB` (`POOL_MAX_BYTES`, unhinted) `+ 64 MiB` span = `72 MiB`
-#:           divisor; `floor(1 GiB / 72 MiB) = 14`.
-QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 14, "control_xz": 11}
+#:           = `25 MiB` divisor, the span not charged;
+#:           `floor(1 GiB / 25 MiB) = 40`, past the top of `PARALLEL_JOBS`, so
+#:           no entry.
+#:  plain:   `8 MiB` (`POOL_MAX_BYTES`, unhinted — the mapping pass hints the
+#:           source with `scan_options.chunk_size`, and `plan_partitions` asks
+#:           `source.partitions` before that hint is ever set on the *query*
+#:           path's source instance, so the multiple
+#:           `LocalFileSource::partitions` applies is capped straight back to
+#:           the ceiling) `+ 64 MiB` span = `72 MiB` divisor;
+#:           `floor(1 GiB / 72 MiB) = 14`.
+QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 14}
 
 #: The worker count every `pgdq` invocation this harness makes states, and the
 #: one every registered figure is taken at **except the two whose axis it is**.
@@ -4184,7 +4194,7 @@ def run_parallel_scan_throughput(session: Session) -> str:
             # `QUERY_SUBSTREAM_CAP`. Every row above four states what the two
             # typed-`query` legs actually planned, clamped or not, so a reader
             # never has to ask whether a given cell is the label or the ceiling.
-            if family == "query-typed" and jobs > 4:
+            if family == "query-typed" and jobs > 4 and inp in QUERY_SUBSTREAM_CAP:
                 achieved = min(jobs, QUERY_SUBSTREAM_CAP[inp])
                 cell += f" · {achieved} sub-stream{'s' if achieved != 1 else ''}"
             cells.append(cell)
@@ -4212,20 +4222,23 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "`POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused worker on a "
         "plain source waits: the rows above four say what that ceiling costs, not that "
         "the scan stopped scaling.\n\n"
-        "**A typed-`query` leg's `--jobs` is clamped a second way, and this one the "
-        "table states per cell rather than footnotes once.** `plan_partitions` caps a "
-        "query's sub-stream count at `--parallel-memory` divided by what one sub-stream "
-        "costs to decode plus what its held batch pins (`docs/design/architecture.md`, "
-        '"Execution model and API surface") — a budget the *harness* chose, '
-        "not a ceiling the library ships, so the rows above four on both typed-`query` "
-        f"legs state the count they actually planned: `{QUERY_SUBSTREAM_CAP['control_xz']}` "
-        f"on `.xz`, `{QUERY_SUBSTREAM_CAP['control']}` on plain "
-        "(`scripts/measure.py`, `QUERY_SUBSTREAM_CAP`). Below that count a cell's "
-        "sub-stream figure equals its row label; at or above it, every further worker "
-        "asked for buys nothing more to plan. "
+        "**The plain typed-`query` leg's `--jobs` is clamped a second way, and this "
+        "one the table states per cell rather than footnotes once.** `plan_partitions` "
+        "caps a query's sub-stream count at `--parallel-memory` divided by what one "
+        "sub-stream costs to decode plus what its held batch pins "
+        '(`docs/design/architecture.md`, "Execution model and API surface") — a budget '
+        "the *harness* chose, not a ceiling the library ships, so the rows above four "
+        "on that leg state the count they actually planned: "
+        f"`{QUERY_SUBSTREAM_CAP['control']}`. Below that count a cell's sub-stream "
+        "figure equals its row label; at or above it, every further worker asked for "
+        "buys nothing more to plan. **The `.xz` typed-`query` leg carries no such "
+        "annotation**, and that is the same arithmetic rather than an omission: a "
+        "block-decoding source retains by the partition, so the span is not charged "
+        "and this budget affords forty sub-streams — past the top of the axis, leaving "
+        "nothing to state. "
         "**The comparison is anchored at four workers and no constant moved to take "
         "this table**: `PARALLEL_BUDGET` stays 1 GiB (it affords four sub-streams on "
-        "the worst leg, `4 × 89 MiB ≈ 356 MiB`, the count `POOL_DEPTH` itself delivers "
+        "the worst leg, `4 × 72 MiB ≈ 288 MiB`, the count `POOL_DEPTH` itself delivers "
         "on a plain source), `PARALLEL_MEMORY` stays 3g, and `PARALLEL_JOBS` is "
         "unchanged.\n"
     )

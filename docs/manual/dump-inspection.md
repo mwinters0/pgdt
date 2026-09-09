@@ -239,19 +239,21 @@ a time, so on a plain file on a fast disk raising it will not show up on a
 clock. On a compressed file the reading is the expensive part, and there it
 can.
 
-> **A query's `--parallel-memory` covers two costs, not one, and the second is
-> fixed at 64 MiB.** Each piece a query splits into holds its own read buffers
-> for as long as its in-flight batch is still being built — up to 64 MiB worth,
-> the same default `query` always batches to — on top of what its worker costs
-> to decode. So the number of pieces you actually get is `--parallel-memory`
-> divided by *that sum*, not by the decode cost alone: at the 64 MiB default,
-> the batch term alone already accounts for the whole budget, so `query --jobs
-> N` runs one piece — serially — however large `N` is, until you raise
-> `--parallel-memory` past roughly 65 MiB. `parse` does not carry this cost: it
-> builds no batches, so its own `--jobs` is bound by the decode cost alone, as
-> described above. When `--jobs` asks for more pieces than the budget affords,
-> `query` says so on stderr, naming both terms of the sum and the budget that
-> declined them, so you know which number to raise.
+> **A query's `--parallel-memory` covers two costs on a plain file and one on
+> a compressed one.** Every piece costs what its worker holds to read. On a
+> plain file it also holds its in-flight batch until that batch is handed
+> over — up to 64 MiB worth, the same default `query` always batches to — so
+> the number of pieces you get is `--parallel-memory` divided by *that sum*.
+> At the 64 MiB default the batch term alone accounts for the whole budget, so
+> `query --jobs N` on a plain file runs one piece, serially, however large `N`
+> is; two pieces need about 145 MiB. On an `.xz` file read a block at a time
+> there is no second cost: the batch holds its rows inside the block its own
+> worker already decoded, so the pieces are bounded by the decode cost alone
+> and the default budget affords more than one. `parse` carries no batch cost on
+> either shape — it builds none — so its `--jobs` is bound by the decode cost
+> as described above. When `--jobs` asks for more pieces than the budget
+> affords, `query` says so on stderr, naming the terms it was charged and the
+> budget that declined them, so you know which number to raise.
 
 For `parse` it cuts the *inside* of a `COPY` block up. Once pgdq has read a
 block's `COPY … FROM stdin;` header it knows everything until the block's end

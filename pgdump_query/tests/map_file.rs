@@ -79,14 +79,14 @@ async fn a_cold_map_file_matches_build_index() {
 /// interior split").
 ///
 /// **A fixture is kilobytes, so the chunk size is announced small.** The local
-/// source's partition unit *is* the read chunk, so at the shipped 1 MiB every
-/// block here is one partition and the scheduler correctly declines all of
-/// them — which would make this the serial path compared to itself. 512 bytes
-/// splits nearly every block, 4 KiB splits the larger ones and leaves the rest
-/// to the serial scanner, so the mixed case — a scan that alternates between
-/// the two paths — is in here too. `tests/wait_policy.rs` is where "the leader
-/// was actually reached under these options" is asserted, off the one
-/// announcement only its scheduler makes.
+/// source's partition is a fixed multiple of the read chunk, so at the shipped
+/// 1 MiB every block here is inside one partition and the scheduler correctly
+/// declines all of them — which would make this the serial path compared to
+/// itself. 64 bytes splits nearly every block, 512 splits the larger ones and
+/// leaves the rest to the serial scanner, so the mixed case — a scan that
+/// alternates between the two paths — is in here too. `tests/wait_policy.rs` is
+/// where "the leader was actually reached under these options" is asserted, off
+/// the one announcement only its scheduler makes.
 #[tokio::test]
 async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
     for schema_dir in ["edge_cases", "objects", "partitions", "types"] {
@@ -104,7 +104,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
             let source = LocalFileSource::open(&dump).unwrap();
             let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
 
-            for chunk_size in [512usize, 4096] {
+            for chunk_size in [64usize, 512] {
                 for jobs in [2usize, 3, 8] {
                     let label =
                         format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");

@@ -26,20 +26,20 @@
 //! the second fixture rather than assert anything about the first.
 //!
 //! **Why the small-chunk legs state a chunk size.** `LocalFileSource`'s
-//! partition unit *is* the read chunk, and `leader::scan_region` declines a
-//! region with less than one partition left in the file — so at the shipped
-//! 1 MiB every fixture here (the largest is 66 KB) is declined whole and a
-//! `--jobs 8` leg would be the serial path compared to itself, which is the
-//! trap `map_file.rs` names. 512 bytes cuts nearly every block and 4 KiB cuts
-//! the larger ones and leaves the rest to the serial scanner, so the mixed scan
-//! is covered too. The leg that runs the **shipped** configuration parallel is
-//! [`a_region_past_the_shipped_chunk_size_writes_the_serial_cache`], whose dump
-//! is generated large enough to clear that floor with no chunk size stated at
-//! all.
+//! partition is a fixed multiple of the read chunk, and `leader::scan_region`
+//! declines a region with less than one partition left in the file — so at the
+//! shipped 1 MiB every fixture here (the largest is 66 KB) is declined whole
+//! and a `--jobs 8` leg would be the serial path compared to itself, which is
+//! the trap `map_file.rs` names. 64 bytes cuts nearly every block and 512
+//! cuts the larger ones and leaves the rest to the serial scanner, so the
+//! mixed scan is covered too. The leg that runs the **shipped** configuration
+//! parallel is [`a_region_past_the_shipped_chunk_size_writes_the_serial_cache`],
+//! whose dump is generated large enough to clear that floor with no chunk size
+//! stated at all.
 
 use std::path::{Path, PathBuf};
 
-use pgdump_query::DEFAULT_CHUNK_SIZE;
+use pgdump_query::{ByteRangeSource, DEFAULT_CHUNK_SIZE, LocalFileSource};
 
 mod common;
 use common::{all_fixtures, run, stderr_of};
@@ -100,12 +100,12 @@ fn every_fixture_parses_to_the_same_cache_at_every_stated_parallelism() {
         &["--jobs", "8"],
         // A chunk size small enough to cut, serially — so a difference here
         // would be the chunk size's doing rather than the workers'.
-        &["--jobs", "1", "--chunk-size", "512"],
+        &["--jobs", "1", "--chunk-size", "64"],
         // The same cut, run by workers: the leg that actually splits block
         // interiors.
-        &["--jobs", "8", "--chunk-size", "512"],
+        &["--jobs", "8", "--chunk-size", "64"],
         // The mixed scan — larger blocks cut, smaller ones left serial.
-        &["--jobs", "8", "--chunk-size", "4096"],
+        &["--jobs", "8", "--chunk-size", "512"],
     ];
 
     for (n, fixture) in all_fixtures().iter().enumerate() {
@@ -118,19 +118,35 @@ fn every_fixture_parses_to_the_same_cache_at_every_stated_parallelism() {
     }
 }
 
-/// A dump whose single `COPY` region runs well past the shipped read chunk,
-/// with the offset its data starts at.
+/// What one partition costs a plain source at the shipped chunk size — the
+/// floor `leader::scan_region` applies.
 ///
-/// Rows are generated until the file clears four chunks, so the leader's floor
-/// — less than one `partition_bytes()` left in the file below the region's data
-/// offset — is cleared by a margin rather than exactly, and four workers have a
-/// partition each.
-fn dump_past_the_chunk_size(dir: &Path) -> (PathBuf, u64) {
+/// **Read off the source rather than restated as a chunk count.** A
+/// partition is a multiple of the read chunk and the multiple is the
+/// library's to choose, so a test that spelled the product out would go
+/// quietly vacuous the next time it moved: the dump below would stop clearing
+/// the floor and every leg would be the serial path compared to itself.
+fn plain_partition_bytes(dir: &Path) -> u64 {
+    let probe = dir.join("probe.bin");
+    std::fs::write(&probe, b"x").unwrap();
+    let source = LocalFileSource::open(&probe).unwrap();
+    source.hint_read_size(DEFAULT_CHUNK_SIZE);
+    source.partitions(0..1).partition_bytes()
+}
+
+/// A dump whose single `COPY` region runs well past one of the source's own
+/// partitions, with the offset its data starts at.
+///
+/// Rows are generated until the file clears four partitions, so the leader's
+/// floor — less than one `partition_bytes()` left in the file below the
+/// region's data offset — is cleared by a margin rather than exactly, and four
+/// workers have a partition each.
+fn dump_past_the_chunk_size(dir: &Path, partition: u64) -> (PathBuf, u64) {
     let header = "SET client_encoding = 'UTF8';\n\n\
          CREATE TABLE public.wide (\n    id integer,\n    name text\n);\n\n\
          COPY public.wide (id, name) FROM stdin;\n";
     let mut file = String::from(header);
-    let want = header.len() + 4 * DEFAULT_CHUNK_SIZE;
+    let want = header.len() + 4 * partition as usize;
     let mut id: u64 = 1;
     while file.len() < want {
         file.push_str(&format!("{id}\trow number {id}\n"));
@@ -144,22 +160,23 @@ fn dump_past_the_chunk_size(dir: &Path) -> (PathBuf, u64) {
 
 /// **The shipped configuration, run parallel.** Every other leg in this file
 /// states a chunk size to get the leader to cut at all; this one states only
-/// `--jobs`, over a dump big enough that `scan_region` cuts it at the 1 MiB
-/// default — which is the arrangement a person raising `--jobs` on a real dump
-/// actually runs.
+/// `--jobs`, over a dump big enough that `scan_region` cuts it at the shipped
+/// defaults — which is the arrangement a person raising `--jobs` on a real
+/// dump actually runs.
 ///
-/// The precondition is asserted rather than assumed: if `DEFAULT_CHUNK_SIZE`
-/// ever grows past what this dump clears, the test fails saying so instead of
-/// quietly degrading into the serial path compared to itself.
+/// The precondition is asserted rather than assumed: if the source's own
+/// partition ever grows past what this dump clears, the test fails saying so
+/// instead of quietly degrading into the serial path compared to itself.
 #[test]
 fn a_region_past_the_shipped_chunk_size_writes_the_serial_cache() {
     let dir = tempfile::tempdir().unwrap();
-    let (dump, data_offset) = dump_past_the_chunk_size(dir.path());
+    let partition = plain_partition_bytes(dir.path());
+    let (dump, data_offset) = dump_past_the_chunk_size(dir.path(), partition);
     let size = std::fs::metadata(&dump).unwrap().len();
     assert!(
-        size - data_offset >= 4 * DEFAULT_CHUNK_SIZE as u64,
+        size - data_offset >= 4 * partition,
         "the generated dump no longer clears the leader's floor: {} data bytes against a \
-         {DEFAULT_CHUNK_SIZE}-byte chunk",
+         {partition}-byte partition",
         size - data_offset,
     );
 

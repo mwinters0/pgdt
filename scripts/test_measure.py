@@ -3790,24 +3790,30 @@ class SubstreamAnnotation(unittest.TestCase):
                     "typed `query`", label, f"{label} is not a typed-query leg but reads like one"
                 )
 
-    def test_every_annotated_leg_has_a_cap(self):
-        for inp, family, _ in measure.PARALLEL_LEGS:
-            if family == "query-typed":
-                self.assertIn(inp, measure.QUERY_SUBSTREAM_CAP)
+    def test_a_cap_belongs_to_a_typed_query_leg(self):
+        # A cap for a leg nothing annotates is dead weight that reads as a
+        # claim about the table.
+        typed = {inp for inp, family, _ in measure.PARALLEL_LEGS if family == "query-typed"}
+        self.assertTrue(measure.QUERY_SUBSTREAM_CAP)
+        self.assertLessEqual(set(measure.QUERY_SUBSTREAM_CAP), typed)
 
     def test_a_cap_is_never_above_the_largest_job_count(self):
         # A cap at or above the largest `--jobs` would annotate every row with
-        # its own label and say nothing.
+        # its own label and say nothing — which is why a leg the budget never
+        # clamps inside the axis carries no entry at all rather than a number
+        # past the top of it.
         for inp, cap in measure.QUERY_SUBSTREAM_CAP.items():
             self.assertLess(cap, measure.PARALLEL_JOBS[-1], inp)
 
-    def test_the_xz_cap_is_below_the_plain_one(self):
-        # A decoded block is larger than a chunk buffer, so the same budget
-        # affords fewer `.xz` sub-streams. If this ever inverts, the arithmetic
-        # in `QUERY_SUBSTREAM_CAP`'s comment has stopped describing the code.
-        self.assertLess(
-            measure.QUERY_SUBSTREAM_CAP["control_xz"], measure.QUERY_SUBSTREAM_CAP["control"]
-        )
+    def test_the_xz_leg_carries_no_cap(self):
+        # `plan_partitions` charges the held batch's span only where the source
+        # retains by the read chunk, and a block-decoding `XzSource` retains by
+        # the partition — so its divisor is the decode footprint alone and
+        # `PARALLEL_BUDGET` affords forty sub-streams, past the top of the
+        # axis. An entry appearing here again means either the library started
+        # charging that leg the span or the budget moved, and the table's own
+        # paragraph saying there is nothing to state has gone false.
+        self.assertNotIn("control_xz", measure.QUERY_SUBSTREAM_CAP)
 
 
 class Scaffolding(unittest.TestCase):
@@ -3937,6 +3943,15 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
         header = [c.strip() for c in rows[0].strip("|").split("|")]
         typed = {i for i, c in enumerate(header) if "typed `query`" in c}
         self.assertEqual(len(typed), 2, header)
+        # Only the legs a budget clamp actually reaches are annotated, and
+        # which those are is `QUERY_SUBSTREAM_CAP`'s to say.
+        capped = {
+            i
+            for i in typed
+            if ("control_xz" if "`.xz`" in header[i] else "control")
+            in measure.QUERY_SUBSTREAM_CAP
+        }
+        self.assertTrue(capped, "no typed-`query` leg is capped, so this asserts nothing")
 
         annotated_columns = set()
         for row in rows[2:]:  # skip header and the |---| separator
@@ -3946,8 +3961,8 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
                     annotated_columns.add(i)
         self.assertEqual(
             annotated_columns,
-            typed,
-            "the sub-stream count must appear in the typed-`query` columns and no others",
+            capped,
+            "the sub-stream count must appear in the capped typed-`query` columns and no others",
         )
 
     def test_rows_at_or_below_four_carry_no_annotation(self):

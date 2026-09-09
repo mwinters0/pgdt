@@ -178,14 +178,40 @@ about the caller rather than the source and are described below, and
 is underneath.** `partitions(range)` answers a `Partitioning` — where this
 source is willing to be split, and what one concurrent reader costs it resident
 — so a scheduler asks, runs the partitions, and names no source type
-([`layering.md`](layering.md)). `LocalFileSource` answers **anywhere, one read
-chunk each**: a positioned read costs the same at every offset. A
+([`layering.md`](layering.md)). `LocalFileSource` answers **anywhere, eight
+read chunks each**: a positioned read costs the same at every offset, and the
+multiple is what keeps a worker's tail read from doubling the file ("A worker
+is two reads…", below, and `io::PLAIN_PARTITION_CHUNKS`). A
 block-decoding `XzSource` answers **at these block boundaries, a block plus a
 chunk buffer each** — 32 MiB against koji's 24 MiB blocks — which is what keeps
 two workers from decoding one block twice ("The compressed source"). The
 default is one partition at no stated cost: a source that has not thought about
 concurrency must not be split by a caller that assumed silence was consent.
 P14 inherits the question with a different answer, a ranged-GET size.
+
+**A partition also states what a *retained* batch pins**, which is a second
+fact about the same shape and the one a query's budget divides by:
+`Partitioning::retained_unit` answers `RetainedUnit::ReadChunk` or
+`RetainedUnit::Partition`. It exists because a caller charges each sub-stream
+its held batch's span on top of the decode footprint, and that second charge is
+honest for one shape and double-counts for the other — a plain source's batch
+pins chunk buffers `partition_bytes` never charged for, where a block-decoding
+source's batch pins the block it did ("Partitioned replay", and "Three flush
+triggers, and only one of them bounds memory"). `ReadChunk` is the **default**,
+for the reason `WaitPolicy::NeverWait` is: it is what every source was charged
+before the term existed, and over-charging plans fewer readers than the budget
+could hold where under-charging plans readers it cannot.
+
+*Rejected:* keying the charge on `PartitionBoundaries` — `Anywhere` read as
+chunk-shaped, `At(…)` as block-shaped. That is the same mistake the arm's own
+rejected paragraph below names: it reads an economic meaning off a statement
+about seeking, and it breaks on the first remote source, whose honest answer is
+`Anywhere` and whose retained unit is not a block. *Also rejected:* a
+`Partitioning` method taking `max_source_span` and answering the whole
+sub-stream cost. It puts a query concept inside the source trait and across the
+layering boundary; the source states a fact about itself and the caller keeps
+the arithmetic, which is the division "It answers where and at what cost, never
+whether" already draws.
 
 **It answers where and at what cost, never whether.** Geometry is the source's
 to state and economics are the caller's, because the same source over the same
@@ -288,8 +314,8 @@ no reading here states.
 
 **A stated `--jobs` is what is asked for, not what is delivered**, and on a
 plain file the chunk pool is what binds first: `LocalFileSource::partitions`
-answers one read chunk per partition, so `worker_count` at the 64 MiB default
-affords 64 — but `hint_parallelism` clamps that pool to `POOL_DEPTH`, so
+answers eight read chunks per partition, so `worker_count` at the 64 MiB
+default affords 8 — but `hint_parallelism` clamps that pool to `POOL_DEPTH`, so
 `BufferPool::slots()` is 4 at the 1 MiB chunk and a fifth fused worker blocks
 for a slot. The wait is doing what it was built for; the consequence is that a
 plain-file `parse` above `--jobs 4` runs four workers and queues the rest, which
@@ -618,22 +644,27 @@ library's own choice of N multiplies whatever the consumer keeps per stream.
 what one concurrent reader costs the *source*, and a sub-stream's held batch is
 the same kind of per-reader cost arriving from the other side.
 
-**Whether one span allowance should be *divided* among sub-streams rather than
-charged to each is decided and not yet built, and the divisor that charges it
-did not weigh it.** What ships is the accounting: N sub-streams really do pin N
-spans, and a divisor that charged one was the defect. What that accounting gets
-wrong is that the span is a cost of the *chunk-shaped* source only — a batch
-confined to one worker's range inside one block pins exactly that block whatever
-the cap says ("Three flush triggers, and only one of them bounds memory"), which
-`partition_bytes` has already charged, so on a block-shaped source the two terms
-count the same bytes twice. **`P19` owns the repair**, and its answer is that
-the retained unit is the source's own to state, the span term being added only
-where that unit is the read chunk
-([`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "The
-span term is charged per source, not universally"). Charging one allowance
-divided among sub-streams was the alternative and is refused there: it leaves
-the double-count in place, and at the shipped 64 MiB budget it plans one
-sub-stream either way.
+**The span is charged per source, not universally.** N sub-streams really do
+pin N spans, so a divisor charging one was the defect — but only on a source
+whose retained unit is the read chunk. A batch confined to one worker's range
+inside one block pins exactly that block whatever the cap says ("Three flush
+triggers, and only one of them bounds memory"), and `partition_bytes` has
+already charged for it, so on a block-shaped source the two terms would count
+the same bytes twice. The source states which it is
+(`Partitioning::retained_unit`, "Execution model and API surface") and
+`plan_partitions` adds the span only for `RetainedUnit::ReadChunk`; where it
+does not, the note below reads `max_source_span: None` rather than a number
+that was never charged. An empty match set keeps the charge, since there is no
+advice to read and nothing runs either way.
+
+*Rejected:* charging one allowance **divided** among sub-streams, which is what
+the inbox filed as the question. It leaves the double-count in place on the
+block-shaped source, and it does not reach the reachability problem either: at
+the shipped defaults a plain source divides 64 MiB of budget by a partition plus
+a 64 MiB span and plans one sub-stream for every `--jobs`, and charging the span
+once gives `N = (budget − max_source_span) / footprint`, which is zero there for
+the same reason. What makes a parallel query reachable at the defaults is the
+budget default, not the arithmetic above it.
 
 **When the divisor declines the requested count, `plan_partitions` says
 so.** At the shipped defaults `max_source_span`'s 64 MiB alone meets
@@ -4450,6 +4481,27 @@ starting at a row boundary. Handing several `PieceScan`s back rather than one
 is what keeps `merge` the only fold: the tail is just another piece, in order.
 A row longer than the tail read grows it rather than losing the row, bounded by
 the same `max_line_bytes` the serial loop enforces.
+
+**The tail is also why a partition is several chunks rather than one, and it is
+the whole of the plain path's 1→2 step.** Those tail bytes are the *next*
+partition's body, read a second time, so the overhead is `chunk / partition` —
+4% on a 24 MiB block, and **100%** on a partition of exactly one chunk, which is
+what a plain source used to advise. Measured: a plain `parse` at `--jobs ≥ 2`
+read every byte of a 3.00 GiB control twice, flat in the worker count because
+the cost is charged per partition rather than per worker. `io::PLAIN_PARTITION_CHUNKS`
+is what fixes it — eight chunks caps the waste at 12.5%, and each doubling past
+that buys under a percent of the read while halving how finely a region can be
+cut and how many readers a stated budget affords. The product is capped at
+`POOL_MAX_BYTES` so the partition read stays a buffer `BufferPool::keeps`,
+since above that ceiling only a buffer of exactly the announced read length
+survives release and an uncapped multiple would lose the pool on the very path
+it is sizing. *Rejected: sizing the tail read to a row instead.* It reaches
+every source and would shrink the compressed 4% too, but it changes what the
+leader does per piece for every caller rather than what one source says about
+itself — a mechanism change, not a default — and amortizing the tail here makes
+what it would buy smaller still
+([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+plain-path fork routes to both branches").
 
 **This is the one read loop that grants `WaitPolicy::MayWait`**, and it is safe
 for the reason the permission documents: each worker holds exactly one read at a
@@ -9028,15 +9080,16 @@ off the tree the way `every_fixture_tiles_exactly` discovers its own. The
 reference is `--jobs 1` **stated**, never inherited, so it cannot follow the
 default wherever that goes next; the flagless leg is asserted against it rather
 than used as it. **The parallel legs state a chunk size, and that is
-load-bearing rather than tuning.** `LocalFileSource`'s partition unit is the
-read chunk and `scan_region` declines a region with less than one partition left
-in the file, so at the shipped 1 MiB every fixture — the largest is 66 KB — is
-declined whole and a `--jobs 8` leg would be the serial path compared to itself.
-512 bytes cuts nearly every block, 4 KiB cuts the larger ones and leaves the
-rest, and one generated dump past four shipped chunks carries the **shipped**
-configuration run parallel with no chunk size stated at all — with its own
-precondition asserted against `DEFAULT_CHUNK_SIZE`, so a raised default fails
-the test rather than hollowing it out. Each leg writes a cache path of its own,
+load-bearing rather than tuning.** `LocalFileSource`'s partition is a fixed
+multiple of the read chunk and `scan_region` declines a region with less than
+one partition left in the file, so at the shipped 1 MiB every fixture — the
+largest is 66 KB — is declined whole and a `--jobs 8` leg would be the serial
+path compared to itself. 64 bytes cuts nearly every block, 512 cuts the larger
+ones and leaves the rest, and one generated dump past four whole partitions
+carries the **shipped** configuration run parallel with no chunk size stated at
+all — with its own precondition asserted against a partition size read off the
+source rather than restated, so a changed multiple fails the test rather than
+hollowing it out. Each leg writes a cache path of its own,
 because the library refuses to overwrite a cache recorded against another file
 (see [the cache](#the-cache)), and every leg reads the fixture where it lies,
 since the identity a cache records is that file's size and mtime.

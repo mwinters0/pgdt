@@ -239,18 +239,56 @@ pub enum PartitionBoundaries {
     At(Vec<u64>),
 }
 
-/// A source's answer to [`ByteRangeSource::partitions`]: where to split, and
-/// what one partition holds resident while it reads.
+/// What a caller's **retained** bytes are rounded out to on this source — the
+/// unit a batch held across reads pins, as against the bytes one concurrent
+/// reader costs while it is reading, which is
+/// [`Partitioning::partition_bytes`]
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// It exists because a caller budgeting sub-streams charges each one its held
+/// batch's span *on top of* the decode footprint, and that second charge is
+/// honest for one source shape and double-counts for the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RetainedUnit {
+    /// The read chunk. A batch spanning `crate::batch::QueryOptions`'
+    /// `max_source_span` bytes pins the chunk buffers those bytes were read
+    /// into, and those are bytes [`Partitioning::partition_bytes`] has not
+    /// charged for — so a caller adds the span. A plain file's answer.
+    ///
+    /// **The default, for the same reason [`WaitPolicy::NeverWait`] is one.**
+    /// It is what every source was charged before the term existed, and it is
+    /// the safe direction: over-charging plans fewer readers than the budget
+    /// could hold, where under-charging plans readers it cannot.
+    #[default]
+    ReadChunk,
+    /// The partition itself. A batch confined to a partition pins that
+    /// partition whatever the span cap says
+    /// (`docs/design/architecture.md`, "Three flush triggers, and only one of
+    /// them bounds memory"), and [`Partitioning::partition_bytes`] has already
+    /// charged for it — so adding the span would count the same bytes twice.
+    /// A block-decoding source's answer, whose retained unit is the decoded
+    /// block a partition is made of.
+    Partition,
+}
+
+/// A source's answer to [`ByteRangeSource::partitions`]: where to split, what
+/// one partition holds resident while it reads, and what a batch held across
+/// reads pins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Partitioning {
     boundaries: PartitionBoundaries,
     partition_bytes: u64,
+    retained: RetainedUnit,
 }
 
 impl Partitioning {
     /// Split anywhere; each partition holds `partition_bytes`.
     pub fn anywhere(partition_bytes: u64) -> Self {
-        Self { boundaries: PartitionBoundaries::Anywhere, partition_bytes }
+        Self {
+            boundaries: PartitionBoundaries::Anywhere,
+            partition_bytes,
+            retained: RetainedUnit::default(),
+        }
     }
 
     /// Split only at `offsets`, which are sorted and deduplicated here so the
@@ -259,12 +297,23 @@ impl Partitioning {
     pub fn at(mut offsets: Vec<u64>, partition_bytes: u64) -> Self {
         offsets.sort_unstable();
         offsets.dedup();
-        Self { boundaries: PartitionBoundaries::At(offsets), partition_bytes }
+        Self {
+            boundaries: PartitionBoundaries::At(offsets),
+            partition_bytes,
+            retained: RetainedUnit::default(),
+        }
     }
 
     /// One partition: this range is not to be split at all.
     pub fn single(partition_bytes: u64) -> Self {
         Self::at(Vec::new(), partition_bytes)
+    }
+
+    /// State that what a retained batch pins on this source is `unit`, rather
+    /// than the [`RetainedUnit::ReadChunk`] every constructor starts at.
+    pub fn retaining(mut self, unit: RetainedUnit) -> Self {
+        self.retained = unit;
+        self
     }
 
     /// Where this source is willing to be split. Any offsets are ascending
@@ -277,9 +326,10 @@ impl Partitioning {
     /// **the buffers the source itself allocates per partition**, and nothing
     /// else.
     ///
-    /// For a plain file that is one read chunk. For a compressed one it is a
-    /// decoded block plus the chunk buffer a read straddling a block boundary
-    /// is assembled into — 32 MiB against the 24 MiB blocks koji's download
+    /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`] read chunks, which
+    /// a worker takes in one buffer. For a compressed one it is a decoded
+    /// block plus the chunk buffer a read straddling a block boundary is
+    /// assembled into — 32 MiB against the 24 MiB blocks koji's download
     /// carries.
     ///
     /// **Two costs are deliberately outside it, and a caller budgeting workers
@@ -291,6 +341,14 @@ impl Partitioning {
     /// this reads.
     pub fn partition_bytes(&self) -> u64 {
         self.partition_bytes
+    }
+
+    /// What a batch this caller holds across reads pins on this source, which
+    /// is what a sub-stream's span allowance is charged against — see
+    /// [`RetainedUnit`], and `crate::stream::plan_partitions`, which is the
+    /// one caller that reads it.
+    pub fn retained_unit(&self) -> RetainedUnit {
+        self.retained
     }
 
     /// How many partitions this advice describes, or `None` for
@@ -509,6 +567,33 @@ const POOL_DEPTH: usize = 4;
 /// large it is (`docs/design/architecture.md`, "Execution model and API
 /// surface").
 const POOL_MAX_BYTES: usize = 8 << 20;
+
+/// How many read chunks a plain file's partition holds
+/// ([`LocalFileSource::partitions`]).
+///
+/// **A partition is not one chunk, because a worker reads its piece and then
+/// one chunk more.** `crate::leader::scan_partition` reads `[start, end)` and
+/// cannot finish there — the line ending at or past `end` needs bytes past
+/// `end` — so a chunk-sized tail read follows, and those bytes are the next
+/// partition's body read a second time. The waste is therefore
+/// `chunk / partition`: a partition of exactly one chunk reads the whole file
+/// **twice**, which is what a plain `--jobs 2` `parse` did, flat in the worker
+/// count because it is charged per partition
+/// (`docs/design/architecture.md`, "The interior split"). Eight caps it at
+/// 12.5% and is where the returns flatten — the tail is one chunk however
+/// large the partition is, so each doubling past this buys less than a
+/// percent of the read while it halves how finely a region can be cut and how
+/// many readers a stated budget affords.
+///
+/// **The product is capped at [`POOL_MAX_BYTES`] so the partition read stays a
+/// buffer the pool keeps** ([`BufferPool::keeps`]): above that ceiling only a
+/// buffer of exactly the announced read length survives release, so an
+/// uncapped multiple would hand back a fresh `calloc` per partition and lose
+/// the pool on the very path this is sizing. Where the announced chunk is
+/// itself at or past the ceiling the partition is that one chunk, which the
+/// hint clause keeps — the same answer this source gave before the multiple
+/// existed.
+const PLAIN_PARTITION_CHUNKS: usize = 8;
 
 /// Read buffers, reused rather than allocated per chunk.
 ///
@@ -947,13 +1032,25 @@ impl ByteRangeSource for LocalFileSource {
         self.pool.hint(len);
     }
 
-    /// **Anywhere, one buffer each.** A positioned read costs the same at
-    /// every offset, so nothing about this source prefers one split point to
-    /// another, and what a partition holds is one read chunk — the pool's own
-    /// slot size, which is the length a read loop announced or the ceiling
-    /// where none has ([`BufferPool::slot_bytes`]).
+    /// **Anywhere, [`PLAIN_PARTITION_CHUNKS`] read chunks each.** A positioned
+    /// read costs the same at every offset, so nothing about this source
+    /// prefers one split point to another; the size is what
+    /// [`PLAIN_PARTITION_CHUNKS`] documents.
+    ///
+    /// The unit it is a multiple of is the pool's own slot size — the length a
+    /// read loop announced, or the ceiling where none has
+    /// ([`BufferPool::slot_bytes`]) — so a caller that raised
+    /// `crate::ScanOptions::chunk_size` scales this with it, and a chunk
+    /// already at or past [`POOL_MAX_BYTES`] is a partition on its own.
+    ///
+    /// What a partition holds resident is that whole number of chunks in one
+    /// buffer, not a chunk: `crate::leader::scan_partition` reads its piece in
+    /// a single `read_range`, so `partition_bytes` is a length this source
+    /// really does allocate.
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
-        Partitioning::anywhere(self.pool.slot_bytes() as u64)
+        let chunk = self.pool.slot_bytes();
+        let bytes = chunk.saturating_mul(PLAIN_PARTITION_CHUNKS).min(POOL_MAX_BYTES).max(chunk);
+        Partitioning::anywhere(bytes as u64)
     }
 
     /// **The budget sizes the free list; the worker count does not.** This
@@ -1504,7 +1601,14 @@ impl XzSource {
                 (start > range.start && start < range.end).then_some(start)
             })
             .collect();
-        Partitioning::at(at, cache.unit as u64 + chunk_bytes)
+        // **And the retained unit is the partition, not the chunk.** A read
+        // inside a decoded block is a zero-copy slice of it, so a batch that
+        // holds views into this partition pins the block the line above has
+        // already charged for; a caller adding its span allowance on top would
+        // count those bytes twice ([`RetainedUnit`]). The streaming arm above
+        // keeps the default: there a read is assembled *into* a chunk buffer,
+        // so what a batch pins is chunks.
+        Partitioning::at(at, cache.unit as u64 + chunk_bytes).retaining(RetainedUnit::Partition)
     }
 
     /// The fallback: one live decode, restarted on a backward seek, serialized
@@ -2143,18 +2247,41 @@ mod tests {
     }
 
     /// A plain file prefers no split point to another, and a partition costs
-    /// one read chunk — the caller's own announced number where it announced
-    /// one, which is the same value the pool sizes a slot by.
+    /// [`PLAIN_PARTITION_CHUNKS`] read chunks — the caller's own announced
+    /// number where it announced one, so the size scales with the unit the
+    /// pool sizes a slot by, and never past the ceiling above which a released
+    /// buffer stops being kept.
+    ///
+    /// **What a partition is a multiple of, and where the multiple stops, are
+    /// two rules and both are asserted**: a hint under the ceiling multiplies,
+    /// one that would carry the product past it is capped, and one already at
+    /// or past it is a partition on its own.
     #[test]
-    fn a_plain_file_advises_anywhere_at_one_buffer_each() {
+    fn a_plain_file_advises_anywhere_at_several_chunks_each() {
         let (_file, source) = source_of(b"0123456789abcdef");
         let advice = source.partitions(0..16);
         assert_eq!(advice.boundaries(), &PartitionBoundaries::Anywhere);
         assert_eq!(advice.max_partitions(), None);
+        assert_eq!(
+            advice.retained_unit(),
+            RetainedUnit::ReadChunk,
+            "a batch pins the chunks it was read into, which partition_bytes has not charged"
+        );
+        // Nothing announced: the slot size is the ceiling, and the multiple is
+        // capped back to it.
         assert_eq!(advice.partition_bytes(), POOL_MAX_BYTES as u64);
 
+        source.hint_read_size(64 << 10);
+        assert_eq!(
+            source.partitions(0..16).partition_bytes(),
+            (PLAIN_PARTITION_CHUNKS as u64) * (64 << 10)
+        );
+
         source.hint_read_size(4 << 20);
-        assert_eq!(source.partitions(0..16).partition_bytes(), 4 << 20);
+        assert_eq!(source.partitions(0..16).partition_bytes(), POOL_MAX_BYTES as u64);
+
+        source.hint_read_size(16 << 20);
+        assert_eq!(source.partitions(0..16).partition_bytes(), 16 << 20);
     }
 
     /// A block-decoding `.xz` advises its block boundaries, so a partition is
@@ -2188,6 +2315,11 @@ mod tests {
         // straddling read is assembled into.
         let unit = source.blocks.as_ref().unwrap().unit as u64;
         assert_eq!(whole.partition_bytes(), unit + POOL_MAX_BYTES as u64);
+
+        // And what a retained batch pins is that same block, which the line
+        // above has already charged for — so a caller must not add its span
+        // allowance on top ([`RetainedUnit`]).
+        assert_eq!(whole.retained_unit(), RetainedUnit::Partition);
     }
 
     /// **A streaming-fallback source advises one partition even though its
@@ -2224,10 +2356,16 @@ mod tests {
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
         let decoding = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 0..4 * 4096);
         assert_eq!(decoding.max_partitions(), Some(4));
+        assert_eq!(decoding.retained_unit(), RetainedUnit::Partition);
 
         let streaming = XzSource::partition_advice(&table, None, 1 << 20, 0..4 * 4096);
         assert_eq!(streaming.max_partitions(), Some(1));
         assert_eq!(streaming.partition_bytes(), 1 << 20, "one chunk buffer, one reader");
+        assert_eq!(
+            streaming.retained_unit(),
+            RetainedUnit::ReadChunk,
+            "a streaming read is assembled into a chunk buffer, so chunks are what a batch pins"
+        );
     }
 
     /// `xz` is not `mise`-pinned (`docs/design/architecture.md`, "Testing

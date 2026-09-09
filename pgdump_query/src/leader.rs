@@ -794,17 +794,24 @@ mod tests {
 
     /// The byte counts a fixture-sized block has to be scheduled against.
     ///
-    /// A dump fixture is kilobytes and the source's own unit is a read chunk,
-    /// so at the shipped 1 MiB every block here is one partition and the
-    /// scheduler correctly declines every one of them. Announcing 64 bytes as
-    /// the read size makes the source advise 64-byte partitions, which turns a
-    /// 4 KiB block into tens of windows of several workers each — the shape the
+    /// A dump fixture is kilobytes and the source's own partition is several
+    /// read chunks (`crate::io::PLAIN_PARTITION_CHUNKS`), so at the shipped
+    /// 1 MiB every block here is inside one partition and the scheduler
+    /// correctly declines every one of them. Announcing 8 bytes as the read
+    /// size makes the source advise 64-byte partitions, which turns a 4 KiB
+    /// block into tens of windows of several workers each — the shape the
     /// window loop, the tail read and the growth path all need in order to be
     /// exercised at all.
+    ///
+    /// **The announced size is bounded below by the smallest region any
+    /// fixture here ends with**, which is 103 bytes: the floor
+    /// [`scan_region`] applies is one whole partition, so a partition larger
+    /// than a trailing block's remaining file declines it and the sweep below
+    /// stops asserting anything about that block.
     fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
-        source.hint_read_size(64);
+        source.hint_read_size(8);
         ScanOptions {
-            chunk_size: 64,
+            chunk_size: 8,
             parallelism: Parallelism::workers(jobs, crate::io::DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()
         }

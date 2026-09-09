@@ -44,6 +44,21 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
     rows
 }
 
+/// What one concurrent reader costs `source` resident at the chunk size these
+/// queries read with — the first term of the sub-stream divisor
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// **Asked of the source rather than restated as a chunk count.** A plain
+/// file's partition is several read chunks and the multiple is the library's
+/// to choose, so a test that spelled the product out would be asserting the
+/// constant rather than the arithmetic that divides by it. The read size is
+/// announced first because the answer scales with it, exactly as the mapping
+/// pass announces it before the plan is made.
+fn partition_unit(source: &LocalFileSource) -> u64 {
+    source.hint_read_size(ScanOptions::default().chunk_size);
+    source.partitions(0..1).partition_bytes()
+}
+
 /// Every row `jobs` sub-streams yield, drained one after another in the order
 /// the split handed them back — which is file order, so this is directly
 /// comparable to [`serial_rows`].
@@ -493,6 +508,90 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
     );
 }
 
+/// **The span term is charged per source, not universally.** A block-decoding
+/// `.xz` retains by the *partition*: a batch holding views into a decoded
+/// block pins that block, which `partition_bytes` has already charged for, so
+/// adding `max_source_span` on top would count the same bytes twice
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// One budget, one span and one job count, put to both source shapes:
+///
+/// - the plain source is charged both terms, so the shipped 64 MiB span alone
+///   swamps a 5 MiB budget and the plan comes back with one sub-stream and a
+///   note naming the span it was charged;
+/// - the compressed one is charged the decode footprint alone — a 64-byte
+///   block plus a chunk buffer — so the same budget affords every worker
+///   asked for and the plan is silent.
+///
+/// The rows are the plain file's either way, which is what keeps this a
+/// statement about the *accounting* rather than about what gets read.
+#[tokio::test]
+async fn a_block_shaped_source_is_not_charged_the_batch_span() {
+    let plain = LocalFileSource::open(edge_cases()).unwrap();
+    let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
+
+    // Five read chunks: four decode footprints on the compressed source (a
+    // 64-byte block plus one chunk buffer each) with room to spare, and less
+    // than one partition on the plain one once its own span is added.
+    let budget = 5 * ScanOptions::default().chunk_size as u64;
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
+
+    let streams = table_stream_partitions(
+        &plain,
+        "public.widgets",
+        ScanOptions::default(),
+        options.clone(),
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert_eq!(streams.len(), 1, "the plain source pays both terms and cannot afford a second");
+    match &streams[0].plan_notes() {
+        [note] => {
+            let PlanNoteKind::ParallelismBudgetLimited { max_source_span, .. } = &note.kind else {
+                panic!("{note:?}")
+            };
+            assert_eq!(
+                *max_source_span,
+                options.max_source_span.map(|span| span as u64),
+                "a chunk-shaped source is charged the span, and the note names it"
+            );
+        }
+        other => panic!("expected exactly one plan note, got {other:?}"),
+    }
+
+    let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
+    let xz = XzSource::open(compressed.path()).unwrap();
+    assert!(
+        xz.seek_table().unwrap().is_seekable(),
+        "a single-block fixture would advise one partition and pass for the wrong reason"
+    );
+    let streams = table_stream_partitions(
+        &xz,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(
+        streams.iter().all(|s| s.plan_notes().is_empty()),
+        "the span is not charged here, so the budget affords every worker: {:?}",
+        streams[0].plan_notes()
+    );
+    assert!(streams.len() > 1, "and the plan really did hand out more than one sub-stream");
+
+    let mut rows = Rows::new();
+    for mut stream in streams {
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
+    }
+    assert_eq!(rows, expected);
+}
+
 /// A source that declines to be split is not split, whatever `--jobs` says —
 /// the single-block `.xz`, whose streaming fallback would make two readers
 /// each force the other's restart (`docs/design/architecture.md`, "The
@@ -631,11 +730,16 @@ async fn a_block_path_that_was_taken_is_silent() {
 /// rows are unaffected.
 ///
 /// **The divisor is two terms, not one**: what a concurrent reader costs the
-/// source (`partition_bytes`, one read chunk on a local file) plus what a
-/// sub-stream's held batch pins (`max_source_span`) — so a budget of four
-/// chunk-units against a one-chunk span affords two workers, not four, and a
-/// test that left `max_source_span` at its 64 MiB default would need a budget
-/// past that default before the job count ever bound anything.
+/// source (`partition_bytes`) plus what a sub-stream's held batch pins
+/// (`max_source_span`, charged here because a plain file retains by the read
+/// chunk) — so a budget of four partition-units against a one-unit span
+/// affords two workers, not four, and a test that left `max_source_span` at
+/// its 64 MiB default would need a budget past that default before the job
+/// count ever bound anything.
+///
+/// **The unit is read off the source rather than restated**
+/// ([`partition_unit`]), so the arithmetic below stays the arithmetic under
+/// test when the plain source's own partition size moves.
 ///
 /// **The plan says why, too**: [`PlanNoteKind::ParallelismBudgetLimited`]
 /// names the same two divisor terms and the budget that declined them, so this
@@ -646,10 +750,10 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
 
-    // One read chunk per partition on a local file, so a per-worker cost of
-    // two chunk-units (one decoded, one pinned) makes a budget of four such
-    // units afford two workers however many jobs are asked for.
-    let chunk = ScanOptions::default().chunk_size as u64;
+    // A per-worker cost of two partition-units — one read, one pinned by the
+    // held batch — makes a budget of four such units afford two workers
+    // however many jobs are asked for.
+    let chunk = partition_unit(&source);
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, 4 * chunk),
         max_source_span: Some(chunk as usize),
@@ -709,7 +813,7 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
 
-    let chunk = ScanOptions::default().chunk_size as u64;
+    let chunk = partition_unit(&source);
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, 2 * chunk),
         max_source_span: None,

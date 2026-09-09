@@ -77,7 +77,7 @@ use crate::index::{
 };
 use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
-    WaitPolicy,
+    RetainedUnit, WaitPolicy,
 };
 use crate::leader::{self, RegionScan};
 use crate::map::{Builder, Span, SpanBody, attach_text};
@@ -1831,8 +1831,11 @@ pub enum PlanNoteKind {
     /// `footprint` is the widest touched block's decode cost
     /// (`crate::io::Partitioning::partition_bytes`) and `max_source_span` is
     /// the second term (`crate::batch::QueryOptions::max_source_span`) —
-    /// `None` when the caller left it unbounded, in which case the footprint
-    /// alone was too big for `memory_bytes`. Never a reason to refuse the
+    /// `None` where no span was charged, in which case the footprint alone was
+    /// too big for `memory_bytes`. It reads `None` for two different reasons
+    /// and names the number in neither: the caller left the span unbounded, or
+    /// this source retains by the partition and the footprint has already
+    /// charged for what a batch pins (`crate::io::RetainedUnit`). Never a reason to refuse the
     /// query: `planned` sub-streams run regardless, this only names why there
     /// are not `requested` of them and what would raise it.
     ParallelismBudgetLimited {
@@ -1996,15 +1999,26 @@ fn compressed_block_path_declined(
 /// **`max_source_span` is the second term the stated budget divides by, not a
 /// separate cap of its own** (`docs/design/architecture.md`, "Execution model
 /// and API surface"). What one sub-stream costs the caller is its held
-/// batch's pin (`max_source_span`, rounded out to the retained unit by the
-/// source's own per-partition footprint) *on top of* what the source charges
-/// a concurrent reader for decoding (`partition_bytes`) — a discovery worker
-/// pays only the second, but a query's sub-stream is handed its batch and
-/// pays both, which is why this divisor is not `worker_count`'s own to know
-/// and is computed here rather than folded into that function. A caller who
-/// left the span unbounded (`None`) has already opted out of a batch-size
-/// bound, so the divisor falls back to the decode footprint alone — the same
-/// answer a discovery worker's call gets.
+/// batch's pin (`max_source_span`, rounded out to the retained unit) *on top
+/// of* what the source charges a concurrent reader for decoding
+/// (`partition_bytes`) — a discovery worker pays only the second, but a
+/// query's sub-stream is handed its batch and pays both, which is why this
+/// divisor is not `worker_count`'s own to know and is computed here rather
+/// than folded into that function. A caller who left the span unbounded
+/// (`None`) has already opted out of a batch-size bound, so the divisor falls
+/// back to the decode footprint alone — the same answer a discovery worker's
+/// call gets.
+///
+/// **The span is charged per source, not universally**, because the second
+/// term is honest for one source shape and double-counts for the other: a
+/// source retaining by the read chunk pins bytes `partition_bytes` never
+/// charged for, and one retaining by the partition pins bytes it did
+/// (`crate::io::RetainedUnit`). So the term is added only where the advice
+/// says [`crate::io::RetainedUnit::ReadChunk`], and where it is not, the note
+/// below reads back `None` rather than a number that was never charged. An
+/// **empty** `matches` has no advice to read, so it keeps the charge: nothing
+/// runs either way, and the arm that says nothing is the one that charges
+/// more.
 ///
 /// **The second return value is the plan's own notes: at most one naming why
 /// `workers` came up short of `parallelism.jobs()`, and at most one
@@ -2033,7 +2047,13 @@ fn plan_partitions(
     let advice: Vec<Partitioning> =
         matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
     let footprint = advice.iter().map(Partitioning::partition_bytes).max().unwrap_or(0);
-    let divisor = match max_source_span {
+    // The span is a cost of a chunk-shaped source only. `all` over an empty
+    // advice would be vacuously true and drop the charge on a match set that
+    // stated nothing, so the emptiness is tested rather than left to fall out.
+    let retains_partitions =
+        !advice.is_empty() && advice.iter().all(|a| a.retained_unit() == RetainedUnit::Partition);
+    let charged_span = if retains_partitions { None } else { max_source_span };
+    let divisor = match charged_span {
         Some(span) => footprint.saturating_add(span as u64),
         None => footprint,
     };
@@ -2051,7 +2071,7 @@ fn plan_partitions(
             requested,
             workers,
             footprint,
-            max_source_span.map(|span| span as u64),
+            charged_span.map(|span| span as u64),
             memory_bytes,
         ));
     }
