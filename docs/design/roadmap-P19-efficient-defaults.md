@@ -315,8 +315,29 @@ when `--parallel-memory` is absent exactly as it already asks when `--jobs` is:
 at ~59 MiB is ~1.4 GiB — and `LocalFileSource` answers with no budget, as it
 answers with one worker today. A count nothing can afford is not a
 recommendation, which is the general form
-([`roadmap.md`](roadmap.md), "A default runs as fast as the machine or the
-cgroup permits").
+([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
+permits").
+
+**Where nothing is discovered, the recommendation is built from four workers,
+not the host's.** `XzSource` recommends `available_parallelism()` for the
+*count*, and its budget recommendation would otherwise be `jobs × C` — ~1.4 GiB
+on this 24-core machine and ~7.5 GiB on a 128-core one, sized from hardware
+nobody said pgdq could have. An unlimited host is a *shared* host until proved
+otherwise ([`roadmap.md`](roadmap.md), "A default runs as fast as the
+allocation permits"), so the unlimited recommendation is `min(cores, 4) × C` —
+**~236 MiB**, four readers. Where a limit *is* discovered it governs and the
+count rises with it, up to `available_parallelism()`: an operator who states an
+allocation has said what pgdq may have, and a host that states nothing has not.
+
+Four rather than some other small number because the roadmap already fixes it
+as the count that survives moving between machines, and it is what a plain
+source's `POOL_DEPTH` already delivers. It is well clear of the failure `19.8`
+would otherwise hit — 236 MiB is four sub-streams, not the one that a 64 MiB
+constant admits — while being about a sixth of what the host's core count would
+have taken. *Rejected:* reading `MemTotal` as a last-resort cap. It reverses
+the going-in refusal, needs a `runtime-invariants.md` entry, and answers the
+wrong question — total memory is not this process's memory on a machine it
+shares.
 
 **The composition is not a `min`, and the difference is one `Option`.** Written
 as `min(source_recommendation, discovered)` it breaks the case it exists for:
@@ -638,7 +659,7 @@ being inserted.
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |
 | **19.13** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule, carrying `19.12`'s constant — plus the source's own budget recommendation, which `ParallelArgs::resolve` asks for when `--parallel-memory` is absent as it already asks for a worker count when `--jobs` is. One slice because they are one review question: what a flagless invocation ends up with for a budget. |
 | **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. Raises `measure.PARALLEL_BUDGET` 1 GiB → 2 GiB with the harness prose that explains it, the old value no longer admitting the widest row's twenty-four workers; the readings follow at `19.11`. Corrects the manual's "on a compressed file the headroom you need is a multiple of the budget rather than a fixed margin", which is true of the shipped build and false the moment the charge is right — the falsified-claim rule puts it in this change, not in `19.10`. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
-| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. **Its first job is the reserve's headroom**, thin at ~7% through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%; a failure there reopens the reserve and a proportional term is what it reopens to. A `runs/` probe, not a figure. |
+| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. Its unlimited arm is exercised **without an unbounded run**: the `None` branch is a unit test over a fixture root carrying no limit files (`19.9`'s tree), and the at-scale reading uses a limit set high enough that the source's recommendation is what binds, which is the same arithmetic outcome with a bounded blast radius. **Its first job is the reserve's headroom**, thin at ~7% through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%; a failure there reopens the reserve and a proportional term is what it reopens to. A `runs/` probe, not a figure. |
 
 **`19.14` and `19.15` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this

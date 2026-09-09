@@ -117,7 +117,7 @@ worker* has over-fitted to the baseline. `parallel-scan-throughput`'s wide
 gathered wherever the machine can give them, and are read as a guard rather
 than as the target.
 
-### A default runs as fast as the machine or the cgroup permits
+### A default runs as fast as the allocation permits
 
 **Where a caller states nothing, the defaults are read from what the
 environment actually allows — the CPU quota, the memory limit — rather than
@@ -126,16 +126,30 @@ deployment case is what settles it: under an orchestrator the process is
 *given* an allocation, is the only party that knows it, and cannot be asked to
 have it restated on a command line.
 
-Three bounds, and they are what keep this from being "take everything":
+**An allocation stated is permission; a machine merely observed is not.** A
+cgroup limit is somebody telling pgdq what it may have, so taking it is what
+they asked for. A host with *no* limit has told us nothing — it is a shared
+machine until proved otherwise, and pgdq is not the only process on it. So the
+two cases are not symmetric and must not be written as one: **where a limit is
+discovered the default fills it, and where none is, the default stays modest**
+whatever the core count suggests. Reading physical RAM to fill an unlimited
+host is refused for the same reason it was refused going in — total memory is
+not *our* memory.
+
+Four bounds, and they are what keep this from being "take everything":
 
 - **A stated flag wins outright**, in both directions. This governs the absence
   of a flag, never its presence.
 - **The library's own default stays `Serial`.** What this rule sets is what the
   *CLI* resolves and what a *source* recommends for itself; an embedder is
   handed the mechanism and takes it deliberately.
-- **We do not take an allocation we cannot show we use.** The budget rule's
-  fraction is this bound in code, and it is why the rule is a ceiling over a
-  subtraction rather than a share of the machine.
+- **We do not take an allocation we cannot show we use.** `stream::worker_count`
+  and `BufferPool::slots`' clamp are this bound in code: resident saturates at
+  the worker count times what one reader holds, so budget above that is taken
+  by nothing.
+- **Unstated is not unlimited.** Absent a discovered limit the default is built
+  from a modest worker count rather than the host's, because the alternative is
+  sizing pgdq's appetite from hardware nobody said it could have.
 
 **Each source answers for its own defaults, worker count and budget alike.**
 That is why `ByteRangeSource::default_workers` is a trait method rather than a

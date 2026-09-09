@@ -421,8 +421,9 @@ the five orderings that bind are in the spec, not here.
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
       rule, carrying `19.12`'s constant — plus the source's own budget
-      recommendation, without which a corrected divisor makes a flagless `.xz`
-      scan serial on an unlimited host.
+      recommendation — `min(cores, 4) × C`, ~236 MiB, where no limit is
+      discovered, without which a corrected divisor makes a flagless `.xz` scan
+      serial on an unlimited host.
 - [ ] **19.14** `XzSource::partition_advice` charges a sub-stream the **two**
       units a reader holds, not one — the divisor `19.12` found out by 2.4× —
       plus `xz_seek::Reader::decode_footprint()`; and `BlockCache::affordable`
@@ -432,7 +433,9 @@ the five orderings that bind are in the spec, not here.
       of the phase waits behind it. Lands before `19.13`.
 - [ ] **19.15** The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB
       with nothing stated, plus one `--jobs` leg on a plain file — the shape
-      whose arena retention no reading has put against a real limit. **First job is the reserve's headroom** — ~7%
+      whose arena retention no reading has put against a real limit — and the
+      unlimited arm, as a unit test over a no-limit fixture root plus a
+      high-limit container rather than an unbounded run on a shared machine. **First job is the reserve's headroom** — ~7%
       through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%, and a
       failure there reopens the reserve. A `runs/` probe, not a figure. Follows
       `19.13`.
