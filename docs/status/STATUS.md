@@ -426,8 +426,9 @@ the five orderings that bind are in the spec, not here.
 - [ ] **19.14** `XzSource::partition_advice` charges a sub-stream the **two**
       units a reader holds, not one — the divisor `19.12` found out by 2.4× —
       plus `xz_seek::Reader::decode_footprint()`; and `BlockCache::affordable`
-      restated against that same cost, and `measure.PARALLEL_BUDGET` raised
-      1 GiB → 2 GiB. **Blocked on `xz-seek`** and the re-vendor, and the rest
+      restated against that same cost, `measure.PARALLEL_BUDGET` raised
+      1 GiB → 2 GiB, and the manual's "headroom is a multiple of the budget"
+      corrected, which this change is what falsifies. **Blocked on `xz-seek`** and the re-vendor, and the rest
       of the phase waits behind it. Lands before `19.13`.
 - [ ] **19.15** The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB
       with nothing stated, plus one `--jobs` leg on a plain file — the shape
