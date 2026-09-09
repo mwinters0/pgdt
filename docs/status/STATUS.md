@@ -398,12 +398,13 @@ the five orderings that bind are in the spec, not here.
       owns. Notes:
       [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
 - [ ] **19.9** Resolution tests, the status line's provenance, the below-floor
-      `PlanNote`.
+      `PlanNote`, and a test pinning the below-reserve arrangement.
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
       whole-block-decode threshold.
 - [ ] **19.11** The closing sweep — publishes the reserve figure and
-      `rss-attribution`, closing `M74`.
+      `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures
+      against `19.14`'s raised `PARALLEL_BUDGET`.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build —
       `runs/measure-20260909T171423`, `--alone`, NOT PUBLISHABLE — with the
       inert worker-count-plus-one arena leg dropped. **`19.7`'s prediction is
@@ -425,11 +426,15 @@ the five orderings that bind are in the spec, not here.
 - [ ] **19.14** `XzSource::partition_advice` charges a sub-stream the **two**
       units a reader holds, not one — the divisor `19.12` found out by 2.4× —
       plus `xz_seek::Reader::decode_footprint()`; and `BlockCache::affordable`
-      restated against that same cost. **Blocked on `xz-seek`** and the
-      re-vendor, and the rest of the phase waits behind it. Lands before
-      `19.13`.
+      restated against that same cost, and `measure.PARALLEL_BUDGET` raised
+      1 GiB → 2 GiB. **Blocked on `xz-seek`** and the re-vendor, and the rest
+      of the phase waits behind it. Lands before `19.13`.
 - [ ] **19.15** The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB
-      with nothing stated. A `runs/` probe, not a figure. Follows `19.13`.
+      with nothing stated, plus one `--jobs` leg on a plain file — the shape
+      whose arena retention no reading has put against a real limit. **First job is the reserve's headroom** — ~7%
+      through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%, and a
+      failure there reopens the reserve. A `runs/` probe, not a figure. Follows
+      `19.13`.
 
 ## Not started
 

@@ -258,6 +258,28 @@ beside the clamp ([`architecture.md`](architecture.md), "Execution model and
 API surface") rather than guarded by a fraction hedging against a change nobody
 has proposed.
 
+**The margin this leaves is thin in one band, and `19.15` is what settles
+it — knowingly, and after `19.13` ships.** The argument above is about *mean*
+resident; it says nothing about variance, and variance is what a cgroup kills
+on, since it kills on one run's peak rather than on the median of three.
+`19.12`'s per-rep spreads across the compressed uncapped leg are **10.1%,
+6.5%, 19.8% and 7.0%** — proportional to resident rather than a fixed jitter,
+the absolute spread growing 27 MiB → 160 MiB across the axis. A *constant*
+reserve leaves *constant* headroom against that: 18.4% at a 512 MiB limit,
+falling to **7.0%** through the 1.25–1.5 GiB band before the worker-count cap
+lifts it again. In that band the margin is below the median observed spread.
+
+Raising the constant does not fix the shape — 20% at 1.8 GiB needs a ~540 MiB
+reserve, which puts a 600 MiB cgroup below the floor — so the alternative is a
+proportional term reintroduced for a *measured* reason rather than as the
+unmeasured ceiling dropped above. That is not taken now: it would pick a number
+from four cells of a diagnostic sitting on a build `19.14` is about to replace.
+**`19.15` is the trigger.** It runs at 256 MiB, 512 MiB and 1 GiB, either side
+of the worst band, against the shipped rule; if the headroom does not survive,
+the reserve is reopened and the proportional term is what it reopens to.
+Reasoning: [2026-09-09](../status/history/2026-09-09.md), "The reserve's
+headroom is thin where variance is widest".
+
 **The reserve is one constant, taken from the compressed leg, and it
 over-reserves the plain path by roughly the difference.** The two paths' fixed
 terms are a factor of thirty apart — a plain `parse` holds 5.86 MiB above its
@@ -295,6 +317,32 @@ answers with one worker today. A count nothing can afford is not a
 recommendation, which is the general form
 ([`roadmap.md`](roadmap.md), "A default runs as fast as the machine or the
 cgroup permits").
+
+**The composition is not a `min`, and the difference is one `Option`.** Written
+as `min(source_recommendation, discovered)` it breaks the case it exists for:
+on an unlimited host `discover()` falls back to today's constant, so the `min`
+is 64 MiB and the `.xz` scan is serial again. What distinguishes *no limit
+found* from *a small limit* is that the first has no cap at all:
+
+- `environment_cap` = the discovered limit minus the reserve, or **`None`**
+  where nothing was discovered;
+- `want` = the source's recommendation, or `DEFAULT_MEMORY_BUDGET` where the
+  source offers none — which is the plain path, and which stays serial anyway;
+- `budget` = `environment_cap.map(|cap| want.min(cap)).unwrap_or(want)`.
+
+So `min` governs where a limit exists, which is "do not take what you cannot
+use", and the fallback is the source's own answer. That is also what keeps "an
+unlimited environment falls back to today's constant" true: the constant is
+what a source with *no* recommendation gets.
+
+**Below the reserve the arrangement is named rather than emergent.** At a
+256 MiB limit `limit − reserve` is zero, and three independent floors would
+otherwise produce the behaviour between them — `worker_count`'s `.max(1)`,
+`BufferPool::slots`' clamp to one, and `affordable()` refusing block decode. So
+state it: below the reserve the budget is one reader's worth on the *streaming*
+path, and the below-floor `PlanNote` (`19.9`) says the allocation bound the
+scan. It gets a test, so that a later change to any of those three floors
+cannot silently alter it.
 
 **This qualifies the settled sentence above rather than reversing it.**
 Discovery still falls back to today's constant; what changes is that a *source*
@@ -584,13 +632,13 @@ being inserted.
 | **19.6** | The reserve figure is registered in `scripts/measure.py` and taken diagnostically to choose the constant. No published table. |
 | **19.7** | `BufferPool`'s accounting, and nothing else: the under-report whenever `keeps` admits a buffer larger than `slot_bytes` ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The plain partition's cap, reviewed"); the **coupling of the block pool's free and retained counts**, without which a stated budget bounds half of what that pool holds; and `BlockCache::affordable` requiring room for **two** units rather than one, since a coupled count of one is the un-poolable shape that pool rejects by name. Re-scoped after the spec was written — see the row below and [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries, closed". |
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
-| **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, and the v1 fixture tree that tests `RT4`'s shape against the reader. |
+| **19.9** | Resolution tests, the status line's provenance, the below-floor `PlanNote`, the v1 fixture tree that tests `RT4`'s shape against the reader, and a test pinning the below-reserve arrangement so no floor can silently change it. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`'s reading leaves it, the new defaults, both flags' help text, and the moved whole-block-decode threshold — `19.7` declines a file whose blocks exceed half the budget, where today it declines one whose blocks exceed the budget. |
 | **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures against `19.14`'s raised `PARALLEL_BUDGET`. |
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |
 | **19.13** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule, carrying `19.12`'s constant — plus the source's own budget recommendation, which `ParallelArgs::resolve` asks for when `--parallel-memory` is absent as it already asks for a worker count when `--jobs` is. One slice because they are one review question: what a flagless invocation ends up with for a budget. |
 | **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. Raises `measure.PARALLEL_BUDGET` 1 GiB → 2 GiB with the harness prose that explains it, the old value no longer admitting the widest row's twenty-four workers; the readings follow at `19.11`. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
-| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. A `runs/` probe, not a figure. |
+| **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. **Its first job is the reserve's headroom**, thin at ~7% through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%; a failure there reopens the reserve and a proportional term is what it reopens to. A `runs/` probe, not a figure. |
 
 **`19.14` and `19.15` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
