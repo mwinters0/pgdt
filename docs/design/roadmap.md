@@ -775,6 +775,14 @@ payloads").
 Work we intend to do without committing it to a phase. An item moves out of
 this section when it acquires a phase number, not when it acquires a design.
 
+**This section is iterated through once the product is feature-complete**, so
+it is where an option surfaced mid-phase and deliberately not taken belongs —
+including a *cheaper alternative* to an item already here, which is recorded
+inside that item rather than as a second one. It survives a keystone untouched:
+no phase doc holds it, and nothing but acquiring a phase number takes an item
+out. An option left only in a phase spec or a slice notes doc does not survive,
+which is what makes the difference worth minding at the moment one is found.
+
 - **A two-unit plain source, so the partition read is pooled at all and a
   raised `--chunk-size` keeps its multiple.** `LocalFileSource` runs one
   `BufferPool` with one announced read length, while the parallel plain path
@@ -792,6 +800,26 @@ this section when it acquires a phase number, not when it acquires a design.
   changes what a source *is* rather than what it defaults to, and P19 is about
   defaults; it wants grilling and a spec before any of it is written
   ([`architecture.md`](architecture.md), "The interior split").
+
+  **Weigh a smaller shape against it first: `scan_partition` reading its
+  partition in chunk-sized reads.** The plain path has two read units only
+  because the partition's *body* is read in one call; the loop already
+  continues chunk-wise after that first read, threading `entry` and `start`
+  through `scan_piece`, so the machinery exists and it is the first read alone
+  that is oversized. Made chunk-sized, the source is single-unit again, every
+  buffer fits a slot and is pooled, and no second pool has to divide a budget.
+  It also removes the *reason* the partition product is capped at
+  `POOL_MAX_BYTES` — the cap bounds one worker's allocation, and there is no
+  such allocation once no read is partition-sized — so the multiple stays eight
+  at any `--chunk-size` rather than collapsing to one at `8m`. That is both of
+  the things this item names, from a change that touches one function. Its
+  known price is eight times the `spawn_blocking` hops and read syscalls per
+  partition, which is what the serial path already pays per chunk, and it is
+  unmeasured. It sits here rather than in the out-of-band ledger for the same
+  reason the item does: it reaches `leader::scan_partition`, which is what
+  every source's leader does per piece
+  ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+  partition-pooling call, reviewed").
 
 - **TOC attribution across an intervening statement, so `--disable-triggers`
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and

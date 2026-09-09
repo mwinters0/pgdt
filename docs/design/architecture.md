@@ -4585,6 +4585,24 @@ what it would buy smaller still
 ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
 plain-path fork routes to both branches").
 
+*Rejected: keeping a ceiling that preserved the appearance of pooling.* The
+partition buffer could have gone on being admitted under a rule of its own,
+leaving the free list as it was and the loss unbooked. What that keeps is not
+pooling but the *report* of it: a single-unit pool has no honest slot to charge
+a second unit at, so any such rule puts `held_bytes()` back to reporting `slots
+× slot_bytes` for a list holding up to `slots × POOL_MAX_BYTES` — and that
+number is what `XzSource::apportion` divides one stated budget with and what a
+memory-budget rule rests on. The under-report was not confined to the parallel
+shape either: `map::attach_text` reads a whole contiguous run of text-storing
+spans in one call, which on any dump whose schema run exceeds a chunk put a
+multi-megabyte buffer on the free list counted as one slot, on the **serial**
+default path. Weighed against that, what the tightening costs is pooling nothing
+ever demonstrated was happening, on a shape measured at 0.81× serial and made
+non-default in the same phase. Pricing the loss first was considered and buys
+nothing decidable: the plain worker default's stated reopening condition is a
+reading showing plain parallel *beating* serial, and a change that makes it
+slower can only move further from it.
+
 **This is the one read loop that grants `WaitPolicy::MayWait`**, and it is safe
 for the reason the permission documents: each worker holds exactly one read at a
 time, the `Bytes` moving into the `spawn_blocking` closure that parses it and

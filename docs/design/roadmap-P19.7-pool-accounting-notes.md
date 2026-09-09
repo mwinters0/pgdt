@@ -36,8 +36,18 @@ allocation per partition". Two things bound what it costs: the shape is
 `--jobs ≥ 2` on a *plain* file, which `19.8` is about to make non-default and
 which the spec already records as slower than serial at every worker count; and
 admission was never a hit rate anyone measured, `BufferPool::pick` taking the
-smallest fitting buffer out of four slots shared with the tail reads. It is
-filed under `STATUS.md`'s "Decisions worth another look".
+smallest fitting buffer out of four slots shared with the tail reads.
+
+**Reviewed and affirmed**, with a third bound the slice had not found: the
+under-report reached the *serial* path too, through `map::attach_text`'s
+whole-run read. Neither reconsideration route was open — the two-unit source is
+out of this phase by the spec, and pricing the loss cannot move a plain worker
+default whose reopening condition is a reading in the opposite direction. The
+reasoning is beside the mechanism ([`architecture.md`](architecture.md), "The
+interior split"), and the review turned up a cheaper remedy than the two-unit
+source, now recorded inside that Future item
+([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
+partition-pooling call, reviewed").
 
 **The slot count still bounds what is *outstanding*.** `--jobs 4` remains the
 ceiling on concurrent plain-file readers: that comes from `obtain`'s wait
