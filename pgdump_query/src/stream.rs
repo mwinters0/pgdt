@@ -1979,8 +1979,8 @@ fn compressed_block_path_declined(
         table.block_count(),
         table.max_block_uncompressed(),
         // The budget actually in force, which is what the source compared its
-        // block against: `Parallelism::Serial` states no number and every
-        // pool falls back to this one.
+        // block against: a caller that stated no number leaves every pool on
+        // this one.
         parallelism.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET),
     ))
 }
@@ -2537,7 +2537,8 @@ pub fn table_stream<'a>(
 ///
 /// The returned `Vec` is never empty and never holds an empty sub-stream
 /// beyond the degenerate one a table with no rows produces.
-/// `Parallelism::Serial` is one sub-stream, which is the serial replay.
+/// The serial state is one sub-stream, which is the serial replay, whether or
+/// not it carries a budget of its own.
 ///
 /// **Each sub-stream carries its own schema, notes and position.**
 /// [`TableStream::resolved_schema`] is empty on a sub-stream until that
@@ -2787,8 +2788,10 @@ mod tests {
         assert_eq!(worker_count(eight, 128 << 20), 1);
         // A source that states no footprint is bounded by `jobs` alone.
         assert_eq!(worker_count(eight, 0), 8);
-        // `Serial` states no budget and is one worker, not a pool of one.
-        assert_eq!(worker_count(Parallelism::Serial, 32 << 20), 1);
+        // The serial state is one worker, not a pool of one — and a budget it
+        // carries changes nothing, the count being what caps the count.
+        assert_eq!(worker_count(Parallelism::default(), 32 << 20), 1);
+        assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), 32 << 20), 1);
     }
 
     /// Grouping keeps the pieces in file order and contiguous, which is what

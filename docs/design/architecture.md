@@ -331,23 +331,29 @@ produces. That is what keeps "is this parallel" a match on the value instead of
 a comparison against a magic number, and it is what makes `--jobs 1` the serial
 path as a property of the value rather than of the CLI.
 
-<!-- deficiency: KD16 -->
-**The collapse takes the stated *budget* down with the worker count, so
-`--parallel-memory` is silently ignored at the default `--jobs`.**
-`ParallelArgs::resolve` builds `Parallelism::workers(jobs, memory_bytes)`, and
-at `jobs == 1` that answers `Serial`, which states no bytes — so every pool
-falls back to `DEFAULT_MEMORY_BUDGET` and the number the user typed reaches
-nothing. It is visible in the status line, which prints `memory_bytes=67108864
-(default)` over a stated 400, and it costs most where the budget is the whole
-point: raising `--parallel-memory` to buy back a compressed file's block path
-does nothing unless `--jobs 2` or more is stated beside it, which is what the
-manual now says and what `pgdump_query-cli/tests/parallelism.rs` pins. The
-worker count and the budget are two independent numbers ("Two numbers,
-whichever binds first"), and only one of them is one at `--jobs 1`. Closing it
-means a shape for "serial, inside a stated budget" that the value does not have
-today — `Serial` carrying an optional budget, or `workers(1, …)` no longer
-collapsing — which is a change to this type's own decision and not a fix to
-make in passing.
+**The collapse takes the worker count down and leaves the budget standing.**
+The two are independent numbers ("Two numbers, whichever binds first"), and
+only the count is one at `--jobs 1` — so `Serial` carries `memory_bytes:
+Option<u64>` and `Parallelism::workers(1, 400 << 20)` answers a serial state
+holding 400 MiB. Every pool is sized from `memory_bytes()`, which reads the
+field through either variant, so a stated `--parallel-memory` reaches a
+compressed source's block-decode line at the default `--jobs` and needs no
+second worker asked for beside it; `pgdump_query-cli/tests/parallelism.rs`
+pins that at the CLI, where a budget carried in the value and dropped on the
+way down would leave the unit tests passing.
+
+**`None` is the distinct fact that nobody stated a budget**, which is
+`Parallelism::default()` and what a source reads as "keep
+`DEFAULT_MEMORY_BUDGET`". The CLI is the one caller that can produce it: its
+own `--parallel-memory` fallback and the library's constant are the same
+number, so `ParallelArgs::resolve` answers the default value when neither flag
+was given rather than restating 64 MiB as though it had been asked for — which
+is what lets the status line's `(default)` marker stay true ("Status output").
+
+*Rejected: `workers(1, …)` no longer collapsing.* It is the other shape that
+closes the same defect, and it costs the paragraph above: "is this parallel"
+stops being a match on the variant and becomes a comparison against the number
+one, at every site that asks.
 
 **The read path's buffer budget reads it, and so does the replay's split; no
 worker scheduler does yet.** Each
@@ -7584,9 +7590,9 @@ to do" and earn no line — a `pgdq parse` against an already-cached file alread
 says so on stdout (see "`parse` resumes, and saves as it goes", above).
 
 **The memory budget is printed as a quantity, never as `Option`'s own
-spelling.** `Parallelism::memory_bytes` answers `None` for
-[`Parallelism::Serial`] by design — "the caller said nothing" and "the caller
-said 64 MiB" are different facts a source with an already-announced budget
+spelling.** `Parallelism::memory_bytes` answers `None` where the caller stated
+no budget at all by design — "the caller said nothing" and "the caller said
+64 MiB" are different facts a source with an already-announced budget
 must tell apart ("Execution model and API surface", above) — but a status
 line has no such source to protect, and printing that `None` bare left a
 reader unable to

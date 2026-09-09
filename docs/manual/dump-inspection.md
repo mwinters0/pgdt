@@ -214,15 +214,11 @@ declined it:
 warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room to hold one — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget above 134217728 byte(s) to read it a block at a time
 ```
 
-If you have the memory, `--parallel-memory 268435456 --jobs 2` buys the block
-path back. If you do not, nothing is wrong — the file reads fine, just with
-more decoding on backward reads.
-
-> **`--jobs 2` is not optional in that line — this is a known bug.** At
-> `--jobs 1`, which is the default, pgdq ignores `--parallel-memory` entirely
-> and uses 64 MiB; the status line shows it, printing
-> `memory_bytes=67108864 (default)` over whatever you typed. So raising the
-> budget on its own changes nothing. State `--jobs 2` or more beside it.
+If you have the memory, `--parallel-memory 268435456` buys the block path back.
+That is the whole of it: the budget is a separate number from `--jobs`, so
+raising it works at the default single worker and you do not have to ask for a
+second one to make it count. If you do not have the memory, nothing is wrong —
+the file reads fine, just with more decoding on backward reads.
 
 **`--jobs <n>` is how many workers pgdq may ask for, and it defaults to 1** —
 the single-threaded path. Nothing runs in parallel unless you say so.

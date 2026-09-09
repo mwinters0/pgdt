@@ -280,6 +280,36 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
         .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"));
     assert!(started.contains("jobs=1"), "{started}");
     assert!(started.contains("memory_bytes=67108864 (default)"), "{started}");
+}
+
+/// **`(default)` says nobody asked, not that nobody could ask.** The serial
+/// path carries a stated budget like any other, so `--parallel-memory` at the
+/// default `--jobs` prints the number that was asked for, bare — which is what
+/// makes the flag's own recourse ("raise the memory budget") readable from the
+/// log without a second worker being stated beside it
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+#[test]
+fn a_stated_memory_budget_at_the_default_job_count_is_not_marked_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("out.dqcache");
+    let out = run(&[
+        "parse",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        cache.to_str().unwrap(),
+        "--parallel-memory",
+        "268435456",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let started = main_scan_lines(&stderr)
+        .into_iter()
+        .find(|l| l.contains("started"))
+        .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"));
+    assert!(started.contains("jobs=1"), "{started}");
+    assert!(started.contains("memory_bytes=268435456"), "{started}");
+    assert!(!started.contains("(default)"), "a stated budget is not the default: {started}");
     assert!(!started.contains("None"), "{started}");
     assert!(!started.contains("Some("), "{started}");
 }

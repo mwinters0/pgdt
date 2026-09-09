@@ -134,8 +134,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// budget between its two read units and decides from it whether it can
     /// afford to decode a whole block at all.
     ///
-    /// [`Parallelism::Serial`] states no byte count, so a source told that
-    /// keeps [`DEFAULT_MEMORY_BUDGET`].
+    /// A [`Parallelism`] that states no byte count — [`Parallelism::default`]
+    /// — leaves a source on [`DEFAULT_MEMORY_BUDGET`].
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     /// How long the read loop about to start will hold the bytes it gets back
     /// — announced once, beside the other two hints
@@ -308,7 +308,8 @@ impl Partitioning {
 /// memory that concurrency may hold
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
-/// **The library defaults to [`Parallelism::Serial`]**, which is the serial
+/// **The library defaults to a [`Parallelism::Serial`] stating no budget**,
+/// which is the serial
 /// code path this build has and not a pool of one: an embeddable component
 /// does not spawn threads by surprise, so parallelism is opted into. The CLI
 /// makes the opposite default, being a program a person ran on purpose.
@@ -327,6 +328,14 @@ impl Partitioning {
 /// from it — which is what keeps "is this parallel" a match on the value
 /// instead of a comparison against a magic number.
 ///
+/// **The two numbers are independent, so the collapse takes only one of them
+/// down.** `Serial` carries the stated budget as an `Option`, because a caller
+/// that asks for one worker inside 400 MiB has said something a source can act
+/// on: how large a chunk pool it may hold, and whether it can afford to decode
+/// a whole compressed block. `None` is the distinct fact that nobody stated a
+/// budget at all, which is [`Parallelism::default`] and what
+/// [`DEFAULT_MEMORY_BUDGET`] answers.
+///
 /// **Three mechanisms read it, and only the third spawns.** `memory_bytes` is
 /// what both pools in a source are sized from, and it is what decides whether
 /// a compressed source can afford to decode a whole block ("The compressed
@@ -338,11 +347,17 @@ impl Partitioning {
 /// [`crate::leader::scan_region`], which both numbers size a window of fused
 /// workers from, and which the mapping pass offers every open `COPY` region to
 /// (`docs/design/architecture.md`, "Execution model and API surface").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parallelism {
-    /// The serial code path: one thread, reading in file order.
-    #[default]
-    Serial,
+    /// The serial code path: one thread, reading in file order — inside
+    /// `memory_bytes` where the caller stated one.
+    Serial {
+        /// What that one thread's source may hold in pooled buffers, in
+        /// bytes, or `None` where the caller stated no budget at all. The
+        /// worker count collapsing to the serial path says nothing about the
+        /// budget beside it, so the budget survives the collapse.
+        memory_bytes: Option<u64>,
+    },
     /// At most `jobs` concurrent workers, holding at most `memory_bytes`
     /// between them.
     Workers {
@@ -359,9 +374,25 @@ pub enum Parallelism {
     },
 }
 
+/// The library's own default: the serial path, stating no budget — an
+/// embeddable component does not spawn threads by surprise, and it does not
+/// claim a byte count nobody gave it either.
+impl Default for Parallelism {
+    fn default() -> Self {
+        Self::Serial { memory_bytes: None }
+    }
+}
+
 impl Parallelism {
-    /// `jobs` workers inside `memory_bytes`, or [`Parallelism::Serial`] where
-    /// `jobs` is one or zero.
+    /// `jobs` workers inside `memory_bytes`, or the serial path inside that
+    /// same budget where `jobs` is one or zero.
+    ///
+    /// **The collapse is on the worker count alone.** A count of one is the
+    /// serial path, but the bytes beside it were still stated, so they ride
+    /// through into [`Parallelism::Serial`]'s own field rather than being
+    /// dropped — which is what makes a stated budget worth stating at any
+    /// worker count (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
     ///
     /// Zero reads as one rather than as an error, exactly as
     /// `xz_seek::Bulk::new` reads it: it is a shape a caller's own arithmetic
@@ -369,17 +400,18 @@ impl Parallelism {
     pub fn workers(jobs: usize, memory_bytes: u64) -> Self {
         match NonZeroUsize::new(jobs) {
             Some(jobs) if jobs.get() > 1 => Self::Workers { jobs, memory_bytes },
-            _ => Self::Serial,
+            _ => Self::Serial { memory_bytes: Some(memory_bytes) },
         }
     }
 
-    /// Whether this is the serial path.
+    /// Whether this is the serial path — a match on the variant, so a stated
+    /// budget does not change the answer.
     pub fn is_serial(&self) -> bool {
-        matches!(self, Self::Serial)
+        matches!(self, Self::Serial { .. })
     }
 
-    /// The bytes this caller allows, or `None` for [`Parallelism::Serial`],
-    /// which states no number.
+    /// The bytes this caller allows, or `None` where it stated none — which is
+    /// [`Parallelism::default`] and nothing else.
     ///
     /// `None` rather than [`DEFAULT_MEMORY_BUDGET`] because "the caller said
     /// nothing" and "the caller said 64 MiB" are different facts, and a source
@@ -387,7 +419,7 @@ impl Parallelism {
     /// announcement — must be able to tell them apart.
     pub fn memory_bytes(&self) -> Option<u64> {
         match self {
-            Self::Serial => None,
+            Self::Serial { memory_bytes } => *memory_bytes,
             Self::Workers { memory_bytes, .. } => Some(*memory_bytes),
         }
     }
@@ -396,7 +428,7 @@ impl Parallelism {
     /// which *is* one worker rather than none.
     pub fn jobs(&self) -> usize {
         match self {
-            Self::Serial => 1,
+            Self::Serial { .. } => 1,
             Self::Workers { jobs, .. } => jobs.get(),
         }
     }
@@ -404,7 +436,7 @@ impl Parallelism {
 
 /// The byte budget actually governing reads under `p`, worded for a status
 /// line rather than for code — [`Parallelism::memory_bytes`] itself, printed
-/// bare, renders [`Parallelism::Serial`] as `None`, which states nothing a
+/// bare, renders an unstated budget as `None`, which states nothing a
 /// reader can act on. Deliberately a free function rather than a method on
 /// [`Parallelism`]: that type's own `memory_bytes` exists precisely to keep
 /// "the caller said nothing" apart from "the caller said 64 MiB" for a source
@@ -422,7 +454,7 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 }
 
 /// What a source may hold in pooled buffers when the caller has stated no
-/// budget of its own — [`Parallelism::Serial`]'s number, and the CLI's default
+/// budget of its own — [`Parallelism::default`]'s number, and the CLI's default
 /// for `--parallel-memory`.
 ///
 /// **It is the serial path's budget and it is deliberately not the largest
@@ -956,7 +988,7 @@ impl ByteRangeSource for LocalFileSource {
 
 /// The byte budget a caller's [`Parallelism`] states, as a `usize`, falling
 /// back to [`DEFAULT_MEMORY_BUDGET`] where it states none — which is
-/// [`Parallelism::Serial`], and also a `u64` too large to be a length on this
+/// [`Parallelism::default`], and also a `u64` too large to be a length on this
 /// target, where the default is the smaller and therefore the safe answer.
 fn budget_bytes(parallelism: Parallelism) -> usize {
     parallelism
@@ -1845,25 +1877,59 @@ mod tests {
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     #[test]
     fn the_library_defaults_to_serial() {
-        assert_eq!(Parallelism::default(), Parallelism::Serial);
+        assert_eq!(Parallelism::default(), Parallelism::Serial { memory_bytes: None });
         assert!(crate::scan::ScanOptions::default().parallelism.is_serial());
         assert!(crate::batch::QueryOptions::default().parallelism.is_serial());
+        // And the default states no budget, which is not the same fact as
+        // stating the number every pool falls back to.
+        assert_eq!(Parallelism::default().memory_bytes(), None);
     }
 
     /// One worker **is** the serial path, so it is spelled that way rather
     /// than as a `Workers` of one nobody can tell from it; zero is a caller's
     /// own arithmetic and reads as one, exactly as `xz_seek::Bulk::new` reads
     /// it.
+    ///
+    /// **The collapse takes the worker count down and not the budget.** The
+    /// two numbers are independent, so a caller asking for one worker inside
+    /// a stated budget has still stated it, and every pool sized from
+    /// `memory_bytes` sees it — which is the whole of that ask on the serial
+    /// path (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
     #[test]
     fn one_worker_and_none_are_both_the_serial_state() {
-        assert_eq!(Parallelism::workers(0, 512 << 20), Parallelism::Serial);
-        assert_eq!(Parallelism::workers(1, 512 << 20), Parallelism::Serial);
+        let serial_in_budget = Parallelism::Serial { memory_bytes: Some(512 << 20) };
+        assert_eq!(Parallelism::workers(0, 512 << 20), serial_in_budget);
+        assert_eq!(Parallelism::workers(1, 512 << 20), serial_in_budget);
+        assert!(serial_in_budget.is_serial());
+        assert_eq!(serial_in_budget.jobs(), 1);
+        assert_eq!(serial_in_budget.memory_bytes(), Some(512 << 20));
         let eight = Parallelism::workers(8, 512 << 20);
         assert!(!eight.is_serial());
         assert_eq!(
             eight,
             Parallelism::Workers { jobs: NonZeroUsize::new(8).unwrap(), memory_bytes: 512 << 20 }
         );
+    }
+
+    /// **A one-worker budget reaches the pool it is a budget for.** The value
+    /// carrying it buys nothing unless the source is sized from it, so this
+    /// drives the announcement a serial read loop makes rather than the value
+    /// alone: 12 KiB of 4 KiB chunks is three slots, where the same source
+    /// told nothing keeps `DEFAULT_MEMORY_BUDGET`'s depth.
+    #[test]
+    fn a_serial_budget_sizes_the_source_it_is_announced_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.sql");
+        std::fs::write(&path, b"x").unwrap();
+        let source = LocalFileSource::open(&path).unwrap();
+        source.hint_read_size(4 << 10);
+
+        source.hint_parallelism(Parallelism::workers(1, 12 << 10));
+        assert_eq!(source.pool.slots(), 3, "the serial path's stated budget sizes the pool");
+
+        source.hint_parallelism(Parallelism::default());
+        assert_eq!(source.pool.slots(), POOL_DEPTH, "stating nothing keeps the default depth");
     }
 
     /// The pool holds `POOL_DEPTH` buffers and no more, and a take picks the
@@ -1941,8 +2007,8 @@ mod tests {
 
         source.hint_parallelism(Parallelism::workers(16, 2 << 20));
         assert_eq!(source.pool.slots(), 2, "the stated budget binds");
-        source.hint_parallelism(Parallelism::Serial);
-        assert_eq!(source.pool.slots(), POOL_DEPTH, "serial states no number");
+        source.hint_parallelism(Parallelism::default());
+        assert_eq!(source.pool.slots(), POOL_DEPTH, "the default states no number");
     }
 
     /// **Backpressure**: a loop that permits a wait gets one instead of
@@ -2479,8 +2545,8 @@ mod tests {
         // Eight workers, so eight retained blocks where the budget affords
         // them — the depth is the caller's number and the floor is the pool's.
         assert_eq!(slots, 8);
-        one.hint_parallelism(Parallelism::Serial);
-        assert_eq!(held(&one).2, POOL_DEPTH, "serial keeps the pool's own depth");
+        one.hint_parallelism(Parallelism::default());
+        assert_eq!(held(&one).2, POOL_DEPTH, "stating nothing keeps the pool's own depth");
     }
 
     /// **A retained block is storage, not a waiting holder, so no read loop's
@@ -2587,7 +2653,7 @@ mod tests {
         let got = source.read_range(4000, 5000).await.unwrap();
         assert_eq!(&got[..], &payload[4000..9000]);
 
-        source.hint_parallelism(Parallelism::Serial);
+        source.hint_parallelism(Parallelism::default());
         assert!(source.block_path().is_some(), "the default budget takes it back");
         let again = source.read_range(4000, 5000).await.unwrap();
         assert_eq!(&again[..], &payload[4000..9000]);

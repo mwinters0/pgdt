@@ -117,8 +117,7 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
 fn a_declined_block_path_is_announced_once_on_stderr() {
     let (_xz_dir, compressed) = seekable_xz();
 
-    // 400 bytes is below the fixture's 512-byte block unit, and `--jobs 2`
-    // is what makes the CLI state the budget at all (`KD16`).
+    // 400 bytes is below the fixture's 512-byte block unit.
     let out = query(&compressed, "public.widgets", &["--jobs", "2", "--parallel-memory", "400"]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let err = stderr_of(&out);
@@ -140,6 +139,38 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     let plain_out = query(&plain, "public.widgets", &["--jobs", "2", "--parallel-memory", "400"]);
     assert!(plain_out.status.success(), "{}", stderr_of(&plain_out));
     assert!(!stderr_of(&plain_out).contains("streaming decoder"), "{}", stderr_of(&plain_out));
+}
+
+/// **The budget is stated at the default worker count too**, which is the
+/// whole of what a serial caller can ask for: `--jobs` defaults to 1, the
+/// serial path, and the value carrying that path carries the stated bytes with
+/// it — so the same decline and the same silence follow from
+/// `--parallel-memory` alone, with no `--jobs 2` beside it
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// Driven through the CLI rather than through the value, because what this
+/// pins is that the flag reaches `ScanOptions`/`QueryOptions` and then the
+/// source: a budget carried in the value and dropped on the way down would
+/// leave the unit tests passing.
+#[test]
+fn a_stated_budget_decides_the_read_path_at_the_default_job_count() {
+    let (_xz_dir, compressed) = seekable_xz();
+
+    let declined = query(&compressed, "public.widgets", &["--parallel-memory", "400"]);
+    assert!(declined.status.success(), "{}", stderr_of(&declined));
+    let err = stderr_of(&declined);
+    assert!(err.contains("memory budget of 400"), "the stated budget declined it: {err}");
+    assert!(err.contains("raise the memory budget above 512"), "{err}");
+
+    // And raising it alone takes the block path back — the recourse the
+    // message names, with nothing else stated beside it.
+    let quiet = query(&compressed, "public.widgets", &["--parallel-memory", "536870912"]);
+    assert!(quiet.status.success(), "{}", stderr_of(&quiet));
+    assert!(!stderr_of(&quiet).contains("streaming decoder"), "{}", stderr_of(&quiet));
+
+    // The rows are the same either way, which is the standing promise: the
+    // budget decides a read path and never an answer.
+    assert_eq!(stdout_of(&declined), stdout_of(&quiet));
 }
 
 /// **The merge prints file order, not arrival order.** `pgdq query` holds one

@@ -103,14 +103,24 @@ impl ParallelArgs {
     /// The [`Parallelism`] these flags state, filling in the CLI's own
     /// defaults for whichever was omitted.
     ///
-    /// deficiency: KD16 — at `jobs == 1` this collapses to
-    /// [`Parallelism::Serial`], which states no bytes, so a stated
-    /// `--parallel-memory` reaches nothing and every pool falls back to
-    /// [`DEFAULT_MEMORY_BUDGET`] (`docs/design/architecture.md`, "Execution
-    /// model and API surface").
+    /// **A stated budget reaches the library at every worker count**, the
+    /// serial state carrying one of its own — so `--parallel-memory` is worth
+    /// stating beside the default `--jobs`, which is what buys back a
+    /// compressed file's block path without also asking for a second worker
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **Stating neither flag is the one case that must state no budget**, so
+    /// that the status line can say `(default)` truthfully: the CLI's own
+    /// fallback and the library's are the same number, and printing it as
+    /// though it had been asked for is the only way that line can lie.
     fn resolve(&self) -> Parallelism {
         let jobs = self.jobs.unwrap_or(DEFAULT_JOBS);
-        Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET))
+        let stated =
+            Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET));
+        match (self.parallel_memory, stated) {
+            (None, Parallelism::Serial { .. }) => Parallelism::default(),
+            _ => stated,
+        }
     }
 }
 
@@ -2243,13 +2253,40 @@ mod tests {
     #[test]
     fn stating_no_parallelism_flag_is_the_serial_path() {
         let stated = ParallelArgs { jobs: None, parallel_memory: None };
-        assert_eq!(stated.resolve(), Parallelism::Serial);
+        assert_eq!(stated.resolve(), Parallelism::default());
+        assert!(stated.resolve().is_serial());
+        // Nothing was asked for, so nothing is claimed: this is what the
+        // status line renders `(default)`.
+        assert_eq!(stated.resolve().memory_bytes(), None);
         assert_eq!(DEFAULT_JOBS, 1);
 
         // And a stated count above one is not: the flag still reaches the
         // value, so this pins the default rather than the plumbing.
         let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
         assert_eq!(asked.resolve(), Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET));
+    }
+
+    /// **A stated budget survives the default worker count.** `--jobs 1` is
+    /// the serial path as a property of the value, and the collapse that makes
+    /// it one takes the *worker count* down and not the bytes beside it — so
+    /// `--parallel-memory` alone is the whole recourse for a compressed file
+    /// whose blocks the 64 MiB default cannot hold, with no second worker
+    /// needing to be asked for
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    #[test]
+    fn a_stated_budget_reaches_the_library_at_the_default_job_count() {
+        let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
+        assert!(stated.resolve().is_serial(), "one worker is still the serial path");
+        assert_eq!(stated.resolve().memory_bytes(), Some(400 << 20));
+
+        // Stated explicitly rather than defaulted: the same value either way.
+        let one = ParallelArgs { jobs: Some(1), parallel_memory: Some(400 << 20) };
+        assert_eq!(one.resolve(), stated.resolve());
+
+        // A stated count with no budget beside it is the other half of the
+        // pair, and it keeps the CLI's own fallback.
+        let jobs_only = ParallelArgs { jobs: Some(1), parallel_memory: None };
+        assert_eq!(jobs_only.resolve().memory_bytes(), None);
     }
 
     /// The bare spelling, unchanged: no whitespace anywhere means nothing to
