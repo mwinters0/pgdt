@@ -113,6 +113,8 @@ trait ByteRangeSource: Send + Sync {
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
+    fn block_decode_bytes(&self) -> Option<u64> { None }
+    fn default_workers(&self) -> usize   { 1 }
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     fn hint_wait_policy(&self, _policy: WaitPolicy) {}
 }
@@ -158,7 +160,7 @@ which is what the CLI holds. Worth knowing when a similar rework is costed
 elsewhere: the two forms are not a matter of taste, and which one is needed is
 decided by whether anything constructs a source it cannot name.
 
-**Three of the seven defaulted methods exist for a source the local file is
+**Four of the nine defaulted methods exist for a source the local file is
 not.** `stored_size()` is the bytes as stored on the device where `size()` is
 the addressable length — equal for a plain file, divergent for a decompressing
 one, and it is what the cache's staleness check reads, so that check stays a
@@ -169,10 +171,15 @@ that cannot answer exactly (gzip's `ISIZE` is useless above 4 GiB, zstd's frame
 content size is optional), added in the pass that reshaped these signatures
 because a later pass would have had to touch them all again for one bool.
 `seek_table()` hands a compressed source's block index to the cache without the
-cache knowing what kind of source it holds. The other four are answered by
+cache knowing what kind of source it holds. `block_decode_bytes()` says what one
+concurrent reader would hold if this source read its container a block at a
+time — the number a budget has to clear for that path to be taken — and exists
+so that the decline's message names the recourse without re-deriving the
+source's own rule ("The compressed source"). The other five are answered by
 every source: `hint_read_size`, `hint_parallelism` and `hint_wait_policy` are
-about the caller rather than the source and are described below, and
-`partitions` is next.
+about the caller rather than the source and are described below, `partitions`
+is next, and `default_workers` is the source's own worker recommendation, also
+below.
 
 **A source advises its own partitioning, and the layer above never learns what
 is underneath.** `partitions(range)` answers a `Partitioning` — where this
@@ -250,19 +257,33 @@ number for one bound reads as a second authority; the policy belongs in the
 source's doc comment, where the reason is, rather than in an arm whose effect
 duplicates another's.
 
-**`partition_bytes` is what the source's own pools hold per partition, and it
-says what it excludes.** For the compressed source that is a decoded block slot
-plus the chunk buffer a straddling read is assembled into. Outside it is the
-decoder's own retention, which is one number: `xz_seek::Reader::decode_footprint()`
-— the LZMA2 dictionary, the compressed input buffer and the backend's own state,
-costing no source read and the same whatever range is read. A caller budgeting
-workers adds it; a number that silently guessed a dictionary size would be wrong
-by 8× on a `-9` file. The dictionary is written in each *block header* rather
-than in the seek table, so that number is a very good estimate and not a sound
-ceiling — a stream whose later block declares a larger dictionary than its first
-is understated, and what cannot understate is the reader's `memlimit`, compared
-against each block's own declared dictionary before any backend object is built,
-so an understating charge is a clean refusal and never an overrun.
+**`partition_bytes` is what one concurrent reader of the source holds, and the
+source states the whole of it.** For a block-decoding compressed source that is
+the block unit **twice** — the block being decoded and the one retained beside
+it — plus the chunk buffer a straddling read is assembled into, plus the
+decoder's own retention: `xz_seek::Reader::decode_footprint()`, the LZMA2
+dictionary, the compressed input buffer and the backend's own state, one number
+costing no source read and the same whatever range is read, so `XzSource` asks
+for it once at construction. *Rejected: leaving the decoder's retention outside
+the charge for the caller to add*, which is what shipped until the divisor was
+measured: no caller added it, and one that guessed a dictionary size instead
+would be wrong by 8× on a `-9` file — but the number is published now, and a
+term every consumer must remember to add is a term some consumer will not
+("The compressed source"). The dictionary is written in each *block header* and
+the seek table records the first block's per stream, so that number is a very
+good estimate and not a sound ceiling — a stream whose later block declares a
+larger dictionary than its first is understated, and what cannot understate is
+the reader's `memlimit`, compared against each block's own declared dictionary
+before any backend object is built, so an understating charge is a clean refusal
+and never an overrun.
+
+**A cost shared across readers is not part of it.** The streaming fallback keeps
+one `xz_seek::Reader` behind a mutex however many readers a caller runs, so that
+arm charges the chunk buffer alone and leaves its single decoder to the fixed
+term a budget's reserve covers; the block path builds a decoder per concurrent
+decode, which is what makes the same number per-reader there. The two arms of
+one source therefore charge differently, which is the point of reading the
+advice off the read path taken rather than off the seek table.
 
 **`Parallelism` is the caller's half of that same question**, and it sits on
 both option structs: `ScanOptions::parallelism` and `QueryOptions::parallelism`,
@@ -420,8 +441,8 @@ one, at every site that asks.
 
 **The read path's buffer budget reads it, and so does the replay's split; no
 worker scheduler does yet.** Each
-of the three read loops announces the value to the source through a sixth
-defaulted method, `hint_parallelism`, at the same point it announces its chunk
+of the three read loops announces the value to the source through a defaulted
+method of its own, `hint_parallelism`, at the same point it announces its chunk
 size — the mapping pass and `scan` from `ScanOptions`, the replay from
 `QueryOptions`, so a query's two passes are bounded separately. A source makes
 of it what its own read units require: `LocalFileSource` sizes its one free
@@ -622,7 +643,7 @@ exactly one. A wait is backpressure for the second and a deadlock for the first
 — the only task that could free the slot would be the one waiting on it — and
 nothing in a `read_range` call says which is calling.
 
-**So the exemption is stated as a permission, through a seventh defaulted
+**So the exemption is stated as a permission, through a defaulted
 method.** `hint_wait_policy(WaitPolicy)` is announced once per read loop,
 beside the chunk size and the budget, and it is the same shape one-off-ness
 takes below and for the same reason. `WaitPolicy::NeverWait` allocates past the
@@ -1121,26 +1142,49 @@ That falsifies the premise the rejection above rests on — *the pool sizes
 itself from the stated budget and not from how many readers were admitted* is
 true of the pool and not of the resident set — so the divisor is the only
 thing that bounds the per-reader term, and it is what has to charge honestly.
-**It charges one unit where `affordable` and `slot` both say two**: 25 MiB a
+It charged one unit where `affordable` and `slot` both said two — 25 MiB a
 sub-stream against a measured 59.4, where the plain path charges
-`POOL_MAX_BYTES` and measures 8.03 against 8. Correcting it makes resident the
-budget plus a constant, which is what the budget rule was written for.
-`dict_size` is on the block header and the seek-table walk reads none, so
-`2 × unit + chunk_bytes` is what a table alone affords. Evidence:
+`POOL_MAX_BYTES` and measures 8.03 against 8. **It now charges what a reader
+holds**: `2 × unit + chunk_bytes + xz_seek::Reader::decode_footprint()`, which
+is 58.03 MiB on koji's 24 MiB blocks and an 8 MiB dictionary against that
+measured 59.4, so resident is the budget plus a constant, which is what the
+budget rule was written for. The decoder's term could not be reached when this
+was found — `dict_size` is on the block header and the seek-table walk read
+none — and the fix was upstream rather than a constant standing in for it: the
+walk now records each stream's first block's dictionary, and one published
+number is what the source divides by. Evidence:
 [`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
-reserve entries, reviewed: the divisor is wrong, not the rule".
+reserve entries, reviewed: the divisor is wrong, not the rule", and
+[`../status/history/2026-09-10.md`](../status/history/2026-09-10.md),
+"`xz-seek`'s interface is final".
 
-**`BlockCache::affordable` moved with it, from one unit to two**, because a
+**What the correction costs is stated rather than discovered: the same budget
+admits fewer readers.** At 512 MiB the plan admits 8 sub-streams where the
+under-charge admitted 20, and the count it used to reach was reached by
+spending 2.4× the memory the caller allowed — so what is removed is an
+over-spend and not a capability, with `--parallel-memory` buying the workers
+back at a number the caller states and can see. At the library's own 64 MiB
+default one reader is what a 24 MiB-block file affords, which is why the
+measurement harness's `PARALLEL_BUDGET` rose 1 GiB → 2 GiB to keep its widest
+row at the twenty-four workers it is labelled
+([`measurements.md`](measurements.md), "What a second scan worker buys, and
+where the plain path stops").
+
+**`BlockCache::affordable` is that same number, asked of one reader**, so
+affording block decode and admitting a reader are one sentence rather than two
+that can drift apart — which is how the divisor came to charge one unit while
+`affordable` and `slot` both said two. It went from one unit to two because a
 coupled count of one is precisely the un-poolable shape rejected above — a
-retained cap of zero, drained before every decode. Asking whether the budget
-affords *two* units is the same sentence as "the coupled count is at least two"
-and needs no new constant. What it changes for a reader is where whole-block
-decode is declined: a file whose largest block exceeds **half** the budget,
-where it used to be one whose largest block exceeded the whole of it. Koji's
-24 MiB blocks still decode at the 64 MiB default, which leaves 60 MiB to the
-block pool against the 48 two units need; `--parallel-memory` remains the lever
-that reverses a decline, and `PlanNoteKind::CompressedBlockPathDeclined` names
-twice the largest block as the number to clear.
+retained cap of zero, drained before every decode — and then took the chunk and
+the decoder with it, because **those two are paid on the streaming path as
+well**: the fallback assembles reads into a chunk buffer and keeps a decoder of
+its own, so they are not what a decline saves. They come off the top and the two
+block slots are what must fit under them. Koji's 24 MiB blocks still decode at
+the 64 MiB default — 58.03 MiB against 64 — and `--parallel-memory` remains the
+lever that reverses a decline, with
+`PlanNoteKind::CompressedBlockPathDeclined` naming the whole charge as the
+number to clear, read off the source
+(`ByteRangeSource::block_decode_bytes`) rather than re-derived by the note.
 
 **Evicting before acquiring is a reuse rule and not a progress guarantee**, and
 reading it as one is the mistake behind the deadlock filed under "Execution
@@ -1209,14 +1253,17 @@ so the question was never "is this file seekable" but "did the caller leave
 room for a block". It is keyed on the file's **largest block**, not on its
 block count, so a multi-block file written with large blocks is declined and
 genuinely does have parallelism to lose; what changed is that the caller can
-now say so. `BlockCache::affordable` compares **twice** that unit against the
-block pool's share of `Parallelism`'s bytes — two because a coupled count of
-one retains nothing — and the refusal is what keeps the budget's own one-slot
-floor from making the stated number a fiction ("Execution model and API
-surface").
+now say so. `BlockCache::affordable` compares one whole reader of it against
+`Parallelism`'s bytes — **twice** that unit, because a coupled count of one
+retains nothing, plus the chunk buffer and the decoder — and the refusal is
+what keeps the budget's own one-slot floor from making the stated number a
+fiction ("Execution model and API surface").
 
-**Under the default budget that line sits at ~30 MiB, and the shapes it
-declines are ordinary ones.** `xz --block-size=128MiB` and `xz -9 -T0` — whose
+**Under the default budget that line sits at ~27 MiB for an 8 MiB-dictionary
+file, and the shapes it declines are ordinary ones.** Where the line falls now
+depends on the file's dictionary as well as on its blocks, the decoder's own
+retention being part of what a reader holds — `(64 − 1 − 9.03) / 2` on a
+preset-6 file, against a flat half-the-budget before it was charged. `xz --block-size=128MiB` and `xz -9 -T0` — whose
 threaded block size is three times its 64 MiB dictionary, so ~192 MiB — both
 fall back where a flat 256 MiB constant took them down the block path at 128 or
 192 MiB resident against a 64 MiB budget. That is the budget being *honoured*

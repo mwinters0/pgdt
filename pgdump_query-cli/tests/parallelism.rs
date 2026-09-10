@@ -109,11 +109,20 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
     }
 }
 
+/// The byte count a decline's message names as the recourse — *raise the
+/// memory budget to N byte(s) or more* — pulled back out of the sentence,
+/// because the number is the source's and this crate has no second copy of it.
+fn recourse_bytes(stderr: &str) -> u64 {
+    let (_, tail) = stderr.split_once("raise the memory budget to ").expect(stderr);
+    let (number, _) = tail.split_once(" byte(s) or more").expect(stderr);
+    number.parse().expect(number)
+}
+
 /// The budget at the CLI: the one that sent a compressed read down the
 /// streaming path says so on stderr, once, naming the file's largest block and
-/// the twice-that the block path wants room for — so the flag that says *raise
-/// it* also says what to raise it to. The rows go to stdout and are untouched
-/// by it.
+/// what one reader of it would have held — two block slots, the chunk buffer
+/// and the decoder's own retention — so the flag that says *raise it* also
+/// says what to raise it to. The rows go to stdout and are untouched by it.
 #[test]
 fn a_declined_block_path_is_announced_once_on_stderr() {
     let (_xz_dir, compressed) = seekable_xz();
@@ -123,8 +132,12 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     assert!(out.status.success(), "{}", stderr_of(&out));
     let err = stderr_of(&out);
     assert_eq!(err.matches("streaming decoder").count(), 1, "said once, not per sub-stream: {err}");
-    assert!(err.contains("raise the memory budget above 1024"), "{err}");
     assert!(err.contains("memory budget of 400"), "the budget that declined it is named: {err}");
+    // The recourse is the whole of what a reader holds, so it is past the two
+    // 512-byte blocks by the decoder's own dictionary — read out of the
+    // sentence rather than restated, this being the CLI's view of a number the
+    // library owns.
+    assert!(recourse_bytes(&err) > 2 * 512, "{err}");
 
     // A budget that affords a whole block says nothing at all about the read
     // path.
@@ -161,7 +174,7 @@ fn a_stated_budget_decides_the_read_path_with_no_jobs_flag() {
     assert!(declined.status.success(), "{}", stderr_of(&declined));
     let err = stderr_of(&declined);
     assert!(err.contains("memory budget of 400"), "the stated budget declined it: {err}");
-    assert!(err.contains("raise the memory budget above 1024"), "{err}");
+    assert!(recourse_bytes(&err) > 2 * 512, "{err}");
 
     // And raising it alone takes the block path back — the recourse the
     // message names, with nothing else stated beside it.

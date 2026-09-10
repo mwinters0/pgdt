@@ -86,20 +86,30 @@ struct ParallelArgs {
     /// What those workers may hold between them in read buffers, in bytes.
     /// Defaults to 64 MiB.
     ///
-    /// It is a real bound rather than a target: a `.xz` file whose blocks do
-    /// not fit inside it is read through the streaming decoder instead of
-    /// being decoded a block at a time, which is correct but slower on
-    /// backward reads. Raise it to buy the block path back on a file written
-    /// with large blocks (`xz -9 -T0`, `xz --block-size=`).
+    /// It is a real bound rather than a target: a `.xz` file that does not
+    /// leave room inside it for one reader — two of its blocks, a read buffer
+    /// and the decompressor's own working memory — is read through the
+    /// streaming decoder instead of being decoded a block at a time, which is
+    /// correct but slower on backward reads. Raise it to buy the block path
+    /// back on a file written with large blocks (`xz -9 -T0`,
+    /// `xz --block-size=`).
     ///
-    /// **On `query` this budget divides by two terms, not one**: what a
-    /// worker costs to decode, plus the 64 MiB a sub-stream's held batch may
-    /// pin (`docs/design/architecture.md`, "Execution model and API
-    /// surface"). At the default 64 MiB this already exceeds the budget, so
-    /// `query --jobs N` with `--parallel-memory` left at its default runs
-    /// serially however large `N` is — raise `--parallel-memory` past roughly
-    /// 65 MiB to get a second sub-stream at all. `parse` is unaffected: it
-    /// builds no batches, so nothing on that path pins a span.
+    /// **It is also what decides how many of `--jobs`' workers read at once**,
+    /// on both commands: the budget divided by what one reader holds. For an
+    /// ordinary 24 MiB-block `.xz` that is about 58 MiB, so the 64 MiB default
+    /// affords one.
+    ///
+    /// **On `query` it divides by two terms rather than one**: what a worker
+    /// costs to read, plus the 64 MiB a sub-stream's held batch may pin
+    /// (`docs/design/architecture.md`, "Execution model and API surface") —
+    /// charged on a plain file, where a batch pins read buffers the first term
+    /// never counted, and not on a block-decoding `.xz`, where it pins the
+    /// block that term already holds. At the default 64 MiB the plain file's
+    /// sum already exceeds the budget, so `query --jobs N` on one with
+    /// `--parallel-memory` left at its default runs serially however large `N`
+    /// is — raise it past roughly 145 MiB to get a second sub-stream at all.
+    /// `parse` is unaffected by the second term: it builds no batches, so
+    /// nothing on that path pins a span.
     #[arg(long, value_name = "BYTES", value_parser = parse_parallel_memory)]
     parallel_memory: Option<u64>,
 }
@@ -1942,10 +1952,12 @@ fn report(
 ///
 /// **Three numbers a user is otherwise sent to `xz --list` for**, which on the
 /// shape that most wants asking (many concatenated streams) is a walk of every
-/// footer in the file. `largest block` is what `--parallel-memory` has to
-/// clear **twice over** for a query to read this file a block at a time — the
-/// block path holds one block while it decodes the next — so the flag that
-/// says *raise it* is answered here by what to raise it to
+/// footer in the file. `largest block` is the largest term of what
+/// `--parallel-memory` has to clear for a query to read this file a block at a
+/// time — **twice over**, the block path holding one block while it decodes
+/// the next, plus a read buffer and the decompressor's own working memory — so
+/// the flag that says *raise it* is most of the way answered here, and a query
+/// that declines the block path names the whole of it
 /// (`docs/design/architecture.md`, "The compressed source").
 fn compression_line(shape: &CompressionShape) -> String {
     format!(

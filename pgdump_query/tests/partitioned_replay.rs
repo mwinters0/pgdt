@@ -516,12 +516,12 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
 ///
 /// One budget, one span and one job count, put to both source shapes:
 ///
-/// - the plain source is charged both terms, so the shipped 64 MiB span alone
-///   swamps a 5 MiB budget and the plan comes back with one sub-stream and a
-///   note naming the span it was charged;
-/// - the compressed one is charged the decode footprint alone — a 64-byte
-///   block plus a chunk buffer — so the same budget affords every worker
-///   asked for and the plan is silent.
+/// - the compressed source is charged what one reader holds and nothing more,
+///   so a budget of exactly four such readers affords the four workers asked
+///   for and the plan is silent;
+/// - the plain source is charged that budget against its own partition **plus**
+///   the shipped 64 MiB span, which swamps it, so the plan comes back with one
+///   sub-stream and a note naming the span it was charged.
 ///
 /// The rows are the plain file's either way, which is what keeps this a
 /// statement about the *accounting* rather than about what gets read.
@@ -530,10 +530,19 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
 
-    // Five read chunks: four decode footprints on the compressed source (a
-    // 64-byte block plus one chunk buffer each) with room to spare, and less
-    // than one partition on the plain one once its own span is added.
-    let budget = 5 * ScanOptions::default().chunk_size as u64;
+    let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
+    let xz = XzSource::open(compressed.path()).unwrap();
+    assert!(
+        xz.seek_table().unwrap().is_seekable(),
+        "a single-block fixture would advise one partition and pass for the wrong reason"
+    );
+    // **The budget is four of the compressed source's own reader charges**,
+    // read off the source rather than restated here, so this stays a test of
+    // the accounting when the terms of that charge move. It is announced the
+    // chunk size the run will announce, that being one of the terms.
+    xz.hint_read_size(ScanOptions::default().chunk_size);
+    let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
+    let budget = 4 * reader;
     let options =
         QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
 
@@ -561,12 +570,6 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
         other => panic!("expected exactly one plan note, got {other:?}"),
     }
 
-    let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
-    let xz = XzSource::open(compressed.path()).unwrap();
-    assert!(
-        xz.seek_table().unwrap().is_seekable(),
-        "a single-block fixture would advise one partition and pass for the wrong reason"
-    );
     let streams = table_stream_partitions(
         &xz,
         "public.widgets",
@@ -649,12 +652,21 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
             PlanNoteKind::CompressedBlockPathDeclined {
                 block_count,
                 max_block_uncompressed,
+                reader_bytes,
                 memory_bytes,
-            } => Some((*block_count, *max_block_uncompressed, *memory_bytes)),
+            } => Some((*block_count, *max_block_uncompressed, *reader_bytes, *memory_bytes)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("{notes:?}"));
-    assert_eq!(declined, (table.block_count(), table.max_block_uncompressed(), budget));
+    // The recourse the note names is the source's own number, not a multiple
+    // this test re-derives: two block slots, the chunk buffer a straddling
+    // read is assembled into, and the decoder's own retention.
+    let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
+    assert!(
+        reader > 2 * table.max_block_uncompressed(),
+        "the chunk and the decoder are inside it too, not just the two blocks: {reader}"
+    );
+    assert_eq!(declined, (table.block_count(), table.max_block_uncompressed(), reader, budget));
 
     // The rows are unaffected — the fallback is slower on a backward read,
     // never a different answer.

@@ -296,10 +296,18 @@ pub(crate) enum RegionScan {
 ///
 /// **The one rule it does apply is a floor**, and it is derived rather than
 /// chosen: a region smaller than one `partition_bytes()` is left to the serial
-/// scanner, because cutting it would hand some worker less than the source's
-/// own unit and charge the scheduling anyway. The region's extent is not known
-/// here — finding it *is* the work — so the bound available is what is left of
-/// the file, which the region cannot exceed.
+/// scanner, because cutting it would spend a whole reader's worth of the
+/// caller's budget on a piece smaller than that, and charge the scheduling
+/// anyway. The region's extent is not known here — finding it *is* the work —
+/// so the bound available is what is left of the file, which the region cannot
+/// exceed.
+///
+/// **That floor is a memory charge and not a span**, which is visible on a
+/// block-decoding source, where the charge covers two block slots and the
+/// decoder besides: such a region is left serial until it is worth more than
+/// one reader costs. Erring towards the serial scanner is the direction this
+/// bound is wanted in — the alternative admits readers the budget was divided
+/// as if it had not.
 pub(crate) async fn scan_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,

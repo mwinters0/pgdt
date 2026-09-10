@@ -117,9 +117,10 @@ diagnostics:
 
 `parse` is unaffected: it only ever reads forwards, so it costs the same on
 such a file as on any other. `query` is where you would feel it, and only on a
-large one — a single-block file the budget has room for twice over (about
-30 MiB at the 64 MiB default) is decoded once and read from there, so only a
-bigger one pays the decode again on every backward read. The remedy is in the message —
+large one — a single-block file the budget has room to hold twice over, with
+room to spare for the decoder itself (about 27 MiB at the 64 MiB default), is
+decoded once and read from there, so only a bigger one pays the decode again on
+every backward read. The remedy is in the message —
 recompressing with `xz -T0` or an
 explicit `--block-size` produces a file pgdq can seek into. Files that
 `xz` produced with threads, or that were made by concatenating several `.xz`
@@ -200,20 +201,22 @@ and it defaults to 64 MiB.** It is a bound rather than a target: pgdq will not
 exceed it by allocating a buffer bigger than you allowed. The one place that
 bites is `.xz` input. A compressed file is normally read a whole block at a
 time, which is what makes reading the same block twice free — but that needs
-room for **two** blocks, one being held while the next is decoded, so a file
-whose blocks are more than half the budget is read through the streaming
-decoder instead. That is still correct and still complete; what
+room for **two** blocks, one being held while the next is decoded, and for the
+decompressor's own working memory beside them — mostly the dictionary size the
+file's own header declares, which is about 9 MB all told for an ordinarily
+compressed file. A file whose blocks do not leave room for all of that is read
+through the streaming decoder instead. That is still correct and still complete; what
 it costs is that reading *backwards* means decoding forward from the start of
 the block again, which `query` does and `parse` never does.
 
 Two ordinary ways of compressing produce blocks too large for the default
 budget: `xz -9 -T0`, whose threaded blocks are about 192 MiB, and any explicit
-`xz --block-size=` above roughly 30 MiB. **`query` tells you when it happens**,
+`xz --block-size=` above roughly 27 MiB. **`query` tells you when it happens**,
 once, on stderr, naming the file's largest block beside the budget that
 declined it:
 
 ```
-warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room to hold two — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget above 268435456 byte(s) to read it a block at a time
+warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 278955808 byte(s) or more to read it a block at a time
 ```
 
 If you have the memory, `--parallel-memory 536870912` buys the block path back.
@@ -227,7 +230,10 @@ decides.** A plain (uncompressed) dump reads serially, because splitting one is
 slower than not splitting it. An `.xz` dump takes the CPUs this process was
 given — the machine's cores, or fewer where a container quota says so, since
 decompression is the one part of the work that a second core reliably finishes
-sooner. Whatever the file would choose, a `--jobs` you type wins outright, in
+sooner. **How many of those workers actually read is then bounded by
+`--parallel-memory`**, and at its 64 MiB default there is room for one reader
+of an ordinary 24 MiB-block file — so a compressed scan takes both numbers
+together, and the budget is the one to raise first. Whatever the file would choose, a `--jobs` you type wins outright, in
 both directions: `--jobs 1` reads a compressed dump serially, and `--jobs 8`
 splits a plain one.
 
@@ -258,8 +264,10 @@ can.
 > `query --jobs N` on a plain file runs one piece, serially, however large `N`
 > is; two pieces need about 145 MiB. On an `.xz` file read a block at a time
 > there is no second cost: the batch holds its rows inside the block its own
-> worker already decoded, so the pieces are bounded by the decode cost alone
-> and the default budget affords more than one. `parse` carries no batch cost on
+> worker already decoded, so the pieces are bounded by what one reader holds —
+> two blocks, a read buffer and the decompressor's own working memory. That is
+> about 58 MiB for a file of 24 MiB blocks, so the default budget affords one
+> piece there and `--parallel-memory` is what buys a second. `parse` carries no batch cost on
 > either shape — it builds none — so its `--jobs` is bound by the decode cost
 > as described above. When `--jobs` asks for more pieces than the budget
 > affords, `query` says so on stderr, naming the terms it was charged and the
@@ -289,9 +297,9 @@ with no room to hold what they decode buys less than either number suggests.
 > glibc gives each thread that allocates its own memory arena, which it keeps
 > rather than returns. pgdq runs a thread for each piece of work it has in
 > flight, so raising `--jobs` raises the arena count with it. So size a cgroup
-> above what `--parallel-memory` names rather than at it — on a compressed file
-> the headroom you need is a multiple of the budget rather than a fixed margin,
-> for the reason in the callout above. `MALLOC_ARENA_MAX` bounds the arena
+> above what `--parallel-memory` names rather than at it — a few hundred
+> megabytes above it on a compressed file, which is roughly a fixed margin
+> rather than something that grows with the budget you set. `MALLOC_ARENA_MAX` bounds the arena
 > count if you want to set it, and 2 is the smallest useful value; how much it
 > saves on a given workload is not something we can currently quote you a
 > number for. **This is not only a compressed-file concern**: a plain file

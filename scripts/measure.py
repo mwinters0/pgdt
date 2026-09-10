@@ -1847,14 +1847,24 @@ JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-job
 #: that grew with `--jobs` would make each row a different apparatus, and the
 #: table's ratios would be over two variables at once.
 #:
-#: **1 GiB, because it must admit the widest row's partitions on the coarsest
-#: input.** A block-decoding `XzSource` charges one partition a decoded block
-#: plus a chunk buffer, so 24 workers over 24 MiB blocks want ~600 MiB and 24
-#: over 128 MiB blocks want more than any budget this machine would state — the
-#: 128 MiB leg is bound by its own block size and says so, which is the whole
-#: point of taking `parallel-peak-rss` at two of them. Below this the widest
-#: rows would be silently clamped by `worker_count`, and a clamped row is a
-#: lower count wearing a higher label.
+#: **2 GiB, because it must admit the widest row's partitions on the coarsest
+#: input.** A block-decoding `XzSource` charges one partition what one reader
+#: of it holds — the block unit **twice**, the chunk buffer, and the decoder's
+#: own retention (`xz_seek::Reader::decode_footprint`, 9,471,776 B on this
+#: shape's 8 MiB dictionary) — so 24 workers over 24 MiB blocks want
+#: `24 x 58.03 MiB` = 1.36 GiB, and 24 over 128 MiB blocks want more than any
+#: budget this machine would state; the 128 MiB leg is bound by its own block
+#: size and says so, which is the whole point of taking `parallel-peak-rss` at
+#: two of them. Below this the widest rows would be silently clamped by
+#: `worker_count`, and a clamped row is a lower count wearing a higher label.
+#:
+#: **It was 1 GiB, sized against a charge of one block plus a chunk.** That
+#: charge was measured out by 2.4x — a sub-stream holding 59.4 MiB was billed
+#: 25 — so the constant sized against it no longer admits twenty-four workers
+#: once the divisor charges what a reader actually holds
+#: (`docs/design/architecture.md`, "The compressed source"). Both `parallel-*`
+#: figures are re-taken at this value; the readings under the old one are the
+#: `af15eac` sitting's and are stale on that library change like every other.
 #:
 #: **`--jobs 1` cannot state it at all**, `Parallelism::workers(1, _)` being
 #: `Serial` and `Serial` carrying no budget, so the baseline row runs at
@@ -1873,7 +1883,7 @@ JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-job
 #: for `POOL_DEPTH` does not discharge a budget clamp — the budget is sized so
 #: that the clamp does not happen, and where it cannot be, what the figure
 #: measures has to be restated rather than footnoted.
-PARALLEL_BUDGET = 1 << 30
+PARALLEL_BUDGET = 2 << 30
 
 #: What the two `parallel-*` figures' containers are given, against the
 #: register's 512 MB. `PARALLEL_BUDGET` is what the library is told it may
@@ -1881,19 +1891,21 @@ PARALLEL_BUDGET = 1 << 30
 #: decoder's own dictionaries and the batches in flight. An apparatus
 #: departure, and each figure's own table says so.
 #:
-#: **It does not rise to keep the top of the `--jobs` axis unclamped, and the
-#: reason is what the extra room would be sized from.** Affording twenty-four
-#: query sub-streams needs a budget of roughly 2.14 GiB and a container well
-#: past this one. The headroom above a stated budget is largely glibc's
-#: per-CPU arenas, whose count follows the host's hardware threads
+#: **It does not rise with `PARALLEL_BUDGET`, and the reason is what the extra
+#: room would be sized from.** The budget rose to 2 GiB so that a corrected
+#: per-reader charge still admits the widest row's twenty-four decoders, which
+#: is the arrangement the previous sitting was taken under rather than a wider
+#: one; what a leg holds tracks the worker count, and that count is unchanged
+#: at the top of the axis. Sizing the *container* off the axis instead is what
+#: is refused: the headroom above a stated budget is largely glibc's per-CPU
+#: arenas, whose count follows the host's hardware threads
 #: (`docs/status/history/2026-09-08.md`, "The `16.14` OOM is glibc's arenas"),
-#: so the container would be picked from an allocator artifact of the machine
-#: that took the figure rather than from anything the library asks for — and
+#: so it would be picked from an allocator artifact of the machine that took
+#: the figure rather than from anything the library asks for — and
 #: `measurements.md`'s contract is that a figure carries the command that
 #: re-takes it. The reading itself would still be a reading about the library;
 #: what would be wrong is an apparatus departure growing with no principle
-#: bounding it. The comparison is anchored at four workers instead, which this
-#: container already holds.
+#: bounding it.
 PARALLEL_MEMORY = "3g"
 
 #: The sub-stream count a typed-`query` leg actually gets from `PARALLEL_BUDGET`,
@@ -1905,8 +1917,13 @@ PARALLEL_MEMORY = "3g"
 #: **The divisor is per source, not universal.** `plan_partitions` adds the
 #: held batch's `max_source_span` only where the source retains by the read
 #: chunk (`crate::io::RetainedUnit`); a block-decoding `XzSource` retains by the
-#: partition, whose decoded block `partition_bytes` has already charged, so its
-#: divisor is the decode footprint alone.
+#: partition, whose decoded blocks `partition_bytes` has already charged, so its
+#: divisor is what one reader of it holds and nothing more.
+#:
+#: **The dict is empty at `PARALLEL_BUDGET`, and that is a reading rather than
+#: an omission**: neither leg's count falls inside `PARALLEL_JOBS` at 2 GiB, so
+#: there is no cell to annotate. The arithmetic below is what says so, and the
+#: entry comes back the moment a constant moves it.
 #:
 #: **Hand-computed, not derived from a mirrored formula.** A Python
 #: reimplementation of `worker_count`/`plan_partitions` would be a second
@@ -1915,18 +1932,18 @@ PARALLEL_MEMORY = "3g"
 #: for `POOL_DEPTH`, is checked by hand against the source once and is exactly
 #: as good until the constants it was checked against move, at which point the
 #: figure is stale on the paths already in its `depends`.
-#:  `.xz`:   `24 MiB` block (`control_xz`'s block size) + `1 MiB` chunk buffer
-#:           = `25 MiB` divisor, the span not charged;
-#:           `floor(1 GiB / 25 MiB) = 40`, past the top of `PARALLEL_JOBS`, so
-#:           no entry.
-#:  plain:   `8 MiB` (`POOL_MAX_BYTES`, unhinted — the mapping pass hints the
-#:           source with `scan_options.chunk_size`, and `plan_partitions` asks
-#:           `source.partitions` before that hint is ever set on the *query*
-#:           path's source instance, so the multiple
-#:           `LocalFileSource::partitions` applies is capped straight back to
-#:           the ceiling) `+ 64 MiB` span = `72 MiB` divisor;
-#:           `floor(1 GiB / 72 MiB) = 14`.
-QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 14}
+#:  `.xz`:   `2 x 24 MiB` block slots (`control_xz`'s block size, the one being
+#:           decoded and the one retained beside it) + `1 MiB` chunk buffer +
+#:           `9,471,776 B` of decoder (an 8 MiB dictionary, the 1 MiB input
+#:           chunk and `liblzma`'s own 34,592 B of state) = `58.03 MiB`
+#:           divisor, the span not charged;
+#:           `floor(2 GiB / 58.03 MiB) = 35`, past the top of `PARALLEL_JOBS`,
+#:           so no entry.
+#:  plain:   `8 MiB` (`POOL_MAX_BYTES`, which is also what
+#:           `LocalFileSource::partitions` applies its multiple to and is
+#:           capped straight back to) `+ 64 MiB` span = `72 MiB` divisor;
+#:           `floor(2 GiB / 72 MiB) = 28`, likewise past the top of the axis.
+QUERY_SUBSTREAM_CAP: dict[str, int] = {}
 
 #: The worker count every `pgdq` invocation this harness makes states, and the
 #: one every registered figure is taken at **except the two whose axis it is**.
@@ -4334,27 +4351,53 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "`POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused worker on a "
         "plain source waits: the rows above four say what that ceiling costs, not that "
         "the scan stopped scaling.\n\n"
-        "**The plain typed-`query` leg's `--jobs` is clamped a second way, and this "
-        "one the table states per cell rather than footnotes once.** `plan_partitions` "
-        "caps a query's sub-stream count at `--parallel-memory` divided by what one "
-        "sub-stream costs to decode plus what its held batch pins "
-        '(`docs/design/architecture.md`, "Execution model and API surface") — a budget '
-        "the *harness* chose, not a ceiling the library ships, so the rows above four "
-        "on that leg state the count they actually planned: "
-        f"`{QUERY_SUBSTREAM_CAP['control']}`. Below that count a cell's sub-stream "
-        "figure equals its row label; at or above it, every further worker asked for "
-        "buys nothing more to plan. **The `.xz` typed-`query` leg carries no such "
-        "annotation**, and that is the same arithmetic rather than an omission: a "
-        "block-decoding source retains by the partition, so the span is not charged "
-        "and this budget affords forty sub-streams — past the top of the axis, leaving "
-        "nothing to state. "
-        "**The comparison is anchored at four workers and no constant moved to take "
-        "this table**: `PARALLEL_BUDGET` stays 1 GiB (it affords four sub-streams on "
-        "the worst leg, `4 × 72 MiB ≈ 288 MiB`, the count `POOL_DEPTH` itself delivers "
-        "on a plain source), `PARALLEL_MEMORY` stays 3g, and `PARALLEL_JOBS` is "
-        "unchanged.\n"
+        + _substream_note()
+        + "**One constant moved to take this table.** `PARALLEL_BUDGET` rose 1 GiB → "
+        f"{_fmt_bytes(PARALLEL_BUDGET)} because a compressed sub-stream is now charged "
+        "what one reader of it holds — two block slots, the chunk buffer and the "
+        'decoder\'s own retention (`docs/design/architecture.md`, "The compressed '
+        'source") — where it used to be charged one block and a chunk. The old value '
+        "would have clamped the widest `.xz` rows to seventeen readers, so the raise is "
+        "what keeps this table's top rows the twenty-four they are labelled. "
+        f"`PARALLEL_MEMORY` stays {PARALLEL_MEMORY} and `PARALLEL_JOBS` is unchanged.\n"
     )
     return table + notes + "\n" + _per_rep(figure, session, specs)
+
+
+def _substream_note() -> str:
+    """What the typed-`query` columns say about the count they actually planned.
+
+    Read off `QUERY_SUBSTREAM_CAP` rather than stated, because the dict is what
+    decides whether a cell carries the annotation: a paragraph asserting a
+    clamp the renderer did not print, or silence over one it did, is the
+    divergence the harness owns its own prose to avoid.
+    """
+    head = (
+        "**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the "
+        "table states per cell rather than footnotes once.** `plan_partitions` caps a "
+        "query's sub-stream count at `--parallel-memory` divided by what one sub-stream "
+        "costs to read plus what its held batch pins "
+        '(`docs/design/architecture.md`, "Execution model and API surface") — a budget '
+        "the *harness* chose, not a ceiling the library ships. "
+    )
+    if not QUERY_SUBSTREAM_CAP:
+        return (
+            head + "**At this budget neither typed-`query` leg reaches it**, so no cell "
+            "carries the annotation: the plain leg is charged `8 MiB + 64 MiB` a "
+            "sub-stream and affords twenty-eight, and the `.xz` leg — which retains by "
+            "the partition, so the span is not charged — is charged `58.03 MiB` and "
+            "affords thirty-five, both past the top of the axis.\n\n"
+        )
+    clamped = ", ".join(
+        f"`{count}` on {'`.xz`' if inp.endswith('_xz') else 'plain'}"
+        for inp, count in sorted(QUERY_SUBSTREAM_CAP.items())
+    )
+    return (
+        head + f"The rows above four on such a leg state the count they actually "
+        f"planned: {clamped}. Below that count a cell's sub-stream figure equals its "
+        "row label; at or above it, every further worker asked for buys nothing more "
+        "to plan.\n\n"
+    )
 
 
 # -- what a parallel scan holds resident ------------------------------------

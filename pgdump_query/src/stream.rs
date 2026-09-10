@@ -1853,10 +1853,15 @@ pub enum PlanNoteKind {
     /// source"). Never a reason to refuse the query — the rows are the same
     /// and the mapping pass, which only reads forward, costs the same either
     /// way; what it names is the number to raise and how far.
-    /// `max_block_uncompressed` is the file's largest block, and the budget is
-    /// compared against **twice** it, a block pool holding one block being the
-    /// un-poolable shape it rejects by name ([`crate::io`], `BlockCache`);
-    /// `block_count` says how much seeking the file would otherwise offer.
+    /// `max_block_uncompressed` is the file's largest block and `block_count`
+    /// says how much seeking the file would otherwise offer, while
+    /// `reader_bytes` is what the budget was actually compared against: the
+    /// block unit **twice** — a block pool holding one block being the
+    /// un-poolable shape it rejects by name ([`crate::io`], `BlockCache`) —
+    /// plus the chunk buffer and the decoder's own retention. The source
+    /// states that number rather than this note deriving it
+    /// ([`crate::io::ByteRangeSource::block_decode_bytes`]), so the recourse
+    /// and the rule cannot part company.
     ///
     /// **Not a [`crate::diagnostic::DiagnosticKind`], for the reason its
     /// sibling above is not one.** The *file* having no seek structure at all
@@ -1868,6 +1873,7 @@ pub enum PlanNoteKind {
     CompressedBlockPathDeclined {
         block_count: usize,
         max_block_uncompressed: u64,
+        reader_bytes: u64,
         memory_bytes: u64,
     },
 }
@@ -1876,12 +1882,14 @@ impl PlanNote {
     fn compressed_block_path_declined(
         block_count: usize,
         max_block_uncompressed: u64,
+        reader_bytes: u64,
         memory_bytes: u64,
     ) -> Self {
         Self {
             kind: PlanNoteKind::CompressedBlockPathDeclined {
                 block_count,
                 max_block_uncompressed,
+                reader_bytes,
                 memory_bytes,
             },
         }
@@ -1933,14 +1941,14 @@ impl PlanNote {
             PlanNoteKind::CompressedBlockPathDeclined {
                 block_count,
                 max_block_uncompressed,
+                reader_bytes,
                 memory_bytes,
             } => format!(
                 "this .xz source has {block_count} block(s) to seek by, but its largest is \
                  {max_block_uncompressed} byte(s) and a memory budget of {memory_bytes} byte(s) \
-                 leaves no room to hold two — so it is read through the streaming decoder and \
-                 every backward read decodes forward from its block's start; raise the memory \
-                 budget above {} byte(s) to read it a block at a time",
-                max_block_uncompressed.saturating_mul(2)
+                 leaves no room for one reader of it — so it is read through the streaming \
+                 decoder and every backward read decodes forward from its block's start; raise \
+                 the memory budget to {reader_bytes} byte(s) or more to read it a block at a time"
             ),
         }
     }
@@ -1955,8 +1963,10 @@ impl PlanNote {
 /// down.** A source that holds a seek table with more than one block and
 /// still advises a *single* partition over the whole of it has declined —
 /// that is exactly the streaming fallback's answer, and it is a comparison
-/// between two values already in hand rather than a trait method added for a
-/// sentence.
+/// between two values already in hand rather than a rule restated here. What
+/// the source *is* asked for is the number the message names as the recourse
+/// ([`crate::io::ByteRangeSource::block_decode_bytes`]), because deriving that
+/// from the table would be a second copy of the source's own arithmetic.
 ///
 /// **Asked over the whole file** rather than over the blocks this query
 /// matched: a query whose rows all sit inside one compressed block would be
@@ -1983,8 +1993,14 @@ fn compressed_block_path_declined(
     Some(PlanNote::compressed_block_path_declined(
         table.block_count(),
         table.max_block_uncompressed(),
+        // What a reader of this file would have held on the path it declined.
+        // A source advising one partition over a seekable table is a
+        // compressed source by construction, so the fallback is unreachable;
+        // it is written as one rather than unwrapped because nothing in the
+        // trait obliges the two answers to agree.
+        source.block_decode_bytes().unwrap_or(0),
         // The budget actually in force, which is what the source compared its
-        // block against: a caller that stated no number leaves every pool on
+        // reader against: a caller that stated no number leaves every pool on
         // this one.
         parallelism.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET),
     ))

@@ -1522,12 +1522,18 @@ class ParallelFigures(unittest.TestCase):
                     )
 
     def test_the_budget_admits_the_widest_row_on_the_coarser_leg(self):
-        # A block-decoding source charges one partition a decoded block plus a
-        # chunk buffer, and `worker_count` divides the stated bytes by that. A
-        # budget below `jobs x (block + chunk)` clamps the top rows silently.
+        # A block-decoding source charges one partition what one reader of it
+        # holds — the block unit twice, the chunk buffer, and the decoder's own
+        # retention — and `worker_count` divides the stated bytes by that. A
+        # budget below `jobs x` that clamps the top rows silently, which is
+        # what the old 1 GiB would now do.
         block = 24 * measure.MIB
-        want = measure.PARALLEL_JOBS[-1] * (block + measure.CHUNK_DEFAULT)
+        # `xz_seek::Reader::decode_footprint` on this shape: an 8 MiB LZMA2
+        # dictionary, the 1 MiB input chunk, and `liblzma`'s 34,592 B of state.
+        decoder = 8 * measure.MIB + measure.CHUNK_DEFAULT + 34_592
+        want = measure.PARALLEL_JOBS[-1] * (2 * block + measure.CHUNK_DEFAULT + decoder)
         self.assertGreaterEqual(measure.PARALLEL_BUDGET, want)
+        self.assertLess(1 << 30, want, "the value this replaced would clamp the widest row")
 
     def test_the_container_holds_more_than_the_budget_it_states(self):
         # The library is told it may hold `PARALLEL_BUDGET`; the container has
@@ -3951,10 +3957,23 @@ class SubstreamAnnotation(unittest.TestCase):
 
     def test_a_cap_belongs_to_a_typed_query_leg(self):
         # A cap for a leg nothing annotates is dead weight that reads as a
-        # claim about the table.
+        # claim about the table. The dict may legitimately be empty — no leg's
+        # count falls inside the axis at the budget stated today — so what is
+        # asserted is the membership, not that anything is in it.
         typed = {inp for inp, family, _ in measure.PARALLEL_LEGS if family == "query-typed"}
-        self.assertTrue(measure.QUERY_SUBSTREAM_CAP)
         self.assertLessEqual(set(measure.QUERY_SUBSTREAM_CAP), typed)
+
+    def test_an_empty_cap_says_so_in_the_prose(self):
+        # The paragraph is emitted from the dict, so the two cannot disagree:
+        # empty means the note says neither leg is clamped, and an entry means
+        # it names the count.
+        empty = measure._substream_note()
+        self.assertIn("neither typed-`query` leg reaches it", empty)
+        self.assertNotIn("state the count they actually", empty)
+        with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {"control": 14}):
+            clamped = measure._substream_note()
+        self.assertIn("`14` on plain", clamped)
+        self.assertNotIn("neither typed-`query` leg reaches it", clamped)
 
     def test_a_cap_is_never_above_the_largest_job_count(self):
         # A cap at or above the largest `--jobs` would annotate every row with
@@ -3964,15 +3983,16 @@ class SubstreamAnnotation(unittest.TestCase):
         for inp, cap in measure.QUERY_SUBSTREAM_CAP.items():
             self.assertLess(cap, measure.PARALLEL_JOBS[-1], inp)
 
-    def test_the_xz_leg_carries_no_cap(self):
+    def test_neither_leg_carries_a_cap_at_this_budget(self):
         # `plan_partitions` charges the held batch's span only where the source
         # retains by the read chunk, and a block-decoding `XzSource` retains by
-        # the partition — so its divisor is the decode footprint alone and
-        # `PARALLEL_BUDGET` affords forty sub-streams, past the top of the
-        # axis. An entry appearing here again means either the library started
-        # charging that leg the span or the budget moved, and the table's own
-        # paragraph saying there is nothing to state has gone false.
-        self.assertNotIn("control_xz", measure.QUERY_SUBSTREAM_CAP)
+        # the partition — so the `.xz` leg is charged what one reader holds,
+        # `58.03 MiB`, and affords thirty-five, while the plain leg is charged
+        # `8 + 64 MiB` and affords twenty-eight. Both are past the top of the
+        # axis. An entry appearing here again means a constant moved, and the
+        # table's own paragraph saying there is nothing to state has gone false
+        # — which is why that paragraph is emitted from this dict.
+        self.assertEqual(measure.QUERY_SUBSTREAM_CAP, {})
 
 
 class Scaffolding(unittest.TestCase):
@@ -4079,9 +4099,17 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
     defect this pins put the `.xz` sub-stream counts in the `.xz`, `parse`
     column — every number correct, attached to the wrong leg — which no
     assertion about `PARALLEL_LEGS` alone would have caught.
+
+    **The cap is supplied here rather than read off the shipped constant**,
+    which is empty at today's budget: a renderer asserted only against the
+    arrangement that prints nothing would stop covering the placement the
+    moment it stopped mattering, which is exactly when a later constant brings
+    it back.
     """
 
-    def _render(self):
+    CAP = {"control": 14}
+
+    def _render(self, cap=None):
         figure = "parallel-scan-throughput"
         specs = measure._parallel_specs()
         raw = {
@@ -4094,7 +4122,19 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
                 measure.Config(), raw, Path(tmp), lambda _m: None
             )
             session.figure_id = figure
-            return measure.run_parallel_scan_throughput(session)
+            with unittest.mock.patch.object(
+                measure, "QUERY_SUBSTREAM_CAP", self.CAP if cap is None else cap
+            ):
+                return measure.run_parallel_scan_throughput(session)
+
+    def test_the_shipped_cap_annotates_nothing(self):
+        # Empty today, and no *cell* may then carry a count — the prose below
+        # the table still discusses the clamp, and says there is none.
+        body = self._render(cap=measure.QUERY_SUBSTREAM_CAP)
+        cells = [r for r in body.splitlines() if r.startswith("| ")]
+        self.assertTrue(cells)
+        for row in cells:
+            self.assertNotIn("sub-stream", row)
 
     def test_the_annotation_is_in_the_typed_query_columns_only(self):
         body = self._render()
@@ -4107,8 +4147,7 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
         capped = {
             i
             for i in typed
-            if ("control_xz" if "`.xz`" in header[i] else "control")
-            in measure.QUERY_SUBSTREAM_CAP
+            if ("control_xz" if "`.xz`" in header[i] else "control") in self.CAP
         }
         self.assertTrue(capped, "no typed-`query` leg is capped, so this asserts nothing")
 
@@ -4146,5 +4185,5 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
             for i, cell in enumerate(cells):
                 if "sub-stream" in cell:
                     inp = "control_xz" if "`.xz`" in header[i] else "control"
-                    want = min(jobs, measure.QUERY_SUBSTREAM_CAP[inp])
+                    want = min(jobs, self.CAP[inp])
                     self.assertIn(f"· {want} sub-stream", cell)

@@ -121,6 +121,27 @@ pub trait ByteRangeSource: Send + Sync {
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
+
+    /// What one concurrent reader would hold if this source read its container
+    /// a block at a time, in bytes — the number a memory budget has to clear
+    /// for that path to be taken at all, whether or not it was
+    /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// `None` for a source with no such path to take, which is every source
+    /// but a compressed one.
+    ///
+    /// **It exists so that the decline has one statement of its rule.** A
+    /// caller that meant to name what to raise a budget *to* would otherwise
+    /// re-derive the source's own arithmetic — the block unit twice, the chunk
+    /// buffer and the decoder's own retention — and the two copies would part
+    /// company at the first change to any of the four. Whether the path was
+    /// declined is still read off [`ByteRangeSource::partitions`], which is a
+    /// comparison between two values already in hand; this is only the number
+    /// the message needs.
+    fn block_decode_bytes(&self) -> Option<u64> {
+        None
+    }
+
     /// How many concurrent readers this source recommends to a caller that has
     /// stated no count of its own — a **recommendation**, never a bound
     /// (`docs/design/architecture.md`, "Execution model and API surface").
@@ -354,20 +375,30 @@ impl Partitioning {
     /// else.
     ///
     /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`] read chunks, which
-    /// a worker takes in one buffer. For a compressed one it is a decoded
-    /// block plus the chunk buffer a read straddling a block boundary is
-    /// assembled into — 32 MiB against the 24 MiB blocks koji's download
-    /// carries.
+    /// a worker takes in one buffer. For a block-decoding compressed one it is
+    /// the block unit **twice** — the block being decoded and the one the
+    /// reader retains beside it — plus the chunk buffer a read straddling a
+    /// boundary is assembled into, plus the decoder's own retention: 58 MiB
+    /// against the 24 MiB blocks koji's download carries.
     ///
-    /// **The decoder's own retention is deliberately outside it, and a caller
-    /// budgeting workers adds it.** It is one number — the LZMA2 dictionary,
-    /// the compressed input buffer and the backend's own state —
-    /// `xz_seek::Reader::decode_footprint()`, which costs no source read and
-    /// is the same whatever range is read. The dictionary is written in each
-    /// block's *header* rather than in the seek table, so that number is a
-    /// very good estimate and not a sound ceiling; what cannot understate is
-    /// the reader's `memlimit`, compared against each block's own declared
-    /// dictionary before any backend object is built.
+    /// **The decoder's own retention is inside it, and it is a published
+    /// number rather than a guess.** `xz_seek::Reader::decode_footprint()` —
+    /// the LZMA2 dictionary, the compressed input buffer and the backend's own
+    /// state — costs no source read and is the same whatever range is read, so
+    /// the source charges it once at construction and never re-derives it. A
+    /// charge that left it out was the whole of a 2.4× under-count
+    /// (`docs/design/architecture.md`, "The compressed source"). The dictionary
+    /// is written in each block's *header* and the table records the first
+    /// block's per stream, so that number is a very good estimate and not a
+    /// sound ceiling; what cannot understate is the reader's `memlimit`,
+    /// compared against each block's own declared dictionary before any backend
+    /// object is built.
+    ///
+    /// **A shared cost is not a per-reader one.** The streaming fallback keeps
+    /// one decoder behind a mutex however many readers a caller runs, so that
+    /// arm charges the chunk buffer alone and leaves the decoder to the fixed
+    /// term a budget's reserve covers; the block path builds a decoder per
+    /// concurrent decode, which is what makes the same number per-reader there.
     pub fn partition_bytes(&self) -> u64 {
         self.partition_bytes
     }
@@ -1290,20 +1321,43 @@ impl BlockCache {
         Some(BlockCache { unit, pool, retained: Mutex::new(Vec::new()) })
     }
 
-    /// Whether the budget this pool was given affords **two** whole blocks —
-    /// the line that decides between block decode and the streaming reader
+    /// What **one concurrent reader** of this file holds while it decodes
+    /// whole blocks, in bytes: the block unit twice, the chunk buffer a
+    /// straddling read is assembled into, and the decoder's own retention
     /// (`docs/design/architecture.md`, "The compressed source").
     ///
-    /// **Two, because a coupled count of one is the shape this pool rejects by
-    /// name.** [`BlockCache::slot`] drains the retention list to
+    /// **Two units, because a coupled count of one is the shape this pool
+    /// rejects by name.** [`BlockCache::slot`] drains the retention list to
     /// `slots() - 1` before taking a slot, so a one-slot pool retains nothing
     /// and drains before every decode — it stops pooling exactly when a caller
-    /// is holding a block. Asking whether the budget affords two units is the
-    /// same sentence as "the coupled count is at least two" and introduces no
-    /// constant of its own. What it moves for a reader is where whole-block
-    /// decode is declined: a file whose largest block exceeds **half** the
-    /// budget, where it used to be one whose largest block exceeded the whole
-    /// of it.
+    /// is holding a block. A reader therefore holds the block it is decoding
+    /// and the one it kept, and that is the same sentence as "the coupled
+    /// count is at least two" rather than a constant of its own.
+    ///
+    /// It is one number with two consumers — [`BlockCache::affordable`], which
+    /// asks whether the budget admits a single such reader, and
+    /// [`XzSource::partition_advice`], which is what a caller's budget is
+    /// divided by to reach a worker count. They were two statements of one
+    /// cost until the divisor was found charging a *single* unit and nothing
+    /// for the decoder, 25 MiB against a measured 59.4.
+    fn reader_bytes(&self, chunk_bytes: u64, decode_bytes: u64) -> u64 {
+        (self.unit as u64)
+            .saturating_mul(2)
+            .saturating_add(chunk_bytes)
+            .saturating_add(decode_bytes)
+    }
+
+    /// Whether `budget` admits one such reader — the line that decides between
+    /// block decode and the streaming reader
+    /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// **The chunk and the decoder come off the top, and what is left must
+    /// hold two blocks.** Both are paid on the streaming path too — that
+    /// fallback assembles reads into a chunk buffer and keeps a decoder of its
+    /// own — so they are not what the decline saves; the two block slots are.
+    /// Stating it as one comparison against the whole per-reader cost is what
+    /// keeps the decline and the divisor from being two sentences that can
+    /// drift apart.
     ///
     /// **This is where a constant used to be.** The refusal was a fixed
     /// 256 MiB beside a fixed 64 MiB budget, two unrelated numbers of which
@@ -1322,8 +1376,8 @@ impl BlockCache {
     /// have parallelism to lose. That is now the caller's to reverse, with
     /// `--parallel-memory` or `Parallelism::Workers`, rather than a constant's
     /// to permit.
-    fn affordable(&self) -> bool {
-        self.unit.saturating_mul(2) <= self.pool.budget()
+    fn affordable(&self, chunk_bytes: u64, decode_bytes: u64, budget: u64) -> bool {
+        self.reader_bytes(chunk_bytes, decode_bytes) <= budget
     }
 
     /// The retained block at `index`, promoted to most-recently-used.
@@ -1425,6 +1479,15 @@ pub struct XzSource {
     /// Present does not mean *taken*: [`XzSource::block_path`] is what decides
     /// per read, since a block the caller's budget cannot hold is streamed.
     blocks: Option<Arc<BlockCache>>,
+    /// What one decode of this file retains beyond the slot it writes into —
+    /// the LZMA2 dictionary, the compressed input chunk and the backend's own
+    /// state (`xz_seek::Reader::decode_footprint`).
+    ///
+    /// **Read once, at construction.** It is a property of the file and of the
+    /// backend, not of a range, so nothing about a read moves it; asking the
+    /// reader for it per call would take the mutex the block path exists to
+    /// stay off.
+    decode_bytes: u64,
     /// What the caller stated it may hold, in bytes, across **both** pools —
     /// [`DEFAULT_MEMORY_BUDGET`] until one is announced.
     ///
@@ -1509,6 +1572,7 @@ impl XzSource {
     ) -> Self {
         let table = Arc::new(reader.index().clone());
         let blocks = BlockCache::for_table(&table).map(Arc::new);
+        let decode_bytes = reader.decode_footprint();
         let source = Self {
             path,
             stat_file,
@@ -1517,6 +1581,7 @@ impl XzSource {
             reader: Arc::new(Mutex::new(reader)),
             pool: Arc::new(BufferPool::default()),
             blocks,
+            decode_bytes,
             budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
             jobs: AtomicUsize::new(1),
         };
@@ -1555,11 +1620,24 @@ impl XzSource {
         }
     }
 
+    /// What one concurrent block-decoding reader of this file would hold,
+    /// whether or not the budget admits one — [`BlockCache::reader_bytes`]
+    /// over this source's own chunk size and decoder charge, and what
+    /// [`ByteRangeSource::block_decode_bytes`] answers.
+    fn block_reader_bytes(&self) -> Option<u64> {
+        let cache = self.blocks.as_ref()?;
+        Some(cache.reader_bytes(self.pool.slot_bytes() as u64, self.decode_bytes))
+    }
+
     /// The block-decode path, or `None` where this read goes through the
-    /// streaming reader: no blocks at all, or a block the caller's budget
-    /// cannot hold ([`BlockCache::affordable`]).
+    /// streaming reader: no blocks at all, or a reader the caller's budget
+    /// cannot afford ([`BlockCache::affordable`]).
     fn block_path(&self) -> Option<&Arc<BlockCache>> {
-        self.blocks.as_ref().filter(|cache| cache.affordable())
+        let budget = self.budget.load(Ordering::Relaxed) as u64;
+        let chunk_bytes = self.pool.slot_bytes() as u64;
+        self.blocks
+            .as_ref()
+            .filter(|cache| cache.affordable(chunk_bytes, self.decode_bytes, budget))
     }
 
     pub fn path(&self) -> &Path {
@@ -1678,8 +1756,10 @@ impl XzSource {
     /// `range`, so a partition is a whole number of blocks and two workers
     /// never decode the same block twice
     /// (`docs/design/architecture.md`, "The compressed source"). A partition
-    /// holds one decoded block slot plus the chunk buffer a read straddling a
-    /// boundary is assembled into.
+    /// costs what one concurrent reader holds — [`BlockCache::reader_bytes`],
+    /// the same number [`BlockCache::affordable`] compares a budget against,
+    /// so the path a budget affords and the readers it admits are one
+    /// statement.
     ///
     /// **Streaming fallback** — one partition, whatever the table says. Such a
     /// file still has block boundaries, but reaching an offset inside a block
@@ -1701,9 +1781,16 @@ impl XzSource {
         table: &xz_seek::SeekTable,
         blocks: Option<&BlockCache>,
         chunk_bytes: u64,
+        decode_bytes: u64,
         range: Range<u64>,
     ) -> Partitioning {
         let Some(cache) = blocks else {
+            // **The streaming arm charges the chunk buffer and not the
+            // decoder**, because that path keeps one `xz_seek::Reader` behind
+            // a mutex however many readers a caller runs: the decoder is a
+            // fixed cost of the source rather than a cost of a concurrent
+            // reader, and charging it per partition would over-charge every
+            // reader but the first ([`Partitioning::partition_bytes`]).
             return Partitioning::single(chunk_bytes);
         };
         let covering = table.blocks_in(range.clone());
@@ -1720,7 +1807,8 @@ impl XzSource {
         // count those bytes twice ([`RetainedUnit`]). The streaming arm above
         // keeps the default: there a read is assembled *into* a chunk buffer,
         // so what a batch pins is chunks.
-        Partitioning::at(at, cache.unit as u64 + chunk_bytes).retaining(RetainedUnit::Partition)
+        Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
+            .retaining(RetainedUnit::Partition)
     }
 
     /// The fallback: one live decode, restarted on a backward seek, serialized
@@ -1858,8 +1946,13 @@ impl ByteRangeSource for XzSource {
             &self.table,
             self.block_path().map(|cache| &**cache),
             self.pool.slot_bytes() as u64,
+            self.decode_bytes,
             range,
         )
+    }
+
+    fn block_decode_bytes(&self) -> Option<u64> {
+        self.block_reader_bytes()
     }
 
     /// **The cores this process was given** — `available_parallelism()`, which
@@ -2528,10 +2621,13 @@ mod tests {
         let one = source.partitions(from..from + 10);
         assert_eq!(one.max_partitions(), Some(1));
 
-        // A partition holds one decoded block plus the chunk buffer a
-        // straddling read is assembled into.
+        // A partition costs what one concurrent reader holds: two block slots
+        // — the one being decoded and the one retained beside it — the chunk
+        // buffer a straddling read is assembled into, and the decoder's own
+        // retention, which is a published number rather than a guess.
         let unit = source.blocks.as_ref().unwrap().unit as u64;
-        assert_eq!(whole.partition_bytes(), unit + POOL_MAX_BYTES as u64);
+        assert_eq!(whole.partition_bytes(), 2 * unit + POOL_MAX_BYTES as u64 + source.decode_bytes);
+        assert_eq!(Some(whole.partition_bytes()), source.block_decode_bytes());
 
         // And what a retained batch pins is that same block, which the line
         // above has already charged for — so a caller must not add its span
@@ -2552,13 +2648,23 @@ mod tests {
         assert!(table.is_seekable(), "the table has boundaries to advise");
 
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
-        let decoding = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 0..4 * 4096);
+        let decoding =
+            XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..4 * 4096);
         assert_eq!(decoding.max_partitions(), Some(4));
         assert_eq!(decoding.retained_unit(), RetainedUnit::Partition);
+        assert_eq!(
+            decoding.partition_bytes(),
+            2 * 4096 + (1 << 20) + (9 << 20),
+            "two block slots, the chunk buffer, and the decoder's own retention"
+        );
 
-        let streaming = XzSource::partition_advice(&table, None, 1 << 20, 0..4 * 4096);
+        let streaming = XzSource::partition_advice(&table, None, 1 << 20, 9 << 20, 0..4 * 4096);
         assert_eq!(streaming.max_partitions(), Some(1));
-        assert_eq!(streaming.partition_bytes(), 1 << 20, "one chunk buffer, one reader");
+        assert_eq!(
+            streaming.partition_bytes(),
+            1 << 20,
+            "one chunk buffer a reader; the fallback's single decoder is a cost of the source"
+        );
         assert_eq!(
             streaming.retained_unit(),
             RetainedUnit::ReadChunk,
@@ -2604,13 +2710,23 @@ mod tests {
     fn the_block_path_wants_room_for_two_blocks() {
         let table = four_block_table();
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
+        // The two terms a decline does not save, held at zero so that this
+        // test is about the block slots alone; the test above is where they
+        // bind.
+        let unit = cache.unit as u64;
 
+        assert!(cache.affordable(0, 0, unit * 2), "exactly two units is the coupled count of two");
         cache.pool.set_limits(cache.unit * 2, POOL_DEPTH);
-        assert!(cache.affordable(), "exactly two units is the coupled count of two");
         assert_eq!(cache.pool.slots(), 2);
 
-        cache.pool.set_limits(cache.unit * 2 - 1, POOL_DEPTH);
-        assert!(!cache.affordable(), "one unit is the un-poolable shape, so it is declined");
+        assert!(
+            !cache.affordable(0, 0, unit * 2 - 1),
+            "one unit is the un-poolable shape, so it is declined"
+        );
+        // And the reader's other two terms are inside the same number: the
+        // same budget that afforded two units declines them once a chunk
+        // buffer and a decoder are charged beside it.
+        assert!(!cache.affordable(1, 1, unit * 2));
     }
 
     /// **One slot count covers the retained blocks and the free ones
@@ -2926,19 +3042,30 @@ mod tests {
             blocks: vec![block(uncompressed_size)],
         };
         // A cache exists for any file with blocks; whether the block path is
-        // *taken* is the budget's answer, asked again on every read.
-        let affordable = |unit: u64, budget: usize| {
+        // *taken* is the budget's answer, asked again on every read. The
+        // decoder's charge is stated here rather than read off a reader — a
+        // synthetic table has none — and stands for what
+        // `xz_seek::Reader::decode_footprint` answers on an 8 MiB-dictionary
+        // file: the dictionary, a 1 MiB input chunk and the backend's own
+        // state, 9,471,776 bytes on koji's shape.
+        const DECODE: u64 = 9_471_776;
+        let affordable = |unit: u64, budget: u64| {
             let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
-            cache.pool.set_limits(budget, POOL_DEPTH);
-            cache.affordable()
+            cache.affordable(crate::DEFAULT_CHUNK_SIZE as u64, DECODE, budget)
         };
-        assert!(affordable(24 << 20, DEFAULT_MEMORY_BUDGET as usize));
+        assert!(affordable(24 << 20, DEFAULT_MEMORY_BUDGET));
         // 128 and 192 MiB blocks — `xz --block-size=128MiB`, and `xz -9 -T0`,
         // whose block is three times its 64 MiB dictionary — are declined at
         // the default and taken once the caller allows the room.
-        assert!(!affordable(128 << 20, DEFAULT_MEMORY_BUDGET as usize));
-        assert!(!affordable(192 << 20, DEFAULT_MEMORY_BUDGET as usize));
+        assert!(!affordable(128 << 20, DEFAULT_MEMORY_BUDGET));
+        assert!(!affordable(192 << 20, DEFAULT_MEMORY_BUDGET));
         assert!(affordable(192 << 20, 512 << 20));
+        // **The unavoidable terms come off the top.** Two 24 MiB blocks fit a
+        // 50 MiB budget on their own and the file is declined all the same,
+        // because a reader of it also holds the chunk buffer and the decoder —
+        // both of which the streaming fallback holds too, which is why they
+        // bound the decision rather than being saved by it.
+        assert!(!affordable(24 << 20, 50 << 20));
         // A file with no blocks at all — `xz -c /dev/null` writes one — has no
         // unit to size a slot with, so there is no cache to ask.
         let empty = xz_seek::SeekTable {
