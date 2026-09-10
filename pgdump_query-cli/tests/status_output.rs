@@ -290,11 +290,109 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
         None => assert!(started.contains("memory_bytes=67108864 (default)"), "{started}"),
         Some(limit) => {
             let budget = pgdump_query::DEFAULT_MEMORY_BUDGET
-                .min(limit.saturating_sub(pgdump_query::MEMORY_RESERVE));
+                .min(limit.bytes.saturating_sub(pgdump_query::MEMORY_RESERVE));
             assert!(started.contains(&format!("memory_bytes={budget}")), "{started}");
             assert!(!started.contains("(default)"), "a discovered budget is not it: {started}");
         }
     }
+}
+
+/// **A run says which of two arrangements it is in, before it opens the
+/// scan.** The mode is a fact about the *environment* and nothing downstream
+/// can recover it: `Parallelism` carries the number and not where it came
+/// from, so a discovered budget and a stated one reach the library identical
+/// (`docs/design/architecture.md`, "Status output"). What only the binary can
+/// say is that the line is emitted at all, on both scanning commands, and
+/// that it agrees with what this machine actually reports.
+///
+/// The mode itself is asserted against `discover_memory_limit` rather than
+/// against either wording, for the same reason the budget assertions are:
+/// the suite runs on bare hosts and in containers, and a test that pinned one
+/// of them would pass on this machine and fail in the container the default
+/// exists for. Which *arm* is exercised is pinned instead over the committed
+/// runtime roots, in `main.rs`'s own resolution tests.
+#[test]
+fn a_scanning_command_reports_the_arrangement_it_resolved() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("out.dqcache");
+    let out = run(&[
+        "parse",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        cache.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let report = stderr
+        .lines()
+        .find(|l| l.contains("memory limit") || l.contains("memory allocation"))
+        .unwrap_or_else(|| panic!("no mode report: {stderr}"));
+    // A flagless plain scan takes the source's own recommendation, which is
+    // the serial path — and says so as a recommendation rather than as
+    // something a person typed.
+    assert!(report.contains("jobs=1 (recommended by the source)"), "{report}");
+    match pgdump_query::discover_memory_limit() {
+        None => {
+            assert!(report.contains("no memory limit found"), "{report}");
+            assert!(report.contains("(default: no limit found)"), "{report}");
+        }
+        Some(limit) => {
+            assert!(report.contains("running inside a stated memory allocation"), "{report}");
+            assert!(report.contains(&format!("limit_bytes={}", limit.bytes)), "{report}");
+            assert!(report.contains("(discovered:"), "{report}");
+        }
+    }
+
+    // The same line on `query`, which resolves the same two numbers for its
+    // mapping pass and its replay and must announce them once.
+    let out = run(&[
+        "query",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        "none",
+        "--table",
+        "public.widgets",
+        "--no-columns",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let reports: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("memory limit") || l.contains("memory allocation"))
+        .collect();
+    assert_eq!(reports.len(), 1, "resolved once, announced once: {stderr}");
+}
+
+/// **A stated flag is reported as stated, on both numbers.** The provenance is
+/// the whole point of the line: the same two readers can appear under
+/// `jobs=2` and under `jobs=24` depending on which of them a person typed, and
+/// only a recommended count is telling the user what will run.
+#[test]
+fn the_mode_report_marks_a_stated_flag_as_stated() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("out.dqcache");
+    let out = run(&[
+        "parse",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        cache.to_str().unwrap(),
+        "--jobs",
+        "3",
+        "--parallel-memory",
+        "268435456",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let report = stderr
+        .lines()
+        .find(|l| l.contains("memory limit") || l.contains("memory allocation"))
+        .unwrap_or_else(|| panic!("no mode report: {stderr}"));
+    assert!(report.contains("jobs=3 (stated)"), "{report}");
+    assert!(report.contains("memory_bytes=268435456 (stated)"), "{report}");
+    assert!(!report.contains("recommended"), "{report}");
 }
 
 /// **`(default)` says nobody asked, not that nobody could ask.** The serial

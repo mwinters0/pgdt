@@ -375,6 +375,7 @@ cgroup sample, an orchestrator's own log:
 $ pgdq parse --source koji.dump.xz
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
+2026-07-23T14:03:36.881975330Z  INFO no memory limit found: nothing is enforcing one on this process jobs=24 (recommended by the source) memory_bytes=1636608768 (no limit found: what this source asks for)
 2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1636608768
 2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1636608768
@@ -395,18 +396,43 @@ opens straight on `scan started` naming the byte the interrupted run reached.
 
 The seek-table lines only appear on a fresh `.xz` file — the walk they report
 is what a cache's persisted table exists to skip (above, "`.xz` files are read
-directly"). `scan started` names the arrangement `--jobs`/`--parallel-memory`
-resolved to, once, so a log says what produced everything that follows it. This
-is where a flagless run says what the file and the machine chose: `jobs=24`
-above is an `.xz` dump taking the CPUs the process was given, where a plain dump
-would say `jobs=1`. `memory_bytes` is the byte budget actually governing reads,
-whether or not you asked for one — the number above is what twenty-four readers
-of this file's 24 MiB blocks want, on a host with no memory limit set and the
-room to allow it. Under a limit it would be that limit less the 256 MiB reserve,
-or whichever of the two is smaller. It is marked `(default)` only on a run that
-resolved to a single worker *and* found no limit to read, which is the one case
-pgdq can currently tell "nobody asked" from "you asked for exactly that" in; a
-stated `--parallel-memory` is always printed bare.
+directly").
+
+**The third line is the one that says what this run is going to do, and
+where each number came from.** It is printed once, before the scan opens, by
+`parse` and by `query` alike, and it opens with which of two situations pgdq
+found itself in: `running inside a stated memory allocation`, naming the limit
+in `limit_bytes`, or `no memory limit found: nothing is enforcing one on this
+process`. That distinction is the whole reason the line exists — under an
+allocation somebody set, pgdq fills it; with nothing set, pgdq is a guest on a
+machine nobody promised it and stays inside half of what the kernel reports
+free, which can quietly buy fewer readers than the file could have used.
+
+`jobs` is the worker count, and it reads differently depending on who chose
+it. `(recommended by the source)` is the flagless case above: an `.xz` dump
+takes the CPUs the process was given, where a plain dump would say `jobs=1
+(recommended by the source)`. Where the memory available could not afford that
+many readers it says so — `(recommended by the source; lowered from 24 by the
+allocation)` — and that lowered number is what will actually run. A `--jobs`
+you typed is printed `(stated)` and is never lowered: it says what was asked
+for, and how much of it the budget delivers is decided later.
+
+`memory_bytes` is the byte budget actually governing reads, whether or not you
+asked for one, and it names its own origin the same way:
+
+- `(stated)` — your `--parallel-memory`.
+- `(discovered: <file> states a limit of N byte(s))` — a cgroup limit, less the
+  256 MiB reserve. The file is named because a `memory.high` throttle and a
+  `memory.max` kill are different things and either can be set on a parent
+  cgroup you did not create.
+- `(no limit found: what this source asks for)` — the number above: what
+  twenty-four readers of this file's 24 MiB blocks want, taken whole because
+  nothing capped it.
+- `(default: no limit found)` — 64 MiB, which is what an unlimited host leaves
+  a plain file, whose reads ask for no budget of their own.
+
+`scan started` below repeats the two resolved numbers without the provenance,
+so a log line naming a scan says what produced everything that follows it.
 
 A query's mapping pass may print `scan complete` at the offset it stopped
 rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file

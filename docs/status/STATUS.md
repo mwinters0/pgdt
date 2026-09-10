@@ -402,26 +402,25 @@ the five orderings that bind are in the spec, not here.
       record that nobody stated one — the slot `19.9`'s provenance work already
       owns. Notes:
       [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
-- [ ] **19.9** Resolution tests, the status line's provenance — `(default: no
-      limit found)` saying no limit is being *enforced* — the below-floor
-      `PlanNote`, a test pinning the below-reserve arrangement, and the fixture
-      tree, which now carries a `meminfo` for the no-limit branch as well as
-      `RT4`'s v1 shape. **It follows `19.13` rather than preceding it**: the
-      seam it tests was `19.7`'s when this list was written and moved to
-      `19.13` when `19.7` was re-scoped, so every one of its five deliverables
-      names something that did not exist until `19.13`'s code landed. It also
-      carries the **mode report**: a run states which of the two arrangements
-      it is in — an allocation somebody set, or a shared host nobody limited —
-      and how many bytes it is taking under it, so a recommendation the
-      `MemAvailable` cap reduced is visible rather than silent
-      ([2026-09-10](history/2026-09-10.md), "The no-limit cap is affirmed, and
-      a run says which mode it is in"). **`jobs=` reads differently by
-      provenance and the report has to say so**: a recommended count is lowered
-      to what the allowance affords and printed lowered, while a stated
-      `--jobs` is printed as typed — so the same two readers can appear under
-      `jobs=2` or under `jobs=24`, and only the first line is telling the user
-      what will run ([`../design/architecture.md`](../design/architecture.md),
-      "Execution model and API surface").
+- [x] **19.9** The resolution is tested and a run says what it resolved. The
+      **mode report** is one line per scanning command, before the scan opens:
+      `running inside a stated memory allocation` naming `limit_bytes`, or `no
+      memory limit found: nothing is enforcing one on this process`, with both
+      numbers carrying their provenance — `jobs=` as `(stated)` or
+      `(recommended by the source; lowered from N by the allocation)`, and
+      `memory_bytes=` in four spellings including `(discovered: <file> states a
+      limit of N byte(s))` and `(default: no limit found)`. It is a **second,
+      CLI-emitted line** rather than `scan started`'s existing slot, which is
+      the library's and cannot know where a number came from — flagged below.
+      `discover_memory_limit` now answers a `MemoryLimit` carrying the file
+      that stated it; `PlanNoteKind::AllocationBelowFloor` is the below-floor
+      note, keyed on the budget against one reader's unit and not on the span;
+      and the three root-taking seams are public, so five committed roots under
+      `pgdump_query-cli/tests/data/runtime/` pin a resolution against a v1
+      hierarchy, an unlimited host and an allocation under the reserve. The
+      manual's `(default)` claim went false with the report and was corrected
+      here. Notes:
+      [`../design/roadmap-P19.9-resolution-report-notes.md`](../design/roadmap-P19.9-resolution-report-notes.md)
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
       whole-block-decode threshold.
@@ -678,4 +677,21 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **`19.9` put the budget's provenance on a second, CLI-emitted status line
+  rather than on `scan started`'s existing `memory_bytes=` slot, which is where
+  the spec said it would go.** The spec calls that slot "a slot that already
+  exists" and has it gain `(stated)`, `(discovered: …)` and `(default: no limit
+  found)`; all three strings are printed, but on a new line the CLI emits at
+  resolve time, ahead of the library's. The reason is that the existing slot is
+  the *library's* and provenance splits into two halves the library cannot
+  hold: whether a flag was typed is knowable only at the CLI, and whether a
+  limit was read only inside the walk that read it — so an embedder handing over
+  `Parallelism::default()` would be told `(default: no limit found)` about an
+  environment nobody consulted. The two ways to reach the spec's wording
+  literally are widening `Parallelism` (a `Copy`, `PartialEq` value matched on
+  in every read loop, for a display fact nothing branches on) or adding a
+  provenance field to `ScanOptions`; both are filed as rejected beside the
+  mechanism ([`../design/architecture.md`](../design/architecture.md), "Status
+  output"). **What would change if reconsidered**: `scan started` would carry
+  the provenance and the second line would go, at the cost of one of those two
+  widenings — the user-visible strings would be the same either way.

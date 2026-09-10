@@ -1222,11 +1222,14 @@ impl<'a> TableStream<'a> {
     }
 
     /// Facts about *this query's plan* rather than about a column or a
-    /// predicate — today two, and both are the stated memory budget declining
-    /// something: [`PlanNoteKind::ParallelismBudgetLimited`], `--jobs` asking
-    /// for more sub-streams than that budget affords, and
+    /// predicate — today three, and all three are the memory budget in force
+    /// declining something: [`PlanNoteKind::ParallelismBudgetLimited`],
+    /// `--jobs` asking for more sub-streams than that budget affords;
     /// [`PlanNoteKind::CompressedBlockPathDeclined`], an `.xz` source with
-    /// blocks too large to hold under it.
+    /// blocks too large to hold under it; and
+    /// [`PlanNoteKind::AllocationBelowFloor`], a budget affording less than
+    /// one reader of any source, which is the arrangement a memory limit at or
+    /// under `crate::io::MEMORY_RESERVE` resolves to.
     ///
     /// **A fourth channel** beside `DumpIndex.diagnostics` (L1),
     /// `ResolvedSchema.notes` (L2) and [`Self::comparison_notes`] (L4) — see
@@ -1876,6 +1879,34 @@ pub enum PlanNoteKind {
         reader_bytes: u64,
         memory_bytes: u64,
     },
+    /// The budget in force affords less than a **single** reader of this
+    /// source, so the plan runs at the one-slot floors already inside the
+    /// mechanism rather than at anything a count could raise
+    /// (`crate::stream::worker_count`'s `.max(1)`, `crate::io::BufferPool`'s
+    /// clamp to one slot, and a compressed source's refusal to decode a whole
+    /// block).
+    ///
+    /// **It is the arrangement below the reserve, named rather than left to
+    /// emerge.** A memory limit at or under `crate::io::MEMORY_RESERVE` leaves
+    /// `limit − reserve` at zero, and a user in a tight cgroup is otherwise
+    /// told nothing at all: [`PlanNoteKind::ParallelismBudgetLimited`] fires
+    /// only where `requested` exceeds what was planned, which at one worker is
+    /// never (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
+    ///
+    /// **Keyed on the budget against what one reader holds, and on nothing
+    /// about the limit.** The library is not told where its budget came from,
+    /// and the arithmetic is the same fact either way: `unit_bytes` is
+    /// `crate::io::Partitioning::partition_bytes` — the widest touched
+    /// block's, for a compressed source — and `memory_bytes` is the budget it
+    /// was compared against. The **span** term is deliberately not added: a
+    /// plain `query` at the 64 MiB default already exceeds the budget once a
+    /// batch's pin is counted, which is a property of that arrangement and not
+    /// a starved allocation.
+    ///
+    /// Never a reason to refuse anything: the rows are the same, and what it
+    /// names is why one reader is all there is.
+    AllocationBelowFloor { unit_bytes: u64, memory_bytes: u64 },
 }
 
 impl PlanNote {
@@ -1893,6 +1924,10 @@ impl PlanNote {
                 memory_bytes,
             },
         }
+    }
+
+    fn allocation_below_floor(unit_bytes: u64, memory_bytes: u64) -> Self {
+        Self { kind: PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } }
     }
 
     fn parallelism_budget_limited(
@@ -1949,6 +1984,12 @@ impl PlanNote {
                  leaves no room for one reader of it — so it is read through the streaming \
                  decoder and every backward read decodes forward from its block's start; raise \
                  the memory budget to {reader_bytes} byte(s) or more to read it a block at a time"
+            ),
+            PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } => format!(
+                "a memory budget of {memory_bytes} byte(s) is less than the {unit_bytes} byte(s) \
+                 one reader of this source holds, so this runs at its one-slot floor whatever \
+                 concurrency is asked for — the budget in force is what bound it, and where \
+                 nothing stated one it is the memory limit this process is running under"
             ),
         }
     }
@@ -2039,12 +2080,13 @@ fn compressed_block_path_declined(
 /// more.
 ///
 /// **The second return value is the plan's own notes: at most one naming why
-/// `workers` came up short of `parallelism.jobs()`, and at most one
-/// naming a compressed source that declined the block-decode path under this
-/// budget ([`compressed_block_path_declined`]).** Empty on every path
-/// that limits nothing — an empty `matches` included, since a footprint of
-/// zero never trips the budget — so a caller need not special-case "nothing
-/// to say".
+/// `workers` came up short of `parallelism.jobs()`, at most one naming a
+/// compressed source that declined the block-decode path under this budget
+/// ([`compressed_block_path_declined`]), and at most one naming a budget that
+/// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`]).**
+/// Empty on every path that limits nothing — an empty `matches` included,
+/// since a footprint of zero never trips the budget — so a caller need not
+/// special-case "nothing to say".
 fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
@@ -2082,6 +2124,20 @@ fn plan_partitions(
     // many readers there are.
     let mut notes: Vec<PlanNote> =
         compressed_block_path_declined(source, parallelism).into_iter().collect();
+    // **Below one reader's worth the floors decide, and they are silent.** The
+    // count note below fires only where `requested` exceeds what was planned,
+    // which at one worker never happens — so a budget too small for a single
+    // partition would otherwise reach a user as unexplained slowness. Charged
+    // against the footprint alone rather than against the divisor: the span
+    // term puts an ordinary plain `query` at the default budget over the line,
+    // which is that arrangement's own property and not a starved allocation
+    // (`docs/design/architecture.md`, "Execution model and API surface").
+    if let Some(memory_bytes) = parallelism.memory_bytes()
+        && footprint > 0
+        && memory_bytes < footprint
+    {
+        notes.push(PlanNote::allocation_below_floor(footprint, memory_bytes));
+    }
     if let Some(memory_bytes) = parallelism.memory_bytes()
         && workers < requested
     {

@@ -170,13 +170,34 @@ impl ParallelArgs {
     /// `Workers` arrangement has nowhere to put "nobody stated one" —
     /// `memory_bytes` is not an `Option` on that variant — so it carries
     /// `DEFAULT_MEMORY_BUDGET` bare, exactly as a stated `--jobs 8` always did.
-    fn resolve(&self, source: &dyn ByteRangeSource) -> Parallelism {
-        let jobs = self.jobs.unwrap_or_else(|| source.default_workers());
-        match self.parallel_memory {
+    fn resolve(&self, source: &dyn ByteRangeSource) -> Resolved {
+        self.resolve_in(Path::new("/"), source)
+    }
+
+    /// [`ParallelArgs::resolve`] against an arbitrary filesystem root, for the
+    /// reason [`pgdump_query::discover_memory_limit_in`] takes one: the arms
+    /// worth pinning are a v1 hierarchy, an unlimited host and an allocation
+    /// under the reserve, and no machine is more than one of those at a time
+    /// (`pgdump_query-cli/tests/data/runtime/`).
+    fn resolve_in(&self, root: &Path, source: &dyn ByteRangeSource) -> Resolved {
+        // Asked of the source only where `--jobs` was absent — a stated count
+        // is not a recommendation and has nothing to be lowered from, which is
+        // what the mode report reads this back for.
+        let recommended_jobs = match self.jobs {
+            Some(_) => None,
+            None => Some(source.default_workers()),
+        };
+        let jobs = self.jobs.or(recommended_jobs).unwrap_or(1);
+        // **Read even where `--parallel-memory` was stated**, because the mode
+        // is a fact about the run and not about the flag: a user who pinned a
+        // budget inside a 512 MiB cgroup is still owed the sentence saying so.
+        // It costs a handful of small reads and no I/O against the dump.
+        let limit = pgdump_query::discover_memory_limit_in(root);
+        let parallelism = match self.parallel_memory {
             Some(stated) => Parallelism::workers(jobs, stated),
             None => {
                 let discovered =
-                    Parallelism::discover_for(jobs, source.default_memory_per_worker());
+                    Parallelism::discover_in(root, jobs, source.default_memory_per_worker());
                 match (self.jobs, discovered.memory_bytes()) {
                     // A stated count is not lowered by the environment: the
                     // flag states what is asked for, and what the budget
@@ -187,6 +208,119 @@ impl ParallelArgs {
                     _ => discovered,
                 }
             }
+        };
+        Resolved {
+            parallelism,
+            limit,
+            budget_stated: self.parallel_memory.is_some(),
+            recommended_jobs,
+        }
+    }
+}
+
+/// What a run resolved its two parallelism numbers to, and where each came
+/// from — the arrangement itself plus the provenance
+/// [`Parallelism`] has nowhere to carry
+/// (`docs/design/architecture.md`, "Status output").
+///
+/// **Provenance is the CLI's fact, not the library's.** Whether a number was
+/// typed is knowable only here, and whether a limit was read is knowable only
+/// to the walk that read it — so neither can be recovered from a
+/// [`Parallelism`] downstream, and the library's own `scan started` line keeps
+/// saying what bound applies rather than where it came from.
+#[derive(Debug, Clone)]
+struct Resolved {
+    /// The arrangement the library is handed.
+    parallelism: Parallelism,
+    /// The memory limit this process runs under, and the file that stated it —
+    /// `None` meaning no limit is being *enforced*, which is a complete
+    /// statement however the process was started.
+    limit: Option<pgdump_query::MemoryLimit>,
+    /// Whether `--parallel-memory` was given.
+    budget_stated: bool,
+    /// What the source recommended for a worker count, or `None` where
+    /// `--jobs` was stated — in which case the count is that flag's, unlowered.
+    recommended_jobs: Option<usize>,
+}
+
+impl Resolved {
+    fn parallelism(&self) -> Parallelism {
+        self.parallelism
+    }
+
+    /// The worker count and its provenance, for a status line.
+    ///
+    /// **A recommended count reads differently from a stated one**, and the
+    /// difference is what is being reported: a recommendation is lowered to
+    /// what the allowance affords and printed lowered, while a stated `--jobs`
+    /// is printed as typed and what it actually delivers stays
+    /// `stream::worker_count`'s to decide from the budget. So the same two
+    /// readers can appear under `jobs=2` and under `jobs=24`, and only the
+    /// first is telling the user what will run
+    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
+    /// permits").
+    fn jobs_display(&self) -> String {
+        let jobs = self.parallelism.jobs();
+        match self.recommended_jobs {
+            None => format!("{jobs} (stated)"),
+            Some(asked) if asked > jobs => {
+                format!(
+                    "{jobs} (recommended by the source; lowered from {asked} by the allocation)"
+                )
+            }
+            Some(_) => format!("{jobs} (recommended by the source)"),
+        }
+    }
+
+    /// The byte budget and its provenance.
+    ///
+    /// Four spellings, because there are four ways to arrive at a number and
+    /// only the first is the user's own: the flag; a discovered limit, named
+    /// by the file that stated it, since `memory.high` throttles where
+    /// `memory.max` kills and either may be an ancestor's; the source's own
+    /// recommendation, taken whole because nothing capped it; and the
+    /// library's constant, which is what "no limit found" leaves a source that
+    /// recommends nothing.
+    fn budget_display(&self) -> String {
+        let bytes = self.parallelism.memory_bytes().unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
+        if self.budget_stated {
+            return format!("{bytes} (stated)");
+        }
+        match (&self.limit, self.parallelism.memory_bytes()) {
+            (Some(limit), _) => format!(
+                "{bytes} (discovered: {} states a limit of {} byte(s))",
+                limit.read_from.display(),
+                limit.bytes
+            ),
+            (None, Some(_)) => format!("{bytes} (no limit found: what this source asks for)"),
+            (None, None) => format!("{bytes} (default: no limit found)"),
+        }
+    }
+
+    /// Say, once per scanning command and before the scan opens, which of two
+    /// arrangements this run is in and how much of it it is taking.
+    ///
+    /// **The mode is reported because the quiet failure is a recommendation
+    /// nobody can see was reduced.** Under an orchestrator the operator
+    /// assigned an allocation and pgdq fills it; with no limit found pgdq is a
+    /// guest on a machine nobody promised it and stays inside half of what the
+    /// kernel says is available (`RT8`) — and in that second arrangement a
+    /// worker count cut to fit surfaces as unexplained slowness unless the run
+    /// says so ([2026-09-10](../../docs/status/history/2026-09-10.md), "The
+    /// no-limit cap is affirmed, and a run says which mode it is in").
+    fn announce(&self) {
+        match &self.limit {
+            Some(limit) => tracing::info!(
+                jobs = %self.jobs_display(),
+                memory_bytes = %self.budget_display(),
+                limit_bytes = limit.bytes,
+                "running inside a stated memory allocation",
+            ),
+            None => tracing::info!(
+                jobs = %self.jobs_display(),
+                memory_bytes = %self.budget_display(),
+                "no memory limit found: nothing is enforcing one on this process",
+            ),
         }
     }
 }
@@ -414,17 +548,16 @@ fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
 }
 
 /// The [`ScanOptions`] one scanning command runs under: the default, with
-/// `--chunk-size` applied where it was given and the parallelism flags
-/// resolved against the source they will read
-/// ([`ParallelArgs::resolve`]).
-fn scan_options(
-    chunk_size: Option<usize>,
-    parallel: &ParallelArgs,
-    source: &dyn ByteRangeSource,
-) -> ScanOptions {
+/// `--chunk-size` applied where it was given and the already-resolved
+/// arrangement ([`ParallelArgs::resolve`]).
+///
+/// **Resolved once per command and passed in, not re-resolved here.** `query`
+/// needs the same arrangement in [`QueryOptions`] as in its mapping pass, and
+/// resolving twice would read the environment twice and announce it twice.
+fn scan_options(chunk_size: Option<usize>, parallel: &Resolved) -> ScanOptions {
     ScanOptions {
         chunk_size: chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
-        parallelism: parallel.resolve(source),
+        parallelism: parallel.parallelism(),
         ..ScanOptions::default()
     }
 }
@@ -978,13 +1111,12 @@ async fn main() -> Result<()> {
             // same is true of the stored-size mismatch, which `open_for_scan`
             // answers with the library's own error before opening anything.
             let source = open_for_scan(&file, &mode)?;
+            let parallel = parallel.resolve(source.as_ref());
+            parallel.announce();
             if preamble_only_flag {
-                let (metadata, diagnostics) = preamble_only(
-                    source.as_ref(),
-                    &scan_options(chunk_size, &parallel, source.as_ref()),
-                    &mode,
-                )
-                .await?;
+                let (metadata, diagnostics) =
+                    preamble_only(source.as_ref(), &scan_options(chunk_size, &parallel), &mode)
+                        .await?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -994,10 +1126,8 @@ async fn main() -> Result<()> {
             let size = source.size().await?;
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
-            let scan_options = ScanOptions {
-                cancel: Some(cancel),
-                ..scan_options(chunk_size, &parallel, source.as_ref())
-            };
+            let scan_options =
+                ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: the user asked the scan to stop, not for a
@@ -1137,6 +1267,8 @@ async fn main() -> Result<()> {
             // and a whole scan over a map that cannot be trusted. `parse` is
             // the command that rebuilds it.
             let source = open_for_scan(&file, &mode)?;
+            let parallel = parallel.resolve(source.as_ref());
+            parallel.announce();
             let mut header_printed = false;
             let mut any_batch = false;
             let mut rows = 0u64;
@@ -1148,7 +1280,7 @@ async fn main() -> Result<()> {
                 // The same flags on both passes: `pgdq query` runs one mapping
                 // scan and one replay over one source, so the number a person
                 // typed is the number both of them work inside.
-                parallelism: parallel.resolve(source.as_ref()),
+                parallelism: parallel.parallelism(),
                 ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to
@@ -1169,7 +1301,7 @@ async fn main() -> Result<()> {
             let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
-                scan_options(chunk_size, &parallel, source.as_ref()),
+                scan_options(chunk_size, &parallel),
                 query_options,
                 mode,
             )
@@ -2313,7 +2445,24 @@ mod tests {
     /// flag — can be told apart without a real file of either shape. The three
     /// required methods answer nothing: `resolve` reads exactly one method and
     /// never touches a byte.
-    struct Recommends(usize);
+    struct Recommends {
+        jobs: usize,
+        per_worker: Option<u64>,
+    }
+
+    impl Recommends {
+        /// A source that recommends a worker count and no per-worker cost —
+        /// the plain file's shape, which asks for no budget of its own.
+        fn jobs(jobs: usize) -> Self {
+            Self { jobs, per_worker: None }
+        }
+
+        /// A source that recommends both, which is what a compressed one does:
+        /// a count, and what **one** of those workers holds.
+        fn reader(jobs: usize, per_worker: u64) -> Self {
+            Self { jobs, per_worker: Some(per_worker) }
+        }
+    }
 
     impl ByteRangeSource for Recommends {
         fn read_range(
@@ -2345,8 +2494,183 @@ mod tests {
             Box::pin(async { Ok(None) })
         }
         fn default_workers(&self) -> usize {
-            self.0
+            self.jobs
         }
+        fn default_memory_per_worker(&self) -> Option<u64> {
+            self.per_worker
+        }
+    }
+
+    /// One of the committed runtime roots
+    /// (`pgdump_query-cli/tests/data/runtime/README.md`) — a filesystem tree
+    /// shaped like a Linux one, so that a resolution can be pinned against an
+    /// environment this machine is not in.
+    fn runtime_root(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/runtime").join(name)
+    }
+
+    /// A `.xz`-shaped recommendation: twenty-four readers of 58 MiB each,
+    /// which is the ordinary 24 MiB-block dump the phase worked through.
+    const READER: u64 = 58 << 20;
+
+    /// **A discovered limit is what a flagless run resolves inside, on both
+    /// cgroup versions.** The v1 arm is the one no machine here can produce
+    /// (`RT4`, `RT6`), and it is reached through `mountinfo` rather than
+    /// through the conventional mount — so what this pins is that a resolution,
+    /// not merely the reader beneath it, comes out of the shape the register
+    /// describes.
+    ///
+    /// The pair is consistent in both: the count is what the allowance affords
+    /// and the budget is exactly what that many readers spend, never the cap
+    /// itself (`docs/design/roadmap.md`, "A default runs as fast as the
+    /// allocation permits").
+    #[test]
+    fn a_flagless_run_resolves_inside_a_discovered_limit_on_either_cgroup_version() {
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+
+        // v2, a 1 GiB `memory.max`: 768 MiB after the reserve, which is
+        // thirteen readers of 58 MiB.
+        let v2 = flagless.resolve_in(&runtime_root("v2-limit"), &Recommends::reader(24, READER));
+        assert_eq!(v2.parallelism().jobs(), 13);
+        assert_eq!(v2.parallelism().memory_bytes(), Some(13 * READER));
+        assert_eq!(v2.limit.as_ref().map(|l| l.bytes), Some(1 << 30));
+
+        // v1, a 512 MiB `memory.limit_in_bytes`: 256 MiB after the reserve,
+        // which is four.
+        let v1 = flagless.resolve_in(&runtime_root("v1-limit"), &Recommends::reader(24, READER));
+        assert_eq!(v1.parallelism().jobs(), 4);
+        assert_eq!(v1.parallelism().memory_bytes(), Some(4 * READER));
+        assert_eq!(
+            v1.limit.as_ref().map(|l| l.read_from.clone()),
+            Some(runtime_root("v1-limit").join("sys/fs/cgroup/memory/svc/memory.limit_in_bytes")),
+            "the v1 mount is located through mountinfo, not assumed"
+        );
+
+        // A plain source recommends nothing and is left where it was, capped
+        // by the same limit.
+        let plain = flagless.resolve_in(&runtime_root("v2-limit"), &Recommends::jobs(1));
+        assert!(plain.parallelism().is_serial());
+        assert_eq!(plain.parallelism().memory_bytes(), Some(pgdump_query::DEFAULT_MEMORY_BUDGET));
+    }
+
+    /// **No limit found leaves the source's recommendation standing**, capped
+    /// only by half of `MemAvailable` (`RT8`) — which is the branch a `min`
+    /// against the fallback constant would have broken, making a flagless
+    /// compressed scan serial on the machine most likely to run it.
+    #[test]
+    fn no_limit_found_takes_the_sources_own_answer_under_the_memavailable_cap() {
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+
+        // ~19 GiB available, so half of it is not the binding number and all
+        // twenty-four readers stand.
+        let roomy = flagless.resolve_in(&runtime_root("no-limit"), &Recommends::reader(24, READER));
+        assert_eq!(roomy.parallelism().jobs(), 24);
+        assert_eq!(roomy.parallelism().memory_bytes(), Some(24 * READER));
+        assert!(roomy.limit.is_none(), "every limit file states max");
+
+        // 512 MiB available on the same unlimited arrangement: half of it is
+        // 256 MiB, which is four readers — the count coming down with the
+        // budget rather than being printed beside one it cannot spend.
+        let cramped =
+            flagless.resolve_in(&runtime_root("cramped"), &Recommends::reader(24, READER));
+        assert_eq!(cramped.parallelism().jobs(), 4);
+        assert_eq!(cramped.parallelism().memory_bytes(), Some(4 * READER));
+
+        // And a source recommending nothing on an unlimited host is the one
+        // arrangement that states no budget at all — what the status line
+        // renders `(default: no limit found)`.
+        let plain = flagless.resolve_in(&runtime_root("no-limit"), &Recommends::jobs(1));
+        assert_eq!(plain.parallelism(), Parallelism::default());
+        assert_eq!(plain.budget_display(), format!("{} (default: no limit found)", 64 << 20));
+    }
+
+    /// **An allocation at or under the reserve resolves to a budget of zero,
+    /// and it is a resolved value rather than an error.** What zero produces
+    /// is one reader on the streaming path, out of three floors already in the
+    /// mechanism — and the `PlanNote` beside it is what tells the user their
+    /// allocation bound the scan
+    /// (`pgdump_query/tests/partitioned_replay.rs`,
+    /// `a_budget_below_one_readers_worth_says_the_allocation_bound_it`).
+    ///
+    /// Pinned here so that a later change to the reserve, to the floors, or to
+    /// the fit cannot silently make a 256 MiB container something else.
+    #[test]
+    fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {
+        let root = runtime_root("below-reserve");
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+
+        for source in [Recommends::reader(24, READER), Recommends::jobs(1)] {
+            let resolved = flagless.resolve_in(&root, &source);
+            assert_eq!(resolved.parallelism().memory_bytes(), Some(0));
+            assert_eq!(resolved.parallelism().jobs(), 1, "the floor is on the count");
+        }
+
+        // A stated budget still wins outright here: the allocation is what
+        // discovery answers, not a ceiling imposed on a person who typed one.
+        let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
+        let resolved = stated.resolve_in(&root, &Recommends::reader(24, READER));
+        assert_eq!(resolved.parallelism().memory_bytes(), Some(400 << 20));
+        assert_eq!(resolved.parallelism().jobs(), 24);
+    }
+
+    /// **`jobs=` reads differently by provenance, and the report says so.** A
+    /// recommended count is lowered to what the allowance affords and printed
+    /// lowered; a stated `--jobs` is printed as typed, what it actually
+    /// delivers staying `stream::worker_count`'s to decide from the budget. So
+    /// the same two readers can appear under `jobs=2` and under `jobs=24`, and
+    /// only the first line is telling the user what will run.
+    #[test]
+    fn the_report_says_which_of_the_two_counts_a_reader_is_looking_at() {
+        let root = runtime_root("cramped");
+        let source = Recommends::reader(24, READER);
+
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+        let recommended = flagless.resolve_in(&root, &source);
+        assert_eq!(recommended.parallelism().jobs(), 4);
+        assert_eq!(
+            recommended.jobs_display(),
+            "4 (recommended by the source; lowered from 24 by the allocation)"
+        );
+
+        let asked = ParallelArgs { jobs: Some(24), parallel_memory: None };
+        let stated = asked.resolve_in(&root, &source);
+        assert_eq!(stated.parallelism().jobs(), 24, "a stated count is not lowered");
+        assert_eq!(stated.jobs_display(), "24 (stated)");
+        // Both arrangements hold the same bytes, which is the whole reason the
+        // two lines have to read differently.
+        assert_eq!(stated.parallelism().memory_bytes(), recommended.parallelism().memory_bytes());
+    }
+
+    /// **The budget's provenance has four spellings and each names a different
+    /// way of arriving at a number** — the flag, a limit that was read, a
+    /// source's own answer under no limit, and the library's constant
+    /// (`docs/design/architecture.md`, "Status output").
+    #[test]
+    fn the_budget_line_names_where_its_number_came_from() {
+        let reader = Recommends::reader(24, READER);
+        let plain = Recommends::jobs(1);
+
+        let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
+        assert_eq!(
+            stated.resolve_in(&runtime_root("no-limit"), &reader).budget_display(),
+            format!("{} (stated)", 400 << 20)
+        );
+
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+        let discovered = flagless.resolve_in(&runtime_root("v2-limit"), &reader);
+        let line = discovered.budget_display();
+        assert!(line.starts_with(&format!("{} (discovered:", 13 * READER)), "{line}");
+        assert!(line.contains("sys/fs/cgroup/pgdq/memory.max"), "{line}");
+        assert!(line.contains(&format!("{}", 1u64 << 30)), "{line}");
+
+        assert_eq!(
+            flagless.resolve_in(&runtime_root("no-limit"), &reader).budget_display(),
+            format!("{} (no limit found: what this source asks for)", 24 * READER)
+        );
+        assert_eq!(
+            flagless.resolve_in(&runtime_root("no-limit"), &plain).budget_display(),
+            format!("{} (default: no limit found)", 64 << 20)
+        );
     }
 
     /// The budget a flagless resolution lands on **here**, on whatever machine
@@ -2364,7 +2688,7 @@ mod tests {
     fn flagless_budget() -> Option<u64> {
         pgdump_query::discover_memory_limit().map(|limit| {
             pgdump_query::DEFAULT_MEMORY_BUDGET
-                .min(limit.saturating_sub(pgdump_query::MEMORY_RESERVE))
+                .min(limit.bytes.saturating_sub(pgdump_query::MEMORY_RESERVE))
         })
     }
 
@@ -2389,21 +2713,27 @@ mod tests {
         // A source recommending the serial path gets it, carrying whatever the
         // environment allows — and `None`, which the status line renders
         // `(default)`, exactly where no limit was found to allow anything.
-        assert!(stated.resolve(&Recommends(1)).is_serial());
-        assert_eq!(stated.resolve(&Recommends(1)).memory_bytes(), budget);
+        assert!(stated.resolve(&Recommends::jobs(1)).parallelism().is_serial());
+        assert_eq!(stated.resolve(&Recommends::jobs(1)).parallelism().memory_bytes(), budget);
 
         // A source that recommends more gets it. `Parallelism::Workers` has
         // nowhere to record that nobody stated a budget, so it carries the
         // fallback bare.
-        assert_eq!(stated.resolve(&Recommends(8)), Parallelism::workers(8, filled));
+        assert_eq!(
+            stated.resolve(&Recommends::jobs(8)).parallelism(),
+            Parallelism::workers(8, filled)
+        );
 
         // And a stated flag wins outright, over a recommendation in either
         // direction: this pins the precedence rather than the plumbing.
         let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
-        assert_eq!(asked.resolve(&Recommends(1)), Parallelism::workers(8, filled));
+        assert_eq!(
+            asked.resolve(&Recommends::jobs(1)).parallelism(),
+            Parallelism::workers(8, filled)
+        );
         let serial = ParallelArgs { jobs: Some(1), parallel_memory: None };
-        assert!(serial.resolve(&Recommends(24)).is_serial());
-        assert_eq!(serial.resolve(&Recommends(24)).memory_bytes(), budget);
+        assert!(serial.resolve(&Recommends::jobs(24)).parallelism().is_serial());
+        assert_eq!(serial.resolve(&Recommends::jobs(24)).parallelism().memory_bytes(), budget);
     }
 
     /// **A stated budget survives a serial worker count.** `--jobs 1` is the
@@ -2416,19 +2746,25 @@ mod tests {
     #[test]
     fn a_stated_budget_reaches_the_library_at_a_serial_job_count() {
         let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
-        let serial = Recommends(1);
-        assert!(stated.resolve(&serial).is_serial(), "one worker is still the serial path");
-        assert_eq!(stated.resolve(&serial).memory_bytes(), Some(400 << 20));
+        let serial = Recommends::jobs(1);
+        assert!(
+            stated.resolve(&serial).parallelism().is_serial(),
+            "one worker is still the serial path"
+        );
+        assert_eq!(stated.resolve(&serial).parallelism().memory_bytes(), Some(400 << 20));
 
         // Stated explicitly rather than taken from the source: the same value
         // either way, and the source's own recommendation cannot change it.
         let one = ParallelArgs { jobs: Some(1), parallel_memory: Some(400 << 20) };
-        assert_eq!(one.resolve(&Recommends(24)), stated.resolve(&serial));
+        assert_eq!(
+            one.resolve(&Recommends::jobs(24)).parallelism(),
+            stated.resolve(&serial).parallelism()
+        );
 
         // A stated count with no budget beside it is the other half of the
         // pair, and the budget then comes from the environment.
         let jobs_only = ParallelArgs { jobs: Some(1), parallel_memory: None };
-        assert_eq!(jobs_only.resolve(&serial).memory_bytes(), flagless_budget());
+        assert_eq!(jobs_only.resolve(&serial).parallelism().memory_bytes(), flagless_budget());
     }
 
     /// The bare spelling, unchanged: no whitespace anywhere means nothing to

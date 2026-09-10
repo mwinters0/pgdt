@@ -26,8 +26,9 @@ pub use index::{
 };
 pub use io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, KnownCompression, LocalFileSource, MEMORY_RESERVE,
-    Parallelism, PartitionBoundaries, Partitioning, Recognized, RetainedUnit, WaitPolicy, XzSource,
-    available_memory, discover_memory_limit, open_local,
+    MemoryLimit, Parallelism, PartitionBoundaries, Partitioning, Recognized, RetainedUnit,
+    WaitPolicy, XzSource, available_memory, available_memory_in, discover_memory_limit,
+    discover_memory_limit_in, open_local,
 };
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,

@@ -656,10 +656,13 @@ impl Parallelism {
     }
 
     /// [`Parallelism::discover_for`] against an arbitrary filesystem root, for
-    /// the reason [`discover_memory_limit_in`] takes one.
-    pub(crate) fn discover_in(root: &Path, jobs: usize, per_worker: Option<u64>) -> Self {
+    /// the reason [`discover_memory_limit_in`] takes one — and public for the
+    /// same reason it is: a caller's own resolution is pinned against
+    /// environments this machine cannot be put into
+    /// (`pgdump_query-cli/tests/data/runtime/`).
+    pub fn discover_in(root: &Path, jobs: usize, per_worker: Option<u64>) -> Self {
         let cap = match discover_memory_limit_in(root) {
-            Some(limit) => Some(limit.saturating_sub(MEMORY_RESERVE)),
+            Some(limit) => Some(limit.bytes.saturating_sub(MEMORY_RESERVE)),
             // Nothing discovered and nothing recommended: no cap to state, and
             // no recommendation to cap. That is today's default, unchanged.
             None if per_worker.is_none() => None,
@@ -901,14 +904,17 @@ fn read_limit_file(path: &Path) -> Option<u64> {
 /// up from the `0::` path never leaves it; limits set outside the namespace
 /// still bind and are simply not readable, which is a property of the
 /// environment rather than a defect to work around.
-fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<u64> {
-    let mut smallest: Option<u64> = None;
+fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<MemoryLimit> {
+    let mut smallest: Option<MemoryLimit> = None;
     let mut rel = cgroup_path.trim_start_matches('/');
     loop {
         let dir = if rel.is_empty() { mount.to_path_buf() } else { mount.join(rel) };
         for file in files {
-            if let Some(value) = read_limit_file(&dir.join(file)) {
-                smallest = Some(smallest.map_or(value, |seen: u64| seen.min(value)));
+            let at = dir.join(file);
+            if let Some(bytes) = read_limit_file(&at)
+                && smallest.as_ref().is_none_or(|seen| bytes < seen.bytes)
+            {
+                smallest = Some(MemoryLimit { bytes, read_from: at });
             }
         }
         match rel.rfind('/') {
@@ -918,6 +924,27 @@ fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<u64
         }
     }
     smallest
+}
+
+/// A memory limit this process is running under, and the file that states it
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// **The path is carried because the two v2 files do different things and the
+/// walk minimises over both.** `memory.high` throttles where `memory.max`
+/// kills (`RT3`), and either may be stated on an ancestor rather than on the
+/// leaf (`RT5`) — so "your budget was cut to 280 MiB" is only actionable
+/// beside the file whose number did the cutting. It is a display fact: nothing
+/// in the library branches on it, and a status line is its one consumer
+/// (`docs/design/architecture.md`, "Status output").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryLimit {
+    /// The smallest limit that binds, in bytes — the minimum over every file
+    /// and every ancestor cgroup.
+    pub bytes: u64,
+    /// The file that stated it, as reached: under
+    /// [`discover_memory_limit_in`]'s root rather than absolute, so a fixture
+    /// tree's answer names the fixture.
+    pub read_from: PathBuf,
 }
 
 /// The memory limit this process is actually running under, in bytes, or
@@ -942,11 +969,20 @@ fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<u64
 /// which hierarchy owns the `memory` controller, that hierarchy's files
 /// (`memory.max` and `memory.high` on v2, `memory.limit_in_bytes` on v1), and
 /// the minimum over every ancestor cgroup rather than the nearest one.
-pub fn discover_memory_limit() -> Option<u64> {
+pub fn discover_memory_limit() -> Option<MemoryLimit> {
     discover_memory_limit_in(Path::new("/"))
 }
 
 /// [`discover_memory_limit`] against an arbitrary filesystem root.
+///
+/// **Public because the arms a test must drive are the ones no machine has
+/// both of.** This is the seam a fixture tree is handed — here, and through
+/// [`Parallelism::discover_in`] and [`available_memory_in`], which take one
+/// for the same reason — so a caller's own resolution can be pinned against a
+/// v1 hierarchy, an unlimited one and a below-reserve one on a machine that is
+/// none of the three (`pgdump_query-cli/tests/data/runtime/`). It is not a
+/// chroot facility: paths are joined onto the root, so a root of `/` is the
+/// real reading and anything else is a tree somebody built.
 ///
 /// **The root is a parameter so that the v1 arm can be executed at all.** This
 /// project's machines run a pure v2 unified hierarchy, and the memory
@@ -955,7 +991,7 @@ pub fn discover_memory_limit() -> Option<u64> {
 /// never having run. What a fixture tree establishes is that this reader
 /// handles the shape `RT4` describes, not that a kernel still produces it,
 /// which only a v1 host can say.
-pub(crate) fn discover_memory_limit_in(root: &Path) -> Option<u64> {
+pub fn discover_memory_limit_in(root: &Path) -> Option<MemoryLimit> {
     let cgroups = std::fs::read_to_string(root.join("proc/self/cgroup")).ok()?;
     match memory_hierarchy(&cgroups) {
         MemoryHierarchy::V1(path) => {
@@ -991,7 +1027,7 @@ pub fn available_memory() -> Option<u64> {
 /// [`available_memory`] against an arbitrary filesystem root, for the same
 /// reason [`discover_memory_limit_in`] takes one: the no-limit branch is
 /// otherwise only exercisable on a machine that has no limit.
-pub(crate) fn available_memory_in(root: &Path) -> Option<u64> {
+pub fn available_memory_in(root: &Path) -> Option<u64> {
     let text = std::fs::read_to_string(root.join("proc/meminfo")).ok()?;
     let line = text.lines().find_map(|line| line.strip_prefix("MemAvailable:"))?;
     let mut fields = line.split_whitespace();
@@ -3920,7 +3956,7 @@ mod tests {
             Some("536870912"),
             None,
         );
-        assert_eq!(discover_memory_limit_in(root.path()), Some(536870912));
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(536870912));
     }
 
     /// **The controller field is a comma-separated list matched by
@@ -3935,7 +3971,7 @@ mod tests {
             Some("268435456"),
             None,
         );
-        assert_eq!(discover_memory_limit_in(root.path()), Some(268435456));
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(268435456));
     }
 
     /// **`max` is a sentinel for one level, not a statement that the process is
@@ -3948,7 +3984,7 @@ mod tests {
         root.v2("/pgdq-probe/child")
             .v2_limits("/pgdq-probe/child", Some("max"), Some("max"))
             .v2_limits("/pgdq-probe", Some("268435456"), None);
-        assert_eq!(discover_memory_limit_in(root.path()), Some(268435456));
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(268435456));
     }
 
     /// **`memory.high` and `memory.max` are minimised together, across levels
@@ -3963,7 +3999,25 @@ mod tests {
             .v2_limits("/a/b/c", Some("2147483648"), None)
             .v2_limits("/a/b", None, Some("134217728"))
             .v2_limits("/a", Some("1073741824"), None);
-        assert_eq!(discover_memory_limit_in(root.path()), Some(134217728));
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(134217728));
+    }
+
+    /// **The file that stated the smallest limit comes back with it**, because
+    /// `memory.high` throttles where `memory.max` kills (`RT3`) and either may
+    /// be an ancestor's (`RT5`) — so a status line saying a budget was cut is
+    /// only actionable beside the file that cut it
+    /// (`docs/design/architecture.md`, "Status output").
+    #[test]
+    fn a_discovered_limit_names_the_file_that_stated_it() {
+        let root = FakeRoot::new();
+        root.v2("/a/b").v2_limits("/a/b", Some("2147483648"), None).v2_limits(
+            "/a",
+            None,
+            Some("134217728"),
+        );
+        let limit = discover_memory_limit_in(root.path()).expect("a limit binds here");
+        assert_eq!(limit.bytes, 134217728);
+        assert_eq!(limit.read_from, root.path().join("sys/fs/cgroup/a/memory.high"));
     }
 
     /// **Nothing anywhere is `None`, and that is a complete statement**: no
@@ -3974,8 +4028,8 @@ mod tests {
     fn an_unlimited_hierarchy_and_a_missing_one_both_read_as_no_limit() {
         let root = FakeRoot::new();
         root.v2("/leaf").v2_limits("/leaf", Some("max"), Some("max"));
-        assert_eq!(discover_memory_limit_in(root.path()), None);
-        assert_eq!(discover_memory_limit_in(FakeRoot::new().path()), None);
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), None);
+        assert_eq!(discover_memory_limit_in(FakeRoot::new().path()).map(|l| l.bytes), None);
     }
 
     /// **A v1 hierarchy is read from its own mount, located through
@@ -4000,7 +4054,7 @@ mod tests {
             // lives in exactly one hierarchy, and this process's memory
             // controller is the v1 one.
             .v2_limits("/leaf", Some("104857600"), None);
-        assert_eq!(discover_memory_limit_in(root.path()), Some(536870912));
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(536870912));
 
         let unset = FakeRoot::new();
         unset
@@ -4013,7 +4067,7 @@ mod tests {
             // shapes "unlimited" takes and therefore the one a threshold has
             // to clear.
             .write("sys/fs/cgroup/memory/memory.limit_in_bytes", "8796093018112\n");
-        assert_eq!(discover_memory_limit_in(unset.path()), None);
+        assert_eq!(discover_memory_limit_in(unset.path()).map(|l| l.bytes), None);
     }
 
     /// **The conventional mount is the fallback, not the authority** — a tree
@@ -4024,7 +4078,7 @@ mod tests {
         let root = FakeRoot::new();
         root.write("proc/self/cgroup", "5:cpu,memory,cpuacct:/svc\n")
             .write("sys/fs/cgroup/memory/svc/memory.limit_in_bytes", "268435456\n");
-        assert_eq!(discover_memory_limit_in(root.path()), Some(268435456));
+        assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(268435456));
     }
 
     /// **`MemAvailable`, in kB, and nothing else** (`RT8`). `MemFree` is on the

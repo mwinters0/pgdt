@@ -390,6 +390,21 @@ today's constant back under a new name in the one case discovery was built for,
 so it is not floored; a user in a tight cgroup is told that their *allocation*
 bound the scan rather than their flags.
 
+**That telling is `PlanNoteKind::AllocationBelowFloor`, and it exists because
+the note beside it cannot fire here.**
+`PlanNoteKind::ParallelismBudgetLimited` names a count the budget declined, so
+it is silent wherever `requested` is one — which is exactly the below-reserve
+arrangement, since a budget of zero admits one worker and one is what was
+asked for. Without a second note a starved allocation reaches a user as
+unexplained slowness. It is keyed on `memory_bytes < Partitioning::partition_bytes`
+and on nothing about the limit, because the library is not told where its
+budget came from and the arithmetic is the same fact either way; the **span**
+term is deliberately excluded, an ordinary plain `query` at the 64 MiB default
+already exceeding the budget once a batch's pin is counted, which is that
+arrangement's own property and not a starved allocation. The mode report above
+is what supplies the half the library cannot: whether the number that bound it
+was typed or read.
+
 **The composition is not a `min`, and the difference is one `Option`.** A
 source recommends a budget as it recommends a worker count —
 `ByteRangeSource::default_memory_per_worker`, `None` for `LocalFileSource` and
@@ -513,6 +528,25 @@ that wants the whole answer, and `Parallelism::discover_for` is that rule given
 recommendations already in hand. **The library still reads none of them**: an
 embedder's silence is `Parallelism::default()`, the serial path stating no
 budget, and the CLI's `ParallelArgs::resolve` is this repo's one caller.
+`discover_memory_limit` answers a `MemoryLimit` — the bytes and the file that
+stated them — rather than a bare number, because the walk minimises over
+`memory.max`, `memory.high` and every ancestor, and which of those bound you is
+the only actionable half of "your budget was cut" ("Status output").
+
+**Each of the three takes a filesystem root in a sibling form, and all three
+are public.** `discover_memory_limit_in`, `available_memory_in` and
+`Parallelism::discover_in` join every path they read onto the root they are
+given, so `/` is the real reading and anything else is a tree somebody built.
+That exists because the arms worth pinning are the ones no machine is more than
+one of at a time — a v1 hierarchy (`RT4`, `RT6`), an unlimited host, and an
+allocation under the reserve — and it is a *test* seam rather than a chroot
+facility: a caller's own resolution is asserted against the committed roots in
+`pgdump_query-cli/tests/data/runtime/`, which is what closes "the default is
+pinned by a test, not by a figure" for the environments as well as for the
+flags. *Rejected: an environment variable overriding the root inside the
+binary.* It would ship a switch a deployment could set by accident, on the one
+channel whose whole job is to be trustworthy about how much memory this process
+may take.
 
 **The asymmetry the default ships is stated rather than smoothed over.** The
 same count gives a compressed `parse` 5.82× and a compressed typed `query` only
@@ -2622,13 +2656,16 @@ or read back from a persisted cache).
 `TableStream::comparison_notes` (`ComparisonNote`, L4) is per predicate term,
 conditional on the filter a query stated ("Predicates", the comparison
 register); `TableStream::plan_notes` (`PlanNote`/`PlanNoteKind`) is
-per query *plan* rather than per file, per column or per term — today two, and
-both are the stated memory budget declining something: `ParallelismBudgetLimited`,
-naming why a partitioned replay's sub-stream count fell short of `--jobs`
-("Execution model and API surface", "When the divisor declines the
-requested count"), and `CompressedBlockPathDeclined`, naming an `.xz` file
-whose blocks are too large to hold under that budget ("The compressed
-source"). Each stays its own type rather than an
+per query *plan* rather than per file, per column or per term — today three,
+and all three are the memory budget in force declining something:
+`ParallelismBudgetLimited`, naming why a partitioned replay's sub-stream count
+fell short of `--jobs` ("Execution model and API surface", "When the divisor
+declines the requested count"); `CompressedBlockPathDeclined`, naming an `.xz`
+file whose blocks are too large to hold under that budget ("The compressed
+source"); and `AllocationBelowFloor`, naming a budget that affords less than a
+single reader of any source, which is what an allocation at or under the
+reserve resolves to and the one case the first of the three is structurally
+silent for ("Execution model and API surface"). Each stays its own type rather than an
 added `DiagnosticKind` variant for the reason `DiagnosticKind` itself gives:
 every existing variant is a property of the file, and neither of these is —
 which is the test the second one had to be re-decided against, its ledger row
@@ -8080,14 +8117,56 @@ calls instead: the byte count the arrangement carries, or
 where it carries none, so the line always reads as a number and never as a
 claim that a caller asked for exactly 64 MiB when nobody did.
 
-**Since discovery the marker distinguishes less than the line needs**, and the
-provenance work is where it comes back. A budget read off the environment is
-printed bare, exactly as a stated one is, because `Parallelism` carries the
-number and not where it came from; `(default)` therefore survives only on the
-one arrangement that carries no number at all. What the line is to gain is the
-three-way distinction — stated, discovered, and *no limit found*, which is the
-one that says no limit is being enforced rather than that pgdq chose not to
-look.
+**Since discovery the marker distinguishes less than `scan started` can say,
+so the provenance is a second line and the CLI is what emits it.** A budget
+read off the environment reaches the library identical to a stated one —
+`Parallelism` carries the number and not where it came from — and `(default)`
+therefore survives on `scan started` only for the one arrangement that carries
+no number at all. Provenance cannot be recovered downstream and it is not the
+library's to know: whether a flag was *typed* is knowable only at the CLI, and
+whether a limit was *read* only to the walk that read it. So the CLI resolves
+once per scanning command and announces the result before the scan opens —
+`running inside a stated memory allocation`, naming `limit_bytes`, or `no
+memory limit found: nothing is enforcing one on this process` — with both
+numbers carrying their own provenance:
+
+- `memory_bytes` has four spellings, because there are four ways to arrive at a
+  number and only the first is the user's own: `(stated)`; `(discovered: <file>
+  states a limit of N byte(s))`, naming the file because `memory.high` throttles
+  where `memory.max` kills and either may be an ancestor's, so a budget that was
+  cut is only actionable beside the thing that cut it; `(no limit found: what
+  this source asks for)`, the source's own recommendation taken whole; and
+  `(default: no limit found)`, the library's constant, which is what no limit
+  found leaves a source that recommends nothing.
+- `jobs` reads differently by provenance and the line says which: a
+  **recommended** count is lowered to what the allowance affords and printed
+  lowered — `(recommended by the source; lowered from N by the allocation)` —
+  while a **stated** `--jobs` is printed as typed, what it actually delivers
+  staying `stream::worker_count`'s to decide from the budget. The same two
+  readers therefore appear under `jobs=2` and under `jobs=24`, and only the
+  first is telling the user what will run.
+
+**The mode is reported because the quiet failure is a recommendation nobody can
+see was reduced.** Under an orchestrator the operator assigned an allocation
+and pgdq fills it; with no limit found pgdq is a guest on a machine nobody
+promised it and stays inside half of what the kernel says is available (`RT8`).
+In that second arrangement a worker count cut to fit is otherwise indistinguishable
+from unexplained slowness ([2026-09-10](../status/history/2026-09-10.md), "The
+no-limit cap is affirmed, and a run says which mode it is in").
+
+**The limit is read even where `--parallel-memory` was stated**, since the mode
+is a fact about the run and not about the flag: a person who pinned a budget
+inside a 512 MiB cgroup is still owed the sentence saying so. It costs a handful
+of small `/sys` and `/proc` reads and no I/O against the dump.
+
+*Rejected: putting the provenance on `scan started` itself, in the slot that
+already prints `(default)`.* That slot is the library's, and a library caller
+that hands over `Parallelism::default()` did no looking at all — so
+`(default: no limit found)` there would be asserting something about an
+environment nobody consulted. Widening `Parallelism` to carry provenance was
+the other way to reach it and is refused for what it costs: the type is `Copy`,
+`PartialEq` and matched on in every read loop, and provenance is a display fact
+that nothing in the library branches on.
 
 **The library carries the facade and no output policy; the CLI carries the
 subscriber.** `tracing::info!` calls live at the three sites above; nothing in

@@ -216,6 +216,72 @@ async fn a_budget_bound_worker_count_announces_why() {
     }
 }
 
+/// **The below-reserve arrangement is pinned here, and it is what a 256 MiB
+/// cgroup resolves to.** `limit − MEMORY_RESERVE` is zero at or under the
+/// reserve, and a serial count means `ParallelismBudgetLimited` cannot fire —
+/// `requested` is one and one is what runs — so without
+/// [`PlanNoteKind::AllocationBelowFloor`] a user in a tight allocation is told
+/// nothing at all (`docs/design/architecture.md`, "Execution model and API
+/// surface").
+///
+/// **The rows are the assertion beside it.** Three floors turn a budget of
+/// zero into one reader on the streaming path, and a later change to any of
+/// them must not silently make this something else: the note names the same
+/// unit the source charges, and the answer is still the serial oracle's.
+#[tokio::test]
+async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let unit = partition_unit(&source);
+    let options = QueryOptions { parallelism: Parallelism::workers(1, 0), ..Default::default() };
+    let mut streams = table_stream_partitions(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert_eq!(streams.len(), 1, "a budget of zero is one reader, not none");
+    let notes = streams[0].plan_notes();
+    assert_eq!(notes.len(), 1, "the count note cannot fire at a serial request: {notes:?}");
+    let PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } = &notes[0].kind else {
+        panic!("{notes:?}")
+    };
+    assert_eq!(*memory_bytes, 0);
+    assert_eq!(*unit_bytes, unit, "the note charges what the source charges");
+    assert!(
+        notes[0].message().contains("one-slot floor"),
+        "the message names the arrangement: {}",
+        notes[0].message()
+    );
+
+    let mut rows = Rows::new();
+    while let Some(batch) = streams[0].next().await {
+        rows.extend(rows_of(&batch.unwrap()));
+    }
+    assert_eq!(rows, serial_rows(&source, "public.widgets", QueryOptions::default()).await);
+}
+
+/// A budget that affords a whole reader is silent about the floor: the note is
+/// for the starved allocation, not for every plan that could have had more.
+#[tokio::test]
+async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let unit = partition_unit(&source);
+    let options = QueryOptions { parallelism: Parallelism::workers(1, unit), ..Default::default() };
+    let streams = table_stream_partitions(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(streams[0].plan_notes().is_empty(), "{:?}", streams[0].plan_notes());
+}
+
 /// A budget that affords every requested worker says nothing: the diagnostic
 /// is for the case the budget actually declined a worker, not a running
 /// commentary on every plan.
