@@ -562,9 +562,42 @@ The two halves have different answers, which is the part not to re-derive:
   provider passes `target_partitions` in.
 - **The budget has no reading to take.** `memory_limit()` reports the whole
   session's pool, shared with every other operator and explicitly not covering
-  sources, so any division of it is a guess. So P6's answer is a **constructor
-  parameter, not a discovery**: the thing that builds three providers is the only
-  thing that knows there are three.
+  sources, so any division of it is a guess. **P6 has a real design question
+  here, not an obvious answer** — see the convention below, which rules out the
+  first thing to reach for.
+
+**How a source is idiomatically configured: counts, pulled, never bytes.** Asked
+separately, and the answer is uniform across the tree.
+
+- **A memory-shaped constructor parameter has no precedent.** Every `with_*` on
+  `ListingOptions`, `ParquetSource`, `CsvSource`, `MemTable`, `StreamConfig` and
+  the `datafusion-examples` custom providers was enumerated; not one takes a byte
+  budget. `ParquetSource::with_metadata_size_hint` is an I/O read size by its own
+  doc, not a budget. `MemTable` — which holds everything in RAM — takes a
+  partition count and no memory parameter at all.
+- **Nor is the count a constructor parameter.** The idiom is to take *nothing* at
+  construction and pull `state.config().target_partitions()` inside `scan()` and
+  `context.session_config().batch_size()` (rows, default 8192) inside `execute()`.
+  `ListingOptions` deliberately has no `target_partitions` field. The payoff is
+  that an embedder's existing `SET` reaches our library for free.
+- **Bytes are derived from counts, never the reverse.** The one source-side byte
+  computation in the tree divides: `FileGroupPartitioner::repartition_evenly_by_size`
+  does `total_size.div_ceil(target_partitions)` (`datasource/src/file_groups.rs:216-220`),
+  where the byte figure is a floor below which not to split. `FairSpillPool`
+  divides a fixed total by a live consumer count. **No partition or worker count
+  is derived from a byte budget anywhere in the tree**, which is the opposite of
+  the direction our rule composes in.
+- **The documented advice matches**: `docs/source/user-guide/configs.md:281-303`
+  tells a user under a tight memory limit to *lower `target_partitions` and
+  `batch_size`* — the budget is fixed on the runtime and the count is the knob
+  that fits it. The same file (268-270) states that `repartition_file_min_size`
+  "does not apply to user defined data sources".
+- **The one in-tree pattern for handing a source a byte budget is a bounded
+  object, not a number.** `CacheManagerConfig::metadata_cache_limit` (50 MiB
+  default) is set once on the `RuntimeEnv`, and the Parquet source consumes it as
+  an opaque handle via `runtime_env().cache_manager.get_file_metadata_cache()`.
+  That is the closest precedent to what our pools would need, and it is worth
+  weighing against a constructor parameter when P6 is grilled.
 
 What this does *not* require is a change to the shipped default. The library's own
 default is `Serial` and `discover()` is opt-in, so nothing oversubscribes unless an
