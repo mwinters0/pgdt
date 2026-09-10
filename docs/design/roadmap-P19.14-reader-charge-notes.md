@@ -60,12 +60,18 @@ compressed path, which is the floor to check the rule against.
   disagree, and the renderer's column placement is still asserted — against a
   patched dict, since the shipped one prints nothing.
 - **The plain typed-`query` leg will run more sub-streams than the published
-  table's**: 24 where the `af15eac` sitting planned 14. Its held batches are
-  `24 × 72 MiB` under a 2 GiB budget in a 3g container, which is the one cell of
-  the sweep worth watching for an OOM. `PARALLEL_MEMORY` was left at 3g
-  deliberately — sizing the container off the axis is refused for the reason in
-  its own docstring — so if that leg does not fit, the reading to change is the
-  container for that figure and its table says so.
+  table's**: 24 where the `af15eac` sitting planned 14. That leg is not the one
+  to watch — measured, it holds 879 MiB where its planning charge suggested
+  `24 × 72 MiB`, a charge being a bound rather than an occupancy.
+- **`PARALLEL_MEMORY` is `PARALLEL_BUDGET + PARALLEL_HEADROOM`, and is `4g`.**
+  It was a literal `3g`, which against the old 1 GiB budget *was* that rule
+  written as a number nothing recomputed — so raising the budget halved the
+  headroom instead of moving the container. Block-pool retention is a function
+  of the budget, not of the reader count, so `parallel-peak-rss`'s
+  `control_xz128` row went from 2110 MiB to 3067 MiB against a 3072 MiB limit.
+  The sweep would have OOM'd an hour in. See
+  [2026-09-10](../status/history/2026-09-10.md), "The container was sized off a
+  number that moved".
 - No figure went from green to red: every figure this touches was already stale
   on `io.rs`, `stream.rs` or `measure.py`, and `nested-decode-micro` — the one
   green figure — declares none of them.

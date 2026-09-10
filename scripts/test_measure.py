@@ -1535,15 +1535,27 @@ class ParallelFigures(unittest.TestCase):
         self.assertGreaterEqual(measure.PARALLEL_BUDGET, want)
         self.assertLess(1 << 30, want, "the value this replaced would clamp the widest row")
 
-    def test_the_container_holds_more_than_the_budget_it_states(self):
-        # The library is told it may hold `PARALLEL_BUDGET`; the container has
-        # to have room for that plus the decoder's dictionaries and the batches
-        # in flight, or the figure OOMs instead of measuring.
+    def test_the_container_is_the_budget_plus_a_fixed_headroom(self):
+        # `container > budget` was the old assertion and it is why nothing
+        # caught `19.14`: raising the budget 1 GiB -> 2 GiB against a literal
+        # `3g` halved the headroom and still passed. Block-pool retention is a
+        # function of the budget, so the widest `control_xz128` row went from
+        # 2110 MiB to 3067 MiB against a 3072 MiB limit. Pin the rule, not the
+        # inequality.
         self.assertTrue(measure.PARALLEL_MEMORY.endswith("g"))
-        self.assertGreater(
-            int(measure.PARALLEL_MEMORY[:-1]) * measure.GIB, measure.PARALLEL_BUDGET
+        self.assertEqual(
+            int(measure.PARALLEL_MEMORY[:-1]) * measure.GIB,
+            measure.PARALLEL_BUDGET + measure.PARALLEL_HEADROOM,
         )
         self.assertNotEqual(measure.PARALLEL_MEMORY, measure.Config().memory)
+
+    def test_the_headroom_clears_the_widest_measured_row(self):
+        # The reading that forced the rule: `control_xz128` at `--jobs 24` and a
+        # 2 GiB budget peaked at 3067 MiB, of which 2 GiB is the budget itself.
+        # A headroom below what the unbudgeted terms actually cost buys an OOM
+        # an hour into a sweep rather than a reading.
+        measured_above_budget = 3067 * measure.MIB - (2 << 30)
+        self.assertGreater(measure.PARALLEL_HEADROOM, measured_above_budget)
 
     def test_both_figures_declare_that_departure(self):
         for fid in ("parallel-scan-throughput", "parallel-peak-rss"):

@@ -1885,28 +1885,41 @@ JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-job
 #: measures has to be restated rather than footnoted.
 PARALLEL_BUDGET = 2 << 30
 
-#: What the two `parallel-*` figures' containers are given, against the
-#: register's 512 MB. `PARALLEL_BUDGET` is what the library is told it may
-#: hold; this is the room the container gives it to hold that, plus the
-#: decoder's own dictionaries and the batches in flight. An apparatus
-#: departure, and each figure's own table says so.
+#: The fixed room the two `parallel-*` figures' containers hold *above* the
+#: budget they state: the decoder dictionaries, the batches in flight and the
+#: allocator's retention, none of which the stated budget covers.
 #:
-#: **It does not rise with `PARALLEL_BUDGET`, and the reason is what the extra
-#: room would be sized from.** The budget rose to 2 GiB so that a corrected
-#: per-reader charge still admits the widest row's twenty-four decoders, which
-#: is the arrangement the previous sitting was taken under rather than a wider
-#: one; what a leg holds tracks the worker count, and that count is unchanged
-#: at the top of the axis. Sizing the *container* off the axis instead is what
-#: is refused: the headroom above a stated budget is largely glibc's per-CPU
-#: arenas, whose count follows the host's hardware threads
-#: (`docs/status/history/2026-09-08.md`, "The `16.14` OOM is glibc's arenas"),
-#: so it would be picked from an allocator artifact of the machine that took
-#: the figure rather than from anything the library asks for — and
+#: **It is a constant, and that is the whole principle.** What is refused is
+#: sizing this off the `--jobs` axis, because the headroom above a stated
+#: budget is largely glibc's per-CPU arenas, whose count follows the host's
+#: hardware threads (`docs/status/history/2026-09-08.md`, "The `16.14` OOM is
+#: glibc's arenas") — a number picked from an allocator artifact of the machine
+#: that took the figure rather than from anything the library asks for, and
 #: `measurements.md`'s contract is that a figure carries the command that
-#: re-takes it. The reading itself would still be a reading about the library;
-#: what would be wrong is an apparatus departure growing with no principle
-#: bounding it.
-PARALLEL_MEMORY = "3g"
+#: re-takes it. Sizing off the *budget* is the opposite case: the budget is a
+#: number the library is handed and promises to bound its pools by, so
+#: `budget + headroom` states the library's own contract and travels to any
+#: machine.
+PARALLEL_HEADROOM = 2 << 30
+
+#: What the two `parallel-*` figures' containers are given, against the
+#: register's 512 MB — an apparatus departure, and each figure's own table says
+#: so. **Derived, never typed**: it is the stated budget plus
+#: `PARALLEL_HEADROOM`, so raising the budget cannot leave the container behind.
+#:
+#: **It was a literal `3g` and that is exactly how it went wrong.** Against the
+#: old 1 GiB budget `3g` *was* this rule — budget plus 2 GiB — but written as a
+#: number nothing recomputed, so `19.14`'s rise to 2 GiB silently halved the
+#: headroom instead of moving the container. Block-pool retention is
+#: `clamp((budget - chunk_held) / unit, 1, POOL_DEPTH.max(jobs))`, a function of
+#: the *budget* rather than of the reader count, so at `control_xz128`'s 128 MiB
+#: unit it went from seven slots to fifteen: `parallel-peak-rss`'s widest row
+#: measured 2110 MiB at 1 GiB and **3067 MiB at 2 GiB**, five megabytes under a
+#: 3072 MiB limit ([`../docs/status/history/2026-09-10.md`](../docs/status/history/2026-09-10.md),
+#: "The container was sized off a number that moved"). The 24 MiB leg rose
+#: 89 MiB over the same step, being depth-bound rather than budget-bound, which
+#: is why the shared constant hid it.
+PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 
 #: The sub-stream count a typed-`query` leg actually gets from `PARALLEL_BUDGET`,
 #: keyed by input — `worker_count`'s floored `budget / divisor` — **for the legs
@@ -4484,7 +4497,17 @@ def run_parallel_peak_rss(session: Session) -> str:
             + ", ".join(fmt_mib(v) for v in session.get_rss(figure, spec))
             for spec in specs
         )
-        + "\n"
+        + "\n\n**Where a leg goes flat, it is the stated budget that stopped "
+        "affording another block slot — which is this table's whole claim.** A "
+        "block pool retains `clamp((budget - chunk) / unit, 1, max(POOL_DEPTH, "
+        "jobs))` decoded blocks, so above four workers the depth term is the "
+        "worker count and never binds; what binds is the budget divided by the "
+        "*file's* block size. That is why the two legs differ in kind rather "
+        "than in degree: the coarse leg is budget-bound and levels off, and the "
+        "fine leg is depth-bound, so its retention tracks `--jobs` and its curve "
+        "is still climbing at the right-hand end. Read the flat value as the "
+        "budget's answer for that block size, not as a ceiling the library "
+        "carries.\n"
     )
     return table + notes
 

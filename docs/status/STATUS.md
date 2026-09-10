@@ -412,7 +412,12 @@ the five orderings that bind are in the spec, not here.
       whole-block-decode threshold.
 - [ ] **19.11** The closing sweep — publishes the reserve figure and
       `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures
-      against `19.14`'s raised `PARALLEL_BUDGET`.
+      against `19.14`'s raised `PARALLEL_BUDGET` in the `4g` container that
+      budget now derives, `PARALLEL_MEMORY` having been a literal that did not
+      move with it ([2026-09-10](history/2026-09-10.md), "The container was
+      sized off a number that moved"). It is also the first sitting that emits
+      `parallel-peak-rss`'s corrected closing paragraph, the hand-written one
+      it replaces having credited the flat region to `POOL_DEPTH`.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build —
       `runs/measure-20260909T171423`, `--alone`, NOT PUBLISHABLE — with the
       inert worker-count-plus-one arena leg dropped. **`19.7`'s prediction is
@@ -640,18 +645,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The `parallel-*` figures' container stayed at 3g while their budget rose to
-  2 GiB.** `19.14` raised `measure.PARALLEL_BUDGET` because the corrected
-  per-reader charge would otherwise clamp the widest `.xz` rows, and left
-  `PARALLEL_MEMORY` alone on the reasoning already in its docstring: a container
-  sized off the `--jobs` axis is sized off an allocator artifact of this
-  machine, not off anything the library asks for. The `.xz` legs are unaffected
-  — 24 readers before and after, so what they hold is unchanged — but the plain
-  typed-`query` leg is no longer budget-clamped, and its top row will plan **24
-  sub-streams where the `af15eac` sitting planned 14**, holding up to
-  `24 × 72 MiB` of batch inside a 3g cgroup. If that does not fit, the closing
-  sweep (`19.11`) discovers it as an OOM an hour in rather than as a reading.
-  Reconsidering it means either raising that figure's container — an apparatus
-  departure the docstring argues against — or capping the plain query leg's
-  count some other way; doing nothing is a bet that the leg fits, and the cheap
-  check is one `query-typed-jobs-24` run before the sweep.
+_Nothing open._

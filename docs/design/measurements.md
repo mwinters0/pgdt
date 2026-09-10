@@ -2567,8 +2567,6 @@ Per-rep readings (peak RSS):
 
 Apparatus over every run in this table: CPU stall ≤1.11%, I/O stall ≤1.72%, machine ≤46% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤72°C.
 
-**Resident set past four workers is not linear in `--jobs`, because `POOL_DEPTH` caps decoded-block retention independently of the worker count** — the 128 MiB leg is flat at ~2.11 GiB from eight jobs on, which is the pool's cap on retained blocks rather than a per-worker charge that keeps growing. The 24 MiB leg has not reached that cap by twenty-four jobs, so its curve is still visibly climbing where the 128 MiB leg has already levelled off.
-
 ## koji full scan — the regression check
 
 <!-- outside-register: koji — taken at `f5768e7` — nothing in this section is a figure; see "The apparatus" -->
