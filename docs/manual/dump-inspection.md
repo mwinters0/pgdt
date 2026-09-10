@@ -256,7 +256,9 @@ decides.** A plain (uncompressed) dump reads serially, because splitting one is
 slower than not splitting it. An `.xz` dump takes the CPUs this process was
 given — the machine's cores, or fewer where a container quota says so, since
 decompression is the one part of the work that a second core reliably finishes
-sooner. **How many of those workers actually read is then bounded by
+sooner — and fewer still where the file itself has fewer blocks than that:
+pgdq splits a compressed file at its block boundaries, so a file with six
+blocks reads with six workers on a machine of any width. **How many of those workers actually read is then bounded by
 `--parallel-memory`**: one reader of an ordinary 24 MiB-block file wants about
 58 MiB, so a budget of 64 MiB delivers one worker whatever `--jobs` says. Left
 unstated the budget is chosen to afford the count — but a budget *you* state,

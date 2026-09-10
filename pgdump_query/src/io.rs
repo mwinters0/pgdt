@@ -170,10 +170,20 @@ pub trait ByteRangeSource: Send + Sync {
         1
     }
 
-    /// How many bytes this source recommends a caller allow, where the caller
+    /// How many bytes **one** worker of this source holds, where the caller
     /// has stated no budget of its own — a **recommendation**, never a bound,
     /// and the budget sibling of [`ByteRangeSource::default_workers`]
     /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **It is per worker rather than a total, and that is what makes the two
+    /// recommendations a consistent pair.** A total would have to be a total
+    /// *for some count*, and the only count a source knows is its own — so a
+    /// caller that stated `--jobs 4` against a source recommending
+    /// twenty-four would get a budget for twenty-four either way, and a
+    /// composition trying to recover the per-worker cost from it would divide
+    /// by the wrong number ([`Parallelism::discover_for`], which is where the
+    /// two meet). Stated per worker, the source answers a question that has
+    /// nothing to do with any count, and multiplying is the caller's.
     ///
     /// **The default is `None`: no recommendation at all**, which leaves a
     /// caller on whatever it would have used — [`DEFAULT_MEMORY_BUDGET`] where
@@ -188,13 +198,12 @@ pub trait ByteRangeSource: Send + Sync {
     /// [`XzSource`]'s `available_parallelism()` worker count to the serial
     /// path on an unlimited host, the machine most likely to run this. A count
     /// nothing can afford is not a recommendation, so a source that recommends
-    /// a count recommends what that count needs
-    /// ([`Parallelism::discover_for`], which is where the two meet).
+    /// a count recommends what each of those workers needs.
     ///
     /// **Nothing in the library reads it**, exactly as with the worker count:
     /// a caller that states a budget gets that budget, and this exists for the
     /// layer above, which has a person's flags to fill in.
-    fn default_memory_bytes(&self) -> Option<u64> {
+    fn default_memory_per_worker(&self) -> Option<u64> {
         None
     }
     /// How much concurrency this caller allows, and how many bytes the source
@@ -603,8 +612,18 @@ impl Parallelism {
 
     /// [`Parallelism::discover`]'s rule against recommendations a caller has
     /// already obtained — a source's own worker count
-    /// ([`ByteRangeSource::default_workers`]) and its own budget
-    /// ([`ByteRangeSource::default_memory_bytes`]).
+    /// ([`ByteRangeSource::default_workers`]) and what one of those workers
+    /// holds ([`ByteRangeSource::default_memory_per_worker`]).
+    ///
+    /// **It answers with both numbers, because they are a pair.** What the
+    /// caller asks is "I would like `jobs` workers, each holding
+    /// `per_worker`" — and where the environment's allowance affords fewer,
+    /// the answer is the smaller count *and* the budget that count spends,
+    /// never the full count beside a budget it cannot have
+    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
+    /// permits"). `jobs` is therefore a recommendation this may lower; a
+    /// caller holding a count somebody **stated** keeps that count and takes
+    /// only the budget from here, which is what `ParallelArgs::resolve` does.
     ///
     /// **The composition is not a `min`, and the difference is one
     /// `Option`.** Written as `min(want, discovered)` it breaks the case it
@@ -614,12 +633,13 @@ impl Parallelism {
     /// distinguishes *no limit found* from *a small limit* is that the first
     /// has no cap at all:
     ///
-    /// - a discovered limit caps at `limit − MEMORY_RESERVE`, and `want` — or
-    ///   [`DEFAULT_MEMORY_BUDGET`] where the caller has no recommendation —
-    ///   is taken no higher. That is "do not take what you cannot use", and it
-    ///   is allowed to fall **below** [`DEFAULT_MEMORY_BUDGET`], because
-    ///   reasserting that constant under a small limit would put today's
-    ///   default back in the one case discovery was built for;
+    /// - a discovered limit caps at `limit − MEMORY_RESERVE`, and
+    ///   `jobs × per_worker` — or [`DEFAULT_MEMORY_BUDGET`] where the caller
+    ///   has no recommendation — is taken no higher. That is "do not take what
+    ///   you cannot use", and it is allowed to fall **below**
+    ///   [`DEFAULT_MEMORY_BUDGET`], because reasserting that constant under a
+    ///   small limit would put today's default back in the one case discovery
+    ///   was built for;
     /// - no limit found caps at half of [`available_memory`], which costs
     ///   nothing wherever there is room — resident saturates at
     ///   `jobs × per-reader`, so every byte above that is structurally inert —
@@ -631,27 +651,53 @@ impl Parallelism {
     /// is [`Parallelism::default`] at a serial count and
     /// [`DEFAULT_MEMORY_BUDGET`] above one — the distinction
     /// [`Parallelism::Workers`] has nowhere to record.
-    pub fn discover_for(jobs: usize, want: Option<u64>) -> Self {
-        Self::discover_in(Path::new("/"), jobs, want)
+    pub fn discover_for(jobs: usize, per_worker: Option<u64>) -> Self {
+        Self::discover_in(Path::new("/"), jobs, per_worker)
     }
 
     /// [`Parallelism::discover_for`] against an arbitrary filesystem root, for
     /// the reason [`discover_memory_limit_in`] takes one.
-    pub(crate) fn discover_in(root: &Path, jobs: usize, want: Option<u64>) -> Self {
-        let budget = match discover_memory_limit_in(root) {
-            Some(limit) => Some(
-                want.unwrap_or(DEFAULT_MEMORY_BUDGET).min(limit.saturating_sub(MEMORY_RESERVE)),
-            ),
-            None => want.map(|want| match available_memory_in(root) {
-                Some(available) => want.min(available / 2),
-                None => want,
-            }),
+    pub(crate) fn discover_in(root: &Path, jobs: usize, per_worker: Option<u64>) -> Self {
+        let cap = match discover_memory_limit_in(root) {
+            Some(limit) => Some(limit.saturating_sub(MEMORY_RESERVE)),
+            // Nothing discovered and nothing recommended: no cap to state, and
+            // no recommendation to cap. That is today's default, unchanged.
+            None if per_worker.is_none() => None,
+            // `MemAvailable` unreadable is the one shape with a recommendation
+            // and no ceiling to hold it under.
+            None => Some(available_memory_in(root).map_or(u64::MAX, |available| available / 2)),
         };
-        match budget {
-            Some(budget) => Self::workers(jobs, budget),
+        match cap {
+            Some(cap) => {
+                let (jobs, budget) = Self::fit(jobs, per_worker, cap);
+                Self::workers(jobs, budget)
+            }
             None if jobs > 1 => Self::workers(jobs, DEFAULT_MEMORY_BUDGET),
             None => Self::default(),
         }
+    }
+
+    /// The largest pair `(count, budget)` that fits inside `cap`: as many of
+    /// `jobs` workers as `cap` affords at `per_worker` each, and exactly what
+    /// that many of them spend.
+    ///
+    /// **The floor is one worker at whatever `cap` is**, not one worker's
+    /// worth of bytes. A cap too small for even a single reader is a real
+    /// arrangement — a 256 MiB cgroup resolves to a budget of zero — and the
+    /// three floors already inside the mechanism turn it into one reader on
+    /// the streaming path. Handing back `per_worker` there would be the one
+    /// thing this function exists to stop: a budget the allowance never
+    /// granted.
+    ///
+    /// A caller recommending nothing is capped at [`DEFAULT_MEMORY_BUDGET`]
+    /// and keeps its count, there being no per-worker cost to divide by.
+    fn fit(jobs: usize, per_worker: Option<u64>, cap: u64) -> (usize, u64) {
+        let jobs = jobs.max(1);
+        let Some(per_worker) = per_worker.filter(|per_worker| *per_worker > 0) else {
+            return (jobs, DEFAULT_MEMORY_BUDGET.min(cap));
+        };
+        let affords = usize::try_from(cap / per_worker).unwrap_or(usize::MAX).clamp(1, jobs);
+        (affords, cap.min(per_worker.saturating_mul(affords as u64)))
     }
 }
 
@@ -2339,26 +2385,34 @@ impl ByteRangeSource for XzSource {
     /// `parse` reaches 5.82× at twenty-four workers and is still climbing
     /// (`docs/design/measurements.md`, "What a second scan worker buys") — so
     /// a small constant such as four would leave the machine's own answer
-    /// unspent on the only path that can use it. What the caller's budget affords still
-    /// binds afterwards, through the divisor every count passes
-    /// (`crate::stream::worker_count`), and this source's own block count binds
-    /// after that: a single-block file has no seam to cut, whatever this says.
+    /// unspent on the only path that can use it. What the caller's budget
+    /// affords still binds afterwards, through the divisor every count passes
+    /// (`crate::stream::worker_count`).
+    ///
+    /// **Capped at this file's own block count**, because `crate::stream::cut`
+    /// cuts at block boundaries and there is no seam past the last one: a
+    /// four-block file can run four readers however many cores this process
+    /// was given. It is capped *here*, where the count is recommended, rather
+    /// than left to bind downstream — the recommendation is multiplied into a
+    /// budget request ([`ByteRangeSource::default_memory_per_worker`]) and
+    /// printed beside it, so a count the file cannot supply work for becomes
+    /// an over-ask and a self-contradicting status line
+    /// ([`Parallelism::discover_for`]).
     ///
     /// A failure to read the count answers **one** rather than propagating: the
     /// caller asked what this source would like, and "the serial path" is a
     /// usable answer where an error is not.
     fn default_workers(&self) -> usize {
-        std::thread::available_parallelism().map_or(1, NonZeroUsize::get)
+        let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        cores.min(self.table.block_count().max(1))
     }
 
-    /// **What this source's recommended worker count needs**:
-    /// [`XzSource::block_reader_bytes`] times
-    /// [`ByteRangeSource::default_workers`], which is the number
-    /// `crate::stream::worker_count` has to divide to hand back the count this
-    /// source just asked for. `None` where there is no block path to buy —
-    /// a file with no blocks, or one whose largest block is not a length on
-    /// this target — since the streaming reader has no second worker to give
-    /// at any budget.
+    /// **What one reader of this file holds**:
+    /// [`XzSource::block_reader_bytes`], which is the number
+    /// `crate::stream::worker_count` divides a budget by to hand back a count.
+    /// `None` where there is no block path to buy — a file with no blocks, or
+    /// one whose largest block is not a length on this target — since the
+    /// streaming reader has no second worker to give at any budget.
     ///
     /// **It is charged at the pool's *current* slot size**, which before any
     /// read loop has announced one is [`POOL_MAX_BYTES`] rather than the
@@ -2368,8 +2422,8 @@ impl ByteRangeSource for XzSource {
     /// toward asking for more budget than the count will spend, and every byte
     /// above `jobs × per-reader` is structurally inert
     /// ([`BufferPool::slots`] clamping at `POOL_DEPTH.max(jobs)`).
-    fn default_memory_bytes(&self) -> Option<u64> {
-        Some(self.block_reader_bytes()?.saturating_mul(self.default_workers() as u64))
+    fn default_memory_per_worker(&self) -> Option<u64> {
+        self.block_reader_bytes()
     }
 }
 
@@ -3236,24 +3290,40 @@ mod tests {
         assert_eq!(table.uncompressed_size(), payload.len() as u64);
     }
 
-    /// **A compressed source recommends the cores it was given**, which is the
-    /// one override of the defaulted recommendation, and the whole of what an
-    /// omitted `--jobs` is filled in from.
+    /// **A compressed source recommends the cores it was given, capped at its
+    /// own block count** — one recommendation with two halves, since
+    /// `crate::stream::cut` cuts at block boundaries and a file with fewer
+    /// blocks than the machine has cores offers no seam for the rest. The cap
+    /// is applied where the count is recommended because the count is
+    /// multiplied into a budget request and printed beside it.
     ///
-    /// Asserted against `available_parallelism()` rather than against a
-    /// literal: the count is the machine's, and the property being pinned is
-    /// that this source asks `std` rather than carrying a constant of its own
-    /// — which is what makes a container's CPU quota reach the default
-    /// (`docs/design/runtime-invariants.md`, `RT7`). A `1` here would be a
-    /// single-CPU machine agreeing with the plain path by accident, so the
-    /// floor is asserted too.
+    /// The core count is asserted against `available_parallelism()` rather
+    /// than against a literal: it is the machine's, and the property being
+    /// pinned is that this source asks `std` rather than carrying a constant
+    /// of its own — which is what makes a container's CPU quota reach the
+    /// default (`docs/design/runtime-invariants.md`, `RT7`).
     #[test]
-    fn an_xz_source_recommends_the_cores_it_was_given() {
-        let payload = xz_test_payload();
-        let compressed = xz_compress(&payload, &["--block-size=4096"]);
-        let source = XzSource::open(compressed.path()).unwrap();
+    fn an_xz_source_recommends_the_cores_it_was_given_capped_at_its_block_count() {
         let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+
+        // More blocks than any machine has cores, so `std`'s answer is what
+        // binds and the cap is inert.
+        let wide: Vec<u8> = (0..4096u32 * 512).map(|i| (i % 251) as u8).collect();
+        let compressed = xz_compress(&wide, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        assert!(source.table.block_count() > cores, "{} blocks", source.table.block_count());
         assert_eq!(source.default_workers(), cores);
+
+        // A handful of blocks: the *file* binds on any machine wider than it,
+        // which is the half that was missing.
+        let narrow = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
+        let source = XzSource::open(narrow.path()).unwrap();
+        let blocks = source.table.block_count();
+        assert!((2..64).contains(&blocks), "{blocks} blocks");
+        assert_eq!(source.default_workers(), cores.min(blocks));
+        if cores > blocks {
+            assert_eq!(source.default_workers(), blocks, "the file is what binds here");
+        }
     }
 
     /// Reading forward in chunks that each land inside one block, straddle a
@@ -3983,12 +4053,25 @@ mod tests {
         root.v2("/leaf").v2_limits("/leaf", Some("1073741824"), None);
         let cap = (1024 << 20) - MEMORY_RESERVE;
 
-        let squeezed = Parallelism::discover_in(root.path(), 8, Some(4 << 30));
-        assert_eq!(squeezed.memory_bytes(), Some(cap));
-        assert_eq!(squeezed.jobs(), 8);
+        // Eight readers of 512 MiB each is 4 GiB against a cap of 768 MiB, so
+        // the count comes down with the budget rather than being printed
+        // beside one it cannot spend: one reader is what fits.
+        let squeezed = Parallelism::discover_in(root.path(), 8, Some(512 << 20));
+        assert_eq!(squeezed.memory_bytes(), Some(512 << 20));
+        assert_eq!(squeezed.jobs(), 1);
 
-        let roomy = Parallelism::discover_in(root.path(), 8, Some(128 << 20));
+        // Eight readers of 16 MiB fit whole, so both numbers stand.
+        let roomy = Parallelism::discover_in(root.path(), 8, Some(16 << 20));
         assert_eq!(roomy.memory_bytes(), Some(128 << 20));
+        assert_eq!(roomy.jobs(), 8);
+
+        // And in between, the count is what the cap affords and the budget is
+        // exactly what that many readers spend — never the cap itself, which
+        // is the over-ask this pairing exists to remove.
+        let fitted = Parallelism::discover_in(root.path(), 8, Some(100 << 20));
+        assert_eq!(fitted.jobs(), 7);
+        assert_eq!(fitted.memory_bytes(), Some(700 << 20));
+        assert!(fitted.memory_bytes() < Some(cap), "the cap itself would be the over-ask");
     }
 
     /// **Below the reserve the budget goes to zero rather than to a floor.**
@@ -4000,7 +4083,12 @@ mod tests {
     fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {
         let root = FakeRoot::new();
         root.v2("/leaf").v2_limits("/leaf", Some(&MEMORY_RESERVE.to_string()), None);
-        assert_eq!(Parallelism::discover_in(root.path(), 4, Some(1 << 30)).memory_bytes(), Some(0));
+        let starved = Parallelism::discover_in(root.path(), 4, Some(1 << 30));
+        assert_eq!(starved.memory_bytes(), Some(0));
+        // One worker at whatever the cap is, not one worker's worth of bytes:
+        // the floor is on the count, and a budget the allowance never granted
+        // is the one thing the fit must not hand back.
+        assert_eq!(starved.jobs(), 1);
 
         let tighter = FakeRoot::new();
         tighter.v2("/leaf").v2_limits("/leaf", Some("134217728"), None);
@@ -4032,20 +4120,30 @@ mod tests {
         root.v2("/leaf")
             .v2_limits("/leaf", Some("max"), None)
             .write("proc/meminfo", "MemAvailable:   20002184 kB\n");
-        let want = 1400 << 20;
-        assert_eq!(
-            Parallelism::discover_in(root.path(), 24, Some(want)).memory_bytes(),
-            Some(want)
-        );
+        // Twenty-four readers of an ordinary 24 MiB-block dump: ~1.4 GiB in
+        // total, well under half of a 19 GiB `MemAvailable`.
+        let per_worker = 58 << 20;
+        let roomy = Parallelism::discover_in(root.path(), 24, Some(per_worker));
+        assert_eq!(roomy.memory_bytes(), Some(per_worker * 24));
+        assert_eq!(roomy.jobs(), 24);
 
         // Half of `MemAvailable`, because it is an estimate two processes
         // reading at once each see the whole of — and it binds only on a
-        // machine too small to afford the recommended count.
+        // machine too small to afford the recommended count, which is then
+        // reduced to what half of it buys rather than left standing.
         let small = FakeRoot::new();
         small.v2("/leaf").write("proc/meminfo", "MemAvailable:     262144 kB\n");
+        let squeezed = Parallelism::discover_in(small.path(), 24, Some(per_worker));
+        assert_eq!(squeezed.jobs(), 2);
+        assert_eq!(squeezed.memory_bytes(), Some(per_worker * 2));
+
+        // `MemAvailable` unreadable is the one shape with a recommendation and
+        // no ceiling over it: the whole of what the count asks for.
+        let blind = FakeRoot::new();
+        blind.v2("/leaf");
         assert_eq!(
-            Parallelism::discover_in(small.path(), 24, Some(want)).memory_bytes(),
-            Some(128 << 20)
+            Parallelism::discover_in(blind.path(), 24, Some(per_worker)).memory_bytes(),
+            Some(per_worker * 24)
         );
     }
 
@@ -4065,24 +4163,26 @@ mod tests {
         );
     }
 
-    /// **A source recommends what its own worker count needs**, so that "no
+    /// **A source recommends what *one* of its workers holds**, so that "no
     /// limit found" cannot mean "serial": one reader of an ordinary compressed
     /// dump costs more than the 64 MiB fallback, and a count nothing can afford
     /// is not a recommendation. The plain source inherits the silence it
     /// inherits for the worker count.
+    ///
+    /// **Per worker rather than a total**, which is what makes it independent
+    /// of any count — including a `--jobs` the source never sees. It is the
+    /// same number `block_decode_bytes` answers, one statement of what a
+    /// reader holds.
     #[test]
-    fn a_compressed_source_recommends_what_its_own_worker_count_needs() {
-        assert_eq!(BareSource.default_memory_bytes(), None);
+    fn a_compressed_source_recommends_what_one_of_its_workers_holds() {
+        assert_eq!(BareSource.default_memory_per_worker(), None);
         let (_file, plain) = source_of(b"0123456789abcdef");
-        assert_eq!(plain.default_memory_bytes(), None);
+        assert_eq!(plain.default_memory_per_worker(), None);
 
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
         let per_reader = source.block_decode_bytes().expect("a block path to price");
-        assert_eq!(
-            source.default_memory_bytes(),
-            Some(per_reader * source.default_workers() as u64)
-        );
+        assert_eq!(source.default_memory_per_worker(), Some(per_reader));
     }
 }

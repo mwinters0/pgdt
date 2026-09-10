@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pgdump_query::{
-    DumpIndex, DumpMetadata, LocalFileSource, ScanOptions, Span, SpanBody, build_index, cache,
+    ByteRangeSource, DumpIndex, DumpMetadata, LocalFileSource, ScanOptions, Span, SpanBody,
+    XzSource, build_index, cache,
 };
 
 mod common;
@@ -449,17 +450,27 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
 /// **The shipped default is the source's, and the status line is where a user
 /// sees which one they got.** A plain `parse` with no `--jobs` says `jobs=1`
 /// (above); the same command over an `.xz` file says the cores this process was
-/// given, because decode is the one shape that scales
+/// given, capped at the blocks the file offers to cut at, because decode is the
+/// one shape that scales and a seam past the last block does not exist
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
-/// Asserted against `available_parallelism()` rather than a literal — the count
-/// is the machine's, and on a one-CPU runner it legitimately *is* 1, which is
-/// why the plain leg is asserted beside it rather than the `.xz` leg alone: what
-/// this pins is that the two commands can differ, and by which number.
+/// Asserted against `available_parallelism()` and the file's own table rather
+/// than a literal — the count is the machine's and the cap is the fixture's,
+/// and on a one-CPU runner the answer legitimately *is* 1, which is why the
+/// plain leg is asserted beside it rather than the `.xz` leg alone: what this
+/// pins is that the two commands can differ, and by which number. This
+/// fixture has a handful of blocks, so on any ordinary workstation it is the
+/// **cap** that is being read here.
 #[test]
 fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let (_dir, xz_path) = seekable_xz();
+    let blocks = XzSource::open(&xz_path)
+        .unwrap()
+        .seek_table()
+        .expect("an XzSource always has a table")
+        .block_count();
+    let cores = cores.min(blocks);
     let cache_dir = tempfile::tempdir().unwrap();
 
     let started_of = |source: &str, cache: PathBuf| -> String {

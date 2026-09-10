@@ -65,7 +65,7 @@ impl From<CliSchemaMode> for SchemaMode {
 struct ParallelArgs {
     /// How many workers pgdq may ask for. Left unstated, the file decides: a
     /// plain dump reads serially, and an `.xz` one takes the CPUs this process
-    /// was given.
+    /// was given, or its own block count where that is smaller.
     ///
     /// **It states what is asked for, not what is delivered.** Two input
     /// shapes admit no parallelism whatever this says: a `.xz` file with one
@@ -139,6 +139,18 @@ impl ParallelArgs {
     /// `--parallel-memory` is absent. What the resulting budget affords still
     /// binds afterwards, through the divisor every count passes alike.
     ///
+    /// **The two answers come back as a pair, and only a *recommended* count
+    /// is lowered to fit.** `discover_for` is given a per-worker cost and a
+    /// count, and where the allowance affords fewer workers it hands back the
+    /// smaller count with the budget that count spends — which is the whole of
+    /// "never allocate workers there is no memory for"
+    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
+    /// permits"). Where the count came from `--jobs` the stated value is kept
+    /// and only the budget is taken, because that rule governs the absence of
+    /// a flag and never its presence: `--jobs` states what is asked for, not
+    /// what is delivered, and what is delivered is `stream::worker_count`'s to
+    /// decide from the budget as it always was.
+    ///
     /// **A discovered limit can put the budget below `DEFAULT_MEMORY_BUDGET`,
     /// and that is the point.** A 256 MiB allocation leaves nothing after the
     /// reserve, and the three floors inside the mechanism make that one
@@ -162,7 +174,19 @@ impl ParallelArgs {
         let jobs = self.jobs.unwrap_or_else(|| source.default_workers());
         match self.parallel_memory {
             Some(stated) => Parallelism::workers(jobs, stated),
-            None => Parallelism::discover_for(jobs, source.default_memory_bytes()),
+            None => {
+                let discovered =
+                    Parallelism::discover_for(jobs, source.default_memory_per_worker());
+                match (self.jobs, discovered.memory_bytes()) {
+                    // A stated count is not lowered by the environment: the
+                    // flag states what is asked for, and what the budget
+                    // delivers still binds through `stream::worker_count`.
+                    // Only the count `discover_for` was *recommending* is its
+                    // to reduce.
+                    (Some(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
+                    _ => discovered,
+                }
+            }
         }
     }
 }

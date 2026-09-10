@@ -18,12 +18,17 @@ against", below.
   a v2 machine.
 - `io::available_memory()` — `RT8`'s `MemAvailable`, on the same root seam.
 - `io::MEMORY_RESERVE` — 256 MiB, `19.12`'s constant.
-- `Parallelism::discover()` and `Parallelism::discover_for(jobs, want)`, over
-  `discover_in(root, …)`.
-- `ByteRangeSource::default_memory_bytes()` — a defaulted `None`, overridden by
-  `XzSource`.
+- `Parallelism::discover()` and `Parallelism::discover_for(jobs, per_worker)`,
+  over `discover_in(root, …)` and `Parallelism::fit`.
+- `ByteRangeSource::default_memory_per_worker()` — what **one** worker of this
+  source holds; a defaulted `None`, overridden by `XzSource` with
+  `block_reader_bytes()`.
 - `ParallelArgs::resolve` asks for it whenever `--parallel-memory` is absent,
   exactly as it already asks for a count when `--jobs` is.
+- `XzSource::default_workers` caps the core count at `SeekTable::block_count()`,
+  and `Parallelism::discover_in` reduces the *count* alongside the budget where
+  the environment's allowance affords fewer workers — the two halves of the
+  consistent pair, below.
 
 `MEMORY_RESERVE`, `discover_memory_limit` and `available_memory` are exported
 from the crate root; `discover_for` is the entry point the CLI uses and
@@ -39,12 +44,20 @@ An embedder gets the sentence the spec promised — "the whole answer" — and t
 CLI does not have to reimplement the reserve arithmetic to narrow it.
 
 **The `Option` in the composition is the whole design, and it is easy to
-flatten by accident.** `want.unwrap_or(DEFAULT).min(cap)` on the discovered
-branch and `want.map(|w| w.min(available/2))` on the other are *different
-shapes*, not two spellings of one: the second has no environment cap at all,
+flatten by accident.** The discovered branch's cap is `limit − MEMORY_RESERVE`;
+the other branch's is half of `MemAvailable`, and where a source recommends
+nothing there is **no cap at all** — `discover_in` returns before computing one,
 which is what stops an unlimited host from falling back to 64 MiB and making a
-compressed scan serial. A refactor that unifies them into a single `min` over
-an `Option<u64>` cap reintroduces exactly the defect the spec rejected.
+compressed scan serial. A refactor that unifies the three into a single `min`
+over an `Option<u64>` cap reintroduces exactly the defect the spec rejected.
+
+**`Parallelism::fit` is where the pair settles, and it returns two numbers.**
+Given `jobs`, `per_worker` and a cap it answers the largest `(count, budget)`
+that fits: `count = clamp(cap / per_worker, 1, jobs)` and
+`budget = min(cap, count × per_worker)`. Handing back the cap instead is the
+over-ask — a budget the count cannot spend — and handing back `per_worker` at
+the floor is the opposite one, a budget the allowance never granted. Both `min`s
+are load-bearing.
 
 **A budget of zero is a legitimate resolved value.** At or below a 256 MiB
 limit `limit − MEMORY_RESERVE` is nothing, and the arrangement that produces is
@@ -84,36 +97,52 @@ reader's own and should stay wherever the reader is.
 ## What `19.15` runs against
 
 `19.15`'s probe is a scratch build of this rule, and this *is* that build. Its
-first job is the reserve's headroom through the 1.25–1.5 GiB band. Three
-readings taken here as a smoke check, not as the probe — a 25 KB fixture, one
-rep, no quiet machine — say the rule fires as designed and nothing more:
+first job is the reserve's headroom through the 1.25–1.5 GiB band. Four
+readings taken here as a smoke check, not as the probe — `fixtures/16/types/default.sql`
+at 24,621 bytes and an `xz --block-size=4096` copy of it with **seven** blocks,
+one rep each, `postgres:16`, no quiet machine — say the rule fires as designed
+and nothing more:
 
-| container | plain | `.xz` (4 KiB blocks) |
+| container | plain | `.xz` (4 KiB blocks, 7 of them) |
 |---|---|---|
-| `-m 256m` | `jobs=1 memory_bytes=0` | `jobs=24 memory_bytes=0` |
-| `-m 512m` | `jobs=1 memory_bytes=67108864` | `jobs=24 memory_bytes=268435456` |
-| `-m 3g` | `jobs=1 memory_bytes=67108864` | `jobs=24 memory_bytes=403710912` |
-| no limit | `jobs=1 memory_bytes=67108864 (default)` | `jobs=24 memory_bytes=403710912` |
+| `-m 256m` | `jobs=1 memory_bytes=0` | `jobs=1 memory_bytes=0` |
+| `-m 512m` | `jobs=1 memory_bytes=67108864` | `jobs=7 memory_bytes=117749016` |
+| `-m 3g` | `jobs=1 memory_bytes=67108864` | `jobs=7 memory_bytes=117749016` |
+| no limit | `jobs=1 memory_bytes=67108864 (default)` | `jobs=7 memory_bytes=117749016` |
 
-The `.xz` recommendation there is `24 × 16.03 MiB`, which the 3 GiB and
-no-limit legs both clear — so on this machine the *source* is what binds above
-512 MiB, which is the arrangement `19.15`'s unlimited arm is built to
-exercise without an unbounded run.
+**Both halves of the pair are visible in that column.** The `.xz` count is seven
+rather than this machine's twenty-four because the *file* offers seven blocks to
+cut at, and it falls to one at 256 MiB because the *allowance* affords no reader
+at all — where before the repair the same three rows all read `jobs=24`, the
+last of them beside a budget of zero. The recommendation is `7 × 16.03 MiB`,
+which the 512 MiB, 3 GiB and no-limit legs all clear — so above 512 MiB it is
+the *source* that binds here, which is the arrangement `19.15`'s unlimited arm
+is built to exercise without an unbounded run.
 
 ## Calls the spec did not decide
 
-- **`default_memory_bytes` is charged at the pool's current slot size**, which
-  before any read loop has announced one is `POOL_MAX_BYTES` (8 MiB) rather
-  than the 1 MiB a scan settles at — so the recommendation runs about a tenth
-  high. It is the same number `block_decode_bytes` answers, deliberately: one
-  statement of what a reader holds. Erring high asks for budget the worker
+- **`default_memory_per_worker` is charged at the pool's current slot size**,
+  which before any read loop has announced one is `POOL_MAX_BYTES` (8 MiB)
+  rather than the 1 MiB a scan settles at — so the recommendation runs about a
+  tenth high. It is the same number `block_decode_bytes` answers, deliberately:
+  one statement of what a reader holds. Erring high asks for budget the worker
   count will not spend, and every byte above `jobs × per-reader` is
   structurally inert.
-- **The recommendation is the source's own count, not the resolved one.** A
-  stated `--jobs 4` on a 24-core host still gets a 24-reader budget. The budget
-  is a bound rather than a target and the resolved count is what spends it, so
-  the alternative buys nothing and would make the source's answer depend on a
-  flag it is meant to be independent of.
+- **The recommendation is per worker, which is what makes it independent of any
+  count.** It was a total for the source's own count until the pair had to
+  settle consistently: a total is a total *for some count*, so recovering the
+  per-worker cost from it means dividing by a number `--jobs` may have replaced,
+  and a stated `--jobs 4` against a source recommending twenty-four would have
+  been reduced to one worker on a cap that comfortably held four. Stated per
+  worker there is nothing to recover and the multiplication is the composition's.
+- **A stated `--jobs` is not reduced; a recommended one is.** `discover_for`
+  lowers the count it was given, because that is what "never allocate workers
+  there is no memory for" means — but `ParallelArgs::resolve` keeps a count that
+  came from the flag and takes only the budget, since the standing rule governs
+  the absence of a flag and never its presence
+  ([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
+  permits"). What a stated count actually delivers stays `stream::worker_count`'s
+  to decide from the budget, exactly as before.
 - **v1's mount is located through `/proc/self/mountinfo`; v2's is the
   `/sys/fs/cgroup` convention.** That is what `std` does for the CPU quota, for
   the same reason — v1 mount points genuinely vary and v2's does not — and the
@@ -162,10 +191,14 @@ A flagless `.xz` run on a host with no memory limit asks for
 through. On a file written by `xz -9 -T0`, whose blocks are ~192 MiB, one
 reader holds `2 × 192 + 8 + decode_footprint` — the footprint carrying that
 level's 64 MiB dictionary — so ~456 MiB, and twenty-four of them ~10.7 GiB.
+**That is the shape of a file with at least twenty-four such blocks**, which is
+about 4.6 GiB uncompressed; below that the block cap on `default_workers` binds
+first and the ask is `blocks × 456 MiB`.
 
 **The `MemAvailable` half-cap binds there**, at ~9.5 GiB against this
-machine's ~19 GiB reading, and the block path is then afforded at a slightly
-reduced count where the 64 MiB constant declined it outright. That is the
+machine's ~19 GiB reading, and the block path is then afforded at a reduced
+count — twenty-one readers rather than twenty-four, the count now coming down
+with the budget — where the 64 MiB constant declined it outright. That is the
 intended posture and the intended reversal. Reviewed 2026-09-10 and affirmed:
 the no-limit arm owes "approximately play nice, and never OOM" rather than an
 exact share, so the fraction is not tuned — the reasoning is beside the
@@ -173,25 +206,21 @@ mechanism ([`architecture.md`](architecture.md), "Execution model and API
 surface"). No reading covers this band; `19.15`'s containers are all far below
 it.
 
-## The repair owed before `19.15` measures the rule
+## The consistent pair
 
-The recommended worker count and the recommended budget must settle as a
-consistent pair, on any machine's cpu-to-memory ratio: never more memory than
-the workers can use, never workers there is no memory for
-([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
-permits"). Two places fall short of that today.
+The recommended worker count and the recommended budget settle as a pair, on any
+machine's cpu-to-memory ratio: never more memory than the workers can use, never
+workers there is no memory for ([`roadmap.md`](roadmap.md), "A default runs as
+fast as the allocation permits"). Two places enforce it, one per half.
 
-- `XzSource::default_workers` answers the core count where `stream::cut` caps
-  pieces at the block boundaries the file offers, so a file with fewer blocks
-  than cores is multiplied into a budget request nothing can spend.
-  `xz_seek::SeekTable::block_count()` is the bound and the table is already on
-  the source.
-- `Parallelism::discover_in` caps the *budget* at the environment's allowance
-  and leaves the count alone, so a reduced allowance yields a count the budget
-  no longer affords. It needs no new argument: a source recommending
-  `jobs × per-reader` makes `per-reader` recoverable as `want / jobs`, so the
-  count can be reduced to what the allowance affords and the budget set to
-  `count × per-reader`.
+- `XzSource::default_workers` caps the core count at
+  `xz_seek::SeekTable::block_count()`, the table being already on the source.
+  `stream::cut` caps pieces at the block boundaries the file offers, so without
+  it a file with fewer blocks than cores is multiplied into a budget request
+  nothing can spend.
+- `Parallelism::fit` reduces the *count* alongside the budget wherever the
+  environment's allowance affords fewer workers, so a reduced allowance can no
+  longer yield a count the budget does not cover.
 
 The first supersedes a sentence of `19.8`'s rationale, which held that the
 block count binds downstream and the recommendation need not know it. That was
@@ -199,8 +228,3 @@ written before a run reported its mode: once it does, a recommendation of
 twenty-four workers printed beside a budget affording six is self-contradictory
 in one line. Reasoning: [2026-09-10](../status/history/2026-09-10.md), "The
 recommended pair has to be consistent".
-
-The smoke table above moves when this lands: the 25 KB `.xz` fixture has far
-fewer than twenty-four 4 KiB blocks, so its recommendation stops being
-`24 × 16.03 MiB`. Re-take those readings with the repair rather than carrying
-them forward.

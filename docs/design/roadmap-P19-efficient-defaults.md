@@ -314,12 +314,22 @@ a sub-stream, so the 64 MiB constant admits **one** — which would override
 source-dependent worker default that never fires on an unlimited host, the
 machine most likely to run this. So `ParallelArgs::resolve` asks the source
 when `--parallel-memory` is absent exactly as it already asks when `--jobs` is:
-`XzSource` answers with what its recommended count needs — twenty-four workers
-at ~59 MiB is ~1.4 GiB — and `LocalFileSource` answers with no budget, as it
-answers with one worker today. A count nothing can afford is not a
+`XzSource` answers with what **one** of its workers holds — ~59 MiB, which at
+its recommended twenty-four is ~1.4 GiB — and `LocalFileSource` answers with no
+budget, as it answers with one worker today. A count nothing can afford is not a
 recommendation, which is the general form
 ([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
 permits").
+
+**Per worker rather than as a total, and the composition multiplies.** A total
+would have to be a total for the source's own count, so a caller that replaced
+that count with `--jobs` could recover the per-worker cost only by dividing by a
+number no longer in play — six times too large at `--jobs 4` against a
+twenty-four-worker recommendation, which reduces a run four readers fit to one.
+Stated per worker the answer is independent of every count. Reversed on review,
+which affirmed the reasoning above and moved only where the multiplication
+happens ([2026-09-10](../status/history/2026-09-10.md), "The recommended pair
+has to be consistent").
 
 *Rejected: detecting a container and softening the default when we are not in
 one.* It sounds like the modest unlimited default and is a weaker version of
@@ -339,15 +349,21 @@ which is complete and true however the process was started, and the status line
 is where it goes.
 
 **Where nothing is discovered, the budget is capped at half of
-`MemAvailable`.** `XzSource` recommends `available_parallelism()` for the count,
-so its budget recommendation is `jobs × C` — and on the no-limit path that is
-capped: `budget = min(jobs × C, ½ × MemAvailable)`. Because resident saturates
-at `jobs × C`, the cap **costs nothing wherever there is room**: half of this
-host's ~20 GiB available is ~10 GiB, which plans the same twenty-four workers a
-1.4 GiB budget does, every byte above `jobs × C` being structurally inert. It
-binds only on a machine too small to afford the full worker count, which is
-exactly where it should. Fast where the machine allows it, bounded where it
-does not.
+`MemAvailable`.** `XzSource` recommends `available_parallelism()` for the count
+and `C` for what one of those workers holds, so the ask is `jobs × C` — and on
+the no-limit path the cap applies to the **pair**: the count comes down to what
+half of `MemAvailable` affords, `jobs' = min(jobs, ½ × MemAvailable / C)`, and
+the budget is what that many spend, `jobs' × C`, never the cap itself. Because
+resident saturates at `jobs × C`, the cap **costs nothing wherever there is
+room**: half of this host's ~20 GiB available is ~10 GiB, which plans the same
+twenty-four workers a 1.4 GiB budget does, every byte above `jobs × C` being
+structurally inert. Fast where the machine allows it, bounded where it does not.
+
+**It binds wherever the recommended count costs more than half of what the host
+has free**, which is not only a small machine: `C` scales with the block size,
+so a large-block file reaches it on a large one too. The cap on
+`XzSource::default_workers` — this file's own block count — is the other half of
+the same bound, and it binds independently of memory.
 
 **Half, and `MemAvailable`, and only after no limit was found — each for its own
 reason** ([`runtime-invariants.md`](runtime-invariants.md), `RT8`).

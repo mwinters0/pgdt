@@ -115,7 +115,7 @@ trait ByteRangeSource: Send + Sync {
     }
     fn block_decode_bytes(&self) -> Option<u64> { None }
     fn default_workers(&self) -> usize   { 1 }
-    fn default_memory_bytes(&self) -> Option<u64> { None }
+    fn default_memory_per_worker(&self) -> Option<u64> { None }
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     fn hint_wait_policy(&self, _policy: WaitPolicy) {}
 }
@@ -179,8 +179,8 @@ so that the decline's message names the recourse without re-deriving the
 source's own rule ("The compressed source"). The other five are answered by
 every source: `hint_read_size`, `hint_parallelism` and `hint_wait_policy` are
 about the caller rather than the source and are described below, `partitions`
-is next, and `default_workers` and `default_memory_bytes` are the source's own
-recommendations for the two numbers a caller states its parallelism in, also
+is next, and `default_workers` and `default_memory_per_worker` are the source's
+own recommendations for the two numbers a caller states its parallelism in, also
 below.
 
 **A source advises its own partitioning, and the layer above never learns what
@@ -303,19 +303,31 @@ because a plain `parse` is slower than serial at every worker count measured
 and the pool-depth clamp is not what makes it so ("Where a scan's time goes");
 `XzSource` answers `available_parallelism()`, which is already the minimum of
 the affinity mask and every ancestor cgroup's CPU quota
-([`runtime-invariants.md`](runtime-invariants.md), `RT7`). Decode is the one
+([`runtime-invariants.md`](runtime-invariants.md), `RT7`), **capped at its own
+block count**. Decode is the one
 shape that demonstrably scales — a compressed `parse` reaches 5.82× at
 twenty-four workers, still climbing — so a small constant such as four would
 leave the machine's own answer unspent on the only path that can use it, and
 the standing rule's four-and-twenty-four baseline already buys predictability
 by a different route ([`roadmap.md`](roadmap.md), "Standing rules").
 
+**The block count is applied where the count is recommended, not left to bind
+downstream.** `stream::cut` cuts at block boundaries and there is no seam past
+the last one, so a four-block file runs four readers however wide the machine
+is — which was once a reason the recommendation need *not* know its own block
+count. It has to now, for two reasons that arrived together: the count is
+multiplied into a budget request (`default_memory_per_worker`, below), so a
+file that cannot supply work for twenty-four readers would otherwise ask for
+twenty-four readers' memory; and the resolved arrangement is printed, so a
+recommendation of twenty-four beside a budget affording six is two numbers
+contradicting each other in one line ([`roadmap.md`](roadmap.md), "A default
+runs as fast as the allocation permits").
+
 **The recommendation is a raw count, and the budget binds after it.** What a
 caller's bytes afford is `stream::worker_count`'s question, asked of every count
 alike against the source's own per-partition footprint, so a source answering
 here reasons about the work rather than about the memory and cannot make the
-budget bind twice. A source's block count binds after that: a single-block `.xz`
-has no seam to cut whatever the recommendation says.
+budget bind twice.
 
 **A worker default can be a source's answer because it is downstream of
 recognition**, which the CLI has already paid for by the time it has a source to
@@ -380,14 +392,52 @@ bound the scan rather than their flags.
 
 **The composition is not a `min`, and the difference is one `Option`.** A
 source recommends a budget as it recommends a worker count —
-`ByteRangeSource::default_memory_bytes`, `None` for `LocalFileSource` and
-`jobs × what one reader holds` for a block-decoding `XzSource` — and
-`Parallelism::discover_for(jobs, want)` composes the two:
+`ByteRangeSource::default_memory_per_worker`, `None` for `LocalFileSource` and
+`what one reader holds` for a block-decoding `XzSource` — and
+`Parallelism::discover_for(jobs, per_worker)` composes the two:
 
-- a **discovered** limit is a cap: `want`, or `DEFAULT_MEMORY_BUDGET` where the
-  source recommends nothing, taken no higher than `limit − MEMORY_RESERVE`;
+- a **discovered** limit is a cap: `jobs × per_worker`, or
+  `DEFAULT_MEMORY_BUDGET` where the source recommends nothing, taken no higher
+  than `limit − MEMORY_RESERVE`;
 - **no limit found** has no cap from the environment at all, only half of
   `/proc/meminfo`'s `MemAvailable` (`RT8`).
+
+**The recommendation is stated per worker, and the answer is a pair.** A total
+would have to be a total *for some count*, and the only count a source knows is
+its own — so recovering the per-worker cost from it means dividing by a number
+the caller may have replaced with `--jobs`. Stated per worker it is independent
+of every count, and the composition owns the multiplication: where the cap
+affords fewer workers than were asked for, `discover_for` returns the smaller
+count **and** the budget that many readers spend, never the cap itself. Handing
+back the cap is the over-ask this pairing removes — "never allocate more memory
+than the workers can use, and never allocate workers there is no memory for"
+([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
+permits"). The floor is one worker at whatever the cap is, not one worker's
+worth of bytes: a 256 MiB cgroup resolves to a budget of zero, and the three
+floors below turn that into one reader on the streaming path.
+
+**Only a *recommended* count is lowered.** `ParallelArgs::resolve` keeps a
+count that came from `--jobs` and takes only the budget, because "a stated flag
+wins outright" governs the absence of a flag and never its presence: `--jobs`
+states what is asked for rather than what is delivered, and what is delivered
+stays `stream::worker_count`'s to decide from the budget.
+
+*Rejected: lowering no count at all, and letting the budget do the reducing on
+its own.* That is what the composition did before, and it is behaviourally
+identical — `stream::worker_count` is already `jobs.min(budget / per-partition)`
+against the same per-reader charge, so the count `fit` removes is a count
+nothing was going to run. What it is not identical in is what gets **reported**:
+the resolved arrangement is printed, and `jobs=24` beside a budget affording two
+is one line contradicting itself. That contradiction is the whole reason the
+block-count cap moved onto `default_workers` in the same change, and leaving it
+on the memory axis would have fixed half of one problem.
+
+*Rejected: lowering a stated `--jobs` too, and printing the smaller number.* It
+is more informative, and it is the direction "a stated flag wins outright, in
+both directions" names explicitly ([`roadmap.md`](roadmap.md), "A default runs
+as fast as the allocation permits"). A flag is the user saying what to ask for;
+the environment reducing what *it* recommended is discovery doing its job, and
+the environment overriding what the user typed is not.
 
 Written instead as `min(want, discovered)` it breaks the case it exists for: on
 an unlimited host discovery falls back to today's 64 MiB constant, one

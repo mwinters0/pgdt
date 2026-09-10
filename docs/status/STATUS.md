@@ -415,7 +415,13 @@ the five orderings that bind are in the spec, not here.
       and how many bytes it is taking under it, so a recommendation the
       `MemAvailable` cap reduced is visible rather than silent
       ([2026-09-10](history/2026-09-10.md), "The no-limit cap is affirmed, and
-      a run says which mode it is in").
+      a run says which mode it is in"). **`jobs=` reads differently by
+      provenance and the report has to say so**: a recommended count is lowered
+      to what the allowance affords and printed lowered, while a stated
+      `--jobs` is printed as typed — so the same two readers can appear under
+      `jobs=2` or under `jobs=24`, and only the first line is telling the user
+      what will run ([`../design/architecture.md`](../design/architecture.md),
+      "Execution model and API surface").
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
       whole-block-decode threshold.
@@ -453,12 +459,14 @@ the five orderings that bind are in the spec, not here.
       `limit − 256 MiB` and no limit found caps at half of `MemAvailable`; a
       256 MiB container resolves to a budget of **zero**, which is one reader's
       worth on the streaming path. The falsified half of the manual moved with
-      it. **One repair is owed before `19.15` measures the rule**: the
-      recommended count and the recommended budget must settle as a consistent
-      pair on any cpu-to-memory shape, so `XzSource::default_workers` caps at
-      `SeekTable::block_count()` and the composition reduces the count to what
-      the environment's allowance affords rather than handing back a budget the
-      count cannot spend ([2026-09-10](history/2026-09-10.md), "The recommended
+      it. **The recommended count and the recommended budget settle as a
+      consistent pair** on any cpu-to-memory shape: `XzSource::default_workers`
+      caps at `SeekTable::block_count()`, the source's budget recommendation is
+      stated **per worker** rather than as a total for its own count, and
+      `Parallelism::fit` reduces the count alongside the budget where the
+      allowance affords fewer workers — a stated `--jobs` keeping its count,
+      that rule governing the absence of a flag and never its presence
+      ([2026-09-10](history/2026-09-10.md), "The recommended
       pair has to be consistent"). Notes:
       [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md)
 - [x] **19.14** A compressed sub-stream is charged what one reader holds —

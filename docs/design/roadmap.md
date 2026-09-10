@@ -175,8 +175,16 @@ That is why `ByteRangeSource::default_workers` is a trait method rather than a
 test for `.xz`: the gzip, zstd/lz4 and format-coverage phases each add a source
 whose right default is its own, and a conditional written against the one
 compressed source in the tree would be reopened by every one of them. A source
-that recommends a worker count also says what budget that count needs, since a
-count nothing can afford is not a recommendation.
+that recommends a worker count also says what **one of those workers** needs,
+since a count nothing can afford is not a recommendation.
+
+**Per worker rather than as a total, because a total is a total for some
+count.** The only count a source knows is its own, so a caller that replaced it
+with a stated `--jobs` could not recover the per-worker cost without dividing by
+a number that is no longer in play. Stated per worker the answer is independent
+of every count, and multiplying is the composition's — which is also what lets
+the composition hand back a *pair*, the count an allowance affords beside the
+budget that many workers spend.
 
 ### Coverage increases monotonically
 
