@@ -506,3 +506,78 @@ what a token means after an embedder holds one is not.
 
 **Origin.** The parallel-scan work's partitioned-replay slice, 2026-09-07
 ([`architecture.md`](architecture.md), "Partitioned replay").
+
+---
+
+## `Parallelism::discover()` is a single-tenant assumption, and a `TableProvider` is not single-tenant
+
+**Fact.** Read from `/mnt/wd12t/upstream/datafusion/origin-main` at `ccfe40b18`
+(workspace `55.0.0`), 2026-09-10.
+
+- **A join across three registered tables is three provider objects and three
+  `scan()` calls.** `register_table` stores the `Arc` and `SchemaProvider::table()`
+  hands back a clone, so the object registered is the object used; physical
+  planning calls `scan_with_args` once per `TableScan` node
+  (`datafusion/core/src/physical_planner.rs:609`). A self-join is one object and
+  two calls. A provider served through a *dynamic* schema provider — which is how
+  `datafusion-cli` answers `SELECT * FROM 'file.parquet'` — is built fresh per
+  query (`datafusion/catalog/src/dynamic_file/catalog.rs:135-144`).
+- **DataFusion never sizes a memory pool from the machine or from a cgroup.**
+  `RuntimeEnvBuilder::build()` defaults to `UnboundedMemoryPool`
+  (`datafusion/execution/src/runtime_env.rs:494`); there is no `MemAvailable`,
+  `cgroup` or `sysinfo` read anywhere in `datafusion/` or `datafusion-cli/`. A
+  bound exists only where the embedder set one — `datafusion-cli -m/--memory-limit`
+  with `--mem-pool-type greedy|fair`, or `SET datafusion.runtime.memory_limit`.
+- **The pool is reachable from a custom provider but explicitly does not cover
+  it.** `Session::runtime_env()` in `scan()` and `TaskContext::memory_pool()` in
+  `execute()` both reach it, and `MemoryPool::memory_limit()` answers
+  `Infinite`/`Finite(n)`/`Unknown`. But the pool's own contract
+  (`datafusion/execution/src/memory_pool/mod.rs:42-186`) says it "does NOT track
+  and limit memory used internally by other operators such as `DataSourceExec`"
+  and that "operators should not reserve memory for the batches they produce".
+  **No built-in read path registers** — Parquet, CSV, JSON, Arrow, Avro and
+  `ListingTable` register nothing; the only `MemoryConsumer` in any datasource
+  crate is the Parquet *writer* (`datasource-parquet/src/sink.rs`). What registers
+  is sorts, aggregates, `RepartitionExec` and `BufferExec`.
+- **The worker count is pulled, not pushed.** A provider reads
+  `state.config().target_partitions()` — default `available_parallelism()`
+  (`datafusion/common/src/config.rs:853`) — and declares what it chose through
+  `output_partitioning()`. `ExecutionPlan::repartitioned` defaults to `Ok(None)`,
+  so a declared count stands. `datafusion-cli` has **no parallelism flag**; the
+  count comes from `DATAFUSION_EXECUTION_TARGET_PARTITIONS` or `SET`.
+
+**Why P6 cares.** `Parallelism::discover()` (`io.rs:609`) resolves a budget from
+the process's cgroup limit, or half of `MemAvailable` where none is found, and a
+count from `available_parallelism()`. Both readings are about *the process*, and
+a `TableProvider` is one tenant of it. Three providers each calling `discover()`
+on a three-file join would budget 150% of the machine and ask for three times its
+CPUs, and nothing in DataFusion would stop them: the default pool is unbounded,
+and even a bounded one neither tracks sources nor tells one what its share is.
+
+The two halves have different answers, which is the part not to re-derive:
+
+- **The count is solved and needs no new API.** `target_partitions` is what
+  DataFusion wants the provider to honour, and `discover_for(jobs, per_worker)`
+  (`io.rs:654`) already takes the count as a parameter rather than reading it. A
+  provider passes `target_partitions` in.
+- **The budget has no reading to take.** `memory_limit()` reports the whole
+  session's pool, shared with every other operator and explicitly not covering
+  sources, so any division of it is a guess. So P6's answer is a **constructor
+  parameter, not a discovery**: the thing that builds three providers is the only
+  thing that knows there are three.
+
+What this does *not* require is a change to the shipped default. The library's own
+default is `Serial` and `discover()` is opt-in, so nothing oversubscribes unless an
+embedder asks it to. The gap is that nothing says `discover()` assumes it is the
+only tenant. That is written beside the mechanism as a **property with a remedy
+in hand** rather than a deficiency
+([`architecture.md`](architecture.md), "Execution model and API surface").
+
+**Origin.** 2026-09-10, grilling `19.9`'s provenance entry under `STATUS.md`'s
+"Decisions worth another look" — the maintainer asked what a three-file join would
+budget. See [`../status/history/2026-09-10.md`](../status/history/2026-09-10.md),
+"The provenance call is affirmed, and `discover()` is single-tenant".
+
+**Contingent on.** DataFusion 55's `MemoryPool` contract continuing to exclude
+data sources, and `target_partitions` remaining pull-style. Re-check both at the
+version P6 actually targets.

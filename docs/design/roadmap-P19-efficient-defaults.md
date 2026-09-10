@@ -521,10 +521,18 @@ already reads as one in `Bulk::new` and in `Parallelism::workers`, and giving it
 a third meaning at the CLI while the library reads it as one is the divergence
 the two-numbers paragraph warns against.
 
-**The status line reports the value and its provenance**, which is a slot that
-already exists: it prints `memory_bytes=67108864 (default)` today, and gains
-`(stated)`, `(discovered: …)` naming which limit was read, and
-`(default: no limit found)`.
+**The status line reports the value and its provenance**, and the provenance is
+a **second line the CLI emits**, not the `memory_bytes=` slot `scan started`
+already prints. All four spellings ship — `(stated)`, `(discovered: …)` naming
+which limit was read, `(no limit found: what this source asks for)` and
+`(default: no limit found)` — on a line whose layer can produce them. The slot
+cannot: discovery hands the library a number byte-identical to a stated one, so
+the distinction is gone before `scan started` runs, and reaching it would mean
+widening `Parallelism` or `ScanOptions` for a display fact nothing branches on.
+The library's slot keeps saying what bound applies, which is what an embedder
+that hands over `Parallelism::default()` is owed. Both widenings are filed as
+rejected beside the mechanism
+([`architecture.md`](architecture.md), "Status output").
 
 ## The default is pinned by a test, not by a figure
 

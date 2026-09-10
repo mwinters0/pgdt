@@ -533,6 +533,35 @@ stated them — rather than a bare number, because the walk minimises over
 `memory.max`, `memory.high` and every ancestor, and which of those bound you is
 the only actionable half of "your budget was cut" ("Status output").
 
+**`discover()` reads the *process's* allocation, so a caller that is one of
+several must not call it.** Every reading it takes — the cgroup limit, the
+`MemAvailable` fallback, `available_parallelism()` — describes the whole
+process, so N components each calling it in one process resolve N times the same
+allowance: three of them would budget 150% of the machine and ask for three
+times its CPUs. Nothing here oversubscribes today, because the library's own
+default is `Serial` and discovery is opt-in — a caller reaches this only by
+asking. `discover_for(jobs, per_worker)` is the seam for a caller that is one of
+several: it takes the recommendations rather than reading them, so whatever
+knows how many tenants there are decides the split and this rule composes them.
+That is a **property with a remedy in hand**, not a deficiency.
+
+The case that makes it concrete is a DataFusion `TableProvider`, where a join
+across three files is three provider objects and three `scan()` calls, and
+nothing upstream would catch the overrun: DataFusion sizes no pool from the
+machine or a cgroup, defaults to an unbounded one, and its memory-pool contract
+excludes data sources by name — no built-in read path registers a
+`MemoryConsumer` at all. The facts and their citations are filed for the phase
+that will build it
+([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md),
+"`Parallelism::discover()` is a single-tenant assumption").
+
+*Rejected: a `discover_reporting` sibling answering the arrangement and the
+`MemoryLimit` together*, so that one walk serves both the resolution and a
+caller's own logging. `discover_memory_limit` is already public and the two-call
+pattern is what the CLI's `Resolved` does, for a handful of small `/sys` reads;
+and the embedder that appeared to want it turns out not to — a provider that
+must not discover at all has nothing to report the provenance of.
+
 **Each of the three takes a filesystem root in a sibling form, and all three
 are public.** `discover_memory_limit_in`, `available_memory_in` and
 `Parallelism::discover_in` join every path they read onto the root they are

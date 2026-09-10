@@ -677,21 +677,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.9` put the budget's provenance on a second, CLI-emitted status line
-  rather than on `scan started`'s existing `memory_bytes=` slot, which is where
-  the spec said it would go.** The spec calls that slot "a slot that already
-  exists" and has it gain `(stated)`, `(discovered: …)` and `(default: no limit
-  found)`; all three strings are printed, but on a new line the CLI emits at
-  resolve time, ahead of the library's. The reason is that the existing slot is
-  the *library's* and provenance splits into two halves the library cannot
-  hold: whether a flag was typed is knowable only at the CLI, and whether a
-  limit was read only inside the walk that read it — so an embedder handing over
-  `Parallelism::default()` would be told `(default: no limit found)` about an
-  environment nobody consulted. The two ways to reach the spec's wording
-  literally are widening `Parallelism` (a `Copy`, `PartialEq` value matched on
-  in every read loop, for a display fact nothing branches on) or adding a
-  provenance field to `ScanOptions`; both are filed as rejected beside the
-  mechanism ([`../design/architecture.md`](../design/architecture.md), "Status
-  output"). **What would change if reconsidered**: `scan started` would carry
-  the provenance and the second line would go, at the cost of one of those two
-  widenings — the user-visible strings would be the same either way.
+_Nothing open._
