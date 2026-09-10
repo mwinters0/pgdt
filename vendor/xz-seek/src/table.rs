@@ -110,6 +110,24 @@ pub struct StreamEntry {
     pub first_block: usize,
     /// How many blocks this stream has.
     pub block_count: usize,
+    /// The LZMA2 dictionary this stream's **first block header** declares, in
+    /// bytes, or [`None`] where that header could not be parsed at all.
+    ///
+    /// It states what the walk read out of that one header and nothing more.
+    /// Every block of a stream declares the same chain unless the producer
+    /// deliberately changed it mid-stream, which `xz` does on demand
+    /// (`docs/design/xz-invariants.md`, `I23`), so this is a stream-wide
+    /// dictionary for every file written without that and understates for the
+    /// rest — a *fact*, not a bound, with the bound built on top of it.
+    ///
+    /// **Zero is a legitimate dictionary, never an "unknown".** A chain naming
+    /// no LZMA2 filter declares none and a stream with no blocks has no header
+    /// to read; both are `Some(0)`, because in both cases the answer is known
+    /// exactly. The unknowing is spelled by the type and arises in exactly one
+    /// way: a first block header that fails to parse, which is `None`. A
+    /// consumer therefore cannot take the number without deciding what an
+    /// absent one costs.
+    pub first_block_dict_size: Option<u64>,
 }
 
 /// One block.
@@ -462,6 +480,135 @@ impl SeekTable {
         let b = &self.blocks[i];
         (offset < b.uncompressed_offset + b.uncompressed_size).then_some(i)
     }
+
+    /// The largest LZMA2 dictionary any stream holding one of `blocks` declares,
+    /// with `memlimit` standing in for a stream whose first block header did not
+    /// parse.
+    ///
+    /// The **range** form of [`SeekTable::decode_footprint`]'s dictionary term,
+    /// and the one [`RangePlan`](crate::RangePlan) charges: every other size a
+    /// plan is built from is the range's own and not the file's, so a three-block
+    /// range inside a 64 KiB-dictionary stream is not priced against the 64 MiB
+    /// stream beside it.
+    ///
+    /// Two binary searches and a scan of the streams between them. Streams are
+    /// ordered by compressed offset like the blocks inside them, so the endpoints
+    /// are found the way `Reader::check_of` finds one block's; the scan between
+    /// them is bounded by the block count the caller already iterates, since a
+    /// stream holding one of `blocks` holds at least one.
+    ///
+    /// Zero for an empty range, which holds no decoder at all — the file-wide
+    /// query's *"never zero"* floor is the backend term, and that is added by
+    /// whoever charges it.
+    pub(crate) fn max_dict_over(&self, blocks: Range<usize>, memlimit: u64) -> u64 {
+        if blocks.is_empty() || self.streams.is_empty() {
+            return 0;
+        }
+        let first = self.blocks[blocks.start].compressed_offset;
+        let last = self.blocks[blocks.end - 1].compressed_offset;
+        let lo = self
+            .streams
+            .partition_point(|s| s.compressed_offset <= first)
+            .saturating_sub(1);
+        let hi = self
+            .streams
+            .partition_point(|s| s.compressed_offset <= last)
+            .max(lo + 1);
+        self.streams[lo..hi]
+            .iter()
+            .map(|s| s.first_block_dict_size.unwrap_or(memlimit))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// What one decode of this file retains beyond the caller's output buffer,
+    /// under `backend` and `memlimit`.
+    ///
+    /// The derivation behind [`Reader::decode_footprint`](crate::Reader::decode_footprint),
+    /// and **private on purpose**: two of its three terms are facts about the
+    /// file and the third is a fact about whoever decodes it, so a public
+    /// `SeekTable` method taking a backend would let a caller charge for one
+    /// backend while running the other. The reader supplies its own, and there
+    /// is no second statement of it to keep in step.
+    ///
+    /// ```text
+    /// dictionary = max over streams of first_block_dict_size, or memlimit where unknown
+    /// chunk      = min(INPUT_CHUNK, the largest block's whole compressed extent)
+    /// state      = Backend::decoder_state_bytes()
+    /// ```
+    ///
+    /// **The dictionary term is a very good estimate and not a ceiling.** It is
+    /// exact for every file whose producer did not vary a filter chain
+    /// mid-stream and understates for the rest, which is `KD10`; the ceiling
+    /// that is sound is `memlimit`, which the decode compares against **each
+    /// block's own** declared dictionary before a backend object is built, so an
+    /// understatement is a clean
+    /// [`Error::MemoryLimitExceeded`](crate::Error::MemoryLimitExceeded) and
+    /// never an overrun.
+    ///
+    /// **A stream whose dictionary is unknown is charged `memlimit`**, because
+    /// the two errors are not symmetric: under-charging spends memory the caller
+    /// did not allow, over-charging admits fewer workers. `None` arises in
+    /// exactly one way — a first block header that did not parse — and the rest
+    /// of that stream can still declare anything up to the limit.
+    ///
+    /// **The two file terms are maximised independently**, which over-charges a
+    /// file whose largest block is not in its largest-dictionary stream. That is
+    /// the cheap direction, and one number per file is what the consumer asked
+    /// for.
+    ///
+    /// The chunk term uses the padded `total_size()` because [`BlockEntry`]
+    /// carries no header size, so it is conservative by one block header —
+    /// `RangePlan` computes its own the same way and for the same reason.
+    ///
+    /// **Never zero**, even for a file with no blocks: the backend term is
+    /// unconditional, so a caller dividing a budget by this cannot divide by
+    /// zero.
+    pub(crate) fn decode_footprint(&self, backend: crate::Backend, memlimit: u64) -> u64 {
+        self.decoder_bytes(backend, memlimit)
+            .saturating_add(self.input_chunk())
+    }
+
+    /// The dictionary and state terms of [`SeekTable::decode_footprint`],
+    /// without the chunk.
+    ///
+    /// Published as [`Reader::decoder_bytes`](crate::Reader::decoder_bytes).
+    /// The split is here rather than left to a caller's subtraction so that a
+    /// fourth term, if one ever arrives, is placed by this crate on one side or
+    /// the other instead of being inherited silently by everyone who wrote
+    /// `decode_footprint() - input_chunk_bytes()`.
+    ///
+    /// **Never zero**, for the reason the sum is never zero: the backend term is
+    /// unconditional.
+    pub(crate) fn decoder_bytes(&self, backend: crate::Backend, memlimit: u64) -> u64 {
+        let dictionary = self
+            .streams
+            .iter()
+            .map(|s| s.first_block_dict_size.unwrap_or(memlimit))
+            .max()
+            .unwrap_or(0);
+        dictionary.saturating_add(backend.decoder_state_bytes())
+    }
+
+    /// The chunk term of [`SeekTable::decode_footprint`], on its own.
+    ///
+    /// Published as [`Reader::input_chunk_bytes`](crate::Reader::input_chunk_bytes),
+    /// which is what keeps the terms of that sum a caller can name reachable
+    /// separately — the dictionary is a public field, the backend's own state is
+    /// deliberately not published on its own (`I24`), and the two of them
+    /// together are [`SeekTable::decoder_bytes`], which is what a caller whose
+    /// source lends charges instead of the whole sum.
+    ///
+    /// Zero for a file with no blocks, where the sum's *"never zero"* floor is
+    /// the backend term alone.
+    pub(crate) fn input_chunk(&self) -> u64 {
+        self.blocks
+            .iter()
+            .map(BlockEntry::total_size)
+            .max()
+            .unwrap_or(0)
+            .min(crate::decode::INPUT_CHUNK as u64)
+    }
 }
 
 #[cfg(test)]
@@ -496,6 +643,7 @@ mod tests {
                 padding: 0,
                 first_block: 0,
                 block_count: blocks.len(),
+                first_block_dict_size: Some(0),
             }],
             blocks,
         }
@@ -514,6 +662,148 @@ mod tests {
         }
         assert!(!Check::from_id(0x05).is_supported());
         assert!(Check::Crc64.is_supported());
+    }
+
+    /// A table of one stream per entry, each carrying one block of `block` bytes
+    /// uncompressed and `window` bytes of whole compressed extent.
+    ///
+    /// The real shapes this has to price — 24 MiB blocks behind 1.29 MB windows
+    /// under an 8 MiB dictionary — are six times the whole generated corpus, so
+    /// they are pinned here rather than against a fixture, exactly as
+    /// `RangePlan`'s two counts are.
+    fn dict_table(streams: &[(Option<u64>, u64, u64)]) -> SeekTable {
+        let mut blocks = Vec::new();
+        let mut entries = Vec::new();
+        let mut c = 0u64;
+        let mut u = 0u64;
+        for &(dict, block, window) in streams {
+            entries.push(StreamEntry {
+                compressed_offset: c,
+                uncompressed_offset: u,
+                compressed_size: window + 36,
+                uncompressed_size: block,
+                check: Check::Crc64,
+                padding: 0,
+                first_block: blocks.len(),
+                block_count: 1,
+                first_block_dict_size: dict,
+            });
+            blocks.push(BlockEntry {
+                compressed_offset: c + 12,
+                uncompressed_offset: u,
+                unpadded_size: window,
+                uncompressed_size: block,
+            });
+            c += window + 36;
+            u += block;
+        }
+        SeekTable {
+            compressed_file_size: c,
+            streams: entries,
+            blocks,
+        }
+    }
+
+    /// The three terms, and the two ways the file half of them is taken.
+    ///
+    /// The koji multistream shape is the row that matters: an 8 MiB dictionary
+    /// behind 24 MiB blocks whose compressed extent is past the input chunk, so
+    /// the chunk term is the whole 1 MiB.
+    #[test]
+    fn the_footprint_is_the_dictionary_the_chunk_and_the_backend() {
+        let koji = dict_table(&[(Some(8 << 20), 24 << 20, 1_290_000)]);
+        assert_eq!(
+            koji.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            (8 << 20) + (1 << 20) + 34_592
+        );
+        assert_eq!(
+            koji.decode_footprint(crate::Backend::Xz4rust, 64 << 20),
+            (8 << 20) + (1 << 20) + 30_680
+        );
+
+        // A block whose whole extent is below the chunk caps it: the buffer is
+        // filled with what is left, and a block shorter than a chunk is read in
+        // one.
+        let small = dict_table(&[(Some(64 << 10), 64 << 10, 26_164)]);
+        assert_eq!(
+            small.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            (64 << 10) + 26_164 + 34_592
+        );
+
+        // The dictionary is the largest any stream declares, not the first
+        // stream's and not the last's.
+        let mixed = dict_table(&[
+            (Some(64 << 10), 1 << 10, 500),
+            (Some(1 << 20), 1 << 10, 500),
+            (Some(4 << 10), 1 << 10, 500),
+        ]);
+        assert_eq!(
+            mixed.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            (1 << 20) + 500 + 34_592
+        );
+
+        // The two file terms are maximised independently, which over-charges a
+        // file whose largest block is not in its largest-dictionary stream.
+        // That is the cheap direction and it is deliberate.
+        let apart = dict_table(&[(Some(1 << 20), 1 << 10, 500), (Some(4 << 10), 1 << 10, 900)]);
+        assert_eq!(
+            apart.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            (1 << 20) + 900 + 34_592
+        );
+    }
+
+    /// The absent dictionary is the memory limit, and nothing else reaches for
+    /// it.
+    #[test]
+    fn a_stream_with_no_known_dictionary_is_charged_the_memory_limit() {
+        let unknown = dict_table(&[(None, 1 << 10, 500)]);
+        assert_eq!(
+            unknown.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            (64 << 20) + 500 + 34_592
+        );
+        // And the limit is a charge, not a clamp: a stream declaring more than
+        // the limit is charged what it declares, since `memlimit` refuses that
+        // block rather than shrinking it.
+        let over = dict_table(&[(Some(64 << 20), 1 << 10, 500)]);
+        assert_eq!(
+            over.decode_footprint(crate::Backend::Liblzma, 1 << 20),
+            (64 << 20) + 500 + 34_592
+        );
+        // Zero is a dictionary. A stream whose chain names no LZMA2 filter, and
+        // a stream with no blocks, are both charged nothing for one.
+        let none_declared = dict_table(&[(Some(0), 1 << 10, 500)]);
+        assert_eq!(
+            none_declared.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            500 + 34_592
+        );
+    }
+
+    /// Never zero, and never wrapped.
+    ///
+    /// A caller divides a budget by this, so a file with no blocks must not
+    /// answer zero; and the table is a plain value a caller can hand back with
+    /// anything in it, so the sum saturates.
+    #[test]
+    fn the_footprint_is_never_zero_and_never_wraps() {
+        let empty = dict_table(&[]);
+        assert_eq!(
+            empty.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            34_592
+        );
+        let no_blocks = SeekTable {
+            blocks: Vec::new(),
+            ..dict_table(&[(Some(0), 0, 0)])
+        };
+        assert_eq!(
+            no_blocks.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            34_592
+        );
+
+        let absurd = dict_table(&[(Some(u64::MAX), 1 << 10, 500)]);
+        assert_eq!(
+            absurd.decode_footprint(crate::Backend::Liblzma, 64 << 20),
+            u64::MAX
+        );
     }
 
     #[test]
@@ -565,6 +855,47 @@ mod tests {
         assert_eq!(t.block_containing(399), Some(1));
         assert_eq!(t.block_containing(400), Some(2));
         assert_eq!(t.block_containing(600), None);
+    }
+
+    /// The range form charges the streams the range touches and no others.
+    ///
+    /// This is what makes a plan's dictionary term the range's own, on the same
+    /// reading as its slot and its window: a read confined to a 64 KiB-dictionary
+    /// stream is not priced against the 8 MiB stream beside it, and one that
+    /// crosses into it is.
+    #[test]
+    fn the_range_form_of_the_dictionary_is_the_streams_the_range_touches() {
+        // Four streams of one block each, 100 uncompressed bytes apiece.
+        let t = dict_table(&[
+            (Some(64 << 10), 100, 200),
+            (Some(8 << 20), 100, 200),
+            (None, 100, 200),
+            (Some(1 << 20), 100, 200),
+        ]);
+        let limit = 64 << 20;
+
+        // Each stream alone.
+        assert_eq!(t.max_dict_over(0..1, limit), 64 << 10);
+        assert_eq!(t.max_dict_over(1..2, limit), 8 << 20);
+        assert_eq!(t.max_dict_over(3..4, limit), 1 << 20);
+
+        // A run that crosses one boundary takes the larger of the two, and one
+        // that crosses into the unknown stream takes the limit — which is the
+        // whole file's answer here.
+        assert_eq!(t.max_dict_over(0..2, limit), 8 << 20);
+        assert_eq!(t.max_dict_over(2..4, limit), limit);
+        assert_eq!(t.max_dict_over(0..4, limit), limit);
+        assert_eq!(
+            t.max_dict_over(0..4, limit),
+            t.decode_footprint(crate::Backend::Liblzma, limit) - 200 - 34_592,
+            "over every block it is the file-wide query's own dictionary term"
+        );
+
+        // A range covering no block holds no decoder, so there is nothing to
+        // charge — the file-wide query's "never zero" floor is the backend term,
+        // which is added by whoever charges it.
+        assert_eq!(t.max_dict_over(0..0, limit), 0);
+        assert_eq!(t.max_dict_over(2..2, limit), 0);
     }
 
     #[test]

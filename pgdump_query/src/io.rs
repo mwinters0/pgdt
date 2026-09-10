@@ -359,13 +359,15 @@ impl Partitioning {
     /// assembled into — 32 MiB against the 24 MiB blocks koji's download
     /// carries.
     ///
-    /// **Two costs are deliberately outside it, and a caller budgeting workers
-    /// adds them.** The decoder's own compressed input buffer is `xz-seek`'s
-    /// and fixed; and the LZMA2 dictionary is written in each block's *header*,
-    /// which the seek table does not carry and which would cost a source read
-    /// per block to learn — `xz_seek::RangePlan::footprint` excludes it for
-    /// that same reason and names 8 MiB a worker as the allowance on the files
-    /// this reads.
+    /// **The decoder's own retention is deliberately outside it, and a caller
+    /// budgeting workers adds it.** It is one number — the LZMA2 dictionary,
+    /// the compressed input buffer and the backend's own state —
+    /// `xz_seek::Reader::decode_footprint()`, which costs no source read and
+    /// is the same whatever range is read. The dictionary is written in each
+    /// block's *header* rather than in the seek table, so that number is a
+    /// very good estimate and not a sound ceiling; what cannot understate is
+    /// the reader's `memlimit`, compared against each block's own declared
+    /// dictionary before any backend object is built.
     pub fn partition_bytes(&self) -> u64 {
         self.partition_bytes
     }
@@ -2583,6 +2585,7 @@ mod tests {
                 compressed_size: 1 << 20,
                 uncompressed_size: 4 * 4096,
                 check: xz_seek::Check::Crc64,
+                first_block_dict_size: Some(8 << 20),
                 padding: 0,
                 first_block: 0,
                 block_count: 4,
@@ -2915,6 +2918,7 @@ mod tests {
                 compressed_size: 1 << 20,
                 uncompressed_size,
                 check: xz_seek::Check::Crc64,
+                first_block_dict_size: Some(8 << 20),
                 padding: 0,
                 first_block: 0,
                 block_count: 1,

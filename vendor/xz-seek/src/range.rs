@@ -7,10 +7,13 @@
 //! buffer the whole of it fits in — see `docs/design/architecture.md`, "The bulk
 //! range read: ordered delivery into the caller's buffer".
 //!
-//! **The delivery contract does not change with the worker count.** At one
-//! worker there is no pool at all: the calling thread decodes each block the
-//! range covers, in order, into a slot of its own and serves the caller's fills
-//! out of it. At two workers and above the same fills are served out of slots a
+//! **The delivery contract does not change with the worker count, and neither
+//! does the fetch.** Every block is read into a [`Window`](crate::Window) over
+//! its whole compressed extent, at every worker count — one fetch policy, two
+//! scheduling policies. At one worker there is no pool at all: the calling
+//! thread fetches each block the range covers into a window of its own, decodes
+//! it into a slot of its own, and serves the caller's fills out of that. At two
+//! workers and above the same fills are served out of slots a
 //! [`Pool`](crate::pool::Pool) filled — one fetch stage reading ascending, N
 //! decoders drawing single blocks from a shared queue, and this module putting
 //! the results back in order at the delivery head. Which of the two runs is
@@ -52,7 +55,7 @@
 use core::ops::Range;
 use std::sync::Arc;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::plan::RangePlan;
 use crate::pool::Pool;
 use crate::source::CompressedSource;
@@ -106,6 +109,18 @@ pub struct RangeRead<S: CompressedSource> {
     /// What the slot is sized to: the largest block *this range covers*, not the
     /// largest in the file.
     slot_len: usize,
+    /// The compressed window the one-worker path fetches each block into,
+    /// reused across blocks. Empty until the first block is actually fetched,
+    /// and never allocated at all above one worker, where the fetch stage
+    /// allocates its own.
+    window: Vec<u8>,
+    /// What the window is sized to: the plan's `compressed_window_bytes()`,
+    /// which is the largest block this range covers, measured whole.
+    window_len: usize,
+    /// The **source's** own size, asked once and kept: a window is told what
+    /// the file would answer, so a truncated file short-returns where the file
+    /// does. `None` until the first fetch.
+    file_size: Option<u64>,
     /// The uncompressed range the slot currently holds. Empty before the first
     /// decode, and an empty range never contains anything, so no sentinel is
     /// needed.
@@ -161,6 +176,10 @@ impl<S: CompressedSource> RangeRead<S> {
         // rather than an allocation that aborts: a zero-length slot reaches
         // `decode_into`, which names both lengths.
         let slot_len = usize::try_from(plan.decoded_slot_bytes()).unwrap_or(0);
+        // Sized the same way and for the same reason: a block whose compressed
+        // extent does not fit this platform's address space is `decode_here`'s
+        // to name, not an allocation that aborts.
+        let window_len = usize::try_from(plan.compressed_window_bytes()).unwrap_or(0);
         let tasks: Arc<[BlockTask]> = tasks.into();
         // **The plan decides which path runs**, and it has already clamped the
         // count by the blocks the range covers — so more than one worker means
@@ -180,6 +199,9 @@ impl<S: CompressedSource> RangeRead<S> {
             end,
             slot: Vec::new(),
             slot_len,
+            window: Vec::new(),
+            window_len,
+            file_size: None,
             held: 0..0,
             plan,
             pool,
@@ -295,6 +317,14 @@ impl<S: CompressedSource> RangeRead<S> {
     }
 
     /// The one-worker path: fetch and decode at the delivery head.
+    ///
+    /// **It builds the same [`Window`](crate::Window) the pool's fetch stage
+    /// does**, through the same [`BlockTask::fetch_window`], so the read has one
+    /// fetch policy at every worker count and two scheduling policies. What
+    /// differs is the buffer: the fetcher allocates one per block because
+    /// `workers + 2` circulate, and here there is exactly one, reused, sized off
+    /// the plan's `compressed_window_bytes()` the way the slot is sized off its
+    /// `decoded_slot_bytes()`.
     fn decode_here(&mut self) -> Result<bool> {
         // A block that ends at or before the delivery head has nothing to give.
         // Only a zero-length block can be one — `SeekTable::validate` admits
@@ -316,14 +346,40 @@ impl<S: CompressedSource> RangeRead<S> {
             // build, which is the difference `reader::DISCARD_CHUNK` records.
             self.slot = vec![0u8; self.slot_len];
         }
+        if self.window.len() < self.window_len {
+            self.window = vec![0u8; self.window_len];
+        }
+        let file_size = self.source_size()?;
         // Decoded into the slot even where `buf` could have taken the block
         // whole — deficiency: KD8, whose detail is in
         // `docs/design/architecture.md`.
-
-        task.decode_into(&self.source, &mut self.slot)?;
+        let window =
+            task.fetch_window(&self.source, file_size, core::mem::take(&mut self.window))?;
+        let decoded = task.decode_into(&window, &mut self.slot);
+        // The buffer comes back whether the decode succeeded or not, so a
+        // handle that is about to be spent does not also drop its allocation
+        // on the way out.
+        self.window = window.into_inner();
+        decoded?;
         self.held = task.uncompressed_range();
         self.next += 1;
         Ok(true)
+    }
+
+    /// The source's own size, asked once per handle.
+    ///
+    /// The pool's fetch stage asks once per read for the same reason: it is a
+    /// `stat` on a file, and the window every block is wrapped in needs it.
+    fn source_size(&mut self) -> Result<u64> {
+        if let Some(size) = self.file_size {
+            return Ok(size);
+        }
+        let size = self.source.size().map_err(|source| Error::Io {
+            compressed_offset: 0,
+            source,
+        })?;
+        self.file_size = Some(size);
+        Ok(size)
     }
 
     /// The pooled path: take the next block **in order** from the workers.

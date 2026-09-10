@@ -367,47 +367,23 @@ fn fetch<S: CompressedSource>(
         if cancel.load(Ordering::Relaxed) || faulted.load(Ordering::Relaxed) {
             return;
         }
-        let extent = task.compressed_range();
-        let Ok(len) = usize::try_from(extent.end - extent.start) else {
-            faulted.store(true, Ordering::Relaxed);
-            let _ = results.send((
-                seq,
-                Err(Error::Io {
-                    compressed_offset: extent.start,
-                    source: std::io::Error::other(
-                        "xz-seek: this block's compressed extent does not fit in memory",
-                    ),
-                }),
-            ));
-            return;
-        };
-        let mut bytes = vec![0u8; len];
-        let mut got = 0usize;
-        while got < len {
-            match source.read_at(extent.start + got as u64, &mut bytes[got..]) {
-                Ok(0) => break,
-                Ok(n) => got += n,
-                Err(e) => {
-                    faulted.store(true, Ordering::Relaxed);
-                    let _ = results.send((
-                        seq,
-                        Err(Error::Io {
-                            compressed_offset: extent.start + got as u64,
-                            source: e,
-                        }),
-                    ));
-                    return;
-                }
-            }
-        }
+        // A fresh `Vec` per block: the fetcher allocates one window per block
+        // and drops it once its decoder is done with it, because `workers + 2`
+        // of them circulate. The one-worker path hands the same call one buffer
+        // over and over, which is where the reuse is.
+        //
         // A short fetch is the file ending early, and it is left to the decode
         // to say so: the window short-returns exactly where the file does, and
         // `Truncated` is raised with the offset the seeking path would name.
-        bytes.truncate(got);
-        if work
-            .send((seq, *task, Window::new(extent.start, file_size, bytes)))
-            .is_err()
-        {
+        let window = match task.fetch_window(source, file_size, Vec::new()) {
+            Ok(window) => window,
+            Err(e) => {
+                faulted.store(true, Ordering::Relaxed);
+                let _ = results.send((seq, Err(e)));
+                return;
+            }
+        };
+        if work.send((seq, *task, window)).is_err() {
             return;
         }
     }

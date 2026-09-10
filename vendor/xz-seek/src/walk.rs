@@ -23,6 +23,20 @@
 //! An index larger than the window falls back to a read sized to the index,
 //! which is the same policy with a bigger `len`.
 //!
+//! # The first block's header rides on the stream header's read
+//!
+//! [`StreamEntry::first_block_dict_size`] is what a caller charges one concurrent
+//! decode for, and it is one byte of the first block's header — which begins
+//! exactly where the stream header ends. That read is extended forward to cover
+//! it, so the block header costs **no additional read**: the window still starts
+//! 4 KiB below the stream header, and only grows at its far end. What it costs is
+//! bytes, at most [`crate::block::HEADER_SIZE_MAX`] of them per stream.
+//!
+//! *Rejected: buying the lookahead out of the backward reach* — 4,084 bytes below
+//! the header down to 3,060. It is free in bytes and costs a second read on any
+//! stream whose index and footer exceed what is left, which is on the order of
+//! 750 blocks in one stream, for no gain over spending the bytes.
+//!
 //! # What a failure is called
 //!
 //! Three variants come out of this module, and the split is R7's:
@@ -143,6 +157,12 @@ fn missing_end<T>(tail_most: bool, compressed_offset: u64) -> Result<T> {
 /// That is the whole of the straddle: a backward walk asking for the 12 bytes at
 /// a stream's start gets the 4 KiB below it in the same read, and that is where
 /// the previous stream's index and footer live.
+///
+/// [`Backfill::ahead`] buys a *forward* lookahead on top of that — the stream
+/// header's read is what also fetches the first block's header — and it is
+/// bought with bytes rather than with backward reach: the window still starts
+/// [`WINDOW`] below the range asked for, and grows by the lookahead at its far
+/// end.
 struct Backfill<'s, S: CompressedSource> {
     source: &'s S,
     size: u64,
@@ -166,17 +186,30 @@ impl<'s, S: CompressedSource> Backfill<'s, S> {
     /// at the file's size: this is the only place the walk can run off the end,
     /// so it is the only place that check has to be written.
     fn bytes(&mut self, offset: u64, len: usize) -> Result<&[u8]> {
+        self.ahead(offset, len, 0)
+    }
+
+    /// The `len` bytes at `offset` **and** `extra` bytes past them, in one read.
+    ///
+    /// The window still begins [`WINDOW`] below `offset`, so the straddle that
+    /// makes the walk one read a stream is untouched and the read simply grows
+    /// by `extra`. That is the trade the lookahead is bought at: taking it out
+    /// of the backward reach instead would shorten the tail this read carries
+    /// for the *next* stream, and cost a second read on any stream whose index
+    /// and footer no longer fit under what was left.
+    fn ahead(&mut self, offset: u64, len: usize, extra: usize) -> Result<&[u8]> {
+        let total = len + extra;
         let end = offset
-            .checked_add(len as u64)
+            .checked_add(total as u64)
             .filter(|end| *end <= self.size)
             .ok_or(Error::Truncated {
                 compressed_offset: self.size,
             })?;
         if offset < self.start || end > self.start + self.buf.len() as u64 {
-            self.fill(offset, end)?;
+            self.fill(offset, end, extra)?;
         }
         let lo = (offset - self.start) as usize;
-        Ok(&self.buf[lo..lo + len])
+        Ok(&self.buf[lo..lo + total])
     }
 
     /// The same, copied out, for a range that has to outlive the next refill.
@@ -186,8 +219,8 @@ impl<'s, S: CompressedSource> Backfill<'s, S> {
         Ok(out)
     }
 
-    fn fill(&mut self, offset: u64, end: u64) -> Result<()> {
-        let want = ((end - offset) as usize).max(WINDOW) as u64;
+    fn fill(&mut self, offset: u64, end: u64, extra: usize) -> Result<()> {
+        let want = ((end - offset) as usize).max(WINDOW + extra) as u64;
         let start = end.saturating_sub(want);
         let len = (end - start) as usize;
         self.buf.clear();
@@ -214,6 +247,9 @@ struct Walked {
     end: u64,
     check: Check,
     padding: u64,
+    /// What this stream's first block header declares, or `None` where it did
+    /// not parse: see [`StreamEntry::first_block_dict_size`].
+    first_block_dict_size: Option<u64>,
     /// `(unpadded_size, uncompressed_size)` per block, in stream order.
     records: Vec<(u64, u64)>,
 }
@@ -314,8 +350,12 @@ fn one_stream<S: CompressedSource>(
     };
 
     // The header costs no extra read: the window refills to end where this
-    // range ends, so it carries the previous stream's tail with it.
-    let h: [u8; 12] = w.array(start)?;
+    // range ends, so it carries the previous stream's tail with it. The same
+    // read reaches forward over the first block's header, which begins where
+    // the stream header ends.
+    let extra = first_block_header_extent(&records) as usize;
+    let bytes = w.ahead(start, STREAM_HEADER_SIZE as usize, extra)?;
+    let (h, first_block_header) = bytes.split_at(STREAM_HEADER_SIZE as usize);
     if h[0..6] != HEADER_MAGIC {
         return inconsistent(start);
     }
@@ -327,13 +367,69 @@ fn one_stream<S: CompressedSource>(
         return inconsistent(start + 6);
     }
 
+    let first_block_dict_size = first_block_dict_size(&records, start, check, first_block_header);
+
     Ok(Walked {
         start,
         end: footer_end,
         check,
         padding,
+        first_block_dict_size,
         records,
     })
+}
+
+/// How far past a stream header the first block's header can possibly run.
+///
+/// A block header is `(first byte + 1) * 4` bytes and never more than
+/// [`crate::block::HEADER_SIZE_MAX`], and it cannot be longer than the block the
+/// index sized. Every byte of it therefore lies inside the stream, which is what
+/// makes the extended request safe: `start + 12 + extent` is at most the
+/// stream's own index offset.
+fn first_block_header_extent(records: &[(u64, u64)]) -> u64 {
+    match records.first() {
+        Some((unpadded, _)) => (*unpadded).min(crate::block::HEADER_SIZE_MAX),
+        None => 0,
+    }
+}
+
+/// The dictionary the first block declares, from bytes the header read carried.
+///
+/// **A header that does not parse is `None` rather than a failed walk.** The
+/// walk places blocks out of the *index*, and a damaged block header is not a
+/// fault in the index region: refusing the file here would make a stream's first
+/// damaged header cost a caller every other block in the file, where today it
+/// costs that block alone — `crate::decode` re-reads and re-parses the same
+/// header, so the fault is raised, with its offset, at the read that meets it.
+///
+/// **What it may not do is spell that absence as zero.** Zero is what a chain
+/// naming no LZMA2 filter declares, and a stream with no blocks has no header to
+/// read and a dictionary known to be zero all the same; both are `Some(0)`. The
+/// field is the per-stream proxy for every block of the stream, so a stream
+/// whose first header is damaged and whose second block declares a large
+/// dictionary is one the reader really does allocate for — `corrupt-block-header.xz`
+/// is that file — and charging it zero would understate it with nothing in the
+/// table able to say so.
+fn first_block_dict_size(
+    records: &[(u64, u64)],
+    start: u64,
+    check: Check,
+    header: &[u8],
+) -> Option<u64> {
+    let Some(&(unpadded_size, uncompressed_size)) = records.first() else {
+        return Some(0);
+    };
+    // `uncompressed_offset` is the one field the parse does not read; the walk
+    // does not know the stream's uncompressed base until `assemble` runs.
+    let entry = BlockEntry {
+        compressed_offset: start + STREAM_HEADER_SIZE,
+        uncompressed_offset: 0,
+        unpadded_size,
+        uncompressed_size,
+    };
+    crate::block::parse(header, &entry, check)
+        .ok()
+        .map(|h| h.dict_size)
 }
 
 /// The two stream-flag bytes, which the header and the footer both carry.
@@ -449,6 +545,7 @@ fn assemble(size: u64, walked: Vec<Walked>) -> Result<SeekTable> {
             padding: s.padding,
             first_block,
             block_count: s.records.len(),
+            first_block_dict_size: s.first_block_dict_size,
         });
         uncompressed_offset = u;
     }
@@ -520,6 +617,32 @@ mod tests {
         assert_eq!(w.bytes(1_000, 9_000).unwrap().len(), 9_000);
         assert_eq!(src.reads.get(), 2);
         assert_eq!(src.last_len.get(), 9_000);
+    }
+
+    /// The lookahead is bought with bytes: the window still starts where it
+    /// would have, and the read grows at its far end.
+    ///
+    /// That is the whole reason the first block's header is free — the tail this
+    /// read carries for the *next* stream is untouched, so the read count is
+    /// what it was.
+    #[test]
+    fn a_lookahead_grows_the_read_and_leaves_the_backward_reach_alone() {
+        let src = Counting::new(100_000);
+        let mut w = Backfill::new(&src, 100_000);
+
+        let got = w.ahead(50_000, 12, 1_024).unwrap();
+        assert_eq!(got.len(), 12 + 1_024);
+        assert_eq!(got, &src.bytes[50_000..][..12 + 1_024]);
+        assert_eq!(src.reads.get(), 1);
+        // One read, WINDOW + lookahead long, and starting exactly where a
+        // plain twelve-byte request would have put it.
+        assert_eq!(src.last_len.get(), WINDOW + 1_024);
+        assert_eq!(w.start, 50_012 - WINDOW as u64);
+
+        // So the previous stream's whole tail is still cached.
+        assert_eq!(src.reads.get(), 1);
+        assert_eq!(w.bytes(50_012 - WINDOW as u64, 4).unwrap().len(), 4);
+        assert_eq!(src.reads.get(), 1);
     }
 
     #[test]
@@ -674,6 +797,14 @@ mod tests {
         // The magic, two tail reads and two sized index reads: still no more
         // than one read a stream beyond the ones the window cannot avoid.
         assert!(src.reads.get() <= 1 + 2 * (t.stream_count() + 1));
+
+        // The blocks here are filler, so no first block header parses. That is
+        // `None` rather than a failed walk: the index region is intact and the
+        // file's geometry is exactly what it says it is, but no dictionary was
+        // read, and only `None` can say so — zero is a dictionary a header can
+        // declare.
+        assert_eq!(t.streams[0].first_block_dict_size, None);
+        assert_eq!(t.streams[1].first_block_dict_size, None);
     }
 
     fn walk_bytes(bytes: Vec<u8>) -> Result<SeekTable> {

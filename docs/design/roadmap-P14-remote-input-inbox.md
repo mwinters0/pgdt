@@ -339,3 +339,54 @@ specified.
 
 **Origin.** `P19.5`, 2026-09-09; the shipped mechanism is
 [`architecture.md`](architecture.md), "Execution model and API surface".
+
+---
+
+## A block decodes out of a caller-supplied window, and the loan is what makes that free
+
+**Fact.** `xz-seek` guarantees that `BlockTask::decode_into` over a
+`Window` cut to that task's own `compressed_range()` decodes the block without
+copying the compressed bytes at all. Three pieces make it work and all are
+public: `compressed_range()` is the block's `total_size()`, so it covers the
+header, the payload and the padding the check sits behind; `Window::new(base,
+file_size, bytes)` builds a source over bytes somebody else fetched; and
+`CompressedSource::slice_at` lends where the source holds the range whole —
+`BlockDecode::fill` asks for `total_size() - header_size`, the *block's* tail
+rather than the file's, so a window cut to the extent satisfies it in one go and
+no input chunk is ever allocated. It is stated as a guarantee in that crate's
+`architecture.md` rather than left as a property of its tests, and
+`Reader::decoder_bytes()` is the matching charge — the dictionary and the
+backend's state without the input-chunk term that `decode_footprint()` carries.
+
+Two consequences travel with it. It closes that crate's `KD3` for the caller
+that takes it: a positioned block read costs **two** source reads today, the
+header's and the payload's, and against a window both come out of memory. And
+it is **not** a memory saving — the window is the block's whole compressed
+extent where the chunk it replaces is capped at 1 MiB, so the caller holds
+*more*, by an amount that scales with block size:
+
+| koji file | ratio | block | window | vs. the 1 MiB chunk |
+|---|---|---|---|---|
+| `…multistream.xz` | 19.41× | 24 MiB | 1.30 MB | +242 KiB a worker |
+| `…blocks128.xz` | 20.13× | 128 MiB | 6.67 MB | +5,487 KiB a worker |
+
+**Why P14 cares.** This phase is where the trade reverses. Against a local file
+the route was priced and **refused** — the header read it spares is a `pread`
+out of page cache, which is not worth 5.4 MB a worker on the 128 MiB shape, so
+`XzSource` keeps handing `decode_into` a `std::fs::File` and charges
+`decode_footprint()` whole. Over ranged GETs the same saving is one fewer round
+trip per block, against the same memory, and that is a trade this phase should
+make deliberately rather than inherit. It also composes with the two entries
+above: ["The fetch policy over a remote source is this phase's to
+own"](#the-fetch-policy-over-a-remote-source-is-this-phases-to-own-and-the-crate-ships-no-knob-for-it)
+is what decides who fetches the window, and this entry is what says the decode
+out of it is free once fetched — together they are the "take the fetch entirely"
+composition, with the crate reduced to a CPU-side decoder over buffers this
+phase hands it. If this phase does take it, `decoder_bytes()` is the divisor and
+`decode_footprint()` would over-charge by the 1 MiB chunk it never allocates.
+
+**Origin.** 2026-09-10, negotiating the re-vendor with `xz-seek` (`M77`) —
+[`../status/history/2026-09-10.md`](../status/history/2026-09-10.md), "`M77`:
+the re-vendor, and the window route priced and refused". Contingent on that
+crate keeping the guarantee; it is stated in its `architecture.md`, so re-check
+there rather than trusting this entry.

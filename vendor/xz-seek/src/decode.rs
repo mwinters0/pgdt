@@ -45,6 +45,12 @@
 //! anyway; non-null padding is [`Error::IndexInconsistent`], the same verdict
 //! the header parse reaches for its own padding.
 //!
+//! **A source that holds the tail lends it instead**, whole and in one go
+//! ([`CompressedSource::slice_at`]), so a decode out of a `Window` or a memory
+//! map copies none of the compressed bytes and the chunk above is the size of a
+//! copy that is not being made. Only the stored check, at most 64 bytes, is
+//! copied out of a loan, because it has to outlive the bytes it was cut from.
+//!
 //! The field order and the exclusion of the padding from Unpadded Size are
 //! `docs/design/xz-invariants.md`'s `I15`.
 //!
@@ -111,20 +117,38 @@ pub(crate) const DEFAULT_MEMLIMIT: u64 = 64 << 20;
 /// real corpus file's 1.29 MB block payload is twenty `read_at` calls per
 /// block — nothing on a local file, and twenty range requests where one would
 /// do over a ranged-HTTP source. Revisit only with a measurement.
+///
+/// **It sizes a copy, so a lending source never reaches it**: a loan is taken
+/// over the block's whole remaining tail, since there is nothing to amortise
+/// when no bytes move.
 pub(crate) const INPUT_CHUNK: usize = 1 << 20;
+
+/// Where the payload bytes a fill put in hand live in the source.
+///
+/// A loan is an **extent**, not a slice, because a [`BlockDecode`] holds no
+/// lifetime: the bytes are re-derived through
+/// [`CompressedSource::slice_at`](crate::CompressedSource::slice_at) on each
+/// call that needs them, which is a bounds check.
+#[derive(Clone, Copy)]
+struct Loan {
+    at: u64,
+    len: usize,
+}
 
 /// A live decode of one block, from its header to its check.
 ///
-/// Holds the compressed chunk in hand, the backend's decoder, and the check
+/// Holds the compressed chunk in hand — copied out of the source, or borrowed
+/// from it where the source lends — the backend's decoder, and the check
 /// being computed as the bytes are produced. It does not hold the uncompressed
 /// bytes: they go straight into whatever buffer [`BlockDecode::read`] was given.
 ///
 /// **It does not hold the source either**, which is why every method that
 /// touches bytes takes one. [`crate::Reader`] owns its source and owns the live
 /// decode over it, and a struct holding both would be self-referential; passing
-/// the source in per call is what keeps the reader an ordinary value. Nothing is
-/// re-derived by doing so — a `BlockDecode` is only ever driven over the source
-/// it was started against.
+/// the source in per call is what keeps the reader an ordinary value. A
+/// `BlockDecode` is only ever driven over the source it was started against,
+/// which is what makes that safe — and what lets borrowed input be kept as a
+/// [`Loan`] and re-derived per call rather than held as a slice.
 pub(crate) struct BlockDecode {
     block: BlockEntry,
     check: Check,
@@ -132,8 +156,11 @@ pub(crate) struct BlockDecode {
     header_size: u64,
     /// The Compressed Data field's length, from the index.
     payload_size: u64,
-    /// The compressed chunk in hand, payload bytes only.
+    /// The compressed chunk in hand, payload bytes only, where the source did
+    /// not lend it. Empty while [`BlockDecode::loan`] is `Some`.
     input: Vec<u8>,
+    /// The payload bytes in hand, where the source lent them instead.
+    loan: Option<Loan>,
     input_pos: usize,
     /// How much of the payload-plus-check region has been read from the source.
     tail_read: u64,
@@ -227,6 +254,7 @@ impl BlockDecode {
             header_size: header.header_size,
             payload_size: header.payload_size,
             input: Vec::new(),
+            loan: None,
             input_pos: 0,
             tail_read: 0,
             stored_check: Vec::new(),
@@ -267,6 +295,8 @@ impl BlockDecode {
         let mut produced = 0usize;
         loop {
             self.fill(source)?;
+            // The loan, re-derived, or nothing where the input was copied.
+            let lent = self.take_loan(source)?;
             // Never write past what the index says this block holds, so that a
             // partial decode cannot exceed the index either.
             let room = ((self.block.uncompressed_size - self.out_written) as usize)
@@ -278,17 +308,22 @@ impl BlockDecode {
             // seam is never offered a byte past the payload, nor room past what
             // the index says the block holds, so the backend cannot be carried
             // past either declaration by anything a file contains. The sweep's
-            // 531,684 pairs run through here, which is what makes this the pin.
+            // 532,228 pairs run through here, which is what makes this the pin.
             debug_assert!(
-                self.in_used + (self.input.len() - self.input_pos) as u64 <= self.payload_size,
+                self.in_used + (self.input_len() - self.input_pos) as u64 <= self.payload_size,
                 "the seam was offered a byte past the payload"
             );
             debug_assert!(
                 self.out_written + room as u64 <= self.block.uncompressed_size,
                 "the seam was offered room past the block"
             );
+            // One or the other, and nothing below this line knows which: a
+            // borrowed input is the source's own bytes, a copied one this
+            // struct's. `lent` borrows the source, not `self`, so the decoder
+            // is still reachable mutably beside it.
+            let input = lent.unwrap_or(&self.input[..]);
             let progress = match self.decoder.decode(
-                &self.input[self.input_pos..],
+                &input[self.input_pos..],
                 &mut out[produced..produced + room],
             ) {
                 Ok(p) => p,
@@ -354,32 +389,61 @@ impl BlockDecode {
     /// checked and dropped and the check is stashed, so the seam is never
     /// offered a byte that is not the block's compressed data.
     fn fill<S: CompressedSource>(&mut self, source: &S) -> Result<()> {
-        if self.input_pos < self.input.len() {
+        if self.input_pos < self.input_len() {
             return Ok(());
         }
         let tail = self.block.total_size() - self.header_size;
-        let remaining = tail - self.tail_read;
+        let start = self.tail_read;
+        let remaining = tail - start;
         if remaining == 0 {
             self.input.clear();
+            self.loan = None;
             self.input_pos = 0;
             return Ok(());
         }
-        let want = remaining.min(self.chunk as u64) as usize;
-        let at = self.block.compressed_offset + self.header_size + self.tail_read;
-        self.input.resize(want, 0);
-        let got = source
-            .read_at(at, &mut self.input)
-            .map_err(|e| Error::io(at, e))?;
-        if got < want {
-            // Every block the walk placed lies inside the file it measured, so
-            // a short read is the source having changed under us.
-            return Err(Error::Truncated {
-                compressed_offset: at + got as u64,
-            });
-        }
+        let at = self.block.compressed_offset + self.header_size + start;
 
-        let start = self.tail_read;
+        // A source that holds the whole remaining tail lends it in one go, and
+        // one that does not is read `chunk` bytes at a time as before. **The
+        // loan is not chunked**, because there is nothing to amortise when no
+        // bytes move: `chunk` is the size of a copy, and a knob on a loan would
+        // be a term with nothing behind it.
+        let lent = match usize::try_from(remaining)
+            .ok()
+            .and_then(|len| source.slice_at(at, len))
+        {
+            // The half of `slice_at`'s contract a consumer can hold an
+            // implementor to for free; the dev profile keeps debug assertions
+            // on, so it fires over every fixture decode. With them off a
+            // mis-sized loan is refused rather than trusted, which costs a copy
+            // and cannot mis-address a decode.
+            Some(s) => {
+                debug_assert_eq!(
+                    s.len() as u64,
+                    remaining,
+                    "a loan of {remaining} bytes at {at} came back {} long",
+                    s.len()
+                );
+                (s.len() as u64 == remaining).then_some(s)
+            }
+            None => None,
+        };
+        let want = match lent {
+            Some(s) => s.len(),
+            None => remaining.min(self.chunk as u64) as usize,
+        };
         let end = start + want as u64;
+
+        // The tail bytes this fill has in hand, whichever way they arrived.
+        let bytes: &[u8] = match lent {
+            Some(s) => s,
+            None => {
+                self.input.resize(want, 0);
+                read_whole(source, at, &mut self.input)?;
+                &self.input
+            }
+        };
+
         let check_at = tail - self.check.size();
 
         // Block padding must be null, and the bytes are already in hand.
@@ -387,21 +451,75 @@ impl BlockDecode {
         let pad_hi = check_at.min(end);
         if pad_lo < pad_hi {
             let (lo, hi) = ((pad_lo - start) as usize, (pad_hi - start) as usize);
-            if let Some(i) = self.input[lo..hi].iter().position(|b| *b != 0) {
+            if let Some(i) = bytes[lo..hi].iter().position(|b| *b != 0) {
                 return inconsistent(at + (lo + i) as u64);
             }
         }
 
+        // The stored check is the one thing a loan still copies: 64 bytes at
+        // most, and it has to outlive the bytes it was cut from.
         if check_at < end {
             let lo = (check_at.max(start) - start) as usize;
-            self.stored_check.extend_from_slice(&self.input[lo..]);
+            self.stored_check.extend_from_slice(&bytes[lo..]);
         }
 
         let payload_here = self.payload_size.saturating_sub(start).min(want as u64) as usize;
-        self.input.truncate(payload_here);
+        match lent {
+            Some(_) => {
+                self.input.clear();
+                self.loan = Some(Loan {
+                    at,
+                    len: payload_here,
+                });
+            }
+            None => {
+                self.input.truncate(payload_here);
+                self.loan = None;
+            }
+        }
         self.input_pos = 0;
         self.tail_read += want as u64;
         Ok(())
+    }
+
+    /// The payload bytes in hand, or `None` where they were copied into
+    /// [`BlockDecode::input`].
+    ///
+    /// A loan is kept as an extent and re-derived here, because this struct
+    /// holds no lifetime. **A source that lent a range and then declines it is
+    /// not an error case**, per
+    /// [`slice_at`](crate::CompressedSource::slice_at)'s contract: the range is
+    /// read instead and the decode carries on copying, so a loan can still only
+    /// ever skip a copy.
+    fn take_loan<'a, S: CompressedSource>(&mut self, source: &'a S) -> Result<Option<&'a [u8]>> {
+        let Some(loan) = self.loan else {
+            return Ok(None);
+        };
+        if let Some(s) = source.slice_at(loan.at, loan.len) {
+            debug_assert_eq!(
+                s.len(),
+                loan.len,
+                "a loan of {} bytes at {} came back {} long",
+                loan.len,
+                loan.at,
+                s.len()
+            );
+            if s.len() == loan.len {
+                return Ok(Some(s));
+            }
+        }
+        self.input.resize(loan.len, 0);
+        read_whole(source, loan.at, &mut self.input)?;
+        self.loan = None;
+        Ok(None)
+    }
+
+    /// How many payload bytes this fill put in hand.
+    fn input_len(&self) -> usize {
+        match self.loan {
+            Some(loan) => loan.len,
+            None => self.input.len(),
+        }
     }
 
     /// Read whatever of the padding and the check the payload's own reads did
@@ -411,7 +529,7 @@ impl BlockDecode {
     /// payload's last bytes fetched the thirty-five bytes that can follow them
     /// too. It has work only where the payload ended on a chunk boundary.
     fn finish_tail<S: CompressedSource>(&mut self, source: &S) -> Result<()> {
-        debug_assert_eq!(self.input_pos, self.input.len(), "the payload is spent");
+        debug_assert_eq!(self.input_pos, self.input_len(), "the payload is spent");
         let tail = self.block.total_size() - self.header_size;
         while self.tail_read < tail {
             self.fill(source)?;
@@ -450,6 +568,22 @@ impl BlockDecode {
     }
 }
 
+/// Fill `buf` from `at`, or say the source ended inside a block.
+///
+/// The one place a copied read of a block's tail happens, so that the fetch a
+/// loan replaces and the fallback a declined loan takes give a short read the
+/// same name. Every block the walk placed lies inside the file it measured, so
+/// a short read is the source having changed under us.
+fn read_whole<S: CompressedSource>(source: &S, at: u64, buf: &mut [u8]) -> Result<()> {
+    let got = source.read_at(at, buf).map_err(|e| Error::io(at, e))?;
+    if got < buf.len() {
+        return Err(Error::Truncated {
+            compressed_offset: at + got as u64,
+        });
+    }
+    Ok(())
+}
+
 /// Give a chain the seam refused a place in the taxonomy and an offset.
 ///
 /// `at` is the block header's own offset, because that is where the chain was
@@ -473,6 +607,7 @@ fn chain_error(e: SeamError, at: u64) -> Error {
 mod tests {
     use super::*;
     use crate::backend::COMPILED;
+    use crate::source::Declining;
     use crate::table::SeekTable;
     use crate::window::Window;
     use std::fs::File;
@@ -642,8 +777,8 @@ mod tests {
             }
         }
 
-        assert_eq!(files, 17, "every intact fixture but the reserved-check one");
-        assert!(blocks >= 80, "{blocks} blocks decoded");
+        assert_eq!(files, 19, "every intact fixture but the reserved-check one");
+        assert!(blocks >= 86, "{blocks} blocks decoded");
         assert_eq!(
             decodes,
             blocks * COMPILED.len() * 2,
@@ -670,6 +805,15 @@ mod tests {
     /// because a BCJ chain is the one that holds bytes back at the block's end,
     /// and `mixed-checks.xz` because its blocks span streams whose checks
     /// differ, so a window over the wrong block would not merely mis-address.
+    ///
+    /// **It is also the arm that runs both branches of `fill` over the same
+    /// bytes.** A window lends, so the borrowing pass takes the block's whole
+    /// tail in one loan; the two chunked passes go through [`Declining`], which
+    /// is the same window with the loan refused. So *a loan cannot change an
+    /// outcome* is a gated claim rather than a design one — and without the
+    /// wrapper the chunk axis would have gone quiet here, since a whole-tail
+    /// loan never re-enters `fill` and `SMALL_CHUNK` would cost the time
+    /// without reaching the multi-chunk path.
     #[test]
     fn a_block_decodes_out_of_a_window_over_its_own_compressed_range() {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
@@ -696,22 +840,43 @@ mod tests {
                 let r = block.uncompressed_range();
 
                 for &backend in COMPILED {
-                    for chunk in [INPUT_CHUNK, SMALL_CHUNK] {
-                        let got = whole_block(
-                            &window,
-                            block,
-                            check_of(&table, i),
-                            DEFAULT_MEMLIMIT,
-                            backend,
-                            chunk,
-                        )
+                    // The chunked passes decline, the whole-tail pass borrows.
+                    // `chunk` is what the borrowing pass ignores, so it is named
+                    // in the failure message either way.
+                    for (chunk, lends) in [
+                        (INPUT_CHUNK, false),
+                        (SMALL_CHUNK, false),
+                        (INPUT_CHUNK, true),
+                    ] {
+                        let got = if lends {
+                            whole_block(
+                                &window,
+                                block,
+                                check_of(&table, i),
+                                DEFAULT_MEMLIMIT,
+                                backend,
+                                chunk,
+                            )
+                        } else {
+                            whole_block(
+                                &Declining(&window),
+                                block,
+                                check_of(&table, i),
+                                DEFAULT_MEMLIMIT,
+                                backend,
+                                chunk,
+                            )
+                        }
                         .unwrap_or_else(|e| {
-                            panic!("{name} block {i} on {backend:?} at chunk {chunk}: {e}")
+                            panic!(
+                                "{name} block {i} on {backend:?} at chunk {chunk}, \
+                                 lending {lends}: {e}"
+                            )
                         });
                         assert!(
                             got == plaintext[r.start as usize..r.end as usize],
-                            "{name} block {i} on {backend:?} at chunk {chunk}: \
-                             bytes differ from xz -dc"
+                            "{name} block {i} on {backend:?} at chunk {chunk}, \
+                             lending {lends}: bytes differ from xz -dc"
                         );
                         decodes += 1;
                     }
@@ -721,7 +886,97 @@ mod tests {
         }
 
         assert!(blocks >= 8, "{blocks} blocks decoded out of a window");
-        assert_eq!(decodes, blocks * COMPILED.len() * 2);
+        assert_eq!(
+            decodes,
+            blocks * COMPILED.len() * 3,
+            "every block, under every compiled backend, declining at both chunk \
+             sizes and borrowing once"
+        );
+    }
+
+    /// A source that lends a range and then declines it decodes the same bytes.
+    ///
+    /// `fill` takes a loan and keeps it as an extent, so every later call
+    /// re-derives it — and a source is free to decline the second time, since
+    /// declining is always a correct answer. What must not happen is that the
+    /// decode fails: the contract says a loan can skip a copy and cannot
+    /// introduce an error case, and `take_loan`'s fallback is where that is
+    /// made true. Nothing in the crate lends inconsistently, so this is the
+    /// only thing that runs the fallback at all.
+    #[test]
+    fn a_source_that_stops_lending_mid_block_decodes_identically() {
+        let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
+        for name in ["many-blocks.xz", "filter-x86.xz", "check-sha256.xz"] {
+            let path = dir.join(name);
+            let (source, table) = walked(&path);
+            let file_size = CompressedSource::size(&source).expect("the fixture measures");
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let plaintext = harness::oracle::plaintext_for(&path).expect("xz -dc");
+
+            for (i, block) in table.blocks.iter().enumerate() {
+                let lo = block.compressed_offset as usize;
+                let hi = lo + block.total_size() as usize;
+                let window =
+                    Window::new(block.compressed_offset, file_size, bytes[lo..hi].to_vec());
+                let fickle = LendsOnce {
+                    inner: window,
+                    left: std::cell::Cell::new(1),
+                };
+                let r = block.uncompressed_range();
+
+                for &backend in COMPILED {
+                    fickle.left.set(1);
+                    let got = whole_block(
+                        &fickle,
+                        block,
+                        check_of(&table, i),
+                        DEFAULT_MEMLIMIT,
+                        backend,
+                        INPUT_CHUNK,
+                    )
+                    .unwrap_or_else(|e| panic!("{name} block {i} on {backend:?}: {e}"));
+                    assert_eq!(
+                        fickle.left.get(),
+                        0,
+                        "{name} block {i} on {backend:?}: the loan was never taken"
+                    );
+                    assert!(
+                        got == plaintext[r.start as usize..r.end as usize],
+                        "{name} block {i} on {backend:?}: bytes differ from xz -dc"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A source that lends its first `left` ranges and declines every one after.
+    ///
+    /// It is what a decode re-deriving an extent has to survive, and nothing
+    /// real behaves this way — a `Window` and a `&[u8]` are both pure functions
+    /// of what they hold.
+    struct LendsOnce<S> {
+        inner: S,
+        left: std::cell::Cell<usize>,
+    }
+
+    impl<S: CompressedSource> CompressedSource for LendsOnce<S> {
+        fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read_at(offset, buf)
+        }
+
+        fn size(&self) -> std::io::Result<u64> {
+            self.inner.size()
+        }
+
+        fn slice_at(&self, offset: u64, len: usize) -> Option<&[u8]> {
+            let left = self.left.get();
+            if left == 0 {
+                return None;
+            }
+            let lent = self.inner.slice_at(offset, len)?;
+            self.left.set(left - 1);
+            Some(lent)
+        }
     }
 
     /// The same bytes come out when the payload arrives in many small reads.

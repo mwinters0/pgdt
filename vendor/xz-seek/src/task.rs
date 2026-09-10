@@ -134,6 +134,66 @@ impl BlockTask {
         self.check
     }
 
+    /// This block's whole compressed extent, read out of `source` into `buf`.
+    ///
+    /// **The one fetch policy the bulk range read has**, called by the pool's
+    /// fetch stage and by the one-worker path alike, so that "the same `Window`
+    /// the fetcher builds" is one function rather than two that agree today.
+    /// `file_size` is the **source's own** size and not the table's: a window is
+    /// told what the file would answer, so a file that ended early short-returns
+    /// where the file does and reaches [`Error::Truncated`] with the offset the
+    /// seeking path names, instead of arriving as a window refusing a read it
+    /// should have answered short.
+    ///
+    /// `buf` is grown when it is shorter than the extent and truncated when it
+    /// is longer, so a caller reusing one buffer across blocks — sized off
+    /// [`RangePlan::compressed_window_bytes`](crate::RangePlan::compressed_window_bytes),
+    /// the largest block its range covers — allocates once, and a caller handing
+    /// over an empty `Vec` gets a fresh `vec![0u8; len]` per block.
+    ///
+    /// **A short read is not an error here.** The window is truncated to what
+    /// arrived and the decode is what names it, which keeps every short-read and
+    /// `Truncated` path in the one place that already had them.
+    pub(crate) fn fetch_window<S: CompressedSource>(
+        &self,
+        source: &S,
+        file_size: u64,
+        mut buf: Vec<u8>,
+    ) -> Result<crate::Window<Vec<u8>>> {
+        let extent = self.compressed_range();
+        let Ok(len) = usize::try_from(extent.end - extent.start) else {
+            return Err(Error::Io {
+                compressed_offset: extent.start,
+                source: std::io::Error::other(
+                    "xz-seek: this block's compressed extent does not fit in memory",
+                ),
+            });
+        };
+        if buf.len() < len {
+            // `vec![0u8; n]` reaches `alloc_zeroed`, where growing a `Vec` with
+            // `resize` writes the zeros a byte at a time in an unoptimized
+            // build — the difference `reader::DISCARD_CHUNK` records.
+            buf = vec![0u8; len];
+        } else {
+            buf.truncate(len);
+        }
+        let mut got = 0usize;
+        while got < len {
+            match source.read_at(extent.start + got as u64, &mut buf[got..]) {
+                Ok(0) => break,
+                Ok(n) => got += n,
+                Err(source) => {
+                    return Err(Error::Io {
+                        compressed_offset: extent.start + got as u64,
+                        source,
+                    });
+                }
+            }
+        }
+        buf.truncate(got);
+        Ok(crate::Window::new(extent.start, file_size, buf))
+    }
+
     /// Decode the whole block into `out`, verify it, and return.
     ///
     /// `source` supplies the block's compressed bytes at the file's own

@@ -69,7 +69,7 @@ use crate::{Error, Result};
 /// shape. [`CacheStatus::Incomplete`] is the worked example — it reinterprets
 /// `scanned_through` against a size already stored, changing nothing on
 /// disk.
-const FORMAT_VERSION: u32 = 16;
+const FORMAT_VERSION: u32 = 17;
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.

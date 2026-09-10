@@ -1,6 +1,6 @@
 Vendored from /mnt/wd12t/fedora/experiments/xz-seek
-commit 5b549d72cc329a251830fb4aef36ca9804b1d668
-committed 2026-09-06T22:09:38Z
+commit 87d55715e23945a240fe0544375a416ce56e6ca5
+committed 2026-09-10T18:23:29Z
 
 This is a read-only snapshot, not a fork: a bug found here is fixed upstream
 and arrives at the next sync, never patched in this copy directly. Re-sync

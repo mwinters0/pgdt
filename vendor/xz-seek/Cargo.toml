@@ -9,8 +9,21 @@ name = "xz-seek"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
-description = "A positioned read over an .xz file: an uncompressed byte offset in, the bytes there out."
+description = "Random access into .xz files: read at any uncompressed byte offset without decoding from zero."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/mwinters0/xz-seek"
+readme = "README.md"
+keywords = ["xz", "lzma", "seek", "random-access", "compression"]
+categories = ["compression"]
+# An allowlist, because this package sits at the workspace root: the default
+# rules skip the members (they carry their own manifests) but sweep up `docs/`,
+# `scripts/`, `tests/` and `.claude/` — none of which a consumer vendors, and
+# all of which are one `repository` link away. An allowlist also does not rot
+# when a new top-level directory appears.
+include = ["/src/**/*.rs", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
+# Everything above is publish-ready and nothing has been published. This is the
+# catch: deleting this line is the whole act, and `xz-seek-cli` — which builds
+# the `xz-seek` binary — carries its own and is a separate decision.
 publish = false
 
 # Every dependency below but `crc` is optional, because two of this crate's

@@ -150,6 +150,36 @@ impl Backend {
     pub fn is_available(self) -> bool {
         COMPILED.contains(&self)
     }
+
+    /// Everything one live payload decoder holds beyond the `D` bytes of
+    /// dictionary its block declares, in bytes.
+    ///
+    /// A **constant per backend**, because it is one: neither figure varies with
+    /// the dictionary, the payload or the LZMA2 properties, and each already
+    /// covers the worst chain the format allows. It folds two things together —
+    /// the decoder's own state, and the overhang the dictionary buffer carries
+    /// above `D` — so that a footprint stays the three terms it is described in
+    /// (`dictionary + input chunk + backend state`) rather than four, and so
+    /// that `liblzma`'s `round16(max(D, 4096)) + 608` is charged rather than
+    /// silently dropped.
+    ///
+    /// Both numbers are traced to source in
+    /// `docs/design/xz-invariants.md`, `I24`, which carries the re-verify
+    /// command; `tests/footprint.rs` is what holds them against a live decode.
+    /// They are struct layouts, so they move with a compiler, a target, a
+    /// feature or a release.
+    ///
+    /// Not public. It is a term of [`crate::Reader::decode_footprint`] and of
+    /// [`crate::RangePlan::decoder_bytes`], and both callers take the backend
+    /// from the reader that will do the decoding; a caller holding this alone
+    /// could pair it with a backend it is not running, which is the mistake the
+    /// query's whole shape exists to prevent.
+    pub(crate) fn decoder_state_bytes(self) -> u64 {
+        match self {
+            Backend::Liblzma => 34_592,
+            Backend::Xz4rust => 30_680,
+        }
+    }
 }
 
 impl core::fmt::Display for Backend {

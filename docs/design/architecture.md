@@ -252,13 +252,17 @@ duplicates another's.
 
 **`partition_bytes` is what the source's own pools hold per partition, and it
 says what it excludes.** For the compressed source that is a decoded block slot
-plus the chunk buffer a straddling read is assembled into. Outside it are the
-decoder's fixed compressed input buffer, which is `xz-seek`'s, and the LZMA2
-dictionary, which is written in each *block header* and so is not in the seek
-table — `xz_seek::RangePlan::footprint` excludes it for that same reason and
-names 8 MiB a worker as the practical allowance. A caller budgeting workers adds
-both; a number that silently guessed a dictionary size would be wrong by 8× on a
-`-9` file.
+plus the chunk buffer a straddling read is assembled into. Outside it is the
+decoder's own retention, which is one number: `xz_seek::Reader::decode_footprint()`
+— the LZMA2 dictionary, the compressed input buffer and the backend's own state,
+costing no source read and the same whatever range is read. A caller budgeting
+workers adds it; a number that silently guessed a dictionary size would be wrong
+by 8× on a `-9` file. The dictionary is written in each *block header* rather
+than in the seek table, so that number is a very good estimate and not a sound
+ceiling — a stream whose later block declares a larger dictionary than its first
+is understated, and what cannot understate is the reader's `memlimit`, compared
+against each block's own declared dictionary before any backend object is built,
+so an understating charge is a clean refusal and never an overrun.
 
 **`Parallelism` is the caller's half of that same question**, and it sits on
 both option structs: `ScanOptions::parallelism` and `QueryOptions::parallelism`,

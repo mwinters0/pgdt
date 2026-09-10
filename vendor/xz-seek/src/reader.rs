@@ -380,6 +380,182 @@ impl<S: CompressedSource> Reader<S> {
         ))
     }
 
+    /// What one decode of this file holds besides the bytes it produces, in
+    /// bytes.
+    ///
+    /// The charge a caller sizing a worker pool against a memory budget divides
+    /// by: everything one [`BlockTask::decode_into`](crate::BlockTask::decode_into)
+    /// — or one live [`Reader::read_at`] — retains beyond the output buffer the
+    /// caller owns. Three terms, and only the first varies per block:
+    ///
+    /// | Held | What it is |
+    /// |---|---|
+    /// | the LZMA2 dictionary | the largest any stream's first block header declares |
+    /// | the compressed input chunk | 1 MiB, capped by the largest block's whole extent |
+    /// | the backend's own decoder state | a constant, per backend |
+    ///
+    /// **It is [`Reader::decoder_bytes`] plus [`Reader::input_chunk_bytes`]**,
+    /// and a caller whose source lends its bytes wants the first of those alone:
+    /// the chunk is never allocated over such a source, so this sum over-charges
+    /// it by exactly that term.
+    ///
+    /// It costs **no source read and no decode**: the seek table carries the
+    /// first two and this reader is the third. **The dictionary is the whole
+    /// file's**, so *this* number does not vary with what is read and a caller
+    /// asks once, at construction, and stores it.
+    ///
+    /// That is also why it is not the charge for one *range*.
+    /// [`Reader::plan_range`] takes the same three terms over the streams a
+    /// range touches, so its
+    /// [`RangePlan::decoder_bytes`](crate::RangePlan::decoder_bytes) is the
+    /// smaller wherever a range misses the largest-dictionary stream — or a
+    /// stream whose first block header did not parse, which this method charges
+    /// `memlimit` for across the whole file. A caller sizing a pool for a read
+    /// it is about to make asks there and not here.
+    ///
+    /// **It is a footprint, not a dictionary, and `memlimit` is neither.**
+    /// [`Builder::memlimit`] is a refusal threshold about the *file* — *this
+    /// file declares a dictionary larger than you allowed* — and stays in
+    /// dictionary bytes; this is a charge for *our own* decode. The dictionary
+    /// term is separately readable as
+    /// [`StreamEntry::first_block_dict_size`](crate::StreamEntry::first_block_dict_size),
+    /// which is a public field of the table.
+    ///
+    /// # What it is not
+    ///
+    /// **Not a sound ceiling.** Within one stream every block declares the same
+    /// filter chain unless the producer deliberately changed it, which `xz`
+    /// does on demand (`docs/design/xz-invariants.md`, `I23`), so this is exact
+    /// for every file written without that and **understates** for the rest —
+    /// deficiency: KD10, whose detail is in `docs/design/architecture.md`. The
+    /// backstop is unconditional: `memlimit` is compared against each block's
+    /// own declared dictionary before any backend object is built, so an
+    /// understating charge surfaces as a clean
+    /// [`Error::MemoryLimitExceeded`] and never as an overrun. A caller that
+    /// needs a number that cannot understate has one already —
+    /// `memlimit` itself, which is the ceiling this can never exceed.
+    ///
+    /// **A stream whose first block header did not parse is charged
+    /// `memlimit`**, since nothing is known about the rest of it and
+    /// over-charging is the cheap direction.
+    ///
+    /// **Never zero**, so it is safe as a divisor: a file with no blocks still
+    /// reports the backend's own state.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use xz_seek::{Bulk, Reader};
+    ///
+    /// let reader = Reader::new(std::fs::File::open("dump.xz")?)?;
+    /// let budget = 1 << 30;
+    ///
+    /// // What one decode of this file holds, whichever range it is over.
+    /// let per_decode = reader.decode_footprint();
+    ///
+    /// // How many decodes that budget admits over the range actually being
+    /// // read is `plan_range`'s answer rather than a division: the plan charges
+    /// // that range's own dictionary, and the buffers a bulk read holds beside
+    /// // the decoders.
+    /// let whole = 0..reader.index().uncompressed_size();
+    /// let workers = reader.plan_range(whole, Bulk::new(16, budget)).workers();
+    /// # let _ = (per_decode, workers);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decode_footprint(&self) -> u64 {
+        self.table.decode_footprint(self.backend, self.memlimit)
+    }
+
+    /// What one decode of this file holds when the source lends its bytes, in
+    /// bytes: the LZMA2 dictionary plus the backend's own decoder state.
+    ///
+    /// [`Reader::decode_footprint`] less
+    /// [`Reader::input_chunk_bytes`] — the charge for a decode that never
+    /// allocates an input buffer, because a source that lends is read through
+    /// [`CompressedSource::slice_at`](crate::CompressedSource::slice_at) and the
+    /// chunk is never built. A caller handing
+    /// [`BlockTask::decode_into`](crate::BlockTask::decode_into) a
+    /// [`Window`](crate::Window) cut to that task's own
+    /// [`compressed_range`](crate::BlockTask::compressed_range) is exactly that
+    /// caller, and divides a budget by this rather than by the whole sum.
+    ///
+    /// **It is stated rather than left to the subtraction** so that a caller is
+    /// not the one deciding, silently, which side a fourth term of the footprint
+    /// would fall on.
+    ///
+    /// **The dictionary is the whole file's**, so this does not vary with what
+    /// is read.
+    /// [`RangePlan::decoder_bytes`](crate::RangePlan::decoder_bytes) is the same
+    /// quantity over the streams one *range* touches, and is the smaller
+    /// wherever that range misses the largest-dictionary stream; a caller sizing
+    /// a pool for a read it is about to make asks there and not here.
+    ///
+    /// **Not a sound ceiling**, on the same terms as the sum that contains it: a
+    /// stream whose *later* block declares a larger dictionary than its first is
+    /// understated — deficiency: KD10, whose detail is in
+    /// `docs/design/architecture.md`. `memlimit` remains the backstop, compared
+    /// against each block's own declared dictionary before any backend object is
+    /// built.
+    ///
+    /// **Never zero**, so it is safe as a divisor: the backend term is
+    /// unconditional, so even a file with no blocks reports it.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use xz_seek::Reader;
+    ///
+    /// let reader = Reader::new(std::fs::File::open("dump.xz")?)?;
+    /// assert_eq!(
+    ///     reader.decode_footprint(),
+    ///     reader.decoder_bytes() + reader.input_chunk_bytes(),
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decoder_bytes(&self) -> u64 {
+        self.table.decoder_bytes(self.backend, self.memlimit)
+    }
+
+    /// The compressed input buffer a positioned read of this file may hold, in
+    /// bytes: the second term of [`Reader::decode_footprint`], on its own.
+    ///
+    /// A fixed 1 MiB chunk, capped by the largest block's whole compressed
+    /// extent, since a block shorter than the chunk is read in one. It is here
+    /// because the memory is: [`Reader::read_at`] pulls a block through this
+    /// buffer, and so does a
+    /// [`BlockTask::decode_into`](crate::BlockTask::decode_into) over a source
+    /// that does not lend.
+    ///
+    /// **It is an upper bound, not an allocation that always happens.** A source
+    /// that lends its bytes — a [`Window`](crate::Window), a `&[u8]`, a caller's
+    /// memory map — is read through
+    /// [`CompressedSource::slice_at`](crate::CompressedSource::slice_at) and the
+    /// decode holds no chunk at all, so over such a source this term and the
+    /// footprint that contains it over-charge by exactly this much. That is the
+    /// cheap direction, and it is the same direction
+    /// [`Reader::decode_footprint`] is conservative in elsewhere.
+    ///
+    /// **It is not a term of [`RangePlan::footprint`](crate::RangePlan::footprint).**
+    /// A bulk range read fetches every block whole into a compressed window and
+    /// decodes out of it at every worker count, so no decoder on that path owns
+    /// an input buffer. A caller sizing a pool asks
+    /// [`Reader::plan_range`]; this is what a *positioned* read holds.
+    ///
+    /// ```no_run
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use xz_seek::Reader;
+    ///
+    /// let reader = Reader::new(std::fs::File::open("dump.xz")?)?;
+    /// // The published charge is the dictionary, this chunk, and the backend's
+    /// // own state.
+    /// assert!(reader.input_chunk_bytes() <= reader.decode_footprint());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn input_chunk_bytes(&self) -> u64 {
+        self.table.input_chunk()
+    }
+
     /// What a bulk read over `range` under `bulk` would hold, and how many
     /// workers it admits.
     ///
@@ -398,7 +574,7 @@ impl<S: CompressedSource> Reader<S> {
     /// a plan whose [`RangePlan::fits`] is false, reporting the footprint one
     /// worker will use anyway.
     pub fn plan_range(&self, range: core::ops::Range<u64>, bulk: Bulk) -> RangePlan {
-        RangePlan::new(&self.table, range, bulk)
+        RangePlan::new(&self.table, range, bulk, self.backend, self.memlimit)
     }
 
     /// An ordered bulk read over a range of the uncompressed stream.

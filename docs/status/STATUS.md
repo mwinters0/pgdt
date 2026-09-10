@@ -432,8 +432,11 @@ the five orderings that bind are in the spec, not here.
       plus `xz_seek::Reader::decode_footprint()`; and `BlockCache::affordable`
       restated against that same cost, `measure.PARALLEL_BUDGET` raised
       1 GiB → 2 GiB, and the manual's "headroom is a multiple of the budget"
-      corrected, which this change is what falsifies. **Blocked on `xz-seek`** and the re-vendor, and the rest
-      of the phase waits behind it. Lands before `19.13`.
+      corrected, which this change is what falsifies. **Unblocked** — `M77`
+      re-vendored `xz-seek` and `Reader::decode_footprint()` is callable, so
+      the charge is assembled from a published number rather than a constant
+      standing in for it. The rest of the phase waits behind this slice; it
+      lands before `19.13`.
 - [ ] **19.15** The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB
       with nothing stated, plus one `--jobs` leg on a plain file — the shape
       whose arena retention no reading has put against a real limit — and the

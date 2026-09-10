@@ -1,5 +1,5 @@
-//! A positioned read over an `.xz` file: an uncompressed byte offset in, the
-//! bytes there out.
+//! Random access into `.xz` files: read at any uncompressed byte offset without
+//! decoding from zero.
 //!
 //! **There is no [`std::io::Seek`] implementation, and there will not be.** The
 //! primitive here is a positioned read — see [`Reader::read_at`] — because a

@@ -165,6 +165,34 @@ impl<B: AsRef<[u8]>> CompressedSource for Window<B> {
     fn size(&self) -> io::Result<u64> {
         Ok(self.file_size)
     }
+
+    /// The bytes themselves, whenever the window holds the whole range asked
+    /// for and the file has every one of them.
+    ///
+    /// A window is the shape this method exists for: the bytes are already in
+    /// hand, so the copy `read_at` performs is pure loss to a caller that only
+    /// wants to read them.
+    ///
+    /// **The two conditions are `read_at`'s, minus its one concession.** That
+    /// method answers a read the window holds *or* a read the file itself would
+    /// short-return, and clips to `file_size` to tell them apart; here a range
+    /// that
+    /// is not held whole and inside the file is simply declined, because
+    /// declining costs a copy and short-returning would mean end of file. So
+    /// the tail window that short-returns from `read_at` lends nothing over the
+    /// same range, and both answers are right.
+    fn slice_at(&self, offset: u64, len: usize) -> Option<&[u8]> {
+        let end = offset.checked_add(len as u64)?;
+        if end > self.file_size {
+            return None;
+        }
+        let held = self.range();
+        if offset < held.start || end > held.end {
+            return None;
+        }
+        let lo = (offset - held.start) as usize;
+        Some(&self.bytes.as_ref()[lo..lo + len])
+    }
 }
 
 /// The extent and the file, never the bytes: a window is routinely megabytes.
@@ -342,6 +370,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A window lends exactly what it holds, and never past the file's end.
+    ///
+    /// The axis is the one the trait's own tests run — `source.rs`'s
+    /// `loan_axis` — with the window's two edges added, and the property is
+    /// `source.rs`'s `a_loan_agrees_with_a_read`, so a window is held to the
+    /// same sentence as every other implementor rather than to its own reading.
+    ///
+    /// What is asserted beside it is the *positive* half, which no shared
+    /// property can carry: a source that declined everything would satisfy the
+    /// contract and lend nothing.
+    #[test]
+    fn a_window_lends_what_it_holds_whole_and_declines_the_rest() {
+        use crate::source::{a_loan_agrees_with_a_read, loan_axis};
+
+        let w = ten_of_a_hundred();
+        let axis = loan_axis(100).into_iter().chain([
+            (39u64, 1usize),
+            (39, 2),
+            (40, 10),
+            (49, 1),
+            (49, 2),
+            (50, 0),
+        ]);
+        a_loan_agrees_with_a_read(&w, axis);
+
+        assert_eq!(w.slice_at(40, 10).unwrap(), &(40u8..50).collect::<Vec<_>>());
+        assert_eq!(w.slice_at(44, 3).unwrap(), &[44, 45, 46]);
+        assert_eq!(w.slice_at(50, 0).unwrap(), b"");
+
+        // Before it, straddling either edge, and wholly past it.
+        for (offset, len) in [(0u64, 4usize), (39, 2), (48, 4), (50, 1), (60, 4)] {
+            assert_eq!(w.slice_at(offset, len), None, "{offset}+{len}");
+        }
+
+        // A tail window short-returns from `read_at` where the file ends and
+        // lends nothing over the same range: a loan is whole or it is absent.
+        let tail = Window::new(40, 50, (40u8..50).collect::<Vec<u8>>());
+        assert_eq!(tail.read_at(46, &mut [0u8; 8]).unwrap(), 4);
+        assert_eq!(tail.slice_at(46, 8), None);
+        assert_eq!(tail.slice_at(46, 4).unwrap(), &[46, 47, 48, 49]);
+        a_loan_agrees_with_a_read(&tail, loan_axis(50));
+
+        // An overflowing extent declines rather than wrapping into a range that
+        // appears to fit, which is `range()`'s saturation seen from here.
+        let far = Window::new(u64::MAX - 4, u64::MAX, vec![0u8; 10]);
+        assert_eq!(far.slice_at(u64::MAX - 4, 8), None);
+        assert_eq!(far.slice_at(u64::MAX - 4, 4).unwrap(), &[0, 0, 0, 0]);
+        a_loan_agrees_with_a_read(&far, loan_axis(u64::MAX));
     }
 
     /// A window whose end overflows `u64` is refused, not panicked at.

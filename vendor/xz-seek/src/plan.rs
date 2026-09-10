@@ -10,19 +10,21 @@
 //! [`RangePlan`] is the answer, and it is readable **before the read starts**:
 //! how many workers the two numbers admit over *this* range, and exactly how
 //! many bytes that will hold. It costs no source read and no decode — the seek
-//! table already carries every block size the arithmetic needs. See
+//! table already carries every block size the arithmetic needs, **and since the
+//! walk fills [`StreamEntry::first_block_dict_size`](crate::StreamEntry::first_block_dict_size)
+//! that includes the decoder's own dictionary**. See
 //! `docs/design/architecture.md`, "The plan: what a bulk read will hold, before
 //! it reads".
 //!
 //! **A budget too small even for one worker clamps to one and reports.** It
-//! never refuses: a caller told *"1 worker, 135.4 MiB, which exceeds the budget
+//! never refuses: a caller told *"1 worker, 142.4 MiB, which exceeds the budget
 //! you set"* can fall back to its own streaming decoder, which holds a
 //! dictionary and a chunk and never materializes a block at all, where a caller
 //! handed an error has a number it must recover from the block sizes itself.
 
 use core::ops::Range;
 
-use crate::decode::INPUT_CHUNK;
+use crate::backend::Backend;
 use crate::table::SeekTable;
 
 /// The two numbers a bulk read is bounded by: a worker count and a byte budget.
@@ -92,10 +94,11 @@ impl Bulk {
 /// plan a read it then decides not to make.
 ///
 /// **The footprint is what the read holds at once, not what it allocates over
-/// its life.** Per worker: one decoded block, one compressed window and the
-/// decode's own input chunk. Beyond one worker there are two spare compressed
-/// windows besides, so that the stage fetching them always has somewhere to put
-/// the next block while every worker is busy.
+/// its life.** Per worker: one decoded block, one compressed window, and the
+/// decoder itself — its LZMA2 dictionary plus the backend's own state. Beyond
+/// one worker there are two spare compressed windows besides, so that the stage
+/// fetching them always has somewhere to put the next block while every worker
+/// is busy.
 ///
 /// ```no_run
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -129,34 +132,51 @@ pub struct RangePlan {
     /// The largest block the range covers, in compressed bytes — header, payload,
     /// padding and check, which is what a fetch of that block asks for.
     window: u64,
-    /// The compressed input buffer one decode holds, which is the input chunk
-    /// capped by the largest block: a block smaller than the chunk is read whole.
-    chunk: u64,
+    /// The decoder one worker holds: the largest LZMA2 dictionary any stream
+    /// this range touches declares, plus the backend's own state. Zero for a
+    /// range covering no blocks, which builds no decoder.
+    decoder: u64,
 }
 
 impl RangePlan {
     /// The plan for `range` under `bulk`, from the table alone.
-    pub(crate) fn new(table: &SeekTable, range: Range<u64>, bulk: Bulk) -> RangePlan {
+    ///
+    /// `backend` and `memlimit` are the reader's, and they enter for the
+    /// decoder term alone: the backend fixes its own state, and `memlimit` is
+    /// what a stream whose first block header did not parse is charged.
+    pub(crate) fn new(
+        table: &SeekTable,
+        range: Range<u64>,
+        bulk: Bulk,
+        backend: Backend,
+        memlimit: u64,
+    ) -> RangePlan {
         let indices = table.blocks_in(range);
         let blocks = indices.len();
         let mut slot = 0u64;
         let mut window = 0u64;
-        for block in &table.blocks[indices] {
+        for block in &table.blocks[indices.clone()] {
             slot = slot.max(block.uncompressed_size);
             window = window.max(block.total_size());
         }
-        RangePlan::derive(blocks, slot, window, bulk)
+        let decoder = if blocks == 0 {
+            0
+        } else {
+            table
+                .max_dict_over(indices, memlimit)
+                .saturating_add(backend.decoder_state_bytes())
+        };
+        RangePlan::derive(blocks, slot, window, decoder, bulk)
     }
 
     /// The arithmetic, over the four numbers it is arithmetic in.
     ///
     /// Split out from [`RangePlan::new`] so that the sizes a real file has —
-    /// 24 MiB blocks against 1.29 MB windows, 128 MiB against 6.7 MB — can be
-    /// pinned without a fixture that shape, which no generated corpus will ever
-    /// hold.
-    fn derive(blocks: usize, slot: u64, window: u64, bulk: Bulk) -> RangePlan {
-        let chunk = window.min(INPUT_CHUNK as u64);
-        let unit = slot.saturating_add(chunk).saturating_add(window);
+    /// 24 MiB blocks against 1.29 MB windows and an 8 MiB dictionary, 128 MiB
+    /// against 6.7 MB — can be pinned without a fixture that shape, which no
+    /// generated corpus will ever hold.
+    fn derive(blocks: usize, slot: u64, window: u64, decoder: u64, bulk: Bulk) -> RangePlan {
+        let unit = slot.saturating_add(window).saturating_add(decoder);
         // A range covering no blocks holds nothing, so nothing binds; one
         // worker is still what is reported, because the floor is one worker and
         // not zero.
@@ -173,7 +193,7 @@ impl RangePlan {
             budget: bulk.budget,
             slot,
             window,
-            chunk,
+            decoder,
         }
     }
 
@@ -216,22 +236,31 @@ impl RangePlan {
 
     /// The bytes the read holds at once, at [`RangePlan::workers`] workers.
     ///
-    /// `workers × (decoded slot + input chunk + compressed window)`, plus two
-    /// spare compressed windows above one worker. Zero for a range covering no
+    /// `workers × (decoded slot + compressed window + decoder)`, plus two spare
+    /// compressed windows above one worker. Zero for a range covering no
     /// blocks, which allocates nothing at all.
     ///
-    /// **The decoder's dictionary is not in it, and cannot be**: a block's
-    /// dictionary size is written in its own header, which the seek table does
-    /// not carry and which would cost a source read per block to learn. What
-    /// bounds it is [`Builder::memlimit`](crate::Builder::memlimit), which is a
-    /// statement about the file and therefore per worker — the aggregate is
-    /// yours to compute, and it is 8 MiB a worker on the files this crate was
-    /// built for.
+    /// **No decoder on this path owns an input buffer.** Every block is fetched
+    /// whole into its window and decoded out of it, at every worker count, so
+    /// the 1 MiB chunk a *positioned* read holds — [`Reader::input_chunk_bytes`](crate::Reader::input_chunk_bytes)
+    /// — is not a term here.
+    ///
+    /// **The decoder's dictionary is in it**, read off
+    /// [`StreamEntry::first_block_dict_size`](crate::StreamEntry::first_block_dict_size)
+    /// over the streams this range touches, so the whole a bulk read holds is
+    /// this one number. It is **not a sound ceiling**: a stream whose later
+    /// block declares a larger dictionary than its first is charged the first's
+    /// — deficiency: KD10, whose detail is in `docs/design/architecture.md`. The
+    /// number that cannot understate is
+    /// [`Builder::memlimit`](crate::Builder::memlimit) per worker, which is a
+    /// refusal threshold about the file rather than a charge for this read, and
+    /// which the decode compares against each block's own declared dictionary
+    /// before any backend object is built.
     pub fn footprint(self) -> u64 {
         let unit = self
             .slot
-            .saturating_add(self.chunk)
-            .saturating_add(self.window);
+            .saturating_add(self.window)
+            .saturating_add(self.decoder);
         let spares = if self.workers > 1 {
             self.window.saturating_mul(2)
         } else {
@@ -277,6 +306,10 @@ impl RangePlan {
     /// fetch overlap a decode: without them there would be nowhere to put block
     /// *k+1* while every worker is busy, so each worker's next block would begin
     /// with a cold source read.
+    ///
+    /// **One at one worker is what the read holds**, not a charge standing in
+    /// for one: the calling thread fetches each block into a window of its own
+    /// and reuses it, which is the same fetch the pool's stage makes.
     pub fn compressed_windows(self) -> usize {
         if self.workers > 1 {
             self.workers + 2
@@ -285,13 +318,20 @@ impl RangePlan {
         }
     }
 
-    /// The compressed input buffer one decode holds, in bytes.
+    /// The decoder one worker holds, in bytes: its LZMA2 dictionary plus the
+    /// backend's own state.
     ///
-    /// The third term of the per-worker cost, and the smallest: a fixed chunk,
-    /// capped by the largest block the range covers, since a block shorter than
-    /// the chunk is read in one.
-    pub fn input_chunk_bytes(self) -> u64 {
-        self.chunk
+    /// The third term of the per-worker cost and, on a real file, the second
+    /// largest — 8 MiB of dictionary against a 24 MiB slot. The dictionary is
+    /// the largest any stream **this range touches** declares, on the same
+    /// range-scoped reading as [`RangePlan::decoded_slot_bytes`]; the state is a
+    /// constant of the backend the reader was built with.
+    ///
+    /// Zero for a range covering no blocks, where no decoder is built. It is the
+    /// only term that is not read off a block, which is why it is the one that
+    /// can be wrong: see [`RangePlan::footprint`].
+    pub fn decoder_bytes(self) -> u64 {
+        self.decoder
     }
 }
 
@@ -323,36 +363,50 @@ mod tests {
     const KOJI_128: (u64, u64) = (128 << 20, 6_700_000);
     /// A budget of 512 MiB, which is the cgroup the first downstream runs in.
     const CGROUP: u64 = 512 << 20;
+    /// One decoder on either koji file under `liblzma`: the 8 MiB dictionary
+    /// both declare, plus that backend's own state.
+    ///
+    /// Written out rather than called, for the same reason the two shapes above
+    /// are: these tests are the arithmetic over numbers a real file has, and
+    /// `Backend::decoder_state_bytes` is a struct layout that moves with a
+    /// compiler. What holds it against an allocation is `tests/footprint.rs`.
+    const KOJI_DECODER: u64 = (8 << 20) + 34_592;
 
     fn plan_for((slot, window): (u64, u64), workers: usize, budget: u64) -> RangePlan {
-        RangePlan::derive(1 << 20, slot, window, Bulk::new(workers, budget))
+        RangePlan::derive(
+            1 << 20,
+            slot,
+            window,
+            KOJI_DECODER,
+            Bulk::new(workers, budget),
+        )
     }
 
-    /// The two counts the spec derived, from the two real files' shapes.
+    /// One worker's three buffers at one of the two koji shapes.
+    fn unit_of((slot, window): (u64, u64)) -> u64 {
+        slot + window + KOJI_DECODER
+    }
+
+    /// The two counts the two real files' shapes admit, dictionary included.
     ///
     /// This is the arithmetic's headline claim — *"this file's 128 MiB blocks
     /// admit 3 workers under your 512 MB budget"* — and the corpus has no file
     /// of either shape, so the numbers are pinned here or nowhere.
     #[test]
-    fn the_budget_admits_nineteen_workers_on_one_real_file_and_three_on_the_other() {
+    fn the_budget_admits_fifteen_workers_on_one_real_file_and_three_on_the_other() {
         let plan = plan_for(KOJI_24, 64, CGROUP);
-        assert_eq!(plan.workers(), 19);
+        assert_eq!(plan.workers(), 15);
         assert!(plan.fits());
         assert!(plan.footprint() <= CGROUP);
+        assert_eq!(plan.decoder_bytes(), KOJI_DECODER);
         // And one more would not.
-        assert!(
-            20 * (plan.decoded_slot_bytes() + plan.input_chunk_bytes() + KOJI_24.1) + 2 * KOJI_24.1
-                > CGROUP
-        );
+        assert!(16 * unit_of(KOJI_24) + 2 * KOJI_24.1 > CGROUP);
 
         let plan = plan_for(KOJI_128, 64, CGROUP);
         assert_eq!(plan.workers(), 3);
         assert!(plan.fits());
         assert_eq!(plan.compressed_windows(), 5);
-        assert_eq!(
-            plan.footprint(),
-            3 * (KOJI_128.0 + (1 << 20) + KOJI_128.1) + 2 * KOJI_128.1
-        );
+        assert_eq!(plan.footprint(), 3 * unit_of(KOJI_128) + 2 * KOJI_128.1);
     }
 
     /// The worker count binds where it is the smaller of the two.
@@ -363,10 +417,7 @@ mod tests {
         assert_eq!(plan.requested_workers(), 4);
         assert_eq!(plan.compressed_windows(), 6);
         assert!(plan.fits());
-        assert_eq!(
-            plan.footprint(),
-            4 * (KOJI_24.0 + (1 << 20) + KOJI_24.1) + 2 * KOJI_24.1
-        );
+        assert_eq!(plan.footprint(), 4 * unit_of(KOJI_24) + 2 * KOJI_24.1);
     }
 
     /// A budget too small for one worker clamps to one and reports the number.
@@ -379,9 +430,9 @@ mod tests {
         assert_eq!(plan.workers(), 1);
         assert_eq!(plan.requested_workers(), 8);
         assert!(!plan.fits());
-        // One worker: one slot, one chunk, one window, and no spares.
+        // One worker: one slot, one window, one decoder, no spares.
         assert_eq!(plan.compressed_windows(), 1);
-        assert_eq!(plan.footprint(), KOJI_128.0 + (1 << 20) + KOJI_128.1);
+        assert_eq!(plan.footprint(), unit_of(KOJI_128));
 
         // The floor holds however small the budget is, including zero.
         let plan = plan_for(KOJI_128, 8, 0);
@@ -396,9 +447,8 @@ mod tests {
     /// half of the arithmetic and the easiest thing to get wrong.
     #[test]
     fn the_step_to_two_workers_pays_for_the_spares() {
-        let (slot, window) = KOJI_24;
-        let unit = slot + (1 << 20) + window;
-        let two = 2 * unit + 2 * window;
+        let (_, window) = KOJI_24;
+        let two = 2 * unit_of(KOJI_24) + 2 * window;
 
         assert_eq!(plan_for(KOJI_24, 8, two).workers(), 2);
         assert_eq!(plan_for(KOJI_24, 8, two - 1).workers(), 1);
@@ -411,18 +461,11 @@ mod tests {
     #[test]
     fn a_range_admits_no_more_workers_than_it_covers_blocks() {
         let bulk = Bulk::new(8, u64::MAX);
-        assert_eq!(
-            RangePlan::derive(2, KOJI_24.0, KOJI_24.1, bulk).workers(),
-            2
-        );
-        assert_eq!(
-            RangePlan::derive(1, KOJI_24.0, KOJI_24.1, bulk).workers(),
-            1
-        );
-        assert_eq!(
-            RangePlan::derive(9, KOJI_24.0, KOJI_24.1, bulk).workers(),
-            8
-        );
+        let workers =
+            |blocks| RangePlan::derive(blocks, KOJI_24.0, KOJI_24.1, KOJI_DECODER, bulk).workers();
+        assert_eq!(workers(2), 2);
+        assert_eq!(workers(1), 1);
+        assert_eq!(workers(9), 8);
     }
 
     /// A range covering no blocks holds nothing, and still reports one worker.
@@ -433,9 +476,10 @@ mod tests {
     #[test]
     fn an_empty_range_costs_nothing_and_fits_every_budget() {
         for budget in [0, 1, CGROUP, u64::MAX] {
-            let plan = RangePlan::derive(0, 0, 0, Bulk::new(8, budget));
+            let plan = RangePlan::derive(0, 0, 0, 0, Bulk::new(8, budget));
             assert_eq!(plan.blocks(), 0);
             assert_eq!(plan.workers(), 1);
+            assert_eq!(plan.decoder_bytes(), 0);
             assert_eq!(plan.footprint(), 0);
             assert!(plan.fits(), "an empty range does not fit {budget}");
         }
@@ -450,19 +494,23 @@ mod tests {
         assert!(plan.fits());
     }
 
-    /// A block smaller than the input chunk is not charged a whole chunk.
+    /// A worker costs its three buffers and no input chunk.
     ///
     /// Every fixture in the corpus is this shape — 64 KiB blocks compressing to
-    /// a few kilobytes — so without the cap every plan the test suite makes
-    /// would be a megabyte of imaginary input buffer per worker.
+    /// a few kilobytes — and the plan charged a fourth term here until the range
+    /// read fetched whole blocks at every worker count. A megabyte of imaginary
+    /// input buffer per worker is what this asserts is gone: at these sizes the
+    /// chunk would have been the block's own 4,000 bytes, so the arithmetic is
+    /// checked at the shape where the missing term is small rather than at the
+    /// one where it is a whole megabyte.
     #[test]
-    fn a_block_smaller_than_the_input_chunk_is_charged_what_it_is() {
-        let plan = RangePlan::derive(256, 64 << 10, 4_000, Bulk::new(4, u64::MAX));
-        assert_eq!(plan.input_chunk_bytes(), 4_000);
+    fn a_worker_is_charged_three_buffers_and_no_input_chunk() {
+        let dict = 1 << 20;
+        let plan = RangePlan::derive(256, 64 << 10, 4_000, dict, Bulk::new(4, u64::MAX));
         assert_eq!(plan.workers(), 4);
         assert_eq!(
             plan.footprint(),
-            4 * ((64 << 10) + 4_000 + 4_000) + 2 * 4_000
+            4 * ((64 << 10) + 4_000 + dict) + 2 * 4_000
         );
     }
 
@@ -473,7 +521,7 @@ mod tests {
     /// arithmetic over exactly those fields and must not overflow on one.
     #[test]
     fn absurd_block_sizes_saturate() {
-        let plan = RangePlan::derive(4, u64::MAX, u64::MAX, Bulk::new(8, u64::MAX));
+        let plan = RangePlan::derive(4, u64::MAX, u64::MAX, u64::MAX, Bulk::new(8, u64::MAX));
         assert_eq!(plan.workers(), 1);
         assert_eq!(plan.footprint(), u64::MAX);
         assert!(plan.fits());

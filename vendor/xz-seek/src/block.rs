@@ -96,7 +96,7 @@ use crate::table::{BlockEntry, Check};
 use crate::walk::{inconsistent, le32, vli};
 
 /// `(0xff + 1) * 4` — the largest header the size byte can describe.
-const HEADER_SIZE_MAX: u64 = 1024;
+pub(crate) const HEADER_SIZE_MAX: u64 = 1024;
 
 /// Delta, whose one property byte is `distance - 1`.
 const FILTER_DELTA: u64 = 0x03;
@@ -731,7 +731,7 @@ mod tests {
     /// `corrupt-payload-derail.xz`, whose flipped bits are in a payload and
     /// whose headers are therefore `xz`'s own.
     ///
-    /// **The coverage claim is stated over the 91 headers the other nineteen
+    /// **The coverage claim is stated over the 97 headers the other twenty-one
     /// files carry**, and the floors below are those. `bulk-blocks.xz`'s 256
     /// are one shape 256 times, so they are volume rather than coverage — but
     /// the shape is not `many-blocks.xz`'s: its `--lzma2=dict=64KiB` is a
@@ -814,14 +814,14 @@ mod tests {
             }
         }
 
-        // The twenty fixtures whose indexes are intact, and the block column of
-        // `harness.md`'s fixture table summed over the nineteen that are not
-        // `bulk-blocks.xz` — whose 256 are re-emitted here and deliberately not
-        // counted into the floors, per this test's docs.
-        assert_eq!(files, 20);
-        assert!(headers >= 91, "{headers} headers re-emitted");
+        // The twenty-two fixtures whose indexes are intact, and the block column
+        // of `harness.md`'s fixture table summed over the twenty-one that are
+        // not `bulk-blocks.xz` — whose 256 are re-emitted here and deliberately
+        // not counted into the floors, per this test's docs.
+        assert_eq!(files, 22);
+        assert!(headers >= 97, "{headers} headers re-emitted");
         assert!(declaring >= 4, "{declaring} headers declare a size");
-        assert!(silent >= 83, "{silent} headers declare neither");
+        assert!(silent >= 89, "{silent} headers declare neither");
         // The four of `header-declared-sizes.xz` already declare both, so they
         // re-emit at their own length; every other header grows.
         assert_eq!(grew, headers - declaring, "{grew} headers grew");
@@ -977,8 +977,8 @@ mod tests {
 
         // The corpus is what it was designed to be: every intact fixture walked,
         // and every one of their blocks compared.
-        assert_eq!(files_checked, 18);
-        assert!(blocks_checked >= 80, "{blocks_checked} blocks compared");
+        assert_eq!(files_checked, 20);
+        assert!(blocks_checked >= 86, "{blocks_checked} blocks compared");
     }
 
     /// The three header shapes the corpus was built to carry, named so that a
