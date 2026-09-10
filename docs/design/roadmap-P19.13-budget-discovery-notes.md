@@ -154,14 +154,53 @@ change that shrinks either container is what to watch: the apparatus rule pins
 a worker count on every shape, and after this slice the *budget* on those two
 shapes is a property of the container as well.
 
-## The one consequence worth a second look
+## What a large-block file asks for, and what caps it
 
-A flagless `.xz` run on a host with no memory limit now asks for
+A flagless `.xz` run on a host with no memory limit asks for
 `jobs × per-reader`, and *per-reader scales with the file's block size*. On a
 24 MiB-block dump that is ~1.4 GiB, which is the number the spec worked
-through. On a file written by `xz -9 -T0`, whose blocks are ~192 MiB, it is
-~9.6 GiB — under the `MemAvailable` half-cap on this machine, so the cap does
-not bind, and the block path is then *afforded* where the 64 MiB constant
-declined it. That is the intended posture and the intended reversal, but no
-reading covers it and `19.15`'s containers are all far below it. Filed under
-STATUS's "Decisions worth another look".
+through. On a file written by `xz -9 -T0`, whose blocks are ~192 MiB, one
+reader holds `2 × 192 + 8 + decode_footprint` — the footprint carrying that
+level's 64 MiB dictionary — so ~456 MiB, and twenty-four of them ~10.7 GiB.
+
+**The `MemAvailable` half-cap binds there**, at ~9.5 GiB against this
+machine's ~19 GiB reading, and the block path is then afforded at a slightly
+reduced count where the 64 MiB constant declined it outright. That is the
+intended posture and the intended reversal. Reviewed 2026-09-10 and affirmed:
+the no-limit arm owes "approximately play nice, and never OOM" rather than an
+exact share, so the fraction is not tuned — the reasoning is beside the
+mechanism ([`architecture.md`](architecture.md), "Execution model and API
+surface"). No reading covers this band; `19.15`'s containers are all far below
+it.
+
+## The repair owed before `19.15` measures the rule
+
+The recommended worker count and the recommended budget must settle as a
+consistent pair, on any machine's cpu-to-memory ratio: never more memory than
+the workers can use, never workers there is no memory for
+([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
+permits"). Two places fall short of that today.
+
+- `XzSource::default_workers` answers the core count where `stream::cut` caps
+  pieces at the block boundaries the file offers, so a file with fewer blocks
+  than cores is multiplied into a budget request nothing can spend.
+  `xz_seek::SeekTable::block_count()` is the bound and the table is already on
+  the source.
+- `Parallelism::discover_in` caps the *budget* at the environment's allowance
+  and leaves the count alone, so a reduced allowance yields a count the budget
+  no longer affords. It needs no new argument: a source recommending
+  `jobs × per-reader` makes `per-reader` recoverable as `want / jobs`, so the
+  count can be reduced to what the allowance affords and the budget set to
+  `count × per-reader`.
+
+The first supersedes a sentence of `19.8`'s rationale, which held that the
+block count binds downstream and the recommendation need not know it. That was
+written before a run reported its mode: once it does, a recommendation of
+twenty-four workers printed beside a budget affording six is self-contradictory
+in one line. Reasoning: [2026-09-10](../status/history/2026-09-10.md), "The
+recommended pair has to be consistent".
+
+The smoke table above moves when this lands: the 25 KB `.xz` fixture has far
+fewer than twenty-four 4 KiB blocks, so its recommendation stops being
+`24 × 16.03 MiB`. Re-take those readings with the repair rather than carrying
+them forward.

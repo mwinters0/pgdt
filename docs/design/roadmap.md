@@ -153,16 +153,22 @@ Four bounds, and they are what keep this from being "take everything":
 - **The library's own default stays `Serial`.** What this rule sets is what the
   *CLI* resolves and what a *source* recommends for itself; an embedder is
   handed the mechanism and takes it deliberately.
-- **We do not take an allocation we cannot show we use.** `stream::worker_count`
-  and `BufferPool::slots`' clamp are this bound in code: resident saturates at
-  the worker count times what one reader holds, so budget above that is taken
-  by nothing.
+- **We do not take an allocation we cannot show we use, and the bound has two
+  halves.** Never allocate more memory than the workers can use, and never
+  allocate workers there is no memory for. The pair has to settle consistently
+  on machines of *different shape* — a wide host with little memory per core
+  and a narrow one with a great deal — so neither number may be chosen without
+  the other. `stream::worker_count` and `BufferPool::slots`' clamp are the
+  second half in code: resident saturates at the worker count times what one
+  reader holds, so budget above that is taken by nothing. The first half is
+  what a source's own recommendation owes — a count the file cannot supply
+  work for must not be multiplied into a budget request.
 - **Unstated is not unlimited.** Absent a discovered limit the default is
   capped at half of what the machine reports available, because the alternative
   is sizing pgdq's appetite from hardware nobody said it could have. That cap
   costs no speed where there is room — resident saturates at the worker count
-  regardless — and binds only on a machine too small for the count it asked
-  for.
+  regardless — and binds wherever the recommended count costs more than half of
+  what the host has free, which on a large-block file is a large machine too.
 
 **Each source answers for its own defaults, worker count and budget alike.**
 That is why `ByteRangeSource::default_workers` is a trait method rather than a

@@ -407,8 +407,24 @@ hand straight back. And half rather than all because `MemAvailable` is an
 estimate that two processes reading at once each see the whole of: a ceiling to
 plan under, never a reservation. The cap costs nothing wherever there is room —
 resident saturates at `jobs × per-reader`, so every byte above that is
-structurally inert — and binds only on a machine too small to afford the
-recommended count.
+structurally inert — and binds wherever the recommended count costs more than
+half of what the host has free. **That is not only a small machine**: a file
+written by `xz -9 -T0` has ~192 MiB blocks, so one reader holds ~456 MiB and
+twenty-four of them ~10.7 GiB, against a `MemAvailable` reading of ~19 GiB on
+this workstation — the cap is what sets that budget, not a fallback for
+undersized hosts.
+
+**The fraction is deliberately untuned.** What the no-limit arm owes is
+"approximately play nice, and never OOM" — not an exact share. `MemAvailable`
+moves between one reading and the next, so whether the cap binds is a property
+of the *moment* rather than of the machine, and a fraction carried to two
+figures would be false precision over an estimate. Half is the hedge against
+two processes reading at once each seeing the whole of it; that it can land
+near half the host on a large-block file is the shared-host posture working
+rather than a number to refine. *Rejected: a tighter fraction, or a fixed
+ceiling, for the no-limit arm.* Both re-introduce the failure discovery exists
+to fix — a recommended worker count nothing can afford — and neither has a
+reading behind it, where half has a stated reason.
 
 *Rejected: a fraction of the discovered limit as a ceiling on top of the
 subtraction.* "We do not take an allocation we cannot show we use" has an exact

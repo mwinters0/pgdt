@@ -409,7 +409,13 @@ the five orderings that bind are in the spec, not here.
       `RT4`'s v1 shape. **It follows `19.13` rather than preceding it**: the
       seam it tests was `19.7`'s when this list was written and moved to
       `19.13` when `19.7` was re-scoped, so every one of its five deliverables
-      names something that did not exist until `19.13`'s code landed.
+      names something that did not exist until `19.13`'s code landed. It also
+      carries the **mode report**: a run states which of the two arrangements
+      it is in — an allocation somebody set, or a shared host nobody limited —
+      and how many bytes it is taking under it, so a recommendation the
+      `MemAvailable` cap reduced is visible rather than silent
+      ([2026-09-10](history/2026-09-10.md), "The no-limit cap is affirmed, and
+      a run says which mode it is in").
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
       whole-block-decode threshold.
@@ -447,7 +453,13 @@ the five orderings that bind are in the spec, not here.
       `limit − 256 MiB` and no limit found caps at half of `MemAvailable`; a
       256 MiB container resolves to a budget of **zero**, which is one reader's
       worth on the streaming path. The falsified half of the manual moved with
-      it. Notes:
+      it. **One repair is owed before `19.15` measures the rule**: the
+      recommended count and the recommended budget must settle as a consistent
+      pair on any cpu-to-memory shape, so `XzSource::default_workers` caps at
+      `SeekTable::block_count()` and the composition reduces the count to what
+      the environment's allowance affords rather than handing back a budget the
+      count cannot spend ([2026-09-10](history/2026-09-10.md), "The recommended
+      pair has to be consistent"). Notes:
       [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md)
 - [x] **19.14** A compressed sub-stream is charged what one reader holds —
       `2 × unit + chunk + xz_seek::Reader::decode_footprint()`, **58.03 MiB**
@@ -658,18 +670,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A flagless `.xz` run on an unlimited host asks for `jobs × per-reader`, and
-  per-reader scales with the file's block size.** On a 24 MiB-block dump that
-  is ~1.4 GiB, which is the number the spec worked through; on one written by
-  `xz -9 -T0`, whose blocks are ~192 MiB, it is ~9.6 GiB on this 24-core
-  machine — under half of `MemAvailable` here, so the cap does not bind, and
-  the block path is then *afforded* where the 64 MiB constant declined it.
-  That is the posture P19 opened with (`xz -T0`) and the reversal is one flag,
-  so it was shipped rather than hedged. What would change if reconsidered: the
-  source's recommendation would need a term that is not linear in the block
-  size — a cap on the *count* for a large-block file, say — and that is a
-  decision about `ByteRangeSource::default_memory_bytes`, not about the budget
-  rule. No reading covers it: `19.15`'s containers are 256 MiB to 1 GiB, all
-  far below, and no fixture has blocks of that size. Detail:
-  [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md),
-  "The one consequence worth a second look".
+_Nothing open._
