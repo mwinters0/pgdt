@@ -256,11 +256,17 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
     assert!(!started.contains("None"), "{started}");
 }
 
-/// **The default case of the same defect.** At the shipped defaults nobody
-/// stated a byte budget, but a real one still governs every read
-/// (`DEFAULT_MEMORY_BUDGET`) — `None` said nothing a reader could act on;
-/// the fix states the number actually in force and says in words that it is
-/// the default rather than something asked for.
+/// **The default case of the same defect.** Stating no byte budget still leaves
+/// a real one governing every read — `None` said nothing a reader could act on;
+/// the line states the number actually in force, and marks it `(default)` on
+/// the one arrangement that carries no number at all.
+///
+/// **Which arrangement that is now depends on the machine.** A plain file
+/// recommends no budget, so a flagless scan reads `67108864 (default)` where no
+/// memory limit is discovered and the discovered allowance, bare, where one is
+/// — so the assertion is written against `discover_memory_limit` rather than
+/// against the constant, which would pass on a bare host and fail in exactly
+/// the container this default exists for.
 #[test]
 fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
     let dir = tempfile::tempdir().unwrap();
@@ -279,7 +285,15 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
         .find(|l| l.contains("started"))
         .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"));
     assert!(started.contains("jobs=1"), "{started}");
-    assert!(started.contains("memory_bytes=67108864 (default)"), "{started}");
+    match pgdump_query::discover_memory_limit() {
+        None => assert!(started.contains("memory_bytes=67108864 (default)"), "{started}"),
+        Some(limit) => {
+            let budget = pgdump_query::DEFAULT_MEMORY_BUDGET
+                .min(limit.saturating_sub(pgdump_query::MEMORY_RESERVE));
+            assert!(started.contains(&format!("memory_bytes={budget}")), "{started}");
+            assert!(!started.contains("(default)"), "a discovered budget is not it: {started}");
+        }
+    }
 }
 
 /// **`(default)` says nobody asked, not that nobody could ask.** The serial

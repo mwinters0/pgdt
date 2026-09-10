@@ -406,7 +406,10 @@ the five orderings that bind are in the spec, not here.
       limit found)` saying no limit is being *enforced* — the below-floor
       `PlanNote`, a test pinning the below-reserve arrangement, and the fixture
       tree, which now carries a `meminfo` for the no-limit branch as well as
-      `RT4`'s v1 shape.
+      `RT4`'s v1 shape. **It follows `19.13` rather than preceding it**: the
+      seam it tests was `19.7`'s when this list was written and moved to
+      `19.13` when `19.7` was re-scoped, so every one of its five deliverables
+      names something that did not exist until `19.13`'s code landed.
 - [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
       leaves it, the new defaults, both flags' help text, and the moved
       whole-block-decode threshold.
@@ -436,7 +439,16 @@ the five orderings that bind are in the spec, not here.
       rule, carrying `19.12`'s constant — plus the source's own budget
       recommendation, capped at half of `MemAvailable` (`RT8`) where no limit
       is discovered — without which a corrected divisor makes a flagless `.xz`
-      scan serial on an unlimited host.
+      scan serial on an unlimited host. **The whole row is in the tree and the
+      box is unticked on the spec's own ordering**: `19.15` runs against this
+      build before `19.13` lands, so the code is written first and the box
+      ticked second. `ParallelArgs::resolve` asks the source when
+      `--parallel-memory` is absent, a discovered limit caps at
+      `limit − 256 MiB` and no limit found caps at half of `MemAvailable`; a
+      256 MiB container resolves to a budget of **zero**, which is one reader's
+      worth on the streaming path. The falsified half of the manual moved with
+      it. Notes:
+      [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md)
 - [x] **19.14** A compressed sub-stream is charged what one reader holds —
       `2 × unit + chunk + xz_seek::Reader::decode_footprint()`, **58.03 MiB**
       against koji's 24 MiB blocks where the old divisor billed 25 for a
@@ -465,10 +477,11 @@ the five orderings that bind are in the spec, not here.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P19 is open and two of the three defaults it is named for are not set
-  yet** — the worker default now comes from the source, but the memory-limit
-  discovery and the budget rule are still ahead. Its checklist is above and
-  its spec is
+- **P19 is open and all three defaults it is named for are now set, one of
+  them unticked** — the worker default comes from the source, and the
+  memory-limit discovery and the budget rule are in the tree with `19.13`'s box
+  held open until `19.15`'s containers have run against them. Its checklist is
+  above and its spec is
   [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
   Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
   table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
@@ -645,4 +658,18 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **A flagless `.xz` run on an unlimited host asks for `jobs × per-reader`, and
+  per-reader scales with the file's block size.** On a 24 MiB-block dump that
+  is ~1.4 GiB, which is the number the spec worked through; on one written by
+  `xz -9 -T0`, whose blocks are ~192 MiB, it is ~9.6 GiB on this 24-core
+  machine — under half of `MemAvailable` here, so the cap does not bind, and
+  the block path is then *afforded* where the 64 MiB constant declined it.
+  That is the posture P19 opened with (`xz -T0`) and the reversal is one flag,
+  so it was shipped rather than hedged. What would change if reconsidered: the
+  source's recommendation would need a term that is not linear in the block
+  size — a cap on the *count* for a large-block file, say — and that is a
+  decision about `ByteRangeSource::default_memory_bytes`, not about the budget
+  rule. No reading covers it: `19.15`'s containers are 256 MiB to 1 GiB, all
+  far below, and no fixture has blocks of that size. Detail:
+  [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md),
+  "The one consequence worth a second look".

@@ -169,6 +169,34 @@ pub trait ByteRangeSource: Send + Sync {
     fn default_workers(&self) -> usize {
         1
     }
+
+    /// How many bytes this source recommends a caller allow, where the caller
+    /// has stated no budget of its own — a **recommendation**, never a bound,
+    /// and the budget sibling of [`ByteRangeSource::default_workers`]
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **The default is `None`: no recommendation at all**, which leaves a
+    /// caller on whatever it would have used — [`DEFAULT_MEMORY_BUDGET`] where
+    /// nothing was discovered, and the discovered allowance where something
+    /// was. [`LocalFileSource`] inherits it, as it inherits the serial worker
+    /// count, and for the same reason: a source that has not thought about
+    /// being read concurrently asks for nothing to read it with.
+    ///
+    /// **It is what keeps "no limit found" from meaning "serial".** A
+    /// compressed reader of an ordinary dump costs about 58 MiB, so the 64 MiB
+    /// fallback admits exactly one of them — which would override
+    /// [`XzSource`]'s `available_parallelism()` worker count to the serial
+    /// path on an unlimited host, the machine most likely to run this. A count
+    /// nothing can afford is not a recommendation, so a source that recommends
+    /// a count recommends what that count needs
+    /// ([`Parallelism::discover_for`], which is where the two meet).
+    ///
+    /// **Nothing in the library reads it**, exactly as with the worker count:
+    /// a caller that states a budget gets that budget, and this exists for the
+    /// layer above, which has a person's flags to fill in.
+    fn default_memory_bytes(&self) -> Option<u64> {
+        None
+    }
     /// How much concurrency this caller allows, and how many bytes the source
     /// may hold while serving it — announced once before a read loop starts,
     /// exactly where [`ByteRangeSource::hint_read_size`] is
@@ -550,6 +578,81 @@ impl Parallelism {
             Self::Workers { jobs, .. } => jobs.get(),
         }
     }
+
+    /// The arrangement to run when the caller has stated neither number and
+    /// has nothing open — the environment's own answer, composed from
+    /// [`discover_memory_limit`] and `std::thread::available_parallelism`
+    /// through [`MEMORY_RESERVE`]
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **It is a convenience over two primitives, and taking it is opting
+    /// in.** [`Parallelism::default`] is still the serial path stating no
+    /// budget, so a library caller that says nothing still spawns nothing;
+    /// this is for the caller that wants the whole answer and would otherwise
+    /// reimplement the reserve arithmetic, which is a measured finding rather
+    /// than a detail.
+    ///
+    /// **An unlimited environment falls back to today's constant**, which is
+    /// what keeps discovery strictly additive: with no limit found and no
+    /// source to recommend otherwise, this is
+    /// [`DEFAULT_MEMORY_BUDGET`] — or, at a serial count,
+    /// [`Parallelism::default`] itself.
+    pub fn discover() -> Self {
+        Self::discover_for(std::thread::available_parallelism().map_or(1, NonZeroUsize::get), None)
+    }
+
+    /// [`Parallelism::discover`]'s rule against recommendations a caller has
+    /// already obtained — a source's own worker count
+    /// ([`ByteRangeSource::default_workers`]) and its own budget
+    /// ([`ByteRangeSource::default_memory_bytes`]).
+    ///
+    /// **The composition is not a `min`, and the difference is one
+    /// `Option`.** Written as `min(want, discovered)` it breaks the case it
+    /// exists for: on an unlimited host `discover` falls back to today's
+    /// 64 MiB constant, so the minimum would be 64 MiB and a compressed scan —
+    /// whose reader costs about 58 MiB — would be serial again. What
+    /// distinguishes *no limit found* from *a small limit* is that the first
+    /// has no cap at all:
+    ///
+    /// - a discovered limit caps at `limit − MEMORY_RESERVE`, and `want` — or
+    ///   [`DEFAULT_MEMORY_BUDGET`] where the caller has no recommendation —
+    ///   is taken no higher. That is "do not take what you cannot use", and it
+    ///   is allowed to fall **below** [`DEFAULT_MEMORY_BUDGET`], because
+    ///   reasserting that constant under a small limit would put today's
+    ///   default back in the one case discovery was built for;
+    /// - no limit found caps at half of [`available_memory`], which costs
+    ///   nothing wherever there is room — resident saturates at
+    ///   `jobs × per-reader`, so every byte above that is structurally inert —
+    ///   and binds only on a machine too small to afford the recommended
+    ///   worker count. Half rather than all because `MemAvailable` is an
+    ///   estimate two processes reading at once each see the whole of.
+    ///
+    /// **A caller with no recommendation and no limit states nothing**, which
+    /// is [`Parallelism::default`] at a serial count and
+    /// [`DEFAULT_MEMORY_BUDGET`] above one — the distinction
+    /// [`Parallelism::Workers`] has nowhere to record.
+    pub fn discover_for(jobs: usize, want: Option<u64>) -> Self {
+        Self::discover_in(Path::new("/"), jobs, want)
+    }
+
+    /// [`Parallelism::discover_for`] against an arbitrary filesystem root, for
+    /// the reason [`discover_memory_limit_in`] takes one.
+    pub(crate) fn discover_in(root: &Path, jobs: usize, want: Option<u64>) -> Self {
+        let budget = match discover_memory_limit_in(root) {
+            Some(limit) => Some(
+                want.unwrap_or(DEFAULT_MEMORY_BUDGET).min(limit.saturating_sub(MEMORY_RESERVE)),
+            ),
+            None => want.map(|want| match available_memory_in(root) {
+                Some(available) => want.min(available / 2),
+                None => want,
+            }),
+        };
+        match budget {
+            Some(budget) => Self::workers(jobs, budget),
+            None if jobs > 1 => Self::workers(jobs, DEFAULT_MEMORY_BUDGET),
+            None => Self::default(),
+        }
+    }
 }
 
 /// The byte budget actually governing reads under `p`, worded for a status
@@ -586,6 +689,276 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 /// [`BlockCache::affordable`] and `docs/design/architecture.md`, "The
 /// compressed source".
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
+
+/// What [`Parallelism::discover`] holds back from a discovered memory limit,
+/// in bytes: everything the process holds that a stated budget does not bound
+/// — the runtime's threads, glibc's per-thread arenas, the decoder state a
+/// compressed source keeps outside its pools, and the binary itself.
+///
+/// **It is a subtraction rather than a fraction, and the evidence is what
+/// chose the shape.** Resident above a stated budget is roughly *constant*
+/// rather than proportional, because [`BufferPool::slots`] clamps at
+/// `POOL_DEPTH.max(jobs)` — so a percentage would under-reserve at a small
+/// limit and over-reserve at a large one, which is backwards: the small cgroup
+/// is where being wrong kills the process
+/// (`docs/design/roadmap-P19-efficient-defaults.md`, "What is discovered, and
+/// what the default makes of it").
+///
+/// **One constant, taken from the compressed leg, over-reserving the plain
+/// path by roughly the difference.** The two paths' fixed terms are a factor
+/// of thirty apart — a plain `parse` holds 5.86 MiB above its pool where a
+/// block-decoding one holds a few hundred megabytes — and a per-source reserve
+/// is not available where the number is needed: [`Parallelism::discover`] is
+/// the primitive a caller reaches with nothing open, and a source's own answer
+/// is downstream of recognition, which is I/O. Over-reserving is the safe
+/// direction, and a caller who wants a plain scan's real headroom states a
+/// budget.
+///
+/// **Below it the budget goes to zero rather than to a floor.** A limit under
+/// this leaves nothing, and the three floors already in the mechanism —
+/// `crate::stream::worker_count`'s `.max(1)`, [`BufferPool::slots`]' clamp to
+/// one, and [`BlockCache::affordable`] refusing block decode — make that one
+/// reader's worth on the streaming path. Reasserting
+/// [`DEFAULT_MEMORY_BUDGET`] there would put today's constant back under a new
+/// name in the one case discovery exists for.
+pub const MEMORY_RESERVE: u64 = 256 << 20;
+
+/// A cgroup v1 `memory.limit_in_bytes` at or above this reads as *no limit*
+/// (`docs/design/runtime-invariants.md`, `RT4`).
+///
+/// **A threshold, never an equality test.** The unset value is
+/// `PAGE_COUNTER_MAX × PAGE_SIZE`, which is a function of the page size and
+/// the word width: 9223372036854771712 at 4 KiB pages, 9223372036854759424 at
+/// 16 KiB, 9223372036854710272 at 64 KiB, and 8796093018112 on a 32-bit
+/// kernel. A threshold is correct at every one of them, where a constant
+/// matches one — and 4 TiB is under the smallest of the four while being more
+/// memory than a cgroup on this century's hardware is given.
+///
+/// It is applied to the v2 files too, where it is very nearly unreachable:
+/// `memory.max` spells "no limit" as the string `max` (`RT2`), so a *stated*
+/// v2 limit above 4 TiB is the only thing this could misread, and reading one
+/// as unlimited falls back to the [`available_memory`] cap, which on such a
+/// machine is the smaller number anyway.
+const NO_LIMIT_AT_OR_ABOVE: u64 = 1 << 42;
+
+/// Which cgroup hierarchy states this process's memory limit, and where in it
+/// the process sits (`docs/design/runtime-invariants.md`, `RT6`).
+enum MemoryHierarchy<'a> {
+    /// A v1 hierarchy carrying the `memory` controller, at this path within
+    /// that hierarchy's own mount.
+    V1(&'a str),
+    /// The unified hierarchy, at this path under the v2 mount.
+    V2(&'a str),
+    /// `/proc/self/cgroup` named neither — no cgroup governs this process, or
+    /// the file is not a Linux one.
+    None,
+}
+
+/// Which of the two file shapes to read, from the body of
+/// `/proc/self/cgroup`.
+///
+/// **A controller lives in exactly one hierarchy** (`RT6`), so a line whose
+/// controller list contains `memory` settles it outright and the `0::` line is
+/// only consulted when no such line exists. Three parse hazards from `RT1` are
+/// handled here and nowhere else: the v2 line is selected **by its shape** —
+/// an empty controller field, which is what `std` matches for the CPU quota —
+/// and never by position or by hierarchy id, which `idr_alloc_cyclic` hands
+/// out cyclically; the controller field is matched by **membership** in a
+/// comma-separated list, since a v1 hierarchy carrying only a name reads
+/// `name=memory` and holds no memory controller at all; and a dead cgroup's
+/// path carries a ` (deleted)` suffix that would otherwise be joined onto the
+/// mount point as part of a directory name.
+fn memory_hierarchy(cgroups: &str) -> MemoryHierarchy<'_> {
+    let mut unified = None;
+    for line in cgroups.lines() {
+        let mut fields = line.splitn(3, ':');
+        let (Some(_id), Some(controllers), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let path = path.strip_suffix(" (deleted)").unwrap_or(path);
+        if controllers.is_empty() {
+            unified.get_or_insert(path);
+        } else if controllers.split(',').any(|c| c == "memory") {
+            return MemoryHierarchy::V1(path);
+        }
+    }
+    unified.map_or(MemoryHierarchy::None, MemoryHierarchy::V2)
+}
+
+/// Where the v1 hierarchy carrying the `memory` controller is mounted, read
+/// from `/proc/self/mountinfo` — the authority when the conventional
+/// `/sys/fs/cgroup/memory` is not where it is (`RT1`).
+///
+/// A line's mount point is its fifth space-separated field; the filesystem
+/// type and the super options follow the ` - ` separator, and the options are
+/// where a v1 cgroup mount names its controllers. Falls back to the
+/// convention when the file cannot be read or lists no such mount, which is
+/// also what a fixture tree that states only the cgroup path gets.
+///
+/// **Mountinfo's `\040` escaping of spaces is not undone**, which is the same
+/// limit `std` states for its own reading of this file: a cgroup mounted under
+/// a path containing a space is not found, and the fallback applies.
+fn v1_memory_mount(root: &Path) -> PathBuf {
+    let conventional = root.join("sys/fs/cgroup/memory");
+    let Ok(text) = std::fs::read_to_string(root.join("proc/self/mountinfo")) else {
+        return conventional;
+    };
+    for line in text.lines() {
+        let Some((before, after)) = line.split_once(" - ") else {
+            continue;
+        };
+        let mut tail = after.split_whitespace();
+        if tail.next() != Some("cgroup") {
+            continue;
+        }
+        let _source = tail.next();
+        if !tail.next().unwrap_or("").split(',').any(|o| o == "memory") {
+            continue;
+        }
+        if let Some(point) = before.split_whitespace().nth(4) {
+            return root.join(point.trim_start_matches('/'));
+        }
+    }
+    conventional
+}
+
+/// One limit file's value in bytes, or `None` where it states no limit — the
+/// literal `max` of a v2 file (`RT2`, `RT3`), a v1 value at
+/// [`NO_LIMIT_AT_OR_ABOVE`] (`RT4`), or a file that is not there at all.
+///
+/// **Absent is "no limit here", not an error** (`RT5`): the hierarchy root
+/// carries no `memory.max` at all, and a cgroup whose parent has not enabled
+/// the controller in `cgroup.subtree_control` carries none either.
+fn read_limit_file(path: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value = text.trim().parse::<u64>().ok()?;
+    (value < NO_LIMIT_AT_OR_ABOVE).then_some(value)
+}
+
+/// The smallest limit any of `files` states at `cgroup_path` or at any
+/// ancestor of it up to `mount` (`docs/design/runtime-invariants.md`, `RT5`).
+///
+/// **Every ancestor, and the two v2 files minimised together.** A limit set on
+/// an ancestor binds a process in a descendant and is invisible in the
+/// descendant's own file, so a reader that consults only the leaf believes an
+/// unlimited process is unlimited when it is not; and nothing orders
+/// `memory.high` against `memory.max`, across levels or within one — a
+/// `memory.high` two levels up may be the smallest number in the walk.
+/// `memory.high` is read at all because it throttles where `memory.max` kills
+/// (`RT3`), and sustained reclaim ends a scan's throughput as surely as an OOM
+/// ends the run.
+///
+/// **The walk is bounded by the mount point, not by counting separators.**
+/// Inside a cgroup namespace the namespace root is what is mounted, so walking
+/// up from the `0::` path never leaves it; limits set outside the namespace
+/// still bind and are simply not readable, which is a property of the
+/// environment rather than a defect to work around.
+fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<u64> {
+    let mut smallest: Option<u64> = None;
+    let mut rel = cgroup_path.trim_start_matches('/');
+    loop {
+        let dir = if rel.is_empty() { mount.to_path_buf() } else { mount.join(rel) };
+        for file in files {
+            if let Some(value) = read_limit_file(&dir.join(file)) {
+                smallest = Some(smallest.map_or(value, |seen: u64| seen.min(value)));
+            }
+        }
+        match rel.rfind('/') {
+            Some(at) => rel = &rel[..at],
+            None if rel.is_empty() => break,
+            None => rel = "",
+        }
+    }
+    smallest
+}
+
+/// The memory limit this process is actually running under, in bytes, or
+/// `None` where nothing limits it
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// **A primitive, not a policy.** It reports what the environment states and
+/// makes nothing of it: what a caller may usefully take from a limit is
+/// [`Parallelism::discover`], which is this composed with
+/// `std::thread::available_parallelism` through [`MEMORY_RESERVE`]. The split
+/// is for the embedder who has already made half their allocation decision —
+/// the case that keeps this library from spawning threads or claiming bytes
+/// nobody asked it for.
+///
+/// **`None` means no limit is being *enforced*, which is a complete and
+/// checkable statement** — unlike "are we in a container", which no reading of
+/// `/.dockerenv` or `/proc/self/cgroup` answers on every runtime. What binds a
+/// process is the limit, not the namespace.
+///
+/// The reading is `RT1`–`RT6` of
+/// [`docs/design/runtime-invariants.md`](../../../docs/design/runtime-invariants.md):
+/// which hierarchy owns the `memory` controller, that hierarchy's files
+/// (`memory.max` and `memory.high` on v2, `memory.limit_in_bytes` on v1), and
+/// the minimum over every ancestor cgroup rather than the nearest one.
+pub fn discover_memory_limit() -> Option<u64> {
+    discover_memory_limit_in(Path::new("/"))
+}
+
+/// [`discover_memory_limit`] against an arbitrary filesystem root.
+///
+/// **The root is a parameter so that the v1 arm can be executed at all.** This
+/// project's machines run a pure v2 unified hierarchy, and the memory
+/// controller lives in exactly one hierarchy at a time (`RT6`), so a v1 shape
+/// cannot be produced beside it — without the seam the v1 branch would ship
+/// never having run. What a fixture tree establishes is that this reader
+/// handles the shape `RT4` describes, not that a kernel still produces it,
+/// which only a v1 host can say.
+pub(crate) fn discover_memory_limit_in(root: &Path) -> Option<u64> {
+    let cgroups = std::fs::read_to_string(root.join("proc/self/cgroup")).ok()?;
+    match memory_hierarchy(&cgroups) {
+        MemoryHierarchy::V1(path) => {
+            smallest_limit(&v1_memory_mount(root), path, &["memory.limit_in_bytes"])
+        }
+        MemoryHierarchy::V2(path) => {
+            smallest_limit(&root.join("sys/fs/cgroup"), path, &["memory.max", "memory.high"])
+        }
+        MemoryHierarchy::None => None,
+    }
+}
+
+/// The kernel's own estimate of the memory obtainable without swapping, in
+/// bytes — `/proc/meminfo`'s `MemAvailable`
+/// (`docs/design/runtime-invariants.md`, `RT8`).
+///
+/// **It is the host's number even inside a container**, so it is meaningful
+/// only once [`discover_memory_limit`] has answered `None`: consulted first it
+/// would read tens of gigabytes against a half-gigabyte allocation.
+///
+/// **`MemAvailable` and not `MemFree`.** `MemFree` excludes reclaimable page
+/// cache and reads several times lower on any machine that has read a large
+/// file, so planning against it would throttle a scan for memory the kernel
+/// would hand straight back.
+///
+/// **A ceiling to plan under, never a reservation.** It is an estimate, it
+/// moves second to second, and two processes reading it at once each see the
+/// whole of it — which is why the caller takes half.
+pub fn available_memory() -> Option<u64> {
+    available_memory_in(Path::new("/"))
+}
+
+/// [`available_memory`] against an arbitrary filesystem root, for the same
+/// reason [`discover_memory_limit_in`] takes one: the no-limit branch is
+/// otherwise only exercisable on a machine that has no limit.
+pub(crate) fn available_memory_in(root: &Path) -> Option<u64> {
+    let text = std::fs::read_to_string(root.join("proc/meminfo")).ok()?;
+    let line = text.lines().find_map(|line| line.strip_prefix("MemAvailable:"))?;
+    let mut fields = line.split_whitespace();
+    let value = fields.next()?.parse::<u64>().ok()?;
+    match fields.next() {
+        // `meminfo_proc_show` prints every size in kB and the unit is part of
+        // the line; a bare number is accepted so that a fixture need not
+        // repeat it.
+        Some("kB") => Some(value.saturating_mul(1024)),
+        None => Some(value),
+        Some(_) => None,
+    }
+}
 
 /// How deep a [`BufferPool`] would like to be, in slots.
 ///
@@ -1976,6 +2349,27 @@ impl ByteRangeSource for XzSource {
     /// usable answer where an error is not.
     fn default_workers(&self) -> usize {
         std::thread::available_parallelism().map_or(1, NonZeroUsize::get)
+    }
+
+    /// **What this source's recommended worker count needs**:
+    /// [`XzSource::block_reader_bytes`] times
+    /// [`ByteRangeSource::default_workers`], which is the number
+    /// `crate::stream::worker_count` has to divide to hand back the count this
+    /// source just asked for. `None` where there is no block path to buy —
+    /// a file with no blocks, or one whose largest block is not a length on
+    /// this target — since the streaming reader has no second worker to give
+    /// at any budget.
+    ///
+    /// **It is charged at the pool's *current* slot size**, which before any
+    /// read loop has announced one is [`POOL_MAX_BYTES`] rather than the
+    /// 1 MiB chunk a scan settles at — so the recommendation runs about a
+    /// tenth high. That is the same number [`ByteRangeSource::block_decode_bytes`]
+    /// answers, deliberately: one statement of what a reader holds, erring
+    /// toward asking for more budget than the count will spend, and every byte
+    /// above `jobs × per-reader` is structurally inert
+    /// ([`BufferPool::slots`] clamping at `POOL_DEPTH.max(jobs)`).
+    fn default_memory_bytes(&self) -> Option<u64> {
+        Some(self.block_reader_bytes()?.saturating_mul(self.default_workers() as u64))
     }
 }
 
@@ -3396,5 +3790,299 @@ mod tests {
         };
         assert!(source.seek_table().is_none());
         assert_eq!(source.size().await.unwrap(), 16);
+    }
+
+    /// A filesystem root shaped like a Linux one, for driving discovery
+    /// against something other than the machine the test is running on.
+    ///
+    /// **Everything the reader consults is under the root** — `proc/self/cgroup`,
+    /// `proc/meminfo`, and the cgroup mount — which is what makes the v1 arm
+    /// executable at all: the memory controller lives in exactly one hierarchy
+    /// (`RT6`), so no v1 shape can exist beside this machine's v2 one.
+    struct FakeRoot(tempfile::TempDir);
+
+    impl FakeRoot {
+        fn new() -> FakeRoot {
+            FakeRoot(tempfile::tempdir().unwrap())
+        }
+
+        fn path(&self) -> &Path {
+            self.0.path()
+        }
+
+        /// Write `body` at `rel`, creating the directories above it.
+        fn write(&self, rel: &str, body: &str) -> &FakeRoot {
+            let at = self.0.path().join(rel);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::write(&at, body).unwrap();
+            self
+        }
+
+        /// The `0::` line for a v2 process at `cgroup`.
+        fn v2(&self, cgroup: &str) -> &FakeRoot {
+            self.write("proc/self/cgroup", &format!("0::{cgroup}\n"))
+        }
+
+        /// A v2 cgroup directory's two limit files, each `None` for absent.
+        fn v2_limits(&self, cgroup: &str, max: Option<&str>, high: Option<&str>) -> &FakeRoot {
+            let dir = format!("sys/fs/cgroup{cgroup}");
+            let dir = dir.trim_end_matches('/');
+            if let Some(max) = max {
+                self.write(&format!("{dir}/memory.max"), &format!("{max}\n"));
+            }
+            if let Some(high) = high {
+                self.write(&format!("{dir}/memory.high"), &format!("{high}\n"));
+            }
+            self
+        }
+    }
+
+    /// **The `0::` line is selected by its shape, and a dead cgroup's path is
+    /// not a directory name** (`RT1`). The hierarchy id is whatever
+    /// `idr_alloc_cyclic` handed out and the line order is unspecified, so
+    /// neither may be read; the ` (deleted)` suffix would otherwise be joined
+    /// onto the mount point.
+    #[test]
+    fn the_unified_line_is_found_by_shape_and_stripped_of_a_deleted_suffix() {
+        let root = FakeRoot::new();
+        root.write("proc/self/cgroup", "7:name=probe:/somewhere\n0::/leaf (deleted)\n").v2_limits(
+            "/leaf",
+            Some("536870912"),
+            None,
+        );
+        assert_eq!(discover_memory_limit_in(root.path()), Some(536870912));
+    }
+
+    /// **The controller field is a comma-separated list matched by
+    /// membership** (`RT6`): a v1 hierarchy carrying only a *name* reads
+    /// `name=memory` and holds no memory controller at all, so a substring
+    /// test would send the reader to a hierarchy with no limit files in it.
+    #[test]
+    fn a_hierarchy_merely_named_memory_is_not_the_memory_controller() {
+        let root = FakeRoot::new();
+        root.write("proc/self/cgroup", "3:name=memory:/decoy\n0::/leaf\n").v2_limits(
+            "/leaf",
+            Some("268435456"),
+            None,
+        );
+        assert_eq!(discover_memory_limit_in(root.path()), Some(268435456));
+    }
+
+    /// **`max` is a sentinel for one level, not a statement that the process is
+    /// unlimited** (`RT2`), and an absent file is "no limit here" rather than an
+    /// error (`RT5`) — the hierarchy root carries neither file at all. So the
+    /// walk climbs past both and finds the ancestor that binds.
+    #[test]
+    fn an_ancestors_limit_binds_where_the_leaf_states_max() {
+        let root = FakeRoot::new();
+        root.v2("/pgdq-probe/child")
+            .v2_limits("/pgdq-probe/child", Some("max"), Some("max"))
+            .v2_limits("/pgdq-probe", Some("268435456"), None);
+        assert_eq!(discover_memory_limit_in(root.path()), Some(268435456));
+    }
+
+    /// **`memory.high` and `memory.max` are minimised together, across levels
+    /// and across the two files** (`RT3`, `RT5`): nothing orders them, and the
+    /// throttle two levels up may be the smallest number in the walk. It is
+    /// read at all because sustained reclaim ends a scan's throughput as surely
+    /// as an OOM ends the run.
+    #[test]
+    fn the_smallest_of_every_limit_at_every_level_is_what_binds() {
+        let root = FakeRoot::new();
+        root.v2("/a/b/c")
+            .v2_limits("/a/b/c", Some("2147483648"), None)
+            .v2_limits("/a/b", None, Some("134217728"))
+            .v2_limits("/a", Some("1073741824"), None);
+        assert_eq!(discover_memory_limit_in(root.path()), Some(134217728));
+    }
+
+    /// **Nothing anywhere is `None`, and that is a complete statement**: no
+    /// limit found means no limit is being enforced, however the process was
+    /// started. A tree with no cgroup file at all reads the same way, which is
+    /// the non-Linux case.
+    #[test]
+    fn an_unlimited_hierarchy_and_a_missing_one_both_read_as_no_limit() {
+        let root = FakeRoot::new();
+        root.v2("/leaf").v2_limits("/leaf", Some("max"), Some("max"));
+        assert_eq!(discover_memory_limit_in(root.path()), None);
+        assert_eq!(discover_memory_limit_in(FakeRoot::new().path()), None);
+    }
+
+    /// **A v1 hierarchy is read from its own mount, located through
+    /// `mountinfo`** (`RT4`, `RT6`), and "unlimited" there is a *threshold*
+    /// near `LONG_MAX` rather than a sentinel string — the value being a
+    /// function of the page size and the word width, so an equality test would
+    /// be right on one kernel configuration and wrong on three.
+    ///
+    /// This establishes that the reader handles the shape `RT4` describes. It
+    /// observes no kernel: this machine runs a pure v2 hierarchy and cannot
+    /// produce a v1 memory controller at all.
+    #[test]
+    fn the_v1_arm_reads_its_own_mount_and_treats_a_huge_value_as_no_limit() {
+        let root = FakeRoot::new();
+        root.write("proc/self/cgroup", "5:memory:/svc\n0::/leaf\n")
+            .write(
+                "proc/self/mountinfo",
+                "31 24 0:27 / /sys/fs/cgroup/memory rw,nosuid - cgroup cgroup rw,memory\n",
+            )
+            .write("sys/fs/cgroup/memory/svc/memory.limit_in_bytes", "536870912\n")
+            // The v2 files are there and must not be consulted: a controller
+            // lives in exactly one hierarchy, and this process's memory
+            // controller is the v1 one.
+            .v2_limits("/leaf", Some("104857600"), None);
+        assert_eq!(discover_memory_limit_in(root.path()), Some(536870912));
+
+        let unset = FakeRoot::new();
+        unset
+            .write("proc/self/cgroup", "5:memory:/\n")
+            .write(
+                "proc/self/mountinfo",
+                "31 24 0:27 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+            )
+            // 32-bit `PAGE_COUNTER_MAX × PAGE_SIZE`, the smallest of the four
+            // shapes "unlimited" takes and therefore the one a threshold has
+            // to clear.
+            .write("sys/fs/cgroup/memory/memory.limit_in_bytes", "8796093018112\n");
+        assert_eq!(discover_memory_limit_in(unset.path()), None);
+    }
+
+    /// **The conventional mount is the fallback, not the authority** — a tree
+    /// that lists no cgroup mount still reads `/sys/fs/cgroup/memory`, which is
+    /// where `file-hierarchy(7)` puts it.
+    #[test]
+    fn the_v1_arm_falls_back_to_the_conventional_mount() {
+        let root = FakeRoot::new();
+        root.write("proc/self/cgroup", "5:cpu,memory,cpuacct:/svc\n")
+            .write("sys/fs/cgroup/memory/svc/memory.limit_in_bytes", "268435456\n");
+        assert_eq!(discover_memory_limit_in(root.path()), Some(268435456));
+    }
+
+    /// **`MemAvailable`, in kB, and nothing else** (`RT8`). `MemFree` is on the
+    /// same file and is not read: it excludes reclaimable page cache, so
+    /// planning against it would throttle a scan for memory the kernel would
+    /// hand straight back.
+    #[test]
+    fn available_memory_reads_memavailable_and_converts_from_kb() {
+        let root = FakeRoot::new();
+        root.write(
+            "proc/meminfo",
+            "MemTotal:       32774304 kB\nMemFree:         1489828 kB\n\
+             MemAvailable:   20002184 kB\n",
+        );
+        assert_eq!(available_memory_in(root.path()), Some(20002184 * 1024));
+        assert_eq!(available_memory_in(FakeRoot::new().path()), None);
+    }
+
+    /// **A discovered limit caps what a source asked for; it does not become
+    /// it.** The reserve comes off the top and the source's recommendation is
+    /// taken no higher — "do not take what you cannot use" — while a
+    /// recommendation that already fits is left alone.
+    #[test]
+    fn a_discovered_limit_caps_the_recommendation_at_the_limit_less_the_reserve() {
+        let root = FakeRoot::new();
+        root.v2("/leaf").v2_limits("/leaf", Some("1073741824"), None);
+        let cap = (1024 << 20) - MEMORY_RESERVE;
+
+        let squeezed = Parallelism::discover_in(root.path(), 8, Some(4 << 30));
+        assert_eq!(squeezed.memory_bytes(), Some(cap));
+        assert_eq!(squeezed.jobs(), 8);
+
+        let roomy = Parallelism::discover_in(root.path(), 8, Some(128 << 20));
+        assert_eq!(roomy.memory_bytes(), Some(128 << 20));
+    }
+
+    /// **Below the reserve the budget goes to zero rather than to a floor.**
+    /// Reasserting [`DEFAULT_MEMORY_BUDGET`] here would hand a 256 MiB cgroup
+    /// exactly what an unlimited host gets, in the one case discovery was built
+    /// for. What zero produces is one reader's worth on the streaming path,
+    /// through the three floors already in the mechanism.
+    #[test]
+    fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {
+        let root = FakeRoot::new();
+        root.v2("/leaf").v2_limits("/leaf", Some(&MEMORY_RESERVE.to_string()), None);
+        assert_eq!(Parallelism::discover_in(root.path(), 4, Some(1 << 30)).memory_bytes(), Some(0));
+
+        let tighter = FakeRoot::new();
+        tighter.v2("/leaf").v2_limits("/leaf", Some("134217728"), None);
+        assert_eq!(Parallelism::discover_in(tighter.path(), 4, None).memory_bytes(), Some(0));
+    }
+
+    /// **A source with no recommendation is still capped by a discovered
+    /// limit**, at [`DEFAULT_MEMORY_BUDGET`] where the limit leaves room — the
+    /// plain path, which asks for nothing and is left where it was.
+    #[test]
+    fn a_source_that_recommends_nothing_is_capped_at_the_existing_default() {
+        let root = FakeRoot::new();
+        root.v2("/leaf").v2_limits("/leaf", Some("3221225472"), None);
+        assert_eq!(
+            Parallelism::discover_in(root.path(), 1, None).memory_bytes(),
+            Some(DEFAULT_MEMORY_BUDGET)
+        );
+    }
+
+    /// **The composition is not a `min`, and the difference is one `Option`.**
+    /// With no limit found there is no cap from the environment at all, so a
+    /// source's recommendation stands — where a `min` against the fallback
+    /// constant would have handed a compressed scan 64 MiB, which affords one
+    /// reader, and made the source's own worker count unreachable on the
+    /// machine most likely to run it.
+    #[test]
+    fn no_limit_found_leaves_the_recommendation_uncapped_but_for_memavailable() {
+        let root = FakeRoot::new();
+        root.v2("/leaf")
+            .v2_limits("/leaf", Some("max"), None)
+            .write("proc/meminfo", "MemAvailable:   20002184 kB\n");
+        let want = 1400 << 20;
+        assert_eq!(
+            Parallelism::discover_in(root.path(), 24, Some(want)).memory_bytes(),
+            Some(want)
+        );
+
+        // Half of `MemAvailable`, because it is an estimate two processes
+        // reading at once each see the whole of — and it binds only on a
+        // machine too small to afford the recommended count.
+        let small = FakeRoot::new();
+        small.v2("/leaf").write("proc/meminfo", "MemAvailable:     262144 kB\n");
+        assert_eq!(
+            Parallelism::discover_in(small.path(), 24, Some(want)).memory_bytes(),
+            Some(128 << 20)
+        );
+    }
+
+    /// **An unlimited environment falls back to today's constant**, which is
+    /// what keeps discovery strictly additive — and at a serial count it falls
+    /// all the way back to [`Parallelism::default`], the state that says nobody
+    /// asked for a budget at all. A `Workers` arrangement has nowhere to record
+    /// that, so it carries the constant bare.
+    #[test]
+    fn nothing_discovered_and_nothing_recommended_is_todays_default() {
+        let root = FakeRoot::new();
+        root.v2("/leaf").write("proc/meminfo", "MemAvailable:   20002184 kB\n");
+        assert_eq!(Parallelism::discover_in(root.path(), 1, None), Parallelism::default());
+        assert_eq!(
+            Parallelism::discover_in(root.path(), 8, None),
+            Parallelism::workers(8, DEFAULT_MEMORY_BUDGET)
+        );
+    }
+
+    /// **A source recommends what its own worker count needs**, so that "no
+    /// limit found" cannot mean "serial": one reader of an ordinary compressed
+    /// dump costs more than the 64 MiB fallback, and a count nothing can afford
+    /// is not a recommendation. The plain source inherits the silence it
+    /// inherits for the worker count.
+    #[test]
+    fn a_compressed_source_recommends_what_its_own_worker_count_needs() {
+        assert_eq!(BareSource.default_memory_bytes(), None);
+        let (_file, plain) = source_of(b"0123456789abcdef");
+        assert_eq!(plain.default_memory_bytes(), None);
+
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        let per_reader = source.block_decode_bytes().expect("a block path to price");
+        assert_eq!(
+            source.default_memory_bytes(),
+            Some(per_reader * source.default_workers() as u64)
+        );
     }
 }

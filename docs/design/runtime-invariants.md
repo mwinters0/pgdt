@@ -31,7 +31,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md), "The
 seekable-xz crate reads its compressed bytes through a trait, on purpose").
 
-**`RT1`–`RT7` are allocated**, and nothing at or below `RT7` is reused.
+**`RT1`–`RT8` are allocated**, and nothing at or below `RT8` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is

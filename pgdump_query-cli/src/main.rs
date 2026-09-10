@@ -12,10 +12,10 @@ use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus, CompressionShape};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DEFAULT_MEMORY_BUDGET, DataBlock,
-    Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism,
-    Predicate, PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody,
-    TypeKind, open_local, preamble_only, render_field_into,
+    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
+    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
+    PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody, TypeKind,
+    open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -84,7 +84,11 @@ struct ParallelArgs {
     #[arg(long, value_name = "N", value_parser = parse_jobs)]
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.
-    /// Defaults to 64 MiB.
+    /// Left unstated, pgdq reads the memory limit it is running under — the
+    /// smallest cgroup limit that binds — and takes that less a 256 MiB
+    /// reserve; where no limit is set it takes what the file's own worker
+    /// count needs, capped at half the memory the machine reports available.
+    /// A plain dump asks for nothing and stays on 64 MiB.
     ///
     /// It is a real bound rather than a target: a `.xz` file that does not
     /// leave room inside it for one reader — two of its blocks, a read buffer
@@ -96,18 +100,20 @@ struct ParallelArgs {
     ///
     /// **It is also what decides how many of `--jobs`' workers read at once**,
     /// on both commands: the budget divided by what one reader holds. For an
-    /// ordinary 24 MiB-block `.xz` that is about 58 MiB, so the 64 MiB default
-    /// affords one.
+    /// ordinary 24 MiB-block `.xz` that is about 58 MiB, so a 64 MiB budget
+    /// affords one — which is why a discovered budget is sized off the count
+    /// the source recommends rather than off a constant.
     ///
     /// **On `query` it divides by two terms rather than one**: what a worker
     /// costs to read, plus the 64 MiB a sub-stream's held batch may pin
     /// (`docs/design/architecture.md`, "Execution model and API surface") —
     /// charged on a plain file, where a batch pins read buffers the first term
     /// never counted, and not on a block-decoding `.xz`, where it pins the
-    /// block that term already holds. At the default 64 MiB the plain file's
-    /// sum already exceeds the budget, so `query --jobs N` on one with
-    /// `--parallel-memory` left at its default runs serially however large `N`
-    /// is — raise it past roughly 145 MiB to get a second sub-stream at all.
+    /// block that term already holds. At 64 MiB — which is what a plain file
+    /// gets unless a limit or a flag says otherwise — the plain file's sum
+    /// already exceeds the budget, so `query --jobs N` on one runs serially
+    /// however large `N` is; raise it past roughly 145 MiB to get a second
+    /// sub-stream at all.
     /// `parse` is unaffected by the second term: it builds no batches, so
     /// nothing on that path pins a span.
     #[arg(long, value_name = "BYTES", value_parser = parse_parallel_memory)]
@@ -124,12 +130,20 @@ impl ParallelArgs {
     /// `Parallelism::workers` and a third meaning at the CLI would diverge from
     /// what the library makes of the same number.
     ///
-    /// **The source is asked for a count, never for a budget.** A worker
-    /// default can be a source's own answer because it is downstream of
-    /// recognition, which the caller has already paid for by the time it has a
-    /// source to hand here (`docs/design/architecture.md`, "Execution model and
-    /// API surface"). What the budget affords still binds afterwards, through
-    /// the divisor every count passes alike.
+    /// **The source is asked for both numbers, and the environment caps the
+    /// second.** A source's answer can be either because both are downstream
+    /// of recognition, which the caller has already paid for by the time it
+    /// has a source to hand here (`docs/design/architecture.md`, "Execution
+    /// model and API surface"); what the *environment* allows is
+    /// `Parallelism::discover_for`'s question, and it is asked only where
+    /// `--parallel-memory` is absent. What the resulting budget affords still
+    /// binds afterwards, through the divisor every count passes alike.
+    ///
+    /// **A discovered limit can put the budget below `DEFAULT_MEMORY_BUDGET`,
+    /// and that is the point.** A 256 MiB allocation leaves nothing after the
+    /// reserve, and the three floors inside the mechanism make that one
+    /// reader's worth on the streaming path — where reasserting the constant
+    /// would hand a tight cgroup the same 64 MiB an unlimited host gets.
     ///
     /// **A stated budget reaches the library at every worker count**, the
     /// serial state carrying one of its own — so `--parallel-memory` is worth
@@ -146,11 +160,9 @@ impl ParallelArgs {
     /// `DEFAULT_MEMORY_BUDGET` bare, exactly as a stated `--jobs 8` always did.
     fn resolve(&self, source: &dyn ByteRangeSource) -> Parallelism {
         let jobs = self.jobs.unwrap_or_else(|| source.default_workers());
-        let stated =
-            Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET));
-        match (self.parallel_memory, stated) {
-            (None, Parallelism::Serial { .. }) => Parallelism::default(),
-            _ => stated,
+        match self.parallel_memory {
+            Some(stated) => Parallelism::workers(jobs, stated),
+            None => Parallelism::discover_for(jobs, source.default_memory_bytes()),
         }
     }
 }
@@ -2313,6 +2325,25 @@ mod tests {
         }
     }
 
+    /// The budget a flagless resolution lands on **here**, on whatever machine
+    /// the suite is running on: `None` — nobody stated one — only where no
+    /// memory limit is discovered, and the discovered allowance capped at the
+    /// library's own constant where one is.
+    ///
+    /// **The branch is the thing being pinned, not the number.** Before
+    /// discovery these assertions could name 64 MiB outright; now the answer
+    /// depends on the cgroup the test process is in, and a test that named the
+    /// constant would pass on a bare host and fail in a container — which is
+    /// the environment this default exists for. Every precedence claim below
+    /// is asserted against this rather than around it, so the flags' behaviour
+    /// stays pinned in both.
+    fn flagless_budget() -> Option<u64> {
+        pgdump_query::discover_memory_limit().map(|limit| {
+            pgdump_query::DEFAULT_MEMORY_BUDGET
+                .min(limit.saturating_sub(pgdump_query::MEMORY_RESERVE))
+        })
+    }
+
     /// **Stating neither flag asks the source**, which is the one thing about
     /// `--jobs` no integration test can see: the whole design promise is that a
     /// partitioned run and a serial one produce the same bytes, so nothing in
@@ -2327,30 +2358,28 @@ mod tests {
     /// which is `ByteRangeSource::default_workers`'s own test.
     #[test]
     fn stating_no_parallelism_flag_asks_the_source() {
+        let budget = flagless_budget();
+        let filled = budget.unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
         let stated = ParallelArgs { jobs: None, parallel_memory: None };
-        assert_eq!(stated.resolve(&Recommends(1)), Parallelism::default());
-        assert!(stated.resolve(&Recommends(1)).is_serial());
-        // Nothing was asked for, so nothing is claimed: this is what the
-        // status line renders `(default)`.
-        assert_eq!(stated.resolve(&Recommends(1)).memory_bytes(), None);
 
-        // A source that recommends more gets it, with the CLI's own budget
-        // filled in beside it — `Parallelism::Workers` has nowhere to record
-        // that nobody stated one.
-        assert_eq!(
-            stated.resolve(&Recommends(8)),
-            Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET)
-        );
+        // A source recommending the serial path gets it, carrying whatever the
+        // environment allows — and `None`, which the status line renders
+        // `(default)`, exactly where no limit was found to allow anything.
+        assert!(stated.resolve(&Recommends(1)).is_serial());
+        assert_eq!(stated.resolve(&Recommends(1)).memory_bytes(), budget);
+
+        // A source that recommends more gets it. `Parallelism::Workers` has
+        // nowhere to record that nobody stated a budget, so it carries the
+        // fallback bare.
+        assert_eq!(stated.resolve(&Recommends(8)), Parallelism::workers(8, filled));
 
         // And a stated flag wins outright, over a recommendation in either
         // direction: this pins the precedence rather than the plumbing.
         let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
-        assert_eq!(
-            asked.resolve(&Recommends(1)),
-            Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET)
-        );
+        assert_eq!(asked.resolve(&Recommends(1)), Parallelism::workers(8, filled));
         let serial = ParallelArgs { jobs: Some(1), parallel_memory: None };
-        assert_eq!(serial.resolve(&Recommends(24)), Parallelism::default());
+        assert!(serial.resolve(&Recommends(24)).is_serial());
+        assert_eq!(serial.resolve(&Recommends(24)).memory_bytes(), budget);
     }
 
     /// **A stated budget survives a serial worker count.** `--jobs 1` is the
@@ -2373,9 +2402,9 @@ mod tests {
         assert_eq!(one.resolve(&Recommends(24)), stated.resolve(&serial));
 
         // A stated count with no budget beside it is the other half of the
-        // pair, and it keeps the CLI's own fallback.
+        // pair, and the budget then comes from the environment.
         let jobs_only = ParallelArgs { jobs: Some(1), parallel_memory: None };
-        assert_eq!(jobs_only.resolve(&serial).memory_bytes(), None);
+        assert_eq!(jobs_only.resolve(&serial).memory_bytes(), flagless_budget());
     }
 
     /// The bare spelling, unchanged: no whitespace anywhere means nothing to

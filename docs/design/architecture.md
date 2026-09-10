@@ -115,6 +115,7 @@ trait ByteRangeSource: Send + Sync {
     }
     fn block_decode_bytes(&self) -> Option<u64> { None }
     fn default_workers(&self) -> usize   { 1 }
+    fn default_memory_bytes(&self) -> Option<u64> { None }
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     fn hint_wait_policy(&self, _policy: WaitPolicy) {}
 }
@@ -160,7 +161,7 @@ which is what the CLI holds. Worth knowing when a similar rework is costed
 elsewhere: the two forms are not a matter of taste, and which one is needed is
 decided by whether anything constructs a source it cannot name.
 
-**Four of the nine defaulted methods exist for a source the local file is
+**Four of the ten defaulted methods exist for a source the local file is
 not.** `stored_size()` is the bytes as stored on the device where `size()` is
 the addressable length — equal for a plain file, divergent for a decompressing
 one, and it is what the cache's staleness check reads, so that check stays a
@@ -178,7 +179,8 @@ so that the decline's message names the recourse without re-deriving the
 source's own rule ("The compressed source"). The other five are answered by
 every source: `hint_read_size`, `hint_parallelism` and `hint_wait_policy` are
 about the caller rather than the source and are described below, `partitions`
-is next, and `default_workers` is the source's own worker recommendation, also
+is next, and `default_workers` and `default_memory_bytes` are the source's own
+recommendations for the two numbers a caller states its parallelism in, also
 below.
 
 **A source advises its own partitioning, and the layer above never learns what
@@ -325,6 +327,127 @@ intact. *Rejected: reading the recommendation inside the library*, which would
 make an embedder's silence mean concurrency and put a source lookup inside every
 scan entry point.
 
+**The byte budget's default is the environment's, and it is discovered rather
+than constant.** Under an orchestrator the process is *given* an allocation, is
+the only party that knows it, and cannot be asked to have it restated on a
+command line — so `io::discover_memory_limit()` reads the limit actually
+binding this process and the CLI fills an omitted `--parallel-memory` from it.
+What is read is `RT1`–`RT6` of
+[`runtime-invariants.md`](runtime-invariants.md): which hierarchy owns the
+`memory` controller, that hierarchy's files — `memory.max` and `memory.high` on
+v2, `memory.limit_in_bytes` on v1 — and the **minimum over every ancestor
+cgroup** rather than the nearest, since an ancestor's limit binds and is
+invisible in the leaf's own file. `memory.high` is read beside `memory.max`
+because it throttles where `memory.max` kills, and sustained reclaim ends a
+scan's throughput as surely as an OOM ends the run. Three parse hazards are
+handled in one place, `io::memory_hierarchy`: the `0::` line is selected by its
+*shape* and never by position or hierarchy id, the controller field is matched
+by membership in a comma-separated list rather than by substring, and a dead
+cgroup's ` (deleted)` suffix is stripped before the path is joined onto a mount
+point.
+
+**`discover_memory_limit` takes its filesystem root as a parameter**, which is
+what makes the v1 arm executable at all: the memory controller lives in exactly
+one hierarchy at a time, so a machine running a unified hierarchy cannot produce
+a v1 shape beside it and the branch would otherwise ship never having run. What
+a fixture root establishes is that the reader handles the shape `RT4` describes,
+not that a kernel still produces it.
+
+**The default is the limit minus a reserve, not a fraction of it.** Resident
+above a stated budget is roughly *constant* rather than proportional, because
+`BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)` — so a percentage would
+under-reserve at a small limit and over-reserve at a large one, which is
+backwards: the small cgroup is where being wrong kills the process.
+`io::MEMORY_RESERVE` is **256 MiB**, read off the compressed leg of the reserve
+measurement, and it over-reserves the plain path by roughly the difference: the
+two paths' fixed terms are a factor of thirty apart, a plain `parse` holding
+5.86 MiB above its pool where a block-decoding one holds a few hundred.
+*Rejected: a per-source reserve*, or a `discover()` that answers a range or
+takes a closure over a source — the number is needed by a caller with nothing
+open, and a source's own answer is downstream of recognition, which is I/O.
+Over-reserving is the safe direction and an operator who wants a plain scan's
+real headroom states the flag.
+
+**Below the reserve the budget goes to zero, and the arrangement that produces
+is named rather than emergent.** At a 256 MiB limit `limit − reserve` is
+nothing, and three independent floors then decide the behaviour between them —
+`stream::worker_count`'s `.max(1)`, `BufferPool::slots`' clamp to one, and
+`BlockCache::affordable` refusing block decode — which is one reader's worth on
+the *streaming* path. Reasserting `DEFAULT_MEMORY_BUDGET` there would put
+today's constant back under a new name in the one case discovery was built for,
+so it is not floored; a user in a tight cgroup is told that their *allocation*
+bound the scan rather than their flags.
+
+**The composition is not a `min`, and the difference is one `Option`.** A
+source recommends a budget as it recommends a worker count —
+`ByteRangeSource::default_memory_bytes`, `None` for `LocalFileSource` and
+`jobs × what one reader holds` for a block-decoding `XzSource` — and
+`Parallelism::discover_for(jobs, want)` composes the two:
+
+- a **discovered** limit is a cap: `want`, or `DEFAULT_MEMORY_BUDGET` where the
+  source recommends nothing, taken no higher than `limit − MEMORY_RESERVE`;
+- **no limit found** has no cap from the environment at all, only half of
+  `/proc/meminfo`'s `MemAvailable` (`RT8`).
+
+Written instead as `min(want, discovered)` it breaks the case it exists for: on
+an unlimited host discovery falls back to today's 64 MiB constant, one
+compressed reader costs about 58 MiB, and the minimum would make the scan
+serial — shipping a source-dependent worker default that never fires on the
+machine most likely to run it. A count nothing can afford is not a
+recommendation ([`roadmap.md`](roadmap.md), "A default runs as fast as the
+allocation permits").
+
+**Half, and `MemAvailable`, and only after no limit was found — each for its own
+reason.** `/proc/meminfo` is the *host's* even inside a container, so consulting
+it before `RT1`–`RT6` have ruled out a limit would read tens of gigabytes
+against a half-gigabyte allocation. `MemFree` is unusable — it excludes
+reclaimable page cache and reads several times lower on any machine that has
+read a large file, so pgdq would throttle itself for memory the kernel would
+hand straight back. And half rather than all because `MemAvailable` is an
+estimate that two processes reading at once each see the whole of: a ceiling to
+plan under, never a reservation. The cap costs nothing wherever there is room —
+resident saturates at `jobs × per-reader`, so every byte above that is
+structurally inert — and binds only on a machine too small to afford the
+recommended count.
+
+*Rejected: a fraction of the discovered limit as a ceiling on top of the
+subtraction.* "We do not take an allocation we cannot show we use" has an exact
+structural expression once the divisor charges honestly — `stream::worker_count`
+is `min(jobs, budget / C)` and `BufferPool::slots` clamps at
+`POOL_DEPTH.max(jobs)` — so a number that provably never binds would read as a
+safety margin and not be one. What that rests on is the clamp: a change that
+unclamps `slots()` makes a large budget suddenly real, which is recorded here
+rather than guarded against by a fraction hedging against a change nobody has
+proposed.
+
+*Rejected: a modest constant instead of the `MemAvailable` cap* — `min(cores, 4)
+× C`, about 236 MiB. It caps a roomy twenty-four-core host at four readers with
+nothing contended, buying safety the cap provides for free, and a constant
+cannot tell a 128-core server with 256 GiB from a 128-core one with 8.
+
+*Rejected: detecting a container and softening the default when we are not in
+one.* What binds a process is the **limit**, not the namespace, and "was an
+allocation stated" is already read completely and is right in all four
+combinations: in a container with a limit, fill it; in a container without one,
+fall to the `MemAvailable` cap; on a bare host with a systemd `MemoryMax`, fill
+it; on a bare host with nothing, the cap again. Container-ness changes the
+answer only in the two middle rows and changes it to the wrong one in both. As a
+*diagnostic* it is incomplete for the same reason the arena-cap check was
+refused — `/.dockerenv` is docker's and absent under containerd,
+`/proc/self/cgroup` reads `0::/` in some containers and a real path in others —
+and the actionable sentence needs no detection: **no limit found already means
+no limit is enforced**, which is complete and true however the process was
+started.
+
+**What an embedder gets is two primitives and a convenience over them.**
+`io::discover_memory_limit()` and `std::thread::available_parallelism()` are the
+primitives, for a caller that has already made half its allocation decision;
+`Parallelism::discover()` composes them through the reserve rule for a caller
+that wants the whole answer, and `Parallelism::discover_for` is that rule given
+recommendations already in hand. **The library still reads none of them**: an
+embedder's silence is `Parallelism::default()`, the serial path stating no
+budget, and the CLI's `ParallelArgs::resolve` is this repo's one caller.
+
 **The asymmetry the default ships is stated rather than smoothed over.** The
 same count gives a compressed `parse` 5.82× and a compressed typed `query` only
 1.60×, its sub-stream count capped by the divisor below. That is a count asked
@@ -428,11 +551,12 @@ way down would leave the unit tests passing.
 
 **`None` is the distinct fact that nobody stated a budget**, which is
 `Parallelism::default()` and what a source reads as "keep
-`DEFAULT_MEMORY_BUDGET`". The CLI is the one caller that can produce it: its
-own `--parallel-memory` fallback and the library's constant are the same
-number, so `ParallelArgs::resolve` answers the default value when neither flag
-was given rather than restating 64 MiB as though it had been asked for — which
-is what lets the status line's `(default)` marker stay true ("Status output").
+`DEFAULT_MEMORY_BUDGET`". The CLI is the one caller that can produce it, and
+since discovery it produces it in one case only: no `--parallel-memory`, no
+limit found, and a source recommending nothing — which is a flagless plain scan
+on an unlimited host. That is what the status line's `(default)` marker still
+means literally, and it is also the whole of what that marker can say, since
+`Parallelism::Workers` has nowhere to record "nobody asked" ("Status output").
 
 *Rejected: `workers(1, …)` no longer collapsing.* It is the other shape that
 closes the same defect, and it costs the paragraph above: "is this parallel"
@@ -7885,10 +8009,19 @@ line has no such source to protect, and printing that `None` bare left a
 reader unable to
 say what bound actually applied, the first cut of this slice having done
 exactly that. `io::memory_budget_display` is the free function a status line
-calls instead: the stated byte count where the caller gave one, or
+calls instead: the byte count the arrangement carries, or
 [`DEFAULT_MEMORY_BUDGET`] — what every pool falls back to — marked `(default)`
-where they did not, so the line always reads as a number and never as a claim
-that a caller asked for exactly 64 MiB when nobody did.
+where it carries none, so the line always reads as a number and never as a
+claim that a caller asked for exactly 64 MiB when nobody did.
+
+**Since discovery the marker distinguishes less than the line needs**, and the
+provenance work is where it comes back. A budget read off the environment is
+printed bare, exactly as a stated one is, because `Parallelism` carries the
+number and not where it came from; `(default)` therefore survives only on the
+one arrangement that carries no number at all. What the line is to gain is the
+three-way distinction — stated, discovered, and *no limit found*, which is the
+one that says no limit is being enforced rather than that pgdq chose not to
+look.
 
 **The library carries the facade and no output policy; the CLI carries the
 subscriber.** `tracing::info!` calls live at the three sites above; nothing in
