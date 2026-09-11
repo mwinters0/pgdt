@@ -41,6 +41,7 @@ cd scripts && uv run measure.py --figure <id>     # re-take one figure — one w
 cd scripts && uv run measure.py --figure <id> --alone   # borrowing nothing: a diagnostic sitting, marked NOT PUBLISHABLE
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run measure.py --profile-recipe  # the sampling-profile sequence, printed; minutes, not detached
+cd scripts && uv run measure.py --heaptrack-recipe # the libc-level heap-attribution sequence, printed; minutes, not detached
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
 cd scripts && uv run measure.py --figure rss-attribution  # registered and untaken: what the per-block resident growth is made of
 
@@ -451,8 +452,8 @@ variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
 
 **A profile is not a figure, and the harness prints its recipe too.** `cd
 scripts && uv run measure.py --profile-recipe` emits the whole sampling-profile
-sequence with every path filled in and runs none of it — the second invocation
-the harness owns without executing, for the opposite reason to koji's: a
+sequence with every path filled in and runs none of it — one of two instrument
+recipes the harness owns without executing, for the opposite reason to koji's: a
 profile takes seconds, attributes cost per function rather than per
 subtraction, and needs no quiet machine, because what it reports is a
 proportion. So it produces a `runs/` artifact, never a median, an apparatus
@@ -474,6 +475,21 @@ plausible and is missing its largest bucket. The recipe's symbol step keys on
 libc's build ID, prefers an installed detached-symbol package to the
 `debuginfod` fetch, and prints which of the two it resolved, so that line is
 the thing to look for before trusting a profile.
+
+**The other one is heaptrack, and it is the instrument to reach for when the
+question is what a C library allocated.** `cd scripts && uv run measure.py
+--heaptrack-recipe` prints it and runs none of it, on the same terms: a `runs/`
+artifact, never a median, an apparatus line or a `measurements.md` marker, and
+its recorded shapes are shapes the sweep times. **Read it beside
+`introspect.rs`, not instead of it** — the counting `#[global_allocator]` sees
+Rust's allocations exactly and `liblzma`'s not at all, heaptrack sees both and
+cannot tell them apart, so the pair is what separates the decoder's working set
+from the allocator's retention. What each can and cannot see, the five details
+that decide whether a report describes what it claims to, and the merged-frame
+peak that has already produced one unexplained number are
+[`docs/design/measurements.md`](docs/design/measurements.md), "What an
+instrument can see" — **read it before reading a heaptrack report you did not
+take**.
 
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.

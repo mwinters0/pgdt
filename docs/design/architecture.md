@@ -7866,9 +7866,10 @@ artifact carries the warning rather than only the document about it.
 *Rejected:* reading it as a defect in the counter. `live_bytes` is the only
 number that says what *this program* asked for, which is exactly what a
 libc-level tool cannot separate out; the scope is what makes it useful, not a
-limitation of it. What is missing is a second instrument at the `malloc`
-boundary, which sees C and Rust alike and cannot tell them apart — the two are
-complementary, and the out-of-band ledger's `M86` is the libc-level half.
+limitation of it. The second instrument at the `malloc` boundary, which sees C
+and Rust alike and cannot tell them apart, is **heaptrack** — the two are
+complementary, and its recipe is printed by
+[`measurements.md`](measurements.md), "What an instrument can see".
 Routing liblzma's own `lzma_stream.allocator` hook (present in `liblzma-sys`,
 not exposed by the safe `liblzma` wrapper) through the counter would close the
 gap from the other side, and belongs upstream in `xz-seek` rather than here,

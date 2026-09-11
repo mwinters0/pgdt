@@ -80,12 +80,13 @@ Usage:
     uv run measure.py --all
     uv run measure.py --stale --since <rev>
     uv run measure.py --profile-recipe
+    uv run measure.py --heaptrack-recipe
     uv run python -m unittest test_measure -v
 
-Two invocations are printed rather than run, for opposite reasons: koji's
-because it is an hour on another medium, and the sampling profile's because a
-profile is not a figure at all. Both live here because a command kept in prose
-is a command that stops running.
+Three invocations are printed rather than run, for two reasons: koji's because
+it is an hour on another medium, and the two instrument recipes' because
+neither a sampling profile nor a heap recording is a figure at all. All three
+live here because a command kept in prose is a command that stops running.
 """
 
 from __future__ import annotations
@@ -8408,6 +8409,233 @@ def cmd_profile() -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# The heaptrack recipe: printed, never run.
+#
+# The third invocation the harness owns without executing, and the
+# **libc-level** half of the instrument pair. `introspect.rs`'s counting
+# `#[global_allocator]` intercepts Rust's `GlobalAlloc` and nothing else, so
+# every byte `liblzma` asks for is invisible to it and fully present in RSS
+# (`architecture.md`, "What the binary can report about itself"). heaptrack
+# hooks `malloc`, which sees C and Rust alike and is the layer that stays
+# correct as more C is vendored.
+#
+# It is not a figure, for koji's reason and the profile's: no reps, no median,
+# no apparatus gate, no `measurements.md` marker. What it produces is a **name**
+# for a term and the arithmetic tying it to a reading a figure took, which is
+# all `measurements.md`, "What an instrument can see", licenses an instrument to
+# produce.
+# --------------------------------------------------------------------------
+
+#: The recorder. `heaptrack_print` is derived from it rather than configured
+#: beside it: the two ship in one package, so a machine that has moved one has
+#: moved both, and two knobs would let a session analyse with a printer that
+#: does not match the recorder's file format.
+HEAPTRACK = _env("PGDQ_HEAPTRACK", "heaptrack")
+
+#: The demangler the report is piped through.
+#:
+#: **Rust symbols reach `heaptrack_print` mangled, and they are v0.** This
+#: workspace's binaries carry 7,351 `_R`-prefixed symbols and no `_ZN` ones, and
+#: heaptrack's own Rust demangling is *post*-1.5.0 and absent from the build
+#: installed here — no binary of it references `rustc_demangle`, and
+#: `heaptrack_interpret` resolves only `__cxa_demangle`. `c++filt` demangles v0
+#: natively, so one pipe buys back every Rust frame in the report; without it
+#: the C frames read fine and the Rust ones above them are noise, which is a
+#: report that looks half-broken rather than one that looks wrong.
+HEAPTRACK_DEMANGLE = _env("PGDQ_HEAPTRACK_DEMANGLE", "c++filt")
+
+#: The two shapes recorded, and they are a **pair** rather than a survey.
+#:
+#: `reserve`'s path step: a stated budget either side of `reader_bytes`, one
+#: byte apart, so the two runs differ by whether `BlockCache::affordable` admits
+#: a block-decoding reader and by nothing else (`RESERVE_STEP_BUDGETS`). Read
+#: as a difference — `heaptrack_print --diff` — that pair names the whole block
+#: path's allocation at the `malloc` boundary, decoder included, which is the
+#: measure-change-measure loop no single recording gives.
+#:
+#: **Why this pair and not the flagless family.** Every other `reserve` leg
+#: differs from its neighbour by a container limit, and a container is what this
+#: recipe deliberately does not use; the step is the one axis that lives
+#: entirely in the argv, so it is the one a host recording can reproduce
+#: exactly. The input is `RESERVE_MECHANISM_INPUT` for the same reason that
+#: figure's mechanism legs use it — the budgets are computed from its block
+#: size, so a second input would price a step nobody measured.
+HEAPTRACK_AXIS: tuple[tuple[str, str], ...] = tuple(
+    (f"{RESERVE_STEP_FAMILY}{budget}", RESERVE_MECHANISM_INPUT)
+    for budget in RESERVE_STEP_BUDGETS
+)
+
+
+def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[str]:
+    """The `pgdq` arguments one recorded shape runs.
+
+    `profile_argv`'s sibling, and the same reconciliation applies: these are the
+    flags `_script` hands the sweep, because an attribution is only readable
+    against the figure it explains. `test_measure.py`'s `HeaptrackRecipe`
+    compares the two shape by shape, so a flag that moves in the timed shape and
+    not here fails there rather than in a recording that quietly measured
+    something else."""
+    if command.startswith(RESERVE_STEP_FAMILY):
+        budget = command.removeprefix(RESERVE_STEP_FAMILY)
+        if not budget.isdigit() or int(budget) not in RESERVE_STEP_BUDGETS:
+            raise ValueError(f"{command!r} names a budget the figure does not carry")
+        return [
+            "parse",
+            "--source", str(source),
+            "--dqcache", str(cache),
+            "--jobs", str(RESERVE_JOBS),
+            "--parallel-memory", budget,
+        ]
+    raise ValueError(f"unknown heaptrack shape {command!r}")
+
+
+def heaptrack_recipe(cfg: Config) -> str:
+    """The whole sequence, with every path filled in.
+
+    Five things here decide whether the recording describes what it claims to,
+    and each fails by returning a plausible report of something else.
+    `test_measure.py` asserts all five:
+
+    * **the `profiling` binary, never `target/release/pgdq`.** heaptrack
+      resolves symbols from either, but `release` carries no line tables, so a
+      report off it has no `.rs:` reference anywhere in it — 3,627 of them
+      against 0, measured on the same recording — and every Rust frame is a bare
+      name with no file behind it. The published figures stay on `release`,
+      which is why this is the second binary the profile recipe already builds.
+    * **no `-C force-frame-pointers=yes`, and that is a stated non-requirement
+      rather than an omission.** heaptrack unwinds `.eh_frame`, where `perf`
+      needs frame pointers, so the flag buys nothing here — verified by
+      recording against a binary whose `main` opens `push %rax`, which resolved
+      the decoder stack whole. Writing it anyway would fingerprint a second
+      build of the same source for no reading.
+    * **`--record-only`.** heaptrack otherwise hands the finished file to
+      `heaptrack_gui`, which is not installed everywhere and, where it is,
+      may not start — Arch ships it in the same package as the CLI tools, and
+      it fails on missing KF6 libraries on a machine with no such desktop. That
+      failure is cosmetic, the `.zst` being already written, but a recipe that
+      ends in an error message is a recipe a session stops trusting.
+    * **`--merge-backtraces=0` on the report.** `heaptrack_print` merges by
+      default and its own `--help` says the merged peak consumption is not
+      correct: a merged frame states the *summed* peak of every backtrace under
+      it beside a call count that belongs to the merge, so one decoder's 8.39 MB
+      can be printed as "8.39M over 2 calls" and eight of them as 67.11 MB. That
+      is the shape of the one unexplained reading this instrument has produced.
+    * **`c++filt`.** See `HEAPTRACK_DEMANGLE`: the Rust frames arrive v0-mangled
+      and this build of heaptrack cannot demangle them.
+
+    And one thing that is not a mistake but reads like one: **no container.**
+    heaptrack multiplies allocation cost and RSS by its own bookkeeping, so a
+    recording made under a cgroup would be a recording of heaptrack meeting the
+    limit. The gate is where a cgroup belongs (`roadmap.md`, "Attribution is
+    introspective; only the gate is blind"); this is the other half."""
+    warm = cfg.warm_dir
+    binary = REPO / "target/profiling/pgdq"
+    cache = warm / "heaptrack.dqcache"
+    out = cfg.out_dir
+    printer = f"{HEAPTRACK}_print"
+
+    lines: list[str] = []
+    step = 0
+
+    def head(*text: str) -> None:
+        nonlocal step
+        lines.extend([f"# {step}. {text[0]}", *(f"#    {t}" for t in text[1:])])
+        step += 1
+
+    head(
+        "The tool. It hooks malloc through LD_PRELOAD, so it sees liblzma's",
+        "dictionary and Rust's allocations alike -- which is the whole reason",
+        "for it: the counting global allocator sees only the second.",
+    )
+    lines += [f"{HEAPTRACK} --version", ""]
+
+    head(
+        "The build. No RUSTFLAGS: heaptrack unwinds .eh_frame, so frame",
+        "pointers buy nothing and would fingerprint a second build. The",
+        "`profiling` profile is what buys source lines; release has none.",
+    )
+    lines += ["cargo build --profile profiling -p pgdump_query-cli", ""]
+
+    staged = sorted({name for _, name in HEAPTRACK_AXIS})
+    head(
+        "Stage the input warm, on the host. Not for the reading's sake --",
+        "heaptrack counts allocations, which a cold read does not change --",
+        "but because its own overhead makes the recording the slow part.",
+    )
+    lines.append(f"mkdir -p {warm} {out}")
+    for name in staged:
+        lines.append(f"cp -n {cfg.cache_dir / input_file(name)} {warm / input_file(name)}")
+    lines.append("")
+
+    def stem(shape: str, name: str) -> str:
+        return f"heaptrack-{shape}-{name}"
+
+    head(
+        "The recordings. --record-only: nothing is handed to heaptrack_gui,",
+        "which need not be installed and, where it is, may not start.",
+        "Each starts from no cache -- a `parse` resumes from one, so the",
+        "second run of a pair would otherwise scan nothing at all.",
+    )
+    for shape, name in HEAPTRACK_AXIS:
+        src = warm / input_file(name)
+        argv = " ".join(heaptrack_argv(shape, src, cache))
+        lines += [
+            "",
+            f"rm -f {cache} {out / (stem(shape, name) + '.zst')}",
+            f"{HEAPTRACK} --record-only -o {out / stem(shape, name)} \\",
+            f"  {binary} {argv} >/dev/null",
+        ]
+    lines.append("")
+
+    head(
+        "The reports. --merge-backtraces=0, because a merged frame's peak is",
+        "the sum over the backtraces merged into it and heaptrack_print's own",
+        "--help says it is not correct; c++filt, because the Rust frames are",
+        "v0-mangled and this heaptrack cannot demangle them.",
+    )
+    for shape, name in HEAPTRACK_AXIS:
+        lines.append(
+            f"{printer} --merge-backtraces=0 {out / (stem(shape, name) + '.zst')} \\"
+        )
+        lines.append(f"  | {HEAPTRACK_DEMANGLE} > {out / (stem(shape, name) + '.txt')}")
+    lines.append("")
+
+    (first, first_input), (second, second_input) = HEAPTRACK_AXIS
+    head(
+        "The pair read as a difference: the block path against the streaming",
+        "fallback, one byte of budget apart. This is what a single recording",
+        "cannot give -- every term the admitted reader adds, named, with no",
+        "subtraction between sittings and no spread to carry.",
+    )
+    lines += [
+        f"{printer} --merge-backtraces=0 {out / (stem(first, first_input) + '.zst')} \\",
+        f"  --diff {out / (stem(second, second_input) + '.zst')} \\",
+        f"  | {HEAPTRACK_DEMANGLE} > {out / 'heaptrack-step-diff.txt'}",
+        "",
+    ]
+
+    head("Tear down: the staged input, and the cache the recordings shared.")
+    lines.append(
+        "rm -f "
+        + " ".join(str(warm / input_file(n)) for n in staged)
+        + f" {cache}"
+    )
+    return "\n".join(lines)
+
+
+def cmd_heaptrack() -> int:
+    cfg = Config()
+    print(
+        "# A heaptrack recording is not a figure: no medians, no apparatus gate,\n"
+        "# no marker in measurements.md. It is a runs/ artifact read for\n"
+        "# attribution (measurements.md, \"What an instrument can see\"). The\n"
+        "# sequence is minutes, so it is not a detached job.\n"
+    )
+    print(heaptrack_recipe(cfg))
+    return 0
+
+
 #: Lines `tables.md` carries that address the session folding a table in, never
 #: a reader of `measurements.md`. Pasting a whole section drags them along --
 #: which is what happened when the fold-in note landed under a figure and stood
@@ -9090,6 +9318,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="print the sampling-profile sequence — the harness owns it but never runs it",
     )
+    parser.add_argument(
+        "--heaptrack-recipe",
+        action="store_true",
+        help="print the libc-level heap-attribution sequence — the harness owns it but "
+        "never runs it",
+    )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")
     parser.add_argument("--keep-warm", action="store_true", help="leave staged inputs on tmpfs")
@@ -9110,6 +9344,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_koji(args.wrap, args.koji_jobs)
     if args.profile_recipe:
         return cmd_profile()
+    if args.heaptrack_recipe:
+        return cmd_heaptrack()
     if args.check:
         return cmd_check(REPO / "docs/design/measurements.md")
     if args.stale:

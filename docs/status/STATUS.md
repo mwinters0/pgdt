@@ -223,6 +223,14 @@ consumes its output. **What a scan spends its time on is
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"**.
 
+**Neither is a heap recording**, and `cd scripts && uv run measure.py
+--heaptrack-recipe` is the second printed-never-run instrument recipe: the
+`reserve` path step recorded either side of `reader_bytes` and read as a
+`--diff`, which attributes at the `malloc` boundary and so sees `liblzma`
+where the counting `#[global_allocator]` cannot
+([`../design/measurements.md`](../design/measurements.md), "What an instrument
+can see"). Nothing in `runs/` from it yet.
+
 **Figures.** All sixteen sweep figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
 `af15eac` sweep of 2026-09-05, folded in whole, each table carrying an
@@ -616,7 +624,13 @@ than losing the sitting.
       `getrusage` legs are kept as the **check** on it. The allocator pair is
       re-aimed or dropped: it cannot test the live hypothesis, glibc's dynamic
       mmap threshold, because swapping glibc removes that mechanism rather than
-      measuring it. Evidence:
+      measuring it. **A second instrument arrived after that re-steer** and
+      covers what the first cannot: `measure.py --heaptrack-recipe` attributes
+      at the `malloc` boundary, so `liblzma`'s per-reader dictionary — 8,388,608
+      bytes, confirmed against `XZ_DECODE_FOOTPRINT` — is read off a stack
+      rather than inferred from the counter's blind spot
+      ([`../design/measurements.md`](../design/measurements.md), "What an
+      instrument can see"). Evidence:
       [2026-09-11](history/2026-09-11.md), "`M81` and `M82` are both withdrawn,
       and the account they were guarding is wrong", "Attribution was being done
       with the gate's instrument", and

@@ -3912,6 +3912,191 @@ class ProfileRecipe(unittest.TestCase):
         ran.assert_not_called()
 
 
+class HeaptrackRecipe(unittest.TestCase):
+    """The libc-level instrument, printed here for the same reason the sampling
+    profile is. Its failure mode is the profile's, not koji's: every mistake
+    below returns a report that looks fine and describes something else — and
+    one of them already has, an unexplained 67.11 MB that was a merged frame's
+    summed peak read as one allocation."""
+
+    def _recipe(self) -> str:
+        return measure.heaptrack_recipe(measure.Config())
+
+    def _records(self) -> list[str]:
+        return [
+            ln for ln in self._recipe().splitlines()
+            if ln.strip().startswith(f"{measure.HEAPTRACK} --record-only")
+        ]
+
+    def _reports(self) -> list[str]:
+        return [
+            ln for ln in self._recipe().splitlines()
+            if ln.strip().startswith(f"{measure.HEAPTRACK}_print")
+        ]
+
+    def test_the_profiling_binary_is_the_one_recorded(self):
+        # heaptrack resolves symbols off either build, so this one fails
+        # quietly: `release` yields a report with no `.rs:` reference anywhere
+        # in it — 3,627 against 0 on the same recording — and every Rust frame
+        # is a bare name with no file behind it.
+        recipe = self._recipe()
+        self.assertIn("target/profiling/pgdq", recipe)
+        self.assertNotIn("target/release/pgdq", recipe)
+        self.assertIn("--profile profiling", recipe)
+
+    def test_frame_pointers_are_not_asked_for(self):
+        # A stated non-requirement, not an omission: heaptrack unwinds
+        # `.eh_frame` where `perf` needs frame pointers, so the flag buys
+        # nothing and would fingerprint a second build of the same source.
+        commands = [
+            ln for ln in self._recipe().splitlines() if ln and not ln.startswith("#")
+        ]
+        for line in commands:
+            with self.subTest(line=line):
+                self.assertNotIn("force-frame-pointers", line)
+                self.assertNotIn("RUSTFLAGS", line)
+        self.assertTrue(any("--profile profiling" in ln for ln in commands))
+
+    def test_the_gui_is_never_launched(self):
+        # Without `--record-only` heaptrack hands the finished file to
+        # `heaptrack_gui`, which need not be installed and, where it is, may
+        # not start. The `.zst` is written either way, so the failure is
+        # cosmetic — and a recipe ending in an error message is one a session
+        # stops trusting.
+        self.assertTrue(self._records())
+        for line in self._records():
+            with self.subTest(line=line):
+                self.assertIn("--record-only", line)
+
+    def test_the_report_does_not_merge_backtraces(self):
+        # `heaptrack_print` merges by default and its own --help says the
+        # merged peak consumption is not correct: a merged frame prints the
+        # *summed* peak of every backtrace under it beside a call count
+        # belonging to the merge, so one decoder's 8.39 MB can read as
+        # "8.39M over 2 calls" and eight of them as 67.11 MB.
+        self.assertTrue(self._reports())
+        for line in self._reports():
+            with self.subTest(line=line):
+                self.assertIn("--merge-backtraces=0", line)
+
+    def test_the_rust_frames_are_demangled(self):
+        # This build's symbols are v0 and this heaptrack cannot demangle them:
+        # its Rust support is post-1.5.0 and no binary of it references
+        # `rustc_demangle`. Without the pipe the C frames read fine and the
+        # Rust frames above them are noise.
+        recipe = self._recipe()
+        self.assertIn(measure.HEAPTRACK_DEMANGLE, recipe)
+        piped = [ln for ln in recipe.splitlines() if ".txt" in ln]
+        self.assertEqual(len(piped), len(measure.HEAPTRACK_AXIS) + 1)
+        for line in piped:
+            with self.subTest(line=line):
+                self.assertIn(f"| {measure.HEAPTRACK_DEMANGLE} >", line)
+
+    def test_each_recording_starts_from_no_cache(self):
+        # `parse` resumes from a cache, so a pair sharing one would record a
+        # full scan and then a no-op — two recordings whose difference is the
+        # whole workload rather than the one byte of budget between them.
+        lines = self._recipe().splitlines()
+        starts = [i for i, ln in enumerate(lines) if ln.startswith(f"{measure.HEAPTRACK} --record-only")]
+        self.assertEqual(len(starts), len(measure.HEAPTRACK_AXIS))
+        for i in starts:
+            with self.subTest(line=lines[i]):
+                self.assertTrue(lines[i - 1].startswith("rm -f "), lines[i - 1])
+                self.assertIn("heaptrack.dqcache", lines[i - 1])
+
+    def test_the_pair_is_read_as_a_difference(self):
+        # The whole reason there are two recordings: a single one names what a
+        # run holds, and only the difference names what the admitted reader
+        # added. Both recordings must appear in that one invocation.
+        recipe = self._recipe()
+        lines = recipe.splitlines()
+        diff = [i for i, ln in enumerate(lines) if "--diff" in ln]
+        self.assertEqual(len(diff), 1)
+        (first, first_input), (second, second_input) = measure.HEAPTRACK_AXIS
+        self.assertIn(f"heaptrack-{second}-{second_input}.zst", lines[diff[0]])
+        self.assertIn(f"heaptrack-{first}-{first_input}.zst", lines[diff[0] - 1])
+
+    def test_the_pair_differs_only_in_its_budget(self):
+        """A difference read frame by frame is only a difference if the two
+        argvs are otherwise identical — a worker count or a cache path that
+        moved with the budget would put a second variable in the one reading
+        this pair exists to isolate."""
+        argvs = [
+            measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+            for shape, _ in measure.HEAPTRACK_AXIS
+        ]
+        self.assertEqual(len(argvs), 2)
+        first, second = argvs
+        self.assertEqual(len(first), len(second))
+        differing = [i for i, (a, b) in enumerate(zip(first, second)) if a != b]
+        self.assertEqual(len(differing), 1, f"{first} vs {second}")
+        self.assertEqual(first[differing[0] - 1], "--parallel-memory")
+        self.assertEqual(abs(int(first[-1]) - int(second[-1])), 1)
+
+    def test_a_recorded_shape_is_the_shape_the_sweep_times(self):
+        """The reconciliation that keeps an attribution readable against the
+        figure it explains — `profile_argv`'s, over the wrapped shapes.
+
+        `_script` builds a container command line with a timer and the RSS
+        wrapper in front of it, so the two cannot be one function; a flag that
+        moves in one and not the other gives a recording of something no figure
+        measures, and nothing else would notice."""
+        for shape, _ in measure.HEAPTRACK_AXIS:
+            with self.subTest(shape=shape):
+                script = measure._script(shape)
+                head, sep, rest = script.partition("/pgdq ")
+                self.assertTrue(sep, script)
+                timed = [w for w in rest.split() if w != ">/dev/null"]
+                recorded = measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+                self.assertEqual(recorded, timed)
+
+    def test_every_recorded_invocation_states_its_worker_count(self):
+        # The apparatus rule, and here it is also what makes the pair a pair:
+        # the count a source recommends moves with the budget, so a recording
+        # that inherited one would differ from its partner in two things.
+        argv_lines = [
+            ln for ln in self._recipe().splitlines() if "target/profiling/pgdq parse" in ln
+        ]
+        self.assertEqual(len(argv_lines), len(measure.HEAPTRACK_AXIS))
+        for line in argv_lines:
+            with self.subTest(line=line):
+                self.assertIn(f"--jobs {measure.RESERVE_JOBS}", line)
+
+    def test_the_input_is_staged_and_torn_down(self):
+        # tmpfs is 16 G and this input does not fit beside a sweep's.
+        cfg = measure.Config()
+        recipe = measure.heaptrack_recipe(cfg)
+        for _, name in measure.HEAPTRACK_AXIS:
+            staged = cfg.warm_dir / measure.input_file(name)
+            with self.subTest(input=name):
+                self.assertIn(f"cp -n {cfg.cache_dir / measure.input_file(name)}", recipe)
+                self.assertIn(f"--source {staged}", recipe)
+                self.assertIn(str(staged), recipe.splitlines()[-1])
+
+    def test_no_container_is_involved(self):
+        # heaptrack multiplies allocation cost and resident set by its own
+        # bookkeeping, so a recording under a cgroup would be a recording of
+        # heaptrack meeting the limit. The cgroup belongs to the gate.
+        recipe = self._recipe()
+        self.assertNotIn("nerdctl", recipe)
+        self.assertNotIn("--memory-swap", recipe)
+
+    def test_the_step_numbering_has_no_hole(self):
+        numbered = [
+            int(ln.split(".")[0][2:]) for ln in self._recipe().splitlines()
+            if re.match(r"^# \d+\. ", ln)
+        ]
+        self.assertEqual(numbered, list(range(len(numbered))))
+
+    def test_the_recipe_never_runs_anything(self):
+        # The rule koji's and the profile's recipes obey: this prints, and a
+        # session runs it by hand.
+        with unittest.mock.patch.object(measure, "run") as ran:
+            with unittest.mock.patch("sys.stdout"):
+                measure.cmd_heaptrack()
+        ran.assert_not_called()
+
+
 class SharedSections(unittest.TestCase):
     def test_the_two_throughput_tables_share_one_section(self):
         # The INSERT path's per-byte CPU is then a division within one place,
