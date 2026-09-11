@@ -355,16 +355,13 @@ with no room to hold what they decode buys less than either number suggests.
 > already leaves that margin for itself — the 256 MiB reserve above — so this
 > is advice about a budget *you* state. `MALLOC_ARENA_MAX` bounds the arena
 > count if you want to set it, and 2 is the smallest useful value. **It gives
-> real memory back on both input shapes, and in different places.** On a
-> compressed scan it comes off that fixed part rather than off the decoded
-> blocks, so what it saves does not grow with the budget you set and it is no
-> substitute for sizing the cgroup above the budget. **And this is not only a
-> compressed-file concern**: a plain file read with `--jobs` set holds roughly
-> 8 MB more for each worker you allow, that growth is arena retention rather
-> than anything the budget names, and capping the arenas removes essentially all
-> of it — so the cap is worth most where you run many workers, arenas being
-> counted per thread. How much either is worth on your own workload is not a
-> number we can quote you yet.
+> real memory back on a compressed scan.** It comes off that fixed part rather
+> than off the decoded blocks, so what it saves does not grow with the budget
+> you set and it is no substitute for sizing the cgroup above the budget. **A
+> plain file is a different matter and needs nothing**: read with `--jobs` set
+> it holds a few megabytes whether you allow two workers or twenty-four, so
+> there is nothing there for the cap to take back. How much it is worth on your
+> own compressed workload is not a number we can quote you yet.
 > Restricting the container's CPUs is a partial substitute at best:
 > it lowers the count an `.xz` file picks when you state no `--jobs`, because
 > that count is read from the CPU quota — but it does nothing to a `--jobs` you

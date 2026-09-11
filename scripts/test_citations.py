@@ -402,7 +402,13 @@ class RealTreeTests(unittest.TestCase):
         self.assertEqual(problems, [], "\n".join(problems))
         self.assertEqual(
             sorted(ids),
-            ["attach-text-profile", "insert-profile", "parse-profile", "query-profile"],
+            [
+                "attach-text-profile",
+                "cut-width",
+                "insert-profile",
+                "parse-profile",
+                "query-profile",
+            ],
         )
         for doc in ids.values():
             self.assertEqual(doc, "docs/design/architecture.md")

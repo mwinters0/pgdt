@@ -139,14 +139,14 @@ falls to `want = chunk_size` for the tail, so `partition_bytes` is a length
 this source allocates rather than an accounting unit.
 
 **The cap is a consequence, not a choice.** `BufferPool` holds one announced
-length and the parallel plain path has two read units, so the partition read
-cannot be the announced one and survives release only under the ceiling. Every
-alternative ceiling the original entry weighed — cap on the stated budget, or
-eat the `calloc` — answers the wrong question; the arrangement that answers it
-is the two-pool one `XzSource` already runs, now a roadmap Future item ("A
-two-unit plain source"). The doc comment and
-[`architecture.md`](architecture.md), "The interior split", say this rather
-than presenting the ceiling as a merit.
+length and the parallel plain path had two read units, so the partition read
+could not be the announced one and survived release only under the ceiling.
+Every alternative ceiling the original entry weighed — cap on the stated
+budget, or eat the `calloc` — answers the wrong question. `19.20` answered it
+by removing the second read unit instead: the plain body read is chunk-sized
+now, so there is no partition-length buffer to pool or to cap
+([`architecture.md`](architecture.md), "The interior split"). What is left of
+the cap is the *cut* width, which is the roadmap Future item.
 
 **The cap makes pooling possible and does not make it happen.**
 `BufferPool::pick` takes the smallest free buffer with `buf.len() >= len`, and

@@ -39,7 +39,7 @@
 use std::ops::Range;
 
 use crate::index::ArrayShape;
-use crate::io::{ByteRangeSource, Partitioning, WaitPolicy};
+use crate::io::{ByteRangeSource, PartitionRead, Partitioning, WaitPolicy};
 use crate::map::census_row;
 use crate::scan::{CopyEnd, CopyScanner, Event, ScanOptions};
 use crate::stream::{cut, worker_count};
@@ -407,7 +407,15 @@ async fn run_region(
             .enumerate()
             .map(|(i, range)| {
                 let entry = if i == 0 { entry } else { PieceEntry::Resync };
-                scan_partition(source, options, entry, range, columns, size)
+                scan_partition(
+                    source,
+                    options,
+                    advice.partition_read(),
+                    entry,
+                    range,
+                    columns,
+                    size,
+                )
             })
             .collect();
         // **The lowest-offset error is the one raised, and this is what
@@ -459,14 +467,25 @@ async fn run_region(
 /// stopped until the piece has consumed the line that ends at or past its
 /// limit.
 ///
-/// **The first read is the piece exactly**, `[range.start, range.end)`, which
-/// on a block-decoding source is one whole block and therefore a zero-copy
-/// slice of it. That read can never complete the piece on its own — the line
-/// that ends at or past `range.end` needs bytes past `range.end` — so a second,
-/// **chunk-sized** read follows it and is scanned as a piece of its own,
-/// starting exactly at a row boundary. That is why a partition's stated
-/// footprint is a block *plus a chunk buffer*: the tail is the read that
-/// straddles the boundary, and it is a chunk rather than a block
+/// **How the piece is read is the source's own statement**
+/// ([`crate::io::PartitionRead`]), because the right answer differs by source
+/// and was measured to differ by a factor of twenty-two. A plain file is read
+/// [`crate::io::PartitionRead::Chunked`] — every read is the announced length,
+/// so [`crate::io::BufferPool`] pools every buffer a worker takes and nothing
+/// allocates a partition-length one; a block-decoding file is read
+/// [`crate::io::PartitionRead::Whole`], because there a piece is one block and
+/// that read is a zero-copy slice of a block the worker was going to decode
+/// anyway. Neither shape is a property of the leader, which is why neither is
+/// written here (`docs/design/architecture.md`, "Execution model and API
+/// surface"). The chunked half is asserted rather than asserted-in-prose:
+/// [`no_read_a_worker_makes_exceeds_the_chunk_size`].
+///
+/// **The reads repeat until the piece has passed its limit**, which no read
+/// inside it can do: the line ending at or past `range.end` needs bytes past
+/// `range.end`, so the last read of a piece straddles the boundary and is
+/// scanned as a piece of its own, starting exactly at a row boundary — always
+/// chunk-sized, whatever the shape above, which is why a partition's stated
+/// footprint carries a chunk buffer beside whatever the source retains
 /// (`ByteRangeSource::partitions`).
 ///
 /// Handing back several [`PieceScan`]s rather than one is what keeps
@@ -477,9 +496,11 @@ async fn run_region(
 /// [`WaitPolicy::MayWait`] safe here: each `Bytes` moves into the blocking
 /// closure that parses it and drops when that closure returns, so a worker
 /// blocked for a pool slot is never itself holding the slot it waits for.
+#[allow(clippy::too_many_arguments)]
 async fn scan_partition(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    read: PartitionRead,
     entry: PieceEntry,
     range: Range<u64>,
     columns: usize,
@@ -489,7 +510,10 @@ async fn scan_partition(
     let mut out = Vec::new();
     let mut entry = entry;
     let mut start = range.start;
-    let mut want = range.end.saturating_sub(range.start).max(1);
+    let mut want = match read {
+        PartitionRead::Whole => range.end.saturating_sub(range.start).max(1),
+        PartitionRead::Chunked => (options.chunk_size as u64).max(1),
+    };
 
     while start < size {
         let end = (start + want).min(size);
@@ -881,6 +905,124 @@ mod tests {
             }
         }
         assert!(blocks_checked > 0, "fixture discovery found no COPY blocks");
+    }
+
+    /// A source that answers exactly what it wraps and records the length of
+    /// every read it was asked for.
+    struct Recording {
+        inner: LocalFileSource,
+        reads: std::sync::Mutex<Vec<(u64, usize)>>,
+    }
+
+    impl crate::io::ByteRangeSource for Recording {
+        fn read_range(
+            &self,
+            offset: u64,
+            len: usize,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = crate::Result<bytes::Bytes>> + Send + '_>,
+        > {
+            self.reads.lock().unwrap().push((offset, len));
+            self.inner.read_range(offset, len)
+        }
+        fn size(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::Result<u64>> + Send + '_>>
+        {
+            self.inner.size()
+        }
+        fn modified(
+            &self,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = crate::Result<Option<std::time::SystemTime>>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            self.inner.modified()
+        }
+        fn hint_read_size(&self, len: usize) {
+            self.inner.hint_read_size(len);
+        }
+        fn partitions(&self, range: std::ops::Range<u64>) -> crate::io::Partitioning {
+            self.inner.partitions(range)
+        }
+    }
+
+    /// **No read a worker makes exceeds `ScanOptions::chunk_size`** — the
+    /// first read of a piece as much as the tail.
+    ///
+    /// It is what keeps every buffer a worker takes a *pooled* one
+    /// (`crate::io::BufferPool::keeps` admits the announced length and nothing
+    /// longer), and it is source-agnostic, which the arrangement it replaced
+    /// was not: a first read of the piece exactly is a poolable zero-copy
+    /// slice on a block-decoding source and a fresh partition-length `calloc`
+    /// on a plain one. Pinning the *read size* rather than the piece width is
+    /// what lets the cut width be chosen by measurement
+    /// (`crate::io::BOUNDARIED_PARTITION_UNITS`) without putting the read
+    /// shape back at risk.
+    ///
+    /// The plain source is the one that can fail this: its pieces are
+    /// `PLAIN_PARTITION_CHUNKS` chunks wide, so a piece-length first read is
+    /// eight times the announced size. The assertion below is on the reads the
+    /// leader actually issued, not on the advice.
+    #[tokio::test]
+    async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
+        let path = edge_cases();
+        let file = std::fs::read(&path).unwrap();
+        let size = file.len() as u64;
+        let blocks = reference(&file);
+        let inner = LocalFileSource::open(&path).unwrap();
+        let source = Recording { inner, reads: std::sync::Mutex::new(Vec::new()) };
+        let mut scheduled_blocks = 0usize;
+        for block in &blocks {
+            for jobs in [2usize, 3, 8] {
+                source.reads.lock().unwrap().clear();
+                let options = scheduled(&source.inner, jobs);
+                let got = scan_region(
+                    &source,
+                    &options,
+                    block.header_offset,
+                    block.data_offset,
+                    block.columns,
+                    size,
+                )
+                .await
+                .unwrap();
+                if matches!(got, RegionScan::Closed(_)) {
+                    scheduled_blocks += 1;
+                }
+                let reads = source.reads.lock().unwrap();
+                assert!(!reads.is_empty(), "a scheduled region reads something");
+                // **The first read at any offset is the one this is about.**
+                // The growth path is the one legitimate way past the chunk — a
+                // piece with no line boundary in `chunk_size` bytes retries
+                // *the same start* at twice the length — and it is never the
+                // first read at its offset, while a piece's own opening read
+                // always is. So the invariant needs no arithmetic on the
+                // lengths, which is what keeps it true of a read the end of
+                // the file truncated.
+                let mut seen: Vec<u64> = Vec::new();
+                for &(offset, len) in reads.iter() {
+                    if seen.contains(&offset) {
+                        assert!(
+                            len <= options.max_line_bytes,
+                            "a {len}-byte read at {offset} is past the growth ceiling"
+                        );
+                        continue;
+                    }
+                    seen.push(offset);
+                    assert!(
+                        len <= options.chunk_size,
+                        "the first read at {offset} under {jobs} jobs is {len} bytes, past the \
+                         {}-byte chunk",
+                        options.chunk_size
+                    );
+                }
+            }
+        }
+        assert!(scheduled_blocks > 0, "no region was actually scheduled");
     }
 
     /// **Two ways to be declined, and neither is a branch on the source's

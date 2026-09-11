@@ -86,9 +86,9 @@ growing 8 MiB a worker, and that is exactly the partition-buffer pooling
 `19.7`'s tightened `keeps` gave up
 ([`architecture.md`](architecture.md), "The interior split"). The shape is
 `--jobs ≥ 2` on a plain file, which `19.8` made non-default, so nobody meets it
-without stating the flag — but the roadmap Future item "A two-unit plain source"
-now has a price beside it rather than an adjective: **8 MiB of resident a
-worker, or a `MALLOC_ARENA_MAX=2` the user sets themselves.**
+without stating the flag — and pricing it at **8 MiB of resident a worker** is
+what identified the partition read as the thing to remove. `19.20` removed it
+([`architecture.md`](architecture.md), "The interior split").
 
 ## The constant `19.13` carries
 

@@ -31,6 +31,7 @@ through.
 | If you are touching… | Read |
 |---|---|
 | the async/IO trait, batch sizing, push vs. pull | [Execution model and API surface](#execution-model-and-api-surface) |
+| how wide a partition is, how a worker reads it, before proposing to change either | [The cut width…](#the-cut-width-is-one-unit-and-it-was-chosen-against-the-default-rather-than-against-a-stated-count) (`cut-width`) |
 | `.xz` input, source recognition, `XzSource`, the seek table | [The compressed source](#the-compressed-source) |
 | `scan.rs`, `copy.rs`, a new `Event` variant, a read loop's buffer, how a field's bytes become a `str` | [Bytes and structure](#bytes-and-structure) |
 | `map.rs`, spans, tiling, TOC headers, `INSERT`/large-object regions | [The file map](#the-file-map) |
@@ -423,22 +424,24 @@ cover it — and it is the opposite of the argument this section used to make,
 that the `POOL_DEPTH.max(jobs)` clamp is what makes the overhead roughly
 constant.
 
-**A partition is one of the source's own units; the charge for one is a
-different number, and the two are computed apart.** `XzSource::partition_advice`
-states `partition_bytes` as `BlockCache::reader_bytes` — two block slots, a
-chunk and the decoder's retention — and that is what a budget is divided by to
-reach a reader count. What a window is *cut* into is
-`Partitioning::window_end`: on a boundaried source it ends a window at the
-`workers`-th boundary past the frontier, so `stream::cut` takes every boundary
-inside it instead of thinning them, and every piece lies within one block. A
-plain file has no seams to respect, so there the two numbers coincide and a
-window is `workers` charges wide exactly as it always was.
+**A partition is `io::BOUNDARIED_PARTITION_UNITS` of the source's own units;
+the charge for one is a different number, and the two are computed apart.**
+`XzSource::partition_advice` states `partition_bytes` as
+`BlockCache::reader_bytes` — two block slots, a chunk and the decoder's
+retention — and that is what a budget is divided by to reach a reader count.
+What a window is *cut* into is `Partitioning::window_end`: on a boundaried
+source it ends a window at the `workers × k`-th boundary past the frontier, so
+`stream::cut`'s thinning takes every `k`-th one and every piece spans at most
+`k` units. A plain file has no seams to respect, so there the two numbers
+coincide and a window is `workers` charges wide exactly as it always was. What
+`k` is and how it was chosen is its own subject ("cut-width"), and so is the
+separate question of how a worker *reads* the piece it was handed.
 
 **That split exists because one value with two consumers is how this broke.**
 `partition_bytes` was both the charge and the cut size, so raising the charge
 from `unit + chunk` to `reader_bytes` silently widened the cut to **2.42
-blocks** at 24 MiB and **2.08** at 128 MiB: `leader::scan_partition`'s first
-read is the piece exactly, so it spanned blocks, took `read_by_blocks`' copying
+blocks** at 24 MiB and **2.08** at 128 MiB: a block-decoding source reads its
+piece whole, so it spanned blocks, took `read_by_blocks`' copying
 arm, and assembled into a fresh `vec![0u8; partition_len]` that
 `BufferPool::keeps` refuses to pool and that is held through the parse. A charge
 that inflated what it was charging for — 216–267 MiB above a stated budget at
@@ -446,9 +449,24 @@ that inflated what it was charging for — 216–267 MiB above a stated budget a
 second in a 1 GiB allocation, and a chunk-pool ceiling that capped the fused
 workers at four. Three doc comments and this document asserted the one-block
 property in prose throughout. It is now a test —
-`io.rs`'s `a_block_decoding_partition_never_crosses_a_block_boundary`, which
+`io.rs`'s `a_block_decoding_partition_spans_at_most_the_cut_width`, which
 walks the window loop from a *mid-block* frontier, the case a single aligned
-window never shows.
+window never shows, and which binds because the table it walks carries more
+boundaries than the window asks for.
+
+**How a worker reads its piece is the source's own statement**
+(`io::PartitionRead`), and the two shapes differ by a factor of twenty-two on
+the plain path. A plain file is read `Chunked` — every read is the announced
+length, so `BufferPool` pools all of them and nothing allocates a
+partition-length buffer at all; a block-decoding file is read `Whole`, because
+there a piece is one unit and that read is a zero-copy slice of a block the
+worker was going to decode anyway. Stating it on `Partitioning` rather than in
+the leader is the same rule as the two paragraphs above: the leader has no
+business knowing which shape a source is, and a read size derived from the
+charge or from the boundaries is one more value with two consumers. What each
+arm cost when it was read the other way is beside the cut width
+("cut-width") and in
+[`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md).
 
 **What one reader holds is stated against the chunk a scan settles at, not
 against an unannounced pool's ceiling** (`XzSource::charged_chunk_bytes`).
@@ -491,15 +509,15 @@ the count grows — 1.8 where it allows 2.0, 2.4 where it allows 3.0, and 5.82×
 at twenty-four where it allows 12× — so it bounds the term rather than
 accounting for it, and the residual is unexplained.
 
-**The waste is one block per *piece*, so the cut width is what amortises it.**
-A one-block piece pays a whole wasted decode for one block of progress; the
-2.42-block piece that `19.14` cut by accident paid 41%, and an eight-block
-piece would pay 12.5%. That is why pinning the cut to the source's retained
-unit costs throughput at low stated counts, and why widening it is a candidate
-repair distinct from the in-flight map. **(c)
-unowned**; promoted by a phase taking up compressed scan throughput, since no
-defaults change reaches it. It is not new — it is what the arrangement before
-the charge-and-cut confusion also did, and it is inside the published
+**The waste is one block per *piece*, so the cut width amortises it — and
+widening the cut has been measured and refused.** A one-block piece pays a
+whole wasted decode for one block of progress, and a `k`-block piece pays
+`1/k`; at two stated readers the wall clock follows that arithmetic all the way
+to 1.64× at eight. At the flagless default it reverses and the wide cuts are
+half the speed, so one unit stays and this entry keeps its whole cost ("cut-width"). **(c) unowned**; promoted by a phase taking up compressed
+scan throughput, since no defaults change reaches it, and the fix left is the
+in-flight map rather than the width. It is not new — it is what the arrangement
+before the charge-and-cut confusion also did, and it is inside the published
 `parallel-scan-throughput` leg that reaches 5.82× at twenty-four workers. What
 is new is that it is named: the alternative reading, that widening a partition
 is what buys throughput, is what that confusion was worth in wall clock, and it
@@ -1480,6 +1498,44 @@ persisting whatever it found along the way — so a query for table X that scans
 past A, B and C leaves the cache useful for those too. Eager (`pgdq parse`)
 scans the whole file up front before answering anything.
 
+<!-- section: cut-width -->
+
+### The cut width is one unit, and it was chosen against the default rather than against a stated count
+
+`k` is **1**, and it is a measured choice rather than the arithmetic of the
+charge. Widening it amortises `KD20`'s wasted decode — one unit per *piece*
+whatever the piece covers, so a `k`-unit piece pays `1/k` — and the account
+says the speedup at `w` workers is bounded by `w / (1 + 1/k)`. At **two stated
+readers** that is what the wall clock does, within 10% at every width: the
+24 MiB-block control runs 17.52 / 13.26 / 11.60 / 10.68 s at `k` = 1 / 2 / 4 /
+8 against a serial 16.89, where the ceilings allow 16.89 / 12.67 / 10.56 /
+9.49. So the term is real, the account predicts it, and a wider cut buys up to
+1.64× there.
+
+**At the flagless default it reverses, and that is what decides it.** The same
+file in a 1 GiB allocation resolves thirteen readers, and there `k` = 1 runs
+**4.84 s** against 9.19 / 9.50 / 9.71 at 2 / 4 / 8 — the wide cuts are half the
+speed, not more. The mechanism is not established; what is established is that
+a window `workers × k` units wide asks the block cache for `13 k` distinct
+blocks against a slot count of thirteen, so from `k` = 2 the cache cannot hold
+what its readers are working on. A default that is twice as slow on the shape
+the phase is named for is not paid for by a stated-count win, so one unit
+stays. Readings:
+[`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md).
+
+*Rejected: deriving the cut width from the charge*, which is what
+`19.14` did by accident and cost `KD19`. The charge answers to a memory
+allowance and the coverage to a wasted decode; they are different quantities
+and a value serving both moves for one reason and is read for another.
+
+*Rejected: a width that varies with the resolved count* — narrow when many
+readers, wide when few, which is what the two readings above would each prefer.
+It is the shape the evidence actually suggests and it is refused for now on
+review grounds rather than on evidence: the flagless collapse above has no
+named mechanism, and a rule fitted to two cells of an unexplained curve is the
+mistake this phase has already paid for twice. It wants the cache's behaviour
+under `13 k` wanted blocks explained first.
+
 ### The compressed source
 
 `.xz` input is read directly — `pgdq parse|info|query --source foo.dump.xz` —
@@ -1523,15 +1579,26 @@ copying nothing; a read spanning a boundary is assembled into a buffer of the
 read's own length.
 
 **On the parallel path a fused worker takes the first arm for its body and the
-second for its tail.** Its first read is the whole partition, and a partition is
+second for its tail.** Its first read is the whole partition — this source says
+so, `partition_advice` stating `PartitionRead::Whole` — and a partition is
 one block (`Partitioning::window_end`, "Execution model and API surface"
-above) — so the body is a slice and copies nothing. The chunk-sized tail read
+above), so the body is a slice and copies nothing. The chunk-sized tail read
 that follows it starts at the last row boundary inside that block and therefore
 crosses into the next one, which is the boundary case: a chunk-length buffer,
 and a second block decoded by a worker that does not own it (`KD20`). Sizing a
 window by the *charge* rather than by the source's own units put the body read
 on the second arm too, at a buffer of partition length; the test that stops that
 returning is beside the mechanism above.
+
+**Reading the body a chunk at a time instead is worse here, and measurably**,
+which is why the shape is the source's to state rather than the leader's to
+choose: the same flagless scan in a 1 GiB allocation holds **931 MiB median
+against 855 and is OOM-killed one run in three**, and it turns one lookup per
+block into one per chunk, each taking the cache's lock. The cost is
+unattributed — the candidate is that a block evicted while a view is out lives
+past the slot cap, and chunk reads multiply the eviction events by the chunk
+count — and it is not claimed as accounted for
+([`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md)).
 
 A `BlockTask` is `Copy` and owns its block, its resolved
 check and the reader's decode settings, so the decode runs with no lock held —
@@ -5095,16 +5162,18 @@ sibling drain it costs, which is one comparison per piece.
 Windows need no rule of their own: a window is folded before the next is
 dispatched, so a later window cannot outrun an earlier one's failure.
 
-**A worker is two reads, and the second is why a partition's footprint is a
-block *plus a chunk*.** The first read is the piece exactly,
-`[start, end)`, which on a block-decoding source is one whole block and so a
-zero-copy slice of it — a window is cut into the source's own units rather than
-into its per-reader charge, which is what keeps that true
-(`Partitioning::window_end`, "Execution model and API surface"). That
-read can never finish the piece on its own — the
-line ending at or past `end` needs bytes past `end` — so a second,
-**chunk-sized** read follows and is scanned as an ordinary contiguous piece
-starting at a row boundary. Handing several `PieceScan`s back rather than one
+**A worker reads its piece the way the source said to, and then one chunk
+more.** `io::PartitionRead` is that statement: a block-decoding source says
+`Whole`, so the body read is the piece exactly, `[start, end)`, which is one
+block and so a zero-copy slice of it (the window being cut into the source's own
+units is what keeps that true — `Partitioning::window_end`, "Execution model
+and API surface"); a plain source says `Chunked`, so the body is read
+`chunk_size` at a time and every buffer a worker takes is a pooled one. Neither
+read can finish the piece — the line ending at or past `end` needs bytes past
+`end` — so a **chunk-sized** tail read follows either shape and is scanned as
+an ordinary contiguous piece starting at a row boundary, which is why a
+partition's footprint carries a chunk beside whatever the source retains.
+Handing several `PieceScan`s back rather than one
 is what keeps `merge` the only fold: the tail is just another piece, in order.
 A row longer than the tail read grows it rather than losing the row, bounded by
 the same `max_line_bytes` the serial loop enforces.
@@ -5120,21 +5189,27 @@ is what fixes it — eight chunks caps the waste at 12.5%, and each doubling pas
 that buys under a percent of the read while halving how finely a region can be
 cut and how many readers a stated budget affords.
 
-**The partition read is not pooled at all, and the `POOL_MAX_BYTES` cap on
-that product is what bounds it instead.** `BufferPool` serves exactly one read
-unit — the announced one (`hint_read_size`) — and the parallel plain path has
-*two*: a partition-sized body read and a chunk-sized tail read. The partition
-read is not the announced one, so `BufferPool::keeps` drops it on release and
-every worker pays a fresh `calloc` per partition; the cap is what keeps that
-allocation from following a raised `--chunk-size` to hundreds of megabytes. Its
-own cost is that the multiple shrinks as the stated chunk grows (four chunks at
-`--chunk-size 2m`, two at `4m`, **one** at `8m` and above), so a caller who
-tuned that flag gets the 100% double read back. The fix for both is the
-two-unit arrangement `XzSource` already runs, a partition pool and a chunk pool
-dividing one stated budget through `held_bytes()` ("The compressed source").
-That is a mechanism change rather than a default, so it is filed as a roadmap
-Future item ("A two-unit plain source") rather than taken inside a phase about
-defaults.
+**There is no partition-sized read on this path, so the plain source has one
+read unit and every buffer is pooled.** `BufferPool` serves exactly one read
+unit — the announced one (`hint_read_size`) — and while the body read was the
+piece the plain path had *two*, so `BufferPool::keeps` dropped the partition
+buffer on release and every worker paid a fresh `calloc` per partition. The
+source now says `PartitionRead::Chunked` and the body is read a chunk at a
+time, which is the announced length ("Execution model and API surface"). It is
+**22× less resident and slightly faster**: the plain control at `--jobs 24`
+holds 9.4 MiB where it held 209.2, and runs 1.26 s against 1.54 — the eight
+extra read syscalls and `spawn_blocking` hops per partition the change was
+expected to cost are not visible against the `calloc` it removes. That is the
+whole of what the roadmap's plain-source item was for on the memory
+side, from a change that touches one `match`.
+
+**What survives of that item is the `POOL_MAX_BYTES` cap on the partition
+product**, whose reason was to bound the allocation a raised `--chunk-size`
+would make and which now bounds only the *cut width*: at `--chunk-size 8m` a
+partition is one chunk again, and the 100% tail re-read `PLAIN_PARTITION_CHUNKS`
+exists to cap comes back for a caller who tuned that flag. Lifting the cap is
+the obvious answer and is unmeasured, which is why it stays in the Future item
+rather than riding along here.
 
 **It *looked* pooled until `19.7`, and that was the accounting lying.** `keeps`
 admitted every buffer under `POOL_MAX_BYTES` while `slots()` counted at
@@ -5142,38 +5217,29 @@ admitted every buffer under `POOL_MAX_BYTES` while `slots()` counted at
 buffers was 32 MiB that `held_bytes()` reported as 4 MiB, on the number
 `XzSource::apportion` divides one stated budget with. `19.7` made `keeps` the
 same sentence as the slot size, which is what makes that number a bound, and
-the partition buffer went with it. Even before, admission was not a hit:
-`BufferPool::pick` takes the smallest free buffer with `buf.len() >= len` and
-four slots were shared between 8 MiB partition reads and 1 MiB tail reads
-across every worker, so a partition read that found only tail buffers free
-allocated anyway — pooling was *possible* and nothing ever measured how often
-it happened. The slot count still bounds what is outstanding, so `--jobs 4`
-remains the ceiling on plain-file readers whatever is kept.
-
-<!-- deficiency: KD18 -->
-**What it costs is now measured, and it is `KD18`.** A plain parallel `parse`
-was flat at 37.4 MiB across the whole worker axis before `19.7`; it is
-**16 MiB + 8.03 MiB a worker** after, reaching 209 MiB at twenty-four — 8 MiB
-being `POOL_MAX_BYTES` exactly, the partition buffer the tightened `keeps` now
-drops. The bytes are not lost to a pool but retained by the releasing thread's
-glibc arena, which is why `MALLOC_ARENA_MAX=2` takes the same shape **flat at
-78–86 MiB** across that axis: two arenas recycle what one per thread does not.
-So the remedy an operator has today is that setting, and the fix in the tree is
-the two-unit arrangement the Future item names. `19.8` made plain `--jobs`
-default to serial, so nobody meets this without stating the flag — which bounds
-who pays it and does not make it a property, the remedy being one no document
-told the reader about until now
+the partition buffer went with it — at which point the bytes it had been
+hiding showed up as **16 MiB + 8.03 MiB a worker**, 209 MiB at twenty-four,
+retained by the releasing thread's glibc arena rather than by any pool. That
+cost is gone with the read that produced it, and the reading above is what says
+so; `MALLOC_ARENA_MAX=2`, which took the same shape flat at 78–86 MiB, now has
+nothing on this path to take back
 ([`../manual/dump-inspection.md`](../manual/dump-inspection.md)). Readings:
 [`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "`19.12`:
-the coupling did not return the bytes".
+the coupling did not return the bytes", and
+[`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md).
+
+**The slot count still bounds what is outstanding**, so `--jobs 4` remains the
+ceiling on plain-file readers whatever is kept.
 
 *Rejected: sizing the tail read to a row instead.* It reaches
-every source and would shrink the compressed 4% too, but it changes what the
-leader does per piece for every caller rather than what one source says about
-itself — a mechanism change, not a default — and amortizing the tail here makes
-what it would buy smaller still
+every source and would shrink the compressed 4% too, and amortizing the tail
+here makes what it would buy smaller still
 ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
-plain-path fork routes to both branches").
+plain-path fork routes to both branches"). It was also argued against on the
+ground that it changes what the leader does per piece for every caller; that
+half no longer stands — the body read's shape is now the *source's* statement
+and the leader's `match` on it reaches every caller too — so what is left
+against it is that it buys little.
 
 *Rejected: keeping a ceiling that preserved the appearance of pooling.* The
 partition buffer could have gone on being admitted under a rule of its own,
@@ -5192,8 +5258,9 @@ non-default in the same phase. Pricing the loss first was considered and would
 not have changed the call: the plain worker default's stated reopening
 condition is a reading showing plain parallel *beating* serial, and a change
 that makes it slower can only move further from it. What the price bought when
-it was eventually taken is a register entry rather than a reversal — the
-resident cost above, `KD18`.
+it was eventually taken was the reading that identified the partition read as
+the thing to remove — 209 MiB at twenty-four workers, held in an arena and by
+no pool — which is what the paragraphs above then removed.
 
 **This is the one read loop that grants `WaitPolicy::MayWait`**, and it is safe
 for the reason the permission documents: each worker holds exactly one read at a
@@ -7017,8 +7084,8 @@ edit with the finding itself.
 
 **So a section whose heading states a finding a measurement can move carries an
 `<!-- section: <id> -->` marker on the line above it, and that id — not the
-heading — is what a citation names.** Four sections do: `parse-profile`,
-`query-profile`, `insert-profile` and `attach-text-profile`. The id names the
+heading — is what a citation names.** Five sections do: `parse-profile`,
+`query-profile`, `insert-profile`, `attach-text-profile` and `cut-width`. The id names the
 mechanism and holds still; the heading says what the profile found and moves
 with it. That is the idiom [`measurements.md`](measurements.md)'s figures and
 the deficiency register
@@ -7113,7 +7180,9 @@ repair puts the cut back on the source's own units ("Execution model and API
 surface"), and a stated-count probe on the repaired build runs 17.8 → 17.9 →
 9.9 → 7.4 s over one, two, four and six readers, still climbing where the
 intervening build was flat. What bounds it is `KD20` — each worker decoding its
-successor's block for a chunk-sized tail. The number above stands as what the
+successor's block for a chunk-sized tail — and widening the cut to amortise
+that has since been measured and refused at the default ("cut-width"), so the
+number above is taken at the arrangement that ships. The number above stands as what the
 figure says until `19.11`'s sitting replaces it, which is why it is flagged here
 rather than edited there. A compressed typed `query` reaches **1.60×**, its
 sub-stream count capped at eleven by the stated budget's divisor. A plain

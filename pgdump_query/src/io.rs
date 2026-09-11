@@ -356,6 +356,82 @@ pub enum RetainedUnit {
     Partition,
 }
 
+/// How a worker reads the piece it was handed
+/// ([`crate::leader::scan_partition`]) — **stated by the source, because the
+/// right answer differs by source and was measured to differ by a factor of
+/// twenty-two**.
+///
+/// It is a separate statement from [`RetainedUnit`] and from
+/// [`Partitioning::partition_bytes`] on purpose. Those two say what a reader
+/// *holds*; this says what shape its reads are, and deriving one from another
+/// is how the cut size came to follow the memory charge
+/// ([`Partitioning::window_end`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PartitionRead {
+    /// `ScanOptions::chunk_size` at a time, repeating until the piece is
+    /// consumed. A plain file's answer, and **the default, for the reason
+    /// [`RetainedUnit::ReadChunk`] is one**: a chunk-sized read is the
+    /// announced length, so [`BufferPool::keeps`] pools every buffer a worker
+    /// takes, and a source that has said nothing about itself is charged and
+    /// read the conservative way.
+    ///
+    /// Measured on the plain control at `--jobs 24`: **9.4 MiB resident
+    /// against 209.2**, and 1.30 s against 1.54 — the partition-length buffer
+    /// that `keeps` refuses and the releasing thread's arena retains is simply
+    /// not allocated. The extra read syscalls and `spawn_blocking` hops it was
+    /// expected to cost are not visible.
+    #[default]
+    Chunked,
+    /// The whole piece in one call. A block-decoding source's answer, where a
+    /// piece is one of its own units ([`BOUNDARIED_PARTITION_UNITS`]) and that
+    /// read is therefore a **zero-copy slice** of a block the worker was going
+    /// to decode anyway — so it allocates nothing at all, where reading the
+    /// same block a chunk at a time is 24 lookups against one
+    /// ([`BlockCache::lookup`], which takes the cache's lock).
+    ///
+    /// Measured on the 24 MiB-block control, flagless in 1 GiB, where both
+    /// arrangements resolve thirteen readers: **854 MiB median resident
+    /// against 931, none killed against one of three**. What a chunk-sized
+    /// read costs there is unattributed — the candidate is that a block
+    /// evicted while a view is out lives past the slot cap, and chunk reads
+    /// multiply the eviction events by the chunk count — and it is not claimed
+    /// as accounted for.
+    ///
+    /// **What makes it safe is that a piece is one unit**, which is
+    /// [`Partitioning::window_end`]'s doing and is asserted by
+    /// [`a_block_decoding_partition_spans_at_most_the_cut_width`]. A piece
+    /// several units wide read whole is the un-poolable partition-length
+    /// buffer `19.19` removed.
+    Whole,
+}
+
+/// How many of a boundaried source's own units one partition covers
+/// ([`Partitioning::window_end`], [`PartitionBoundaries::At`]) — **the cut
+/// width, chosen by measurement**.
+///
+/// **What it buys is the tail read's second decode, amortised.** A worker
+/// finishes its piece by reading one chunk past the piece's end, and on a
+/// block-decoding source those bytes are in the block its *successor* owns —
+/// so both decode that block and nothing shares the result (`KD20`). The waste
+/// is one unit's decode per **piece**, whatever the piece covers, so a piece of
+/// `k` units pays `1/k` of a unit per unit read: at one it doubles the decode
+/// work of the region, at two it adds half, at four a quarter.
+///
+/// **It does not widen what a reader holds.** Retention on this path is capped
+/// by [`BufferPool::slots`] and not by the piece — [`BlockCache::slot`] drains
+/// to one below the slot count before every decode — so a worker walking `k`
+/// units holds the unit it views and the unit it is decoding exactly as it
+/// does at one, which is the two units [`BlockCache::reader_bytes`] charges.
+/// The cut width and the memory charge are therefore genuinely independent
+/// numbers, which is the whole reason [`Partitioning::window_end`] exists
+/// apart from [`Partitioning::partition_bytes`].
+///
+/// **What it costs is granularity.** A window is `want × k` units wide, so a
+/// region shorter than that is cut into fewer pieces than there are workers
+/// and the last window of every region is ragged. That is the trade the
+/// measurement priced.
+const BOUNDARIED_PARTITION_UNITS: usize = 1;
+
 /// A source's answer to [`ByteRangeSource::partitions`]: where to split, what
 /// one partition holds resident while it reads, and what a batch held across
 /// reads pins.
@@ -364,6 +440,7 @@ pub struct Partitioning {
     boundaries: PartitionBoundaries,
     partition_bytes: u64,
     retained: RetainedUnit,
+    read: PartitionRead,
 }
 
 impl Partitioning {
@@ -373,6 +450,7 @@ impl Partitioning {
             boundaries: PartitionBoundaries::Anywhere,
             partition_bytes,
             retained: RetainedUnit::default(),
+            read: PartitionRead::default(),
         }
     }
 
@@ -386,6 +464,7 @@ impl Partitioning {
             boundaries: PartitionBoundaries::At(offsets),
             partition_bytes,
             retained: RetainedUnit::default(),
+            read: PartitionRead::default(),
         }
     }
 
@@ -398,6 +477,13 @@ impl Partitioning {
     /// than the [`RetainedUnit::ReadChunk`] every constructor starts at.
     pub fn retaining(mut self, unit: RetainedUnit) -> Self {
         self.retained = unit;
+        self
+    }
+
+    /// State how a worker should read one of these partitions, rather than the
+    /// [`PartitionRead::Chunked`] every constructor starts at.
+    pub fn reading(mut self, read: PartitionRead) -> Self {
+        self.read = read;
         self
     }
 
@@ -448,6 +534,13 @@ impl Partitioning {
         self.retained
     }
 
+    /// How a worker should read one of these partitions — see
+    /// [`PartitionRead`], and `crate::leader::scan_partition`, which is the
+    /// one caller that reads it.
+    pub fn partition_read(&self) -> PartitionRead {
+        self.read
+    }
+
     /// How many partitions this advice describes, or `None` for
     /// [`PartitionBoundaries::Anywhere`], which is bounded by the caller's
     /// worker count rather than by the source.
@@ -464,32 +557,32 @@ impl Partitioning {
     /// charge**.
     ///
     /// [`Partitioning::partition_bytes`] is what one reader *holds*;
-    /// this is what one reader *covers*. They coincide on a plain file and do
-    /// not on a block-decoding compressed one, where a reader holds two block
-    /// slots, a chunk buffer and a decoder in order to cover **one** block. A
-    /// window sized by the charge offers `cut` more boundaries than the caller
-    /// has workers, and thinning them is what makes a partition span two or
-    /// three blocks — which sends the first read down
-    /// [`XzSource::read_by_blocks`]' copying arm, into an unpoolable buffer of
-    /// partition length that nothing bills for
-    /// (`docs/design/architecture.md`, "Execution model and API surface"). One
-    /// value with two consumers, changed for the first, silently followed by
-    /// the second.
+    /// this is what one reader *covers*. They are different quantities and
+    /// they answer to different pressures — the charge to a memory allowance,
+    /// the coverage to the tail read's wasted decode
+    /// ([`BOUNDARIED_PARTITION_UNITS`]) — so computing the second from the
+    /// first is what let a change made for one silently move the other. It
+    /// did: raising the charge to [`BlockCache::reader_bytes`] widened the
+    /// window until [`crate::stream::cut`] had to thin the boundaries on
+    /// offer, and a partition became 2.08–2.42 blocks with no decision
+    /// recorded anywhere (`docs/design/architecture.md`, "Execution model and
+    /// API surface").
     ///
     /// So the two are computed apart:
     ///
     /// - [`PartitionBoundaries::Anywhere`] has no seams to respect, so a
     ///   window is `want` charges wide — which is what a plain file has always
     ///   been cut into, unchanged;
-    /// - [`PartitionBoundaries::At`] ends the window at the **`want`-th
-    ///   boundary strictly past `start`**, so exactly `want - 1` of them fall
-    ///   inside it and [`crate::stream::cut`] takes every one rather than
-    ///   thinning. Every piece then lies within a single one of this source's
-    ///   units. Fewer than `want` boundaries left is the region's tail, and
-    ///   the window runs to `limit`.
+    /// - [`PartitionBoundaries::At`] ends the window at the
+    ///   **`want × `[`BOUNDARIED_PARTITION_UNITS`]-th boundary strictly past
+    ///   `start`**, so the window holds `want` pieces of that many units each
+    ///   and [`crate::stream::cut`]'s thinning picks every `k`-th boundary.
+    ///   Fewer boundaries left than that is the region's tail: the window runs
+    ///   to `limit`, and the thinning still cannot give a piece more than `k`
+    ///   units, since the window never contains more than `want × k` of them.
     ///
     /// Asserted rather than asserted-in-prose:
-    /// [`a_block_decoding_partition_never_crosses_a_block_boundary`].
+    /// [`a_block_decoding_partition_spans_at_most_the_cut_width`].
     pub fn window_end(&self, start: u64, want: usize, limit: u64) -> u64 {
         let want = want.max(1);
         match &self.boundaries {
@@ -500,7 +593,7 @@ impl Partitioning {
                 .iter()
                 .copied()
                 .filter(|&at| at > start && at < limit)
-                .nth(want - 1)
+                .nth(want.saturating_mul(BOUNDARIED_PARTITION_UNITS) - 1)
                 .unwrap_or(limit),
         }
     }
@@ -2226,7 +2319,10 @@ impl XzSource {
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     /// An in-flight map is the fix and is not taken here: it puts a second
     /// lock in front of the case that does *not* collide, and this is a
-    /// throughput bound rather than a correctness one.
+    /// throughput bound rather than a correctness one. **Widening the cut so
+    /// that fewer pieces each waste one block has been measured and refused**
+    /// ([`BOUNDARIED_PARTITION_UNITS`]), so the map is the fix left rather
+    /// than one of two.
     // deficiency: KD20
     fn block(
         index: usize,
@@ -2374,8 +2470,15 @@ impl XzSource {
         // count those bytes twice ([`RetainedUnit`]). The streaming arm above
         // keeps the default: there a read is assembled *into* a chunk buffer,
         // so what a batch pins is chunks.
+        // **And a worker reads its whole piece in one call**, which on this
+        // source is one block and so a zero-copy slice of it
+        // ([`PartitionRead::Whole`]). The streaming arm above keeps the
+        // default for the same reason it keeps the retained unit: there a read
+        // is assembled into a chunk buffer, and nothing is gained by asking
+        // for a longer one.
         Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
             .retaining(RetainedUnit::Partition)
+            .reading(PartitionRead::Whole)
     }
 
     /// The fallback: one live decode, restarted on a backward seek, serialized
@@ -3274,6 +3377,12 @@ mod tests {
             RetainedUnit::ReadChunk,
             "a streaming read is assembled into a chunk buffer, so chunks are what a batch pins"
         );
+        // **The read shape is stated apart from both of those**, and the two
+        // arms differ in it: a block-decoding piece is one block and reading it
+        // whole copies nothing, while a streaming read is assembled into a
+        // chunk buffer whatever length is asked for.
+        assert_eq!(decoding.partition_read(), PartitionRead::Whole);
+        assert_eq!(streaming.partition_read(), PartitionRead::Chunked);
     }
 
     /// A four-block seek table over 4 KiB blocks, built by hand rather than by
@@ -3281,6 +3390,13 @@ mod tests {
     /// synthetic one lets a slot be small enough for a budget to be stated in
     /// whole slots.
     fn four_block_table() -> xz_seek::SeekTable {
+        block_table(4)
+    }
+
+    /// The same table at `count` blocks, for the one test that needs more
+    /// boundaries than workers: a bound on how many units a piece spans is
+    /// vacuous on a file whose every window runs out of boundaries first.
+    fn block_table(count: u64) -> xz_seek::SeekTable {
         let block = |i: u64| xz_seek::BlockEntry {
             compressed_offset: 12 + i * 128,
             uncompressed_offset: i * 4096,
@@ -3293,21 +3409,22 @@ mod tests {
                 compressed_offset: 0,
                 uncompressed_offset: 0,
                 compressed_size: 1 << 20,
-                uncompressed_size: 4 * 4096,
+                uncompressed_size: count * 4096,
                 check: xz_seek::Check::Crc64,
                 first_block_dict_size: Some(8 << 20),
                 padding: 0,
                 first_block: 0,
-                block_count: 4,
+                block_count: count as usize,
             }],
-            blocks: (0..4).map(block).collect(),
+            blocks: (0..count).map(block).collect(),
         }
     }
 
-    /// **Every partition the leader hands a worker lies inside one block**, so
-    /// `crate::leader::scan_partition`'s first read — which is the piece
-    /// exactly — is a zero-copy slice of a decoded block rather than an
-    /// assembly into a buffer of partition length.
+    /// **Every partition the leader hands a worker covers at most
+    /// [`BOUNDARIED_PARTITION_UNITS`] of this source's units**, whatever the
+    /// charge says and whatever the worker count is — which is what makes the
+    /// cut width a number somebody chose rather than a consequence of the
+    /// memory charge.
     ///
     /// This is the invariant three doc comments and `architecture.md` asserted
     /// in prose while the code had stopped honouring it: `partition_bytes` was
@@ -3316,16 +3433,22 @@ mod tests {
     /// `crate::stream::cut` had to thin the boundaries on offer, and a piece
     /// became 2.08–2.42 blocks. The repair is
     /// [`Partitioning::window_end`], which sizes the window in the source's own
-    /// partitions; this test is what stops the two consumers being confused
-    /// again.
+    /// units; this test is what stops the two consumers being confused again.
     ///
     /// It walks the window loop rather than one window: a frontier lands
     /// wherever the last window's final row ended, and a *mid-block* start is
-    /// the case a single aligned window would never show.
+    /// the case a single aligned window would never show. The bound holds at
+    /// the ragged end too — a window with fewer boundaries left than it asked
+    /// for runs to the limit, and thinning a shorter list cannot give a piece
+    /// more units than a full one would.
     #[test]
-    fn a_block_decoding_partition_never_crosses_a_block_boundary() {
-        let table = four_block_table();
-        let size = 4 * 4096;
+    fn a_block_decoding_partition_spans_at_most_the_cut_width() {
+        // Enough blocks that a window of `workers × BOUNDARIED_PARTITION_UNITS`
+        // is satisfied out of the boundary list rather than running off the end
+        // of the file, which is what makes the bound below bind.
+        let blocks = 8 * BOUNDARIED_PARTITION_UNITS as u64 + 4;
+        let table = block_table(blocks);
+        let size = blocks * 4096;
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
         let advice = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
         // The charge is two blocks, a chunk and the decoder — three orders of
@@ -3335,6 +3458,7 @@ mod tests {
 
         for workers in [2usize, 3, 4, 8] {
             for start in [0u64, 1, 4095, 4096, 5000, 8192, 12287] {
+                assert!(start < size, "a frontier inside the file");
                 let end = advice.window_end(start, workers, size);
                 assert!(end > start, "a window must advance: {workers} workers from {start}");
                 let ranges = crate::stream::cut(start..end, &advice, workers);
@@ -3345,10 +3469,10 @@ mod tests {
                 );
                 for piece in ranges {
                     let covering = table.blocks_in(piece.clone());
-                    assert_eq!(
-                        covering.len(),
-                        1,
-                        "{piece:?} spans {} blocks at {workers} workers from {start}",
+                    assert!(
+                        covering.len() <= BOUNDARIED_PARTITION_UNITS,
+                        "{piece:?} spans {} blocks at {workers} workers from {start}, \
+                         against a cut width of {BOUNDARIED_PARTITION_UNITS}",
                         covering.len()
                     );
                 }
@@ -3364,6 +3488,16 @@ mod tests {
         let (_file, source) = source_of(&[0u8; 64]);
         source.hint_read_size(8);
         let advice = source.partitions(0..64);
+        assert_eq!(
+            advice.partition_read(),
+            PartitionRead::Chunked,
+            "a plain partition is read a chunk at a time, so every buffer is a pooled one"
+        );
+        assert_eq!(
+            BareSource.partitions(0..1 << 30).partition_read(),
+            PartitionRead::Chunked,
+            "and a source that has said nothing is read the conservative way"
+        );
         let charge = advice.partition_bytes();
         assert_eq!(advice.window_end(0, 3, u64::MAX), 3 * charge);
         assert_eq!(advice.window_end(charge, 3, u64::MAX), 4 * charge);

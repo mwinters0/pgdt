@@ -887,43 +887,24 @@ which is what makes the difference worth minding at the moment one is found.
   [2026-09-09](../status/history/2026-09-09.md), "Fast by default, and the
   no-limit cap".
 
-- **A two-unit plain source, so the partition read is pooled at all and a
-  raised `--chunk-size` keeps its multiple.** `LocalFileSource` runs one
-  `BufferPool` with one announced read length, while the parallel plain path
-  has two read units — a partition-sized body read and a chunk-sized tail read.
-  Only one of them can be the announced length, so the partition read is
-  **not pooled**: `BufferPool::keeps` admits what fits a slot and a partition
-  is eight of them, which makes every partition a fresh `calloc` of up to
-  `POOL_MAX_BYTES`. That cap is now what bounds the allocation rather than what
-  buys the pooling, and it costs a second thing besides: the multiple shrinks
-  as the stated chunk grows and reaches one at `--chunk-size 8m`, handing back
-  the 100% double read the multiple exists to remove. `XzSource` already runs
-  the arrangement that fixes both — two pools dividing one stated budget
-  through `BufferPool::held_bytes` — so this is applying a shape the tree
-  already has, not inventing one. It is here rather than in a phase because it
-  changes what a source *is* rather than what it defaults to, and P19 is about
-  defaults; it wants grilling and a spec before any of it is written
-  ([`architecture.md`](architecture.md), "The interior split").
-
-  **Weigh a smaller shape against it first: `scan_partition` reading its
-  partition in chunk-sized reads.** The plain path has two read units only
-  because the partition's *body* is read in one call; the loop already
-  continues chunk-wise after that first read, threading `entry` and `start`
-  through `scan_piece`, so the machinery exists and it is the first read alone
-  that is oversized. Made chunk-sized, the source is single-unit again, every
-  buffer fits a slot and is pooled, and no second pool has to divide a budget.
-  It also removes the *reason* the partition product is capped at
-  `POOL_MAX_BYTES` — the cap bounds one worker's allocation, and there is no
-  such allocation once no read is partition-sized — so the multiple stays eight
-  at any `--chunk-size` rather than collapsing to one at `8m`. That is both of
-  the things this item names, from a change that touches one function. Its
-  known price is eight times the `spawn_blocking` hops and read syscalls per
-  partition, which is what the serial path already pays per chunk, and it is
-  unmeasured. It sits here rather than in the out-of-band ledger for the same
-  reason the item does: it reaches `leader::scan_partition`, which is what
-  every source's leader does per piece
-  ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "The
-  partition-pooling call, reviewed").
+- **The `POOL_MAX_BYTES` cap on the plain partition product, lifted, so a
+  raised `--chunk-size` keeps its multiple.** What this item was mostly for is
+  done: `leader::scan_partition` reads a plain piece a chunk at a time now
+  (`io::PartitionRead`), so the plain source is single-unit again, every buffer
+  a worker takes is pooled, and the arena retention that came with the
+  un-pooled partition buffer is gone — 9.4 MiB at `--jobs 24` against 209.2,
+  and slightly faster ([`architecture.md`](architecture.md), "The interior
+  split"). What is left is the cap. Its reason was to bound the allocation a
+  raised `--chunk-size` would make, and there is no such allocation any more;
+  with the cap still in place a partition is one chunk at `--chunk-size 8m` and
+  above, which hands back the 100% tail re-read `io::PLAIN_PARTITION_CHUNKS`
+  exists to cap. Lifting it is one expression, and it is here rather than taken
+  along with the read shape because it widens the *cut* at large stated chunks
+  and nothing has measured that — a wider cut was measured to cost throughput
+  at the compressed default, which is a different mechanism but the same
+  question asked of the same number ([`architecture.md`](architecture.md),
+  "cut-width"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
+  before it lands, not a spec.
 
 - **TOC attribution across an intervening statement, so `--disable-triggers`
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and

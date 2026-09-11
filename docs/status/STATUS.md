@@ -331,16 +331,17 @@ goes").
 
 Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
 **The numbers after the evidence slices are allocation order, not schedule** —
-the five orderings that bind are in the spec, not here. What remains runs
-**`19.20`, `19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the
+the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
+What remains runs **`19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**.
+
 **The repair ran ahead of the account, which is the reverse of what the spec
-wrote**, and `19.20` now runs ahead of all of it: it decides the cut width by
-measurement, and the per-reader charge, the resident curve and the thin
-allocation all move with it — so `19.18`'s sitting and `19.16`/`19.13`'s
-constant would otherwise be taken against an arrangement about to change, which
-is the failure that already cost this phase once (`KD19`). Start with `19.20`,
-reading `19.19`'s notes first.
+wrote.** `19.20` has run and the arrangement is settled: the cut stays at one
+unit and only the plain path's read shape moved, so nothing about the
+compressed resident curve the remaining slices read has changed since `19.19`
+left it. Start with `19.17.1`, whose premise `19.19` and `19.20` between them
+undermined — no leg of either was killed at any registered limit on the
+arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -639,14 +640,23 @@ reading `19.19`'s notes first.
       and 1.5 GiB at 11.6% and 10.3%; and the tail read's duplicate block decode
       is now named, `KD20`. Notes:
       [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)
-- [ ] **19.20** The cut width, decided by measurement — `19.19`'s route
-      reopened. Make `scan_partition`'s first read chunk-sized, widen the cut
-      past one block, time it against both builds at stated and flagless
-      counts, and keep whichever wins; the outcome is open, since `19.14`'s
-      flat-above-four ceiling is still unexplained. Re-pins the invariant on
-      the read size rather than on the one-block piece. Amortises the
-      duplicate successor-block decode without removing it, so it closes no
-      register entry.
+- [x] **19.20** The cut width, decided by measurement — **one unit stays, and
+      the read shape is now the source's own statement.** Six binaries in one
+      sitting: at two stated readers a wider cut follows the `w / (1 + 1/k)`
+      account within 10% and buys up to 1.64×, and at the flagless default it
+      reverses — 4.84 s at one unit against 9.19/9.50/9.71 at two/four/eight —
+      so the width the phase's own shape wants is the one shipped. The
+      chunk-sized body read the row asked for is **refused on the compressed
+      path** (931 MiB median against 855 in a 1 GiB allocation, killed one run
+      in three) and **kept on the plain one**, where it holds 9.4 MiB at
+      `--jobs 24` against 209.2 and runs faster — so `io::PartitionRead` makes
+      the shape the source's to state, **`KD18` is struck**, and the read-size
+      invariant the row wanted pinned is what the reading refused rather than
+      what it confirmed (flagged below). `BOUNDARIED_PARTITION_UNITS` and a
+      widened `a_block_decoding_partition_spans_at_most_the_cut_width` are what
+      keep one unit a measured choice rather than settled intent. `KD20` is
+      unclosed and now knows the width is not its fix. Notes:
+      [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md)
 
 ## Not started
 
@@ -808,22 +818,12 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "What parallelism
   buys, and where it stops".
 
-- **KD18** — a plain `parse` at `--jobs ≥ 2` holds **16 MiB + 8.03 MiB a
-  worker**, reaching 209 MiB at twenty-four, where before `19.7` it was flat at
-  37.4 MiB: the partition buffer the tightened `keeps` stops pooling is
-  retained by the releasing thread's glibc arena instead. **(c) unowned**;
-  promoted by the roadmap Future item "A two-unit plain source", which is the
-  fix, and `MALLOC_ARENA_MAX=2` takes the shape flat in the meantime. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "The interior
-  split".
-
 - **KD20** — a block-decoding worker decodes its **successor's block as well as
-  its own**, nothing sharing the two: a piece is one block and its chunk-sized
-  tail read lands in the next one, so a parallel compressed scan does about
-  twice the decode work and its speedup is capped near half the reader count
-  (17.8 → 17.9 → 9.9 → 7.4 s over one, two, four and six readers). **(c)
-  unowned**; promoted by a phase taking up compressed scan throughput, no
-  defaults change reaching it. Detail:
+  its own**, nothing sharing the two, so a parallel compressed scan does about
+  twice the decode work and its speedup is capped near half the reader count.
+  **(c) unowned**; promoted by a phase taking up compressed scan throughput,
+  and the fix left is an in-flight map, a wider cut having been measured and
+  refused. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Execution model and
   API surface".
 
@@ -844,4 +844,27 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **`19.20`'s box is ticked although one clause of its row was refused rather
+  than delivered, and the slice shipped a second mechanism its row did not
+  name.** The row asked for the invariant to be re-pinned on the **read size**
+  — "no read exceeds `chunk_size`" — on the stated ground that this "survives
+  either outcome". It does not: the row's own measurement refused the
+  chunk-sized read on the compressed path, so the winning arrangement does not
+  have that property and pinning it would pin something the code deliberately
+  is not. What was pinned instead is the **cut width** (a piece spans at most
+  `BOUNDARIED_PARTITION_UNITS` units, over a block table carrying more
+  boundaries than the window asks for) plus the chunked half of the read shape
+  on the plain path, which is the property that survived. The box is ticked
+  because the row's deliverable — decide the width by measurement, keep the
+  winner, stop the choice reading as settled intent — is delivered in full and
+  there is nothing for a later session to come back to; the alternative was a
+  permanently unticked box describing finished work. **The second half is the
+  call to weigh**: making the body read's shape the *source's* statement
+  (`io::PartitionRead`) is a mechanism the row did not ask for, taken because
+  the winner differs by source — whole on compressed, chunked on plain — and
+  "keep whichever wins" cannot be honoured with one number. It closed `KD18`
+  and most of a roadmap Future item as a side effect. Reversing it means
+  choosing one shape for both sources and paying the loser's cost: 209 MiB at
+  `--jobs 24` on plain, or a killed flagless run in 1 GiB on compressed.
+  Reasoning and readings:
+  [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md).
