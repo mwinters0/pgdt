@@ -421,9 +421,21 @@ the five orderings that bind are in the spec, not here.
       manual's `(default)` claim went false with the report and was corrected
       here. Notes:
       [`../design/roadmap-P19.9-resolution-report-notes.md`](../design/roadmap-P19.9-resolution-report-notes.md)
-- [ ] **19.10** The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`
-      leaves it, the new defaults, both flags' help text, and the moved
-      whole-block-decode threshold.
+- [x] **19.10** The manual and both flags' help text. The correction that
+      mattered is that a **discovered limit is a ceiling, not the budget**:
+      `limit − 256 MiB` bounds what pgdq may take and what it *does* take is
+      what the file asks for, so a plain dump in a 3 GiB container runs at
+      64 MiB and a 24 MiB-block `.xz` at ~1.4 GiB, and where the ceiling
+      affords fewer readers the **count** comes down with the budget. Three
+      sentences the phase's own code had falsified went with it — the largest
+      block cleared "twice over" (now plus the chunk and the decoder), 48 MiB a
+      worker (now ~58), and "each worker also holds the block it is decoding"
+      as the account of what a compressed scan holds above its budget, which
+      `19.14` charged. `MALLOC_ARENA_MAX` says the cap buys real memory back on
+      both shapes and in different places, with **no number** — `19.11`'s
+      sitting is what can publish one. `19.9`'s below-floor note reached the
+      manual here. Notes:
+      [`../design/roadmap-P19.10-manual-notes.md`](../design/roadmap-P19.10-manual-notes.md)
 - [ ] **19.11** The closing sweep — publishes the reserve figure and
       `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures
       against `19.14`'s raised `PARALLEL_BUDGET` in the `4g` container that
@@ -677,4 +689,14 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **Long `--help` text is rustdoc, citations and markdown included.** Every
+  flag's help in `pgdump_query-cli` is a doc comment `clap` renders verbatim, so
+  `pgdq parse --help` prints `(docs/design/architecture.md, "…")` and `**bold**`
+  at a user who may have neither the tree nor a renderer. `19.10` corrected what
+  the two parallelism flags *claim* and left that convention alone, since it is
+  the CLI's whole surface rather than this row's scope. **The decision is
+  whether help text and rustdoc should be split** — a `long_help` per flag,
+  paying duplication for prose aimed at the audience the manual is written for —
+  or whether the citations are worth their cost to a reader who can follow them.
+  Reversing it later costs nothing already built; what it costs is a second
+  place to keep true for every flag.

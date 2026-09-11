@@ -65,7 +65,9 @@ impl From<CliSchemaMode> for SchemaMode {
 struct ParallelArgs {
     /// How many workers pgdq may ask for. Left unstated, the file decides: a
     /// plain dump reads serially, and an `.xz` one takes the CPUs this process
-    /// was given, or its own block count where that is smaller.
+    /// was given, or its own block count where that is smaller — lowered again
+    /// to the number of readers the memory allocation can pay for, where that
+    /// is fewer. A count stated here is never lowered that way.
     ///
     /// **It states what is asked for, not what is delivered.** Two input
     /// shapes admit no parallelism whatever this says: a `.xz` file with one
@@ -85,10 +87,11 @@ struct ParallelArgs {
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.
     /// Left unstated, pgdq reads the memory limit it is running under — the
-    /// smallest cgroup limit that binds — and takes that less a 256 MiB
-    /// reserve; where no limit is set it takes what the file's own worker
-    /// count needs, capped at half the memory the machine reports available.
-    /// A plain dump asks for nothing and stays on 64 MiB.
+    /// smallest cgroup limit that binds — less a 256 MiB reserve, and takes
+    /// inside that what the file asks for: one reader's worth for each worker
+    /// it would run, rather than the whole allowance. Where no limit is set
+    /// that same number is held under half the memory the machine reports
+    /// available. A plain dump asks for nothing of its own and stays on 64 MiB.
     ///
     /// It is a real bound rather than a target: a `.xz` file that does not
     /// leave room inside it for one reader — two of its blocks, a read buffer
