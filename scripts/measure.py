@@ -1021,22 +1021,31 @@ def parse_oom_kills(text: str) -> int | None:
     return max(int(m) for m in matches)
 
 
-#: A `key=value` line an instrument writes on its own stdout. Only the decode
-#: instrument writes any today.
+#: A `key=value` line an instrument writes on a stream of its own. Two write
+#: them today: the decode example, on stdout, which has no other output; and
+#: `pgdq --features introspect`, on **stderr**, where a diagnostic belongs
+#: because stdout is that binary's answer.
 REPORTED_RE = re.compile(r"^([a-z_]+)=(\S+)$")
+
+#: What `pgdump_query-cli/src/introspect.rs` brackets its report with. Shared
+#: in fact rather than in type: the two constants live in two languages and
+#: move together.
+INSTRUMENT_BEGIN = "# pgdq-introspect"
+INSTRUMENT_END = "# end pgdq-introspect"
 
 
 def parse_reported(text: str) -> dict[str, str]:
     """The `key=value` lines a timed binary printed about its own run.
 
     A binary that reports what it did — how many bytes it decoded, how many
-    workers its plan admitted — closes a gap a file size cannot: the harness
-    would otherwise have to compute the plaintext volume behind a compressed
-    input by a second mechanism, and the day the two disagreed the table would
-    publish a rate over the wrong denominator.
+    workers its plan admitted, how many bytes it was holding — closes a gap a
+    file size cannot: the harness would otherwise have to compute the plaintext
+    volume behind a compressed input by a second mechanism, and the day the two
+    disagreed the table would publish a rate over the wrong denominator.
 
     Lines that are not `key=value` are ignored rather than refused, so a binary
-    is free to print whatever else it likes.
+    is free to print whatever else it likes — which is what lets the
+    introspection build print `malloc_info`'s XML on the same stream.
     """
     out: dict[str, str] = {}
     for line in text.splitlines():
@@ -1044,6 +1053,27 @@ def parse_reported(text: str) -> dict[str, str]:
         if match:
             out[match.group(1)] = match.group(2)
     return out
+
+
+def parse_instrument(text: str) -> dict[str, str]:
+    """The introspection build's own report, out of a stream it shares.
+
+    **Bracketed rather than read whole, because stderr has two writers.** The
+    harness's own `rss_wrapper` prints `maxrss_kib=<n>` there, which is a
+    `key=value` line by the same grammar — and folding it in would put a
+    *per-rep reading* into the dict of facts a run states about itself, where
+    every other entry is identical across reps and only the last rep's copy is
+    kept. The markers carry no `=`, so they are invisible to the parse they
+    delimit.
+
+    `{}` where the stream carries no report, which is every default build — the
+    instrument is off by default and never in a shipped binary.
+    """
+    start = text.rfind(INSTRUMENT_BEGIN)
+    if start < 0:
+        return {}
+    end = text.find(INSTRUMENT_END, start)
+    return parse_reported(text[start : end if end >= 0 else len(text)])
 
 
 #: The worker count and byte budget a scan says it is running under, off its own
@@ -3017,10 +3047,16 @@ class Session:
             )
         seconds = parse_bash_time(proc.stderr)
         self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
-        # The instrument's own stdout, and — for a scan — what the run says it
-        # resolved, which is on the log rather than on stdout. One dict: both
-        # are facts the run reported about itself, identical across reps.
-        self._last_stdout = {**parse_reported(proc.stdout), **parse_resolution(proc.stderr)}
+        # The instrument's own report — stdout for a binary that has no other
+        # output, the bracketed stderr block for one whose stdout is an answer
+        # — and, for a scan, what the run says it resolved, which is on the
+        # log. One dict: all of it is facts the run reported about itself,
+        # identical across reps.
+        self._last_stdout = {
+            **parse_reported(proc.stdout),
+            **parse_instrument(proc.stderr),
+            **parse_resolution(proc.stderr),
+        }
         telemetry = counter_delta(before, after)
         telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
@@ -3407,6 +3443,16 @@ ALLOCATOR_LEGS: tuple[str, ...] = ("system", "jemalloc", "mimalloc")
 #: of failure as profiling the `release` binary and calling it `profiling`.
 ALLOCATOR_RE = re.compile(r"\(allocator: ([a-z]+)\)")
 
+#: What an *instrumented* build appends beside its allocator
+#: (`pgdump_query-cli/src/introspect.rs`). Such a build takes an atomic on
+#: every allocation and prints its own live bytes and glibc's statistics: it is
+#: how an attribution is taken, and it is not what any figure may be timed or
+#: measured on (`docs/design/roadmap.md`, "Attribution is introspective; only
+#: the gate is blind"). The marker rides in `--version` because that is the one
+#: place a *binary* can be asked what it is, which is the same argument the
+#: allocator name is read there for.
+INSTRUMENT_RE = re.compile(r"\(instrument: ([a-z-]+)\)")
+
 
 def binary_allocator(binary: Path) -> str:
     """Which allocator a built `pgdq` links against, read out of the binary.
@@ -3414,8 +3460,23 @@ def binary_allocator(binary: Path) -> str:
     Not an optional nicety: the day the CLI's default feature set changes,
     `target/release/pgdq` becomes a different binary and every apparatus line
     that still names the old allocator is wrong with nothing to notice. This is
-    what the session stamp reports."""
+    what the session stamp reports.
+
+    **An instrumented build is refused here rather than named**, because every
+    caller of this function is about to publish something about the binary —
+    the session stamp, or an `allocator` leg's label. A counting allocator
+    would be timed as `system` and read as the shipped binary, which is the
+    same family of failure as profiling the `release` build and calling it
+    `profiling`, and the refusal is what makes "not a fourth `ALLOCATOR_LEGS`
+    member" mechanical instead of intentional."""
     out = run([str(binary), "--version"], capture=True)
+    instrument = INSTRUMENT_RE.search(out)
+    if instrument is not None:
+        raise RuntimeError(
+            f"{binary} --version names an instrument ({instrument.group(1)}): an introspection "
+            "build reports what it holds and is not what any figure is taken on — build it "
+            "into its own target dir and read it, never time it"
+        )
     match = ALLOCATOR_RE.search(out)
     if match is None:
         raise RuntimeError(

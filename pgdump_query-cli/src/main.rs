@@ -19,6 +19,7 @@ use pgdump_query::{
 };
 
 mod alloc;
+mod introspect;
 mod where_expr;
 
 #[derive(Parser)]
@@ -1092,6 +1093,10 @@ fn init_status_output() {
 /// actually running.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    // A default build drops this entirely; an `introspect` build prints what
+    // the process held on the way out, whether this returns `Ok` or an error
+    // propagates through it (`src/introspect.rs`).
+    let _instrument = introspect::at_exit();
     init_status_output();
     let cli = Cli::parse();
     match cli.command {
@@ -1152,6 +1157,12 @@ async fn main() -> Result<()> {
                 // Exit by signal (130/143), so a script can tell an interrupt
                 // from a failure. `SIGINT` is the fallback for a flag nothing
                 // in this binary sets any other way.
+                //
+                // `std::process::exit` runs no destructors, so the instrument
+                // is asked here rather than left to `main`'s guard — an
+                // interrupted scan is exactly the run whose resident account
+                // someone wants.
+                introspect::report();
                 let number = signalled.load(Ordering::SeqCst);
                 std::process::exit(128 + if number == 0 { 2 } else { number });
             }
@@ -2619,6 +2630,52 @@ mod tests {
         let resolved = stated.resolve_in(&root, &Recommends::reader(24, READER));
         assert_eq!(resolved.parallelism().memory_bytes(), Some(400 << 20));
         assert_eq!(resolved.parallelism().jobs(), 24);
+    }
+
+    /// **The check `introspect` owes: the instrument must not move the plan it
+    /// reports on.** A counting `#[global_allocator]` and a `mallinfo2` call
+    /// at exit change what the process *holds*, which is the point — what they
+    /// must not change is what it *resolves*, or every reading describes an
+    /// arrangement the shipped binary does not make.
+    ///
+    /// This is compiled into both configurations against the same literals, so
+    /// `cargo test -p pgdump_query-cli` and `cargo test -p pgdump_query-cli
+    /// --features introspect` are the two halves of the comparison and neither
+    /// can drift without failing. The roots are the committed ones rather than
+    /// this machine's `/` (`tests/data/runtime/README.md`), since a resolution
+    /// read off the host would differ between the two runs for reasons that
+    /// have nothing to do with the instrument.
+    ///
+    /// It sweeps every root rather than a chosen one: the arms differ in which
+    /// term binds — a discovered ceiling, `RT8`'s half-`MemAvailable` cap, the
+    /// reserve leaving nothing — and an instrument is exactly the kind of
+    /// change that would move one of them and not the others.
+    #[test]
+    fn the_instrument_build_resolves_what_the_default_build_resolves() {
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+        let source = Recommends::reader(24, READER);
+
+        let resolved: Vec<(usize, Option<u64>)> =
+            ["v2-limit", "v1-limit", "no-limit", "cramped", "below-reserve"]
+                .iter()
+                .map(|name| {
+                    let r = flagless.resolve_in(&runtime_root(name), &source);
+                    (r.parallelism().jobs(), r.parallelism().memory_bytes())
+                })
+                .collect();
+
+        assert_eq!(
+            resolved,
+            vec![
+                (13, Some(13 * READER)),
+                (4, Some(4 * READER)),
+                (24, Some(24 * READER)),
+                (4, Some(4 * READER)),
+                (1, Some(0)),
+            ],
+            "the resolved arrangement moved: `--features introspect` and the default build must \
+             read this identically"
+        );
     }
 
     /// **`jobs=` reads differently by provenance, and the report says so.** A

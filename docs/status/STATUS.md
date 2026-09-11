@@ -339,10 +339,11 @@ What remains runs **`19.18`, `19.16`, `19.13`, `19.11`**.
 wrote.** `19.20` has run and the arrangement is settled: the cut stays at one
 unit and only the plain path's read shape moved, so nothing about the
 compressed resident curve the remaining slices read has changed since `19.19`
-left it. Start with `19.18`, reading `19.19`'s, `19.20`'s and `19.17.1`'s notes
-first: its three mechanism legs are dead arithmetically and need re-aiming or
-dropping **before** the hour is spent, and a leg that dies now censors a cell
-rather than losing the sitting.
+left it. Start with `19.18`, reading `19.21`'s, `19.19`'s, `19.20`'s and
+`19.17.1`'s notes first: the instrument it now runs on is built and probed, its
+three mechanism legs are dead arithmetically and need re-aiming or dropping
+**before** the hour is spent, and a leg that dies now censors a cell rather
+than losing the sitting.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -680,19 +681,24 @@ rather than losing the sitting.
       unclosed and now knows the width is not its fix. Notes:
       [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md)
 
-- [ ] **19.21** The introspection the compressed account needs, built before
-      the account is taken — one cargo feature on `pgdump_query-cli`, off by
-      default and joining `alloc.rs`'s at-most-one guard, under which the binary
-      reports what it holds: a counting `#[global_allocator]` keeping **live
-      bytes and their high-water**, and glibc's own `mallinfo2` / `malloc_info`
-      statistics, including each arena's high-water. `key=value` lines, which
-      `measure.parse_reported` already reads. **Neither quantity needs a
-      sampler.** No library code; **not** a fourth `ALLOCATOR_LEGS` member, that
-      tuple being the `allocator` figure's published table and this build
-      carrying an atomic per allocation — so it never times anything. Owes its
-      own check: the feature build resolves the same `jobs=`/`memory_bytes=`
-      pair as the default build, so the instrument is shown not to have moved
-      the plan it reports on. Runs before `19.18`.
+- [x] **19.21** The introspection the compressed account needs. `introspect`
+      is a third off-by-default feature joining `alloc.rs`'s guard — refused
+      beside `jemalloc`/`mimalloc` because it counts one heap and reads
+      glibc's — under which `pgdq` reports ten `key=value` lines plus
+      `malloc_info`'s raw XML, carrying each arena's own high-water. **On
+      stderr, bracketed**, which is the one place the row moved: stdout is the
+      answer and `chunk_size.rs`'s parity tests are what refuse a diagnostic in
+      it, while reading the whole stderr instead would fold `rss_wrapper`'s own
+      per-rep `maxrss_kib` into the facts a run states about itself —
+      `measure.parse_instrument` takes the block and nothing else. `pgdq
+      --version` names the instrument and `measure.binary_allocator` **raises**
+      on it, so "never timed" is mechanical. The check is
+      `the_instrument_build_resolves_what_the_default_build_resolves`, compiled
+      into both configurations over all five runtime roots. A first probe (not
+      a figure): on `control_xz` at `--jobs 4`, live high-water 209.8 MB
+      against 383.0 MB resident, `hblkhd` **0** and 157.8 MB in `fordblks` —
+      nine tenths of the gap, in the term no peak-RSS leg can separate. Notes:
+      [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md)
 
 ## Not started
 
@@ -880,4 +886,23 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **`19.21`'s report is on stderr in a bracketed block, and the harness gained
+  `parse_instrument` for it** — where the row said `key=value` lines "which
+  `measure.parse_reported` already reads", and that function reads stdout. The
+  decision being asked for: is a marker-delimited block on stderr the right
+  channel for a build's self-report, or should an instrument write somewhere a
+  parser needs no delimiters for — a path named by a flag, say? What forced the
+  move off stdout is in the tree and is not a judgement call: `chunk_size.rs`'s
+  two parity tests fail under the feature, because stdout is the binary's
+  *answer* and the instrumented build stopped answering what the shipped one
+  does. What is a judgement call is the bracket. Reading `key=value` off the
+  whole of stderr would fold `rss_wrapper`'s own `maxrss_kib=<n>` — a *per-rep
+  reading* — into the dict of facts a run states about itself, where every
+  other entry is identical across reps and only the last rep's copy is kept; a
+  marker pair is the cheapest thing that separates two writers on one stream,
+  and it costs a five-line harness function plus a test holding the two
+  constants across two languages. If reconsidered, what changes is
+  `introspect::report_text`'s framing and `measure.parse_instrument`; no
+  reading depends on it, since `19.18` has not been taken. Detail:
+  [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md),
+  "Two calls made inside the row".

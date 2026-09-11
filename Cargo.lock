@@ -1150,6 +1150,7 @@ dependencies = [
  "clap",
  "futures",
  "insta",
+ "libc",
  "mimalloc",
  "pgdump_query",
  "serde",

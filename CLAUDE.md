@@ -16,6 +16,8 @@ cargo fmt --check                                 # config: rustfmt.toml
 cargo run -p pgdump_query-cli -- parse --source <file>       # binary is `pgdq`; the only scanner, resumes
 cargo run -p pgdump_query-cli -- info --source <file> [--detail]   # never scans; reads the cache
 cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no dump file needed
+cargo test -p pgdump_query-cli --features introspect         # the instrument build's own half of its check
+cargo build --release -p pgdump_query-cli --features introspect --target-dir <its own>  # the instrument; never timed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
 cd scripts && uv run generate_fixtures.py --skip-dumps          # re-take the comparison oracle only
@@ -346,7 +348,13 @@ sessions of `P19`.
 [`docs/design/roadmap.md`](docs/design/roadmap.md), "Attribution is
 introspective; only the gate is blind" — read it before planning any work whose
 deliverable is a reading, and before reaching for another sitting to explain a
-number.** A reading that decides whether the shipped thing works stays
+number.** The introspective one this repo owns is
+`pgdump_query-cli`'s off-by-default `introspect` feature — the process
+reporting its own live bytes and its allocator's retention
+([`docs/design/architecture.md`](docs/design/architecture.md), "What the binary
+can report about itself"); **read that section before adding an instrument or
+reading one of its numbers**, and note that a build carrying it is refused by
+the harness and may never be timed. A reading that decides whether the shipped thing works stays
 black-box, on the shipped build in the container; a reading that says *why* asks
 the process itself, and where nothing in the binary can answer, **building the
 instrument is the slice** rather than something discovered after the sitting

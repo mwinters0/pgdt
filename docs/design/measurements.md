@@ -1003,6 +1003,13 @@ takes a marker, and nothing here needs a quiet machine.
 | `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
 | `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
 
+**Two of them are built and in the tree**, behind `pgdump_query-cli`'s
+off-by-default `introspect` feature: the counting `#[global_allocator]` and
+glibc's `mallinfo2`/`malloc_info`, reported together as `key=value` lines on
+stderr. How to build it, what each line means and why `--version` refuses to
+let it be timed is [`architecture.md`](architecture.md), "What the binary can
+report about itself".
+
 **Two of those need no sampling, which is the part that is not obvious.** A
 snapshot at exit reports the end state, not the peak, so the instinct is to
 poll — and polling is what koji's recipe does, because there the process runs

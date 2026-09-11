@@ -486,6 +486,20 @@ class Allocator(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 measure.binary_allocator(Path("/pgdq"))
 
+    def test_an_instrumented_build_is_refused_rather_than_timed(self):
+        # The failure this prevents is silent: a counting `#[global_allocator]`
+        # still answers `(allocator: system)`, so without the refusal an
+        # introspection build reads as the shipped binary and every reading
+        # taken on it is published as a figure of something else.
+        with unittest.mock.patch.object(
+            measure,
+            "run",
+            return_value="pgdq 0.1.0 (allocator: system) (instrument: counting-allocator)\n",
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                measure.binary_allocator(Path("/pgdq"))
+        self.assertIn("counting-allocator", str(raised.exception))
+
     def test_an_unknown_leg_is_never_built(self):
         with self.assertRaises(ValueError):
             measure.ensure_allocator_binary(measure.Config(), "tcmalloc", lambda _: None)
@@ -2510,6 +2524,53 @@ class Reported(unittest.TestCase):
 
     def test_no_report_is_an_empty_report(self):
         self.assertEqual(measure.parse_reported(""), {})
+
+
+class InstrumentReport(unittest.TestCase):
+    """The introspection build's own block, off a stderr it shares."""
+
+    #: A stderr shaped like a real one: the status log, the harness's own
+    #: wrapper line, and the bracketed report between them.
+    STREAM = (
+        "2026-09-11T19:24:35Z  INFO scan started bytes=2352 jobs=1 memory_bytes=67108864\n"
+        "# pgdq-introspect\n"
+        "instrument=counting-allocator\n"
+        "live_bytes=76876\n"
+        "live_peak_bytes=209822121\n"
+        "mallinfo_arena=131768320\n"
+        "malloc_system_max=404201472\n"
+        "# malloc_info\n"
+        '<system type="max" size="135168"/>\n'
+        "# end malloc_info\n"
+        "# end pgdq-introspect\n"
+        "maxrss_kib=373524\n"
+        "real 0m9.150s\n"
+    )
+
+    def test_it_reads_the_block_and_nothing_around_it(self):
+        got = measure.parse_instrument(self.STREAM)
+        self.assertEqual(got["live_peak_bytes"], "209822121")
+        self.assertEqual(got["malloc_system_max"], "404201472")
+
+    def test_the_harnesss_own_reading_is_not_a_fact_the_run_reported(self):
+        # `maxrss_kib` is `rss_wrapper`'s, it is a `key=value` line by the same
+        # grammar, and it differs per rep — where every other entry in this
+        # dict is identical across reps and only the last rep's copy is kept.
+        # Reading the whole stream would file a reading as a report.
+        self.assertNotIn("maxrss_kib", measure.parse_instrument(self.STREAM))
+
+    def test_a_default_build_reports_nothing(self):
+        # The instrument is off by default and never in a shipped binary, so
+        # every figure's own runs take this branch.
+        self.assertEqual(measure.parse_instrument("maxrss_kib=1\nreal 0m1.000s\n"), {})
+
+    def test_the_markers_match_the_binarys(self):
+        # Two constants in two languages. A rename on one side that misses the
+        # other leaves an instrument whose report nothing reads, and a silent
+        # empty dict is what that looks like.
+        source = (measure.REPO / "pgdump_query-cli/src/introspect.rs").read_text()
+        self.assertIn(f'const BEGIN: &str = "{measure.INSTRUMENT_BEGIN}";', source)
+        self.assertIn(f'const END: &str = "{measure.INSTRUMENT_END}";', source)
 
 
 class Staleness(unittest.TestCase):

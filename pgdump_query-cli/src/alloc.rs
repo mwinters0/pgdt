@@ -34,6 +34,20 @@ compile_error!(
      They are measured legs of `measure.py --figure allocator`, not a matrix."
 );
 
+/// `introspect` is the third `#[global_allocator]` in this crate, so it joins
+/// the guard above — but the reason it is refused is not only the symbol
+/// collision. The instrument counts allocations in front of `System` and then
+/// reads glibc's `mallinfo2`/`malloc_info` for what that same allocator is
+/// holding underneath; asked for beside `jemalloc` or `mimalloc` it would
+/// count one heap and report another's, which is an instrument that answers
+/// plausibly about the wrong thing. See `src/introspect.rs`.
+#[cfg(all(feature = "introspect", any(feature = "jemalloc", feature = "mimalloc")))]
+compile_error!(
+    "`introspect` counts allocations in front of the platform allocator and reads glibc's own \
+     statistics for the same heap: it is an instrument, not a leg, and cannot be combined with \
+     `jemalloc` or `mimalloc`."
+);
+
 #[cfg(feature = "jemalloc")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -53,8 +67,17 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// Spelled as `#[cfg]` arms rather than a `cfg!` chain because `concat!` takes
 /// literals only, and the point is a string a `--version` reader finds rather
 /// than a value assembled at runtime.
-#[cfg(all(not(feature = "jemalloc"), not(feature = "mimalloc")))]
+#[cfg(all(not(feature = "jemalloc"), not(feature = "mimalloc"), not(feature = "introspect")))]
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: system)");
+/// The instrumented build says so **beside** the allocator rather than in
+/// place of it: it is still the platform allocator, with a counter in front of
+/// it. `scripts/measure.py`'s `binary_allocator` refuses a binary whose
+/// `--version` carries this marker, which is what keeps an instrument that
+/// takes an atomic per allocation out of every timed table by construction
+/// rather than by anyone remembering.
+#[cfg(all(not(feature = "jemalloc"), not(feature = "mimalloc"), feature = "introspect"))]
+pub const VERSION: &str =
+    concat!(env!("CARGO_PKG_VERSION"), " (allocator: system) (instrument: counting-allocator)");
 #[cfg(feature = "jemalloc")]
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (allocator: jemalloc)");
 #[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
@@ -80,8 +103,23 @@ mod tests {
             "system"
         };
         assert!(
-            VERSION.ends_with(&format!("(allocator: {expected})")),
+            VERSION.contains(&format!("(allocator: {expected})")),
             "{VERSION} does not name {expected}"
+        );
+    }
+
+    /// **Only an instrumented build carries the instrument marker**, in either
+    /// direction. A default build that grew one would be refused by the
+    /// harness and every figure would stop being takeable; an instrumented
+    /// build that lost one would be timed as the shipped binary, which is the
+    /// failure that matters — a plausible table of a binary taking an atomic
+    /// on every allocation.
+    #[test]
+    fn the_instrument_marker_is_present_exactly_when_the_feature_is() {
+        assert_eq!(
+            VERSION.contains("(instrument: counting-allocator)"),
+            cfg!(feature = "introspect"),
+            "{VERSION} disagrees with the `introspect` feature"
         );
     }
 }

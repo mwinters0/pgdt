@@ -21,6 +21,14 @@ path = "src/main.rs"
 default = []
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+# The introspection build (`src/introspect.rs`): a counting
+# `#[global_allocator]` over `System` plus glibc's own `mallinfo2` /
+# `malloc_info` statistics, printed as `key=value` lines on the way out. It is
+# an *instrument*, not an allocator leg -- attribution asks the process, and
+# only the gate stays black-box (`docs/design/roadmap.md`, "Attribution is
+# introspective; only the gate is blind"). It never times anything, and
+# `pgdq --version` names it so the harness cannot publish a figure taken on it.
+introspect = ["dep:libc"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -35,6 +43,9 @@ arrow = { version = "59.2.0", default-features = false }
 # reviewable at all.
 clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
 futures = "0.3.34"
+# `introspect` only: `mallinfo2`, `malloc_info` and the `open_memstream` the
+# second one writes into. Nothing in a default build links it.
+libc = { version = "0.2.189", optional = true }
 mimalloc = { version = "0.1.50", optional = true }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 serde = { version = "1.0.229", features = ["derive"] }

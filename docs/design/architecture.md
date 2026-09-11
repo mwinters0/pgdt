@@ -48,6 +48,7 @@ through.
 | where a scan's time actually goes, before proposing to make one faster | [Where a scan's time goes](#where-a-scans-time-goes) |
 | whether adding workers can help a shape at all, before proposing to parallelize one | [What parallelism buys, and where it stops](#what-parallelism-buys-and-where-it-stops) |
 | `alloc.rs`, a `#[global_allocator]`, what a figure's apparatus line names | [The allocator is the binary's choice](#the-allocator-is-the-binarys-choice) |
+| `introspect.rs`, what the process reports about its own memory, before planning a sitting to attribute one | [What the binary can report about itself](#what-the-binary-can-report-about-itself) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -81,6 +82,7 @@ through.
 | CLI (`pgdq parse` / `info` / `query`), the `--filter` term grammar | `pgdump_query-cli/src/main.rs` | above L4 |
 | The `--where` expression grammar | `pgdump_query-cli/src/where_expr.rs` | above L4 |
 | Which allocator the binary links, and `--version`'s report of it | `pgdump_query-cli/src/alloc.rs` | above L4 |
+| The introspection build: a counting `#[global_allocator]` and glibc's own statistics, off by default | `pgdump_query-cli/src/introspect.rs` | above L4 |
 
 `error.rs` and `lib.rs` are cross-cutting and belong to no layer. Which layer a
 module is in constrains what it may depend on and what it may know:
@@ -7806,6 +7808,83 @@ instructions retire. Reopen it on an instrument, not on a sign.
 allocator is chosen when the binary is linked, so a runtime switch would have
 to link all three and dispatch through a vtable on every allocation, which
 prices the mechanism above what it is measuring.
+
+### What the binary can report about itself
+
+`pgdump_query-cli/src/introspect.rs` is a **third, off-by-default Cargo
+feature** — `introspect` — under which `pgdq` installs a counting
+`#[global_allocator]` over `System` and prints, on the way out, what the
+program was holding and what glibc was holding for it. A default build drops
+every item in the module and is the binary that ships.
+
+```sh
+cargo build --release -p pgdump_query-cli --features introspect \
+  --target-dir <a target dir of its own>
+```
+
+**It exists because a peak-RSS reading cannot be taken apart.** `ru_maxrss` is
+one scalar with no decomposition, so the only way to decompose it is to vary
+something and subtract — and every subtraction is another sitting carrying both
+legs' spreads. That is the right instrument for *does the shipped rule survive
+a real allocation* and the wrong one for *what is the resident set made of*,
+which is the split [`roadmap.md`](roadmap.md), "Attribution is introspective;
+only the gate is blind", makes a standing rule. What each instrument can see is
+[`measurements.md`](measurements.md), "What an instrument can see".
+
+**Ten `key=value` lines and the raw `malloc_info` XML**, bracketed by
+`# pgdq-introspect` / `# end pgdq-introspect`. `live_bytes` and
+`live_peak_bytes` are the counting allocator's, exact and allocator-independent;
+`mallinfo_arena`, `mallinfo_hblkhd`, `mallinfo_uordblks` and
+`mallinfo_fordblks` are glibc's view of the same heap; `malloc_heaps`,
+`malloc_system_current` and `malloc_system_max` are `malloc_info`'s
+document-level totals, and the XML beneath them carries **each arena's own
+high-water**, which is the one number `mallinfo2` cannot give.
+
+**Neither quantity needs a sampler**, which is what makes reading this a
+minutes-long job rather than an instrumented re-run of a sweep: the counter
+keeps its own high-water and `malloc_info` keeps each arena's, so a snapshot at
+exit is not merely an end state.
+
+**It reports on stderr, not on stdout.** stdout is the answer — rows, listings,
+JSON — and a diagnostic written into it corrupts a pipe, which is the same
+argument `init_status_output` makes for the status stream ("Status output").
+Writing it to stdout was tried, and `chunk_size.rs` is what refuses it: two
+runs that must agree byte for byte disagree on the instrument's own numbers, so
+the instrumented build stops answering what the shipped one answers.
+
+**The report is bracketed because that stream has two writers.** The
+measurement harness wraps every timed command in `rss_wrapper`, which prints
+`maxrss_kib=<n>` to stderr — a `key=value` line by the same grammar. A harness
+reading the whole stream would fold the wrapper's own *per-rep reading* into
+the dict of facts a run states about itself, where every other entry is
+identical across reps and only the last rep's copy is kept.
+`measure.parse_instrument` takes the bracketed block and nothing else; the
+markers carry no `=`, so they are invisible to the parse they delimit.
+
+**`--version` names the instrument, and `measure.binary_allocator` refuses a
+binary that does.** A counting allocator still answers `(allocator: system)`,
+so without the refusal an instrumented build reads as the shipped one and every
+reading taken on it could be published as a figure of something else. That is
+what makes "not a fourth `ALLOCATOR_LEGS` member" mechanical rather than
+intentional: **this build never times anything.**
+
+*Rejected:* counting in front of whichever allocator the build selected. The
+glibc statistics describe the allocator underneath, so `introspect` beside
+`jemalloc` or `mimalloc` would count one heap and report another's — an
+instrument answering plausibly about the wrong thing. `alloc.rs` refuses the
+combination rather than ordering it, for the same reason it refuses the two
+allocators together.
+
+*Rejected:* a sampler thread, and `/proc/self/statm` polling beside it. Both
+quantities carry their own high-water, so a sampler would add a thread, an
+arena and a missed-peak failure mode to buy something already exact —
+`rss_wrapper`'s own docstring describes that failure for `/proc` polling.
+
+*Rejected:* making the counting allocator the shipped default and reading it
+without a feature. The atomic per allocation is small and is not zero, and
+every figure in [`measurements.md`](measurements.md) would then be a figure of
+a binary carrying it. The perturbation is stated rather than bounded precisely
+because this build is never timed.
 
 ## The cache
 
