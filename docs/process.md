@@ -1089,6 +1089,42 @@ move. Granularity follows the roadmap's: what escalates is a **rule** being
 added or changed, not an edit that re-describes something the project already
 has.
 
+**A stand-in may also find the record *wrong*, and deferring to it is then the
+failure.** The rule above is a guard against a session inventing authority, and
+it is exactly the wrong guard when the document being cited is what has gone
+wrong. A record's authority is that the maintainer approved it against the
+evidence available at the time; **evidence that postdates the approval was never
+approved by anyone**, so a recommendation contradicted by the record is not
+automatically wrong — the record may be.
+
+So there is a further disposition, and it is not an escalation: **the record is
+refuted**. Three conditions bound it, and all three are checkable:
+
+- **The contradiction is settled without a new measurement** — code that can be
+  read, arithmetic that can be done, or a reading already in the tree. If
+  settling it needs a run, it is not a refutation yet; it is an escalation, or
+  work to be admitted.
+- **The falsifying artifact is named exactly** — file and line, a figure's cell,
+  a logged number, the commit that changed the premise. "The evidence shows" is
+  what this licence degenerates into otherwise, and a stretched refutation is
+  worse than a stretched citation because it also edits the record.
+- **The record is amended in the same round**, with the refutation written down.
+  A stand-in that works around a false document and leaves it standing has
+  spent the finding and kept the trap.
+
+**The escalation boundary is unchanged, and it is what keeps this narrow.** What
+may be refuted in-loop is **phase-local** record: the open phase's spec, its
+slice rows, a deficiency entry's account of a mechanism, a claim in a dated
+entry. A standing rule, an entry in an assumptions register, a
+standing-constraint doc, `CLAUDE.md` or a skill **escalates even when it is
+provably wrong** — a rule that outlives the phase is the maintainer's to retire,
+and the evidence keeps until they read it.
+
+Without this, a loop built to check recommendations against the record cannot
+catch an error *in* the record, and what that produces is several sessions of
+locally competent work inside a false frame — each one correctly refusing the
+recommendation that would have escaped it.
+
 Two things make that acceptable rather than a hole. The exchange is **recorded
 verbatim** for the maintainer to read afterwards, so the review is deferred
 rather than skipped. And the recording is redundant: every closure still files

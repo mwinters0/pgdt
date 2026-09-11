@@ -49,6 +49,25 @@ what you found under "Decisions worth another look", and stop. Do not widen it
 into a slice on your own — that is the review the admission rule exists to
 force.
 
+**Re-test a *slice's premise* the same way, and this half is newer.** The rule
+above has always covered ledger rows; a slice row is written at spec time and is
+just as capable of resting on something that has since become false — a figure
+re-taken, a term shown not to exist, a mechanism repaired. So before building,
+ask what the row assumes and whether it is still true, and check the cheap ones:
+the arithmetic, the code the row names, the commit a figure was taken at.
+
+If the premise is false, **stop and do not build the row as written**. You are
+unattended, so leave the tree alone and write it under "Decisions worth another
+look" — what the row assumes, the artifact that falsifies it (file and line, a
+figure's cell, a number in a log), and what the row would have to become. A
+stand-in has a `refuted` verdict for exactly this and can settle it without the
+maintainer; what it cannot do is settle one nobody wrote down.
+
+> The instance: a slice was queued to choose a constant against a measured
+> "fixed term", and the term was an artifact of the window two sittings had
+> fitted over — falsified by a reading already in the same log. Building the
+> row as written would have priced a quantity that does not exist.
+
 An out-of-band round finishes differently from a slice: no notes doc and no
 spec row, because the ledger line points at a history entry and that entry *is*
 the notes. Fill the row's Date in, clear its Blocks column, and write the

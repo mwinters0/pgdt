@@ -26,7 +26,7 @@ precedent set by an earlier slice. That is a checkable property, not taste, and
 checking it is your entire job.
 
 So for every question in every round: go and read the record yourself, then
-return one of four verdicts.
+return one of five verdicts.
 
 - **`record`** — the recommendation follows from something already written.
   Cite it: file, and the section or rule by name. This is the verdict the loop
@@ -40,6 +40,10 @@ return one of four verdicts.
   to *what is the maintainer being asked to decide* is "nothing — they would
   nod", it is a known deficiency, an inbox entry or an out-of-band row. Say
   which, and have the round file it there. Counted too.
+- **`refuted`** — the recommendation contradicts the record, **and the record is
+  wrong**. Not an escalation: see "When the record is what is wrong" below for
+  the three conditions and the boundary. Counted, and watched most closely of
+  the five.
 - **`escalate`** — the maintainer must answer this one. Stops the loop.
 
 **Never accept the griller's account of the record.** It is a subagent under
@@ -79,13 +83,60 @@ and a call that meets the criterion escalates whether or not it is named here.
   defect on a phase nobody has grilled, or silently manufactures a
   `(c) unowned` one.
 - **A closure that contradicts a rationale the phase spec deliberately
-  recorded.** An amendment filling a gap the spec never addressed is discovery
-  — that is `judgement`, and the loop proceeds. An amendment reversing
-  something the spec argued for is, by construction, a case the record does not
-  settle in the recommendation's favour.
+  recorded — unless that rationale is *refuted*.** An amendment filling a gap
+  the spec never addressed is discovery: that is `judgement`, and the loop
+  proceeds. An amendment reversing something the spec argued for is, by
+  construction, a case the record does not settle in the recommendation's
+  favour — so it escalates, **except** where the spec's argument rests on a
+  premise you can show is false without a new measurement, which is `refuted`
+  and is the next section. The distinction is between disagreeing with the
+  spec's reasoning and finding its premise untrue; the first is the
+  maintainer's, the second is checkable.
 - **You disagree, or cannot tell.** No threshold to clear and no apology owed:
   an escalation costs the maintainer one reading, and the alternative costs
   them a phase built on a call you were not sure of.
+
+## When the record is what is wrong
+
+Your whole job is checking recommendations against the record, which makes you
+structurally blind to an error *in* it: a correct recommendation that
+contradicts a false document reads exactly like an incorrect one. `process.md`'s
+"Working unattended" gives you a disposition for that case and bounds it, and
+this is the procedure.
+
+**A record's authority is that the maintainer approved it against the evidence
+of its day.** Evidence that postdates the approval was approved by nobody, so
+"the spec says otherwise" is not by itself a refusal.
+
+Return **`refuted`** only with all three of these, and put each in the
+transcript:
+
+1. **It is settled without a new measurement** — code you read, arithmetic you
+   did, or a reading already in the tree. Needing a run means it is not a
+   refutation: escalate, or have the round admit the work.
+2. **You name the falsifying artifact exactly** — file and line, a figure's
+   cell, a logged number, the commit that moved the premise. Not "the evidence
+   shows". A stretched refutation is worse than a stretched `record` citation,
+   because it also edits the document.
+3. **The round amends the record in the same closure.** Working around a false
+   document and leaving it standing spends the finding and keeps the trap.
+
+**What may be refuted is phase-local**: the open phase's spec, its slice rows,
+a `KD<k>`'s account of a mechanism, a claim in a dated entry. A standing rule,
+an invariant, a standing-constraint doc, `CLAUDE.md` or a skill **escalates even
+when it is provably wrong** — the boundary under "What escalates" governs
+unchanged, and a rule that outlives the phase is the maintainer's to retire.
+
+**Go looking for it at one specific moment**: when the griller's recommendation
+is sound on its own terms and the record contradicts it. That is the shape, and
+the reflex it has to beat is answering `escalate` or refusing on the citation
+without opening the thing the citation rests on. Read the *evidence behind* the
+record, not only the record.
+
+> The instance this rule was written from: a phase spec named a candidate for
+> an unexplained memory term, and the candidate was refuted by a slot count
+> anyone could compute from `io.rs` in ten minutes. Three sessions worked inside
+> the spec instead, and each was locally correct.
 
 What does **not** escalate, because it is the process working rather than a
 decision being made: re-slicing and earned `<N>.<M>.<K>` numbers, admitting
@@ -268,7 +319,9 @@ signal the maintainer is watching: a phase whose answers are almost all
 `record` is a loop running safely on precedent, and a rising share of
 `judgement` — or of `misfiled`, which means the loop has started manufacturing
 entries because entries are what it rewards — is the loop improvising and the
-maintainer's cue to come back. That is the measurement this design owes them in
+maintainer's cue to come back. **A `refuted` is worth reading the moment it
+appears**, whatever the counts: it says a document the phase is being built on
+was wrong, and it is the one verdict that changes the record without them. That is the measurement this design owes them in
 exchange for not being in the room.
 
 ## What this skill is not
