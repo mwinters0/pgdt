@@ -1544,9 +1544,15 @@ per worker and billed by nothing. The two numbers are genuinely independent —
 that is the point of computing the coverage apart from the charge — and this is
 the one combination of them that is wrong. The test above bounds a piece at `k`
 units rather than at one, so it passes at every width and cannot catch it.
-`M83` is the fix, and it is queued rather than landed: `Whole` becomes *one
-unit* rather than *one piece*, which is the same read at `k` = 1 and stays
-correct above it.
+`M83` bounds it and does not make a wider cut safe. Queued rather than landed,
+it makes `Whole` mean *one unit* rather than *one piece* — the identical read at
+`k` = 1, where a piece is one unit, and above it a buffer capped at one unit
+instead of growing with `k`. That removes the unbounded case, not the copy:
+`BufferPool::keeps` admits only the announced chunk, so a one-unit read is
+un-poolable at either width, and `SeekTable::max_block_uncompressed()` is a
+file-wide maximum, so a read starting at a boundary can still cross into a
+smaller successor block and take the copying arm. Raising `k` safely wants the
+clip below.
 
 *The end state is a read clipped to the next boundary* — each read running to
 the next unit seam rather than to a stated length — which is correct at any
