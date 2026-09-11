@@ -459,15 +459,19 @@ the five orderings that bind are in the spec, not here.
       structurally inert. Notes:
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
-      rule, carrying `19.12`'s constant — plus the source's own budget
+      rule, carrying the constant **`19.16`** chooses — plus the source's own budget
       recommendation, capped at half of `MemAvailable` (`RT8`) where no limit
       is discovered — without which a corrected divisor makes a flagless `.xz`
       scan serial on an unlimited host. **The whole row is in the tree and the
       box is held open because `19.15`'s gate did not pass**: the constant this
       row carries leaves a flagless `.xz` scan 0.6% of a 512 MiB allocation at
       the top of thirteen reps, so the reserve is reopened and the number the
-      row ships is not settled — flagged below, and nothing else about the row
-      is outstanding. `ParallelArgs::resolve` asks the source when
+      row ships is not settled. Reviewed since: the margin the constant must
+      leave is now stated (worst rep leaves ≥20% of the limit), the
+      proportional term is withdrawn, and `19.16` takes the reading the number
+      comes from; this row also gains the **decline's report**, naming the limit
+      that sent a compressed scan serial, since raising the reserve is what
+      declines the block path. Nothing else about the row is outstanding. `ParallelArgs::resolve` asks the source when
       `--parallel-memory` is absent, a discovered limit caps at
       `limit − 256 MiB` and no limit found caps at half of `MemAvailable`; a
       256 MiB container resolves to a budget of **zero**, which is one reader's
@@ -507,12 +511,21 @@ the five orderings that bind are in the spec, not here.
       exceeds the 256 MiB reserve. `MALLOC_ARENA_MAX=2` buys a sixth of it, so
       the standing arena account does not explain it. The reopening the spec
       named is refused by the same reading, a proportional reserve being smaller
-      where the failure is — flagged below. Everything else resolved as designed,
+      where the failure is. Reviewed since: the spec's reserve decisions are
+      amended and the constant is `19.16`'s to choose. Everything else resolved as designed,
       including the unlimited arm at 8 GiB, where the source's recommendation
       binds; `KD18`'s shape costs 80.5 MiB inside a 1 GiB container rather than
       209, the budget admitting eight of the twenty-four workers stated. A
       `runs/` probe, not a figure. Notes:
       [`../design/roadmap-P19.15-budget-probe-notes.md`](../design/roadmap-P19.15-budget-probe-notes.md)
+- [ ] **19.16** The reserve constant, from a reading rather than a fit:
+      candidate reserves at 512 MiB and 768 MiB, ten reps each, against the
+      **one-reader block path** that every candidate near the measured
+      403 MiB fixed term produces and that no sitting has measured — `19.15`'s
+      apparatus, binary and probe script, so the sitting is minutes. It reports
+      the resolved count and the worst-rep headroom against the stated
+      criterion, **worst rep leaves ≥20% of the limit**, and the constant it
+      picks is what `19.13` ships. A `runs/` probe, not a figure.
 
 ## Not started
 
@@ -555,8 +568,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD18 -->
-**`KD1`–`KD18` are allocated, and nothing at or below `KD18` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD19 -->
+**`KD1`–`KD19` are allocated, and nothing at or below `KD19` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -683,6 +696,17 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "The interior
   split".
 
+- **KD19** — a block-decoding `.xz` scan holds a **~403 MiB fixed term** of
+  which roughly 280 MiB is unexplained: the pools can hold 134 MiB of it and
+  glibc arenas a further sixth, and nothing accounts for the rest. It is what
+  forces the reserve high enough to decline the block path on a small
+  allocation. **(c) unowned**; promoted by a real input hitting that decline, or
+  by a phase that takes the compressed path's resident set as its subject.
+  `--parallel-memory` reverses the decline and `MALLOC_ARENA_MAX=2` recovers the
+  arena share in the meantime. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Execution model and
+  API surface".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -700,22 +724,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **What the reserve reopens to, now that `19.15`'s gate has failed and refused
-  the spec's own answer.** The call to make: which of three shapes the discovered
-  budget takes, since `budget = limit − 256 MiB` leaves a flagless `.xz` scan
-  0.6% of a 512 MiB allocation at the top of thirteen reps and the spec's named
-  reopening — a proportional term — is *smaller* exactly where the failure is. A
-  larger constant is the obvious move and costs a decision about the floor: the
-  measured fixed term is ~403 MiB, and reserving that much puts a 600 MiB cgroup
-  below it, so something has to say what a 512 MiB allocation gets instead. The
-  two alternatives are a **limit below which the block path is declined
-  outright** — honest, and it makes a small container's compressed scan serial
-  where today it is three readers that nearly fit — and **attacking the 403 MiB
-  fixed term itself**, which is the only one that improves the answer rather
-  than trading it, and which no slice of this phase is scoped for: ~340 MiB of
-  it is unattributed, the arena cap reaching a sixth. Nothing was proceeded with:
-  `19.13`'s code is unchanged in the tree and its box is open. Reversing this
-  later costs one constant and whatever tests name it. Evidence:
-  [2026-09-11](history/2026-09-11.md), "The budget rule's headroom fails at
-  512 MiB, and not where it was predicted to";
-  [`../design/roadmap-P19.15-budget-probe-notes.md`](../design/roadmap-P19.15-budget-probe-notes.md).
+_Nothing open._

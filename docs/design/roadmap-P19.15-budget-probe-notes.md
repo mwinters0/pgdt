@@ -6,12 +6,14 @@ The gate the phase held `19.13`'s box open for. The spec row is
 [`architecture.md`](architecture.md), "Execution model and API surface".
 
 **It does not pass.** A flagless `.xz` `parse` inside a **512 MiB** allocation
-holds 474 MiB median and 503.7 MiB at its worst of three — 1.6% of the limit —
-against a per-rep spread of 10.2%, which is the criterion the reserve review set
-for itself. Everything else about the resolution is right, and the predicted
-thin band is comfortable. So the reserve reopens, and not to the term the spec
-named: see "Where the reopening cannot go", below, and the entry under
-`STATUS.md`'s "Decisions worth another look" that is holding the call.
+holds 474 MiB median and 503.7 MiB at its worst of three — 1.6% of the limit,
+and 0.57% at the worst of ten further reps — against the margin the reserve is
+now held to, which is **20% of the limit at the worst rep**. Everything else
+about the resolution is right, and the predicted thin band is comfortable. So
+the reserve reopens, and not to the term the spec named: see "Where the
+reopening cannot go", below, whose reviewed outcome is that the larger constant
+and the floor are one knob and that `19.16` takes the reading the number comes
+from.
 
 ## Apparatus
 
@@ -138,10 +140,13 @@ The standing account of resident above the pools is glibc arena retention
 So arenas are **a sixth** of the 512 MiB leg's fixed term, not the bulk of it,
 and the cap lifts that leg's median headroom from 7.3% to 19.4% — better, and
 still a setting the operator has to make themselves. The remaining ~340 MiB is
-unattributed: what the pools are charged for accounts for about 250 MiB of the
-512 MiB leg (eight coupled block slots at 24 MiB, three decoders at 9.5, three
-chunk buffers, and the ~6 MiB a plain scan holds), and the rest is not yet
-named. **Nothing here should be read as an attribution**; what the sitting
+unattributed, and what the pools can hold is a smaller part of the leg than the
+per-reader charge suggests: `XzSource::apportion` sets the block pool's depth to
+`POOL_DEPTH.max(jobs)` = `max(4, 3)` = **4** and `BufferPool::slots` clamps
+there, counting free and retained together, so that pool's ceiling is **96 MiB**
+rather than the 192 that two units a reader would imply. With three decoders at
+9.5, the chunk pool's four slots and the ~6 MiB a plain scan holds, about
+134 MiB of the 474 is accounted for and the rest is not yet named. **Nothing here should be read as an attribution**; what the sitting
 establishes is that capping arenas does not rescue the margin.
 
 ## Where the reopening cannot go
@@ -154,11 +159,17 @@ allocation 20% would hand a 512 MiB allocation *more* budget than 256 MiB does,
 not less. The three shapes that remain are a larger constant (which the review
 already priced: ~400 MiB puts a 600 MiB cgroup below the floor, and the floor is
 then the thing to decide), a *floor on the limit* below which the block path is
-declined outright, and attacking the 403 MiB fixed term itself. Choosing among
-them is a decision the phase's spec records, so it is not this session's:
-`STATUS.md`'s "Decisions worth another look" carries it, and the evidence is
+declined outright, and attacking the 403 MiB fixed term itself.
+
+**Reviewed since, and the first two are one knob**: `BlockCache::affordable`
+reads off the budget, so a larger constant *is* the floor and no second number
+states it. The reserve must leave a stated margin — worst rep ≥20% of the
+limit — the proportional term is withdrawn, and the constant comes from `19.16`'s
+reading of the one-reader block path this sitting does not hold. Amended in the
+spec's "The margin this leaves is thin in one band"; evidence in
 [2026-09-11](../status/history/2026-09-11.md), "The budget rule's headroom fails
-at 512 MiB, and not where it was predicted to".
+at 512 MiB, and not where it was predicted to" and "Closed: what the reserve
+reopens to".
 
 ## `KD18` inside an allocation costs a quarter of what it costs outside one
 

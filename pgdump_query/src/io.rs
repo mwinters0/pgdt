@@ -753,10 +753,23 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// (`docs/design/roadmap-P19-efficient-defaults.md`, "What is discovered, and
 /// what the default makes of it").
 ///
+/// **What it must satisfy: the worst observed rep leaves at least 20% of the
+/// limit**, the median being context rather than the gate, because a cgroup's
+/// killer reads one run's peak. The criterion bounds this number rather than
+/// describing it — measured in real cgroups with nothing stated, a
+/// block-decoding `.xz` scan holds `403 MiB + 31.2 MiB` a reader, so a 512 MiB
+/// allocation comes within three megabytes of its limit at the top of thirteen
+/// reps (`docs/design/architecture.md`, "Execution model and API surface").
+/// **Raising this constant is also what declines the block path**, since
+/// [`BlockCache::affordable`] reads off the budget this leaves: the two are one
+/// knob, and the floor below which a compressed scan is serial is implicit in
+/// it rather than stated separately.
+///
 /// **One constant, taken from the compressed leg, over-reserving the plain
-/// path by roughly the difference.** The two paths' fixed terms are a factor
-/// of thirty apart — a plain `parse` holds 5.86 MiB above its pool where a
-/// block-decoding one holds a few hundred megabytes — and a per-source reserve
+/// path by roughly the difference.** The two paths' fixed terms are almost two
+/// orders of magnitude apart — a plain `parse` holds 5.86 MiB above its pool
+/// where a block-decoding one holds a few hundred megabytes — and a per-source
+/// reserve
 /// is not available where the number is needed: [`Parallelism::discover`] is
 /// the primitive a caller reaches with nothing open, and a source's own answer
 /// is downstream of recognition, which is I/O. Over-reserving is the safe

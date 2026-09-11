@@ -385,14 +385,68 @@ the shortfall is measured rather than suspected.** Run in real cgroups with
 nothing stated, a block-decoding `.xz` scan's resident set is
 **403 MiB + 31.2 MiB a reader** — so a 512 MiB allocation, the smallest that
 reaches the block path at all, resolves three readers and comes within
-three megabytes of its limit at the top of thirteen reps. The reserve is
-therefore an open question and not a settled number: `STATUS.md`'s "Decisions
-worth another look" holds the call, and the readings, the refuted earlier fit
-and the reason a *proportional* reserve is the wrong repair are in
+three megabytes of its limit at the top of thirteen reps. The readings, the
+refuted earlier fit and the reason a *proportional* reserve is the wrong repair
+are in
 [`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md).
 Two things that reading rules out: the excess is not glibc arena retention,
 which is a sixth of it, and it is not visible at a large limit, where the
 worker-count cap lifts the margin back above a third.
+
+<!-- deficiency: KD19 -->
+**Most of that fixed term is unexplained, which is `KD19`.** The pools can hold
+134 MiB of the 512 MiB leg — the block pool's depth is `POOL_DEPTH.max(jobs)`
+and `BufferPool::slots` clamps there counting free and retained together, so
+four 24 MiB slots and not the eight that two units a reader would suggest — and
+`MALLOC_ARENA_MAX=2` recovers a further sixth, which also retires glibc arena
+retention as the standing account of the excess. Roughly 280 MiB is accounted
+for by nothing, and it is what forces the reserve high enough to decline the
+block path on a small allocation, so the deficiency is the decline rather than
+the bytes. `(c)` unowned: no phase holds the intent, and the promotion trigger is
+a real input hitting that decline or a phase taking this path's resident set as
+its subject. A user has `--parallel-memory` to reverse the decline and the arena
+cap to recover its share, neither of which touches the remainder. Note that
+`rss-attribution` does **not** instrument this: its inputs are plain files, and
+it attributes the plain path's per-block growth.
+
+**What the reserve must satisfy is a stated margin, and before this it was
+unstated.** The criterion is that the **worst observed rep leaves at least 20%
+of the limit**, with the median reported beside it as context rather than as the
+gate — worst-rep because a cgroup's killer reads one run's peak and not a median
+of three, accepting that a tail is something this project can only ever
+estimate and that thirteen reps is the estimate. Without a stated margin the
+rule had none: `budget = limit − reserve` aims resident *at* the limit by
+construction, so every margin it has ever left was an accident of two
+over-estimates — `Parallelism::fit`'s quantisation, which grants only whole
+readers, and a per-reader charge that bills 65.03 MiB against a marginal
+31.2 MiB measured. Both scale with the reader count, which is why the thin point
+is the *smallest* limit that reaches the block path rather than the largest, and
+why the headroom predicted from a fit taken at a pinned count of twenty-four
+was inverted along the axis.
+
+*Rejected: promoting that criterion to a standing rule* over every source that
+gains a per-worker charge. There is no second site for it to govern —
+`MEMORY_RESERVE` is one shared constant rather than a per-source one, for the
+reasons above, so a future source inherits the criterion by inheriting the
+constant. Writing it as a standing rule would bind phases nobody has grilled on
+20% calibrated against one file's distribution on one allocator, and invite a
+later reader to treat the number as derived rather than as this phase's
+judgement. A phase that admits a per-source reserve inherits the criterion as an
+open question, which is the honest state.
+
+**Raising the reserve is also what declines the block path, because
+`BlockCache::affordable` reads off the budget.** The two are one knob and not
+two: a reserve `R` admits block decode only where `limit − R` covers one
+reader's `reader_bytes`, so a reserve near the measured fixed term makes a
+compressed scan serial below roughly `R + 65 MiB` with nothing else written. The
+floor is therefore left implicit — *rejected: a named `BLOCK_PATH_MIN_LIMIT`
+constant checked separately*, which is a second number deriving the same
+boundary and free to drift out of step with the first, exactly the divergence
+collapsing the divisor and the decline into one `reader_bytes` removed from the
+adjacent function. What the implicit floor owes instead is a **report**: a
+compressed scan going serial is a throughput cliff, so the decline names the
+limit that caused it rather than leaving an operator to infer it from a status
+line that says only what was resolved.
 
 **Below the reserve the budget goes to zero, and the arrangement that produces
 is named rather than emergent.** At a 256 MiB limit `limit − reserve` is

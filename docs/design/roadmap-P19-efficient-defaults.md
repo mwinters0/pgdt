@@ -283,6 +283,39 @@ premise is the case it will actually meet.
 Reasoning: [2026-09-09](../status/history/2026-09-09.md), "The reserve's
 headroom is thin where variance is widest".
 
+**The gate failed, and three of the decisions above are amended by what it
+found.** `19.15` ran and the headroom did not survive — at the opposite end of
+the axis from the prediction, 7.3% at 512 MiB against 33.4% at 1.5 GiB, because
+the paragraph above reasons from a fit taken with the count pinned at
+twenty-four while a flagless run derives the count *from* the limit. The three
+amendments:
+
+- **The margin is now stated, where before it was only called "thin".** The
+  criterion is that the **worst observed rep leaves at least 20% of the limit**,
+  the median being context and not the gate. Until this, `budget = limit −
+  reserve` aimed resident at the limit by construction and every margin it left
+  was an accident of two over-estimates that both scale with the reader count —
+  which is why the thin point is the *smallest* limit reaching the block path.
+- **The proportional term does not return, and is withdrawn as this spec's
+  named reopening.** It is smaller than a constant exactly where the failure is,
+  so it is the wrong instrument on the measurement as well as on the argument
+  this spec already made against a fraction twice over. Calibrating it at a
+  large limit instead relies on the source's own recommendation binding before
+  the allowance does, which trades an ordinary host's worker count for a small
+  host's safety.
+- **The constant is chosen by `19.16`, not by this paragraph, and it also sets
+  the floor.** Every candidate near the measured fixed term produces a
+  *one-reader block path* that no sitting has measured, so the number is taken
+  from a reading rather than extrapolated across the discontinuity that broke
+  the last extrapolation. And because `BlockCache::affordable` reads off the
+  budget, the reserve and the limit below which a compressed scan goes serial
+  are one knob; the floor stays implicit and the decline is **reported**, naming
+  the limit that caused it.
+
+Reasoning: [2026-09-11](../status/history/2026-09-11.md), "The budget rule's
+headroom fails at 512 MiB, and not where it was predicted to", and
+[`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md).
+
 **The reserve is one constant, taken from the compressed leg, and it
 over-reserves the plain path by roughly the difference.** The two paths' fixed
 terms are a factor of thirty apart — a plain `parse` holds 5.86 MiB above its
@@ -668,7 +701,11 @@ Five orderings bind, and nothing else does:
 - **the closing sweep last, and after `KD16`**, since closing `KD16` re-bases a
   row that sweep publishes;
 - **the pool accounting, then the reserve re-take, then the divisor, then the
-  budget rule** — `19.7`, `19.12`, `19.14`, `19.13`. The accounting change
+  container gate, then the constant, then the budget rule** — `19.7`, `19.12`,
+  `19.14`, `19.15`, `19.16`, `19.13`. `19.15` and `19.16` joined this chain when
+  the gate failed: the rule's one constant now comes from `19.16`'s reading of a
+  one-reader block path rather than from `19.12`'s fit, and `19.13` cannot ship
+  a number that reading has not produced. The accounting change
   moves every cell of the reserve reading, and the rule's one constant comes
   from that reading, so taking either out of order prices a build about to be
   replaced or ships a number nothing measured. `19.14` joined that chain when
@@ -741,7 +778,9 @@ being inserted.
 | **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. Raises `measure.PARALLEL_BUDGET` 1 GiB → 2 GiB with the harness prose that explains it, the old value no longer admitting the widest row's twenty-four workers; the readings follow at `19.11`. Corrects the manual's "on a compressed file the headroom you need is a multiple of the budget rather than a fixed margin", which is true of the shipped build and false the moment the charge is right — the falsified-claim rule puts it in this change, not in `19.10`. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
 | **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. Its unlimited arm is exercised **without an unbounded run**: the `None` branch is a unit test over a fixture root carrying no limit files (`19.9`'s tree), and the at-scale reading uses a limit set high enough that the source's recommendation is what binds, which is the same arithmetic outcome with a bounded blast radius. **Its first job is the reserve's headroom**, thin at ~7% through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%; a failure there reopens the reserve and a proportional term is what it reopens to. A `runs/` probe, not a figure. |
 
-**`19.14` and `19.15` were admitted after this spec was written**, and take the
+| **19.16** | The reserve constant, chosen from a reading rather than a fit: candidate reserves at 512 MiB and 768 MiB, ten reps each, against the **one-reader block path** that every candidate near the measured fixed term produces and that no sitting has measured. It reports the resolved count and the worst-rep headroom against the stated criterion — worst rep leaves at least 20% of the limit — and the constant it picks is what `19.13` then ships. A `runs/` probe on `19.15`'s apparatus, not a figure. |
+
+**`19.14`, `19.15` and `19.16` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
 spec's evidence section rejected: charging a compressed worker what it holds
 was refused because "it would admit fewer readers for exactly the same resident
@@ -750,7 +789,9 @@ than of the worker count — falsified by `19.12`'s plain leg, which saturates a
 twenty-four workers and goes flat while the budget doubles. `19.15` exists
 because every reserve reading this phase took was made at `-m 3g` with the
 budget *stated*, while discovery's whole purpose is the small allocation
-nothing has ever run in. Reasoning:
+nothing has ever run in. `19.16` exists because `19.15`'s failure left the
+constant needing an arrangement nothing had measured, and the phase had already
+paid once for extrapolating a fit onto an arrangement it never took. Reasoning:
 [2026-09-09](../status/history/2026-09-09.md), "The reserve entries, reviewed:
 the divisor is wrong, not the rule".
 
