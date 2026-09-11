@@ -25,7 +25,15 @@ mimalloc = ["dep:mimalloc"]
 [dependencies]
 anyhow = "1.0.104"
 arrow = { version = "59.2.0", default-features = false }
-clap = { version = "4.6.6", features = ["derive"] }
+# `wrap_help`, not just `derive`: without it `clap` wraps help text at no width
+# at all, so a flag whose doc comment is a paragraph prints as one line the
+# terminal hard-wraps mid-word, losing the hanging indent an option list is read
+# by. A flag's help *is* its doc comment here
+# (`docs/design/architecture.md`, "A flag's help is its doc comment, citations
+# included"), so those paragraphs are the normal case rather than the
+# exception. `tests/help_text.rs` snapshots every page so the rendering is
+# reviewable at all.
+clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
 futures = "0.3.34"
 mimalloc = { version = "0.1.50", optional = true }
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
@@ -52,6 +60,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # `--jobs` asks the source for (`ParallelArgs::resolve`). The version tracks
 # `pgdump_query`'s own, since the two `Bytes` must be one type.
 bytes = "1.12.1"
+# `tests/help_text.rs` only. Same version as `pgdump_query`'s, so one
+# `cargo insta review` covers both crates' snapshots.
+insta = "1.48.0"
 pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
 tempfile = "3.27.0"
 # `rt` here too, and not only for symmetry: every `#[tokio::test]` in this

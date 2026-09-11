@@ -1,0 +1,34 @@
+---
+source: pgdump_query-cli/tests/help_text.rs
+expression: "help_page(&[\"info\", \"--help\"])"
+---
+Report what a dump's cache holds. **`info` never scans** — it reads the cache `pgdq parse` wrote and
+errors if there is not one, rather than starting an hours-long scan on your behalf
+(`docs/design/architecture.md`, "CLI surface"). A cache from an unfinished scan is reported for as
+far as it got, with the coverage stated at the top
+
+Usage: pgdq info [OPTIONS]
+
+Options:
+      --source <SOURCE>    The dump file the cache belongs to: its size is checked against the
+                           cache's, so a changed file is caught. Omit it to answer from `--dqcache`
+                           alone — cache-only mode, which then requires `--dqcache` and cannot check
+                           anything
+      --dqcache <DQCACHE>  Cache file path, defaulting to the colocated `<source>.dqcache`. Required
+                           when `--source` is omitted — that is the cache-only entry point, and
+                           there is nothing else to answer from
+      --detail             Also report each `COPY` block's byte offsets and, per column, what it
+                           became: the Arrow type it resolved to, or — for a column that came back
+                           as a string — why. Turns the `user-defined types` count into a listing of
+                           the types themselves, and on a compressed dump adds the container's shape
+      --map                List every span the map holds (`docs/design/architecture.md`,
+                           "`DumpIndex`: one owner per fact") — DDL objects and framing included,
+                           not just `COPY` blocks — instead of the per-table listing
+      --json               Print the internal index as JSON instead of the human-readable listing:
+                           the whole `DumpIndex`, its coverage, its diagnostics, and the
+                           per-`COPY`-block type resolution `--detail` renders as text. No schema
+                           stability is promised — this is a raw dump of our internal
+                           representation, not a supported interchange format
+                           (`docs/design/architecture.md`, "CLI surface"). Incompatible with
+                           `--detail`/`--map`, which format detail this already carries in full
+  -h, --help               Print help

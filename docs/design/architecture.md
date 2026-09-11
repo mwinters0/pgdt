@@ -7766,6 +7766,26 @@ reader who has the tree gets a pointer from the point of use, which is the one
 thing help text has that the manual does not. `citations.py` resolves these
 like any other, so a heading that moves breaks the build rather than the help.
 
+**Because the help is prose, `clap` has to wrap it, and the manifest turns that
+on.** `clap` wraps at no width at all without its `wrap_help` feature — not at
+the terminal's, not at `COLUMNS` — so a paragraph of rustdoc prints as one line
+of several hundred columns, which a terminal hard-wraps mid-word with none of
+the hanging indent an option list is read by. With the feature on the width is
+the terminal's, falling back to `COLUMNS` and then to `clap`'s own 100 columns,
+which is what a redirected `--help` gets.
+
+**The rendered pages are snapshotted, because the rendering is invisible from
+the source.** `pgdump_query-cli/tests/help_text.rs` holds all eight — both
+depths of the root command and of the three subcommands — at a stated
+`COLUMNS`, so a wording change puts the rendered result in front of a reviewer
+rather than only the doc comment it came from. Two properties are asserted
+outright beside them, because a snapshot cannot carry either: **no line exceeds
+the width**, since a snapshot of an unwrapped page looks exactly as plausible as
+one of a wrapped page, and **no flag renders with nothing beside it**, since a
+flag whose help *is* its doc comment prints as a bare spec when it has none.
+Both are the same class of failure as the wrapping: a reviewer reading the doc
+comment cannot see either one.
+
 *Rejected:* a `long_help` per flag, holding user prose apart from the tree's.
 It buys a page with no citations and costs a second text to keep true for every
 flag on the surface. The argument against is that keeping *one* copy true is

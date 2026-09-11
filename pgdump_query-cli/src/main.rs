@@ -409,6 +409,11 @@ enum Command {
         /// point, and there is nothing else to answer from.
         #[arg(long, required_unless_present = "source")]
         dqcache: Option<PathBuf>,
+        /// Also report each `COPY` block's byte offsets and, per column, what
+        /// it became: the Arrow type it resolved to, or — for a column that
+        /// came back as a string — why. Turns the `user-defined types` count
+        /// into a listing of the types themselves, and on a compressed dump
+        /// adds the container's shape.
         #[arg(long)]
         detail: bool,
         /// List every span the map holds (`docs/design/architecture.md`,
