@@ -4,7 +4,7 @@
 //! behind the `introspect` Cargo feature; without it every item here is a
 //! no-op and the binary is byte-for-byte the one that ships. With it, `pgdq`
 //! installs a counting `#[global_allocator]` over `std::alloc::System` and
-//! prints, on the way out, what the program held and what glibc was holding
+//! writes, on the way out, what the program held and what glibc was holding
 //! for it.
 //!
 //! # Why it exists
@@ -44,7 +44,17 @@
 //!   high-water is the one number `mallinfo2` cannot give and the one the
 //!   dynamic-mmap-threshold hypothesis is stated against.
 //!
-//! All of it goes to **stderr**, beside the status lines — see [`report`].
+//! **The two families do not cover the same memory**, so the report says which
+//! each is: `live_scope` and `glibc_scope`, with the note between them. The
+//! counter sees what passes through Rust's `GlobalAlloc`; glibc sees the whole
+//! process, C included — and `liblzma` is the active `.xz` backend in the
+//! shipped build, so ~9.47 MB a reader of decoder working set is invisible to
+//! one and fully present in the other. Their difference is therefore not
+//! retention, and labelling it in the report is what stops the subtraction
+//! being made by accident.
+//!
+//! All of it goes to **the file [`OUT_VAR`] names**, and nowhere at all when
+//! that variable is unset — see [`report`].
 //!
 //! # What it is not
 //!
@@ -69,7 +79,19 @@
 //! assertion re-run under the counting allocator, and the two runs are the two
 //! halves of the comparison.
 
-/// Prints the report when it goes out of scope.
+/// The environment variable naming the file [`report`] writes to.
+///
+/// **Unset means no report at all**, which is every run of every build that is
+/// not being measured, and the only state a default build can be in. Shared in
+/// fact rather than in type with `measure.INSTRUMENT_OUT_VAR`; the two live in
+/// two languages and `scripts/test_measure.py` holds them to each other.
+///
+/// Compiled into both configurations, so the name is one string and the doc
+/// links above it resolve in a default build; only the feature build reads it.
+#[cfg_attr(not(feature = "introspect"), allow(dead_code))]
+pub const OUT_VAR: &str = "PGDQ_INTROSPECT_OUT";
+
+/// Writes the report when it goes out of scope.
 ///
 /// Held in `main`, so the report is emitted on the ordinary return **and** on
 /// an error propagated out of it, while tokio's blocking pool threads are
@@ -79,7 +101,7 @@
 pub struct AtExit(());
 
 /// Arm the report. A no-op without the `introspect` feature, where [`report`]
-/// has nothing to print.
+/// has nothing to write.
 pub fn at_exit() -> AtExit {
     AtExit(())
 }
@@ -90,21 +112,33 @@ impl Drop for AtExit {
     }
 }
 
-/// Print the `key=value` lines this build can answer. Nothing without the
-/// feature.
+/// Write the `key=value` lines this build can answer to the file [`OUT_VAR`]
+/// names. Nothing without the feature, and nothing with the variable unset.
 ///
-/// **To stderr, with the status lines, and not to stdout.** stdout is the
-/// answer — rows, listings, JSON — and a diagnostic written into it corrupts
-/// a pipe, which is the same argument `init_status_output` makes for the
-/// status stream (`docs/design/architecture.md`, "Status output"). The
-/// alternative was tried and is what `chunk_size.rs` refuses: two runs that
-/// must agree byte for byte disagree on the instrument's own numbers, so the
-/// instrumented build stops answering what the shipped one answers.
-/// `measure.parse_reported` reads both streams for exactly this.
+/// **A file, not a stream.** This is the first of several self-reports a build
+/// is expected to make, and a shared stream is a framing protocol paid once
+/// per writer: every further writer either collides with the `key=value`
+/// grammar or needs markers of its own. A file has one writer by
+/// construction, carries `malloc_info`'s XML without riding a log, and
+/// survives as a run artifact beside the readings it explains.
+///
+/// **An environment variable rather than a flag**, so the command shape is
+/// identical to the one a sweep times — the instrumented leg runs the argv the
+/// figure runs. Unset means no report at all rather than a fallback onto
+/// stderr: the file is the only channel, so there is no second shape of "the
+/// report" for the one caller least able to say which shape it got, and
+/// `measure.parse_reported` reads a file's text rather than picking a block
+/// out of a stream two processes write to.
+///
+/// A write that fails says so on stderr. That is an error, not the report:
+/// the reader's own account of a missing file is what
+/// `docs/design/architecture.md`, "What the binary can report about itself",
+/// describes, and a silent failure is the one outcome it cannot tell from a
+/// build without the feature.
 pub fn report() {
     #[cfg(feature = "introspect")]
     {
-        eprint!("{}", enabled::report_text());
+        enabled::write_report();
     }
 }
 
@@ -188,34 +222,63 @@ mod enabled {
     #[global_allocator]
     static GLOBAL: Counting = Counting;
 
+    /// Write [`report_text`] to the file [`super::OUT_VAR`] names, or do
+    /// nothing at all where the variable is unset.
+    ///
+    /// **The whole file is rewritten, and the last writer wins.** One process
+    /// writes one report, at its own exit, so there is nothing to append to;
+    /// a run that re-used a previous run's path would otherwise be read as
+    /// that run's, which is the one confusion a truncating write cannot
+    /// produce.
+    pub fn write_report() {
+        let Some(path) = std::env::var_os(super::OUT_VAR) else { return };
+        let path = std::path::PathBuf::from(path);
+        if let Err(err) = std::fs::write(&path, report_text()) {
+            // Not the report — an error saying there is none. A silent failure
+            // here is indistinguishable from a build without the feature,
+            // which is exactly what the reader must be able to tell apart.
+            eprintln!(
+                "pgdq: the introspection report could not be written to {}: {err}",
+                path.display()
+            );
+        }
+    }
+
     /// The whole report, as text, so the formatting is testable without a
     /// process to run.
     ///
-    /// **Bracketed, because this stream has two writers.** The measurement
-    /// harness wraps every timed command in its own reporter, which prints
-    /// `maxrss_kib=<n>` to stderr — a `key=value` line by the same grammar as
-    /// these. A harness that read the whole stream would fold the wrapper's
-    /// own per-rep reading into the dict of facts a run states about itself,
-    /// where every other entry is identical across reps. The markers are what
-    /// let `measure.parse_instrument` take this block and nothing else; they
-    /// carry no `=` and are therefore invisible to the `key=value` parse.
+    /// **Every quantity carries its scope, because the two families do not
+    /// cover the same memory.** `live_*` is what passed through Rust's
+    /// `GlobalAlloc`; `mallinfo_*` and `malloc_*` are glibc's view of the
+    /// whole process, C allocations included. Their difference is decoder
+    /// working set plus bookkeeping plus retention, and reading it as
+    /// retention alone is the mistake [`SCOPE_NOTE`] exists to stop — see
+    /// `docs/design/architecture.md`, "What the binary can report about
+    /// itself".
+    ///
+    /// The note's lines carry no `=`, so `measure.parse_reported` ignores
+    /// them exactly as it ignores the XML below.
     pub fn report_text() -> String {
-        let mut out = String::from(BEGIN);
-        out.push('\n');
-        out.push_str("instrument=counting-allocator\n");
+        let mut out = String::from("instrument=counting-allocator\n");
+        out.push_str("live_scope=rust-global-alloc\n");
         out.push_str(&format!("live_bytes={}\n", LIVE.load(Ordering::Relaxed)));
         out.push_str(&format!("live_peak_bytes={}\n", PEAK.load(Ordering::Relaxed)));
+        out.push_str(SCOPE_NOTE);
+        out.push_str("glibc_scope=whole-process\n");
         push_glibc(&mut out);
-        out.push_str(END);
-        out.push('\n');
         out
     }
 
-    /// The opening marker. `measure.parse_instrument` keys on this exact
-    /// string, so it is a shared constant in fact if not in type — changing it
-    /// means changing that function in the same commit.
-    const BEGIN: &str = "# pgdq-introspect";
-    const END: &str = "# end pgdq-introspect";
+    /// What the two scopes mean, in the report itself rather than only in the
+    /// document that explains it. The number is `XZ_DECODE_FOOTPRINT`
+    /// (`docs/design/architecture.md`, "The compressed source").
+    const SCOPE_NOTE: &str = concat!(
+        "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
+        "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",
+        "# included: `liblzma` is the active `.xz` backend and allocates ~9.47 MB\n",
+        "# a reader the counter cannot see. The two are not commensurable, and\n",
+        "# their difference is not retention.\n",
+    );
 
     #[cfg(target_env = "gnu")]
     fn push_glibc(out: &mut String) {
@@ -234,8 +297,8 @@ mod enabled {
                 out.push_str(&format!("malloc_system_max={}\n", totals.system_max));
                 // Verbatim, after the keys. Every line of it fails
                 // `measure.parse_reported`'s `key=value` match and is ignored
-                // there, which is what lets the per-arena detail ride along on
-                // the same stream the harness reads.
+                // there, which is what lets the per-arena detail sit in the
+                // same file the harness reads for the totals.
                 out.push_str("# malloc_info\n");
                 out.push_str(&xml);
                 if !xml.ends_with('\n') {
@@ -330,6 +393,38 @@ mod xml {
         let tail = xml.rfind(prefix)? + prefix.len();
         let digits: String = xml[tail..].chars().take_while(char::is_ascii_digit).collect();
         digits.parse().ok()
+    }
+}
+
+/// The report's own shape, which only the instrument build can produce.
+///
+/// Compiled under the feature alone — `report_text` does not exist without it
+/// — so these run in `cargo test -p pgdump_query-cli --features introspect`,
+/// which is also where the resolution half of the instrument's check runs.
+#[cfg(all(test, feature = "introspect"))]
+mod instrumented_tests {
+    use super::enabled::report_text;
+
+    /// **The scope labels are the report's, not the reader's.** A consumer
+    /// that differenced `live_peak_bytes` against `malloc_system_max` would be
+    /// subtracting a Rust-only count from a whole-process one and calling the
+    /// remainder retention; the two keys are what make that visible in the
+    /// artifact rather than only in the document about it.
+    #[test]
+    fn every_quantity_states_which_memory_it_covers() {
+        let text = report_text();
+        assert!(text.contains("live_scope=rust-global-alloc\n"), "{text}");
+        assert!(text.contains("glibc_scope=whole-process\n"), "{text}");
+    }
+
+    /// The note explaining the two scopes must not itself parse as a reading:
+    /// `measure.parse_reported` takes every `key=value` line in the file, so a
+    /// note line carrying one would enter the report as a fact.
+    #[test]
+    fn the_prose_lines_are_invisible_to_the_key_value_parse() {
+        for line in report_text().lines().filter(|l| l.starts_with('#')) {
+            assert!(!line.contains('='), "a comment line parses as a reading: {line}");
+        }
     }
 }
 

@@ -1005,10 +1005,15 @@ takes a marker, and nothing here needs a quiet machine.
 
 **Two of them are built and in the tree**, behind `pgdump_query-cli`'s
 off-by-default `introspect` feature: the counting `#[global_allocator]` and
-glibc's `mallinfo2`/`malloc_info`, reported together as `key=value` lines on
-stderr. How to build it, what each line means and why `--version` refuses to
-let it be timed is [`architecture.md`](architecture.md), "What the binary can
-report about itself".
+glibc's `mallinfo2`/`malloc_info`, reported together as `key=value` lines in
+the file `PGDQ_INTROSPECT_OUT` names — unset meaning no report at all, so the
+instrument writes to no stream. **They do not cover the same memory**, and the
+report labels which each is: the counter sees Rust's `GlobalAlloc` and glibc
+sees the whole process, C included, so their difference is decoder working set
+plus bookkeeping plus retention rather than retention. How to build it, what
+each line means and why `--version` refuses to let it be timed is
+[`architecture.md`](architecture.md), "What the binary can report about
+itself".
 
 **Two of those need no sampling, which is the part that is not obvious.** A
 snapshot at exit reports the end state, not the peak, so the instinct is to

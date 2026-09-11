@@ -7813,7 +7813,7 @@ prices the mechanism above what it is measuring.
 
 `pgdump_query-cli/src/introspect.rs` is a **third, off-by-default Cargo
 feature** — `introspect` — under which `pgdq` installs a counting
-`#[global_allocator]` over `System` and prints, on the way out, what the
+`#[global_allocator]` over `System` and writes, on the way out, what the
 program was holding and what glibc was holding for it. A default build drops
 every item in the module and is the binary that ships.
 
@@ -7831,8 +7831,9 @@ which is the split [`roadmap.md`](roadmap.md), "Attribution is introspective;
 only the gate is blind", makes a standing rule. What each instrument can see is
 [`measurements.md`](measurements.md), "What an instrument can see".
 
-**Ten `key=value` lines and the raw `malloc_info` XML**, bracketed by
-`# pgdq-introspect` / `# end pgdq-introspect`. `live_bytes` and
+**Twelve `key=value` lines and the raw `malloc_info` XML**, written to the file
+`PGDQ_INTROSPECT_OUT` names. `live_scope` and `glibc_scope` say which memory
+each family covers, for the reason two paragraphs below. `live_bytes` and
 `live_peak_bytes` are the counting allocator's, exact and allocator-independent;
 `mallinfo_arena`, `mallinfo_hblkhd`, `mallinfo_uordblks` and
 `mallinfo_fordblks` are glibc's view of the same heap; `malloc_heaps`,
@@ -7858,7 +7859,9 @@ files declare — modelled at `XZ_DECODE_FOOTPRINT` = 9,471,776 bytes *per
 reader* ("The compressed source"). So the gap between the counter and glibc's
 totals is decoder working set **plus** allocator bookkeeping **plus**
 retention, and no reading here separates them. Naming that difference
-"retention" is the mistake this paragraph exists to stop.
+"retention" is the mistake this paragraph exists to stop — and the report says
+so itself, in `live_scope`, `glibc_scope` and the note between them, so the
+artifact carries the warning rather than only the document about it.
 
 *Rejected:* reading it as a defect in the counter. `live_bytes` is the only
 number that says what *this program* asked for, which is exactly what a
@@ -7871,28 +7874,46 @@ not exposed by the safe `liblzma` wrapper) through the counter would close the
 gap from the other side, and belongs upstream in `xz-seek` rather than here,
 `vendor/` being read-only.
 
-**It reports on stderr, not on stdout.** stdout is the answer — rows, listings,
-JSON — and a diagnostic written into it corrupts a pipe, which is the same
-argument `init_status_output` makes for the status stream ("Status output").
-Writing it to stdout was tried, and `chunk_size.rs` is what refuses it: two
-runs that must agree byte for byte disagree on the instrument's own numbers, so
-the instrumented build stops answering what the shipped one answers.
+*Rejected:* reporting on stdout. stdout is the answer — rows, listings, JSON —
+and a diagnostic written into it corrupts a pipe, which is the same argument
+`init_status_output` makes for the status stream ("Status output"). It was
+tried, and `chunk_size.rs` is what refuses it: two runs that must agree byte
+for byte disagree on the instrument's own numbers, so the instrumented build
+stops answering what the shipped one answers. The file transport settles it
+from the other side — the instrument writes to no stream at all — but the
+argument is why a stream was never the answer.
 
-**The report is bracketed because that stream has two writers.** The
-measurement harness wraps every timed command in `rss_wrapper`, which prints
-`maxrss_kib=<n>` to stderr — a `key=value` line by the same grammar. A harness
-reading the whole stream would fold the wrapper's own *per-rep reading* into
-the dict of facts a run states about itself, where every other entry is
-identical across reps and only the last rep's copy is kept.
-`measure.parse_instrument` takes the bracketed block and nothing else; the
-markers carry no `=`, so they are invisible to the parse they delimit.
+**The report is a file, and `PGDQ_INTROSPECT_OUT` names it. Unset means no
+report at all.** This is the first of several self-reports a build is expected
+to make, and a shared stream is a framing protocol paid once per writer: every
+further writer either collides with the `key=value` grammar or needs markers of
+its own. A file has one writer by construction, carries the `malloc_info` XML
+without riding a log, and survives as a run artifact beside the readings it
+explains — the harness keeps one per rep under the sitting's own directory.
+`measure.parse_reported` is the reader, with a file's text as its input.
 
-**That transport is superseded and the bracket goes with it** — the out-of-band
-ledger's `M85` moves the report into a file whose path an environment variable
-names, which has one writer by construction where a shared stream is a framing
-protocol paid once per writer. It blocks `P19`, `19.18` being the sitting that
-reads this report. stderr over stdout is unaffected: that is the paragraph
-above, and it was never the open question.
+**An environment variable rather than a flag**, so the instrumented leg runs
+the argv a figure times and the command shape a sweep records is the shape that
+ran. The perturbation objection to a flag — a longer command line, a file write
+— is not the reason: both are negligible beside an atomic per allocation, which
+this build already pays and states rather than bounds. Falling back to stderr
+when the variable is unset was the alternative and is refused: it keeps a
+second shape of "the report" alive for the one caller least able to say which
+shape it got. A write that fails says so on stderr, which is an error rather
+than the report.
+
+**A missing report is an error where one was expected.** `RunSpec.instrument`
+is the harness-side declaration that a leg runs this build, and an absent file
+under it raises at the rep that produced it. Without the declaration an absence
+parses as `{}` — right for every default build, and indistinguishable from a leg
+built without the feature, a leg pointed at the default binary, and a report
+that never reached the file. A leg the kernel OOM-killed never reaches the exit
+that writes the report, so that absence is the kill and stays censored.
+
+**The numbers are per-rep readings.** `live_peak_bytes` and the `mallinfo_*`
+fields move between reps, so they are filed as a list per leg beside the RSS
+readings — not into `measure.Session.reported`, which is keyed per spec and
+holds facts identical across reps, of which only the last is kept.
 
 **`--version` names the instrument, and `measure.binary_allocator` refuses a
 binary that does.** A counting allocator still answers `(allocator: system)`,

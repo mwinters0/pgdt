@@ -3,7 +3,7 @@
 What `19.18` inherits. The mechanism itself is
 [`architecture.md`](architecture.md), "What the binary can report about
 itself"; this doc is the part that doc has no home for — how to run it, what a
-first reading looked like, and the two calls that were made inside the row.
+first reading looked like, and the calls that were made inside the row.
 
 ## How to build it and read it
 
@@ -18,13 +18,16 @@ one**: a `--features` build in the default dir overwrites
 harness builds this yet — `19.18` is the first sitting that wants it, and a
 build step registered before a caller exists is a step nobody runs.
 
-The report lands on **stderr**, bracketed by `# pgdq-introspect` /
-`# end pgdq-introspect`, and `measure.parse_instrument` is what reads the block
-out of a stream the harness's own `rss_wrapper` also writes to. A leg that
-wants the numbers gets them in `raw.json`'s `reported` dict beside
-`resolved_jobs`/`resolved_budget`, under the keys `live_bytes`,
+The report lands in the file `PGDQ_INTROSPECT_OUT` names, and nowhere at all
+when that variable is unset (`M85`). A hand-run sets it like any other
+variable; a harness leg sets `RunSpec.instrument`, which mounts a directory
+under the sitting's own output, names a per-rep file in it, and **raises when
+no report arrives**. The readings come back in `raw.json`'s `instrument` dict —
+a list per leg, one entry per rep, keyed as `rss` is — under `live_bytes`,
 `live_peak_bytes`, `mallinfo_{arena,hblkhd,uordblks,fordblks}`,
-`malloc_heaps`, `malloc_system_current` and `malloc_system_max`.
+`malloc_heaps`, `malloc_system_current` and `malloc_system_max`, with
+`live_scope` and `glibc_scope` saying which memory each family covers.
+`reported` keeps only what is identical across reps.
 
 ## The first reading, and why it is worth `19.18`'s hour
 
@@ -58,24 +61,21 @@ peak-RSS leg can never separate.
 `getrusage` legs are the check: a term the instrument names has to show up in
 the sum a peak-RSS leg measures.
 
-## Two calls made inside the row
+## The call made inside the row, and the one that replaced it
 
-**The report goes to stderr, and the row said stdout.** The row's ground for
-stdout was that `measure.parse_reported` already reads it; the ground against
-it is stronger and is in the tree rather than in an argument —
+**The report does not go to stdout, and the row said it should.** The row's
+ground for stdout was that `measure.parse_reported` already reads it; the
+ground against it is in the tree rather than in an argument —
 `chunk_size.rs`'s two parity tests fail under the feature, because the
-instrumented build's stdout no longer matches the shipped build's. stdout is
-the answer and stderr is where this binary's diagnostics already go
-(`architecture.md`, "Status output"). The harness cost is one function,
-`parse_instrument`.
+instrumented build's stdout no longer matches the shipped build's. That is
+still why no stream carries it.
 
-**The block is bracketed, which the row did not ask for.** Reading `key=value`
-off stderr wholesale picks up `rss_wrapper`'s own `maxrss_kib=<n>`, and that is
-a *per-rep reading* landing in the dict of facts a run states about itself —
-where every other entry is identical across reps and only the last rep's copy
-survives. The markers carry no `=`, so they are invisible to the parse they
-delimit, and `test_measure.py` holds the two constants to each other across the
-two languages.
+**Which stream is moot: `M85` made the report a file.** The slice shipped a
+marker-bracketed block on stderr, because reading `key=value` off that stream
+wholesale picks up `rss_wrapper`'s own `maxrss_kib=<n>`. A file has one writer
+by construction, so the framing goes and so does the collision it was framing
+against — the rationale is beside the mechanism (`architecture.md`, "What the
+binary can report about itself").
 
 ## What it deliberately does not do
 

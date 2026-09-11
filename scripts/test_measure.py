@@ -2527,50 +2527,161 @@ class Reported(unittest.TestCase):
 
 
 class InstrumentReport(unittest.TestCase):
-    """The introspection build's own block, off a stderr it shares."""
+    """The introspection build's own report, out of the file it writes.
 
-    #: A stderr shaped like a real one: the status log, the harness's own
-    #: wrapper line, and the bracketed report between them.
-    STREAM = (
-        "2026-09-11T19:24:35Z  INFO scan started bytes=2352 jobs=1 memory_bytes=67108864\n"
-        "# pgdq-introspect\n"
+    The transport is a file rather than a block on a shared stream, so the
+    parse is `parse_reported`'s and the questions here are about the channel:
+    that the variable naming it matches the binary's, that a leg declaring the
+    instrument fails loudly when no report arrives, and that the readings are
+    filed per rep rather than collapsed to the last one.
+    """
+
+    #: A report shaped as the instrument writes one: the two scope keys, the
+    #: prose note between them, the totals, and the raw XML underneath.
+    REPORT = (
         "instrument=counting-allocator\n"
+        "live_scope=rust-global-alloc\n"
         "live_bytes=76876\n"
         "live_peak_bytes=209822121\n"
+        "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n"
+        "# their difference is not retention.\n"
+        "glibc_scope=whole-process\n"
         "mallinfo_arena=131768320\n"
         "malloc_system_max=404201472\n"
         "# malloc_info\n"
         '<system type="max" size="135168"/>\n'
         "# end malloc_info\n"
-        "# end pgdq-introspect\n"
-        "maxrss_kib=373524\n"
-        "real 0m9.150s\n"
     )
 
-    def test_it_reads_the_block_and_nothing_around_it(self):
-        got = measure.parse_instrument(self.STREAM)
+    def test_it_reads_the_keys_and_ignores_the_prose(self):
+        got = measure.parse_reported(self.REPORT)
         self.assertEqual(got["live_peak_bytes"], "209822121")
         self.assertEqual(got["malloc_system_max"], "404201472")
+        # The scope labels are part of the report, not commentary on it: a
+        # consumer differencing a Rust-only count against a whole-process one
+        # is what they exist to make visible.
+        self.assertEqual(got["live_scope"], "rust-global-alloc")
+        self.assertEqual(got["glibc_scope"], "whole-process")
 
-    def test_the_harnesss_own_reading_is_not_a_fact_the_run_reported(self):
-        # `maxrss_kib` is `rss_wrapper`'s, it is a `key=value` line by the same
-        # grammar, and it differs per rep — where every other entry in this
-        # dict is identical across reps and only the last rep's copy is kept.
-        # Reading the whole stream would file a reading as a report.
-        self.assertNotIn("maxrss_kib", measure.parse_instrument(self.STREAM))
+    def test_the_harnesss_own_reading_cannot_reach_it(self):
+        # `maxrss_kib` is `rss_wrapper`'s, and it is a `key=value` line by this
+        # same grammar. The file is why it cannot land here: one writer by
+        # construction, where the bracketed stderr block it replaced was a
+        # framing protocol over a stream two processes wrote to.
+        self.assertNotIn("maxrss_kib", measure.parse_reported(self.REPORT))
 
-    def test_a_default_build_reports_nothing(self):
-        # The instrument is off by default and never in a shipped binary, so
-        # every figure's own runs take this branch.
-        self.assertEqual(measure.parse_instrument("maxrss_kib=1\nreal 0m1.000s\n"), {})
-
-    def test_the_markers_match_the_binarys(self):
-        # Two constants in two languages. A rename on one side that misses the
-        # other leaves an instrument whose report nothing reads, and a silent
-        # empty dict is what that looks like.
+    def test_the_variable_matches_the_binarys(self):
+        # Two constants in two languages. A rename on one side that missed the
+        # other would leave the instrument writing nowhere the harness looks —
+        # which is now an error rather than an empty dict, but only because the
+        # name is right.
         source = (measure.REPO / "pgdump_query-cli/src/introspect.rs").read_text()
-        self.assertIn(f'const BEGIN: &str = "{measure.INSTRUMENT_BEGIN}";', source)
-        self.assertIn(f'const END: &str = "{measure.INSTRUMENT_END}";', source)
+        self.assertIn(f'pub const OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source)
+
+    def test_no_leg_that_does_not_declare_it_is_given_the_variable(self):
+        # An env var leaves the command shape identical, which is the whole
+        # reason it is not a flag — but it must still reach only the legs that
+        # asked for it, or a default build's runs acquire a mount for nothing.
+        self.assertFalse(any(s.instrument for s in measure._reserve_flagless_specs()))
+
+    def _session(self, out_root):
+        cfg = measure.Config()
+        session = measure.Session(
+            cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None, out_root
+        )
+        session.figure_id = "reserve"
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path("/dev/null")
+        return session
+
+    TIMED = "maxrss_kib=68228\n\nreal\t0m0.012s\nuser\t0m0.008s\nsys\t0m0.004s\n"
+    NO_KILL = "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+
+    def _instrumented(self):
+        spec = dataclasses.replace(measure._reserve_flagless_specs()[0], instrument=True)
+        return spec
+
+    def _run(self, session, spec, write_report: bool):
+        """One fake run, optionally writing the report the container would."""
+
+        def fake_run(argv, **_kwargs):
+            if write_report:
+                out = [a for a in argv if a.startswith(f"{measure.INSTRUMENT_OUT_VAR}=")]
+                self.assertEqual(len(out), 1, argv)
+                name = out[0].split("=", 1)[1].rpartition("/")[2]
+                (session.out_root / measure.INSTRUMENT_DIR / name).write_text(self.REPORT)
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="", stderr=self.TIMED + self.NO_KILL
+            )
+
+        with unittest.mock.patch.object(measure.subprocess, "run", fake_run):
+            return session.time_run(spec)
+
+    def test_a_declared_leg_that_reports_nothing_is_an_error(self):
+        # The three apparatus faults this catches — built without the feature,
+        # pointed at the default binary, a write that failed — all used to read
+        # as an empty dict, and an empty column an hour later is what that
+        # looks like.
+        with tempfile.TemporaryDirectory() as tmp:
+            session = self._session(Path(tmp))
+            with self.assertRaises(RuntimeError) as caught:
+                self._run(session, self._instrumented(), write_report=False)
+        self.assertIn("declares the instrument", str(caught.exception))
+        self.assertIn("--features introspect", str(caught.exception))
+
+    def test_the_report_is_read_back_and_kept_beside_the_readings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = self._session(Path(tmp))
+            spec = self._instrumented()
+            self._run(session, spec, write_report=True)
+            self.assertEqual(session._last_instrument["live_peak_bytes"], "209822121")
+            record = session.records[0]
+            self.assertEqual(record["instrument"]["glibc_scope"], "whole-process")
+            # The file stays, under the sitting's own directory, because the
+            # `malloc_info` XML in it is per-arena detail no summary carries.
+            kept = Path(tmp) / record["instrument_report"]
+            self.assertTrue(kept.exists())
+            self.assertIn("malloc_info", kept.read_text())
+
+    def test_the_command_shape_is_untouched_by_the_variable(self):
+        # The argv a figure records must be the argv it would run without the
+        # instrument; the variable and the mount are `nerdctl` arguments.
+        plain = measure._script(measure._reserve_flagless_specs()[0].command)
+        self.assertEqual(plain, measure._script(self._instrumented().command))
+        self.assertNotIn(measure.INSTRUMENT_OUT_VAR, plain)
+
+    def test_the_readings_are_filed_per_rep_and_not_collapsed(self):
+        # `reported` keeps one dict per spec, the last rep's, because what it
+        # holds is identical across reps. `live_peak_bytes` is not: it is a
+        # reading, and a spread of them is what an attribution reads.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(dry_run=True)
+            session = measure.Session(
+                cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None, Path(tmp)
+            )
+            session.figure_id = "reserve"
+            session.input_path = lambda name, regime: Path("/dev/null")
+            spec = self._instrumented()
+            session.sweep("reserve", [spec], reps=3)
+            peaks = [r["live_peak_bytes"] for r in session.instrument_reports("reserve", spec)]
+        self.assertEqual(len(peaks), 3)
+        self.assertGreater(len(set(peaks)), 1, peaks)
+
+    def test_a_leg_with_no_instrument_is_absent_rather_than_empty(self):
+        # The same split `get_rss` makes: an absent key means this leg carries
+        # no instrument, an empty list means every reading it took was
+        # censored.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(dry_run=True)
+            session = measure.Session(
+                cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None, Path(tmp)
+            )
+            session.figure_id = "reserve"
+            session.input_path = lambda name, regime: Path("/dev/null")
+            spec = measure._reserve_flagless_specs()[0]
+            session.sweep("reserve", [spec], reps=1)
+            with self.assertRaises(KeyError):
+                session.instrument_reports("reserve", spec)
 
 
 class Staleness(unittest.TestCase):

@@ -1093,9 +1093,10 @@ fn init_status_output() {
 /// actually running.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    // A default build drops this entirely; an `introspect` build prints what
-    // the process held on the way out, whether this returns `Ok` or an error
-    // propagates through it (`src/introspect.rs`).
+    // A default build drops this entirely; an `introspect` build writes what
+    // the process held to the file `PGDQ_INTROSPECT_OUT` names, on the way
+    // out, whether this returns `Ok` or an error propagates through it
+    // (`src/introspect.rs`).
     let _instrument = introspect::at_exit();
     init_status_output();
     let cli = Cli::parse();

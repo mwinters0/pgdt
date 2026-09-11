@@ -684,13 +684,13 @@ than losing the sitting.
 - [x] **19.21** The introspection the compressed account needs. `introspect`
       is a third off-by-default feature joining `alloc.rs`'s guard — refused
       beside `jemalloc`/`mimalloc` because it counts one heap and reads
-      glibc's — under which `pgdq` reports ten `key=value` lines plus
-      `malloc_info`'s raw XML, carrying each arena's own high-water. **On
-      stderr, bracketed**, which is the one place the row moved: stdout is the
-      answer and `chunk_size.rs`'s parity tests are what refuse a diagnostic in
-      it, while reading the whole stderr instead would fold `rss_wrapper`'s own
-      per-rep `maxrss_kib` into the facts a run states about itself —
-      `measure.parse_instrument` takes the block and nothing else. `pgdq
+      glibc's — under which `pgdq` reports twelve `key=value` lines plus
+      `malloc_info`'s raw XML, carrying each arena's own high-water. **Into the
+      file `PGDQ_INTROSPECT_OUT` names** (`M85` replaced the slice's own
+      marker-bracketed stderr block), so the instrument writes to no stream:
+      stdout is the answer and `chunk_size.rs`'s parity tests are what refuse a
+      diagnostic in it, and a file has one writer where stderr already carries
+      `rss_wrapper`'s per-rep `maxrss_kib` by the same grammar. `pgdq
       --version` names the instrument and `measure.binary_allocator` **raises**
       on it, so "never timed" is mechanical. The check is
       `the_instrument_build_resolves_what_the_default_build_resolves`, compiled

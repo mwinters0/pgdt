@@ -1021,17 +1021,29 @@ def parse_oom_kills(text: str) -> int | None:
     return max(int(m) for m in matches)
 
 
-#: A `key=value` line an instrument writes on a stream of its own. Two write
-#: them today: the decode example, on stdout, which has no other output; and
-#: `pgdq --features introspect`, on **stderr**, where a diagnostic belongs
-#: because stdout is that binary's answer.
+#: A `key=value` line an instrument writes where the harness can read it. Two
+#: write them today: the decode example, on stdout, which has no other output;
+#: and `pgdq --features introspect`, into the file `INSTRUMENT_OUT_VAR` names,
+#: which is a channel of its own rather than a stream it shares.
 REPORTED_RE = re.compile(r"^([a-z_]+)=(\S+)$")
 
-#: What `pgdump_query-cli/src/introspect.rs` brackets its report with. Shared
-#: in fact rather than in type: the two constants live in two languages and
-#: move together.
-INSTRUMENT_BEGIN = "# pgdq-introspect"
-INSTRUMENT_END = "# end pgdq-introspect"
+#: The environment variable naming the file `pgdump_query-cli/src/introspect.rs`
+#: writes its report to. **Unset means no report at all**, so a default build
+#: and an unmeasured run of the instrument build behave identically.
+#:
+#: Shared in fact rather than in type: the two constants live in two languages
+#: and `test_measure.py` holds them to each other. An environment variable
+#: rather than a flag, so the instrumented leg's argv is the argv a figure
+#: times — see `RunSpec.instrument`.
+INSTRUMENT_OUT_VAR = "PGDQ_INTROSPECT_OUT"
+
+#: Where the report is mounted inside the container, and the directory under a
+#: sitting's own output that is bind-mounted there. One report per rep lands
+#: here and stays, beside `raw.json`: `live_peak_bytes` and the `mallinfo_*`
+#: fields are per-rep readings, and the `malloc_info` XML under them is the
+#: per-arena detail no summary carries.
+INSTRUMENT_MOUNT = "/introspect"
+INSTRUMENT_DIR = "instrument"
 
 
 def parse_reported(text: str) -> dict[str, str]:
@@ -1044,8 +1056,14 @@ def parse_reported(text: str) -> dict[str, str]:
     disagreed the table would publish a rate over the wrong denominator.
 
     Lines that are not `key=value` are ignored rather than refused, so a binary
-    is free to print whatever else it likes — which is what lets the
-    introspection build print `malloc_info`'s XML on the same stream.
+    is free to write whatever else it likes — which is what lets the
+    introspection build carry `malloc_info`'s XML and its own scope note in the
+    same file.
+
+    The text is a stream's for the decode example and a **file's** for the
+    introspection build (`INSTRUMENT_OUT_VAR`). The parse is the same either
+    way; what the file buys is a channel with one writer, where stderr already
+    carries `rss_wrapper`'s own per-rep `maxrss_kib=<n>` by this same grammar.
     """
     out: dict[str, str] = {}
     for line in text.splitlines():
@@ -1053,27 +1071,6 @@ def parse_reported(text: str) -> dict[str, str]:
         if match:
             out[match.group(1)] = match.group(2)
     return out
-
-
-def parse_instrument(text: str) -> dict[str, str]:
-    """The introspection build's own report, out of a stream it shares.
-
-    **Bracketed rather than read whole, because stderr has two writers.** The
-    harness's own `rss_wrapper` prints `maxrss_kib=<n>` there, which is a
-    `key=value` line by the same grammar — and folding it in would put a
-    *per-rep reading* into the dict of facts a run states about itself, where
-    every other entry is identical across reps and only the last rep's copy is
-    kept. The markers carry no `=`, so they are invisible to the parse they
-    delimit.
-
-    `{}` where the stream carries no report, which is every default build — the
-    instrument is off by default and never in a shipped binary.
-    """
-    start = text.rfind(INSTRUMENT_BEGIN)
-    if start < 0:
-        return {}
-    end = text.find(INSTRUMENT_END, start)
-    return parse_reported(text[start : end if end >= 0 else len(text)])
 
 
 #: The worker count and byte budget a scan says it is running under, off its own
@@ -1798,6 +1795,22 @@ class RunSpec:
     #: two reps of one; every other figure states its flags and wants one
     #: container for the table.
     memory: str | None = None
+    #: Whether this leg runs an **instrument build** and must therefore produce
+    #: a report (`INSTRUMENT_OUT_VAR`).
+    #:
+    #: **It is a declaration, not a consequence of the binary.** A missing
+    #: report otherwise reads as `{}`, which is right for every default build
+    #: and indistinguishable from three apparatus bugs: a leg built without the
+    #: feature, a leg pointed at the default binary, and a report that never
+    #: reached the file. Declared here, the absence is an error at the rep that
+    #: produced it rather than an empty column an hour later. A leg the kernel
+    #: OOM-killed is the legitimate absence and stays censored, as `KILL_TOLERANT`
+    #: leaves it.
+    #:
+    #: Not part of `key`: it says what the harness must find, not what
+    #: arrangement was measured, and two legs cannot differ by it alone — the
+    #: build does not change the argv.
+    instrument: bool = False
 
     def key(self, figure: str) -> str:
         """This run's identity, which is what a reading is filed under.
@@ -2823,10 +2836,21 @@ def pinned_count_problems() -> list[str]:
 
 
 class Session:
-    def __init__(self, cfg: Config, stager: Stager, log: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        stager: Stager,
+        log: Callable[[str], None],
+        out_root: Path | None = None,
+    ) -> None:
         self.cfg = cfg
         self.stager = stager
         self.log = log
+        #: This sitting's output directory, which is where an instrument leg's
+        #: reports are kept — beside `raw.json`, because they are that
+        #: sitting's readings and not a scratch artifact. `None` falls back to
+        #: `runs/`, which is what a test constructing a bare `Session` gets.
+        self.out_root = out_root or cfg.out_dir
         self.readings: dict[str, list[float]] = {}
         #: Peak resident set, in KiB, under the same keys as `readings`. A
         #: second dict rather than a second number per reading: only the runs
@@ -2848,6 +2872,20 @@ class Session:
         #: from what the binary said it decoded rather than from a file size a
         #: second mechanism would have to agree with.
         self.reported: dict[str, dict[str, str]] = {}
+        #: The instrument build's own report, **one dict per rep**, under the
+        #: same keys as `rss`. A second dict rather than more entries in
+        #: `reported`: that one is keyed per spec and holds facts identical
+        #: across reps, of which only the last is kept, and `live_peak_bytes`
+        #: and the `mallinfo_*` fields are not that — they are readings, and a
+        #: spread of them is the thing an attribution reads.
+        self.instrument: dict[str, list[dict[str, str]]] = {}
+        #: How many reports this sitting has written, which names the next
+        #: file. A plain counter rather than the reading key: a rep discarded
+        #: by the contention gate is re-taken, and two runs must not write the
+        #: same file.
+        self._instrument_reports = 0
+        #: The report the last run wrote, or `{}` where the leg declared none.
+        self._last_instrument: dict[str, str] = {}
         #: How many of each key's reps the kernel OOM-killed. A censored
         #: reading: it is in neither `readings` nor `rss`, because the peak it
         #: reports is a bound the process never got past rather than the peak
@@ -2906,14 +2944,70 @@ class Session:
             return
         run(argv)
 
+    def _read_instrument(self, spec: RunSpec, path: Path) -> dict[str, str]:
+        """The instrument build's report, off the file it wrote.
+
+        **A missing or empty file is an error, not an empty report.** The leg
+        declared `instrument`, so the report is part of what this rep was
+        taken for, and there are exactly three ways it can be absent from a run
+        that did not die: the binary was built without the feature, the leg was
+        pointed at the default binary, or the write failed and said so on
+        stderr. All three are apparatus faults, all three used to read as `{}`,
+        and an empty column an hour later is what that looks like.
+
+        A leg the kernel killed never reaches this — the report is written at
+        exit, so its absence there is the kill (`KILL_TOLERANT`)."""
+        text = path.read_text() if path.exists() else ""
+        report = parse_reported(text)
+        if not report:
+            raise RuntimeError(
+                f"{spec.label}: this leg declares the instrument, and no report reached "
+                f"{path}. Either the binary was built without `--features introspect`, "
+                f"or the leg is pointed at the default binary, or the write failed — "
+                f"`pgdq --version` names the instrument when it is there, and a failed "
+                f"write says so on stderr."
+            )
+        return report
+
+    def instrument_report_path(self, spec: RunSpec) -> Path:
+        """Where this run's instrument report will land, on the host.
+
+        One file per rep, numbered in the order the sitting took them, under
+        the sitting's own output directory. The name carries the reading key so
+        a report can be read back by eye without `raw.json`, and the number is
+        what keeps a re-take from overwriting the rep it replaced."""
+        self._instrument_reports += 1
+        slug = re.sub(r"[^A-Za-z0-9]+", "-", spec.key(self.figure_id)).strip("-")
+        return (
+            self.out_root
+            / INSTRUMENT_DIR
+            / f"{self._instrument_reports:04d}-{slug}.txt"
+        )
+
     def time_run(self, spec: RunSpec) -> float:
         self._last_killed = False
+        self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
         mounts = [f"{dump}:/dump.sql:ro"]
         if spec.binary != "none":
             mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdq:ro")
         if spec.command == "parse-cache-out":
             mounts.append(f"{self.cfg.warm_dir}:/out")
+        # The instrument writes to a file rather than to a stream, so the leg
+        # needs somewhere to put it and a variable saying where. Neither
+        # touches the argv: the command shape a figure records is the shape
+        # that ran (`RunSpec.instrument`).
+        report_path = None
+        env_argv: list[str] = []
+        if spec.instrument:
+            report_path = self.instrument_report_path(spec)
+            if not self.cfg.dry_run:
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+            mounts.append(f"{report_path.parent}:{INSTRUMENT_MOUNT}")
+            env_argv = [
+                "-e",
+                f"{INSTRUMENT_OUT_VAR}={INSTRUMENT_MOUNT}/{report_path.name}",
+            ]
         # The spec's own limit first: a flagless leg's container limit is the
         # axis it is read across, so it overrides the figure's one container.
         memory = spec.memory or self.memory or self.cfg.memory
@@ -2928,6 +3022,7 @@ class Session:
         ]
         for m in mounts:
             argv += ["-v", m]
+        argv += env_argv
         # The command shape, then the harness's own question about how it
         # ended. `OOM_ORACLE` is appended here rather than written into
         # `_script` so that what a figure records as its shape is exactly what
@@ -2979,6 +3074,26 @@ class Session:
                     "resolved_jobs": str(3 * rank),
                     "resolved_budget": str(3 * rank * (65 << 20)),
                 }
+            if spec.instrument:
+                # A stand-in report, so a dry run reaches whatever an
+                # attribution computes from these rather than stopping at the
+                # first missing key. Varied by rep, because they are per-rep
+                # readings and a renderer that collapsed a spread would look
+                # correct against a constant.
+                self._last_instrument = {
+                    "instrument": "counting-allocator",
+                    "live_scope": "rust-global-alloc",
+                    "live_bytes": str(64 << 10),
+                    "live_peak_bytes": str(200 * MIB + digest[2] * MIB // 255),
+                    "glibc_scope": "whole-process",
+                    "mallinfo_arena": str(130 * MIB),
+                    "mallinfo_hblkhd": "0",
+                    "mallinfo_uordblks": str(66 * MIB),
+                    "mallinfo_fordblks": str(64 * MIB),
+                    "malloc_heaps": "6",
+                    "malloc_system_current": str(130 * MIB),
+                    "malloc_system_max": str(350 * MIB),
+                }
             return 0.4 + digest[0] / 255 * 5.0
         # The counters bracket the run as tightly as possible: two procfile
         # reads, outside the timer, either side of the subprocess. Their
@@ -3010,6 +3125,11 @@ class Session:
                 self._last_killed = True
                 self._last_rss = None
                 self._last_stdout = parse_resolution(proc.stderr)
+                # The instrument reports at exit and this process never got
+                # there, so its absence is the kill rather than an apparatus
+                # fault — the one legitimate absence `RunSpec.instrument`
+                # exempts.
+                self._last_instrument = {}
                 # What the run still said about itself, under names that cannot
                 # be read as readings. Both are **lower bounds**: the wrapper
                 # reports the peak the process had reached when the kernel
@@ -3047,16 +3167,17 @@ class Session:
             )
         seconds = parse_bash_time(proc.stderr)
         self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
-        # The instrument's own report — stdout for a binary that has no other
-        # output, the bracketed stderr block for one whose stdout is an answer
-        # — and, for a scan, what the run says it resolved, which is on the
-        # log. One dict: all of it is facts the run reported about itself,
-        # identical across reps.
+        # What the run said about itself on its own streams: the decode
+        # example's counts on stdout, and, for a scan, the arrangement its
+        # `scan started` line names. One dict, all of it identical across reps.
+        # The introspection build's report is **not** here — it is per-rep, and
+        # it arrives in a file of its own (`_read_instrument`).
         self._last_stdout = {
             **parse_reported(proc.stdout),
-            **parse_instrument(proc.stderr),
             **parse_resolution(proc.stderr),
         }
+        if report_path is not None:
+            self._last_instrument = self._read_instrument(spec, report_path)
         telemetry = counter_delta(before, after)
         telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
@@ -3076,6 +3197,14 @@ class Session:
                 "wall_including_container": round(time.time() - started, 3),
                 "telemetry": telemetry,
                 "reported": self._last_stdout,
+                # The instrument's own readings, per rep, and the file they
+                # came out of — kept in the record as well as in `instrument`
+                # so `--render` can rebuild a per-rep column and a reader can
+                # find the `malloc_info` XML the summary does not carry.
+                "instrument": self._last_instrument,
+                "instrument_report": (
+                    str(report_path.relative_to(self.out_root)) if report_path else None
+                ),
                 "argv": argv,
             }
         )
@@ -3108,6 +3237,11 @@ class Session:
                     self.killed[key] = self.killed.get(key, 0) + 1
                     if "rss" in spec.command:
                         self.rss.setdefault(key, [])
+                    if spec.instrument:
+                        # Opened for the reason the RSS key is: an absent key
+                        # means "this leg carries no instrument", which is a
+                        # different fact from "every rep of it was killed".
+                        self.instrument.setdefault(key, [])
                     if self._last_stdout:
                         self.reported[key] = self._last_stdout
                     continue
@@ -3123,6 +3257,14 @@ class Session:
                 # answer.
                 if self._last_stdout:
                     self.reported[spec.key(figure)] = self._last_stdout
+                # The introspection build's numbers are the other shape: a
+                # reading per rep, kept as a list beside `rss` for the same
+                # reason that one is a list. Collapsing them into `reported`
+                # would publish one rep's high-water as the leg's.
+                if self._last_instrument:
+                    self.instrument.setdefault(spec.key(figure), []).append(
+                        self._last_instrument
+                    )
 
     def take(self, spec: RunSpec, rep: int) -> float:
         """One reading, retaken while the machine says it was contended.
@@ -3169,6 +3311,16 @@ class Session:
         the key exists because the shape carries the wrapper, and it is empty
         because every reading it took was censored (`kills`)."""
         return self.rss[spec.key(figure)]
+
+    def instrument_reports(self, figure: str, spec: RunSpec) -> list[dict[str, str]]:
+        """This spec's instrument reports, one per surviving rep.
+
+        `[]` for a leg every rep of which was OOM-killed, and a `KeyError` for
+        a leg that never declared the instrument — the same split `get_rss`
+        makes, and for the same reason: a renderer must be able to tell "this
+        shape carries no instrument" from "every reading it took was
+        censored"."""
+        return self.instrument[spec.key(figure)]
 
     def kills(self, figure: str, spec: RunSpec) -> int:
         """How many of this spec's reps the kernel OOM-killed.
@@ -7446,6 +7598,10 @@ class ReplaySession(Session):
         self.rss = raw.get("rss", {})
         self.killed = raw.get("killed", {})
         self.reported = raw.get("reported", {})
+        #: Absent from every sitting taken before the report was a file, which
+        #: renders as a figure that carries no instrument rather than as one
+        #: whose reports went missing.
+        self.instrument = raw.get("instrument", {})
         self.telemetry = raw.get("telemetry", [])
         self.records = raw.get("runs", [])
         self._sizes = raw.get("input_sizes", {})
@@ -7607,7 +7763,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         log("nothing was run: every one of these is knowable before the first measurement.")
         log_file.close()
         return 2
-    session = Session(cfg, stager, log)
+    session = Session(cfg, stager, log, out_root)
     # The apparatus, in the order it has to be established: pin the governor
     # (a machine-wide change, restored on the way out), then start sampling.
     # `--dry-run` touches neither: it runs nothing worth witnessing and must
@@ -7784,6 +7940,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 "rss": session.rss,
                 "killed": session.killed,
                 "reported": session.reported,
+                "instrument": session.instrument,
                 "telemetry": session.telemetry,
                 "governor": {
                     "requested": SWEEP_GOVERNOR if cfg.pin_governor else None,
