@@ -689,14 +689,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **Long `--help` text is rustdoc, citations and markdown included.** Every
-  flag's help in `pgdump_query-cli` is a doc comment `clap` renders verbatim, so
-  `pgdq parse --help` prints `(docs/design/architecture.md, "…")` and `**bold**`
-  at a user who may have neither the tree nor a renderer. `19.10` corrected what
-  the two parallelism flags *claim* and left that convention alone, since it is
-  the CLI's whole surface rather than this row's scope. **The decision is
-  whether help text and rustdoc should be split** — a `long_help` per flag,
-  paying duplication for prose aimed at the audience the manual is written for —
-  or whether the citations are worth their cost to a reader who can follow them.
-  Reversing it later costs nothing already built; what it costs is a second
-  place to keep true for every flag.
+_Nothing open._

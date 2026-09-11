@@ -7747,6 +7747,43 @@ applies to everything the cache grows later.
 **The output shape is provisional**, pending real user trials. Nothing depends
 on it.
 
+### A flag's help is its doc comment, citations included
+
+**Every flag's help text is the rustdoc above it**, rendered by `clap` with no
+`help` or `long_help` attribute anywhere in `main.rs`. `clap_derive` splits the
+comment by paragraph: the first becomes the short help `-h` prints, the whole
+comment becomes the long help `--help` prints. So the two audiences are already
+served by one text at two depths, and the depth is chosen by the reader.
+
+**Design-doc citations and markdown emphasis reach the rendered page, and
+that is the intent.** `pgdq parse --help` prints
+`(docs/design/architecture.md, "Execution model and API surface")` and
+`**It states what is asked for, not what is delivered.**` verbatim. Nine flags
+across the three subcommands carry a citation. A sentence that ends in one is
+complete without it — the citation says where the rule is derived, so a reader
+who cannot follow it stops at the sentence before and loses nothing, while a
+reader who has the tree gets a pointer from the point of use, which is the one
+thing help text has that the manual does not. `citations.py` resolves these
+like any other, so a heading that moves breaks the build rather than the help.
+
+*Rejected:* a `long_help` per flag, holding user prose apart from the tree's.
+It buys a page with no citations and costs a second text to keep true for every
+flag on the surface. The argument against is that keeping *one* copy true is
+already the failing part: three sentences of the manual describing worker
+counts and per-worker residency were false against code that had landed, and
+were corrected only when a slice went looking. Doubling the prose surface is
+the wrong response to a staleness problem, and the duplication would fall
+hardest on exactly the flags whose facts move most.
+
+*Rejected:* making help the manual's abstract — no citations, and where a fact
+needs derivation the help names a manual section instead. It points the reader
+at the weaker document. The manual is derived from the design docs and is
+where the falsified sentences above actually lived; a manual heading is also a
+looser handle than a section a citation check resolves. Where a help citation
+would name a heading that states a measured finding, the `<!-- section: <id> -->`
+form applies as it does anywhere else, and `citations.py` enforces it — no
+help-text citation names such a heading today.
+
 ### `info` reads; `parse` scans
 
 Three verbs, and the boundary between them is drawn once: **`parse` is the only
