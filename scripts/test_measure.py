@@ -2002,7 +2002,7 @@ class CompressedAccount(unittest.TestCase):
         # Crossing them with the limits and the block sizes buys a second cross
         # of an expensive axis for no question anybody asked.
         legs = measure._reserve_mechanism_specs()
-        self.assertEqual(len(legs), len(measure.RESERVE_ALLOCATORS) + 1)
+        self.assertEqual(len(legs), 1)
         for label, spec in legs:
             with self.subTest(leg=label):
                 self.assertEqual(spec.input, measure.RESERVE_MECHANISM_INPUT)
@@ -2030,20 +2030,58 @@ class CompressedAccount(unittest.TestCase):
         keys = [s.key("reserve") for s in measure._reserve_flagless_specs()]
         self.assertIn(reference.key("reserve"), keys)
 
-    def test_the_allocator_legs_are_named_never_respecified(self):
-        # What a leg's binary *is* is the `allocator` figure's apparatus rule,
-        # so these call `ensure_allocator_binary` through the same `alloc:`
-        # naming rather than carrying a second recipe for one build.
-        legs = dict(measure._reserve_mechanism_specs())
-        for leg in measure.RESERVE_ALLOCATORS:
-            with self.subTest(allocator=leg):
-                self.assertIn(leg, measure.ALLOCATOR_LEGS)
-                spec = legs[f"`{leg}`"]
-                self.assertEqual(spec.binary, f"alloc:{leg}")
-                self.assertEqual(
-                    spec.command, f"{measure.RESERVE_FLAGLESS}{measure.RESERVE_UNCAPPED}"
-                )
-        self.assertNotIn(measure.ALLOCATOR_LEGS[0], measure.RESERVE_ALLOCATORS)
+    def test_no_leg_of_this_figure_swaps_the_allocator(self):
+        # The two allocator legs are **dropped, not re-aimed**: jemalloc and
+        # mimalloc do not have glibc's dynamic mmap threshold, so swapping them
+        # removes the mechanism under test instead of measuring it. A later
+        # session re-adding one would be re-running the sitting whose
+        # foreseeable outcome was "the three legs could not attribute it".
+        every = [
+            *measure._reserve_flagless_specs(),
+            *measure._reserve_instrument_specs(),
+            *(s for _, s in measure._reserve_mechanism_specs()),
+            *measure._reserve_step_specs(),
+            *measure._reserve_specs(),
+            measure._RESERVE_BASELINE,
+        ]
+        for spec in every:
+            with self.subTest(leg=spec.label):
+                self.assertFalse(spec.binary.startswith("alloc:"))
+
+    def test_the_instrument_legs_are_the_flagless_shape_on_the_instrument_build(self):
+        # The attribution and the check must be the *same arrangement* measured
+        # two ways, so the shape is the flagless one and the only difference is
+        # the binary — which `key` carries, so neither can be read as a rep of
+        # the other.
+        flagless = {s.key("reserve"): s for s in measure._reserve_flagless_specs()}
+        legs = measure._reserve_instrument_specs()
+        self.assertEqual(len(legs), len(measure.RESERVE_INSTRUMENT_LIMITS) + 1)
+        for spec in legs:
+            with self.subTest(leg=spec.label):
+                self.assertEqual(spec.binary, "introspect")
+                self.assertTrue(spec.instrument)
+                self.assertEqual(spec.input, measure.RESERVE_MECHANISM_INPUT)
+                self.assertTrue(spec.command.startswith(measure.RESERVE_FLAGLESS))
+                self.assertNotIn(spec.key("reserve"), flagless)
+        # Every limit of the axis, so the instrument's decomposition can be read
+        # against the black-box fit leg for leg rather than at one cell.
+        uncapped = [s for s in legs if s.command == measure._flagless_shape()]
+        self.assertEqual(
+            [s.memory for s in uncapped], list(measure.RESERVE_INSTRUMENT_LIMITS)
+        )
+        # And the capped leg, at the same pair the mechanism row takes, so the
+        # black-box delta and the introspective one describe one arrangement.
+        capped = [s for s in legs if s.command == measure._flagless_shape(measure.RESERVE_CAPPED)]
+        self.assertEqual([s.memory for s in capped], [measure.RESERVE_MECHANISM_LIMIT])
+
+    def test_an_instrument_leg_is_kill_tolerant_like_the_axis_it_mirrors(self):
+        # It runs the arrangement the rule aims *at* the allocation, so it sits
+        # against its own ceiling exactly as the flagless axis does — and the
+        # report is written at exit, so a kill is also the one legitimate
+        # absence of the report `RunSpec.instrument` otherwise makes an error.
+        for spec in measure._reserve_instrument_specs():
+            with self.subTest(leg=spec.label):
+                self.assertTrue(measure.kill_tolerant(spec.command))
 
     def test_the_arena_leg_is_the_flagless_shape_with_the_cap_and_nothing_else(self):
         # One mechanism at a time: the capped leg differs from the reference by
@@ -2583,6 +2621,60 @@ class InstrumentReport(unittest.TestCase):
         # reason it is not a flag — but it must still reach only the legs that
         # asked for it, or a default build's runs acquire a mount for nothing.
         self.assertFalse(any(s.instrument for s in measure._reserve_flagless_specs()))
+
+    def test_a_declaring_leg_is_pointed_at_the_instrument_build_and_nothing_else_is(self):
+        # A leg that declares the instrument and runs the default binary
+        # produces no report, which `_read_instrument` can only report as "one
+        # of three apparatus faults" — and the pairing is the one of the three
+        # that can be checked before the sitting starts.
+        for spec in measure._reserve_instrument_specs():
+            with self.subTest(leg=spec.label):
+                self.assertEqual(spec.instrument, spec.binary == "introspect")
+        for spec in [
+            *measure._reserve_flagless_specs(),
+            *(s for _, s in measure._reserve_mechanism_specs()),
+            *measure._reserve_step_specs(),
+            *measure._reserve_specs(),
+        ]:
+            with self.subTest(leg=spec.label):
+                self.assertNotEqual(spec.binary, "introspect")
+                self.assertFalse(spec.instrument)
+
+    def test_a_build_that_names_no_instrument_is_refused(self):
+        # The mirror of `binary_allocator`'s refusal, pointed the other way:
+        # there an instrumented build must not be timed, here a leg that
+        # declares the instrument must carry one.
+        with unittest.mock.patch.object(
+            measure, "run", return_value="pgdq 0.1.0 (allocator: system)\n"
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                measure.binary_instrument(Path("/pgdq"))
+        self.assertIn("--features introspect", str(caught.exception))
+
+    def test_the_instrument_build_is_read_back_and_names_itself(self):
+        with unittest.mock.patch.object(
+            measure,
+            "run",
+            return_value="pgdq 0.1.0 (allocator: system) (instrument: counting-allocator)\n",
+        ):
+            self.assertEqual(
+                measure.binary_instrument(Path("/pgdq")), "counting-allocator"
+            )
+
+    def test_the_dictionary_term_is_inside_the_reader_charge(self):
+        # The one term an attribution adds back by hand: `liblzma` allocates it
+        # through C `malloc`, so the counting allocator cannot see it and glibc
+        # cannot separate it. It is part of what `reader_bytes` already charges,
+        # never a term beside it — a decomposition that added it twice would
+        # under-report retention by 8 MiB a reader.
+        self.assertLess(measure.XZ_DICT_BYTES, measure.XZ_DECODE_FOOTPRINT)
+        self.assertEqual(measure.XZ_DICT_BYTES, 8 << 20)
+        # What is left of the footprint once the dictionary comes out is
+        # `xz_seek`'s 1 MiB input chunk plus `liblzma`'s own 34,592 B of state.
+        self.assertEqual(
+            measure.XZ_DECODE_FOOTPRINT - measure.XZ_DICT_BYTES,
+            measure.LIBRARY_CHUNK_BYTES + 34_592,
+        )
 
     def _session(self, out_root):
         cfg = measure.Config()
@@ -5041,21 +5133,43 @@ class CensoredCells(unittest.TestCase):
     def _specs(self):
         return {
             "flagless": measure._reserve_flagless_specs(),
+            "instrument": measure._reserve_instrument_specs(),
             "mechanism": [s for _, s in measure._reserve_mechanism_specs()],
             "steps": measure._reserve_step_specs(),
             "stated": measure._reserve_specs(),
+        }
+
+    #: One instrument report, shaped as `introspect.rs` writes one. The
+    #: quantities are monotone in the leg for the same reason the readings are,
+    #: so a renderer that crossed two legs' reports prints a number these tests
+    #: can tell apart.
+    def _report(self, i):
+        return {
+            "instrument": "counting-allocator",
+            "live_scope": "rust-global-alloc",
+            "live_bytes": str(64 << 10),
+            "live_peak_bytes": str((100 + 10 * i) * measure.MIB),
+            "glibc_scope": "whole-process",
+            "mallinfo_arena": str((150 + 10 * i) * measure.MIB),
+            "mallinfo_hblkhd": "0",
+            "mallinfo_uordblks": str((60 + 10 * i) * measure.MIB),
+            "mallinfo_fordblks": str(90 * measure.MIB),
+            "malloc_heaps": "6",
+            "malloc_system_current": str((150 + 10 * i) * measure.MIB),
+            "malloc_system_max": str((260 + 10 * i) * measure.MIB),
         }
 
     def _raw(self, killed_reps=3, total_reps=3):
         specs = self._specs()
         every = [
             *specs["flagless"],
+            *specs["instrument"],
             *specs["mechanism"],
             *specs["steps"],
             *specs["stated"],
             measure._RESERVE_BASELINE,
         ]
-        rss, reported, killed = {}, {}, {}
+        rss, reported, killed, instrument = {}, {}, {}, {}
         for i, spec in enumerate(every):
             key = spec.key(self.FIGURE)
             # Monotone in the leg, so the flagless fit is well conditioned and
@@ -5065,6 +5179,8 @@ class CensoredCells(unittest.TestCase):
                 "resolved_jobs": str(2 + i % 5),
                 "resolved_budget": str(600 << 20),
             }
+            if spec.instrument:
+                instrument[key] = [self._report(i)] * total_reps
         # The killed reps' own records, exactly as `time_run`'s kill branch
         # writes them: the constraint line is rendered off `runs`, so a fixture
         # with an empty one would exercise only the nothing-was-reported branch.
@@ -5093,6 +5209,7 @@ class CensoredCells(unittest.TestCase):
             "rss": rss,
             "killed": killed,
             "reported": reported,
+            "instrument": instrument,
             "input_sizes": {name: 1 << 30 for name in measure.INPUTS},
             "runs": runs,
         }
@@ -5104,7 +5221,7 @@ class CensoredCells(unittest.TestCase):
             )
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
             ):
                 return measure.run_reserve(session), session
 
@@ -5159,7 +5276,7 @@ class CensoredCells(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
             ):
                 body = measure.run_reserve(session)
         self.assertIn("reported no bound before it died", body)
@@ -5198,7 +5315,7 @@ class CensoredCells(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
             ):
                 body = measure.run_reserve(session)
         no_fit = [ln for ln in body.splitlines() if ln.startswith("- **") and "no fit" in ln]
@@ -5222,6 +5339,107 @@ class CensoredCells(unittest.TestCase):
         self.assertIn("must not be published", note)
         self.assertIn("OOM-killed", note)
 
+    # -- the attribution -------------------------------------------------
+
+    def test_the_account_adds_the_decoder_dictionaries_back_by_hand(self):
+        # `liblzma` allocates through C `malloc`, so the counting allocator
+        # cannot see it and glibc cannot separate it. A decomposition that
+        # subtracted the two families without this term charges 8 MiB a reader
+        # to retention — which is the term the whole sitting is about.
+        body, session = self._render()
+        section = body.split("The account, term by term")[1].split("What the program itself")[0]
+        self.assertIn("Decoder dictionaries", section)
+        self.assertIn(f"{measure.XZ_DICT_BYTES:,} bytes", body)
+        rows = [ln for ln in section.splitlines() if ln.startswith("| instrument")]
+        self.assertEqual(len(rows), len(measure._reserve_instrument_specs()))
+        # The column is `readers x dictionary` exactly, read off the
+        # arrangement the run itself reported rather than off the limit — so
+        # the fixture's own resolved counts are what it has to reproduce.
+        readers = [
+            int(session.reported[spec.key(self.FIGURE)]["resolved_jobs"])
+            for spec in measure._reserve_instrument_specs()
+        ]
+        for row, count in zip(rows, readers):
+            self.assertIn(
+                measure._fmt_budget_bytes(count * measure.XZ_DICT_BYTES), row
+            )
+
+    def test_the_fit_is_stated_against_the_charge_the_source_bills(self):
+        # The point of taking the account: what a reader costs the program plus
+        # the C dictionary the counter is blind to, against what
+        # `XzSource::block_reader_bytes` bills a sub-stream. It is the one
+        # comparison that says whether the number the budget rule divides by is
+        # the number a reader actually is.
+        body, _ = self._render()
+        line = next(ln for ln in body.splitlines() if ln.startswith("**What the program itself"))
+        self.assertIn("Against the charge", line)
+        self.assertIn(
+            measure._fmt_budget_bytes(measure.reader_bytes(measure.RESERVE_MECHANISM_UNIT)),
+            line,
+        )
+
+    def test_the_two_columns_that_can_leave_range_are_explained(self):
+        # `RSS − heap high-water` goes negative and the `fordblks` share passes
+        # 100% whenever two high-waters are taken at different instants. Both
+        # read as apparatus faults unless the table says otherwise.
+        body, _ = self._render()
+        section = body.split("The account, term by term")[1].split("What the program itself")[0]
+        self.assertIn("RSS − heap high-water", section)
+        self.assertIn("non-simultaneity", section)
+
+    def test_the_program_fit_is_evaluated_inside_its_own_window(self):
+        # An intercept is a physical quantity only where the fit still holds
+        # where the mechanism is simplest, and the phase has already published
+        # one `403 MiB` intercept that nobody evaluated at its own smallest
+        # cell.
+        body, _ = self._render()
+        line = next(ln for ln in body.splitlines() if ln.startswith("**What the program itself"))
+        self.assertIn("smallest arrangement in its own window", line)
+        self.assertIn("residual", line)
+
+    def test_the_remainder_carries_a_name_or_says_it_has_none(self):
+        # Never a bare number carried across sessions: a residual with no owner
+        # acquires a false one.
+        body, _ = self._render()
+        self.assertTrue(
+            "**The remainder has a name**" in body or "**The remainder has no name here**" in body,
+            "the account ends on neither a name nor an explicit no-name",
+        )
+
+    def test_the_check_states_the_arrangement_and_the_tolerance(self):
+        # The exact half is whether the instrument build resolved the shipped
+        # build's arrangement; the resident half is a stated tolerance, because
+        # a different binary cannot be held to the shipped leg's own spread.
+        body, _ = self._render()
+        checks = [ln for ln in body.splitlines() if ln.startswith("- `-m ")]
+        self.assertEqual(len(checks), len(measure.RESERVE_INSTRUMENT_LIMITS))
+        for line in checks:
+            self.assertIn("resolved", line)
+            self.assertIn(f"{measure.INSTRUMENT_TOLERANCE_PCT}%", line)
+
+    def test_a_censored_instrument_leg_prints_no_terms(self):
+        # The report is written at exit, so a killed leg has none — and a
+        # renderer that read a missing field as zero would print an account
+        # summing to a resident set nobody measured.
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = self._raw()
+            spec = measure._reserve_instrument_specs()[0]
+            key = spec.key(self.FIGURE)
+            raw["instrument"][key] = []
+            raw["rss"][key] = []
+            raw["killed"][key] = 3
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        row = next(
+            ln for ln in body.splitlines() if ln.startswith(f"| {spec.label} |")
+        )
+        self.assertIn("OOM-killed", row)
+        self.assertNotIn("MiB", row)
+
     def test_an_untouched_sitting_carries_no_kill_and_no_note(self):
         with tempfile.TemporaryDirectory() as tmp:
             raw = self._raw()
@@ -5235,7 +5453,7 @@ class CensoredCells(unittest.TestCase):
             )
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
             ):
                 body = measure.run_reserve(session)
         self.assertNotIn("OOM-killed", body)

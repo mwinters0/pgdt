@@ -2275,6 +2275,20 @@ LIBRARY_CHUNK_BYTES = 1 << 20
 #: over-state, which is the direction that costs nothing.
 XZ_DECODE_FOOTPRINT = 9_471_776
 
+#: The dictionary term inside `XZ_DECODE_FOOTPRINT`: 8 MiB for an
+#: 8 MiB-dictionary file, allocated by `liblzma` through C `malloc` and
+#: therefore **invisible to the counting allocator**, which sees only what
+#: passes through Rust's `GlobalAlloc`.
+#:
+#: Named here because it is the one term an attribution must add back by hand:
+#: the instrument's `live_*` family cannot see it and its `mallinfo_*`/`malloc_*`
+#: family cannot separate it, so a decomposition that subtracted the two would
+#: charge it to retention. Read off a stack rather than modelled —
+#: `heaptrack_print` attributes exactly 8,388,608 bytes for one decoder through
+#: `lzma_lz_decoder_init` ← `lzma_raw_decoder` ← `PayloadDecoder::new`
+#: (`measurements.md`, "What an instrument can see"; `M86`).
+XZ_DICT_BYTES = 8_388_608
+
 
 def reader_bytes(unit: int) -> int:
     """What **one** concurrent block-decoding reader of a file with `unit`-sized
@@ -2392,11 +2406,12 @@ def kill_tolerant(command: str) -> bool:
     return command.startswith(KILL_TOLERANT)
 
 
-#: The limit the three mechanism legs are read at, and the input they are read
-#: over.
+#: The limit the mechanism leg is read at, and the input it is read over. The
+#: capped instrument leg takes the same pair, so the black-box delta and the
+#: introspective one describe the same arrangement.
 #:
 #: **One limit and one block size, deliberately.** This figure is gated
-#: `warm-parallel` and crossing the mechanism legs with the limits and the
+#: `warm-parallel` and crossing the mechanism leg with the limits and the
 #: block sizes buys a second cross of the expensive axis for no question
 #: anybody asked. The limit is the smallest one reaching the block path, which
 #: is where the fixed term is the largest share of resident and therefore where
@@ -2404,22 +2419,29 @@ def kill_tolerant(command: str) -> bool:
 RESERVE_MECHANISM_LIMIT = "512m"
 RESERVE_MECHANISM_INPUT = "control_xz"
 
-#: The two non-platform allocators the mechanism legs are read under, in table
-#: order.
+#: How far the instrument build's resident set may sit from the shipped
+#: build's before the check calls the two different runs, as a percentage.
 #:
-#: **Named, never re-specified**: what a leg's binary *is* — built
-#: `--no-default-features` in its own target dir, its allocator read back out of
-#: `--version` — is the `allocator` figure's apparatus rule, so these legs call
-#: `ensure_allocator_binary` exactly as `rss-attribution`'s do rather than
-#: carrying a second recipe for one build.
+#: **Stated rather than read off the shipped leg's spread.** This is a different
+#: binary — its `.text` is its own and every allocation goes through a counter —
+#: so three reps of the shipped build say nothing about how far it may
+#: legitimately be. Ten percent is the same order `measurements.md` records for
+#: two builds of one source differing by code layout alone; what the check is
+#: for is catching an instrument leg that ran a *different arrangement*, which
+#: the resolved-count half answers exactly, and this half is the coarse bound
+#: beside it.
+INSTRUMENT_TOLERANCE_PCT = 10
+
+#: The limits the **instrument** legs are read at: the flagless arrangement,
+#: run on the introspection build, so the process states its own terms instead
+#: of being differenced.
 #:
-#: **They are what separates fragmentation from retention.** The hypothesis the
-#: account must be able to kill is `BlockCache::slot`'s own: a block evicted
-#: while a `Bytes` still views it stays alive until that view drops, which is a
-#: live-block count no pool bounds. Nothing in `19.15`'s reading tells that from
-#: glibc fragmentation — and these legs do, since fragmentation moves under
-#: jemalloc and a retained view does not.
-RESERVE_ALLOCATORS: tuple[str, ...] = ("jemalloc", "mimalloc")
+#: **The whole flagless axis at one block size**, so the instrument's
+#: decomposition can be read against the black-box fit leg for leg rather than
+#: at a single cell. One block size, for `RESERVE_MECHANISM_LIMIT`'s reason:
+#: whether a term scales with the unit is the black-box axis's question, and it
+#: already crosses both.
+RESERVE_INSTRUMENT_LIMITS: tuple[str, ...] = tuple(token for token, _ in RESERVE_LIMITS)
 
 #: The block size of the input the mechanism legs run over, read out of
 #: `RESERVE_FLAGLESS_INPUTS` rather than written again, so the unit the step's
@@ -2919,6 +2941,8 @@ class Session:
             return ensure_xz_decode_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
+        if which == "introspect":
+            return ensure_instrument_binary(self.cfg, self.log)
         raise ValueError(f"unknown binary {which!r}")
 
     def input_path(self, name: str, regime: str) -> Path:
@@ -3709,6 +3733,77 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
             "it would publish a comparison of two identical binaries"
         )
     log(f"  {out.name}: {leg}")
+    return out
+
+
+#: Whether the instrument build has already been made by this process, for
+#: `_ALLOC_BUILT`'s reason: a binary left in `runs/` by an earlier session was
+#: built from whatever the source said then, and reading it beside this
+#: session's black-box legs compares two revisions and calls it an attribution.
+_INSTRUMENT_BUILT = False
+
+
+def binary_instrument(binary: Path) -> str:
+    """Which instrument a built `pgdq` carries, read out of the binary.
+
+    The mirror of `binary_allocator`'s refusal, pointed the other way: there an
+    instrumented build must not be timed, here a leg that declares the
+    instrument must actually carry one. Both failures are silent otherwise —
+    a default binary produces no report at all, which `_read_instrument` can
+    only report as "one of three apparatus faults", and this is the one of the
+    three it can name before the sitting starts."""
+    out = run([str(binary), "--version"], capture=True)
+    match = INSTRUMENT_RE.search(out)
+    if match is None:
+        raise RuntimeError(
+            f"{binary} --version names no instrument ({out.strip()!r}): the build did not take "
+            "`--features introspect`, and every leg pointed at it would report nothing"
+        )
+    return match.group(1)
+
+
+def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """The introspection build, built and then interrogated.
+
+    `ensure_allocator_binary`'s three details hold here for the same reasons,
+    with one difference: the features are the shipped set **plus** the
+    instrument, so there is no `--no-default-features`. The CLI's default set is
+    empty today and the instrument is meant to run the arrangement the shipped
+    binary runs, so subtracting the defaults would measure a third build.
+
+    **Its own target dir**, because a `--features` build in the default one
+    overwrites `target/release/pgdq` — every other figure's binary — with a
+    binary that takes an atomic on every allocation and that
+    `binary_allocator` then refuses, which is a sitting lost to a build step.
+
+    **`--version` is read back**, and it must name the instrument. A leg
+    declaring `RunSpec.instrument` and pointed at a build without the feature
+    produces no report, and the run that discovers it is the first rep of the
+    hour rather than the second before it.
+    """
+    global _INSTRUMENT_BUILT
+    out = cfg.out_dir / "pgdq-introspect"
+    if _INSTRUMENT_BUILT:
+        return out
+    target = cfg.alloc_build_root / "introspect"
+    if cfg.dry_run:
+        log(f"  [dry-run] would build the introspection instrument into {target}")
+        return out
+    log(f"  building the introspection instrument into {target}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "cargo", "build", "--release", "-p", "pgdump_query-cli",
+            "--features", "introspect",
+            "--target-dir", str(target),
+        ],
+        cwd=REPO,
+    )
+    shutil.copyfile(target / "release/pgdq", out)
+    out.chmod(0o755)
+    _INSTRUMENT_BUILT = True
+    log(f"  {out.name}: {binary_instrument(out)}")
     return out
 
 
@@ -5375,36 +5470,33 @@ def _reserve_flagless_specs() -> list[RunSpec]:
 
 
 def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
-    """The three mechanism legs and what the table calls each.
+    """The mechanism leg, and what the table calls it.
 
     **The reference is not here.** It is the flagless leg at the same input and
-    the same limit, which the axis above already measures — so each of these is
-    one reading rather than a pair, and the comparison is against a number no
-    leg of this block had to re-take.
+    the same limit, which the axis above already measures — so this is one
+    reading rather than a pair, and the comparison is against a number no leg of
+    this block had to re-take.
 
-    The two allocator legs and the arena leg are the *same flagless
-    arrangement*, one mechanism at a time. The path step is the exception and
-    states a budget, because the thing under test is a comparison the
-    environment cannot express: `BlockCache::affordable` is read off the budget,
-    so one byte either side of `reader_bytes` is the only way to change the path
-    and nothing else.
+    **One leg, where three were registered.** The arena cap is the *same
+    flagless arrangement* with one mechanism changed, and it is the only one of
+    the three that bears on the live hypothesis: glibc's dynamic mmap threshold
+    retains a block-sized buffer in the arena of every thread that ever decoded
+    one, so capping the arenas bounds how many can hold one. The two allocator
+    legs are **dropped rather than re-aimed** — jemalloc and mimalloc do not
+    have that threshold, so swapping them removes the mechanism instead of
+    measuring it, and what they report is `MALLOC_ARENA_MAX`'s sixth again
+    (`roadmap-P19-efficient-defaults.md`, "A second hypothesis, and this one has
+    a mechanism rather than a suspicion"). What replaced them is
+    `_reserve_instrument_specs`, which asks the process rather than subtracting
+    two of them.
+
+    The path step is the other exception and states a budget, because the thing
+    under test is a comparison the environment cannot express:
+    `BlockCache::affordable` is read off the budget, so one byte either side of
+    `reader_bytes` is the only way to change the path and nothing else.
     """
-    legs: list[tuple[str, RunSpec]] = [
-        (
-            f"`{leg}`",
-            RunSpec(
-                f"alloc:{leg}",
-                RESERVE_MECHANISM_INPUT,
-                _flagless_shape(),
-                "warm-parallel",
-                f"flagless in {RESERVE_MECHANISM_LIMIT}, {leg}",
-                memory=RESERVE_MECHANISM_LIMIT,
-            ),
-        )
-        for leg in RESERVE_ALLOCATORS
-    ]
     arena = next(label for token, _, label in RESERVE_ARENAS if token == RESERVE_CAPPED)
-    legs.append(
+    return [
         (
             arena,
             RunSpec(
@@ -5416,8 +5508,50 @@ def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
                 memory=RESERVE_MECHANISM_LIMIT,
             ),
         )
-    )
-    return legs
+    ]
+
+
+def _reserve_instrument_specs() -> list[RunSpec]:
+    """The flagless arrangement on the introspection build, which is where the
+    attribution comes from.
+
+    **The same command shape as the black-box flagless legs**, so the two are
+    the same arrangement measured two ways and the `getrusage` axis is the check
+    on this one: a term the process names has to show up in the sum the wrapper
+    measures. They differ by `RunSpec.binary` alone, which `key` carries, so
+    neither can be read as a rep of the other.
+
+    **The uncapped axis, plus the capped leg the mechanism row also takes.** The
+    axis is what decomposes — every limit resolves its own reader count, so the
+    program's own high-water can be read against that count — and the capped leg
+    is what says *where* the arena cap's megabytes go, which the black-box delta
+    beside it can only say *whether*.
+
+    Diagnostic by construction: this build takes an atomic on every allocation
+    and `binary_allocator` refuses it, so no reading here is ever a figure."""
+    return [
+        RunSpec(
+            "introspect",
+            RESERVE_MECHANISM_INPUT,
+            _flagless_shape(),
+            "warm-parallel",
+            f"instrument, flagless in {token}",
+            memory=token,
+            instrument=True,
+        )
+        for token in RESERVE_INSTRUMENT_LIMITS
+    ] + [
+        RunSpec(
+            "introspect",
+            RESERVE_MECHANISM_INPUT,
+            _flagless_shape(RESERVE_CAPPED),
+            "warm-parallel",
+            f"instrument, flagless in {RESERVE_MECHANISM_LIMIT}, "
+            + next(label for token, _, label in RESERVE_ARENAS if token == RESERVE_CAPPED),
+            memory=RESERVE_MECHANISM_LIMIT,
+            instrument=True,
+        )
+    ]
 
 
 def _reserve_step_specs() -> list[RunSpec]:
@@ -5541,6 +5675,18 @@ def run_reserve(session: Session) -> str:
     count as its axis and publishes a *slope*: there the intercept is the
     allocator's baseline and a nuisance, here the intercept is the answer.
 
+    **The attribution is introspective, and the black-box legs are its check.**
+    A subtraction between whole runs cannot name a term that no leg removes,
+    which is what three sittings of this phase discovered by spending an hour
+    each on it. So the account comes from the process reporting its own live
+    bytes and its allocator's retention (`_reserve_instrument_specs`), and the
+    `getrusage` axis stays as the independent reading it has to agree with —
+    two instruments sharing no mechanism, which is the independence
+    `.claude/skills/evidence/SKILL.md`'s third rule asks for. Nothing measured
+    on that build is a figure: it takes an atomic on every allocation, and
+    `binary_allocator` refuses it (`docs/design/roadmap.md`, "Attribution is
+    introspective; only the gate is blind").
+
     **Two families, because one arrangement cannot answer both questions.** The
     flagless legs run what a person who states nothing gets, which is the
     arrangement the constant is for and the only one that can say what the
@@ -5598,15 +5744,19 @@ def run_reserve(session: Session) -> str:
     stated = _reserve_specs()
     flagless = _reserve_flagless_specs()
     mechanism = _reserve_mechanism_specs()
+    instrument = _reserve_instrument_specs()
     steps = _reserve_step_specs()
     # Before the first reading, as `rss-attribution` and the `allocator` figure
     # build theirs: a leg discovered missing at rep two has already spent the
-    # session's first rep under a different machine state.
-    for _, spec in mechanism:
-        if spec.binary.startswith("alloc:"):
-            ensure_allocator_binary(session.cfg, spec.binary.removeprefix("alloc:"), session.log)
+    # session's first rep under a different machine state. The instrument build
+    # is the one whose absence is silent — a default binary writes no report and
+    # the leg fails at the rep, not at the build — so it is made and
+    # interrogated here.
+    if instrument:
+        ensure_instrument_binary(session.cfg, session.log)
     specs = [
         *flagless,
+        *instrument,
         *(spec for _, spec in mechanism),
         *steps,
         *stated,
@@ -5771,6 +5921,213 @@ def run_reserve(session: Session) -> str:
             + censored_tail
         )
 
+    # -- the attribution: what the process says it held ---------------------
+    #
+    # This is the half no subtraction between whole runs produces. Every column
+    # below is a number the process reported about itself, and the two families
+    # do not cover the same memory: `live_*` is what passed through Rust's
+    # `GlobalAlloc`, `mallinfo_*`/`malloc_*` are glibc's view of the whole
+    # process, C included. The renderer keeps them apart and adds the one term
+    # that sits between them — `liblzma`'s per-reader dictionary — by hand.
+    def reported_median(spec: RunSpec, key: str) -> float | None:
+        """One instrument field's median over this leg's surviving reps, or
+        `None` where the leg reported none — which is the kill, since the report
+        is written at exit."""
+        values = [float(r[key]) for r in session.instrument_reports(figure, spec) if key in r]
+        return median(values) if values else None
+
+    instrument_rows, account_rows, account_points, checks = [], [], [], []
+    for spec in instrument:
+        readings = rss(spec)
+        killed = session.kills(figure, spec)
+        got = arrangement(spec)
+        heap_max = reported_median(spec, "malloc_system_max")
+        live_peak = reported_median(spec, "live_peak_bytes")
+        if heap_max is None or live_peak is None or not readings:
+            # A censored leg, or one whose reps all died before exit. It carries
+            # the same third cell state the flagless axis uses, and enters
+            # neither table's arithmetic.
+            instrument_rows.append(
+                [spec.label, "—", f"**OOM-killed**, {killed} rep(s)", "—", "—", "—", "—", "—"]
+            )
+            continue
+        readers = got[0] if got else 0
+        resident = median(readings) * 1024
+        fordblks = reported_median(spec, "mallinfo_fordblks") or 0.0
+        hblkhd = reported_median(spec, "mallinfo_hblkhd") or 0.0
+        heaps = reported_median(spec, "malloc_heaps") or 0.0
+        instrument_rows.append(
+            [
+                spec.label,
+                f"{readers}r" if got else "—",
+                fmt_mib_median_spread(readings),
+                _fmt_budget_bytes(heap_max),
+                _fmt_budget_bytes(live_peak),
+                f"{heaps:.0f}",
+                _fmt_budget_bytes(fordblks),
+                _fmt_budget_bytes(hblkhd),
+            ]
+        )
+        # The account, term by term. Each term is a high-water **of its own**,
+        # so the sum bounds any single instant rather than describing one, and
+        # the remainder is a residual of maxima. Said in the prose below, and
+        # the reason no line here claims an identity.
+        dictionaries = readers * XZ_DICT_BYTES
+        unattributed = heap_max - live_peak - dictionaries
+        account_rows.append(
+            [
+                spec.label,
+                fmt_mib(resident / 1024),
+                _fmt_budget_bytes(resident - heap_max),
+                _fmt_budget_bytes(live_peak),
+                _fmt_budget_bytes(dictionaries),
+                _fmt_budget_bytes(unattributed),
+                (
+                    f"{fordblks / unattributed * 100:.0f}%"
+                    if unattributed > 0
+                    else "—"
+                ),
+            ]
+        )
+        if not killed and got:
+            account_points.append((readers, live_peak, unattributed, fordblks))
+        # The check: the same arrangement measured black-box. A term the
+        # instrument names has to show up in the sum the wrapper measures, and
+        # the two instruments share no mechanism — which is the independence
+        # `19.15` and `19.18` never had.
+        #
+        # **The arrangement is the exact half and resident is the approximate
+        # one.** Whether the instrument build resolved the same reader count and
+        # budget is a yes or no, and a no means the attribution describes a run
+        # the shipped build does not make. Resident cannot be held to the
+        # shipped leg's own spread — this is a different binary, so its text and
+        # its allocator bookkeeping are its own — so the tolerance is stated
+        # rather than read off three reps of something else.
+        black_box = by_flagless.get((spec.input, spec.memory))
+        if black_box is not None and spec.command == black_box.command:
+            theirs = session.get_rss(figure, black_box)
+            if theirs:
+                delta = median(readings) - median(theirs)
+                off = abs(delta) / median(theirs) * 100
+                same = arrangement(black_box) == got
+                checks.append(
+                    f"- `-m {spec.memory}`: the instrument build resolved "
+                    + (
+                        f"the shipped build's arrangement, {readers} reader(s)"
+                        if same
+                        else "**a different arrangement** from the shipped build's, so what it "
+                        "attributes is not the run beside it"
+                    )
+                    + f", and held {fmt_mib(median(readings))} against "
+                    f"{fmt_mib_median_spread(theirs)} — {fmt_rss_delta(delta)}, {off:.0f}% "
+                    + (
+                        f"apart, inside the {INSTRUMENT_TOLERANCE_PCT}% a second build of the "
+                        "same source is allowed"
+                        if off <= INSTRUMENT_TOLERANCE_PCT
+                        else f"apart, **outside** the {INSTRUMENT_TOLERANCE_PCT}% a second "
+                        "build of the same source is allowed, so the sum the instrument "
+                        "decomposes is not the sum the gate measured"
+                    )
+                    + "."
+                )
+
+    instrument_table = md_table(
+        [
+            "Leg",
+            "Readers",
+            "Peak RSS",
+            "glibc heap high-water",
+            "Rust live high-water",
+            "Arenas",
+            "Freed and held at exit",
+            "mmap-backed at exit",
+        ],
+        instrument_rows,
+    )
+    account_table = md_table(
+        [
+            "Leg",
+            "Peak RSS",
+            "RSS − heap high-water",
+            "Rust live high-water",
+            "Decoder dictionaries",
+            "Unattributed",
+            "Covered by `fordblks`",
+        ],
+        account_rows,
+    )
+
+    # The program's own two terms, read off the counter rather than off a
+    # difference of resident sets: `live_peak = fixed + readers x per_reader`.
+    # Evaluated inside its own window, at the smallest arrangement, because an
+    # intercept is a physical quantity only where the fit still holds where the
+    # mechanism is simplest.
+    if len({r for r, _, _, _ in account_points}) >= 2:
+        live_fit = _least_squares([(r, p / MIB) for r, p, _, _ in account_points])
+        smallest = min(account_points)
+        at_smallest = live_fit[0] + live_fit[1] * smallest[0]
+        live_line = (
+            f"**What the program itself held**, least squares over the "
+            f"{len(account_points)} leg(s) that survived: fixed "
+            f"**{live_fit[0]:,.0f} MiB**, a reader **{live_fit[1]:,.1f} MiB**. At the "
+            f"smallest arrangement in its own window — {smallest[0]} reader(s) — it predicts "
+            f"{at_smallest:,.0f} MiB against {smallest[1] / MIB:,.0f} MiB measured, a residual "
+            f"of {abs(at_smallest - smallest[1] / MIB):,.0f} MiB."
+        )
+        # The account against the model, which is the point of taking it: what a
+        # reader costs the program, plus the C dictionary the counter is blind
+        # to, against what `XzSource` bills a sub-stream. Computed here rather
+        # than left to a reader, because it is the one comparison that says
+        # whether the charge the budget rule divides by is the charge a reader
+        # actually is.
+        measured_reader = live_fit[1] * MIB + XZ_DICT_BYTES
+        billed = reader_bytes(RESERVE_MECHANISM_UNIT)
+        live_line += (
+            f" Against the charge: {live_fit[1]:,.1f} MiB of Rust plus the "
+            f"{_fmt_budget_bytes(XZ_DICT_BYTES)} dictionary is "
+            f"**{_fmt_budget_bytes(measured_reader)}** a reader, where "
+            f"`XzSource::block_reader_bytes` bills {_fmt_budget_bytes(billed)} — "
+            f"{measured_reader / billed * 100:.0f}% of it."
+        )
+    else:
+        live_line = (
+            "**No fit over the program's own high-water**: the surviving legs resolved "
+            f"{len({r for r, _, _, _ in account_points})} distinct reader count(s), and a line "
+            "through one point is an intercept asserted as a measurement."
+        )
+
+    # A name, or an explicit no-name with the follow-up that would supply one.
+    # The criterion is stated with the answer rather than applied silently: the
+    # remainder is *named* where glibc's own freed-and-held figure covers at
+    # least half of it at every surviving leg.
+    covered = [
+        (f / u if u > 0 else 1.0) for _, _, u, f in account_points
+    ]
+    if covered and min(covered) >= 0.5:
+        verdict = (
+            "**The remainder has a name**: glibc's own `fordblks` — bytes the program freed, "
+            "the allocator kept and the kernel still counts resident — covers at least half of "
+            f"it at every surviving leg (worst {min(covered) * 100:.0f}%). That is the dynamic "
+            "mmap threshold's signature and not program structure: a block-sized buffer stops "
+            "being mmap-backed after the first one is freed, and the arena it lands in never "
+            "returns it, which is why `hblkhd` reads zero on a run that decoded blocks "
+            "throughout."
+        )
+    elif covered:
+        verdict = (
+            "**The remainder has no name here**, in those words: `fordblks` covers as little as "
+            f"{min(covered) * 100:.0f}% of it, so what is left is neither the program's own live "
+            "bytes, the decoder's dictionaries, nor allocator retention as glibc reports it. "
+            "What would name it is `cd scripts && uv run measure.py --heaptrack-recipe`, which "
+            "attributes every `malloc` — C and Rust alike — to a call stack, and a `--diff` "
+            "between two of these arrangements would name the site rather than the term."
+        )
+    else:
+        verdict = (
+            "**The remainder has no name here**, in those words: every instrument leg was "
+            "censored, so nothing was reported to attribute."
+        )
+
     # -- the mechanism legs, against the flagless leg they differ from one ---
     reference = by_flagless[(RESERVE_MECHANISM_INPUT, RESERVE_MECHANISM_LIMIT)]
     ref_readings = session.get_rss(figure, reference)
@@ -5870,13 +6227,50 @@ def run_reserve(session: Session) -> str:
             if constraints
             else ""
         )
+        + "\n\n**What the process says it held**, on the introspection build running the "
+        "same flagless shape as the axis above. Nothing here is a figure: the build takes an "
+        "atomic on every allocation and `pgdq --version` names it, so it is never timed. The "
+        "two families do not cover the same memory — the Rust column is what passed through "
+        "`GlobalAlloc`, every glibc column is the whole process, C included — and the gap "
+        "between them is decoder working set plus bookkeeping plus retention, never retention "
+        "alone:\n\n"
+        + instrument_table
+        + "\n\n**The account, term by term.** Each term is a high-water *of its own*, so the "
+        "row bounds any single instant rather than describing one, and the last column is a "
+        "residual of maxima. `liblzma` allocates through C `malloc`, so its per-reader "
+        f"dictionary — {XZ_DICT_BYTES:,} bytes, read off a stack rather than modelled — is "
+        "added back by hand: the counter cannot see it and glibc cannot separate it, and a "
+        "decomposition that subtracted the two families would charge it to retention. Two "
+        "columns can leave the range a resident term would keep, and both say the same thing: "
+        "`RSS − heap high-water` goes **negative** where the arenas' summed high-water exceeds "
+        "peak RSS, which it may, because `system max` is address space each arena obtained and "
+        "no two arenas reach their maxima at once; and `fordblks` covers **more** than the "
+        "remainder where retention at exit is larger than the gap between two maxima taken at "
+        "different instants. Neither is an error in the reading — both are what "
+        "non-simultaneity looks like, and they are why the last column is a share rather than "
+        "a subtraction anyone should carry forward:\n\n"
+        + account_table
+        + "\n\n"
+        + live_line
+        + "\n\n"
+        + verdict
+        + (
+            "\n\n**The check, which is what makes the two instruments independent**: the "
+            "black-box legs measure the same arrangement through `getrusage`, sharing no "
+            "mechanism with the report above, so a term the process names has to show up in "
+            "the sum the wrapper measures.\n\n" + "\n".join(checks)
+            if checks
+            else ""
+        )
         + f"\n\n**What each mechanism moves**, at one block size and one allocation — "
         f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
         + (f"{ref_jobs} readers" if ref_arrangement else "a count it never lived to report")
-        + ". The reference is the axis row above, not a re-take. The allocator "
-        "legs are what separate glibc fragmentation from anything structural — fragmentation "
-        "moves under jemalloc, a block retained behind a live view does not — and the arena leg "
-        "bounds how much of the term is arena retention at all:\n\n"
+        + ". The reference is the axis row above, not a re-take. **One leg, where three were "
+        "registered**: the arena cap bounds how many arenas can hold a retained block, which "
+        "is the live hypothesis, and the two allocator legs are dropped rather than re-aimed "
+        "because jemalloc and mimalloc do not have glibc's dynamic mmap threshold — swapping "
+        "them removes the mechanism instead of measuring it. What replaced them is the "
+        "instrument above, which reports the retention rather than differencing two runs:\n\n"
         + mech_table
         + "\n\n**What the block path costs against the streaming fallback**, one byte of budget "
         f"apart in the same {RESERVE_MECHANISM_LIMIT} allocation at `--jobs {RESERVE_JOBS}`: "

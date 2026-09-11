@@ -426,6 +426,33 @@ cover it — and it is the opposite of the argument this section used to make,
 that the `POOL_DEPTH.max(jobs)` clamp is what makes the overhead roughly
 constant.
 
+**What the resident set above the budget is made of has a name, and the process
+was asked rather than differenced.** Read through the introspection build
+("What the binary can report about itself") over four container limits, a
+flagless block-decoding scan of a 24 MiB-block file holds **4 MiB + 49.0 MiB a
+reader** of *program* memory — the counting allocator's own high-water, linear
+over the four to twenty-four readers those allocations resolve, and predicting
+its own smallest cell to within a megabyte. Add `liblzma`'s 8 MiB dictionary,
+which is a C allocation the counter cannot see, and a reader costs **57.0 MiB**
+against the **58.0 MiB** `XzSource::block_reader_bytes` bills it: **the charge
+is right to 2%**, and it is not what puts a flagless scan against its ceiling.
+What does is **glibc arena retention** — `mallinfo`'s `fordblks`, freed by the
+program and kept by the allocator, 102–413 MiB across those limits, covering
+the whole gap between the program's high-water and the heap's, with `hblkhd`
+**zero** on runs that decoded 24 MiB blocks throughout. That is the dynamic
+mmap threshold's signature, it scales with the number of threads that have ever
+decoded a block, and `MALLOC_ARENA_MAX=2` moves it in exactly the place the
+instrument predicts: `fordblks` 102.5 MiB → 68.2 with arenas 6 → 2, and 7% off
+resident. Readings and what the constant may not be read off:
+[`roadmap-P19.18-compressed-account-notes.md`](roadmap-P19.18-compressed-account-notes.md).
+
+That does **not** overturn the concavity above, and the window is why: the
+program-side fit covers four readers and up, where the slot arithmetic's step
+is at one to four. What it establishes is that the term a constant reserve has
+to cover is retention rather than program structure — so it grows with the
+count the allowance affords, which is the count the allowance is being computed
+for.
+
 **A partition is `io::BOUNDARIED_PARTITION_UNITS` of the source's own units;
 the charge for one is a different number, and the two are computed apart.**
 `XzSource::partition_advice` states `partition_bytes` as

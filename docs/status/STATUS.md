@@ -341,17 +341,16 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.18`, `19.16`, `19.13`, `19.11`**.
+What remains runs **`19.16`, `19.13`, `19.11`**.
 
-**The repair ran ahead of the account, which is the reverse of what the spec
-wrote.** `19.20` has run and the arrangement is settled: the cut stays at one
-unit and only the plain path's read shape moved, so nothing about the
-compressed resident curve the remaining slices read has changed since `19.19`
-left it. Start with `19.18`, reading `19.21`'s, `19.19`'s, `19.20`'s and
-`19.17.1`'s notes first: the instrument it now runs on is built and probed, its
-three mechanism legs are dead arithmetically and need re-aiming or dropping
-**before** the hour is spent, and a leg that dies now censors a cell rather
-than losing the sitting.
+**The account is taken and the term is named, so the remaining three are the
+constant, the rule and the sweep.** `19.18`'s sitting says the program holds
+`4 MiB + 49.0 MiB a reader` and that a reader costs 98% of what
+`XzSource::block_reader_bytes` bills it — the charge is right — while the
+resident excess above the budget is **glibc arena retention**, which scales
+with the count the allowance affords. Start with `19.16`, reading `19.18`'s
+notes first: the constant it picks is covering retention rather than a fixed
+program term, and the thin cells are the middle of the range.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -564,7 +563,12 @@ than losing the sitting.
       11.6% and 10.3% over three reps
       ([`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)),
       so a candidate taken off `19.15`'s curve is aimed at the wrong end of the
-      axis. It reports the
+      axis. `19.18` read the same middle-of-the-range shape — 33.2/16.6/8.8/29.0%
+      over the four limits — and named what the constant covers: **glibc arena
+      retention**, which grows with the count the allowance affords, not a
+      fixed program term
+      ([`../design/roadmap-P19.18-compressed-account-notes.md`](../design/roadmap-P19.18-compressed-account-notes.md)).
+      It reports the
       resolved count and the worst-rep headroom against the stated criterion,
       **worst rep leaves ≥20% of the limit**, and the constant it picks is what
       `19.13` ships. A `runs/` probe, not a figure.
@@ -585,56 +589,26 @@ than losing the sitting.
       here — both computed by a test rather than asserted; whether the row
       wanted a third edge is flagged below. Notes:
       [`../design/roadmap-P19.17-compressed-instrument-notes.md`](../design/roadmap-P19.17-compressed-instrument-notes.md)
-- [ ] **19.18** The sitting, **diagnostic** (`--alone`, NOT PUBLISHABLE, as
-      `19.6` and `19.12` were — `19.11` publishes `reserve` once, after the
-      constant ships): the compressed path's resident account, which is what
-      the reserve constant and `partition_advice` are read off. **It ran once,
-      was OOM-killed on its fifth leg, and reviewing it cost three sessions —
-      read the next two paragraphs before re-taking it.** A kill no longer
-      costs the sitting (`19.17.1`); it censors that cell and bars the figure,
-      so the hour still comes back readable.
-
-      **Its named hypothesis is dead, and the arithmetic kills it without a
-      run.** The three mechanism legs were registered to test the block cache's
-      `POOL_DEPTH` retention floor. At every measured cell
-      `(budget − chunk_held)/unit` exceeds `POOL_DEPTH.max(jobs)`, so slots are
-      2/4/4/6 against a bill of `2 × readers` = 2/4/8/12 — the floor's unbilled
-      share is zero at two readers and *negative* above, so it cannot produce a
-      positive excess at all. A sitting aimed at it would spend an hour to
-      report that it moved nothing.
-
-      **What the excess was is repaired**, `19.19` having put the cut back on
-      the source's own units. The account that named it modelled peak as
-      `~15 MiB + slots × unit + min(readers, POOL_DEPTH) × partition`, exact at
-      both serial cells and recovering 84/94/99% of the cross-block-size
-      difference against the shipped model's 42/63/85%; the remainder tracked
-      the measured ~31 MiB-a-reader glibc arena term, which is unit-independent
-      and sits where the unit-scaled terms leave a gap. So what this sitting
-      publishes is the **repaired** account, and the arrangement it measures is
-      the one `19.19` left: the per-reader and fixed terms have both moved, the
-      thin allocation is no longer 512 MiB, and the three mechanism legs need
-      re-aiming or dropping before the hour is spent. It ends on a **name, not a
-      residual**. Owns nothing.
-
-      **Re-steered: it runs on `19.21`'s instrument.** As registered its only
-      instrument was a subtraction between whole runs, which cannot name a term
-      no leg removes — so "the three legs could not attribute it" was the
-      foreseeable outcome, not the risk. The attribution now comes from the
-      process reporting its own live bytes and its allocator's retention; the
-      `getrusage` legs are kept as the **check** on it. The allocator pair is
-      re-aimed or dropped: it cannot test the live hypothesis, glibc's dynamic
-      mmap threshold, because swapping glibc removes that mechanism rather than
-      measuring it. **A second instrument arrived after that re-steer** and
-      covers what the first cannot: `measure.py --heaptrack-recipe` attributes
-      at the `malloc` boundary, so `liblzma`'s per-reader dictionary — 8,388,608
-      bytes, confirmed against `XZ_DECODE_FOOTPRINT` — is read off a stack
-      rather than inferred from the counter's blind spot
-      ([`../design/measurements.md`](../design/measurements.md), "What an
-      instrument can see"). Evidence:
-      [2026-09-11](history/2026-09-11.md), "`M81` and `M82` are both withdrawn,
-      and the account they were guarding is wrong", "Attribution was being done
-      with the gate's instrument", and
-      [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md).
+- [x] **19.18** The compressed path's resident account —
+      `runs/measure-20260911T214041`, `--alone`, **NOT PUBLISHABLE**, three
+      reps, nothing killed. It ends on a **name**: the program itself holds
+      `4 MiB + 49.0 MiB a reader`, and 49.0 plus `liblzma`'s 8 MiB dictionary
+      is **57.0 MiB** against the **58.0 MiB** `XzSource::block_reader_bytes`
+      bills — **the charge is right to 2%** — while the excess above the
+      budget is **glibc arena retention**: `fordblks` 102–413 MiB across the
+      four limits, covering the whole gap, `hblkhd` **zero** on runs that
+      decoded 24 MiB blocks throughout, arenas 6/15/24/26 at 4/13/22/24 readers, and `MALLOC_ARENA_MAX=2` taking `fordblks` to 68.2 MiB
+      with arenas at 2. **The two allocator legs are dropped rather than
+      re-aimed** — they cannot test glibc's own threshold — and what replaced
+      them is a fifth family running the flagless shape on `19.21`'s
+      instrument, whose **check passes at every limit**: the same resolved
+      arrangement (4/13/22/24 readers) and resident within 0–3%, two
+      instruments sharing no mechanism. What `19.16` inherits is that the
+      constant covers retention rather than a fixed term, that the thin cell is
+      the *middle* of the range (8.8% at `1536m`/22r against `512m`'s 33.2%),
+      and that the black-box fit's 129/358 MiB intercepts are that retention
+      folded into a window starting at four readers. Owns nothing. Notes:
+      [`../design/roadmap-P19.18-compressed-account-notes.md`](../design/roadmap-P19.18-compressed-account-notes.md)
 - [x] **19.17.1** A killed leg is recorded and the sitting continues; a killed
       leg bars publication. The premise was re-tested before it was built and
       **holds** on three legs that are not predictions: the registration and the
