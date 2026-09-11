@@ -555,7 +555,28 @@ is numeric, so its first unticked box is not the next piece of work.
       `partition_advice` are read off. It ends on a **name, not a residual** —
       each leg reports what it moves, the remainder is a number carrying a
       mechanism or an explicit "no name". A reducible term earns `19.18.1` and
-      the constant is chosen after it. Owns **`KD19`**.
+      the constant is chosen after it. Owns **`KD19`**. **The sitting ran and
+      was killed by the default it was measuring**, five legs in: a flagless
+      `.xz` at 128 MiB blocks in a 1 GiB container resolves two readers and is
+      OOM-killed at 1024.4 MiB, so the figure aborted before its mechanism legs
+      and no account was published. What the five surviving legs and a
+      follow-up `runs/` probe establish is that the term the account is *for*
+      is a function of the block size — 216–267 MiB above the stated budget at
+      24 MiB blocks against 443–791 MiB at 128 MiB — so the family cannot be
+      measured at any limit while the reserve is 256 MiB. Reviewed since: a
+      unit-independent fixed term is **refuted**, the named candidate is the
+      block cache's `POOL_DEPTH`-unit retention floor, and the spec's fourth
+      amendment under "The gate failed" settles the rest — the repair is a
+      second per-file term rather than a bigger `reader_bytes`, `19.16` waits
+      on this account and derives its candidates from it, and the 128 MiB
+      flagless family becomes the repair's acceptance gate rather than a source
+      of numbers. `KD19` is rewritten to that. What remains is the re-take,
+      which is **blocked on `M81` and `M82`** — the harness mirrors a per-file
+      charge as a constant, and a killed leg aborts the figure instead of being
+      recorded as the reading `19.17` declared it. Evidence:
+      [2026-09-11](history/2026-09-11.md), "`19.18`'s sitting is killed by the
+      default it was measuring" and "A unit-independent fixed term is refuted,
+      so the reserve cannot be one constant".
 
 ## Not started
 
@@ -726,14 +747,17 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "The interior
   split".
 
-- **KD19** — a block-decoding `.xz` scan holds a **~403 MiB fixed term** of
-  which roughly 280 MiB is unexplained: the pools can hold 134 MiB of it and
-  glibc arenas a further sixth, and nothing accounts for the rest. It is what
+- **KD19** — a block-decoding `.xz` scan holds resident **above its stated
+  budget** by a term that scales with the block unit, 216–267 MiB at 24 MiB
+  blocks against 443–791 MiB at 128 MiB, which is what kills a flagless scan of
+  the second in a 1 GiB allocation; a unit-independent fixed term is refuted,
+  and the named candidate is the block cache retaining up to `POOL_DEPTH`
+  *units* whatever the reader count, unbilled by `reader_bytes`. It is what
   forces the reserve high enough to decline the block path on a small
-  allocation. **(b) owned by P19**, slice **`19.18`**, which is the sitting that
-  attributes it or reports that three legs could not. `--parallel-memory`
-  reverses the decline and `MALLOC_ARENA_MAX=2` recovers the arena share in the
-  meantime. Detail:
+  allocation. **(b) owned by P19**, slice **`19.18`**, the sitting that confirms
+  that candidate or kills it; it is discharged when the 128 MiB flagless legs
+  survive their own allocations. `--parallel-memory` reverses the decline and
+  `MALLOC_ARENA_MAX=2` recovers the arena share in the meantime. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Execution model and
   API surface".
 

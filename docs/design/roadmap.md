@@ -832,6 +832,10 @@ table as a work queue.
 | `M79` | | The resolution is announced in two lines rather than one: what was **stated or discovered** before the source is touched — the flags as typed, and the limit with the file that stated it — and then what the source's recommendation and the allowance **fit**, which is the only line that can name a count the allowance lowered. `19.9`'s single line waits on `open_for_scan`, so on koji's multistream download a typo'd `--parallel-memory` goes unconfirmed through 85 s of footer walk. No decision moves: the distinctions, their spellings and their layer are `19.9`'s | | [2026-09-10](../status/history/2026-09-10.md), "`M79`: the resolution is announced twice, because half of it is knowable before the file is opened" |
 | `M80` | 2026-09-11 | `clap`'s `wrap_help` feature, and a snapshot of every help page. Without the feature `clap` wraps at no width at all — not the terminal's, not `COLUMNS` — so the pages printed single lines up to **748** columns, which a terminal hard-wraps mid-word with none of the hanging indent that makes an option list scannable. Nothing rendered a help page, which is how it survived every session that edited those comments; `tests/help_text.rs` holds all eight pages plus the two properties a snapshot cannot carry — no line over the width, and no flag with nothing beside it. The second caught `info --detail`, which had no doc comment at all and printed blank | | [2026-09-11](../status/history/2026-09-11.md), "`M80`: help text is not wrapped, and nothing looked" |
 
+| `M81` | | The harness stops mirroring the library's per-reader charge and reads it off the run's own report. `XZ_DECODE_FOOTPRINT` is a constant, but `decode_bytes` carries `SeekTable::input_chunk()` — the largest *compressed* block — so the mirror is per-file and wrong by 7 MiB on `control_xz128`, and it is what gates `block_path` in the `reserve` renderer. `19.17` made the resolved *count* read back off the `scan started` line for exactly this reason and left the charge computed | P19 | [2026-09-11](../status/history/2026-09-11.md), "Two defects in the instrument, found reviewing the sitting" |
+
+| `M82` | | A killed leg is recorded as a reading and the sweep goes on. `RESERVE_LIMITS` already declares an OOM kill "a reading rather than an apparatus failure" and the sweep then raises, losing the whole figure — here five readings plus the mechanism legs, the path step and both stated families, for 25 minutes and no table. The flagless family is structurally unrunnable at every registered limit until the charge is repaired, so each re-take loses the figure to the same cell. The same change bars a killed leg from publication — a diagnostic sitting records it, `measurements.md` may not carry it | P19 | [2026-09-11](../status/history/2026-09-11.md), "Two defects in the instrument, found reviewing the sitting" |
+
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,
 which argued for an `INSERT` fast path — and *that* changes a decision, so it
@@ -855,6 +859,19 @@ inside that item rather than as a second one. It survives a keystone untouched:
 no phase doc holds it, and nothing but acquiring a phase number takes an item
 out. An option left only in a phase spec or a slice notes doc does not survive,
 which is what makes the difference worth minding at the moment one is found.
+
+- **A block cache whose retention floor tracks the reader count.**
+  `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)`, so the
+  cache holds up to four *units* however few readers there are — at 128 MiB
+  blocks that is roughly 512 MiB a compressed scan must be charged before it
+  may decode a block at all, which is most of a small container and is what
+  sends such a scan serial there (`architecture.md`, "Execution model and API
+  surface"). A floor that followed the count instead would charge far less at
+  one and two readers. It is not taken in P19: that phase charges the floor
+  honestly and reports the decline, and reworking a pool's sizing rule needs
+  evidence P19's account does not produce. The cheap half of it — whether the
+  floor buys anything at all below `POOL_DEPTH` readers — is a reading, not a
+  design.
 
 - **A "safe mode" that deliberately under-fills a stated allocation.** The
   defaults fill a discovered cgroup limit, on the reasoning that a limit is

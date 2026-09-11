@@ -403,7 +403,40 @@ retention as the standing account of the excess. Roughly 280 MiB is accounted
 for by nothing, and it is what forces the reserve high enough to decline the
 block path on a small allocation, so the deficiency is the decline rather than
 the bytes. `(b)` owned by P19, whose sitting either attributes the remainder or
-reports that its three legs could not. A user has `--parallel-memory` to reverse
+reports that its three legs could not.
+
+**The excess scales with the block unit, so no one constant bounds it.** Read
+at a *stated* count in a container large enough never to bind, resident above
+the stated budget is 216–267 MiB across two, four and six readers of a
+24 MiB-block file and **443–791 MiB** across the same counts of a 128 MiB-block
+one — the reason the 256 MiB reserve kills a flagless scan of the second file
+in a 1 GiB allocation rather than merely crowding it. A unit-independent fixed
+term is refuted outright by the same reading: if `resident = fixed + readers ×
+reader_bytes` held with `fixed` a property of the process, the two files would
+differ at equal reader counts by exactly `readers × 2 × 104 MiB`, and they
+differ by 991 / 1327 / 1473 MiB at two / four / six readers against a predicted
+416 / 832 / 1248. The excess *falls* as the count rises, which is the signature
+of a unit-scaled term that is **not** per-reader.
+
+**The candidate is this pool's own retention, and it is the one the sitting
+must confirm or kill.** `BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)`,
+so the block cache holds up to `POOL_DEPTH` *units* whatever the reader count,
+while `reader_bytes` bills two units **per reader** and nothing for the floor —
+unit-scaled, not per-reader, which is the measured shape. The
+evicted-but-still-viewed block above is the second candidate and has the same
+shape, one unit per live view. What the reading rules out is the per-reader
+charge being the fault: chord slopes over two to six readers are 58.7 MiB
+against a 58.0 MiB charge at 24 MiB blocks and 179.1 against 266.0 at 128 MiB —
+exact at the small unit, conservative at the large one. Two further shapes
+constrain any model: one reader is the *serial* arrangement and holds 62.9 MiB
+against 270.8 MiB at the two block sizes, so the 1→2 step costs about four
+times what one reader is charged; and resident is **concave** in the reader
+count above that, the marginal reader costing 83.9 then 33.6 MiB at 24 MiB
+blocks and 251.8 then 106.5 at 128 MiB — so `fixed + readers × per_reader` is a
+model of the flagless axis rather than of the mechanism.
+([`../status/history/2026-09-11.md`](../status/history/2026-09-11.md),
+"A unit-independent fixed term is refuted, so the reserve cannot be one
+constant"). A user has `--parallel-memory` to reverse
 the decline and the arena cap to recover its share, neither of which touches the
 remainder. Note that `rss-attribution` does **not** instrument this: its inputs
 are plain files, and it attributes the plain path's per-block growth — which is

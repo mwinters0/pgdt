@@ -398,6 +398,72 @@ Reasoning: [2026-09-11](../status/history/2026-09-11.md), "The budget rule's
 headroom fails at 512 MiB, and not where it was predicted to", and
 [`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md).
 
+**A fourth amendment: the reserve is not one constant, because the term it
+covers scales with the block unit.** Everything above argues about whether the
+reserve should scale with the *limit*, and refuses that twice. Neither argument
+considered the **block size**, and that is the axis it actually varies on:
+`19.18`'s probe refutes a unit-independent fixed term outright — at equal
+reader counts the two block sizes differ by far more than the `2 × unit` the
+per-reader charge accounts for, by an excess that *falls* as the count rises,
+which is the signature of a unit-scaled term that is not per-reader. So:
+
+- **The repair is a second per-file term, subtracted once — not a bigger
+  `reader_bytes`.** The measurement decides the shape rather than leaving it to
+  the repair: the excess *falls* as the reader count rises, so the term is not
+  per-reader, and `reader_bytes` is multiplied by the count. Charging it there
+  would over-bill at high counts by exactly the factor the reading rules out —
+  the mirror image of the error `19.14` corrected — and because
+  `BlockCache::affordable` reads off the budget, an over-billed per-reader term
+  declines the block path on allocations that could have afforded it, trading
+  an OOM for a silent serial scan. So the budget loses the per-file term once,
+  before it is divided, and `reader_bytes` keeps its shape. After that what
+  remains may be constant and `19.16`'s question becomes answerable. A
+  per-source *reserve* is the same arithmetic filed in the one place the rule
+  cannot read it, which this spec already refused above.
+- **The decline the repair widens is accepted, and reported.** A per-file term
+  taken off the top leaves less for readers, so a compressed scan goes serial
+  on allocations where it takes the block path today — at 128 MiB blocks with
+  `POOL_DEPTH` units of floor that is roughly 512 MiB, most of a small
+  container. That is the correct answer rather than a regression: it is the
+  first arrangement in which the stated number is true for a large-block file,
+  the decline's report (`19.13`) names the limit that caused it, and
+  `--parallel-memory` reverses it. The cheaper alternative is named and **not
+  taken here** — the floor is `POOL_DEPTH` units only because `POOL_DEPTH` is
+  four, and a block cache whose floor tracked the reader count would charge
+  less at low counts. That reworks a pool's sizing rule on evidence this
+  account has not produced, so it is a `Future` item
+  ([`roadmap.md`](roadmap.md)) rather than a slice of this phase.
+- **`19.16` does not run until the account completes.** Its candidates were
+  picked against a fixed term measured at one block size; choosing a constant
+  against a quantity now known not to be constant is the extrapolation that
+  broke `19.15`, one level up. The spec's binding order — the compressed
+  account, then the constant — is unchanged and is the reason.
+- **The named candidate is the block cache's own retention.**
+  `BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)`, so the cache holds up
+  to `POOL_DEPTH` units regardless of the reader count, and `reader_bytes`
+  bills two units *per reader* and nothing for it. `KD19`'s evicted-but-viewed
+  block is the second candidate. The three mechanism legs separate them, and
+  they are what the aborted sitting never reached.
+- **The repair takes the next free slice number once the account names it, and
+  not before.** What the amendment fixes is *where* the repair goes, not what
+  it is; that is the re-taken `19.18`'s reading. A slice allocated ahead of it
+  would be a box the unattended loop picks up and cannot land, the checklist
+  being that loop's work queue — allocation on discovery is the rule for a
+  phase and for an out-of-band item, and a slice is allocated when it can be
+  sliced.
+- **The 128 MiB flagless family is the repair's acceptance gate, not a source
+  of numbers.** Under the current rule it produces none at any registered
+  limit: it declines the block path at `512m` and is killed at `1g` and above.
+  After the repair every leg in it must either take the block path and survive
+  its allocation or decline it, and none may be killed — which is what that
+  family is uniquely able to say, being the one reading in the phase taken on a
+  block size the machine did not choose for itself. The margin criterion above,
+  worst rep leaves ≥20% of the limit, is unchanged and applies to the legs that
+  survive.
+
+Reasoning: [2026-09-11](../status/history/2026-09-11.md), "A unit-independent
+fixed term is refuted, so the reserve cannot be one constant".
+
 **The reserve is one constant, taken from the compressed leg, and it
 over-reserves the plain path by roughly the difference.** The two paths' fixed
 terms are a factor of thirty apart — a plain `parse` holds 5.86 MiB above its
@@ -777,6 +843,20 @@ the count comes *down* with the budget, so the fit's two terms trade places and
 the thin point moves to the other end of the axis. A figure whose table is cited
 for what the shipped default holds must therefore measure the shipped default.
 
+**A killed leg is a reading, and a killed leg bars publication.** The rule aims
+resident at the limit by construction, so a flagless leg that crosses its
+allocation is the most informative cell on that axis and the sweep records it
+as `killed at <maxrss>` and carries on — losing the whole figure to it, as the
+harness does today, throws away every other family for the one reading that was
+expected. What it may not do is reach `measurements.md`: a published table whose
+own axis says the shipped default kills the process cannot be told, by a reader
+who was not at the sitting, from a broken apparatus — which is the ambiguity the
+NOT PUBLISHABLE banner exists to remove for a diagnostic sitting and nothing
+removes for a published one. So a sitting that publishes `reserve` refuses while
+any leg is killed, enforced by the harness as `--figure` already refuses an
+entangled figure outside a sweep, rather than remembered by the session that
+publishes. This binds `19.11`.
+
 **The stated legs stay, because they are the only ones that can separate the
 two terms.** Under discovery `budget = jobs × per_worker` exactly, so the
 budget axis and the count axis are the *same* axis and no fit over flagless legs
@@ -889,7 +969,7 @@ being inserted.
 | **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. Raises `measure.PARALLEL_BUDGET` 1 GiB → 2 GiB with the harness prose that explains it, the old value no longer admitting the widest row's twenty-four workers; the readings follow at `19.11`. Corrects the manual's "on a compressed file the headroom you need is a multiple of the budget rather than a fixed margin", which is true of the shipped build and false the moment the charge is right — the falsified-claim rule puts it in this change, not in `19.10`. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
 | **19.15** | The budget rule run in containers at 256 MiB, 512 MiB and 1 GiB with nothing stated, reporting what each discovers and holds, plus one leg stating `--jobs` on a *plain* file — the shape `KD18` makes expensive, which no reading has ever put against a real limit. Its unlimited arm is exercised **without an unbounded run**: the `None` branch is a unit test over a fixture root carrying no limit files (`19.9`'s tree), and the at-scale reading uses a limit set high enough that the source's recommendation is what binds, which is the same arithmetic outcome with a bounded blast radius. **Its first job is the reserve's headroom**, thin at ~7% through the 1.25–1.5 GiB band against per-rep spreads of 6.5–19.8%; a failure there reopens the reserve and a proportional term is what it reopens to. A `runs/` probe, not a figure. |
 
-| **19.16** | The reserve constant, chosen from a reading rather than a fit: candidate reserves at 512 MiB and 768 MiB, ten reps each, against the **one-reader block path** that every candidate near the measured fixed term produces and that no sitting has measured. It reports the resolved count and the worst-rep headroom against the stated criterion — worst rep leaves at least 20% of the limit — and the constant it picks is what `19.13` then ships. A `runs/` probe on `19.15`'s apparatus, not a figure. |
+| **19.16** | The reserve constant, chosen from a reading rather than a fit: candidate reserves **derived from the re-taken account's fixed term** rather than named here, ten reps each, against the **one-reader block path** that every candidate near that term produces and that no sitting has measured. The 512 MiB and 768 MiB this row first named were picked against a fixed term since shown not to be one — see the fourth amendment under "The gate failed" — and a session that measured them would be pricing bytes the charge repair has already moved. It reports the resolved count and the worst-rep headroom against the stated criterion — worst rep leaves at least 20% of the limit — and the constant it picks is what `19.13` then ships. A `runs/` probe on `19.15`'s apparatus, not a figure. |
 
 | **19.17** | The compressed account's instrument, and no library code: `reserve` gains flagless legs beside its stated ones, the reader-count axis is registered at both block sizes, the three mechanism legs — allocator, arena cap, path step — are registered at one, and what it shares with `peak-rss` and `rss-attribution` is re-declared — **one edge and one stated non-edge**, per the section above. Reviewable cold against `scripts/test_measure.py`. |
 | **19.18** | The sitting, **diagnostic** — `--alone`, NOT PUBLISHABLE, as `19.6` and `19.12` were: the compressed path's **fixed term and per-reader term**, each with its spread, on a quiet machine. It either attributes the ~280 MiB `19.15` left unexplained or reports that the three legs could not, naming the follow-up experiment. Closes **`KD19`** or rewrites it to what is still true. |
