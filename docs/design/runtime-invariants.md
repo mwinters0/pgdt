@@ -599,7 +599,7 @@ one whose command merely exits non-zero reads `oom 0` / `oom_kill 0`, and both
 containers exit **1** through the resident-set wrapper. An unlimited container
 has the file and reads all zeros.
 
-**Scope limit.** Three, and the first is the one a caller must not lose.
+**Scope limit.** Four, and the first is the one a caller must not lose.
 
 - **A missing file is not "nothing was killed".** On a v1 hierarchy, or where
   `/sys/fs/cgroup` is not the container's own, there is no counter and the
@@ -611,13 +611,27 @@ has the file and reads all zeros.
 - **It is hierarchical**, so a cgroup with descendants counts their kills too.
   Nothing here has descendants — a container's command tree is one cgroup — but
   a caller that acquired them would need `memory.events.local`.
+- **It says the arrangement did not fit; it does not say `peak > limit` for any
+  one process.** What licenses the first step is that clean page cache is
+  *reclaimed* rather than killed for: a 3 GB file read through a 64 MiB cgroup
+  hits the ceiling **13,798 times** (`memory.events`, `max`) and is never
+  reaped, so a cgroup that does get a kill had a charge reclaim could not free.
+  What blocks the second is that the charge is the **cgroup's**, and the cgroup
+  holds the wrapper, the shell and ~350 KB of slab alongside the one process a
+  `ru_maxrss` fit measures. Sub-MiB against the limits used here, and still not
+  the same quantity. **Reading the cgroup's own high-water instead does not
+  escape this**: `memory.peak` reads exactly the limit in both cases — killed
+  and survived — because any cgroup that touches its ceiling once reads
+  `peak == limit` from then on.
 
 **Verified against:** Linux 7.1.4-arch1-1; nerdctl 2.3.5 / containerd v2.3.3;
 `alpine:3` and `postgres:16`.
 
 **Relied on by:** [`measurements.md`](measurements.md), "The apparatus" — the
 harness's kill oracle, which decides whether a killed leg is a censored reading
-or an apparatus failure, and bars a figure from publication either way.
+or an apparatus failure, and bars a figure from publication either way; and
+`scripts/measure.py`, `_censored_constraint`, which states a killed leg as the
+constraint it proves and takes its wording from the fourth scope limit above.
 
 **Re-verify:**
 
@@ -630,3 +644,18 @@ docker run --rm alpine:3 cat /sys/fs/cgroup/memory.events
 ```
 
 `oom_kill 1`, then `oom_kill 0`, then `oom_kill 0`.
+
+For the fourth scope limit — clean page cache is reclaimed rather than killed
+for, and `memory.peak` saturates either way:
+
+```sh
+docker run --rm -m 64m --memory-swap 64m alpine:3 sh -c \
+  'dd if=/dev/zero of=/big bs=1M count=1024 2>/dev/null; sync; cat /big >/dev/null
+   grep -E "^(max|oom|oom_kill) " /sys/fs/cgroup/memory.events
+   cat /sys/fs/cgroup/memory.peak'
+```
+
+Exits **0** with `oom 0` / `oom_kill 0` and a `max` count in the thousands —
+one per time reclaim was driven — and `memory.peak` equal to the limit,
+67108864. The count scales with the bytes read and is not a fixed number: 9,249
+here over 1 GiB, 13,798 over the 3 GB file the scope limit quotes.

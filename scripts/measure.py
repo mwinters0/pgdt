@@ -5256,10 +5256,22 @@ def _censored_constraint(
     ([`../docs/design/runtime-invariants.md`](../docs/design/runtime-invariants.md),
     `RT9`), which says the arrangement did not run inside the allocation — a
     fact about the *arrangement*, needing no argument about what the cgroup
-    charged to whom. `peak > limit` is the same finding with a reclaim-ordering
-    step in front of it that nothing in the register establishes, and it is not
-    needed: "the rule's own arrangement did not fit its allocation" is already
-    the thing a reserve constant is chosen against.
+    charged to whom. The register's fourth scope limit does license the step to
+    "something reclaim could not free hit the ceiling", clean page cache being
+    reclaimed rather than killed for; what it does not license is the last step
+    to `peak > limit`, because the charge is the **cgroup's** and the fit is
+    over one process's `ru_maxrss`. "The rule's own arrangement did not fit its
+    allocation" is already the thing a reserve constant is chosen against, so
+    the stronger sentence would buy precision in a quantity the line is not
+    about.
+
+    **It bounds the arrangement, not the fitted terms.** It prints under the
+    fits because that is where a reader looks for what happened at the limits,
+    and the window sentence above — each fit naming the legs it covers — is
+    only legible with the legs it does *not* cover adjacent to it. That
+    placement is not a claim that this is a point the fit should pass near:
+    `19.16` picks the constant from a headroom criterion over surviving reps,
+    and a killed leg has no headroom to report.
 
     **The number beside it is a floor, and says so.** `maxrss_bound_kib` is
     where the wrapper's reading had got to when the process was reaped, so it

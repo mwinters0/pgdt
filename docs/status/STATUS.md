@@ -855,19 +855,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A censored `reserve` leg prints "did not fit `-m <token>`", where `M84`'s
-  row asked for `peak > limit`.** The two are not the same claim. What the
-  apparatus reads is the cgroup's own `oom_kill` counter, which establishes
-  that the kernel reaped a process in that cgroup
-  ([`../design/runtime-invariants.md`](../design/runtime-invariants.md), `RT9`)
-  — a fact about the *arrangement*, not about the process's resident set. Going
-  from there to `peak > limit` needs a step nothing in the register states:
-  that reclaim evicts the scan's page cache before the killer fires, so the
-  charge that reached the limit was anonymous. The weaker form was printed
-  because it is directly read and is already what a reserve constant is chosen
-  against; the wrapper's `maxrss_bound_kib` goes beside it as an explicit floor.
-  **What a reconsideration would change:** an `RT` entry on cgroup reclaim
-  ordering — a container invocation, not an argument — would license the
-  stronger sentence and let the constraint line be read against the fit's
-  intercept directly, which the "did not fit" form cannot be. Mechanism:
-  `scripts/measure.py`, `_censored_constraint`.
+_Nothing open._
