@@ -1536,6 +1536,24 @@ named mechanism, and a rule fitted to two cells of an unexplained curve is the
 mistake this phase has already paid for twice. It wants the cache's behaviour
 under `13 k` wanted blocks explained first.
 
+**Raising `k` breaks `PartitionRead::Whole`, and nothing here fails if you
+do.** `Whole` is safe because a piece is one unit, so the read is a zero-copy
+slice of a block the worker already holds; a piece two units wide read whole is
+the un-poolable partition-length buffer the charge repair removed, allocated
+per worker and billed by nothing. The two numbers are genuinely independent —
+that is the point of computing the coverage apart from the charge — and this is
+the one combination of them that is wrong. The test above bounds a piece at `k`
+units rather than at one, so it passes at every width and cannot catch it.
+`M83` is the fix, and it is queued rather than landed: `Whole` becomes *one
+unit* rather than *one piece*, which is the same read at `k` = 1 and stays
+correct above it.
+
+*The end state is a read clipped to the next boundary* — each read running to
+the next unit seam rather than to a stated length — which is correct at any
+width by construction and is what the block path wants anyway. It is not taken
+because it is unmeasured and buys nothing until the width actually varies, so
+it belongs with whatever explains the `13 k` collapse above.
+
 ### The compressed source
 
 `.xz` input is read directly — `pgdq parse|info|query --source foo.dump.xz` —

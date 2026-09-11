@@ -652,7 +652,11 @@ arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
       `--jobs 24` against 209.2 and runs faster — so `io::PartitionRead` makes
       the shape the source's to state, **`KD18` is struck**, and the read-size
       invariant the row wanted pinned is what the reading refused rather than
-      what it confirmed (flagged below). `BOUNDARIED_PARTITION_UNITS` and a
+      what it confirmed — the spec row is amended to say so, and `M83` is owed
+      by `PartitionRead::Whole`'s dependence on the width
+      ([2026-09-11](history/2026-09-11.md), "`19.20`'s refused clause, and the
+      read shape as the source's statement").
+      `BOUNDARIED_PARTITION_UNITS` and a
       widened `a_block_decoding_partition_spans_at_most_the_cut_width` are what
       keep one unit a measured choice rather than settled intent. `KD20` is
       unclosed and now knows the width is not its fix. Notes:
@@ -844,27 +848,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.20`'s box is ticked although one clause of its row was refused rather
-  than delivered, and the slice shipped a second mechanism its row did not
-  name.** The row asked for the invariant to be re-pinned on the **read size**
-  — "no read exceeds `chunk_size`" — on the stated ground that this "survives
-  either outcome". It does not: the row's own measurement refused the
-  chunk-sized read on the compressed path, so the winning arrangement does not
-  have that property and pinning it would pin something the code deliberately
-  is not. What was pinned instead is the **cut width** (a piece spans at most
-  `BOUNDARIED_PARTITION_UNITS` units, over a block table carrying more
-  boundaries than the window asks for) plus the chunked half of the read shape
-  on the plain path, which is the property that survived. The box is ticked
-  because the row's deliverable — decide the width by measurement, keep the
-  winner, stop the choice reading as settled intent — is delivered in full and
-  there is nothing for a later session to come back to; the alternative was a
-  permanently unticked box describing finished work. **The second half is the
-  call to weigh**: making the body read's shape the *source's* statement
-  (`io::PartitionRead`) is a mechanism the row did not ask for, taken because
-  the winner differs by source — whole on compressed, chunked on plain — and
-  "keep whichever wins" cannot be honoured with one number. It closed `KD18`
-  and most of a roadmap Future item as a side effect. Reversing it means
-  choosing one shape for both sources and paying the loser's cost: 209 MiB at
-  `--jobs 24` on plain, or a killed flagless run in 1 GiB on compressed.
-  Reasoning and readings:
-  [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md).
+_Nothing open._

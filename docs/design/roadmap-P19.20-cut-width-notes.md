@@ -146,6 +146,15 @@ mechanism, and fitting a rule to two cells of an unexplained curve is what this
 phase has already paid for twice (`19.15`'s fixed term, `19.18`'s `POOL_DEPTH`
 floor). It wants the `13 k`-wanted-blocks question answered first.
 
+**Whoever widens it must land `M83` first.** `PartitionRead::Whole` is safe
+only because a piece is one unit, and the test here bounds a piece at `k` units
+rather than at one — so a raised width re-creates the un-poolable
+partition-length buffer `19.19` removed and nothing goes red. `M83` makes
+`Whole` mean one *unit*, which is the same read at `k` = 1. The end state, a
+read clipped to the next boundary, is filed beside the mechanism
+([`architecture.md`](architecture.md), "cut-width") and belongs with whatever
+explains the collapse.
+
 ## For `19.17.1`
 
 **Its premise is now undermined from two directions and it should be re-tested
