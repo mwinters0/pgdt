@@ -723,9 +723,15 @@ The budget rule rests on one number, and a number the docs state is one someone
 can re-take. Neither existing figure answers it: `peak-rss` measures resident
 and `rss-attribution` decomposes per-block growth, where the reserve is
 **resident above what the process was told it could have**. So it is a
-registered figure, taken in the closing sweep beside those two — all three read
-resident on shared shapes, so it declares `shares` edges and the harness
-re-takes the set together, which is the same collapse `M74` exists to make.
+registered figure, taken in the closing sweep beside those two. What it shares
+with them is **a sitting, and one reading** — all three read resident, so `M74`'s
+sweep takes them together, which is the collapse that sweep exists to make, and
+the one borrow is `peak-rss`'s `control` row, which this figure's serial baseline
+repeats spec for spec. It shares **nothing** with `rss-attribution`, whose every
+leg runs the two block-count shapes that are its axis where none of this figure's
+do: the two measure different paths and publish a slope against an intercept, so
+there is no reading to borrow ([2026-09-11](../status/history/2026-09-11.md),
+"The reserve shares a sitting with two figures and a reading with one").
 
 **It is measured both ways and the shipped default uses the uncapped number.**
 Having declined the in-binary cap there are two reserves — one with
@@ -885,7 +891,7 @@ being inserted.
 
 | **19.16** | The reserve constant, chosen from a reading rather than a fit: candidate reserves at 512 MiB and 768 MiB, ten reps each, against the **one-reader block path** that every candidate near the measured fixed term produces and that no sitting has measured. It reports the resolved count and the worst-rep headroom against the stated criterion — worst rep leaves at least 20% of the limit — and the constant it picks is what `19.13` then ships. A `runs/` probe on `19.15`'s apparatus, not a figure. |
 
-| **19.17** | The compressed account's instrument, and no library code: `reserve` gains flagless legs beside its stated ones, the reader-count axis is registered at both block sizes, the three mechanism legs — allocator, arena cap, path step — are registered at one, and the `shares` edges against `peak-rss` and `rss-attribution` are re-declared. Reviewable cold against `scripts/test_measure.py`. |
+| **19.17** | The compressed account's instrument, and no library code: `reserve` gains flagless legs beside its stated ones, the reader-count axis is registered at both block sizes, the three mechanism legs — allocator, arena cap, path step — are registered at one, and what it shares with `peak-rss` and `rss-attribution` is re-declared — **one edge and one stated non-edge**, per the section above. Reviewable cold against `scripts/test_measure.py`. |
 | **19.18** | The sitting, **diagnostic** — `--alone`, NOT PUBLISHABLE, as `19.6` and `19.12` were: the compressed path's **fixed term and per-reader term**, each with its spread, on a quiet machine. It either attributes the ~280 MiB `19.15` left unexplained or reports that the three legs could not, naming the follow-up experiment. Closes **`KD19`** or rewrites it to what is still true. |
 
 **`19.14` through `19.18` were admitted after this spec was written**, and take the

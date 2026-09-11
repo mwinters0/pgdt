@@ -754,19 +754,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.17` declared one `shares` edge where its spec row names two**, and the
-  second is recorded as a non-edge rather than invented. The row asks for "the
-  `shares` edges against `peak-rss` and `rss-attribution`"; `peak-rss` does
-  carry one of `reserve`'s runs — the serial baseline, spec for spec — and
-  `rss-attribution` carries none of them, its every leg running over
-  `blocks500`/`blocks4000` where every leg of `reserve` runs over `control`,
-  `control_xz` or `control_xz128`. A borrow names a reading two figures
-  *publish*, so there was nothing to declare, and what the three actually share
-  is a sitting, which is `M74`'s. **What would change if this were
-  reconsidered**: `reserve` would take a leg over a block-count input to create
-  the overlap — a leg about `COPY`-block growth inside a figure whose axis is
-  the allocation — or the row's wording is satisfied as it stands and the
-  non-edge is the answer. The intersections are computed by a test either way,
-  so a leg added later that does coincide fails rather than ages
-  ([`../design/roadmap-P19.17-compressed-instrument-notes.md`](../design/roadmap-P19.17-compressed-instrument-notes.md),
-  "The edges, and the one that is a non-edge").
+_Nothing open._

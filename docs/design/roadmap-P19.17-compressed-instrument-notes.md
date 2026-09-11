@@ -129,9 +129,14 @@ one stated non-edge**, and the declaration beside the figure now says so:
 
 A test computes both intersections over the spec keys rather than asserting them
 in prose, so the day a leg is added that does coincide, the claim fails instead
-of ageing. Whether the row wanted a genuine third edge — which would mean this
-figure taking a leg over the block-count inputs, and measuring something else —
-is filed under `STATUS.md`'s "Decisions worth another look".
+of ageing.
+
+**Reviewed since, and the spec was what was wrong.** A third edge would mean this
+figure taking a leg over the block-count inputs, measuring on the compressed path
+what the plain path already publishes; it is refused, and the spec's paragraph and
+its `19.17` row now say one edge and one stated non-edge rather than two edges
+([2026-09-11](../status/history/2026-09-11.md), "The reserve shares a sitting with
+two figures and a reading with one").
 
 Neither edge is *declared as a `Shared`* here, for the reason it never was: an
 edge declared from `UNTAKEN` entangles `peak-rss`, which the doc carries from a
