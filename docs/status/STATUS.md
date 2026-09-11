@@ -652,8 +652,8 @@ arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
       `--jobs 24` against 209.2 and runs faster — so `io::PartitionRead` makes
       the shape the source's to state, **`KD18` is struck**, and the read-size
       invariant the row wanted pinned is what the reading refused rather than
-      what it confirmed — the spec row is amended to say so, and `M83` is owed
-      by `PartitionRead::Whole`'s dependence on the width
+      what it confirmed — the spec row is amended to say so, and
+      `PartitionRead::Whole`'s dependence on the width is bounded by `M83`
       ([2026-09-11](history/2026-09-11.md), "`19.20`'s refused clause, and the
       read shape as the source's statement").
       `BOUNDARIED_PARTITION_UNITS` and a

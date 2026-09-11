@@ -473,12 +473,20 @@ async fn run_region(
 /// [`crate::io::PartitionRead::Chunked`] — every read is the announced length,
 /// so [`crate::io::BufferPool`] pools every buffer a worker takes and nothing
 /// allocates a partition-length one; a block-decoding file is read
-/// [`crate::io::PartitionRead::Whole`], because there a piece is one block and
-/// that read is a zero-copy slice of a block the worker was going to decode
-/// anyway. Neither shape is a property of the leader, which is why neither is
-/// written here (`docs/design/architecture.md`, "Execution model and API
-/// surface"). The chunked half is asserted rather than asserted-in-prose:
-/// [`no_read_a_worker_makes_exceeds_the_chunk_size`].
+/// [`crate::io::PartitionRead::Whole`], one of that source's own units at a
+/// time, which at the shipped cut width is the piece exactly and so a
+/// zero-copy slice of a block the worker was going to decode anyway. Neither
+/// shape is a property of the leader, which is why neither is written here
+/// (`docs/design/architecture.md`, "Execution model and API surface"). Both
+/// halves are asserted rather than asserted-in-prose:
+/// [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
+/// [`no_read_a_worker_makes_exceeds_the_stated_unit`].
+///
+/// **`Whole` is `min(piece, unit)`, not the piece**, so a cut wider than one
+/// unit caps the body read at a unit rather than growing it with the width.
+/// That bounds the buffer; it does not make a wider cut safe, which wants a
+/// read clipped to the next boundary (`docs/design/architecture.md`,
+/// "cut-width").
 ///
 /// **The reads repeat until the piece has passed its limit**, which no read
 /// inside it can do: the line ending at or past `range.end` needs bytes past
@@ -511,7 +519,7 @@ async fn scan_partition(
     let mut entry = entry;
     let mut start = range.start;
     let mut want = match read {
-        PartitionRead::Whole => range.end.saturating_sub(range.start).max(1),
+        PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),
         PartitionRead::Chunked => (options.chunk_size as u64).max(1),
     };
 
@@ -912,6 +920,12 @@ mod tests {
     struct Recording {
         inner: LocalFileSource,
         reads: std::sync::Mutex<Vec<(u64, usize)>>,
+        /// When set, the advice is restated as
+        /// [`crate::io::PartitionRead::Whole`] at this unit — the only way to
+        /// put a `Whole` piece *wider* than a unit in front of the leader,
+        /// since the one source that states `Whole` today also cuts its
+        /// windows into single units.
+        unit: Option<u64>,
     }
 
     impl crate::io::ByteRangeSource for Recording {
@@ -946,22 +960,29 @@ mod tests {
             self.inner.hint_read_size(len);
         }
         fn partitions(&self, range: std::ops::Range<u64>) -> crate::io::Partitioning {
-            self.inner.partitions(range)
+            let advice = self.inner.partitions(range);
+            match self.unit {
+                Some(unit) => advice.reading(PartitionRead::Whole { unit }),
+                None => advice,
+            }
         }
     }
 
-    /// **No read a worker makes exceeds `ScanOptions::chunk_size`** — the
-    /// first read of a piece as much as the tail.
+    /// **No read a worker makes on a `PartitionRead::Chunked` source exceeds
+    /// `ScanOptions::chunk_size`** — the first read of a piece as much as the
+    /// tail.
     ///
-    /// It is what keeps every buffer a worker takes a *pooled* one
+    /// It is what keeps every buffer such a worker takes a *pooled* one
     /// (`crate::io::BufferPool::keeps` admits the announced length and nothing
-    /// longer), and it is source-agnostic, which the arrangement it replaced
-    /// was not: a first read of the piece exactly is a poolable zero-copy
-    /// slice on a block-decoding source and a fresh partition-length `calloc`
-    /// on a plain one. Pinning the *read size* rather than the piece width is
-    /// what lets the cut width be chosen by measurement
-    /// (`crate::io::BOUNDARIED_PARTITION_UNITS`) without putting the read
-    /// shape back at risk.
+    /// longer). It is **not** source-agnostic and was never going to be: the
+    /// measurement that decided the read shape refused a chunk-sized body read
+    /// on the block-decoding path, where a first read of the piece exactly is
+    /// a poolable zero-copy slice and a chunked one costs 76 MiB of median
+    /// resident. The bound that binds *there* is the source's own unit —
+    /// [`no_read_a_worker_makes_exceeds_the_stated_unit`] — and pinning a read
+    /// size per shape rather than the piece width is what lets the cut width
+    /// be chosen by measurement (`crate::io::BOUNDARIED_PARTITION_UNITS`)
+    /// without putting either shape back at risk.
     ///
     /// The plain source is the one that can fail this: its pieces are
     /// `PLAIN_PARTITION_CHUNKS` chunks wide, so a piece-length first read is
@@ -974,7 +995,7 @@ mod tests {
         let size = file.len() as u64;
         let blocks = reference(&file);
         let inner = LocalFileSource::open(&path).unwrap();
-        let source = Recording { inner, reads: std::sync::Mutex::new(Vec::new()) };
+        let source = Recording { inner, reads: std::sync::Mutex::new(Vec::new()), unit: None };
         let mut scheduled_blocks = 0usize;
         for block in &blocks {
             for jobs in [2usize, 3, 8] {
@@ -1023,6 +1044,90 @@ mod tests {
             }
         }
         assert!(scheduled_blocks > 0, "no region was actually scheduled");
+    }
+
+    /// **No read a worker makes on a `PartitionRead::Whole` source exceeds the
+    /// unit that source stated**, however many units the piece covers.
+    ///
+    /// It is what bounds the body buffer on the block-decoding path. `Whole`
+    /// was the piece exactly, which is safe only while a piece is one unit —
+    /// `crate::io::BOUNDARIED_PARTITION_UNITS`' doing, and a number the
+    /// measurement is free to raise. The test that bounds a piece at the cut
+    /// width passes at every width, so nothing else here fails if it is
+    /// raised; this does.
+    ///
+    /// Asserted over a **plain** file restated as `Whole`, because the one
+    /// source that says `Whole` today also cuts its windows into single units,
+    /// so on it `min(piece, unit)` is `piece` and the bound is vacuous. The
+    /// plain source's pieces are `PLAIN_PARTITION_CHUNKS` chunks wide against
+    /// a unit of three, which is the wide-piece case a raised cut width would
+    /// produce.
+    ///
+    /// It does **not** assert that the read is poolable, because it is not:
+    /// `crate::io::BufferPool::keeps` admits the announced chunk and nothing
+    /// longer, at either width (`docs/design/architecture.md`, "cut-width").
+    #[tokio::test]
+    async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
+        const UNIT: u64 = 24;
+        let path = edge_cases();
+        let file = std::fs::read(&path).unwrap();
+        let size = file.len() as u64;
+        let blocks = reference(&file);
+        let inner = LocalFileSource::open(&path).unwrap();
+        let source =
+            Recording { inner, reads: std::sync::Mutex::new(Vec::new()), unit: Some(UNIT) };
+        let mut scheduled_blocks = 0usize;
+        let mut wide_pieces = 0usize;
+        for block in &blocks {
+            for jobs in [2usize, 3, 8] {
+                source.reads.lock().unwrap().clear();
+                let options = scheduled(&source.inner, jobs);
+                let got = scan_region(
+                    &source,
+                    &options,
+                    block.header_offset,
+                    block.data_offset,
+                    block.columns,
+                    size,
+                )
+                .await
+                .unwrap();
+                if matches!(got, RegionScan::Closed(_)) {
+                    scheduled_blocks += 1;
+                }
+                // The piece is eight chunks wide and the stated unit is three,
+                // so an unbounded `Whole` would read past `UNIT` here — which
+                // is what makes the assertion below non-vacuous.
+                let advice = source.partitions(block.data_offset..size);
+                if advice.partition_bytes() > UNIT {
+                    wide_pieces += 1;
+                }
+                let reads = source.reads.lock().unwrap();
+                assert!(!reads.is_empty(), "a scheduled region reads something");
+                // Same shape as the chunked bound above: the first read at an
+                // offset is the piece's own opening read, and a repeat at the
+                // same offset is the growth retry, whose ceiling is
+                // `max_line_bytes` on either read shape.
+                let mut seen: Vec<u64> = Vec::new();
+                for &(offset, len) in reads.iter() {
+                    if seen.contains(&offset) {
+                        assert!(
+                            len <= options.max_line_bytes,
+                            "a {len}-byte read at {offset} is past the growth ceiling"
+                        );
+                        continue;
+                    }
+                    seen.push(offset);
+                    assert!(
+                        len as u64 <= UNIT,
+                        "the first read at {offset} under {jobs} jobs is {len} bytes, past the \
+                         {UNIT}-byte unit"
+                    );
+                }
+            }
+        }
+        assert!(scheduled_blocks > 0, "no region was actually scheduled");
+        assert!(wide_pieces > 0, "no piece was wider than the stated unit");
     }
 
     /// **Two ways to be declined, and neither is a branch on the source's

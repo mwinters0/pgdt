@@ -458,9 +458,12 @@ boundaries than the window asks for.
 (`io::PartitionRead`), and the two shapes differ by a factor of twenty-two on
 the plain path. A plain file is read `Chunked` — every read is the announced
 length, so `BufferPool` pools all of them and nothing allocates a
-partition-length buffer at all; a block-decoding file is read `Whole`, because
-there a piece is one unit and that read is a zero-copy slice of a block the
-worker was going to decode anyway. Stating it on `Partitioning` rather than in
+partition-length buffer at all; a block-decoding file is read `Whole`, one of
+that source's own units at a time, which at the shipped cut width is the piece
+exactly and so a zero-copy slice of a block the worker was going to decode
+anyway. `Whole` carries that unit rather than meaning "the piece", so a wider
+cut caps the body read instead of growing it — the bound, and what it does not
+buy, are beside the cut width ("cut-width"). Stating it on `Partitioning` rather than in
 the leader is the same rule as the two paragraphs above: the leader has no
 business knowing which shape a source is, and a read size derived from the
 charge or from the boundaries is one more value with two consumers. What each
@@ -1536,23 +1539,30 @@ named mechanism, and a rule fitted to two cells of an unexplained curve is the
 mistake this phase has already paid for twice. It wants the cache's behaviour
 under `13 k` wanted blocks explained first.
 
-**Raising `k` breaks `PartitionRead::Whole`, and nothing here fails if you
-do.** `Whole` is safe because a piece is one unit, so the read is a zero-copy
-slice of a block the worker already holds; a piece two units wide read whole is
-the un-poolable partition-length buffer the charge repair removed, allocated
-per worker and billed by nothing. The two numbers are genuinely independent —
-that is the point of computing the coverage apart from the charge — and this is
-the one combination of them that is wrong. The test above bounds a piece at `k`
-units rather than at one, so it passes at every width and cannot catch it.
-`M83` bounds it and does not make a wider cut safe. Queued rather than landed,
-it makes `Whole` mean *one unit* rather than *one piece* — the identical read at
-`k` = 1, where a piece is one unit, and above it a buffer capped at one unit
-instead of growing with `k`. That removes the unbounded case, not the copy:
-`BufferPool::keeps` admits only the announced chunk, so a one-unit read is
-un-poolable at either width, and `SeekTable::max_block_uncompressed()` is a
-file-wide maximum, so a read starting at a boundary can still cross into a
-smaller successor block and take the copying arm. Raising `k` safely wants the
-clip below.
+**`PartitionRead::Whole` is bounded by the source's unit, not by `k`, and that
+is what keeps a raised width from re-creating an unbounded buffer.** `Whole`
+carries the unit — the block-decoding arm states
+`SeekTable::max_block_uncompressed()`, by way of the `BlockCache::unit` built
+from it — and `leader::scan_partition` reads `min(piece, unit)`. At `k` = 1,
+where a piece is one unit, that is the piece exactly and the identical read;
+above it the body buffer is capped at one unit instead of growing with `k`.
+The two numbers stay genuinely independent, which is the point of computing the
+coverage apart from the charge.
+
+The bound is asserted rather than argued: `leader.rs`'s
+`no_read_a_worker_makes_exceeds_the_stated_unit` restates a *plain* source as
+`Whole` at a unit narrower than its eight-chunk piece, because the one source
+that says `Whole` today also cuts its windows into single units, so on it
+`min(piece, unit)` is `piece` and the bound is vacuous. The cut-width test above
+bounds a piece at `k` units rather than at one, so it passes at every width and
+would catch nothing here.
+
+**What that removes is the unbounded case, not the copy.** `BufferPool::keeps`
+admits only the announced chunk, so a one-unit read is un-poolable at either
+width, and `SeekTable::max_block_uncompressed()` is a file-wide maximum, so a
+read starting at a boundary can still cross into a smaller successor block and
+take the copying arm. Raising `k` safely wants the clip below; the unit bound is
+not it.
 
 *The end state is a read clipped to the next boundary* — each read running to
 the next unit seam rather than to a stated length — which is correct at any
@@ -1603,10 +1613,13 @@ copying nothing; a read spanning a boundary is assembled into a buffer of the
 read's own length.
 
 **On the parallel path a fused worker takes the first arm for its body and the
-second for its tail.** Its first read is the whole partition — this source says
-so, `partition_advice` stating `PartitionRead::Whole` — and a partition is
-one block (`Partitioning::window_end`, "Execution model and API surface"
-above), so the body is a slice and copies nothing. The chunk-sized tail read
+second for its tail.** Its first read is one block — this source says so,
+`partition_advice` stating `PartitionRead::Whole` at a unit of
+`SeekTable::max_block_uncompressed()` — and a partition is one block too
+(`Partitioning::window_end`, "Execution model and API surface"
+above), so the body is the whole piece, a slice, and copies nothing. The unit
+is what the read is bounded by rather than the piece, which is what holds if
+the cut width is ever raised ("cut-width"). The chunk-sized tail read
 that follows it starts at the last row boundary inside that block and therefore
 crosses into the next one, which is the boundary case: a chunk-length buffer,
 and a second block decoded by a worker that does not own it (`KD20`). Sizing a
@@ -5188,10 +5201,11 @@ dispatched, so a later window cannot outrun an earlier one's failure.
 
 **A worker reads its piece the way the source said to, and then one chunk
 more.** `io::PartitionRead` is that statement: a block-decoding source says
-`Whole`, so the body read is the piece exactly, `[start, end)`, which is one
-block and so a zero-copy slice of it (the window being cut into the source's own
-units is what keeps that true — `Partitioning::window_end`, "Execution model
-and API surface"); a plain source says `Chunked`, so the body is read
+`Whole` at its own unit, so the body read is `min(piece, unit)` — the piece
+exactly, `[start, end)`, while the window is cut into single units
+(`Partitioning::window_end`, "Execution model and API surface"), which is one
+block and so a zero-copy slice of it, and one unit rather than the piece at any
+wider cut ("cut-width"); a plain source says `Chunked`, so the body is read
 `chunk_size` at a time and every buffer a worker takes is a pooled one. Neither
 read can finish the piece — the line ending at or past `end` needs bytes past
 `end` — so a **chunk-sized** tail read follows either shape and is scanned as

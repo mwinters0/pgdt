@@ -382,11 +382,12 @@ pub enum PartitionRead {
     /// expected to cost are not visible.
     #[default]
     Chunked,
-    /// The whole piece in one call. A block-decoding source's answer, where a
-    /// piece is one of its own units ([`BOUNDARIED_PARTITION_UNITS`]) and that
-    /// read is therefore a **zero-copy slice** of a block the worker was going
-    /// to decode anyway — so it allocates nothing at all, where reading the
-    /// same block a chunk at a time is 24 lookups against one
+    /// One of the source's own `unit`s in a single call — the whole piece
+    /// where the piece is one unit, which is what
+    /// [`BOUNDARIED_PARTITION_UNITS`] makes it. A block-decoding source's
+    /// answer, where that read is a **zero-copy slice** of a block the worker
+    /// was going to decode anyway — so it allocates nothing at all, where
+    /// reading the same block a chunk at a time is 24 lookups against one
     /// ([`BlockCache::lookup`], which takes the cache's lock).
     ///
     /// Measured on the 24 MiB-block control, flagless in 1 GiB, where both
@@ -397,12 +398,25 @@ pub enum PartitionRead {
     /// multiply the eviction events by the chunk count — and it is not claimed
     /// as accounted for.
     ///
-    /// **What makes it safe is that a piece is one unit**, which is
-    /// [`Partitioning::window_end`]'s doing and is asserted by
-    /// [`a_block_decoding_partition_spans_at_most_the_cut_width`]. A piece
-    /// several units wide read whole is the un-poolable partition-length
-    /// buffer `19.19` removed.
-    Whole,
+    /// **The unit is what bounds the buffer, and it is the source's number
+    /// rather than the cut's.** `crate::leader::scan_partition` reads
+    /// `min(piece, unit)`, so at the shipped width — where a piece *is* one
+    /// unit — this is the piece exactly and the identical read, and above it
+    /// the buffer is capped at one unit instead of growing with the width.
+    /// That removes the unbounded case and **not** the copy: [`BufferPool::keeps`]
+    /// admits only the announced chunk, so a one-unit read is un-poolable
+    /// either way, and `xz_seek::SeekTable::max_block_uncompressed` is a
+    /// file-wide maximum, so a read starting on a boundary can still cross
+    /// into a smaller successor block and take the copying arm. Raising the
+    /// cut width safely wants a read clipped to the next boundary, which is
+    /// not this (`docs/design/architecture.md`, "cut-width").
+    Whole {
+        /// The source's own unit, in bytes — the decoded block on the
+        /// block-decoding path, where [`BlockCache::unit`] is
+        /// `xz_seek::SeekTable::max_block_uncompressed`. Never zero: a source
+        /// with no unit has nothing to state and stays [`PartitionRead::Chunked`].
+        unit: u64,
+    },
 }
 
 /// How many of a boundaried source's own units one partition covers
@@ -2470,15 +2484,19 @@ impl XzSource {
         // count those bytes twice ([`RetainedUnit`]). The streaming arm above
         // keeps the default: there a read is assembled *into* a chunk buffer,
         // so what a batch pins is chunks.
-        // **And a worker reads its whole piece in one call**, which on this
-        // source is one block and so a zero-copy slice of it
-        // ([`PartitionRead::Whole`]). The streaming arm above keeps the
-        // default for the same reason it keeps the retained unit: there a read
-        // is assembled into a chunk buffer, and nothing is gained by asking
-        // for a longer one.
+        // **And a worker reads one of this source's units in one call**,
+        // which at the shipped cut width is the whole piece and so a zero-copy
+        // slice of the block it lands in ([`PartitionRead::Whole`]). The unit
+        // is `cache.unit`, which `BlockCache::for_table` sets from
+        // `xz_seek::SeekTable::max_block_uncompressed` — the same number, read
+        // off the cache that already holds it rather than recomputed, and
+        // non-zero by that constructor's own guard. The streaming arm above
+        // keeps the default for the same reason it keeps the retained unit:
+        // there a read is assembled into a chunk buffer, and nothing is gained
+        // by asking for a longer one.
         Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
             .retaining(RetainedUnit::Partition)
-            .reading(PartitionRead::Whole)
+            .reading(PartitionRead::Whole { unit: cache.unit as u64 })
     }
 
     /// The fallback: one live decode, restarted on a backward seek, serialized
@@ -3380,8 +3398,15 @@ mod tests {
         // **The read shape is stated apart from both of those**, and the two
         // arms differ in it: a block-decoding piece is one block and reading it
         // whole copies nothing, while a streaming read is assembled into a
-        // chunk buffer whatever length is asked for.
-        assert_eq!(decoding.partition_read(), PartitionRead::Whole);
+        // chunk buffer whatever length is asked for. The unit the block arm
+        // states is the table's own largest block — what bounds the body read
+        // at a cut width the measurement may yet raise, rather than the piece.
+        assert_eq!(decoding.partition_read(), PartitionRead::Whole { unit: 4096 });
+        assert_eq!(
+            table.max_block_uncompressed(),
+            4096,
+            "the stated unit is the table's largest block, not the piece"
+        );
         assert_eq!(streaming.partition_read(), PartitionRead::Chunked);
     }
 

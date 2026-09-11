@@ -130,7 +130,8 @@ and the test follows it.
 **The read-size invariant the row wanted pinned does not hold, and that is a
 finding rather than an omission.** The row asked for "no read exceeds
 `chunk_size`" on the ground that it "survives either outcome"; the measurement
-refused the arrangement that has it. What is pinned is the chunked half —
+refused the arrangement that has it. What is pinned is a read size **per
+shape**: the chunked half here, and the whole half's own bound in `M83` below —
 `no_read_a_worker_makes_exceeds_the_chunk_size`, over the plain source, which
 fails on the piece-length read and tells a growth retry from a piece's opening
 read by **offset** rather than by length (the growth path retries the same start
@@ -146,12 +147,14 @@ mechanism, and fitting a rule to two cells of an unexplained curve is what this
 phase has already paid for twice (`19.15`'s fixed term, `19.18`'s `POOL_DEPTH`
 floor). It wants the `13 k`-wanted-blocks question answered first.
 
-**Whoever widens it must land `M83` first.** `PartitionRead::Whole` is safe
-only because a piece is one unit, and the test here bounds a piece at `k` units
-rather than at one — so a raised width re-creates the un-poolable
-partition-length buffer `19.19` removed and nothing goes red. `M83` caps that
-buffer at one unit — the same read at `k` = 1 — which bounds the damage rather
-than removing it, a one-unit read being un-poolable at either width. What a
+**Widening it is bounded but still not safe.** `PartitionRead::Whole` was the
+piece exactly, which is safe only because a piece is one unit, and the test here
+bounds a piece at `k` units rather than at one — so a raised width would have
+re-created the un-poolable partition-length buffer `19.19` removed with nothing
+going red. `M83` closed that: `Whole` carries the source's unit and the body
+read is `min(piece, unit)`, the same read at `k` = 1. It bounds the damage
+rather than removing it, a one-unit read being un-poolable at either width and a
+file-wide maximum still able to cross into a smaller successor block. What a
 wider cut actually wants is the read clipped to the next boundary, filed beside
 the mechanism ([`architecture.md`](architecture.md), "cut-width") and belonging
 with whatever explains the collapse.
