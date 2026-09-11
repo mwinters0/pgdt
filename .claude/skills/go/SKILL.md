@@ -17,6 +17,12 @@ question, review an approach, or unblock you. Work accordingly.
    landed in this phase.
 4. Read `docs/design/roadmap.md`'s **"Out-of-band work"** ledger, for the rows
    whose Date is empty.
+5. **If the slice you pick takes, reads, or reasons from a measurement —
+   invoke the `evidence` skill before designing it.** That includes a slice
+   whose deliverable is a reading, one that fits a model to numbers already
+   taken, and one that sets a constant from a figure. Its first rule is that an
+   *account* is arithmetic from the source and a *fit* is not one, and applying
+   it has already turned an hour-long sitting into a `grep`.
 
 ## Pick the work
 
