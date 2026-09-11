@@ -1009,6 +1009,39 @@ def parse_reported(text: str) -> dict[str, str]:
     return out
 
 
+#: The worker count and byte budget a scan says it is running under, off its own
+#: `scan started` line.
+#:
+#: **The library's line, not the CLI's provenance one.** Both carry the pair;
+#: this one states it bare — `jobs=3 memory_bytes=204537856` — where the CLI's
+#: wraps each number in the words that say where it came from, and what a
+#: resident reading needs is the arrangement rather than its provenance. Both
+#: `scan started` lines of a run print the same pair, so the first match stands.
+SCAN_RESOLVED_RE = re.compile(r"\bscan started\b[^\n]*?\bjobs=(\d+) memory_bytes=(\d+)\b")
+
+
+def parse_resolution(text: str) -> dict[str, str]:
+    """What a run resolved for itself, read back off its own log.
+
+    `{}` where the run printed no such line, which is every shape that is not a
+    scan. **It is read for every shape rather than for the flagless family
+    alone**: the pair is free to read, and a stated shape whose resolved pair is
+    not the pair it stated is exactly the apparatus failure the worker-count
+    reconciliation cannot see — `--jobs 24` inside a budget affording three
+    readers is a row labelled 24 that ran three.
+
+    It is the flagless legs that *need* it. Under discovery the count is
+    `ParallelArgs::resolve`'s answer to the allocation, so the reader count a
+    resident set belongs to exists nowhere else — the harness cannot compute it
+    without reimplementing the rule, which is the second authority
+    `QUERY_SUBSTREAM_CAP` refuses by name.
+    """
+    match = SCAN_RESOLVED_RE.search(text)
+    if not match:
+        return {}
+    return {"resolved_jobs": match.group(1), "resolved_budget": match.group(2)}
+
+
 #: `getrusage`'s syscall number, by machine. Read from the host's own
 #: architecture because the container shares this kernel, so the two cannot
 #: disagree; an unlisted machine is an error rather than a guess, since a wrong
@@ -1688,9 +1721,28 @@ class RunSpec:
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
     label: str
+    #: The container memory limit this one run is given, overriding the figure's
+    #: own. `None` — every spec but the reserve figure's flagless legs — takes
+    #: the figure's `memory`, or the recorded 512 MB.
+    #:
+    #: **A per-spec limit exists because one figure's axis *is* the limit.** A
+    #: flagless run resolves its whole arrangement from the allocation it was
+    #: given, so two legs differing only in `-m` are two different readings, not
+    #: two reps of one; every other figure states its flags and wants one
+    #: container for the table.
+    memory: str | None = None
 
     def key(self, figure: str) -> str:
-        return f"{figure}/{self.binary}/{self.input}/{self.command}/{self.regime}"
+        """This run's identity, which is what a reading is filed under.
+
+        **The limit is part of it whenever there is one**, since two flagless
+        legs differ by nothing else and would otherwise share a key — the
+        failure `_attribution_specs` names, where two legs differing only in the
+        words a table prints silently become one reading. It is appended rather
+        than always present so that a past sitting's `raw.json` still renders:
+        every spec that states no limit keys exactly as it did before."""
+        base = f"{figure}/{self.binary}/{self.input}/{self.command}/{self.regime}"
+        return base if self.memory is None else f"{base}/m={self.memory}"
 
 
 #: The perf table's columns, split the way the generator writes them: the 16
@@ -2081,6 +2133,184 @@ RESERVE_INPUTS: tuple[tuple[str, str], ...] = (
 #: name says it has one.
 RESERVE_FAMILY = "parse-rss-reserve-"
 
+#: The command-shape prefix of the legs that state **nothing** — no `--jobs`,
+#: no `--parallel-memory` — so that the arrangement under test is the one a
+#: flagless invocation resolves for itself.
+#:
+#: **This is the one family in the register that states no worker count, and it
+#: is declared at both ends rather than slipping past the reconciliation.**
+#: `worker_count_problems` and `pinned_count_problems` skip it by this prefix,
+#: and a test asserts that what it states is *neither* flag — the exemption is
+#: from stating a count, never a licence to pin one quietly. What earns it is
+#: that the count is the **reading**: under discovery `ParallelArgs::resolve`
+#: lowers the source's recommendation to what the allocation affords, so the
+#: `jobs=` a run reports is the reader count its resident set is a resident set
+#: *for*, and a shape that pinned one would measure an arrangement the shipped
+#: default never produces (`roadmap-P19-efficient-defaults.md`, "The figure
+#: states the budget and the worker count, and that is not the arrangement the
+#: default produces").
+#:
+#: **It does not reopen the figure this spec refused.** What was refused there
+#: was publishing a *throughput* table off unpinned shapes, the throughput of
+#: the default being already measured at a stated count by
+#: `parallel-scan-throughput`; this is a diagnostic resident reading of an
+#: arrangement no stated shape can express, and the count it runs at is
+#: recorded per leg from the run's own report rather than assumed.
+RESERVE_FLAGLESS = "parse-rss-discover-"
+
+#: The command-shape prefix of the **path step**: the same `parse` at a stated
+#: budget either side of what one block-decoding reader costs, so that block
+#: decode is afforded on one leg and declined on the other
+#: (`BlockCache::affordable`).
+#:
+#: A family of its own rather than two more entries in `RESERVE_BUDGETS`, whose
+#: four values are crossed with both arena settings and both sources: the step's
+#: two budgets are neither whole mebibytes nor an axis anything else is read
+#: across, and adding them there would multiply eight legs out of a pair.
+RESERVE_STEP_FAMILY = "parse-rss-step-"
+
+#: `pgdump_query::DEFAULT_CHUNK_SIZE`, mirrored — the read chunk a scan settles
+#: at when no `--chunk-size` is stated, and one of the three terms in what a
+#: block-decoding reader holds.
+#:
+#: Named apart from `CHUNK_DEFAULT`, which is the same number wearing the
+#: chunk-size figure's hat — that one is *the row every other row is a ratio
+#: against* and this one is *what a reader holds a buffer of*. A test holds the
+#: two equal, which is the cheap reconciliation: the day they diverge, one of
+#: the two meanings has moved and the figure that reads it is wrong.
+LIBRARY_CHUNK_BYTES = 1 << 20
+
+#: `xz_seek::Reader::decode_footprint()` on an 8 MiB-dictionary file: the
+#: dictionary, the 1 MiB input chunk and `liblzma`'s own 34,592 B of state.
+#: Every `.xz` input here is written at preset 6, so every one of them has that
+#: dictionary (`INPUTS["control_xz"]`).
+XZ_DECODE_FOOTPRINT = 9_471_776
+
+
+def reader_bytes(unit: int) -> int:
+    """What **one** concurrent block-decoding reader of a file with `unit`-sized
+    blocks holds: two block slots, the chunk buffer a straddling read is
+    assembled into, and the decoder's own retention.
+
+    `XzSource::block_reader_bytes`, mirrored — the number
+    `BlockCache::affordable` compares a budget against and the number
+    `XzSource::partition_advice` charges a sub-stream.
+
+    **Hand-computed, on `QUERY_SUBSTREAM_CAP`'s argument.** A Python
+    reimplementation of the library's arithmetic is a second authority that goes
+    stale silently; a mirror checked by hand against the source once is exactly
+    as good until one of its terms moves, at which point the figure is already
+    stale on the paths its `depends` names. At 24 MiB blocks this is
+    58.03 MiB, which is the number `19.14` shipped and `19.12` measured.
+    """
+    return 2 * unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
+
+
+#: The two compressed inputs the flagless axis is read over: the registered
+#: input, what the table calls it, and its block size.
+#:
+#: **Both block sizes, because the per-reader charge bills `2 × unit`.** A
+#: unit-shaped error in that charge is multiplied by the reader count, and
+#: `19.14` has already been wrong about the charge once; a fit taken at one
+#: block size cannot tell a term that scales with the unit from one that does
+#: not (`roadmap-P19-efficient-defaults.md`, "The grid is asymmetric,
+#: deliberately").
+#:
+#: The block size is declared here rather than read off the file because it is
+#: what `reader_bytes` is a function of, and the renderer needs it to say which
+#: legs took the block path at all — `parse` emits no decline note, that being
+#: a `PlanNote` on a query's `TableStream`.
+RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
+    ("control_xz", "24 MiB blocks", 24 << 20),
+    ("control_xz128", "128 MiB blocks", 128 << 20),
+)
+
+#: The container limits the flagless axis is read at: the `-m` value and the
+#: bytes it states.
+#:
+#: **The limit is the axis, because under discovery it is the only input.** A
+#: flagless run reads `limit − MEMORY_RESERVE`, fits the source's recommended
+#: count inside it and spends exactly what that many readers cost, so one
+#: number decides both terms of the arrangement — which is why these legs carry
+#: a **per-spec** container limit where every other figure takes its own.
+#:
+#: **512 MiB is the thin point rather than the bottom of a range.** It is the
+#: smallest allocation that reaches the block path at all on the 24 MiB leg,
+#: which is where `19.15` measured 474 MiB median against 503.7 worst and the
+#: margin the gate asks for failed; 1 GiB and 1.5 GiB are where that sitting
+#: read 23.7% and 35.2% of headroom, so the fit has the whole shape of the
+#: curve in it rather than its worst end; and 2 GiB is where the 24 MiB leg's
+#: count saturates at the source's own recommendation, which is what separates
+#: "the allowance ran out" from "the recommendation did".
+#:
+#: **A leg may be OOM-killed, and that is a reading rather than an apparatus
+#: failure.** The rule aims resident at the limit by construction, so every
+#: flagless leg sits close to its own ceiling and the 128 MiB legs sit closest —
+#: `19.15`'s worst rep left three megabytes of 512. The sitting fails on the
+#: first rep if one crosses, which is minutes in and is the finding the
+#: constant is being chosen against.
+RESERVE_LIMITS: tuple[tuple[str, int], ...] = (
+    ("512m", 512 << 20),
+    ("1g", 1 << 30),
+    ("1536m", 1536 << 20),
+    ("2g", 2 << 30),
+)
+
+#: The limit the three mechanism legs are read at, and the input they are read
+#: over.
+#:
+#: **One limit and one block size, deliberately.** This figure is gated
+#: `warm-parallel` and crossing the mechanism legs with the limits and the
+#: block sizes buys a second cross of the expensive axis for no question
+#: anybody asked. The limit is the smallest one reaching the block path, which
+#: is where the fixed term is the largest share of resident and therefore where
+#: a leg that moves it is visible at all.
+RESERVE_MECHANISM_LIMIT = "512m"
+RESERVE_MECHANISM_INPUT = "control_xz"
+
+#: The two non-platform allocators the mechanism legs are read under, in table
+#: order.
+#:
+#: **Named, never re-specified**: what a leg's binary *is* — built
+#: `--no-default-features` in its own target dir, its allocator read back out of
+#: `--version` — is the `allocator` figure's apparatus rule, so these legs call
+#: `ensure_allocator_binary` exactly as `rss-attribution`'s do rather than
+#: carrying a second recipe for one build.
+#:
+#: **They are what separates fragmentation from retention.** The hypothesis the
+#: account must be able to kill is `BlockCache::slot`'s own: a block evicted
+#: while a `Bytes` still views it stays alive until that view drops, which is a
+#: live-block count no pool bounds. Nothing in `19.15`'s reading tells that from
+#: glibc fragmentation — and these legs do, since fragmentation moves under
+#: jemalloc and a retained view does not.
+RESERVE_ALLOCATORS: tuple[str, ...] = ("jemalloc", "mimalloc")
+
+#: The block size of the input the mechanism legs run over, read out of
+#: `RESERVE_FLAGLESS_INPUTS` rather than written again, so the unit the step's
+#: budgets are computed from and the unit the flagless table prints cannot
+#: disagree.
+RESERVE_MECHANISM_UNIT = next(
+    unit for name, _, unit in RESERVE_FLAGLESS_INPUTS if name == RESERVE_MECHANISM_INPUT
+)
+
+#: The path step's two stated budgets: exactly what one block-decoding reader of
+#: that file holds, and **one byte less**.
+#:
+#: `BlockCache::affordable` is `reader_bytes <= budget`, so the pair straddles
+#: that comparison and nothing else differs between the two runs — which is what
+#: makes the difference between them the whole block path against the streaming
+#: fallback rather than a budget change with a path change inside it. It is the
+#: 15.1 MiB against 474 MiB step `19.15` read across two *limits*, priced here
+#: at one byte.
+#:
+#: It earns its place whatever the attribution finds: it is what an operator
+#: needs in order to decide whether `--parallel-memory` is worth setting, and no
+#: figure states it.
+RESERVE_STEP_BUDGETS: tuple[int, ...] = (
+    reader_bytes(RESERVE_MECHANISM_UNIT),
+    reader_bytes(RESERVE_MECHANISM_UNIT) - 1,
+)
+
 
 def fmt_chunk(size: int) -> str:
     """A chunk size as the table spells it — KiB below a mebibyte, else MiB.
@@ -2250,6 +2480,38 @@ def _script(command: str) -> str:
             f"--source /dump.sql --dqcache /tmp/x.dqcache "
             f"--jobs {RESERVE_JOBS} --parallel-memory {budget} >/dev/null"
         )
+    if command.startswith(RESERVE_FLAGLESS):
+        # The flagless family: the same `parse` under the same wrapper, with
+        # **neither** flag, so what runs is what `ParallelArgs::resolve`
+        # resolves from the container's own limit. The arena setting is still a
+        # token, because the arena-cap mechanism leg is this shape with
+        # `MALLOC_ARENA_MAX` set and nothing else changed.
+        #
+        # **The container limit is not here**, and it cannot be: it is a
+        # `nerdctl run` argument rather than an argv one, so it rides on the
+        # `RunSpec` instead (`RunSpec.memory`) and is what two legs of this
+        # family differ by.
+        token = command.removeprefix(RESERVE_FLAGLESS)
+        arenas = {name: value for name, value, _ in RESERVE_ARENAS}
+        if token not in arenas:
+            raise ValueError(f"{command!r} names an arena setting the figure does not carry")
+        arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
+        return (
+            f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
+            f"--source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
+        )
+    if command.startswith(RESERVE_STEP_FAMILY):
+        # The path step: a stated budget either side of `reader_bytes`, one byte
+        # apart, so the two runs differ by whether `BlockCache::affordable`
+        # admits a block-decoding reader and by nothing else.
+        budget = command.removeprefix(RESERVE_STEP_FAMILY)
+        if not budget.isdigit() or int(budget) not in RESERVE_STEP_BUDGETS:
+            raise ValueError(f"{command!r} names a budget the figure does not carry")
+        return (
+            f"time {rss_wrapper(platform.machine())} /pgdq parse "
+            f"--source /dump.sql --dqcache /tmp/x.dqcache "
+            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} >/dev/null"
+        )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Everything else about them is the shape they are
@@ -2333,6 +2595,8 @@ def command_shapes() -> tuple[str, ...]:
             for token, _, _ in RESERVE_ARENAS
             for budget in RESERVE_BUDGETS
         ),
+        *(f"{RESERVE_FLAGLESS}{token}" for token, _, _ in RESERVE_ARENAS),
+        *(f"{RESERVE_STEP_FAMILY}{budget}" for budget in RESERVE_STEP_BUDGETS),
         *(f"decode-{w}" for w in DECODE_WORKERS),
         "dd",
     )
@@ -2348,6 +2612,14 @@ _WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
 #: non-`pgdq` shape has to be admitted here on purpose.
 _NO_WORKERS = ("dd",)
 
+#: The one `pgdq` family that states no worker count and is right not to: the
+#: reserve figure's flagless legs, whose reading *is* the count a flagless run
+#: resolves. Declared as its own prefix rather than appended to `_NO_WORKERS`
+#: above, because that tuple's rule is "not a run of ours" and this is the
+#: opposite — it is exactly a run of ours, stating nothing on purpose
+#: (`RESERVE_FLAGLESS`).
+_NO_FLAGS = (RESERVE_FLAGLESS,)
+
 
 def worker_count_problems() -> list[str]:
     """Command shapes that inherit a worker count instead of stating one.
@@ -2356,12 +2628,47 @@ def worker_count_problems() -> list[str]:
     shape that pins nothing measures whatever the CLI's `--jobs` defaults to
     that day, and no table can say which arrangement it read. That is how the
     default moved underneath nineteen figures twice with no shape changing and
-    nothing noticing."""
+    nothing noticing.
+
+    **The flagless family is exempt and declares itself** (`_NO_FLAGS`): its
+    reading is the count a flagless run resolves, so a shape that pinned one
+    would measure an arrangement the shipped default never produces.
+    `flagless_flag_problems` is the other side of that exemption — it holds
+    those shapes to stating *neither* flag, so the exemption cannot become a
+    quiet pin."""
     return [
         command
         for command in command_shapes()
-        if command not in _NO_WORKERS and not _WORKER_COUNT.search(_script(command))
+        if command not in _NO_WORKERS
+        and not command.startswith(_NO_FLAGS)
+        and not _WORKER_COUNT.search(_script(command))
     ]
+
+
+#: A byte budget stated on a command line. The flagless family must carry
+#: neither this nor a worker count.
+_BUDGET_STATED = re.compile(r"--parallel-memory \d+")
+
+
+def flagless_flag_problems() -> list[str]:
+    """Shapes in the flagless family that state a flag after all.
+
+    The exemption `_NO_FLAGS` opens is from *stating a count*, and its whole
+    premise is that the arrangement under test is the one a run with no flags
+    resolves for itself. A shape that quietly acquired `--jobs` or
+    `--parallel-memory` would still pass `worker_count_problems` — it is exempt
+    — and would publish a stated arrangement under a heading that says
+    discovered, which is the failure the count reconciliation exists against
+    seen from the far side."""
+    bad = []
+    for command in command_shapes():
+        if not command.startswith(_NO_FLAGS):
+            continue
+        script = _script(command)
+        stated = [*_WORKER_COUNT.findall(script), *_BUDGET_STATED.findall(script)]
+        if stated:
+            bad.append(f"{command} states {', '.join(sorted(stated))}")
+    return bad
 
 
 def pinned_count_problems() -> list[str]:
@@ -2376,12 +2683,15 @@ def pinned_count_problems() -> list[str]:
     defect from the other side and is the one no `--stale` can see.
 
     The decode instrument states `--workers`, not `--jobs`, and its counts are
-    its own figure's axis; it is exempt for the same reason, by prefix.
+    its own figure's axis; it is exempt for the same reason, by prefix. So are
+    the reserve figure's two stated families, whose count is the figure's own
+    constant (`RESERVE_JOBS`), and its flagless one, which states nothing and is
+    held to that by `flagless_flag_problems`.
     """
     bad = []
     for command in command_shapes():
         if command in _NO_WORKERS or command.startswith(
-            ("decode-", RESERVE_FAMILY, *JOBS_AXIS)
+            ("decode-", RESERVE_FAMILY, RESERVE_STEP_FAMILY, *_NO_FLAGS, *JOBS_AXIS)
         ):
             continue
         stated = set(_WORKER_COUNT.findall(_script(command)))
@@ -2470,7 +2780,9 @@ class Session:
             mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdq:ro")
         if spec.command == "parse-cache-out":
             mounts.append(f"{self.cfg.warm_dir}:/out")
-        memory = self.memory or self.cfg.memory
+        # The spec's own limit first: a flagless leg's container limit is the
+        # axis it is read across, so it overrides the figure's one container.
+        memory = spec.memory or self.memory or self.cfg.memory
         argv = [
             *self.cfg.container_argv(),
             "run",
@@ -2514,6 +2826,20 @@ class Session:
                 if spec.command.startswith("decode-")
                 else {}
             )
+            if spec.memory is not None:
+                # A stand-in resolution, for the same reason the reading above
+                # is a stand-in: a dry run must exercise every division the
+                # flagless table performs, and the count it fits over exists
+                # only in what a real run reports. Monotone in the limit so the
+                # fit is well conditioned, and deliberately **not** the
+                # library's own arithmetic — nothing here may grow into a second
+                # authority on what an allocation resolves to.
+                rank = 1 + [token for token, _ in RESERVE_LIMITS].index(spec.memory)
+                self._last_stdout = {
+                    **self._last_stdout,
+                    "resolved_jobs": str(3 * rank),
+                    "resolved_budget": str(3 * rank * (65 << 20)),
+                }
             return 0.4 + digest[0] / 255 * 5.0
         # The counters bracket the run as tightly as possible: two procfile
         # reads, outside the timer, either side of the subprocess. Their
@@ -2529,7 +2855,10 @@ class Session:
             )
         seconds = parse_bash_time(proc.stderr)
         self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
-        self._last_stdout = parse_reported(proc.stdout)
+        # The instrument's own stdout, and — for a scan — what the run says it
+        # resolved, which is on the log rather than on stdout. One dict: both
+        # are facts the run reported about itself, identical across reps.
+        self._last_stdout = {**parse_reported(proc.stdout), **parse_resolution(proc.stderr)}
         telemetry = counter_delta(before, after)
         telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
@@ -4527,6 +4856,17 @@ def _fmt_budget(n: int) -> str:
     return f"{n >> 20} MiB"
 
 
+def _fmt_budget_bytes(n: int) -> str:
+    """A budget a *run* resolved for itself, in MiB to one place.
+
+    `_fmt_budget` is for a number somebody typed and refuses anything but a
+    whole mebibyte, which is the right refusal there. A discovered budget is
+    `readers × what one reader holds` and is almost never whole — 195.1 MiB is
+    three readers of a 24 MiB-block file — so it is formatted rather than
+    checked."""
+    return f"{n / MIB:.1f} MiB"
+
+
 #: The one reading this figure does not take on the budget axis: the shipped
 #: serial arrangement, at the library's own `DEFAULT_MEMORY_BUDGET`.
 #:
@@ -4561,73 +4901,380 @@ def _reserve_specs() -> list[RunSpec]:
     ]
 
 
+#: The arena token that sets nothing. Every reading outside the arena legs
+#: themselves is taken under it, because the shipped constant has to survive the
+#: operator who capped nothing.
+RESERVE_UNCAPPED = RESERVE_ARENAS[0][0]
+
+#: The arena token that caps, read off the registry rather than written again.
+RESERVE_CAPPED = next(token for token, value, _ in RESERVE_ARENAS if value)
+
+
+def _flagless_shape(arena: str = "") -> str:
+    """The flagless command shape, under one arena setting."""
+    return f"{RESERVE_FLAGLESS}{arena or RESERVE_UNCAPPED}"
+
+
+def _reserve_flagless_specs() -> list[RunSpec]:
+    """One spec per compressed input and container limit, stating no flags.
+
+    **The limit is on the spec, not in the shape**, because it is a `nerdctl
+    run` argument: these legs share one command shape and are told apart by
+    `RunSpec.memory`, which `RunSpec.key` carries for exactly this reason."""
+    return [
+        RunSpec(
+            "pgdq",
+            name,
+            _flagless_shape(),
+            "warm-parallel",
+            f"{label}, flagless in {token}",
+            memory=token,
+        )
+        for name, label, _ in RESERVE_FLAGLESS_INPUTS
+        for token, _ in RESERVE_LIMITS
+    ]
+
+
+def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
+    """The three mechanism legs and what the table calls each.
+
+    **The reference is not here.** It is the flagless leg at the same input and
+    the same limit, which the axis above already measures — so each of these is
+    one reading rather than a pair, and the comparison is against a number no
+    leg of this block had to re-take.
+
+    The two allocator legs and the arena leg are the *same flagless
+    arrangement*, one mechanism at a time. The path step is the exception and
+    states a budget, because the thing under test is a comparison the
+    environment cannot express: `BlockCache::affordable` is read off the budget,
+    so one byte either side of `reader_bytes` is the only way to change the path
+    and nothing else.
+    """
+    legs: list[tuple[str, RunSpec]] = [
+        (
+            f"`{leg}`",
+            RunSpec(
+                f"alloc:{leg}",
+                RESERVE_MECHANISM_INPUT,
+                _flagless_shape(),
+                "warm-parallel",
+                f"flagless in {RESERVE_MECHANISM_LIMIT}, {leg}",
+                memory=RESERVE_MECHANISM_LIMIT,
+            ),
+        )
+        for leg in RESERVE_ALLOCATORS
+    ]
+    arena = next(label for token, _, label in RESERVE_ARENAS if token == RESERVE_CAPPED)
+    legs.append(
+        (
+            arena,
+            RunSpec(
+                "pgdq",
+                RESERVE_MECHANISM_INPUT,
+                _flagless_shape(RESERVE_CAPPED),
+                "warm-parallel",
+                f"flagless in {RESERVE_MECHANISM_LIMIT}, {arena}",
+                memory=RESERVE_MECHANISM_LIMIT,
+            ),
+        )
+    )
+    return legs
+
+
+def _reserve_step_specs() -> list[RunSpec]:
+    """The path step's pair, in table order: the budget that affords one
+    block-decoding reader, then the one a byte below it."""
+    return [
+        RunSpec(
+            "pgdq",
+            RESERVE_MECHANISM_INPUT,
+            f"{RESERVE_STEP_FAMILY}{budget}",
+            "warm-parallel",
+            f"{budget} stated, block decode "
+            + ("afforded" if budget >= reader_bytes(RESERVE_MECHANISM_UNIT) else "declined"),
+            memory=RESERVE_MECHANISM_LIMIT,
+        )
+        for budget in RESERVE_STEP_BUDGETS
+    ]
+
+
+def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]:
+    """The intercept and slope of the line best fitting `points`.
+
+    `resident = fixed + readers × per_reader`, which is the pair this figure
+    publishes. Written out rather than taken from a library because the harness
+    depends on nothing but the standard library, and because three lines of
+    arithmetic are easier to check than an import is to justify.
+
+    Raises on fewer than two distinct abscissae: a "fit" through one point is an
+    intercept asserted as a measurement, which is exactly the mistake `19.15`
+    found in `19.12`'s extrapolation.
+    """
+    xs = [x for x, _ in points]
+    if len(set(xs)) < 2:
+        raise ValueError(f"a fit needs two distinct reader counts, got {sorted(set(xs))}")
+    n = len(points)
+    mean_x, mean_y = sum(xs) / n, sum(y for _, y in points) / n
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in points)
+    var = sum((x - mean_x) ** 2 for x in xs)
+    slope = cov / var
+    return mean_y - slope * mean_x, slope
+
+
 def run_reserve(session: Session) -> str:
     """What a scan holds resident **above** the budget it was told it could have.
 
     The budget rule the phase ships is `limit - reserve`, and this is the one
     number in it. Neither existing resident figure answers it: `peak-rss`
     measures the whole against nothing, and `rss-attribution` decomposes growth
-    per `COPY` block. Here the stated budget is the axis and the published
-    quantity is the subtraction, so a leg whose reserve grows with the budget is
-    a rule that cannot be a constant at all.
+    per `COPY` block.
+
+    **It publishes a pair, not a total.** The quantity is the **fixed term and
+    the per-reader term**, each with its spread, because the reserve constant is
+    read off the first and `XzSource::partition_advice` off the second -- a table
+    reporting only resident would leave the decomposition exactly as `KD19`
+    records it. This is the opposite end of `rss-attribution`, which holds block
+    count as its axis and publishes a *slope*: there the intercept is the
+    allocator's baseline and a nuisance, here the intercept is the answer.
+
+    **Two families, because one arrangement cannot answer both questions.** The
+    flagless legs run what a person who states nothing gets, which is the
+    arrangement the constant is for and the only one that can say what the
+    shipped default holds; the stated legs pin the count and vary the budget,
+    which is the only arrangement that can tell a reader's cost from a budget
+    byte's -- under discovery `budget = jobs x per_worker` exactly, so there the
+    two axes are one axis. Dropping either leaves a figure that cannot answer
+    one of the two questions asked of it.
 
     **The shipped constant comes from the uncapped leg**, because the default
     has to survive the operator who did not set `MALLOC_ARENA_MAX` -- that being
-    the case that kills the process -- and from the smallest budget, the reserve
-    falling as the budget rises wherever resident is flat in it.
+    the case that kills the process.
     """
     figure = "reserve"
-    specs = _reserve_specs()
-    session.sweep(figure, [*specs, _RESERVE_BASELINE], session.cfg.reps(3))
+    stated = _reserve_specs()
+    flagless = _reserve_flagless_specs()
+    mechanism = _reserve_mechanism_specs()
+    steps = _reserve_step_specs()
+    # Before the first reading, as `rss-attribution` and the `allocator` figure
+    # build theirs: a leg discovered missing at rep two has already spent the
+    # session's first rep under a different machine state.
+    for _, spec in mechanism:
+        if spec.binary.startswith("alloc:"):
+            ensure_allocator_binary(session.cfg, spec.binary.removeprefix("alloc:"), session.log)
+    specs = [
+        *flagless,
+        *(spec for _, spec in mechanism),
+        *steps,
+        *stated,
+        _RESERVE_BASELINE,
+    ]
+    session.sweep(figure, specs, session.cfg.reps(3))
 
+    per_rep: list[str] = []
+
+    def rss(spec: RunSpec) -> list[float]:
+        readings = session.get_rss(figure, spec)
+        per_rep.append(f"- {spec.label}: " + ", ".join(fmt_mib(v) for v in readings))
+        return readings
+
+    def resolved(spec: RunSpec) -> tuple[int, int]:
+        """The worker count and budget this leg's own run reported.
+
+        Read back rather than computed: the count a flagless run resolves is
+        `ParallelArgs::resolve`'s answer to the allocation, and a harness that
+        predicted it would be a second authority on the rule under test."""
+        report = session.reported.get(spec.key(figure), {})
+        if "resolved_jobs" not in report or "resolved_budget" not in report:
+            raise RuntimeError(
+                f"{spec.label}: the run reported no resolved arrangement, so the fit has no "
+                "reader count — `scan started` is where it comes from (`parse_resolution`)"
+            )
+        return int(report["resolved_jobs"]), int(report["resolved_budget"])
+
+    # -- the flagless axis: what the shipped default resolves and holds -----
+    limits = dict(RESERVE_LIMITS)
+    by_flagless = {(spec.input, spec.memory): spec for spec in flagless}
+    flagless_rows, fits = [], []
+    for token, limit in RESERVE_LIMITS:
+        cells = [f"`-m {token}`"]
+        for name, _, unit in RESERVE_FLAGLESS_INPUTS:
+            spec = by_flagless[(name, token)]
+            readings = rss(spec)
+            jobs, budget = resolved(spec)
+            worst = max(readings) * 1024
+            head = (limit - worst) / limit * 100
+            # Whether this leg took the block path at all is the budget against
+            # what one reader of *this file* holds, which is
+            # `BlockCache::affordable` exactly. A declined leg is not on the
+            # line the fit is over, and the fit leaves it out by name.
+            block_path = budget >= reader_bytes(unit)
+            cells.append(
+                f"{fmt_mib_median_spread(readings)} · {jobs}r, {_fmt_budget_bytes(budget)} · "
+                f"head {head:.1f}%" + ("" if block_path else " · *streaming*")
+            )
+        flagless_rows.append(cells)
+    flagless_table = md_table(
+        ["Allocation", *(label for _, label, _ in RESERVE_FLAGLESS_INPUTS)], flagless_rows
+    )
+
+    for name, label, unit in RESERVE_FLAGLESS_INPUTS:
+        points, declined = [], []
+        for token, _ in RESERVE_LIMITS:
+            spec = by_flagless[(name, token)]
+            jobs, budget = resolved(spec)
+            readings = session.get_rss(figure, spec)
+            if budget < reader_bytes(unit):
+                declined.append(token)
+                continue
+            points.append((jobs, readings))
+        if len({jobs for jobs, _ in points}) < 2:
+            fits.append(
+                f"- **{label}**: no fit — "
+                + (
+                    f"the block path is declined at {', '.join(f'`{t}`' for t in declined)} and "
+                    if declined
+                    else ""
+                )
+                + "the legs that took it resolved "
+                f"{sorted({jobs for jobs, _ in points})} readers, which is one point."
+            )
+            continue
+        fixed, per_reader = _least_squares([(j, median(r) / 1024) for j, r in points])
+        # The band is the same fit taken over the per-rep extremes rather than
+        # the medians: a term's spread is what the reps permit it to be, and a
+        # single residual says nothing about which of the two terms moved.
+        band = [_least_squares([(j, pick(r) / 1024) for j, r in points]) for pick in (min, max)]
+        residual = max(
+            abs(median(r) / 1024 - (fixed + per_reader * j)) for j, r in points
+        )
+        fits.append(
+            f"- **{label}**: fixed **{fixed:,.0f} MiB** ({band[0][0]:,.0f}–{band[1][0]:,.0f}), "
+            f"a reader **{per_reader:,.1f} MiB** ({band[0][1]:,.1f}–{band[1][1]:,.1f}), over "
+            f"{len(points)} legs at {', '.join(str(j) for j, _ in points)} readers; residuals "
+            f"reach ±{residual:,.0f} MiB"
+            + (
+                f". `{'`, `'.join(declined)}` declined the block path and is not in the fit"
+                if declined
+                else ""
+            )
+        )
+
+    # -- the mechanism legs, against the flagless leg they differ from one ---
+    reference = by_flagless[(RESERVE_MECHANISM_INPUT, RESERVE_MECHANISM_LIMIT)]
+    ref_readings = session.get_rss(figure, reference)
+    ref_jobs, _ = resolved(reference)
+    mech_rows = [
+        [
+            "the reference — glibc, arenas uncapped",
+            fmt_mib_median_spread(ref_readings),
+            "—",
+        ]
+    ]
+    for label, spec in mechanism:
+        readings = rss(spec)
+        delta = median(readings) - median(ref_readings)
+        mech_rows.append(
+            [
+                label,
+                fmt_mib_median_spread(readings),
+                f"{fmt_rss_delta(delta)} ({delta / median(ref_readings) * 100:+.0f}%)",
+            ]
+        )
+    mech_table = md_table(["Leg", "Peak RSS", "Against the reference"], mech_rows)
+
+    # -- the path step ------------------------------------------------------
+    step_rows, step_medians = [], []
+    for spec in steps:
+        readings = rss(spec)
+        step_medians.append(median(readings))
+        budget = int(spec.command.removeprefix(RESERVE_STEP_FAMILY))
+        step_rows.append(
+            [
+                f"`--parallel-memory {budget}`"
+                + (
+                    " — one reader afforded"
+                    if budget >= reader_bytes(RESERVE_MECHANISM_UNIT)
+                    else " — **one byte short**, block decode declined"
+                ),
+                fmt_mib_median_spread(readings),
+            ]
+        )
+    step_table = md_table(["Leg", "Peak RSS"], step_rows)
+
+    # -- the stated-budget axis ---------------------------------------------
     by_key = {
         (spec.input, spec.command.removeprefix(RESERVE_FAMILY).rpartition("-")[0],
          int(spec.command.rpartition("-")[2])): spec
-        for spec in specs
+        for spec in stated
     }
-    rows, per_rep, worst = [], [], {}
+    rows, worst_stated = [], {}
     for name, source in RESERVE_INPUTS:
         for token, _, arena in RESERVE_ARENAS:
             cells = [f"{source}, {arena}"]
             for budget in RESERVE_BUDGETS:
                 spec = by_key[(name, token, budget)]
-                readings = session.get_rss(figure, spec)
+                readings = rss(spec)
                 reserve = median(readings) - budget / 1024
-                worst[token] = max(worst.get(token, reserve), reserve)
+                worst_stated[token] = max(worst_stated.get(token, reserve), reserve)
                 cells.append(f"{fmt_mib_median_spread(readings)} · {fmt_rss_delta(reserve)}")
-                per_rep.append(
-                    f"- {spec.label}: " + ", ".join(fmt_mib(v) for v in readings)
-                )
             rows.append(cells)
     table = md_table(
         ["Leg", *(_fmt_budget(b) + " stated" for b in RESERVE_BUDGETS)], rows
     )
 
-    base = session.get_rss(figure, _RESERVE_BASELINE)
+    base = rss(_RESERVE_BASELINE)
     base_reserve = median(base) - (LIBRARY_DEFAULT_BUDGET / 1024)
-    per_rep.append(
-        f"- {_RESERVE_BASELINE.label}: " + ", ".join(fmt_mib(v) for v in base)
-    )
-    notes = (
-        f"\n\nEach cell is peak resident set, then that reading **minus the budget the run "
-        f"stated** — the reserve. Every row states `--jobs {RESERVE_JOBS}` in a "
-        f"{PARALLEL_MEMORY} container, an apparatus departure from the register's "
-        f"512 MB, which is smaller than the largest budget under test.\n\n"
-        "**The constant the budget rule takes is the uncapped leg's worst cell**, since the "
+    return (
+        "**What a flagless scan resolves, and what it then holds.** Each cell is peak resident "
+        "set, the worker count and budget the run itself reported, and what the *worst* rep left "
+        "of the allocation — which is the number a cgroup's killer reads, where the median is "
+        "context. Nothing is stated on these legs: the container's limit is the whole input, "
+        "which is why it is the axis.\n\n"
+        + flagless_table
+        + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
+        "block path, the band being the same fit over the per-rep extremes:\n\n"
+        + "\n".join(fits)
+        + f"\n\n**What each mechanism moves**, at one block size and one allocation — "
+        f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
+        f"{ref_jobs} readers. The reference is the axis row above, not a re-take. The allocator "
+        "legs are what separate glibc fragmentation from anything structural — fragmentation "
+        "moves under jemalloc, a block retained behind a live view does not — and the arena leg "
+        "bounds how much of the term is arena retention at all:\n\n"
+        + mech_table
+        + "\n\n**What the block path costs against the streaming fallback**, one byte of budget "
+        f"apart in the same {RESERVE_MECHANISM_LIMIT} allocation at `--jobs {RESERVE_JOBS}`: "
+        f"{fmt_rss_delta(step_medians[0] - step_medians[-1])} between the two, "
+        f"{step_medians[0] / max(step_medians[-1], 1):.1f}×. `BlockCache::affordable` is "
+        f"`reader_bytes <= budget`, so the pair straddles that comparison and differs in nothing "
+        "else. It is what an operator deciding whether to set `--parallel-memory` needs, and no "
+        "other figure states it:\n\n"
+        + step_table
+        + f"\n\n**The stated-budget axis, which is what makes the pair decomposable.** Each cell "
+        f"is peak resident set, then that reading **minus the budget the run stated** — the "
+        f"reserve. Every row states `--jobs {RESERVE_JOBS}` in a {PARALLEL_MEMORY} container, an "
+        f"apparatus departure from the register's 512 MB, which is smaller than the largest "
+        f"budget under test; the flagless legs above each carry their own allocation instead.\n\n"
+        + table
+        + "\n\n**The constant the budget rule takes is the uncapped leg's worst cell**, since the "
         "default must survive an operator who set no arena cap: "
         + ", ".join(
-            f"{arena} **{fmt_rss_delta(worst[token])}**" for token, _, arena in RESERVE_ARENAS
+            f"{arena} **{fmt_rss_delta(worst_stated[token])}**"
+            for token, _, arena in RESERVE_ARENAS
         )
         + ".\n\n"
-        f"**The shipped serial arrangement is read beside it and not on the axis**: "
+        f"**The shipped serial arrangement is read beside it and not on either axis**: "
         f"`control` at `--jobs 1` with no budget stated runs at the library's "
         f"{_fmt_budget(LIBRARY_DEFAULT_BUDGET)} default and holds "
         f"{fmt_mib_median_spread(base)}, a reserve of **{fmt_rss_delta(base_reserve)}**. That "
         "run is `peak-rss`'s own `control` row — the same binary, command, input and regime — "
         "so publishing this table means declaring it a shared reading rather than measuring "
         "it twice.\n"
+        + "\nPer-rep readings (peak RSS):\n"
+        + "\n".join(per_rep)
+        + "\n"
     )
-    return table + notes + "\nPer-rep readings (peak RSS):\n" + "\n".join(per_rep) + "\n"
+
+
 def _fmt_ns(ns: float) -> str:
     return f"{ns / 1000:.2f} µs" if ns >= 1000 else f"{ns:.0f} ns"
 
@@ -5138,24 +5785,34 @@ UNTAKEN: list[Figure] = [
         warm_inputs=_ATTRIBUTION_INPUTS,
         run=run_rss_attribution,
     ),
-    # The budget rule's one number, and the third resident-set instrument. It
-    # waits here rather than in `FIGURES` because the sitting that chooses the
-    # constant is **diagnostic** — the phase spec gives it no published table
-    # until the closing sweep, which is also the sitting that can afford it the
-    # `Shared` edge below.
+    # The budget rule's one number, the compressed path's account, and the third
+    # resident-set instrument. It waits here rather than in `FIGURES` because the
+    # sitting that takes it is **diagnostic** — the phase spec gives it no
+    # published table until the closing sweep, which is also the sitting that can
+    # afford it the `Shared` edge below.
     #
-    # **It declares no share while it is untaken, for `rss-attribution`'s
-    # reason.** Its serial-default row is `peak-rss`'s `control` row spec for
-    # spec, so the two must eventually share a reading rather than take one
-    # each; declaring that edge from here would entangle `peak-rss`, which the
-    # doc carries from a standalone `41c96bb` sitting, and fail `--check` on
-    # that sitting's marker with no sweep yet to cure it. **Whichever sweep
-    # declares it owes a harness change with it**: `Session.borrow` copies wall
-    # clock only, so an RSS reading cannot cross a share today.
+    # **The edges it owes when it is published are one, and the second is a
+    # stated non-edge.** Onto `peak-rss`: its serial-default row is that figure's
+    # `control` row spec for spec, so the two must share a reading rather than
+    # take one each. Onto `rss-attribution`: **none**, and that is a reading of
+    # the leg set rather than an omission — that figure's every leg runs over
+    # `blocks500`/`blocks4000`, the two block-count shapes whose axis it is,
+    # where every leg here runs over `control`, `control_xz` or `control_xz128`,
+    # so no two of their runs are the same run. What the three do share is a
+    # *sitting*: all three read resident, so `M74`'s sweep takes them together,
+    # and that collapse is the closure the harness computes rather than an edge
+    # any one of them declares.
+    #
+    # **No edge is declared while it is untaken**, for `rss-attribution`'s
+    # reason: declaring one from here entangles `peak-rss`, which the doc carries
+    # from a standalone `41c96bb` sitting, and fails `--check` on that sitting's
+    # marker with no sweep yet to cure it. **Whichever sweep declares it owes a
+    # harness change with it**: `Session.borrow` copies wall clock only, so an
+    # RSS reading cannot cross a share today.
     Figure(
         id="reserve",
         section="What a scan holds above the budget it was given",
-        # Two regimes: the budget axis occupies every hardware thread and is
+        # Two regimes: every axis here occupies every hardware thread and is
         # gated as `warm-parallel`, while the serial-default row is the shape
         # `peak-rss` takes and is gated as that figure gates it.
         stage="warm+warm-parallel",
@@ -5173,11 +5830,19 @@ UNTAKEN: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # The baseline's input is one of the two already, and is named anyway:
-        # the day it is not, a staging list built off `RESERVE_INPUTS` alone
-        # would leave that row's file unstaged.
+        # Every family's inputs, deduplicated: the stated axis's two, the
+        # flagless axis's two block sizes, and the baseline's — which is one of
+        # the stated axis's already and is named anyway, since the day it is not,
+        # a staging list built off `RESERVE_INPUTS` alone leaves that row's file
+        # unstaged.
         warm_inputs=tuple(
-            dict.fromkeys((*(name for name, _ in RESERVE_INPUTS), _RESERVE_BASELINE.input))
+            dict.fromkeys(
+                (
+                    *(name for name, _ in RESERVE_INPUTS),
+                    *(name for name, _, _ in RESERVE_FLAGLESS_INPUTS),
+                    _RESERVE_BASELINE.input,
+                )
+            )
         ),
         memory=PARALLEL_MEMORY,
         run=run_reserve,

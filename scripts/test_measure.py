@@ -266,14 +266,22 @@ class WorkerCount(unittest.TestCase):
 
     def test_a_shape_that_inherits_one_is_reported(self):
         # The check must fail loudly, since the shape it would pass still runs
-        # and still produces a table.
+        # and still produces a table. Every shape but the two declared
+        # exemptions: `dd`, which is not a run of ours, and the flagless family,
+        # whose reading is the count a flagless run resolves —
+        # `flagless_flag_problems` is what holds *that* family to stating
+        # nothing, so neither exemption leaves a shape unchecked.
         with unittest.mock.patch.object(
             measure, "_script", lambda c: "time /pgdq parse --source /dump.sql"
         ):
             reported = measure.worker_count_problems()
         self.assertEqual(
             sorted(reported),
-            sorted(c for c in measure.command_shapes() if c != "dd"),
+            sorted(
+                c
+                for c in measure.command_shapes()
+                if c != "dd" and not c.startswith(measure.RESERVE_FLAGLESS)
+            ),
         )
 
     def test_check_fails_on_a_shape_that_inherits_one(self):
@@ -1825,6 +1833,362 @@ class Reserve(unittest.TestCase):
         # would be a section with no numbers under it.
         doc = (measure.REPO / "docs/design/measurements.md").read_text()
         self.assertNotIn("<!-- figure: reserve ", doc)
+
+class CompressedAccount(unittest.TestCase):
+    """The three families `reserve` grew when the compressed path got an account.
+
+    The figure's published quantity is a **pair** — a fixed term and a
+    per-reader term — so every assertion here is a way to get a plausible pair
+    of the wrong thing. Four fail silently and are the reason this class
+    exists. A **flagless leg that states a flag** measures a stated arrangement
+    under a heading that says discovered, which `worker_count_problems` cannot
+    see because that family is exempt from it. Two **legs differing only in
+    their container limit** would share a reading, the limit not being an argv
+    fact — which is `_attribution_specs`' failure with a new cause. A **fit over
+    one point** is an intercept asserted as a measurement, which is exactly
+    what `19.15` found in `19.12`'s extrapolation. And a **mechanism leg at its
+    own limit or block size** would read as a mechanism moving a term when what
+    moved was the arrangement.
+    """
+
+    def _fig(self):
+        return measure.SELECTABLE_BY_ID["reserve"]
+
+    # -- the flagless axis -------------------------------------------------
+
+    def test_the_flagless_axis_runs_at_both_block_sizes(self):
+        # A compressed reader's charge bills `2 x unit`, so a unit-shaped error
+        # in it is multiplied by the reader count: a fit at one block size
+        # cannot tell a term that scales with the unit from one that does not.
+        self.assertEqual(
+            [name for name, _, _ in measure.RESERVE_FLAGLESS_INPUTS],
+            ["control_xz", "control_xz128"],
+        )
+        for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS:
+            with self.subTest(input=name):
+                self.assertEqual(measure.INPUTS[name].suffix, ".xz")
+                self.assertIn(name, self._fig().warm_inputs)
+                self.assertGreater(unit, 0)
+        units = {unit for _, _, unit in measure.RESERVE_FLAGLESS_INPUTS}
+        self.assertEqual(len(units), len(measure.RESERVE_FLAGLESS_INPUTS))
+
+    def test_the_block_sizes_are_the_ones_the_other_compressed_figure_reads(self):
+        # Two block sizes is a claim about files, not about this figure, so the
+        # pair is the one `parallel-peak-rss` already publishes — a third size
+        # here would be a second answer to the same question.
+        self.assertEqual(
+            [name for name, _, _ in measure.RESERVE_FLAGLESS_INPUTS],
+            [name for name, _ in measure.PARALLEL_RSS_LEGS],
+        )
+
+    def test_the_flagless_shapes_state_neither_flag(self):
+        # The exemption `_NO_FLAGS` opens is from *stating a count*; a shape
+        # that quietly acquired one would still pass the count reconciliation,
+        # being exempt, and would publish a stated arrangement as a discovered
+        # one.
+        self.assertEqual(measure.flagless_flag_problems(), [])
+        for token, _, _ in measure.RESERVE_ARENAS:
+            with self.subTest(arena=token):
+                script = measure._script(f"{measure.RESERVE_FLAGLESS}{token}")
+                self.assertNotIn("--jobs", script)
+                self.assertNotIn("--parallel-memory", script)
+                self.assertIn("/pgdq parse --source /dump.sql", script)
+
+    def test_a_flagless_shape_that_states_a_flag_is_reported(self):
+        # The check must fail loudly: the shape it would pass still runs and
+        # still produces a row.
+        with unittest.mock.patch.object(
+            measure,
+            "_script",
+            lambda c: "time /pgdq parse --source /dump.sql --jobs 4 --parallel-memory 99",
+        ):
+            reported = measure.flagless_flag_problems()
+        self.assertEqual(
+            sorted(reported),
+            sorted(
+                f"{c} states --jobs 4, --parallel-memory 99"
+                for c in measure.command_shapes()
+                if c.startswith(measure.RESERVE_FLAGLESS)
+            ),
+        )
+
+    def test_the_exemption_is_declared_at_both_ends(self):
+        # Declared as its own prefix rather than appended to `_NO_WORKERS`,
+        # whose rule is "not a run of ours" — this is exactly a run of ours,
+        # stating nothing on purpose.
+        self.assertIn(measure.RESERVE_FLAGLESS, measure._NO_FLAGS)
+        self.assertNotIn(measure.RESERVE_FLAGLESS, measure._NO_WORKERS)
+        self.assertEqual(measure.worker_count_problems(), [])
+        self.assertEqual(measure.pinned_count_problems(), [])
+
+    def test_the_limit_rides_on_the_spec_and_two_legs_never_share_a_reading(self):
+        # The container limit is a `nerdctl run` argument, so it cannot be in
+        # the command shape; these legs share one shape and are told apart by
+        # `RunSpec.memory`, which `RunSpec.key` has to carry or they collapse
+        # into one another's reps.
+        specs = measure._reserve_flagless_specs()
+        self.assertEqual(
+            len(specs),
+            len(measure.RESERVE_FLAGLESS_INPUTS) * len(measure.RESERVE_LIMITS),
+        )
+        keys = [s.key("reserve") for s in specs]
+        self.assertEqual(len(set(keys)), len(keys))
+        tokens = {token for token, _ in measure.RESERVE_LIMITS}
+        for spec in specs:
+            with self.subTest(leg=spec.label):
+                self.assertIn(spec.memory, tokens)
+                self.assertIn(f"m={spec.memory}", spec.key("reserve"))
+
+    def test_a_spec_that_states_no_limit_keys_as_it_always_did(self):
+        # Appended rather than always present, so a past sitting's `raw.json`
+        # still renders: every spec outside this figure keys exactly as before.
+        spec = measure.RunSpec("pgdq", "control", "parse-rss", "warm", "x")
+        self.assertEqual(spec.key("peak-rss"), "peak-rss/pgdq/control/parse-rss/warm")
+        self.assertEqual(spec.memory, None)
+
+    def test_nothing_outside_this_figure_states_a_per_spec_limit(self):
+        # A per-spec limit exists because one figure's axis *is* the limit.
+        # Anywhere else it would be a container departure no table states.
+        others = [
+            *measure._reserve_specs(),
+            *_peak_rss_specs(),
+            *measure._parallel_rss_specs(),
+            *measure._parallel_specs(),
+            *measure._decode_specs(),
+            *(spec for _, small, big in measure._attribution_specs() for spec in (small, big)),
+            measure._RESERVE_BASELINE,
+        ]
+        for spec in others:
+            with self.subTest(leg=spec.label):
+                self.assertIsNone(spec.memory)
+
+    def test_the_limits_span_the_curve_rather_than_its_worst_end(self):
+        # 512 MiB is the smallest allocation reaching the block path at all and
+        # is where the gate failed; a set clustered there would fit a line
+        # through the thin point alone.
+        self.assertEqual(measure.RESERVE_LIMITS[0], ("512m", 512 << 20))
+        byte_values = [n for _, n in measure.RESERVE_LIMITS]
+        self.assertEqual(sorted(byte_values), byte_values)
+        self.assertGreaterEqual(len(measure.RESERVE_LIMITS), 3)
+
+    def test_every_flagless_leg_is_read_under_the_uncapped_arena(self):
+        # The shipped constant comes from the operator who capped nothing; the
+        # capped arrangement is a mechanism leg, not the axis.
+        shape = f"{measure.RESERVE_FLAGLESS}{measure.RESERVE_UNCAPPED}"
+        for spec in measure._reserve_flagless_specs():
+            with self.subTest(leg=spec.label):
+                self.assertEqual(spec.command, shape)
+        self.assertNotIn("MALLOC_ARENA_MAX", measure._script(shape))
+
+    # -- the mechanism legs ------------------------------------------------
+
+    def test_the_mechanism_legs_are_one_block_size_and_one_allocation(self):
+        # Crossing them with the limits and the block sizes buys a second cross
+        # of an expensive axis for no question anybody asked.
+        legs = measure._reserve_mechanism_specs()
+        self.assertEqual(len(legs), len(measure.RESERVE_ALLOCATORS) + 1)
+        for label, spec in legs:
+            with self.subTest(leg=label):
+                self.assertEqual(spec.input, measure.RESERVE_MECHANISM_INPUT)
+                self.assertEqual(spec.memory, measure.RESERVE_MECHANISM_LIMIT)
+        self.assertIn(
+            measure.RESERVE_MECHANISM_LIMIT, [token for token, _ in measure.RESERVE_LIMITS]
+        )
+        self.assertIn(
+            measure.RESERVE_MECHANISM_INPUT,
+            [name for name, _, _ in measure.RESERVE_FLAGLESS_INPUTS],
+        )
+
+    def test_the_reference_is_a_leg_of_the_axis_rather_than_a_re_take(self):
+        # Each mechanism leg is one reading, compared against the flagless leg
+        # at the same input and limit — which the axis above already measures,
+        # so nothing here is measured twice.
+        reference = measure.RunSpec(
+            "pgdq",
+            measure.RESERVE_MECHANISM_INPUT,
+            f"{measure.RESERVE_FLAGLESS}{measure.RESERVE_UNCAPPED}",
+            "warm-parallel",
+            "",
+            memory=measure.RESERVE_MECHANISM_LIMIT,
+        )
+        keys = [s.key("reserve") for s in measure._reserve_flagless_specs()]
+        self.assertIn(reference.key("reserve"), keys)
+
+    def test_the_allocator_legs_are_named_never_respecified(self):
+        # What a leg's binary *is* is the `allocator` figure's apparatus rule,
+        # so these call `ensure_allocator_binary` through the same `alloc:`
+        # naming rather than carrying a second recipe for one build.
+        legs = dict(measure._reserve_mechanism_specs())
+        for leg in measure.RESERVE_ALLOCATORS:
+            with self.subTest(allocator=leg):
+                self.assertIn(leg, measure.ALLOCATOR_LEGS)
+                spec = legs[f"`{leg}`"]
+                self.assertEqual(spec.binary, f"alloc:{leg}")
+                self.assertEqual(
+                    spec.command, f"{measure.RESERVE_FLAGLESS}{measure.RESERVE_UNCAPPED}"
+                )
+        self.assertNotIn(measure.ALLOCATOR_LEGS[0], measure.RESERVE_ALLOCATORS)
+
+    def test_the_arena_leg_is_the_flagless_shape_with_the_cap_and_nothing_else(self):
+        # One mechanism at a time: the capped leg differs from the reference by
+        # the environment the wrapper `exec`s into and by nothing on the command
+        # line.
+        arena = next(
+            label for token, _, label in measure.RESERVE_ARENAS if token == measure.RESERVE_CAPPED
+        )
+        spec = dict(measure._reserve_mechanism_specs())[arena]
+        self.assertEqual(spec.binary, "pgdq")
+        script = measure._script(spec.command)
+        self.assertIn("time MALLOC_ARENA_MAX=2 perl", script)
+        self.assertNotIn("--jobs", script)
+        self.assertNotIn("--parallel-memory", script)
+
+    # -- the path step -----------------------------------------------------
+
+    def test_the_step_is_one_byte_either_side_of_what_a_reader_holds(self):
+        # `BlockCache::affordable` is `reader_bytes <= budget`, so the pair
+        # straddles that comparison and differs in nothing else. A wider gap
+        # would be a budget change with a path change inside it.
+        afforded, declined = measure.RESERVE_STEP_BUDGETS
+        self.assertEqual(afforded, measure.reader_bytes(measure.RESERVE_MECHANISM_UNIT))
+        self.assertEqual(declined, afforded - 1)
+        for spec in measure._reserve_step_specs():
+            with self.subTest(leg=spec.label):
+                self.assertEqual(spec.input, measure.RESERVE_MECHANISM_INPUT)
+                self.assertEqual(spec.memory, measure.RESERVE_MECHANISM_LIMIT)
+                self.assertIn(f"--jobs {measure.RESERVE_JOBS}", measure._script(spec.command))
+
+    def test_the_step_budgets_fit_inside_the_allocation_they_run_in(self):
+        # A stated budget above the container's own limit would measure the
+        # container, not the path.
+        limit = dict(measure.RESERVE_LIMITS)[measure.RESERVE_MECHANISM_LIMIT]
+        for budget in measure.RESERVE_STEP_BUDGETS:
+            with self.subTest(budget=budget):
+                self.assertLess(budget, limit)
+
+    def test_a_step_budget_the_figure_does_not_carry_is_an_error(self):
+        with self.assertRaises(ValueError):
+            measure._script(f"{measure.RESERVE_STEP_FAMILY}99")
+
+    # -- the reader charge, mirrored ---------------------------------------
+
+    def test_the_reader_charge_is_the_librarys_own_three_terms(self):
+        # Hand-computed on `QUERY_SUBSTREAM_CAP`'s argument, so the mirror is
+        # checked here rather than trusted: two block slots, the chunk buffer
+        # and the decoder's retention, which is 58.03 MiB at koji's block size.
+        self.assertEqual(measure.reader_bytes(24 << 20), 60_852_000)
+        self.assertEqual(
+            measure.reader_bytes(128 << 20),
+            2 * (128 << 20) + measure.LIBRARY_CHUNK_BYTES + measure.XZ_DECODE_FOOTPRINT,
+        )
+        self.assertEqual(measure.LIBRARY_CHUNK_BYTES, measure.CHUNK_DEFAULT)
+
+    def test_the_mirrored_chunk_size_is_the_librarys_default(self):
+        # The one term of the three that is a library constant rather than a
+        # property of the file or of the decoder.
+        src = (measure.REPO / "pgdump_query/src/scan.rs").read_text()
+        self.assertIn(
+            f"pub const DEFAULT_CHUNK_SIZE: usize = {measure.LIBRARY_CHUNK_BYTES >> 20} << 20;",
+            src,
+        )
+
+    def test_the_mechanism_unit_is_read_off_the_input_registry(self):
+        # Written twice, the unit the step's budgets are computed from and the
+        # unit the flagless table prints would be free to disagree.
+        self.assertEqual(
+            measure.RESERVE_MECHANISM_UNIT,
+            next(
+                unit
+                for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS
+                if name == measure.RESERVE_MECHANISM_INPUT
+            ),
+        )
+
+    # -- the resolution, read back off the run -----------------------------
+
+    def test_the_resolved_arrangement_is_read_off_the_runs_own_log(self):
+        # The count a flagless run resolves exists nowhere else: the harness
+        # cannot compute it without reimplementing the rule under test.
+        log = (
+            "2026-09-11T03:33:02Z  INFO running inside a stated memory allocation "
+            "jobs=3 (recommended by the source; lowered from 24 by the allocation) "
+            "memory_bytes=204576096 (discovered: /sys/fs/cgroup/memory.max states a "
+            "limit of 536870912 byte(s)) limit_bytes=536870912\n"
+            "2026-09-11T03:33:02Z  INFO preamble scan started bytes=3221227790 "
+            "chunk_size=1048576 jobs=3 memory_bytes=204576096\n"
+            "2026-09-11T03:33:18Z  INFO scan started bytes=3221227790 resumed_from=425 "
+            "chunk_size=1048576 jobs=3 memory_bytes=204576096\n"
+            "maxrss_kib=485786\n"
+        )
+        self.assertEqual(
+            measure.parse_resolution(log),
+            {"resolved_jobs": "3", "resolved_budget": "204576096"},
+        )
+
+    def test_the_line_it_reads_still_carries_that_pair_in_that_order(self):
+        # The flagless axis rests on a log line, which is the one input here
+        # that is not a constant: a field renamed or reordered in `stream.rs`
+        # turns every reader count into a missing key, and the figure would fail
+        # a sitting in rather than at its first second.
+        src = (measure.REPO / "pgdump_query/src/stream.rs").read_text()
+        event = src[: src.index('"scan started"')]
+        jobs = event.rindex("jobs = ")
+        budget = event.rindex("memory_bytes = ")
+        self.assertLess(jobs, budget)
+        self.assertNotIn("\n\n", event[jobs:])
+
+    def test_a_run_that_reports_no_arrangement_reports_nothing(self):
+        # Every shape that is not a scan, `dd` and the decode instrument among
+        # them. `{}` rather than a guess: a renderer that wants the pair says so
+        # by failing on its absence.
+        self.assertEqual(measure.parse_resolution("real 0m1.000s\n"), {})
+
+    # -- the fit ------------------------------------------------------------
+
+    def test_the_fit_recovers_a_line_exactly(self):
+        fixed, per_reader = measure._least_squares([(1, 110.0), (2, 120.0), (4, 140.0)])
+        self.assertAlmostEqual(fixed, 100.0)
+        self.assertAlmostEqual(per_reader, 10.0)
+
+    def test_a_fit_through_one_reader_count_is_refused(self):
+        # An intercept asserted as a measurement is what `19.15` found in
+        # `19.12`'s extrapolation, and it is the failure this figure exists to
+        # stop repeating.
+        with self.assertRaises(ValueError):
+            measure._least_squares([(3, 474.0), (3, 503.0)])
+
+    # -- the edges it owes --------------------------------------------------
+
+    def test_the_only_reading_it_shares_is_peak_rsss_control_row(self):
+        """What it owes `peak-rss` when it is published, and what it does not owe
+        `rss-attribution`.
+
+        The edge is mechanical rather than asserted: a shared reading is two
+        figures keying the same run, so the overlap is computable. `peak-rss`
+        carries exactly one of these runs — the serial-default baseline.
+        `rss-attribution` carries none, and that is a reading of the leg set
+        rather than an omission: its every leg runs over the two block-count
+        shapes whose axis it is, where nothing here does. What the three share
+        is a *sitting*, which `M74` is for."""
+        mine = {
+            spec.key("")
+            for spec in (
+                *measure._reserve_specs(),
+                *measure._reserve_flagless_specs(),
+                *(s for _, s in measure._reserve_mechanism_specs()),
+                *measure._reserve_step_specs(),
+                measure._RESERVE_BASELINE,
+            )
+        }
+        peak = {spec.key("") for spec in _peak_rss_specs()}
+        attribution = {
+            spec.key("")
+            for _, small, big in measure._attribution_specs()
+            for spec in (small, big)
+        }
+        self.assertEqual(mine & peak, {measure._RESERVE_BASELINE.key("")})
+        self.assertEqual(mine & attribution, set())
+
 
 class PinnedWorkerCount(unittest.TestCase):
     """The other half of the `JOBS_AXIS` exemption.
