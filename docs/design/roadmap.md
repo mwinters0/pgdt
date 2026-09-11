@@ -944,7 +944,16 @@ which is what makes the difference worth minding at the moment one is found.
   honestly and reports the decline, and reworking a pool's sizing rule needs
   evidence P19's account does not produce. The cheap half of it — whether the
   floor buys anything at all below `POOL_DEPTH` readers — is a reading, not a
-  design.
+  design. **That reading is now taken, and it says the floor buys nothing there.**
+  At a 512 MiB limit on koji's block size, a `runs/` probe swept the reader
+  count by varying the reserve alone: four readers is 1.66× the streaming
+  fallback and three is 1.31×, but **two readers is 6% slower than declining and
+  one reader is 3% slower**, holding 250 MiB and 63 MiB against the fallback's
+  15 (`docs/design/roadmap-P19.16-reserve-constant-notes.md`, "The block path
+  buys nothing below three readers, on this file"). One file, one limit and a
+  probe rather than a figure — but it moves the item's shape: the cheap half is
+  answered, and what is left is whether a count-tracking floor would put a third
+  reader inside allocations that today get none.
 
 - **A "safe mode" that deliberately under-fills a stated allocation.** The
   defaults fill a discovered cgroup limit, on the reasoning that a limit is
