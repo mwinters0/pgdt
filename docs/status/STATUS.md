@@ -855,23 +855,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**A leg that lost *any* rep to the OOM killer leaves the `reserve` fit
-entirely, rather than contributing its survivors** (`19.17.1`). The spec row
-asks only that a *cell* be censored; whether a partly-killed leg's surviving
-reps are still a point on the line is a call it does not make, and it was made
-by dropping the leg.
-
-The reasoning is survivorship: the reps that survived are exactly the ones that
-stayed under the ceiling, so their median understates and their worst is not the
-worst — and a line fitted through them reads low, which is precisely the number
-that would make a too-small reserve look adequate. Against that, the flagless
-fit has only three or four points to begin with, so one kill can leave it
-unconditioned and the table then reports "no fit" where it could have reported a
-weak one.
-
-What would change if reconsidered: the survivors would rejoin the fit with the
-cell annotated, and `19.16`'s constant could then be read off a curve one of
-whose points is biased low by an unknown amount. Keeping the drop costs a fit;
-reversing it risks a reserve chosen against readings that stopped short. It is
-one predicate in `run_reserve`'s flagless loop
-([`../design/roadmap-P19.17.1-killed-leg-notes.md`](../design/roadmap-P19.17.1-killed-leg-notes.md)).
+_Nothing open._

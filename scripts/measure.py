@@ -5254,10 +5254,29 @@ def run_reserve(session: Session) -> str:
     **A leg the kernel killed is a third cell state, not a missing number**
     (`KILL_TOLERANT`). Its reading is a bound on a peak the process never
     reached, so the cell says so and carries no headroom; and the leg leaves the
-    fit **whether or not a rep survived**, because the reps that survived are
-    the ones that stayed under the ceiling — a line through them reads low,
-    which is the number that would make a too-small reserve look adequate.
-    `emit` is what then bars the figure from publication.
+    fit **whether or not a rep survived**. `emit` is what then bars the figure
+    from publication.
+
+    **What that exclusion is for is enforcement, not the survivorship it looks
+    like.** Survivorship is real — the reps that survived are the ones that
+    stayed under the ceiling, so a line through them reads low — but it is not
+    what earns the rule its place, because two other rules already close the
+    path it protects: the constant is not read off a censored table at all, and
+    it is chosen from a measured headroom rather than off this fit. Both of
+    those are prose. This exclusion is the only *mechanical* thing between a
+    censored sitting and a fitted number, which is why it stays. Stating it the
+    other way round is how the rule gets reversed by a later session that
+    correctly observes the bias argument is not load-bearing.
+
+    *Rejected:* fitting the censored point as an interval-censored observation.
+    It is the statistically right answer and the wrong size for four points —
+    it buys precision this table cannot support and puts a second fitting
+    technique in the harness.
+
+    **The window the fit covers is not yet stated in its own output, and the
+    kill's one-sided constraint is not yet printed** — both admitted as `M84`
+    ([`../docs/design/roadmap.md`](../docs/design/roadmap.md), "Out-of-band
+    work"), which blocks `P19`.
     """
     figure = "reserve"
     stated = _reserve_specs()
