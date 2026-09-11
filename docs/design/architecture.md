@@ -371,14 +371,28 @@ above a stated budget is roughly *constant* rather than proportional, because
 under-reserve at a small limit and over-reserve at a large one, which is
 backwards: the small cgroup is where being wrong kills the process.
 `io::MEMORY_RESERVE` is **256 MiB**, read off the compressed leg of the reserve
-measurement, and it over-reserves the plain path by roughly the difference: the
-two paths' fixed terms are a factor of thirty apart, a plain `parse` holding
-5.86 MiB above its pool where a block-decoding one holds a few hundred.
+measurement, and it over-reserves the plain path by a wide margin: the two
+paths' fixed terms are almost two orders of magnitude apart, a plain `parse`
+holding 5.86 MiB above its pool where a block-decoding one holds a few hundred.
 *Rejected: a per-source reserve*, or a `discover()` that answers a range or
 takes a closure over a source — the number is needed by a caller with nothing
 open, and a source's own answer is downstream of recognition, which is I/O.
 Over-reserving is the safe direction and an operator who wants a plain scan's
 real headroom states the flag.
+
+**That constant does not currently cover the compressed path's fixed term, and
+the shortfall is measured rather than suspected.** Run in real cgroups with
+nothing stated, a block-decoding `.xz` scan's resident set is
+**403 MiB + 31.2 MiB a reader** — so a 512 MiB allocation, the smallest that
+reaches the block path at all, resolves three readers and comes within
+three megabytes of its limit at the top of thirteen reps. The reserve is
+therefore an open question and not a settled number: `STATUS.md`'s "Decisions
+worth another look" holds the call, and the readings, the refuted earlier fit
+and the reason a *proportional* reserve is the wrong repair are in
+[`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md).
+Two things that reading rules out: the excess is not glibc arena retention,
+which is a sixth of it, and it is not visible at a large limit, where the
+worker-count cap lifts the margin back above a third.
 
 **Below the reserve the budget goes to zero, and the arrangement that produces
 is named rather than emergent.** At a 256 MiB limit `limit − reserve` is
