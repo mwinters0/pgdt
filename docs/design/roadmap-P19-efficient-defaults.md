@@ -198,6 +198,38 @@ a build that is not the shipped one. **If the three legs leave the remainder
 unexplained, that is the finding**, and it names a follow-up experiment rather
 than licensing an unpublishable build inside a figure's own sitting.
 
+**Amended: the two paragraphs above applied a figure's rule to a diagnosis, and
+the account is now introspective.** What is refused above is a build that is not
+the shipped one — correctly, for anything this document publishes, and
+irrelevantly for an attribution, which publishes nothing. This sitting is
+`--alone` and NOT PUBLISHABLE by its own next paragraph, exactly as `19.2`'s
+account was while it ran against a raised-`POOL_DEPTH` scratch build. So the
+constraint that was actually binding here was never the apparatus rule; it was
+that **nothing in the binary can report a term**, which left differencing whole
+runs as the only instrument and made "the three legs leave the remainder
+unexplained" a foreseeable outcome rather than a risk. Three mechanism legs
+subtracting sums cannot name a term that none of them removes.
+
+**What replaces it.** `19.21` builds the introspection first — the process
+reports its own live bytes and its allocator's retention — and this sitting
+reads it. The black-box legs are **kept and re-aimed**: they stop being the
+attribution and become its check, since a term the instrument names must also
+show up in the sum a `getrusage` leg measures, and two instruments that share
+no mechanism is the independence
+[`.claude/skills/evidence/SKILL.md`](../../.claude/skills/evidence/SKILL.md)'s
+third rule asks for and `19.15` and `19.18` did not have. The path step is
+untouched: it prices the block path against the streaming fallback, which is an
+operator-facing fact rather than an attribution, and it earns its place on the
+grounds the paragraph above already gives it.
+
+**The standing rule this now follows is
+[`roadmap.md`](roadmap.md), "Attribution is introspective; only the gate is
+blind"**, written out of this section's failure. The gate — `19.15`'s and
+`19.16`'s readings of whether the shipped rule survives a real cgroup — is
+unchanged and stays blind, on the shipped build under the shipped allocator.
+Reasoning: [2026-09-11](../status/history/2026-09-11.md), "Attribution was being
+done with the gate's instrument".
+
 **The sitting is diagnostic, and `19.11` still publishes.** `reserve` is
 registered but untaken, so it has no marker and no table to invalidate, and the
 account is taken `--alone` — NOT PUBLISHABLE — exactly as `19.6` and `19.12`
@@ -235,6 +267,29 @@ other term here is bounded by `slots()`. Nothing in `19.15`'s reading
 distinguishes that from allocator fragmentation, and the allocator legs are what
 separate them: fragmentation moves under jemalloc, retained views do not. It is
 stated as a hypothesis rather than a cause, because no reading has tested it.
+**It is dead on arithmetic** — at every measured cell the slot count exceeds
+what the charge bills, so the floor's unbilled share cannot be positive
+([`../status/STATUS.md`](../status/STATUS.md), `19.18`) — and what stands in
+its place is the paragraph below.
+
+**A second hypothesis, and this one has a mechanism rather than a suspicion.**
+**glibc's mmap threshold is dynamic, so a block-sized buffer stops being
+mmap-backed after the first one is freed and is thereafter held in an arena that
+never returns it.** Probed on the apparatus's own libc — glibc 2.36 in
+`postgres:16` — eight `malloc`/`free` cycles of a 24 MiB buffer: the first is
+mmap-backed and returns to the OS on `free`; from the second on, `hblkhd` is
+**0**, `arena` is **25,305,088**, and the cycle ends with 24 MiB sitting in
+`fordblks`, freed and resident
+([`measurements.md`](measurements.md), "What an instrument can see"). That
+predicts a retention term of about one block per thread that has ever decoded
+one, unit-scaled and count-scaled and bounded by neither pool — which is the
+shape of what `19.15` could not name. It is a hypothesis and not a cause: the
+probe is a C program, not pgdq, and what makes it testable rather than plausible
+is that `19.21`'s instrument reports `arena` and `fordblks` per arena directly.
+**No allocator leg can test it**, which is why the mechanism legs were never
+going to find it: jemalloc and mimalloc do not have glibc's threshold, so
+swapping them removes the mechanism instead of measuring it, and the excess they
+report is `MALLOC_ARENA_MAX`'s sixth all over again.
 
 ## The span term is charged per source, not universally
 
@@ -941,7 +996,9 @@ Five orderings bind, and nothing else does:
   budget rule** — `19.7`, `19.12`, `19.14`, `19.15`, `19.17`, `19.18`, `19.16`,
   `19.13`. The account precedes the constant for the reason the plain account
   precedes the plain default, and `19.17` precedes `19.18` because an instrument
-  is registered before it is read. `19.15` and `19.16` joined this chain when
+  is registered before it is read, and **`19.21` precedes `19.18` for the same
+  reason one level down** — the harness leg is registered before it is read, and
+  the thing it reads has to exist before either. `19.15` and `19.16` joined this chain when
   the gate failed: the rule's one constant now comes from `19.16`'s reading of a
   one-reader block path rather than from `19.12`'s fit, and `19.13` cannot ship
   a number that reading has not produced. The accounting change
@@ -1020,13 +1077,14 @@ being inserted.
 | **19.16** | The reserve constant, chosen from a reading rather than a fit: candidate reserves **derived from the re-taken account's fixed term** rather than named here, ten reps each, against the **one-reader block path** that every candidate near that term produces and that no sitting has measured. The 512 MiB and 768 MiB this row first named were picked against a fixed term since shown not to be one — see the fourth amendment under "The gate failed" — and a session that measured them would be pricing bytes the charge repair has already moved. It reports the resolved count and the worst-rep headroom against the stated criterion — worst rep leaves at least 20% of the limit — and the constant it picks is what `19.13` then ships. A `runs/` probe on `19.15`'s apparatus, not a figure. |
 
 | **19.17** | The compressed account's instrument, and no library code: `reserve` gains flagless legs beside its stated ones, the reader-count axis is registered at both block sizes, the three mechanism legs — allocator, arena cap, path step — are registered at one, and what it shares with `peak-rss` and `rss-attribution` is re-declared — **one edge and one stated non-edge**, per the section above. Reviewable cold against `scripts/test_measure.py`. |
-| **19.18** | The sitting, **diagnostic** — `--alone`, NOT PUBLISHABLE, as `19.6` and `19.12` were: the compressed path's **fixed term and per-reader term**, each with its spread, on a quiet machine. It either attributes the ~280 MiB `19.15` left unexplained or reports that the three legs could not, naming the follow-up experiment. Closes **`KD19`** or rewrites it to what is still true. |
+| **19.18** | The sitting, **diagnostic** — `--alone`, NOT PUBLISHABLE, as `19.6` and `19.12` were: the compressed path's **fixed term and per-reader term**, each with its spread, on a quiet machine. It either attributes the ~280 MiB `19.15` left unexplained or reports that the three legs could not, naming the follow-up experiment. Closes **`KD19`** or rewrites it to what is still true. **Amended: it runs on `19.21`'s instrument, and the black-box legs stop being the attribution.** As written, the row's only instrument was a subtraction between whole runs, which cannot name a term no leg removes — and its named hypothesis then died on arithmetic, leaving a row whose foreseeable outcome was "the three legs could not". The attribution now comes from the process reporting its own live bytes and its allocator's retention; the `getrusage` legs are kept as the **check** on it, two instruments sharing no mechanism being the independence the account has never had. The mechanism legs are **re-aimed or dropped** rather than run as registered: the allocator pair cannot test the live hypothesis, since swapping glibc removes the threshold behaviour instead of measuring it. Reasoning: [2026-09-11](../status/history/2026-09-11.md), "Attribution was being done with the gate's instrument". |
 
 | **19.17.1** | A killed leg is recorded as a reading and the sitting continues; a killed leg bars publication of the figure. An **earned third level**: `19.17` shipped the wrong contract, registering a `RESERVE_LIMITS` docstring that calls an OOM kill "a reading rather than an apparatus failure" beside a sweep that raises and loses the whole figure. Re-filed from the withdrawn `M82`, which was not out-of-band because it reverses that decision. Two facts the row did not have: the harness **cannot tell an OOM kill from any other failure**, `rss_wrapper` collapsing every signal death to exit 1 and `--rm` destroying the container before `inspect` could say — so the oracle is `/sys/fs/cgroup/memory.events`' `oom_kill` count, read inside the container after the timed command; and the licence is **per family**, never harness-wide, since `parallel-peak-rss` once measured 3067 MiB in a 3072 MiB container and a kill there is the apparatus failure that being loud caught. A killed cell is a *censored* reading and needs a third cell state rather than a number. |
 | **19.19** | The per-file term, billed where the file is open, and `fit`'s divisor — the repair the fifth amendment names, and the one slice in this phase whose evidence is a **unit test** rather than a sitting. `partition_bytes` is both the memory charge and `run_region`'s cut size, so `19.14` raising it to `reader_bytes` made every partition 2.08–2.42 blocks and sent `scan_partition`'s first read down `read_by_blocks`' copying arm, into an unpoolable buffer of partition length held through the parse and billed one chunk. Restore the one-block partition (or make that first read chunk-sized like its tail) and bill what `reader_bytes` misses where the source is open; in the same slice, divide the allowance by the affordability charge rather than by the recommendation, which costs a reader at every allocation. Acceptance is two-sided: the 128 MiB flagless family survives or declines with nothing killed, **and** the pre/post probe shows the four-worker throughput ceiling lifted. Owns **`KD19`**. |
 | **19.20** | The cut width, decided by measurement — the route `19.19` took on a judgement call, reopened. `19.19` fixed a partition-length first read by shrinking the cut to one block, which re-couples the cut to the source's retained unit and costs throughput below about five stated readers (2 readers: 11.2 s → 17.9 s on the 24 MiB control). The waste is one successor-block decode **per piece** (`KD20`), so the cut width is what amortises it: one block pays 100%, `19.14`'s 2.42-block piece paid 41%, eight blocks would pay 12.5% — and retention is capped at `BufferPool::slots`, not by piece width, so a wider cut does not widen the charge. Make `scan_partition`'s first read chunk-sized like its tail, widen the cut past one block, and time it against both existing builds at stated and flagless counts; keep whichever wins. **The outcome is open** — `19.14`'s flat-above-four ceiling is unexplained and may survive the read-shape fix, in which case what is shipped stays. Re-pin the invariant on the **read size** (no read exceeds `chunk_size`), which is what keeps every buffer poolable and survives either outcome; `a_block_decoding_partition_never_crosses_a_block_boundary` and `window_end`'s "every piece lies within a single unit" pin the arrangement under review and must not be left as settled intent. **Amended by the sitting, in two places.** The chunk-sized read is not one decision: it was kept on the plain path, where it holds 9.4 MiB at `--jobs 24` against 209.2, and refused on the compressed one, where it costs 76 MiB of median resident and crossed a 1 GiB limit once in three — so the read shape is stated **by the source** (`io::PartitionRead`) rather than by the leader, which is a mechanism this row did not name. And the read-size invariant is **refused rather than deferred**: "no read exceeds `chunk_size`" is not a property of the arrangement that won, so the clause's stated ground — that it "survives either outcome" — is exactly what the measurement falsified. What is pinned instead is the **cut width**, a piece spanning at most `BOUNDARIED_PARTITION_UNITS` of the source's own units, plus the chunked half over the plain source. Reasoning: [2026-09-11](../status/history/2026-09-11.md), "`19.20`'s refused clause, and the read shape as the source's statement". Does **not** close `KD20`: a wider cut amortises the wasted decode, only an in-flight map removes it. |
+| **19.21** | **The introspection the account needs, built before the account is taken.** One cargo feature on `pgdump_query-cli`, off by default and joining `alloc.rs`'s existing at-most-one guard, under which the binary reports what it holds: a counting `#[global_allocator]` over `System` maintaining **live bytes and their high-water**, allocator-independent and exact; and glibc's own statistics at exit — `mallinfo2`'s `arena`, `hblkhd`, `uordblks`, `fordblks`, and `malloc_info`'s per-arena `system current` and `system max`. Emitted as `key=value` lines, which `measure.parse_reported` already reads. **Neither quantity needs a sampler**: the counter keeps its own high-water and `malloc_info` keeps each arena's, which is what makes this minutes rather than an instrumented rerun of the sweep. **No library code** — the allocator is the binary's choice and never the library's ([`architecture.md`](architecture.md), "The allocator is the binary's choice"), which is also what keeps `P6`'s embedder unburdened. **Not a fourth `ALLOCATOR_LEGS` member**: that tuple is the `allocator` figure's published table, and a binary carrying an atomic per allocation does not belong in a timing comparison with three that do not. The perturbation is stated rather than bounded — **this build never times anything**. The instrument owes its own check, an instrument nobody can falsify being the trap a figure nobody can re-take already is: the feature build must resolve the same `jobs=`/`memory_bytes=` pair as the default build on the same input, so the instrument is shown not to have moved the plan it reports on. |
 
-**`19.14` through `19.19` were admitted after this spec was written**, and take the
+**`19.14` through `19.21` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
 spec's evidence section rejected: charging a compressed worker what it holds
 was refused because "it would admit fewer readers for exactly the same resident
@@ -1047,6 +1105,19 @@ reviewable cold and the sitting being a machine-quiet reading whose review
 question is whether its numbers support a constant. Reasoning:
 [2026-09-09](../status/history/2026-09-09.md), "The reserve entries, reviewed:
 the divisor is wrong, not the rule".
+
+**`19.21` exists because `19.17` and `19.18` split at that seam and both landed
+on the wrong side of a different one.** The instrument `19.17` registered is a
+*harness* instrument — more legs of the same subtraction — and the account it
+serves is an attribution, which a subtraction cannot produce. That was not
+visible at the seam the pair was split on, because both halves were correct
+about the sitting and neither asked whether the sitting could answer the
+question. `19.21` is the instrument the account actually needs, and it is a
+third slice rather than a re-scope of `19.17` because `19.17` shipped what its
+row promised and its legs are kept: what changed is that they are now the check
+rather than the answer. Reasoning:
+[2026-09-11](../status/history/2026-09-11.md), "Attribution was being done with
+the gate's instrument".
 
 **`19.7` was re-scoped and split after this spec was written, and the two new
 rows take the next free numbers rather than being inserted.** As specified it

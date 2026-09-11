@@ -979,6 +979,70 @@ them: the census-off **source patch**, which no harness should perform, and the
 generator invocations a reader may want on their own. koji's was a third until
 the harness took it — `uv run measure.py --koji-recipe` prints it now.
 
+## What an instrument can see, and what only a sitting can
+
+Everything above governs a **figure**: a timed or resident reading of the
+shipped binary, taken in the container, published. A figure answers *how much*.
+It cannot answer *what of* — and when the question is what a number is made of,
+reaching for another figure is the expensive wrong move the roadmap's
+"Attribution is introspective; only the gate is blind" now refuses.
+
+This section is the other half: what a process can be asked about itself, what
+each answer covers, and what it costs. None of it produces a figure, none of it
+takes a marker, and nothing here needs a quiet machine.
+
+**Resident is a sum, and the instruments split it in different places.**
+
+| Instrument | Reports | Blind to | Cost |
+|---|---|---|---|
+| `getrusage(RUSAGE_CHILDREN)` — `rss_wrapper` | peak RSS, one scalar | every term separately | a sitting per subtraction |
+| `mallinfo2()` | live bytes now, split arena-backed (`uordblks`) from mmap-backed (`hblkhd`); arena free bytes (`fordblks`) | the peak — it is a snapshot; non-heap pages | one call |
+| `malloc_info()` | the same per arena, **including each arena's high-water** (`system type="max"`) | mmap-backed blocks, which are not per-arena | one call |
+| a counting `#[global_allocator]` | exact live bytes and their **high-water**, allocator-independent | where they were allocated | an atomic per allocation |
+| jemalloc `prof` + `jeprof` | live heap attributed to **call stacks** | glibc's behaviour — it is a different allocator | a feature flag and a build |
+| `perf record -e page-faults` | resident **growth** attributed to call stacks | what was freed and retained | a `runs/` artifact |
+| `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
+
+**Two of those need no sampling, which is the part that is not obvious.** A
+snapshot at exit reports the end state, not the peak, so the instinct is to
+poll — and polling is what koji's recipe does, because there the process runs
+for an hour. It is unnecessary for the two quantities this project keeps asking
+for: a counting allocator maintains its own high-water for free, and
+`malloc_info` already prints each arena's. Neither needs a sampler thread, and
+a sampler that missed the peak is the failure mode `rss_wrapper`'s own docstring
+describes for `/proc` polling.
+
+**Verified on the apparatus's own libc** — glibc 2.36 in `postgres:16`, which
+is what every figure here was taken under:
+
+- `mallinfo2` **sums all arenas**, not just the main one. Its `arena` matched
+  `malloc_info`'s total `system type="current"` exactly across nine heaps.
+- `hblkhd` tracks mmap-backed allocations exactly: 24 MiB and 100 MiB blocks
+  appeared as 25,169,920 and 130,031,616 bytes and left on `free`.
+- **The dynamic mmap threshold moves a block-sized buffer out of `mmap` and
+  into an arena after the first one is freed, and the arena never gives it
+  back.** Eight `malloc`/`free` cycles of a 24 MiB buffer: the first is
+  mmap-backed (`hblkhd` 25,169,920, `arena` 135,168), and from the second on
+  `hblkhd` is **0** and `arena` is **25,305,088**, ending with 24 MiB sitting in
+  `fordblks` — freed, held, resident. That is a named mechanism for a
+  retention term that scales with the number of threads that ever decoded a
+  block and with nothing else, and it is reachable only by an instrument: it is
+  invisible in peak RSS, and an allocator leg that replaces glibc removes the
+  mechanism rather than measuring it.
+
+  Re-verify: `scripts/measure.py --profile-recipe` does not cover this one; the
+  probe is eight `malloc`/`memset`/`free` cycles at the block size with
+  `mallinfo2` printed each time, built **`-O0`** — at `-O1` GCC elides the
+  `malloc`/`free` pair outright and every field reads zero, which looks exactly
+  like an instrument that does not work.
+
+**What this does not license.** An instrument reading is not a figure and no
+document may quote one as a measurement — it is taken on a build that is not
+the shipped one, or through a call the shipped binary does not make, and it has
+no reps, no median and no quiet machine behind it. What it produces is a
+**name**: the term, its mechanism, and the arithmetic that ties it to the
+reading a figure took. The figure still says how much.
+
 ## Which allocator a figure was taken under
 
 **The platform allocator — glibc's `malloc` on this apparatus.** The choice is

@@ -605,9 +605,20 @@ rather than losing the sitting.
       the one `19.19` left: the per-reader and fixed terms have both moved, the
       thin allocation is no longer 512 MiB, and the three mechanism legs need
       re-aiming or dropping before the hour is spent. It ends on a **name, not a
-      residual**. Owns nothing. Evidence:
+      residual**. Owns nothing.
+
+      **Re-steered: it runs on `19.21`'s instrument.** As registered its only
+      instrument was a subtraction between whole runs, which cannot name a term
+      no leg removes — so "the three legs could not attribute it" was the
+      foreseeable outcome, not the risk. The attribution now comes from the
+      process reporting its own live bytes and its allocator's retention; the
+      `getrusage` legs are kept as the **check** on it. The allocator pair is
+      re-aimed or dropped: it cannot test the live hypothesis, glibc's dynamic
+      mmap threshold, because swapping glibc removes that mechanism rather than
+      measuring it. Evidence:
       [2026-09-11](history/2026-09-11.md), "`M81` and `M82` are both withdrawn,
-      and the account they were guarding is wrong", and
+      and the account they were guarding is wrong", "Attribution was being done
+      with the gate's instrument", and
       [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md).
 - [x] **19.17.1** A killed leg is recorded and the sitting continues; a killed
       leg bars publication. The premise was re-tested before it was built and
@@ -668,6 +679,20 @@ rather than losing the sitting.
       keep one unit a measured choice rather than settled intent. `KD20` is
       unclosed and now knows the width is not its fix. Notes:
       [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md)
+
+- [ ] **19.21** The introspection the compressed account needs, built before
+      the account is taken — one cargo feature on `pgdump_query-cli`, off by
+      default and joining `alloc.rs`'s at-most-one guard, under which the binary
+      reports what it holds: a counting `#[global_allocator]` keeping **live
+      bytes and their high-water**, and glibc's own `mallinfo2` / `malloc_info`
+      statistics, including each arena's high-water. `key=value` lines, which
+      `measure.parse_reported` already reads. **Neither quantity needs a
+      sampler.** No library code; **not** a fourth `ALLOCATOR_LEGS` member, that
+      tuple being the `allocator` figure's published table and this build
+      carrying an atomic per allocation — so it never times anything. Owes its
+      own check: the feature build resolves the same `jobs=`/`memory_bytes=`
+      pair as the default build, so the instrument is shown not to have moved
+      the plan it reports on. Runs before `19.18`.
 
 ## Not started
 

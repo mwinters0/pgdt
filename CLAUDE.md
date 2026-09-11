@@ -342,6 +342,20 @@ prevents; the first — *account before you fit*, an account being arithmetic
 from the source rather than a slope — is the one that would have saved three
 sessions of `P19`.
 
+**Neither of those says which instrument to reach for, and that is
+[`docs/design/roadmap.md`](docs/design/roadmap.md), "Attribution is
+introspective; only the gate is blind" — read it before planning any work whose
+deliverable is a reading, and before reaching for another sitting to explain a
+number.** A reading that decides whether the shipped thing works stays
+black-box, on the shipped build in the container; a reading that says *why* asks
+the process itself, and where nothing in the binary can answer, **building the
+instrument is the slice** rather than something discovered after the sitting
+fails. The apparatus rules bind what may be *published*, so a diagnostic sitting
+may use an instrumented build and always could. What each instrument sees, what
+it is blind to and what it costs is
+[`docs/design/measurements.md`](docs/design/measurements.md), "What an
+instrument can see".
+
 `scripts/measure.py` is the harness that takes those figures and emits that
 doc's tables. **Run it rather than writing a one-off script when a figure needs
 re-taking** — every re-take before it was a `runs/` script that died with the

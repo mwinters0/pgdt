@@ -356,6 +356,75 @@ hazard is live for the unwritten specs. Reasoning:
 [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "4.6.1
 is earned, and the spec row's ambiguity is why".
 
+### Attribution is introspective; only the gate is blind
+
+**A reading that decides whether the shipped thing works stays black-box; a
+reading that says *why* asks the process itself.** Those are two deliverables
+and they have been taking one instrument, which is how this project came to
+plan sitting after sitting differencing whole runs to attribute a term the
+process could have printed.
+
+**What forces the split is what a high-water mark is.** `getrusage`'s
+`ru_maxrss` is one scalar with no decomposition and no time axis, so the only
+way to take it apart is to vary something and subtract — and every subtraction
+is another sitting, carries both legs' spreads, and confounds whatever else
+moved with it. Resident is at least three terms:
+
+```
+RSS = what the program asked for and still holds
+    + what the allocator obtained and has not returned
+    + what is neither heap nor ours — thread stacks, the binary, mapped files
+```
+
+A peak-RSS leg measures their sum and nothing else. Every question asked about
+memory here is a question about *one* term — is a fixed term live structure or
+arena retention, does a pool ceiling bind, what does an evicted-but-viewed
+block cost — and no number of subtractions between sums answers one of them as
+well as a process printing its own.
+
+**The rule.** A slice row whose deliverable is an **attribution** names an
+introspective instrument: something inside the process reporting the term
+directly — a counter, the allocator's own statistics, a profile attributing to
+call stacks. Differencing whole runs is the **fallback**, and a row that
+chooses it says which introspective instrument was considered and why it cannot
+answer. Where no such instrument exists yet, **building one is the slice**, and
+it comes before the sitting rather than after the sitting fails.
+
+That last clause is the whole of what this rule adds. The preference was
+already written — `.claude/skills/evidence/SKILL.md`, "Before planning a slice
+whose deliverable is a reading" — and it changed nothing, because a preference between instruments
+is inert when only one of them exists. What a session actually chooses between
+is a harness leg it can add in an afternoon and an instrument nobody has built,
+and it will choose the leg every time and be able to defend it.
+
+**The gate is the exception, and it is genuinely blind.** What kills a process
+is resident bytes under a real limit, not live heap, so a pass/fail reading
+against a cgroup is taken on the shipped build, under the shipped allocator, in
+the container, exactly as [`measurements.md`](measurements.md)'s apparatus says.
+The rule above does not weaken it — it protects it, by keeping diagnosis from
+being smuggled into the one reading that has to be taken on the thing that
+ships.
+
+**The apparatus rules govern figures, not diagnosis, and reading them wider is
+the specific mistake.** "The allocator is part of the apparatus" and "a figure
+is taken with the default glibc build" bind what may be **published**. A
+diagnostic sitting already does what a figure may not: `--alone` marks a whole
+run NOT PUBLISHABLE, and `19.2`'s account ran against a scratch build with a
+lifted `POOL_DEPTH`. So an instrumented build, a counting allocator or a
+profiling one has been available for attribution all along, and a spec refusing
+one *for a figure's reasons* has applied the wrong rule to it.
+
+**It is not a rule about memory.** The same split holds for time — a sampling
+profile attributes per function where a subtraction of medians attributes per
+run, which is why the profile recipe sits beside the sweep — and for anything
+else a run can be asked about itself: bytes read, blocks decoded, workers
+admitted. A resolved count read off the run's own `scan started` line is this
+rule already being followed. Where the process can count a thing, counting it
+beats subtracting around it.
+
+Reasoning: [`../status/history/2026-09-11.md`](../status/history/2026-09-11.md),
+"Attribution was being done with the gate's instrument".
+
 ### A test may assume the tools `mise` pins
 
 **A test that needs a pinned tool asserts its presence; it does not skip
