@@ -330,8 +330,13 @@ goes").
 Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. What remains runs
-**`19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the list below
-is numeric, so its first unticked box is not the next piece of work.
+**`19.19`, `19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the
+list below is numeric, so its first unticked box is not the next piece of work.
+**The repair now runs ahead of the account, which is the reverse of what the
+spec wrote**: `19.19` is a defect with a failing unit test behind it, and every
+reading taken before it lands prices that defect — including the two sittings
+whose agreed-on `403 MiB` fixed term turned out to be a fitting artifact
+(`KD19`). Start with `19.19`.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -449,6 +454,13 @@ is numeric, so its first unticked box is not the next piece of work.
       sitting that publishes `reserve` for the first time it also owes the
       `Shared` edge onto `peak-rss` and the `Session.borrow` change that lets an
       **RSS** reading cross a share, `borrow` copying wall clock only today.
+
+      **It does not start until a `--figure reserve --alone` sitting completes
+      with no killed leg**, which is what the spec makes publication
+      conditional on — so it is behind `19.19` and `19.17.1`, not merely behind
+      `19.13`. It also re-takes `parallel-scan-throughput` and
+      `parallel-peak-rss`, both of which were taken before `partition_bytes`
+      changed and describe partitioning this code no longer does.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build —
       `runs/measure-20260909T171423`, `--alone`, NOT PUBLISHABLE — with the
       inert worker-count-plus-one arena leg dropped. **`19.7`'s prediction is
@@ -523,14 +535,17 @@ is numeric, so its first unticked box is not the next piece of work.
       209, the budget admitting eight of the twenty-four workers stated. A
       `runs/` probe, not a figure. Notes:
       [`../design/roadmap-P19.15-budget-probe-notes.md`](../design/roadmap-P19.15-budget-probe-notes.md)
-- [ ] **19.16** The reserve constant, from a reading rather than a fit:
-      candidate reserves at 512 MiB and 768 MiB, ten reps each, against the
-      **one-reader block path** that every candidate near the measured
-      403 MiB fixed term produces and that no sitting has measured — `19.15`'s
-      apparatus, binary and probe script, so the sitting is minutes. It reports
-      the resolved count and the worst-rep headroom against the stated
-      criterion, **worst rep leaves ≥20% of the limit**, and the constant it
-      picks is what `19.13` ships. A `runs/` probe, not a figure.
+- [ ] **19.16** The reserve constant, from a reading rather than a fit.
+      **Do not build this from the description it used to carry**: the
+      512 MiB/768 MiB candidates it named were picked against a
+      `403 MiB` fixed term that **does not exist** — that number is a line
+      fitted to a concave curve over a window excluding the origin, and one
+      reader holds 62.9 MiB where it predicts 436. Its candidates come from the
+      re-taken account instead, and the arrangement it measures is post-`19.19`,
+      since every reading before the repair prices a defect. It reports the
+      resolved count and the worst-rep headroom against the stated criterion,
+      **worst rep leaves ≥20% of the limit**, and the constant it picks is what
+      `19.13` ships. A `runs/` probe, not a figure.
 - [x] **19.17** The compressed account's instrument, no library code.
       `reserve` is four families now: the stated budget axis unchanged, **eight
       flagless legs** whose axis is the container limit — two block sizes at
@@ -550,33 +565,65 @@ is numeric, so its first unticked box is not the next piece of work.
       [`../design/roadmap-P19.17-compressed-instrument-notes.md`](../design/roadmap-P19.17-compressed-instrument-notes.md)
 - [ ] **19.18** The sitting, **diagnostic** (`--alone`, NOT PUBLISHABLE, as
       `19.6` and `19.12` were — `19.11` publishes `reserve` once, after the
-      constant ships): the compressed path's **fixed term and per-reader term**,
-      each with its spread, which is what the reserve constant and
-      `partition_advice` are read off. It ends on a **name, not a residual** —
-      each leg reports what it moves, the remainder is a number carrying a
-      mechanism or an explicit "no name". A reducible term earns `19.18.1` and
-      the constant is chosen after it. Owns **`KD19`**. **The sitting ran and
-      was killed by the default it was measuring**, five legs in: a flagless
-      `.xz` at 128 MiB blocks in a 1 GiB container resolves two readers and is
-      OOM-killed at 1024.4 MiB, so the figure aborted before its mechanism legs
-      and no account was published. What the five surviving legs and a
-      follow-up `runs/` probe establish is that the term the account is *for*
-      is a function of the block size — 216–267 MiB above the stated budget at
-      24 MiB blocks against 443–791 MiB at 128 MiB — so the family cannot be
-      measured at any limit while the reserve is 256 MiB. Reviewed since: a
-      unit-independent fixed term is **refuted**, the named candidate is the
-      block cache's `POOL_DEPTH`-unit retention floor, and the spec's fourth
-      amendment under "The gate failed" settles the rest — the repair is a
-      second per-file term rather than a bigger `reader_bytes`, `19.16` waits
-      on this account and derives its candidates from it, and the 128 MiB
-      flagless family becomes the repair's acceptance gate rather than a source
-      of numbers. `KD19` is rewritten to that. What remains is the re-take,
-      which is **blocked on `M81` and `M82`** — the harness mirrors a per-file
-      charge as a constant, and a killed leg aborts the figure instead of being
-      recorded as the reading `19.17` declared it. Evidence:
-      [2026-09-11](history/2026-09-11.md), "`19.18`'s sitting is killed by the
-      default it was measuring" and "A unit-independent fixed term is refuted,
-      so the reserve cannot be one constant".
+      constant ships): the compressed path's resident account, which is what
+      the reserve constant and `partition_advice` are read off. **It ran once,
+      was OOM-killed on its fifth leg, and reviewing it cost three sessions —
+      read the next two paragraphs before re-taking it.**
+
+      **Its named hypothesis is dead, and the arithmetic kills it without a
+      run.** The three mechanism legs were registered to test the block cache's
+      `POOL_DEPTH` retention floor. At every measured cell
+      `(budget − chunk_held)/unit` exceeds `POOL_DEPTH.max(jobs)`, so slots are
+      2/4/4/6 against a bill of `2 × readers` = 2/4/8/12 — the floor's unbilled
+      share is zero at two readers and *negative* above, so it cannot produce a
+      positive excess at all. A sitting aimed at it would spend an hour to
+      report that it moved nothing.
+
+      **What the excess actually is, is `KD19`, and `19.19` repairs it** — the
+      partition read taking `read_by_blocks`' copying arm. Modelling peak as
+      `~15 MiB + slots × unit + min(readers, POOL_DEPTH) × partition` is exact
+      at both serial cells and recovers 84/94/99% of the cross-block-size
+      difference, against the shipped model's 42/63/85%; the remainder tracks
+      the measured ~31 MiB-a-reader glibc arena term, which is unit-independent
+      and sits where the unit-scaled terms leave a gap. So this sitting runs
+      **after** `19.19`, and what it publishes is the repaired account. It ends
+      on a **name, not a residual**. Owns nothing now — `KD19` moved to
+      `19.19`. Evidence: [2026-09-11](history/2026-09-11.md), "`M81` and `M82`
+      are both withdrawn, and the account they were guarding is wrong".
+- [ ] **19.17.1** A killed leg is recorded and the sitting continues; a killed
+      leg bars publication. Re-filed from the withdrawn `M82`, which was not
+      out-of-band: it reverses the fail-fast `19.17` registered, whose own
+      docstring defends it as "the finding the constant is being chosen
+      against". **The harness cannot currently tell an OOM kill from any other
+      failure** — `rss_wrapper`'s `exit($st == 0 ? 0 : ($st >> 8) || 1)`
+      collapses every signal death to exit 1, and `--rm` destroys the container
+      before `inspect` could say — so the sound oracle is the container reading
+      `/sys/fs/cgroup/memory.events`' `oom_kill` count after the timed command.
+      **The licence is per-family, never harness-wide**: `parallel-peak-rss`
+      once measured 3067 MiB in a 3072 MiB container, and a kill there is the
+      apparatus failure that being loud caught. A killed cell is a *censored*
+      reading — it cannot enter the fit or the headroom column — so the
+      renderer needs a third cell state, not a number. Whether it is needed at
+      all is a question for the session after `19.19`: the repair may leave no
+      leg that dies.
+- [ ] **19.19** The per-file term, billed where the file is open — the repair
+      `KD19` names, and **the one item in this phase whose evidence is a unit
+      test rather than a sitting**. Build the four-block `SeekTable` fixture,
+      call `XzSource::partition_advice`, feed `stream::cut`, and assert every
+      range spans one block: it fails today, because `partition_bytes` is both
+      the memory charge and the cut size and raising it to `reader_bytes` made
+      a partition 2.08–2.42 blocks. Restore the one-block partition (or make
+      `scan_partition`'s first read chunk-sized like its tail), and bill the
+      terms `reader_bytes` misses where the source is open. **The same slice
+      fixes `fit`'s divisor**: it divides the allowance by the source's
+      *recommendation* (68,192,032, charging an 8 MiB chunk slot because the
+      file is not yet open for reading) rather than by the 60,852,000
+      `BlockCache::affordable` compares against, so a 512 MiB allocation
+      resolves three readers where four fit. They are one arithmetic and
+      pricing them apart would price the charge twice. Acceptance is two-sided:
+      a flagless 128 MiB-block scan survives its allocation or declines the
+      block path, **and** the pre/post `runs/19.18-blocksize-charge-probe.py`
+      wall times show the four-worker ceiling lifted. Owns **`KD19`**.
 
 ## Not started
 
@@ -747,17 +794,21 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "The interior
   split".
 
-- **KD19** — a block-decoding `.xz` scan holds resident **above its stated
-  budget** by a term that scales with the block unit, 216–267 MiB at 24 MiB
-  blocks against 443–791 MiB at 128 MiB, which is what kills a flagless scan of
-  the second in a 1 GiB allocation; a unit-independent fixed term is refuted,
-  and the named candidate is the block cache retaining up to `POOL_DEPTH`
-  *units* whatever the reader count, unbilled by `reader_bytes`. It is what
-  forces the reserve high enough to decline the block path on a small
-  allocation. **(b) owned by P19**, slice **`19.18`**, the sitting that confirms
-  that candidate or kills it; it is discharged when the 128 MiB flagless legs
-  survive their own allocations. `--parallel-memory` reverses the decline and
-  `MALLOC_ARENA_MAX=2` recovers the arena share in the meantime. Detail:
+- **KD19** — a compressed parallel scan holds **one to four whole block units
+  per reader that nothing bills for**: `partition_bytes` is both the memory
+  charge and the cut size, so raising it to `reader_bytes` made every partition
+  2.08–2.42 blocks, which sends `read_by_blocks` down its copying arm and
+  allocates an unpoolable buffer of partition length held through the parse.
+  Resident runs 216–267 MiB above a stated budget at 24 MiB blocks and
+  443–791 MiB at 128 MiB, which is what kills a flagless scan of the second in a
+  1 GiB allocation; it also caps the fused workers at four, flat from 8.83 to
+  8.77 s where the pre-change figure scaled to twenty-four jobs. **The
+  `403 MiB + 31.2` fixed term two sittings reported does not exist** — it is a
+  line fitted to a concave curve over a window excluding the origin, refuted by
+  one reader holding 62.9 MiB against a predicted 436. **(b) owned by P19**,
+  slice **`19.19`**; discharged when a flagless 128 MiB-block scan survives its
+  allocation or declines the block path. `--parallel-memory` reverses a decline
+  and `MALLOC_ARENA_MAX=2` recovers the arena share meanwhile. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Execution model and
   API surface".
 

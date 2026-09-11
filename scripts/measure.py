@@ -2184,6 +2184,14 @@ LIBRARY_CHUNK_BYTES = 1 << 20
 #: dictionary, the 1 MiB input chunk and `liblzma`'s own 34,592 B of state.
 #: Every `.xz` input here is written at preset 6, so every one of them has that
 #: dictionary (`INPUTS["control_xz"]`).
+#:
+#: **The chunk term is a constant across every registered input, not a
+#: coincidence of one of them.** `SeekTable::input_chunk()` is the largest
+#: block's *compressed* extent **capped at `xz_seek`'s 1 MiB `INPUT_CHUNK`**, and
+#: both compressed inputs here compress a block to far more than that — 4.6 MB
+#: at 24 MiB blocks, 24.5 MB at 128 MiB — so both saturate the cap. A file whose
+#: every block compresses below 1 MiB would charge less and this constant would
+#: over-state, which is the direction that costs nothing.
 XZ_DECODE_FOOTPRINT = 9_471_776
 
 
@@ -2195,6 +2203,20 @@ def reader_bytes(unit: int) -> int:
     `XzSource::block_reader_bytes`, mirrored — the number
     `BlockCache::affordable` compares a budget against and the number
     `XzSource::partition_advice` charges a sub-stream.
+
+    **It is the charge at the steady-state slot size, which is not the one the
+    source *recommends* against.** `BlockCache::reader_bytes` takes the pool's
+    current slot as its chunk term, and that is `DEFAULT_CHUNK_SIZE` once a read
+    loop has announced one and `POOL_MAX_BYTES` — 8 MiB — before any has. So
+    `XzSource::default_memory_per_worker`, asked before the file is opened for
+    reading, answers **7 MiB more per reader** at every block size, deliberately
+    (`io.rs`, "runs about a tenth high"), and a flagless run's resolved budget is
+    that larger number times its count: 1,636,608,768 at 24 readers of 24 MiB
+    blocks, where a reader of that file actually holds 60,852,000. Only the
+    smaller number answers "did this leg take the block path", which is what this
+    mirror is for and what the path step's two budgets straddle. A budget read
+    off a run's own report and divided by its count is the *other* number and
+    cannot stand in for this one.
 
     **Hand-computed, on `QUERY_SUBSTREAM_CAP`'s argument.** A Python
     reimplementation of the library's arithmetic is a second authority that goes

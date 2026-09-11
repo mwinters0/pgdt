@@ -365,11 +365,15 @@ a v1 shape beside it and the branch would otherwise ship never having run. What
 a fixture root establishes is that the reader handles the shape `RT4` describes,
 not that a kernel still produces it.
 
-**The default is the limit minus a reserve, not a fraction of it.** Resident
-above a stated budget is roughly *constant* rather than proportional, because
-`BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)` — so a percentage would
-under-reserve at a small limit and over-reserve at a large one, which is
-backwards: the small cgroup is where being wrong kills the process.
+**The default is the limit minus a reserve, not a fraction of it.** A percentage
+would under-reserve at a small limit and over-reserve at a large one, which is
+backwards: the small cgroup is where being wrong kills the process. **The
+argument that used to be made here — that resident above a stated budget is
+roughly constant *because* `BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)`
+— is false, and inverted.** That clamp is what makes resident concave in the
+reader count, and the concavity is what produced the phantom fixed term below.
+The subtraction survives its own justification because of the shape argument
+above, which never depended on the overhead being constant.
 `io::MEMORY_RESERVE` is **256 MiB**, read off the compressed leg of the reserve
 measurement, and it over-reserves the plain path by a wide margin: the two
 paths' fixed terms are almost two orders of magnitude apart, a plain `parse`
@@ -380,68 +384,101 @@ open, and a source's own answer is downstream of recognition, which is I/O.
 Over-reserving is the safe direction and an operator who wants a plain scan's
 real headroom states the flag.
 
-**That constant does not currently cover the compressed path's fixed term, and
-the shortfall is measured rather than suspected.** Run in real cgroups with
-nothing stated, a block-decoding `.xz` scan's resident set is
-**403 MiB + 31.2 MiB a reader** — so a 512 MiB allocation, the smallest that
-reaches the block path at all, resolves three readers and comes within
-three megabytes of its limit at the top of thirteen reps. The readings, the
-refuted earlier fit and the reason a *proportional* reserve is the wrong repair
-are in
+**That constant does not currently cover the compressed path, and the shortfall
+is measured rather than suspected.** Run in real cgroups with nothing stated, a
+block-decoding `.xz` scan of a 24 MiB-block file inside a 512 MiB allocation —
+the smallest that reaches the block path at all — resolves three readers and
+comes within three megabytes of its limit at the top of thirteen reps, and the
+same shape over a 128 MiB-block file is OOM-killed outright in a 1 GiB
+allocation. The readings are in
 [`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md).
-Two things that reading rules out: the excess is not glibc arena retention,
-which is a sixth of it, and it is not visible at a large limit, where the
-worker-count cap lifts the margin back above a third.
+
+**There is no fixed term, and the `403 MiB + 31.2 MiB a reader` that two
+sittings reported is an artifact of the window they fitted over.** This is the
+single most expensive error this phase has made, and it survived three sessions
+because both sittings agreed with each other. Resident is **concave** in the
+reader count, so a straight line fitted to it has an intercept equal to the
+concavity it skipped: the same file and the same mechanism give `62 MiB +
+93.3 MiB a reader` fitted over one to six readers and `405 MiB + 31 MiB a
+reader` fitted over three to twenty-four. The refutation needs no new
+measurement — **at one reader the process holds 62.9 MiB where `403 + 31.2`
+predicts 436**, and a term present in the process at every arrangement cannot be
+absent at the smallest one. So a reserve sized against that intercept is sized
+against nothing, and `19.15`'s "~340 MiB unattributed" was measuring the
+fitting window.
+
+**The concavity has a mechanism, and it is this pool's own slot arithmetic.**
+With a flagless budget of about `jobs × 2 × unit`, `BufferPool::slots` runs
+**2, 4, 4, 4, 5, 6** over one to six readers — a two-unit step from one reader
+to two, flat through four, then one unit a reader. Big jump, flat middle,
+linear tail: a fit that starts at three readers projects that jump onto the
+y-axis. The same term is therefore *fixed* at one end of the axis and
+*per-reader* at the other, which is the whole reason no constant reserve can
+cover it — and it is the opposite of the argument this section used to make,
+that the `POOL_DEPTH.max(jobs)` clamp is what makes the overhead roughly
+constant.
 
 <!-- deficiency: KD19 -->
-**Most of that fixed term is unexplained, which is `KD19`.** The pools can hold
-134 MiB of the 512 MiB leg — the block pool's depth is `POOL_DEPTH.max(jobs)`
-and `BufferPool::slots` clamps there counting free and retained together, so
-four 24 MiB slots and not the eight that two units a reader would suggest — and
-`MALLOC_ARENA_MAX=2` recovers a further sixth, which also retires glibc arena
-retention as the standing account of the excess. Roughly 280 MiB is accounted
-for by nothing, and it is what forces the reserve high enough to decline the
-block path on a small allocation, so the deficiency is the decline rather than
-the bytes. `(b)` owned by P19, whose sitting either attributes the remainder or
-reports that its three legs could not.
+**A compressed parallel scan holds one to four whole block units per reader that
+nothing bills for, because a partition read takes the copying arm. That is
+`KD19`, and it is a defect rather than an under-billing.**
+`XzSource::partition_advice` states `partition_bytes` as
+`BlockCache::reader_bytes` — but that number is *both* the memory charge and the
+cut-size target: `leader::run_region` sets `window_bytes = workers ×
+partition_bytes`, `stream::cut` divides that window into `workers` pieces at
+block boundaries, and `leader::scan_partition`'s first read is the whole piece.
+At `2 × unit + chunk + decode` a piece is **2.42 blocks** at 24 MiB and **2.08**
+at 128 MiB, never one — so `XzSource::read_by_blocks` takes its multi-block arm
+and assembles the read into a fresh `vec![0u8; partition_len]` that
+`BufferPool::keeps` refuses to pool, held until the parse of that piece
+finishes. `reader_bytes` bills one chunk — 1 MiB — for it.
 
-**The excess scales with the block unit, so no one constant bounds it.** Read
-at a *stated* count in a container large enough never to bind, resident above
-the stated budget is 216–267 MiB across two, four and six readers of a
-24 MiB-block file and **443–791 MiB** across the same counts of a 128 MiB-block
-one — the reason the 256 MiB reserve kills a flagless scan of the second file
-in a 1 GiB allocation rather than merely crowding it. A unit-independent fixed
-term is refuted outright by the same reading: if `resident = fixed + readers ×
-reader_bytes` held with `fixed` a property of the process, the two files would
-differ at equal reader counts by exactly `readers × 2 × 104 MiB`, and they
-differ by 991 / 1327 / 1473 MiB at two / four / six readers against a predicted
-416 / 832 / 1248. The excess *falls* as the count rises, which is the signature
-of a unit-scaled term that is **not** per-reader.
+**Three comments and this document assert the opposite**, which is what makes it
+a defect: `leader::scan_partition` says the first read "*on a block-decoding
+source is one whole block and therefore a zero-copy slice of it*",
+`ByteRangeSource::partitions` says a partition's footprint is "*a block plus a
+chunk buffer*", and "The compressed source" below says the common case copies
+nothing. All four were true until `partition_bytes` was raised from `unit +
+chunk`; raising the charge raised the partition, which raised the real cost,
+which is a charge that inflates what it is charging for.
 
-**The candidate is this pool's own retention, and it is the one the sitting
-must confirm or kill.** `BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)`,
-so the block cache holds up to `POOL_DEPTH` *units* whatever the reader count,
-while `reader_bytes` bills two units **per reader** and nothing for the floor —
-unit-scaled, not per-reader, which is the measured shape. The
-evicted-but-still-viewed block above is the second candidate and has the same
-shape, one unit per live view. What the reading rules out is the per-reader
-charge being the fault: chord slopes over two to six readers are 58.7 MiB
-against a 58.0 MiB charge at 24 MiB blocks and 179.1 against 266.0 at 128 MiB —
-exact at the small unit, conservative at the large one. Two further shapes
-constrain any model: one reader is the *serial* arrangement and holds 62.9 MiB
-against 270.8 MiB at the two block sizes, so the 1→2 step costs about four
-times what one reader is charged; and resident is **concave** in the reader
-count above that, the marginal reader costing 83.9 then 33.6 MiB at 24 MiB
-blocks and 251.8 then 106.5 at 128 MiB — so `fixed + readers × per_reader` is a
-model of the flagless axis rather than of the mechanism.
-([`../status/history/2026-09-11.md`](../status/history/2026-09-11.md),
-"A unit-independent fixed term is refuted, so the reserve cannot be one
-constant"). A user has `--parallel-memory` to reverse
-the decline and the arena cap to recover its share, neither of which touches the
-remainder. Note that `rss-attribution` does **not** instrument this: its inputs
-are plain files, and it attributes the plain path's per-block growth — which is
-why the compressed path gets an account of its own, publishing an intercept
-where that figure publishes a slope.
+**It is also a throughput regression, and the same reading finds it.** Those
+partition buffers are taken from the chunk pool, whose four slots then cap the
+fused workers: a stated-count `parse` of a 24 MiB-block file runs 16.85 → 11.30
+→ 8.83 → **8.77** s at one, two, four and six readers — flat from four, where
+the published figure taken before the change ran out to twenty-four jobs. So
+`parallel-scan-throughput` and `parallel-peak-rss` both describe partitioning
+this code no longer does.
+
+**With that term the account closes.** Modelling peak as `~15 MiB + slots ×
+unit + min(readers, POOL_DEPTH) × partition` is **exact at both serial cells**
+(62.9 and 270.8 MiB measured and predicted) and recovers 84 / 94 / 99% of the
+measured difference between the two block sizes at two / four / six readers,
+against the shipped model's 42 / 63 / 85%. What is left over — 105 / 156 /
+176 MiB at 24 MiB blocks — is close to the measured glibc arena term of about
+31 MiB a reader, which is unit-*independent* and so sits exactly where the
+unit-scaled terms leave a gap. This machine runs an arena per CPU across many
+cores, so that term is larger here than it would be elsewhere;
+`MALLOC_ARENA_MAX=2` recovers 61.6 MiB at 512 MiB and 145.4 MiB at 1 GiB.
+
+**The candidate this register named before — the block cache's `POOL_DEPTH`
+retention floor — is refuted arithmetically and needs no sitting to kill it.**
+At every measured cell `(budget − chunk_held)/unit` exceeds `POOL_DEPTH.max(jobs)`,
+so slots are 2/4/4/6 against a bill of `2 × readers` = 2/4/8/12: the floor's
+*unbilled* share is zero at two readers and **negative** above, so it cannot
+produce a positive excess at all, let alone one that falls as the count rises.
+It is real and mis-billed, and above four readers it makes the charge
+conservative rather than short.
+
+**(b) owned by P19**, slice **`19.19`**, which bills the term where the file is
+open and restores the one-block partition; it is discharged when a flagless
+128 MiB-block scan survives its own allocation or declines the block path. A
+user has `--parallel-memory` to reverse a decline and `MALLOC_ARENA_MAX=2` to
+recover the arena share in the meantime. Note that `rss-attribution` does
+**not** instrument any of this: its inputs are plain files, and it attributes
+the plain path's per-block growth — which is why the compressed path gets an
+account of its own, publishing an intercept where that figure publishes a
+slope.
 
 **What the reserve must satisfy is a stated margin, and before this it was
 unstated.** The criterion is that the **worst observed rep leaves at least 20%
@@ -529,7 +566,23 @@ count **and** the budget that many readers spend, never the cap itself. Handing
 back the cap is the over-ask this pairing removes — "never allocate more memory
 than the workers can use, and never allocate workers there is no memory for"
 ([`roadmap.md`](roadmap.md), "A default runs as fast as the allocation
-permits"). The floor is one worker at whatever the cap is, not one worker's
+permits").
+
+**The recommendation is knowingly high, and what that costs is a *reader*, not
+idle bytes.** `XzSource::default_memory_per_worker` is asked before the file is
+open for reading, so `BlockCache::reader_bytes` charges the chunk pool's slot at
+`POOL_MAX_BYTES` (8 MiB) where a running loop has announced `DEFAULT_CHUNK_SIZE`
+(1 MiB) — 68,192,032 a reader against the 60,852,000 `BlockCache::affordable`
+compares a budget to, at any block size, since the gap is the chunk term and not
+a per-file one. `io.rs` justifies the over-ask as spending budget nothing will
+use, which is true of the bytes and **false of the divisor**: `Parallelism::fit`
+divides the allowance by that same number, so a 512 MiB allocation resolves
+`268,435,456 / 68,192,032` = **three** readers where four would fit. A
+systematic under-count of the discovered default's parallelism, on every
+allocation, and it is `19.19`'s to repair alongside the partition charge — the
+two are one arithmetic and pricing them separately would price the charge twice.
+
+The floor is one worker at whatever the cap is, not one worker's
 worth of bytes: a 256 MiB cgroup resolves to a budget of zero, and the three
 floors below turn that into one reader on the streaming path.
 
@@ -1435,9 +1488,20 @@ module's privacy boundary is unchanged.
 **A read decodes the blocks it lands in, and the block is what is retained.**
 `XzSource::read_range` turns its range into block indices (`SeekTable::blocks_in`),
 takes an `xz_seek::BlockTask` for each, and decodes the block whole into a slot
-of its own pool. A read inside one block is then a **slice** of that block, so
-the common case copies nothing; a read straddling a boundary is assembled into
-a chunk-pool buffer. A `BlockTask` is `Copy` and owns its block, its resolved
+of its own pool. A read inside one block is then a **slice** of that block,
+copying nothing; a read spanning a boundary is assembled into a buffer of the
+read's own length.
+
+**On the parallel path the second arm is the common case, not the rare one, and
+that is `KD19`** ("Execution model and API surface", above). A fused worker's
+first read is a whole partition, and since `partition_bytes` became
+`reader_bytes` a partition is 2.08–2.42 blocks — so the read spans blocks, takes
+the copying arm, and allocates a buffer of partition length that
+`BufferPool::keeps` will not pool and that is held through the parse. The
+sentence above describes the serial path and the query path's chunk-sized reads,
+which is where it is still true.
+
+A `BlockTask` is `Copy` and owns its block, its resolved
 check and the reader's decode settings, so the decode runs with no lock held —
 which is what makes concurrent `read_range` calls genuinely concurrent, the
 serialization point the parallel-scan work exists to remove.
@@ -5001,8 +5065,12 @@ dispatched, so a later window cannot outrun an earlier one's failure.
 
 **A worker is two reads, and the second is why a partition's footprint is a
 block *plus a chunk*.** The first read is the piece exactly,
-`[start, end)`, which on a block-decoding source is one whole block and so a
-zero-copy slice of it. That read can never finish the piece on its own — the
+`[start, end)`, which on a block-decoding source was one whole block and so a
+zero-copy slice of it. **It is no longer, and that is `KD19`**: `partition_bytes`
+is both the memory charge and this window's cut size, so raising it to
+`reader_bytes` made every piece 2.08–2.42 blocks and sent the first read down
+`read_by_blocks`' copying arm. The charge inflates what it charges for. That
+read can never finish the piece on its own — the
 line ending at or past `end` needs bytes past `end` — so a second,
 **chunk-sized** read follows and is scanned as an ordinary contiguous piece
 starting at a row boundary. Handing several `PieceScan`s back rather than one
@@ -7005,7 +7073,16 @@ one-core rate by a worker count; two of that figure's four legs behave as the
 projection said and two do not ([`measurements.md`](measurements.md), "What a
 second scan worker buys, and where the plain path stops"). A compressed `parse`
 reaches **5.82×** at twenty-four workers, sublinearly, which is the decode
-figure's own shape. A compressed typed `query` reaches **1.60×**, its
+figure's own shape — **and that leg is the one claim in this section believed
+not to survive a re-take.** It was measured at `20fd77c`, before
+`partition_bytes` became `reader_bytes`; since then a partition read takes
+`read_by_blocks`' copying arm into a chunk-pool buffer, so the pool's four slots
+cap the fused workers and a stated-count probe runs 16.85 → 11.30 → 8.83 →
+8.77 s over one, two, four and six readers — flat from four, where this figure
+scaled to twenty-four. That is `KD19`'s throughput half, repaired by `19.19`
+and re-taken by `19.11`; the number above stands as what the figure says until
+a sitting replaces it, which is why it is flagged here rather than edited
+there. A compressed typed `query` reaches **1.60×**, its
 sub-stream count capped at eleven by the stated budget's divisor. A plain
 `parse` *falls* to **0.81×**, paying coordination for a scan that was already
 device-bound — which is the refusal of parallel plain-file discovery, arrived

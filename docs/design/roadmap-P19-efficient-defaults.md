@@ -464,6 +464,54 @@ which is the signature of a unit-scaled term that is not per-reader. So:
 Reasoning: [2026-09-11](../status/history/2026-09-11.md), "A unit-independent
 fixed term is refuted, so the reserve cannot be one constant".
 
+**A fifth amendment: the repair runs *before* the account, the named candidate
+is refuted, and the fixed term the first four amendments argue about does not
+exist.** Three of the four bullets above survive — the repair's shape, the
+accepted decline, the 128 MiB family as acceptance gate. Three things change,
+and each is established without a new sitting:
+
+- **There is no fixed term to choose a reserve against.** `19.15` and `19.18`
+  independently fitted `403 + 31.2` and `406 + 31.1` a reader, and agreeing
+  with each other is why it stood for three sessions. Both fitted over three to
+  twenty-four readers; resident is **concave** in the count, so the intercept is
+  the concavity the window skipped. The same file over one to six readers fits
+  `62 MiB + 93.3`, and at one reader the process holds **62.9 MiB** where
+  `403 + 31.2` predicts 436. The concavity's mechanism is `BufferPool::slots`
+  running 2, 4, 4, 4, 5, 6 over one to six readers — so the clamp this spec
+  cites as the reason overhead is *constant* is the reason it is not.
+- **The named candidate is refuted arithmetically, not by measurement.** At
+  every measured cell `(budget − chunk_held)/unit` exceeds
+  `POOL_DEPTH.max(jobs)`, so slots are 2/4/4/6 against a bill of `2 × readers`
+  = 2/4/8/12: the retention floor's unbilled share is zero at two readers and
+  negative above, and it cannot produce a positive excess at any count. The
+  three mechanism legs registered to separate it from the evicted-but-viewed
+  block would have spent an hour establishing that.
+- **The term is a defect, so the repair is `19.19` and it goes first.**
+  `partition_bytes` is both the memory charge and `run_region`'s cut size, so
+  `19.14` raising it to `reader_bytes` made every partition 2.08–2.42 blocks;
+  `scan_partition`'s first read is the whole piece, so it takes
+  `read_by_blocks`' multi-block arm and assembles into an unpoolable buffer of
+  partition length, held through the parse and billed one chunk. A charge that
+  inflates what it charges for. It is also a throughput regression — the chunk
+  pool's four slots then cap the fused workers, flat at 8.83 → 8.77 s from four
+  readers where the pre-change figure scaled to twenty-four jobs.
+
+**So the binding order inverts for this one slice.** The fourth amendment held
+the repair behind the account on the ground that the account is what names the
+term. It is named, by a failing unit test rather than a sitting — build the
+four-block `SeekTable` fixture, call `partition_advice`, feed `stream::cut`,
+assert every range spans one block — and a slice whose evidence is a unit test
+is allocatable now, which is what that bullet was waiting for. Every reading
+taken before it lands prices the defect, so the re-taken `19.18` follows it.
+`19.16` still runs after the account, unchanged.
+
+`19.19` also carries `fit`'s divisor: it divides the allowance by the source's
+*recommendation* rather than by the affordability charge, so a 512 MiB
+allocation resolves three readers where four fit. The two are one arithmetic.
+
+Reasoning: [2026-09-11](../status/history/2026-09-11.md), "`M81` and `M82` are
+both withdrawn, and the account they were guarding is wrong".
+
 **The reserve is one constant, taken from the compressed leg, and it
 over-reserves the plain path by roughly the difference.** The two paths' fixed
 terms are a factor of thirty apart — a plain `parse` holds 5.86 MiB above its
@@ -974,7 +1022,10 @@ being inserted.
 | **19.17** | The compressed account's instrument, and no library code: `reserve` gains flagless legs beside its stated ones, the reader-count axis is registered at both block sizes, the three mechanism legs — allocator, arena cap, path step — are registered at one, and what it shares with `peak-rss` and `rss-attribution` is re-declared — **one edge and one stated non-edge**, per the section above. Reviewable cold against `scripts/test_measure.py`. |
 | **19.18** | The sitting, **diagnostic** — `--alone`, NOT PUBLISHABLE, as `19.6` and `19.12` were: the compressed path's **fixed term and per-reader term**, each with its spread, on a quiet machine. It either attributes the ~280 MiB `19.15` left unexplained or reports that the three legs could not, naming the follow-up experiment. Closes **`KD19`** or rewrites it to what is still true. |
 
-**`19.14` through `19.18` were admitted after this spec was written**, and take the
+| **19.17.1** | A killed leg is recorded as a reading and the sitting continues; a killed leg bars publication of the figure. An **earned third level**: `19.17` shipped the wrong contract, registering a `RESERVE_LIMITS` docstring that calls an OOM kill "a reading rather than an apparatus failure" beside a sweep that raises and loses the whole figure. Re-filed from the withdrawn `M82`, which was not out-of-band because it reverses that decision. Two facts the row did not have: the harness **cannot tell an OOM kill from any other failure**, `rss_wrapper` collapsing every signal death to exit 1 and `--rm` destroying the container before `inspect` could say — so the oracle is `/sys/fs/cgroup/memory.events`' `oom_kill` count, read inside the container after the timed command; and the licence is **per family**, never harness-wide, since `parallel-peak-rss` once measured 3067 MiB in a 3072 MiB container and a kill there is the apparatus failure that being loud caught. A killed cell is a *censored* reading and needs a third cell state rather than a number. |
+| **19.19** | The per-file term, billed where the file is open, and `fit`'s divisor — the repair the fifth amendment names, and the one slice in this phase whose evidence is a **unit test** rather than a sitting. `partition_bytes` is both the memory charge and `run_region`'s cut size, so `19.14` raising it to `reader_bytes` made every partition 2.08–2.42 blocks and sent `scan_partition`'s first read down `read_by_blocks`' copying arm, into an unpoolable buffer of partition length held through the parse and billed one chunk. Restore the one-block partition (or make that first read chunk-sized like its tail) and bill what `reader_bytes` misses where the source is open; in the same slice, divide the allowance by the affordability charge rather than by the recommendation, which costs a reader at every allocation. Acceptance is two-sided: the 128 MiB flagless family survives or declines with nothing killed, **and** the pre/post probe shows the four-worker throughput ceiling lifted. Owns **`KD19`**. |
+
+**`19.14` through `19.19` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
 spec's evidence section rejected: charging a compressed worker what it holds
 was refused because "it would admit fewer readers for exactly the same resident
