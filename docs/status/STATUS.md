@@ -333,15 +333,16 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**.
+What remains runs **`19.18`, `19.16`, `19.13`, `19.11`**.
 
 **The repair ran ahead of the account, which is the reverse of what the spec
 wrote.** `19.20` has run and the arrangement is settled: the cut stays at one
 unit and only the plain path's read shape moved, so nothing about the
 compressed resident curve the remaining slices read has changed since `19.19`
-left it. Start with `19.17.1`, whose premise `19.19` and `19.20` between them
-undermined — no leg of either was killed at any registered limit on the
-arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
+left it. Start with `19.18`, reading `19.19`'s, `19.20`'s and `19.17.1`'s notes
+first: its three mechanism legs are dead arithmetically and need re-aiming or
+dropping **before** the hour is spent, and a leg that dies now censors a cell
+rather than losing the sitting.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -462,7 +463,8 @@ arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
 
       **It does not start until a `--figure reserve --alone` sitting completes
       with no killed leg**, which is what the spec makes publication
-      conditional on — so it is behind `19.19` and `19.17.1`, not merely behind
+      conditional on and which `19.17.1` made a question a run answers — banner,
+      `raw.json` and exit code — rather than one that could not be asked — so it is behind `19.19` and `19.17.1`, not merely behind
       `19.13`. It also re-takes `parallel-scan-throughput` and
       `parallel-peak-rss`, both of which were taken before `partition_bytes`
       changed and describe partitioning this code no longer does.
@@ -579,7 +581,9 @@ arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
       constant ships): the compressed path's resident account, which is what
       the reserve constant and `partition_advice` are read off. **It ran once,
       was OOM-killed on its fifth leg, and reviewing it cost three sessions —
-      read the next two paragraphs before re-taking it.**
+      read the next two paragraphs before re-taking it.** A kill no longer
+      costs the sitting (`19.17.1`); it censors that cell and bars the figure,
+      so the hour still comes back readable.
 
       **Its named hypothesis is dead, and the arithmetic kills it without a
       run.** The three mechanism legs were registered to test the block cache's
@@ -605,22 +609,25 @@ arrangement that ships — reading `19.19`'s and `19.20`'s notes first.
       [2026-09-11](history/2026-09-11.md), "`M81` and `M82` are both withdrawn,
       and the account they were guarding is wrong", and
       [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md).
-- [ ] **19.17.1** A killed leg is recorded and the sitting continues; a killed
-      leg bars publication. Re-filed from the withdrawn `M82`, which was not
-      out-of-band: it reverses the fail-fast `19.17` registered, whose own
-      docstring defends it as "the finding the constant is being chosen
-      against". **The harness cannot currently tell an OOM kill from any other
-      failure** — `rss_wrapper`'s `exit($st == 0 ? 0 : ($st >> 8) || 1)`
-      collapses every signal death to exit 1, and `--rm` destroys the container
-      before `inspect` could say — so the sound oracle is the container reading
-      `/sys/fs/cgroup/memory.events`' `oom_kill` count after the timed command.
-      **The licence is per-family, never harness-wide**: `parallel-peak-rss`
-      once measured 3067 MiB in a 3072 MiB container, and a kill there is the
-      apparatus failure that being loud caught. A killed cell is a *censored*
-      reading — it cannot enter the fit or the headroom column — so the
-      renderer needs a third cell state, not a number. Whether it is needed at
-      all is a question for the session after `19.19`: the repair may leave no
-      leg that dies.
+- [x] **19.17.1** A killed leg is recorded and the sitting continues; a killed
+      leg bars publication. The premise was re-tested before it was built and
+      **holds** on three legs that are not predictions: the registration and the
+      code contradicted each other in the tree; the harness could not tell an
+      OOM kill from a parse error at all (verified in the apparatus — the
+      wrapper exits **1** for both, and only `memory.events`' `oom_kill`
+      separates them, 1 against 0); and `19.11`'s gate, *completes with no
+      killed leg*, was unanswerable while a kill stopped the sitting completing.
+      `measure.OOM_ORACLE` reads the container's own counter after the timed
+      command and is appended in `time_run` rather than in `_script`, so no
+      figure's recorded shape carries it; `measure.KILL_TOLERANT` holds the
+      licence to **one family** — the flagless legs, mechanism legs included by
+      prefix — and everywhere else a kill still ends the figure, now saying that
+      the kernel did it. A censored rep enters neither `readings` nor `rss`, is
+      kept in `raw.json` as `maxrss_bound_kib`/`seconds_to_kill`, and a
+      **partly** killed leg leaves the fit too, its survivors being the reps
+      that stayed under the ceiling. The bar is a note above the table as well
+      as a run banner, and the sitting exits non-zero. Notes:
+      [`../design/roadmap-P19.17.1-killed-leg-notes.md`](../design/roadmap-P19.17.1-killed-leg-notes.md)
 - [x] **19.19** The per-file term, billed where the file is open — `KD19`
       struck. `Partitioning::window_end` is the cut size, separate from the
       memory charge: a boundaried source's window ends at the `workers`-th
@@ -848,4 +855,23 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+**A leg that lost *any* rep to the OOM killer leaves the `reserve` fit
+entirely, rather than contributing its survivors** (`19.17.1`). The spec row
+asks only that a *cell* be censored; whether a partly-killed leg's surviving
+reps are still a point on the line is a call it does not make, and it was made
+by dropping the leg.
+
+The reasoning is survivorship: the reps that survived are exactly the ones that
+stayed under the ceiling, so their median understates and their worst is not the
+worst — and a line fitted through them reads low, which is precisely the number
+that would make a too-small reserve look adequate. Against that, the flagless
+fit has only three or four points to begin with, so one kill can leave it
+unconditioned and the table then reports "no fit" where it could have reported a
+weak one.
+
+What would change if reconsidered: the survivors would rejoin the fit with the
+cell annotated, and `19.16`'s constant could then be read off a curve one of
+whose points is biased low by an unknown amount. Keeping the drop costs a fit;
+reversing it risks a reserve chosen against readings that stopped short. It is
+one predicate in `run_reserve`'s flagless loop
+([`../design/roadmap-P19.17.1-killed-leg-notes.md`](../design/roadmap-P19.17.1-killed-leg-notes.md)).

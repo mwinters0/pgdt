@@ -984,6 +984,43 @@ def parse_maxrss_kib(text: str) -> int:
     return int(matches[0])
 
 
+#: What the harness appends to every in-container script, after the timed
+#: command and outside every timer, so a run can be asked whether the kernel
+#: killed it.
+#:
+#: **The exit code cannot answer this.** `rss_wrapper`'s
+#: `exit($st == 0 ? 0 : ($st >> 8) || 1)` collapses every signal death to exit
+#: 1, so a leg killed by the OOM reaper is indistinguishable from one that
+#: failed to parse its input; and `nerdctl inspect` cannot answer it either,
+#: because `--rm` has destroyed the container by the time there is anything to
+#: ask. The container's own `memory.events` counter can, and it is read inside
+#: the container while it still exists.
+#:
+#: **It is not part of any command shape.** `_script` builds what is measured;
+#: this is the harness asking the container what happened afterwards, which is
+#: why it is appended here rather than written into thirty branches — and why a
+#: figure's recorded shape is unchanged by it. Nothing it does is timed: the
+#: `time` builtin and the RSS wrapper both closed before `$__st` is read.
+OOM_ORACLE = "; __st=$?; cat /sys/fs/cgroup/memory.events >&2 || true; exit $__st"
+
+#: The `oom_kill` line of a cgroup v2 `memory.events`.
+OOM_KILL_RE = re.compile(r"^oom_kill (\d+)$", re.MULTILINE)
+
+
+def parse_oom_kills(text: str) -> int | None:
+    """How many processes the kernel OOM-killed in this run's cgroup, or `None`
+    where the counter was not readable.
+
+    `None` and `0` are different answers and the caller must keep them apart: a
+    missing counter means the harness **cannot tell** what killed the run, which
+    is the state the whole oracle exists to leave behind, so it can never be
+    read as "not killed"."""
+    matches = OOM_KILL_RE.findall(text)
+    if not matches:
+        return None
+    return max(int(m) for m in matches)
+
+
 #: A `key=value` line an instrument writes on its own stdout. Only the decode
 #: instrument writes any today.
 REPORTED_RE = re.compile(r"^([a-z_]+)=(\S+)$")
@@ -2266,17 +2303,50 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: "the allowance ran out" from "the recommendation did".
 #:
 #: **A leg may be OOM-killed, and that is a reading rather than an apparatus
-#: failure.** The rule aims resident at the limit by construction, so every
-#: flagless leg sits close to its own ceiling and the 128 MiB legs sit closest —
-#: `19.15`'s worst rep left three megabytes of 512. The sitting fails on the
-#: first rep if one crosses, which is minutes in and is the finding the
-#: constant is being chosen against.
+#: failure** — see `KILL_TOLERANT`, which is where that licence is granted and
+#: bounded. The rule aims resident at the limit by construction, so every
+#: flagless leg sits close to its own ceiling and the 128 MiB legs sit closest:
+#: `19.15`'s worst rep left three megabytes of 512, and a sitting was lost to a
+#: kill at `1g` before the per-file charge was repaired.
 RESERVE_LIMITS: tuple[tuple[str, int], ...] = (
     ("512m", 512 << 20),
     ("1g", 1 << 30),
     ("1536m", 1536 << 20),
     ("2g", 2 << 30),
 )
+
+#: The command-shape prefixes whose legs may be OOM-killed without the sitting
+#: dying: a kill there is a **censored reading**, recorded and reported, and the
+#: figure carrying it is barred from publication.
+#:
+#: **Why a licence at all.** The flagless family's whole subject is a rule that
+#: aims resident *at* the allocation, so a leg sitting against its own ceiling
+#: is the arrangement under test rather than a mis-set apparatus. Failing fast
+#: on the first one loses every leg behind it — which is what happened: an hour's
+#: `--alone` sitting died on its fifth leg of eighteen and published no account
+#: at all, so the mechanism legs, the path step and the whole stated-budget axis
+#: were paid for and thrown away.
+#:
+#: **Why it is per family and never harness-wide.** Everywhere else a kill *is*
+#: the apparatus failing, and being loud about it is what caught the one that
+#: mattered: `parallel-peak-rss` once measured 3067 MiB inside a 3072 MiB
+#: container, and a licence written across the harness would have swallowed it
+#: into a footnote. A shape outside this tuple that is killed still raises — but
+#: now says so in those words, which the exit code could not.
+#:
+#: **A censored cell is not a number.** The reading is a lower bound on a peak
+#: the process never reached, so it enters neither a fit nor a headroom column;
+#: the renderer states the kill instead. What it is *evidence of* is the thing
+#: the constant is being chosen against, which is why it is recorded rather than
+#: discarded.
+KILL_TOLERANT: tuple[str, ...] = (RESERVE_FLAGLESS,)
+
+
+def kill_tolerant(command: str) -> bool:
+    """Whether an OOM kill of this command shape is a reading rather than an
+    apparatus failure (`KILL_TOLERANT`)."""
+    return command.startswith(KILL_TOLERANT)
+
 
 #: The limit the three mechanism legs are read at, and the input they are read
 #: over.
@@ -2748,9 +2818,20 @@ class Session:
         #: from what the binary said it decoded rather than from a file size a
         #: second mechanism would have to agree with.
         self.reported: dict[str, dict[str, str]] = {}
+        #: How many of each key's reps the kernel OOM-killed. A censored
+        #: reading: it is in neither `readings` nor `rss`, because the peak it
+        #: reports is a bound the process never got past rather than the peak
+        #: the arrangement holds — see `KILL_TOLERANT`. The key is present with
+        #: a count where a kill happened and absent everywhere else, so a
+        #: renderer asks one question rather than comparing rep counts.
+        self.killed: dict[str, int] = {}
         self._dry_reps: dict[str, int] = {}
         self._last_telemetry: dict[str, float] = {}
         self._last_rss: float | None = None
+        #: Whether the run just taken was OOM-killed under a family that
+        #: tolerates it. Read by `sweep`, which files the rep as censored
+        #: instead of as a reading.
+        self._last_killed = False
         self.sampler = Sampler()
         #: Every reading's telemetry, in the order taken, so a sweep can be
         #: audited after the fact even where the gate let a reading through.
@@ -2796,6 +2877,7 @@ class Session:
         run(argv)
 
     def time_run(self, spec: RunSpec) -> float:
+        self._last_killed = False
         dump = self.input_path(spec.input, spec.regime)
         mounts = [f"{dump}:/dump.sql:ro"]
         if spec.binary != "none":
@@ -2816,7 +2898,12 @@ class Session:
         ]
         for m in mounts:
             argv += ["-v", m]
-        argv += [self.cfg.image, "bash", "-c", _script(spec.command)]
+        # The command shape, then the harness's own question about how it
+        # ended. `OOM_ORACLE` is appended here rather than written into
+        # `_script` so that what a figure records as its shape is exactly what
+        # was measured, and so the oracle covers every shape by construction
+        # rather than by thirty branches remembering to carry it.
+        argv += [self.cfg.image, "bash", "-c", _script(spec.command) + OOM_ORACLE]
 
         # Whether the cache is dropped is the regime's own declaration, not a
         # prefix on its name: the name and the staging area are two facts, and
@@ -2871,9 +2958,62 @@ class Session:
         before, mono_start = Counters.read(), time.monotonic()
         proc = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         mono_end, after = time.monotonic(), Counters.read()
+        oom = parse_oom_kills(proc.stderr)
         if proc.returncode != 0:
+            # What killed it, said in those words. Before the oracle the only
+            # thing the harness could report was "exited 1", which is what a
+            # signal death and a parse error both look like once `rss_wrapper`
+            # has collapsed them.
+            if oom is None:
+                why = (
+                    " — and the container's `memory.events` was unreadable, so whether the "
+                    "kernel killed it cannot be told from here"
+                )
+            elif oom > 0:
+                why = f" — OOM-killed ({oom} process(es), by the container's own `memory.events`)"
+            else:
+                why = " — not an OOM kill: the container's `memory.events` counted none"
+            if oom and kill_tolerant(spec.command):
+                # A censored reading. Recorded with everything that could still
+                # be read off it, so `raw.json` carries the kill and `--render`
+                # reproduces the cell; the sitting goes on to the next leg.
+                self._last_killed = True
+                self._last_rss = None
+                self._last_stdout = parse_resolution(proc.stderr)
+                # What the run still said about itself, under names that cannot
+                # be read as readings. Both are **lower bounds**: the wrapper
+                # reports the peak the process had reached when the kernel
+                # reaped it, and the timer the seconds it had run for. Kept
+                # because they are evidence of the very thing the constant is
+                # being chosen against; named apart because a fit or a headroom
+                # column that picked them up would describe a run that stopped.
+                def _bound(read: Callable[[str], float]) -> float | None:
+                    try:
+                        return read(proc.stderr)
+                    except ValueError:
+                        return None
+
+                self.records.append(
+                    {
+                        "figure": self.figure_id,
+                        "spec": dataclasses.asdict(spec),
+                        "seconds": None,
+                        "maxrss_kib": None,
+                        "killed": True,
+                        "maxrss_bound_kib": _bound(parse_maxrss_kib),
+                        "seconds_to_kill": _bound(parse_bash_time),
+                        "oom_kill": oom,
+                        "exit": proc.returncode,
+                        "wall_including_container": round(time.time() - started, 3),
+                        "telemetry": {},
+                        "reported": self._last_stdout,
+                        "argv": argv,
+                    }
+                )
+                return 0.0
             raise RuntimeError(
-                f"{spec.label} exited {proc.returncode}\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
+                f"{spec.label} exited {proc.returncode}{why}"
+                f"\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
             )
         seconds = parse_bash_time(proc.stderr)
         self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
@@ -2893,6 +3033,10 @@ class Session:
                 "spec": dataclasses.asdict(spec),
                 "seconds": seconds,
                 "maxrss_kib": self._last_rss,
+                # Zero where the container answered and nothing was killed;
+                # `None` where `memory.events` could not be read, which is a
+                # different answer and stays one (`parse_oom_kills`).
+                "oom_kill": oom,
                 "wall_including_container": round(time.time() - started, 3),
                 "telemetry": telemetry,
                 "reported": self._last_stdout,
@@ -2919,6 +3063,18 @@ class Session:
             order = list(specs) if rep < (reps + 1) // 2 else list(reversed(specs))
             for spec in order:
                 seconds = self.take(spec, rep)
+                if self._last_killed:
+                    # Censored: recorded as a kill, never as a number. The RSS
+                    # key is opened here so a leg whose every rep was killed
+                    # still resolves — an absent key means "this shape carries
+                    # no RSS wrapper", which is a different fact.
+                    key = spec.key(figure)
+                    self.killed[key] = self.killed.get(key, 0) + 1
+                    if "rss" in spec.command:
+                        self.rss.setdefault(key, [])
+                    if self._last_stdout:
+                        self.reported[key] = self._last_stdout
+                    continue
                 self.readings[spec.key(figure)].append(seconds)
                 # Only the accepted reading's RSS is kept: a rep the gate
                 # discarded is discarded whole, never half-kept because the
@@ -2947,6 +3103,12 @@ class Session:
         """
         for attempt in range(1, GATE_RETRIES + 1):
             seconds = self.time_run(spec)
+            if self._last_killed:
+                # A killed run is not a timing reading at all, so the
+                # contention gate has nothing to judge and retaking it would
+                # spend `GATE_RETRIES` runs reproducing the kill.
+                self.log(f"  rep{rep + 1} {spec.label}: **OOM-killed** — recorded, censored")
+                return seconds
             verdict = contention_verdict(self._last_telemetry, spec.regime)
             if verdict is None:
                 self.log(f"  rep{rep + 1} {spec.label}: {seconds:.3f} s")
@@ -2965,8 +3127,25 @@ class Session:
         return self.readings[spec.key(figure)]
 
     def get_rss(self, figure: str, spec: RunSpec) -> list[float]:
-        """The peak resident sets, in KiB, of one spec's accepted reps."""
+        """The peak resident sets, in KiB, of one spec's accepted reps.
+
+        A leg every rep of which was OOM-killed answers `[]`, not a KeyError:
+        the key exists because the shape carries the wrapper, and it is empty
+        because every reading it took was censored (`kills`)."""
         return self.rss[spec.key(figure)]
+
+    def kills(self, figure: str, spec: RunSpec) -> int:
+        """How many of this spec's reps the kernel OOM-killed.
+
+        Zero for every spec outside `KILL_TOLERANT`, which cannot reach this
+        state — a kill there raises and the figure is lost, which is the whole
+        of what the licence is narrow for."""
+        return self.killed.get(spec.key(figure), 0)
+
+    def figure_kills(self, figure: str) -> dict[str, int]:
+        """Every killed leg of one figure, by reading key."""
+        prefix = f"{figure}/"
+        return {k: n for k, n in self.killed.items() if k.startswith(prefix)}
 
     def has(self, figure: str, spec: RunSpec) -> bool:
         return spec.key(figure) in self.readings
@@ -5071,6 +5250,14 @@ def run_reserve(session: Session) -> str:
     **The shipped constant comes from the uncapped leg**, because the default
     has to survive the operator who did not set `MALLOC_ARENA_MAX` -- that being
     the case that kills the process.
+
+    **A leg the kernel killed is a third cell state, not a missing number**
+    (`KILL_TOLERANT`). Its reading is a bound on a peak the process never
+    reached, so the cell says so and carries no headroom; and the leg leaves the
+    fit **whether or not a rep survived**, because the reps that survived are
+    the ones that stayed under the ceiling — a line through them reads low,
+    which is the number that would make a too-small reserve look adequate.
+    `emit` is what then bars the figure from publication.
     """
     figure = "reserve"
     stated = _reserve_specs()
@@ -5096,22 +5283,40 @@ def run_reserve(session: Session) -> str:
 
     def rss(spec: RunSpec) -> list[float]:
         readings = session.get_rss(figure, spec)
-        per_rep.append(f"- {spec.label}: " + ", ".join(fmt_mib(v) for v in readings))
+        killed = session.kills(figure, spec)
+        per_rep.append(
+            f"- {spec.label}: "
+            + (", ".join(fmt_mib(v) for v in readings) or "no surviving rep")
+            + (f" · **{killed} rep(s) OOM-killed**" if killed else "")
+        )
         return readings
+
+    def arrangement(spec: RunSpec) -> tuple[int, int] | None:
+        """The worker count and budget this leg's own run reported, or `None`
+        where no rep of it got as far as reporting one."""
+        report = session.reported.get(spec.key(figure), {})
+        if "resolved_jobs" not in report or "resolved_budget" not in report:
+            return None
+        return int(report["resolved_jobs"]), int(report["resolved_budget"])
 
     def resolved(spec: RunSpec) -> tuple[int, int]:
         """The worker count and budget this leg's own run reported.
 
         Read back rather than computed: the count a flagless run resolves is
         `ParallelArgs::resolve`'s answer to the allocation, and a harness that
-        predicted it would be a second authority on the rule under test."""
-        report = session.reported.get(spec.key(figure), {})
-        if "resolved_jobs" not in report or "resolved_budget" not in report:
+        predicted it would be a second authority on the rule under test.
+
+        A leg with a surviving rep that reported nothing is an error; a leg with
+        none at all is a censored cell and its caller asks `arrangement`
+        instead, because the mode report is printed before the scan opens and a
+        run killed early enough may never have reached it."""
+        got = arrangement(spec)
+        if got is None:
             raise RuntimeError(
                 f"{spec.label}: the run reported no resolved arrangement, so the fit has no "
                 "reader count — `scan started` is where it comes from (`parse_resolution`)"
             )
-        return int(report["resolved_jobs"]), int(report["resolved_budget"])
+        return got
 
     # -- the flagless axis: what the shipped default resolves and holds -----
     limits = dict(RESERVE_LIMITS)
@@ -5122,6 +5327,23 @@ def run_reserve(session: Session) -> str:
         for name, _, unit in RESERVE_FLAGLESS_INPUTS:
             spec = by_flagless[(name, token)]
             readings = rss(spec)
+            killed = session.kills(figure, spec)
+            if not readings:
+                # The third cell state: every rep censored, so there is no
+                # number to print. What the leg still says is the arrangement
+                # it resolved before it died, which is the half of the reading
+                # the kill did not destroy.
+                got = arrangement(spec)
+                cells.append(
+                    f"**OOM-killed**, {killed} rep(s) · "
+                    + (
+                        f"{got[0]}r, {_fmt_budget_bytes(got[1])}"
+                        if got
+                        else "arrangement never reported"
+                    )
+                    + " · head —"
+                )
+                continue
             jobs, budget = resolved(spec)
             worst = max(readings) * 1024
             head = (limit - worst) / limit * 100
@@ -5132,7 +5354,12 @@ def run_reserve(session: Session) -> str:
             block_path = budget >= reader_bytes(unit)
             cells.append(
                 f"{fmt_mib_median_spread(readings)} · {jobs}r, {_fmt_budget_bytes(budget)} · "
-                f"head {head:.1f}%" + ("" if block_path else " · *streaming*")
+                f"head {head:.1f}%"
+                + ("" if block_path else " · *streaming*")
+                # A partly-censored leg's surviving reps are the ones that did
+                # not reach the ceiling, so its median understates and its worst
+                # is not the worst. Said in the cell, and kept out of the fit.
+                + (f" · **{killed} rep(s) OOM-killed**" if killed else "")
             )
         flagless_rows.append(cells)
     flagless_table = md_table(
@@ -5140,15 +5367,27 @@ def run_reserve(session: Session) -> str:
     )
 
     for name, label, unit in RESERVE_FLAGLESS_INPUTS:
-        points, declined = [], []
+        points, declined, censored_legs = [], [], []
         for token, _ in RESERVE_LIMITS:
             spec = by_flagless[(name, token)]
-            jobs, budget = resolved(spec)
             readings = session.get_rss(figure, spec)
+            # A censored leg is out of the fit whether or not a rep survived:
+            # the kill removes the high end of the distribution, so what is
+            # left is a biased sample and a line through it reads low.
+            if session.kills(figure, spec):
+                censored_legs.append(token)
+                continue
+            jobs, budget = resolved(spec)
             if budget < reader_bytes(unit):
                 declined.append(token)
                 continue
             points.append((jobs, readings))
+        censored_tail = (
+            f". `{'`, `'.join(censored_legs)}` was OOM-killed and is out of the fit — a kill "
+            "removes the high end of the distribution, so what survives it is a biased sample"
+            if censored_legs
+            else ""
+        )
         if len({jobs for jobs, _ in points}) < 2:
             fits.append(
                 f"- **{label}**: no fit — "
@@ -5158,7 +5397,10 @@ def run_reserve(session: Session) -> str:
                     else ""
                 )
                 + "the legs that took it resolved "
-                f"{sorted({jobs for jobs, _ in points})} readers, which is one point."
+                f"{sorted({jobs for jobs, _ in points})} readers, which is "
+                f"{len({jobs for jobs, _ in points})} point(s)"
+                + censored_tail
+                + "."
             )
             continue
         fixed, per_reader = _least_squares([(j, median(r) / 1024) for j, r in points])
@@ -5179,29 +5421,43 @@ def run_reserve(session: Session) -> str:
                 if declined
                 else ""
             )
+            + censored_tail
         )
 
     # -- the mechanism legs, against the flagless leg they differ from one ---
     reference = by_flagless[(RESERVE_MECHANISM_INPUT, RESERVE_MECHANISM_LIMIT)]
     ref_readings = session.get_rss(figure, reference)
-    ref_jobs, _ = resolved(reference)
+    ref_killed = session.kills(figure, reference)
+    ref_arrangement = arrangement(reference)
+    ref_jobs = ref_arrangement[0] if ref_arrangement else 0
+
+    def mech_cell(readings: Sequence[float], killed: int) -> str:
+        """One mechanism leg's reading, or the fact that it was killed."""
+        if not readings:
+            return f"**OOM-killed**, {killed} rep(s)"
+        return fmt_mib_median_spread(readings) + (
+            f" · **{killed} rep(s) OOM-killed**" if killed else ""
+        )
+
     mech_rows = [
         [
             "the reference — glibc, arenas uncapped",
-            fmt_mib_median_spread(ref_readings),
+            mech_cell(ref_readings, ref_killed),
             "—",
         ]
     ]
     for label, spec in mechanism:
         readings = rss(spec)
-        delta = median(readings) - median(ref_readings)
-        mech_rows.append(
-            [
-                label,
-                fmt_mib_median_spread(readings),
-                f"{fmt_rss_delta(delta)} ({delta / median(ref_readings) * 100:+.0f}%)",
-            ]
-        )
+        killed = session.kills(figure, spec)
+        # A delta against a censored reference, or from a censored leg, is a
+        # difference of two things at least one of which is a bound. Said,
+        # never printed as a number.
+        if not readings or not ref_readings:
+            against = "— · a censored leg is a bound, not a number"
+        else:
+            delta = median(readings) - median(ref_readings)
+            against = f"{fmt_rss_delta(delta)} ({delta / median(ref_readings) * 100:+.0f}%)"
+        mech_rows.append([label, mech_cell(readings, killed), against])
     mech_table = md_table(["Leg", "Peak RSS", "Against the reference"], mech_rows)
 
     # -- the path step ------------------------------------------------------
@@ -5258,7 +5514,8 @@ def run_reserve(session: Session) -> str:
         + "\n".join(fits)
         + f"\n\n**What each mechanism moves**, at one block size and one allocation — "
         f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
-        f"{ref_jobs} readers. The reference is the axis row above, not a re-take. The allocator "
+        + (f"{ref_jobs} readers" if ref_arrangement else "a count it never lived to report")
+        + ". The reference is the axis row above, not a re-take. The allocator "
         "legs are what separate glibc fragmentation from anything structural — fragmentation "
         "moves under jemalloc, a block retained behind a live view does not — and the arena leg "
         "bounds how much of the term is arena retention at all:\n\n"
@@ -6926,6 +7183,22 @@ def partial_lead(
     )
 
 
+def censored_note(kills: Mapping[str, int]) -> str:
+    """The paragraph that goes above a table one of whose legs was OOM-killed.
+
+    It sits in the figure's own section rather than only in the run's header,
+    because a section is what gets pasted: a banner at the top of `tables.md`
+    is not carried by the one table somebody copies out of it.
+    """
+    legs = ", ".join(f"`{key.partition('/')[2]}` ({n} rep(s))" for key, n in sorted(kills.items()))
+    return (
+        "> **A leg of this table was OOM-killed, so it must not be published.** "
+        f"{legs}. Those cells are censored — the reading is a bound on a peak the process "
+        "never reached, so it enters neither the fit nor the headroom column — and the rest "
+        "of the table was measured beside a leg that did not complete.\n\n"
+    )
+
+
 def recorded_input_sizes(stager: Stager, figures: Sequence[Figure]) -> dict[str, int]:
     """Every selected figure's inputs, by name, at the size they were on disk.
 
@@ -6966,6 +7239,7 @@ class ReplaySession(Session):
         super().__init__(cfg, Stager(cfg, log), log)
         self.readings = raw["readings"]
         self.rss = raw.get("rss", {})
+        self.killed = raw.get("killed", {})
         self.reported = raw.get("reported", {})
         self.telemetry = raw.get("telemetry", [])
         self.records = raw.get("runs", [])
@@ -7023,7 +7297,11 @@ def render(cfg: Config, run_dir: Path) -> int:
         )
         return 2
 
-    by_id = {f.id: f for f in FIGURES}
+    # `SELECTABLE_BY_ID`, not `FIGURES_BY_ID`: a sitting is re-renderable
+    # exactly when `--figure` could have taken it, and an **untaken**
+    # instrument is the case that needs re-rendering most — it is taken
+    # diagnostically, repeatedly, while its renderer is still being written.
+    by_id = SELECTABLE_BY_ID
     unknown = [fid for fid in raw["figures"] if fid not in by_id]
     if unknown:
         print(f"unknown figure(s) in {raw_path}: {', '.join(unknown)}", file=sys.stderr)
@@ -7051,7 +7329,9 @@ def render(cfg: Config, run_dir: Path) -> int:
             sections_seen.add(fig.section)
             label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
             marker = figure_marker(fig.id, None if whole_sweep else head)
-            parts.append(f"{heading}{marker}\n\n{label}{body}\n{apparatus}{consumers}")
+            kills = session.figure_kills(fig.id)
+            bar = censored_note(kills) if kills else ""
+            parts.append(f"{heading}{marker}\n\n{label}{bar}{body}\n{apparatus}{consumers}")
 
     out = run_dir / "tables.md"
     out.write_text("\n".join(raw["header"]) + "\n" + "\n".join(parts))
@@ -7137,6 +7417,12 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     parts: list[str] = []
     sections_seen: set[str] = set()
     failures: list[tuple[str, str]] = []
+    # Figures that lost a leg to the OOM killer. A kill inside `KILL_TOLERANT`
+    # is a reading rather than an apparatus failure, so the sitting goes on —
+    # but the figure it belongs to may not be published from it, because a
+    # censored cell is a bound rather than a number and the table would read as
+    # though the arrangement had been measured.
+    censored: list[tuple[str, int]] = []
     for i, fig in enumerate(figures):
         session.figure_index = i
         blocked = [r for r, _ in failures if r in fig.requires]
@@ -7169,6 +7455,16 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             failures.append((fig.id, str(exc)))
             continue
         took = time.time() - started
+        kills = session.figure_kills(fig.id)
+        if kills:
+            censored.append((fig.id, sum(kills.values())))
+            log(
+                f"!! {fig.id}: {sum(kills.values())} rep(s) OOM-killed across "
+                f"{len(kills)} leg(s) — recorded as censored readings; this figure "
+                "must not be published from this sitting"
+            )
+            for key, n in sorted(kills.items()):
+                log(f"!!   {key}: {n}")
         apparatus = apparatus_note(session.records[first_record:])
         if apparatus:
             log("    " + apparatus.strip())
@@ -7183,7 +7479,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         sections_seen.add(fig.section)
         label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
         marker = figure_marker(fig.id, None if whole_sweep else head)
-        parts.append(f"{heading}{marker}\n\n{label}{body}\n{apparatus}{consumers}")
+        bar = censored_note(kills) if kills else ""
+        parts.append(f"{heading}{marker}\n\n{label}{bar}{body}\n{apparatus}{consumers}")
 
     stager.cleanup()
     if not cfg.dry_run:
@@ -7244,6 +7541,17 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             + ".",
             "",
         ]
+    if censored:
+        header += [
+            "> **NOT PUBLISHABLE — a leg was OOM-killed.** "
+            + "; ".join(f"`{fid}` lost {n} rep(s)" for fid, n in censored)
+            + ". The kill is a reading and is recorded as one, but a censored cell is a "
+            "bound on a peak the process never reached rather than the peak the "
+            "arrangement holds, so the table above it describes an arrangement that was "
+            "not measured. Fix what kills it, or state the finding from the kill itself, "
+            "and re-take the figure.",
+            "",
+        ]
     if failures:
         header += ["> **Figures that failed:** " + ", ".join(f"`{f}` ({m})" for f, m in failures), ""]
 
@@ -7269,6 +7577,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 "input_sizes": recorded_input_sizes(stager, figures),
                 "readings": session.readings,
                 "rss": session.rss,
+                "killed": session.killed,
                 "reported": session.reported,
                 "telemetry": session.telemetry,
                 "governor": {
@@ -7284,7 +7593,12 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     )
     log(f"\nwrote {out_root / 'tables.md'} and {out_root / 'raw.json'}")
     log_file.close()
-    return 1 if failures else 0
+    # A censored sitting exits non-zero like a failed one. It *completed*, and
+    # that is the point: "the sitting finished" is no longer the same claim as
+    # "the figure may be published", so the exit code has to carry the second.
+    # A detached `--figure reserve --alone` whose gate is "no leg was killed"
+    # is then answerable without reading the log.
+    return 1 if (failures or censored) else 0
 
 
 def cmd_list() -> None:

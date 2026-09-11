@@ -31,7 +31,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md), "The
 seekable-xz crate reads its compressed bytes through a trait, on purpose").
 
-**`RT1`–`RT8` are allocated**, and nothing at or below `RT8` is reused.
+**`RT1`–`RT9` are allocated**, and nothing at or below `RT9` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -573,3 +573,60 @@ grep -E '^Mem(Total|Free|Available)' /proc/meminfo
 sudo nerdctl run --rm -m 512m postgres:16 sh -c \
   'grep -E "^Mem(Total|Free|Available)" /proc/meminfo; cat /sys/fs/cgroup/memory.max'
 ```
+
+---
+
+## RT9 — cgroup v2 `memory.events` is the only thing that says a process was OOM-killed
+
+**Claim.** `<cgroup>/memory.events` exists on every non-root v2 cgroup — a
+container's own, whether or not it was given a limit — and carries a line
+`oom_kill <n>`, a monotonic count of the processes the kernel's OOM killer
+reaped in that cgroup. It is readable **from inside** the container by the
+container's own processes, so it can be read after a command and before the
+container is torn down.
+
+It is the only signal available. A process reaped by the OOM killer dies by
+`SIGKILL` and is indistinguishable, from its own exit status, from any other
+signal death; where the harness runs the command under a wrapper that reports
+its child's peak resident set, the wrapper exits with a *collapsed* status and
+the distinction is gone entirely.
+
+**Proof.** `Documentation/admin-guide/cgroup-v2.rst`, `memory.events`:
+*"oom_kill — The number of processes belonging to this cgroup killed by any kind
+of OOM killer."* Observed on this host, under `-m 64m --memory-swap 64m`: a
+container whose command allocates past the limit reads `oom 1` / `oom_kill 1`,
+one whose command merely exits non-zero reads `oom 0` / `oom_kill 0`, and both
+containers exit **1** through the resident-set wrapper. An unlimited container
+has the file and reads all zeros.
+
+**Scope limit.** Three, and the first is the one a caller must not lose.
+
+- **A missing file is not "nothing was killed".** On a v1 hierarchy, or where
+  `/sys/fs/cgroup` is not the container's own, there is no counter and the
+  answer is *unknown* — which has to stay distinguishable from zero, or an
+  unreadable oracle silently becomes a clean bill of health.
+- **`oom_kill` counts processes, `oom` counts events.** A cgroup that went OOM
+  without reaping anything increments the second and not the first; what a
+  caller asking "did my command die to the kernel" wants is the first.
+- **It is hierarchical**, so a cgroup with descendants counts their kills too.
+  Nothing here has descendants — a container's command tree is one cgroup — but
+  a caller that acquired them would need `memory.events.local`.
+
+**Verified against:** Linux 7.1.4-arch1-1; nerdctl 2.3.5 / containerd v2.3.3;
+`alpine:3` and `postgres:16`.
+
+**Relied on by:** [`measurements.md`](measurements.md), "The apparatus" — the
+harness's kill oracle, which decides whether a killed leg is a censored reading
+or an apparatus failure, and bars a figure from publication either way.
+
+**Re-verify:**
+
+```sh
+docker run --rm -m 64m --memory-swap 64m alpine:3 sh -c \
+  'tail /dev/zero >/dev/null 2>&1; cat /sys/fs/cgroup/memory.events'
+docker run --rm -m 64m --memory-swap 64m alpine:3 sh -c \
+  'false; cat /sys/fs/cgroup/memory.events'
+docker run --rm alpine:3 cat /sys/fs/cgroup/memory.events
+```
+
+`oom_kill 1`, then `oom_kill 0`, then `oom_kill 0`.

@@ -487,6 +487,41 @@ read back out of the doc the way a sitting commit is, with its own reconciliatio
 The register is the place a change like that gets grilled, and the defect being
 closed here is a default nothing named at all.
 
+**A run the kernel killed is a reading in one family and an apparatus failure
+everywhere else, and the harness can now tell the two apart at all.** It could
+not before: `rss_wrapper` collapses every signal death to exit 1, and `--rm` has
+destroyed the container before `nerdctl inspect` could be asked, so an OOM kill
+and a parse error came back as the same sentence. The oracle is the container's
+own `/sys/fs/cgroup/memory.events` — read inside it, after the timed command and
+outside every timer, so no figure's recorded shape carries it. What that buys is
+in two halves:
+
+- **A kill inside `measure.KILL_TOLERANT` is a censored reading.** Only the
+  reserve instrument's flagless family is in it, because that family's whole
+  subject is a rule aiming resident *at* the allocation, so a leg sitting
+  against its own ceiling is the arrangement under test. The kill is recorded,
+  the sitting continues, and the cell prints the fact rather than a number —
+  a killed run's peak is a bound on one the process never reached, so it enters
+  neither a fit nor a headroom column, and a leg *partly* killed leaves the fit
+  too, its surviving reps being the ones that stayed under the ceiling.
+- **A killed leg bars the figure from publication**, in the run's header and in
+  a note above the table itself, since a section is what gets pasted. The
+  sitting exits non-zero: "the sitting finished" and "the figure may be
+  published" stopped being the same claim, and the second is what a detached
+  run's caller needs.
+
+The licence is **per family and never harness-wide**: everywhere else a kill is
+the apparatus failing, and being loud about it is what caught the one that
+mattered — `parallel-peak-rss` once measured 3067 MiB inside a 3072 MiB
+container. Outside the tolerant families a kill still ends the figure, but now
+says in those words that the kernel did it.
+
+*Rejected:* fail-fast, which is what this replaced. It cost an hour-long
+`--alone` sitting that died on its fifth leg of eighteen and published no
+account at all — the mechanism legs, the path step and the whole stated-budget
+axis behind it were paid for and thrown away — and it contradicted the family's
+own registration, which called a kill there a reading.
+
 **A regime names a device, and a figure that reads the wrong one still emits a
 plausible table.** That is why the three staging areas are three directories
 and never one, why `cold-nvme` is its own regime rather than a flag on `cold`,

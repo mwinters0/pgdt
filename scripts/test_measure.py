@@ -23,6 +23,7 @@ import inspect
 import io
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 import unittest.mock
@@ -4563,3 +4564,314 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
                     inp = "control_xz" if "`.xz`" in header[i] else "control"
                     want = min(jobs, self.CAP[inp])
                     self.assertIn(f"· {want} sub-stream", cell)
+
+
+class OomKillOracle(unittest.TestCase):
+    """Telling an OOM kill from any other failure.
+
+    The exit code cannot: `rss_wrapper` collapses every signal death to exit 1,
+    and `--rm` has destroyed the container before `nerdctl inspect` could be
+    asked. So the oracle is the container's own `memory.events`, read inside it
+    after the timed command — and the three things that make that sound are
+    asserted here, because each fails by returning a plausible answer about
+    something else.
+    """
+
+    EVENTS = "low 0\nhigh 0\nmax 41\noom 2\noom_kill 1\noom_group_kill 0\n"
+
+    def test_the_counter_is_read_off_memory_events(self):
+        self.assertEqual(measure.parse_oom_kills(self.EVENTS), 1)
+
+    def test_a_container_that_killed_nothing_answers_zero(self):
+        self.assertEqual(measure.parse_oom_kills(self.EVENTS.replace("oom_kill 1", "oom_kill 0")), 0)
+
+    def test_an_unreadable_counter_is_not_zero(self):
+        # The distinction the whole oracle exists for: "nothing was killed" and
+        # "the harness cannot tell" are different answers, and reading the
+        # second as the first is how a kill becomes a silent apparatus failure.
+        self.assertIsNone(measure.parse_oom_kills("real\t0m1.000s\n"))
+
+    def test_the_oracle_runs_after_the_timed_command_and_preserves_its_status(self):
+        # Inside the timer it would be part of the reading; without the saved
+        # status the container would exit on `cat`'s success and every failure
+        # would read as a pass.
+        self.assertTrue(measure.OOM_ORACLE.startswith("; __st=$?;"))
+        self.assertTrue(measure.OOM_ORACLE.rstrip().endswith("exit $__st"))
+        self.assertIn("/sys/fs/cgroup/memory.events", measure.OOM_ORACLE)
+
+    def test_it_writes_to_stderr_beside_the_other_two_reports(self):
+        # `parse_reported` reads a binary's *stdout*; sending the counter there
+        # would put `oom_kill 0` in front of it as a `key=value` line.
+        self.assertIn(">&2", measure.OOM_ORACLE)
+
+    def test_it_is_not_part_of_any_command_shape(self):
+        # What a figure records as its shape must be exactly what was measured.
+        for command in measure.command_shapes():
+            with self.subTest(command=command):
+                self.assertNotIn("memory.events", measure._script(command))
+
+    def test_the_oracle_adds_a_command_but_never_a_timer(self):
+        # `parse_bash_time` refuses more than one `real` line, so a shape that
+        # acquired a second timed command would lose its figure — and a shape
+        # whose timer count the oracle changed is exactly that.
+        self.assertNotIn("time ", measure.OOM_ORACLE)
+        for command in measure.command_shapes():
+            with self.subTest(command=command):
+                bare = measure._script(command)
+                self.assertEqual((bare + measure.OOM_ORACLE).count("time "), bare.count("time "))
+
+
+class KillLicence(unittest.TestCase):
+    """Which families may lose a leg to the kernel and continue.
+
+    The licence is narrow on purpose. `parallel-peak-rss` once measured
+    3067 MiB inside a 3072 MiB container, and a kill there is the apparatus
+    failure that being loud caught; the flagless family is the opposite case,
+    since the rule under test aims resident at the allocation by construction.
+    """
+
+    def test_the_flagless_family_carries_it(self):
+        for spec in measure._reserve_flagless_specs():
+            with self.subTest(leg=spec.label):
+                self.assertTrue(measure.kill_tolerant(spec.command))
+
+    def test_the_mechanism_legs_carry_it_because_they_are_that_same_shape(self):
+        for _, spec in measure._reserve_mechanism_specs():
+            with self.subTest(leg=spec.label):
+                self.assertTrue(measure.kill_tolerant(spec.command))
+
+    def test_the_resident_figures_that_could_hide_a_near_miss_do_not(self):
+        for spec in (*measure._parallel_rss_specs(), *_peak_rss_specs()):
+            with self.subTest(leg=spec.label):
+                self.assertFalse(measure.kill_tolerant(spec.command))
+
+    def test_the_stated_families_of_the_same_figure_do_not(self):
+        # They state a budget far below their container, so a kill there is the
+        # apparatus and not the reading.
+        for spec in (*measure._reserve_specs(), *measure._reserve_step_specs()):
+            with self.subTest(leg=spec.label):
+                self.assertFalse(measure.kill_tolerant(spec.command))
+
+    def test_no_shape_outside_the_reserve_figure_is_tolerant(self):
+        for command in measure.command_shapes():
+            if command.startswith(measure.RESERVE_FLAGLESS):
+                continue
+            with self.subTest(command=command):
+                self.assertFalse(measure.kill_tolerant(command))
+
+
+class CensoredCells(unittest.TestCase):
+    """The reserve table with a leg the kernel killed.
+
+    A censored cell is a **bound on a peak the process never reached**, so what
+    this holds is that no number is printed for it, that it leaves the fit, and
+    that the figure says it must not be published. All three fail silently
+    otherwise: a killed leg whose surviving reps were averaged publishes a
+    median of the reps that stayed *under* the ceiling, which is exactly the
+    number that makes a too-small reserve look adequate.
+    """
+
+    FIGURE = "reserve"
+    #: The leg killed in these renders: the 128 MiB file in a 1 GiB allocation,
+    #: which is the one an actual sitting lost.
+    KILLED = ("control_xz128", "1g")
+
+    def _specs(self):
+        return {
+            "flagless": measure._reserve_flagless_specs(),
+            "mechanism": [s for _, s in measure._reserve_mechanism_specs()],
+            "steps": measure._reserve_step_specs(),
+            "stated": measure._reserve_specs(),
+        }
+
+    def _raw(self, killed_reps=3, total_reps=3):
+        specs = self._specs()
+        every = [
+            *specs["flagless"],
+            *specs["mechanism"],
+            *specs["steps"],
+            *specs["stated"],
+            measure._RESERVE_BASELINE,
+        ]
+        rss, reported, killed = {}, {}, {}
+        for i, spec in enumerate(every):
+            key = spec.key(self.FIGURE)
+            # Monotone in the leg, so the flagless fit is well conditioned and
+            # the numbers below are never two legs' readings by accident.
+            rss[key] = [100000.0 + 1000 * i + 10 * r for r in range(total_reps)]
+            reported[key] = {
+                "resolved_jobs": str(2 + i % 5),
+                "resolved_budget": str(600 << 20),
+            }
+        for spec in specs["flagless"]:
+            if (spec.input, spec.memory) == self.KILLED:
+                key = spec.key(self.FIGURE)
+                killed[key] = killed_reps
+                rss[key] = rss[key][: total_reps - killed_reps]
+        return {
+            "readings": {k: [1.0] * total_reps for k in rss},
+            "rss": rss,
+            "killed": killed,
+            "reported": reported,
+            "input_sizes": {name: 1 << 30 for name in measure.INPUTS},
+            "runs": [],
+        }
+
+    def _render(self, **kwargs):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(
+                measure.Config(), self._raw(**kwargs), Path(tmp), lambda _m: None
+            )
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                return measure.run_reserve(session), session
+
+    def test_a_wholly_killed_leg_prints_no_number(self):
+        body, _ = self._render()
+        cells = [c.strip() for r in body.splitlines() if r.startswith("| ") for c in r.split("|")]
+        killed = [c for c in cells if "OOM-killed" in c]
+        self.assertTrue(killed, "the killed leg's cell says nothing about the kill")
+        for cell in killed:
+            self.assertNotIn("MiB", cell.split("·")[0])
+
+    def test_a_killed_leg_is_out_of_the_fit_and_the_fit_says_so(self):
+        body, _ = self._render()
+        self.assertIn("out of the fit", body)
+        self.assertIn("biased sample", body)
+
+    def test_a_partly_killed_leg_keeps_its_reps_and_declares_the_kill(self):
+        # The surviving reps are the ones that stayed under the ceiling, so the
+        # cell may show them only with the kill beside it — and it still leaves
+        # the fit.
+        body, _ = self._render(killed_reps=1)
+        self.assertIn("1 rep(s) OOM-killed", body)
+        self.assertIn("out of the fit", body)
+
+    def test_the_figure_reports_its_kills_for_the_publication_bar(self):
+        _, session = self._render()
+        kills = session.figure_kills(self.FIGURE)
+        self.assertEqual(len(kills), 1)
+        self.assertEqual(sum(kills.values()), 3)
+
+    def test_the_note_pasted_above_the_table_refuses_publication(self):
+        _, session = self._render()
+        note = measure.censored_note(session.figure_kills(self.FIGURE))
+        self.assertIn("must not be published", note)
+        self.assertIn("OOM-killed", note)
+
+    def test_an_untouched_sitting_carries_no_kill_and_no_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = self._raw()
+            raw["killed"] = {}
+            for spec in measure._reserve_flagless_specs():
+                key = spec.key(self.FIGURE)
+                if len(raw["rss"][key]) < 3:
+                    raw["rss"][key] = [100000.0, 100010.0, 100020.0]
+            session = measure.ReplaySession(
+                measure.Config(), raw, Path(tmp), lambda _m: None
+            )
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        self.assertNotIn("OOM-killed", body)
+        self.assertEqual(session.figure_kills(self.FIGURE), {})
+
+
+class CensoredSittingsBarPublication(unittest.TestCase):
+    """What `emit` does with a figure that lost a leg, and what `--render`
+    reproduces."""
+
+    def test_emit_bars_publication_and_names_the_figure(self):
+        source = inspect.getsource(measure.emit)
+        self.assertIn("NOT PUBLISHABLE — a leg was OOM-killed", source)
+        self.assertIn("censored_note(kills)", source)
+        self.assertIn("failures or censored", source)
+
+    def test_an_untaken_instruments_sitting_can_be_re_rendered(self):
+        # `render` looked its figures up in `FIGURES`, so a diagnostic sitting
+        # of an untaken instrument came back "unknown figure" — and an untaken
+        # instrument is the case that needs re-rendering most, being taken
+        # repeatedly while its renderer is still being written. `reserve` is
+        # also the only figure that can carry a censored cell at all.
+        self.assertIn("reserve", measure.SELECTABLE_BY_ID)
+        self.assertNotIn("reserve", measure.FIGURES_BY_ID)
+        self.assertIn("by_id = SELECTABLE_BY_ID", inspect.getsource(measure.render))
+
+    def test_a_sitting_records_its_kills_so_a_render_reproduces_the_cells(self):
+        # The same reconciliation `test_a_sitting_records_what_a_render_needs`
+        # makes for every other recorded field: `render` reads `killed` off the
+        # sitting, so `emit` must write it.
+        self.assertIn('"killed": session.killed', inspect.getsource(measure.emit))
+        self.assertIn('raw.get("killed"', inspect.getsource(measure.ReplaySession.__init__))
+        self.assertIn("censored_note(kills)", inspect.getsource(measure.render))
+
+
+class TimeRunHandlesAKill(unittest.TestCase):
+    """`Session.time_run`'s kill branch, which no other test reaches.
+
+    It is the one path that only runs when something dies, so it is the one
+    most likely to be wrong when it finally does — the previous sitting spent
+    an hour finding that out.
+    """
+
+    EVENTS = "low 0\nhigh 0\nmax 22\noom 1\noom_kill 1\noom_group_kill 0\n"
+    TIMED = "maxrss_kib=68228\n\nreal\t0m0.012s\nuser\t0m0.008s\nsys\t0m0.004s\n"
+
+    def _session(self):
+        cfg = measure.Config()
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        session.figure_id = "reserve"
+        session.input_path = lambda name, regime: Path("/dev/null")
+        session.binary_path = lambda which: Path("/dev/null")
+        return session
+
+    def _run(self, spec, stderr, returncode):
+        session = self._session()
+        proc = subprocess.CompletedProcess([], returncode, stdout="", stderr=stderr)
+        with unittest.mock.patch.object(measure.subprocess, "run", lambda *a, **k: proc):
+            return session, session.time_run(spec)
+
+    def _flagless(self):
+        return measure._reserve_flagless_specs()[0]
+
+    def test_a_killed_tolerant_leg_is_recorded_and_does_not_raise(self):
+        session, _ = self._run(self._flagless(), self.TIMED + self.EVENTS, 1)
+        self.assertTrue(session._last_killed)
+        self.assertEqual(len(session.records), 1)
+        record = session.records[0]
+        self.assertTrue(record["killed"])
+        self.assertEqual(record["oom_kill"], 1)
+        self.assertIsNone(record["seconds"])
+        self.assertIsNone(record["maxrss_kib"])
+        # The bound the run still reported, under a name no fit reads.
+        self.assertEqual(record["maxrss_bound_kib"], 68228)
+        self.assertAlmostEqual(record["seconds_to_kill"], 0.012)
+
+    def test_a_non_oom_failure_of_the_same_leg_still_raises_and_says_so(self):
+        with self.assertRaises(RuntimeError) as caught:
+            self._run(self._flagless(), self.TIMED + self.EVENTS.replace("oom_kill 1", "oom_kill 0"), 1)
+        self.assertIn("not an OOM kill", str(caught.exception))
+
+    def test_an_unreadable_counter_raises_rather_than_reading_as_no_kill(self):
+        with self.assertRaises(RuntimeError) as caught:
+            self._run(self._flagless(), self.TIMED, 1)
+        self.assertIn("cannot be told", str(caught.exception))
+
+    def test_a_kill_outside_the_licence_raises_and_names_the_kill(self):
+        # `parallel-peak-rss`'s shape: the near-miss that being loud caught.
+        with self.assertRaises(RuntimeError) as caught:
+            self._run(measure._parallel_rss_specs()[0], self.TIMED + self.EVENTS, 1)
+        self.assertIn("OOM-killed", str(caught.exception))
+
+    def test_a_surviving_run_records_the_counter_beside_its_reading(self):
+        session, seconds = self._run(
+            self._flagless(), self.TIMED + self.EVENTS.replace("oom_kill 1", "oom_kill 0"), 0
+        )
+        self.assertFalse(session._last_killed)
+        self.assertAlmostEqual(seconds, 0.012)
+        self.assertEqual(session.records[0]["oom_kill"], 0)
