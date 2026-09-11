@@ -457,6 +457,53 @@ impl Partitioning {
             PartitionBoundaries::At(offsets) => Some(offsets.len() + 1),
         }
     }
+
+    /// Where a window of `want` partitions starting at `start` ends, never
+    /// past `limit` — the number `crate::leader::run_region` hands
+    /// `crate::stream::cut`, and **the cut size, which is not the memory
+    /// charge**.
+    ///
+    /// [`Partitioning::partition_bytes`] is what one reader *holds*;
+    /// this is what one reader *covers*. They coincide on a plain file and do
+    /// not on a block-decoding compressed one, where a reader holds two block
+    /// slots, a chunk buffer and a decoder in order to cover **one** block. A
+    /// window sized by the charge offers `cut` more boundaries than the caller
+    /// has workers, and thinning them is what makes a partition span two or
+    /// three blocks — which sends the first read down
+    /// [`XzSource::read_by_blocks`]' copying arm, into an unpoolable buffer of
+    /// partition length that nothing bills for
+    /// (`docs/design/architecture.md`, "Execution model and API surface"). One
+    /// value with two consumers, changed for the first, silently followed by
+    /// the second.
+    ///
+    /// So the two are computed apart:
+    ///
+    /// - [`PartitionBoundaries::Anywhere`] has no seams to respect, so a
+    ///   window is `want` charges wide — which is what a plain file has always
+    ///   been cut into, unchanged;
+    /// - [`PartitionBoundaries::At`] ends the window at the **`want`-th
+    ///   boundary strictly past `start`**, so exactly `want - 1` of them fall
+    ///   inside it and [`crate::stream::cut`] takes every one rather than
+    ///   thinning. Every piece then lies within a single one of this source's
+    ///   units. Fewer than `want` boundaries left is the region's tail, and
+    ///   the window runs to `limit`.
+    ///
+    /// Asserted rather than asserted-in-prose:
+    /// [`a_block_decoding_partition_never_crosses_a_block_boundary`].
+    pub fn window_end(&self, start: u64, want: usize, limit: u64) -> u64 {
+        let want = want.max(1);
+        match &self.boundaries {
+            PartitionBoundaries::Anywhere => {
+                start.saturating_add((want as u64).saturating_mul(self.partition_bytes)).min(limit)
+            }
+            PartitionBoundaries::At(offsets) => offsets
+                .iter()
+                .copied()
+                .filter(|&at| at > start && at < limit)
+                .nth(want - 1)
+                .unwrap_or(limit),
+        }
+    }
 }
 
 /// How much concurrency a caller allows a scan or a query, and how much
@@ -1341,6 +1388,22 @@ impl BufferPool {
         }
     }
 
+    /// The unit a read loop announced, or `None` where none has — the same
+    /// state [`BufferPool::slot_bytes`] reads, with the absence still an
+    /// absence.
+    ///
+    /// It exists because a caller pricing a *reader* and a pool sizing a
+    /// *slot* want different answers to "nobody has said": the pool's own
+    /// question is answered by [`POOL_MAX_BYTES`], the largest buffer it will
+    /// keep, and a charge divided into a memory allowance wants the chunk the
+    /// scan is about to announce ([`XzSource::charged_chunk_bytes`]).
+    fn announced_bytes(&self) -> Option<usize> {
+        match self.hinted.load(Ordering::Relaxed) {
+            0 => None,
+            len => Some(len),
+        }
+    }
+
     /// The budget this pool is sizing itself against, in bytes.
     fn budget(&self) -> usize {
         self.budget.load(Ordering::Relaxed)
@@ -2088,13 +2151,42 @@ impl XzSource {
         }
     }
 
+    /// The chunk slot every one of this source's charges is stated against:
+    /// the length a read loop announced ([`ByteRangeSource::hint_read_size`]),
+    /// or [`crate::DEFAULT_CHUNK_SIZE`] where none has yet.
+    ///
+    /// **The fallback is the chunk a scan settles at, not
+    /// [`POOL_MAX_BYTES`]**, which is what [`BufferPool::slot_bytes`] answers
+    /// an unannounced pool and is the right answer to *its* question — the
+    /// largest buffer that pool will keep. It is the wrong one here, because
+    /// this number is divided into an allowance by
+    /// [`Parallelism::fit`] at a moment when the file is not yet open for
+    /// reading, while the gate the count then meets
+    /// ([`BlockCache::affordable`]) is compared at the steady-state slot. The
+    /// gap is exactly `POOL_MAX_BYTES - DEFAULT_CHUNK_SIZE`, and it cost a
+    /// reader at every allocation: a 512 MiB cgroup resolved three readers
+    /// where four fit (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
+    ///
+    /// *Rejected:* moving the gate to the recommendation instead. The gate is
+    /// compared against what a reader really holds while it reads, which is a
+    /// chunk and not a pool ceiling, so raising it would decline the block path
+    /// on files that fit.
+    fn charged_chunk_bytes(&self) -> u64 {
+        match self.pool.announced_bytes() {
+            Some(len) => len as u64,
+            None => crate::DEFAULT_CHUNK_SIZE as u64,
+        }
+    }
+
     /// What one concurrent block-decoding reader of this file would hold,
     /// whether or not the budget admits one — [`BlockCache::reader_bytes`]
-    /// over this source's own chunk size and decoder charge, and what
-    /// [`ByteRangeSource::block_decode_bytes`] answers.
+    /// over this source's own chunk size ([`XzSource::charged_chunk_bytes`])
+    /// and decoder charge, and what [`ByteRangeSource::block_decode_bytes`]
+    /// answers.
     fn block_reader_bytes(&self) -> Option<u64> {
         let cache = self.blocks.as_ref()?;
-        Some(cache.reader_bytes(self.pool.slot_bytes() as u64, self.decode_bytes))
+        Some(cache.reader_bytes(self.charged_chunk_bytes(), self.decode_bytes))
     }
 
     /// The block-decode path, or `None` where this read goes through the
@@ -2102,7 +2194,7 @@ impl XzSource {
     /// cannot afford ([`BlockCache::affordable`]).
     fn block_path(&self) -> Option<&Arc<BlockCache>> {
         let budget = self.budget.load(Ordering::Relaxed) as u64;
-        let chunk_bytes = self.pool.slot_bytes() as u64;
+        let chunk_bytes = self.charged_chunk_bytes();
         self.blocks
             .as_ref()
             .filter(|cache| cache.affordable(chunk_bytes, self.decode_bytes, budget))
@@ -2125,10 +2217,17 @@ impl XzSource {
     /// The block at `index`, from the retention list or freshly decoded into a
     /// slot of the block pool.
     ///
-    /// **Two concurrent misses on one block decode it twice**, and that is
-    /// accepted rather than coordinated: an in-flight map would serialize the
-    /// common case — different readers on different blocks — behind a second
-    /// lock to spare a duplicate decode that only a shared boundary produces.
+    /// **Two concurrent misses on one block decode it twice**, and on the
+    /// parallel scan path that is the common case rather than the rare one:
+    /// every fused worker's chunk-sized tail read lands in the block its
+    /// *successor* owns, so each block is decoded about twice and a scan's
+    /// speedup is capped near half the reader count — `KD20`, the argument and
+    /// the readings being beside the mechanism
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    /// An in-flight map is the fix and is not taken here: it puts a second
+    /// lock in front of the case that does *not* collide, and this is a
+    /// throughput bound rather than a correctness one.
+    // deficiency: KD20
     fn block(
         index: usize,
         cache: &BlockCache,
@@ -2413,7 +2512,7 @@ impl ByteRangeSource for XzSource {
         Self::partition_advice(
             &self.table,
             self.block_path().map(|cache| &**cache),
-            self.pool.slot_bytes() as u64,
+            self.charged_chunk_bytes(),
             self.decode_bytes,
             range,
         )
@@ -2463,14 +2562,17 @@ impl ByteRangeSource for XzSource {
     /// one whose largest block is not a length on this target — since the
     /// streaming reader has no second worker to give at any budget.
     ///
-    /// **It is charged at the pool's *current* slot size**, which before any
-    /// read loop has announced one is [`POOL_MAX_BYTES`] rather than the
-    /// 1 MiB chunk a scan settles at — so the recommendation runs about a
-    /// tenth high. That is the same number [`ByteRangeSource::block_decode_bytes`]
-    /// answers, deliberately: one statement of what a reader holds, erring
-    /// toward asking for more budget than the count will spend, and every byte
-    /// above `jobs × per-reader` is structurally inert
-    /// ([`BufferPool::slots`] clamping at `POOL_DEPTH.max(jobs)`).
+    /// **It is charged at the chunk a scan settles at**
+    /// ([`XzSource::charged_chunk_bytes`]), which is what
+    /// [`BlockCache::affordable`] compares a budget against once the file is
+    /// open — so the number handed to [`Parallelism::fit`] before it is open
+    /// and the number the resulting count then meets are the same. Charging
+    /// the unannounced pool's [`POOL_MAX_BYTES`] ceiling instead ran the
+    /// recommendation a tenth high, which was inert as bytes and not as a
+    /// count: the allowance was divided by it, so a 512 MiB cgroup resolved
+    /// three readers where four fit. It is the same number
+    /// [`ByteRangeSource::block_decode_bytes`] answers, deliberately: one
+    /// statement of what a reader holds.
     fn default_memory_per_worker(&self) -> Option<u64> {
         self.block_reader_bytes()
     }
@@ -3121,9 +3223,14 @@ mod tests {
         // A partition costs what one concurrent reader holds: two block slots
         // — the one being decoded and the one retained beside it — the chunk
         // buffer a straddling read is assembled into, and the decoder's own
-        // retention, which is a published number rather than a guess.
+        // retention, which is a published number rather than a guess. The
+        // chunk term is the one a scan settles at, no read loop having
+        // announced one here ([`XzSource::charged_chunk_bytes`]).
         let unit = source.blocks.as_ref().unwrap().unit as u64;
-        assert_eq!(whole.partition_bytes(), 2 * unit + POOL_MAX_BYTES as u64 + source.decode_bytes);
+        assert_eq!(
+            whole.partition_bytes(),
+            2 * unit + crate::DEFAULT_CHUNK_SIZE as u64 + source.decode_bytes
+        );
         assert_eq!(Some(whole.partition_bytes()), source.block_decode_bytes());
 
         // And what a retained batch pins is that same block, which the line
@@ -3195,6 +3302,72 @@ mod tests {
             }],
             blocks: (0..4).map(block).collect(),
         }
+    }
+
+    /// **Every partition the leader hands a worker lies inside one block**, so
+    /// `crate::leader::scan_partition`'s first read — which is the piece
+    /// exactly — is a zero-copy slice of a decoded block rather than an
+    /// assembly into a buffer of partition length.
+    ///
+    /// This is the invariant three doc comments and `architecture.md` asserted
+    /// in prose while the code had stopped honouring it: `partition_bytes` was
+    /// both the memory charge and `run_region`'s cut size, so raising the
+    /// charge to `BlockCache::reader_bytes` widened the window until
+    /// `crate::stream::cut` had to thin the boundaries on offer, and a piece
+    /// became 2.08–2.42 blocks. The repair is
+    /// [`Partitioning::window_end`], which sizes the window in the source's own
+    /// partitions; this test is what stops the two consumers being confused
+    /// again.
+    ///
+    /// It walks the window loop rather than one window: a frontier lands
+    /// wherever the last window's final row ended, and a *mid-block* start is
+    /// the case a single aligned window would never show.
+    #[test]
+    fn a_block_decoding_partition_never_crosses_a_block_boundary() {
+        let table = four_block_table();
+        let size = 4 * 4096;
+        let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
+        let advice = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
+        // The charge is two blocks, a chunk and the decoder — three orders of
+        // magnitude above the 4 KiB unit here, which is what made a window
+        // sized by it swallow the whole file.
+        assert!(advice.partition_bytes() > size, "the charge is not the cut size");
+
+        for workers in [2usize, 3, 4, 8] {
+            for start in [0u64, 1, 4095, 4096, 5000, 8192, 12287] {
+                let end = advice.window_end(start, workers, size);
+                assert!(end > start, "a window must advance: {workers} workers from {start}");
+                let ranges = crate::stream::cut(start..end, &advice, workers);
+                assert!(
+                    ranges.len() <= workers,
+                    "{workers} workers were handed {} pieces from {start}",
+                    ranges.len()
+                );
+                for piece in ranges {
+                    let covering = table.blocks_in(piece.clone());
+                    assert_eq!(
+                        covering.len(),
+                        1,
+                        "{piece:?} spans {} blocks at {workers} workers from {start}",
+                        covering.len()
+                    );
+                }
+            }
+        }
+    }
+
+    /// **A plain file's window is unchanged by the split above**: with no
+    /// boundaries to respect the charge *is* the cut size, so a window is
+    /// `workers` charges wide exactly as it always was.
+    #[test]
+    fn a_plain_window_is_still_the_charge_times_the_worker_count() {
+        let (_file, source) = source_of(&[0u8; 64]);
+        source.hint_read_size(8);
+        let advice = source.partitions(0..64);
+        let charge = advice.partition_bytes();
+        assert_eq!(advice.window_end(0, 3, u64::MAX), 3 * charge);
+        assert_eq!(advice.window_end(charge, 3, u64::MAX), 4 * charge);
+        assert_eq!(advice.window_end(0, 3, 17), 17, "the limit binds");
     }
 
     /// **Whole-block decode is declined unless the budget affords two blocks.**
@@ -4251,5 +4424,41 @@ mod tests {
         let source = XzSource::open(compressed.path()).unwrap();
         let per_reader = source.block_decode_bytes().expect("a block path to price");
         assert_eq!(source.default_memory_per_worker(), Some(per_reader));
+    }
+
+    /// **The number an allowance is divided by before the file is open is the
+    /// number the resulting count then meets.** `Parallelism::fit` divides a
+    /// cap by `default_memory_per_worker` with nothing announced;
+    /// `crate::stream::worker_count` divides the budget that produced by
+    /// `partitions().partition_bytes()` once the scan has announced its chunk.
+    /// Those were two different numbers — the second consumer of a value
+    /// changed for the first — and the gap was `POOL_MAX_BYTES -
+    /// DEFAULT_CHUNK_SIZE` a reader, so a 512 MiB allocation resolved three
+    /// readers where four fit.
+    ///
+    /// Asserted end to end rather than by comparing two accessors, because
+    /// what has to agree is the *resolution* and the *scan*, and only the
+    /// round trip through `Parallelism` can say so.
+    #[test]
+    fn the_recommendation_an_allowance_is_divided_by_is_the_scans_own_divisor() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        let per_reader = source.default_memory_per_worker().expect("a block path to price");
+
+        // Four readers' worth of allowance, as `Parallelism::fit` would spend
+        // it, then the scan's own announcement and its divisor.
+        let (jobs, budget) = Parallelism::fit(24, Some(per_reader), 4 * per_reader);
+        assert_eq!(jobs, 4);
+        let parallelism = Parallelism::workers(jobs, budget);
+        source.hint_read_size(crate::DEFAULT_CHUNK_SIZE);
+        source.hint_parallelism(parallelism);
+        let divisor = source.partitions(0..payload.len() as u64).partition_bytes();
+        assert_eq!(divisor, per_reader, "the recommendation and the charge are one number");
+        assert_eq!(
+            crate::stream::worker_count(parallelism, divisor),
+            jobs,
+            "the count the allowance bought is the count the scan runs"
+        );
     }
 }

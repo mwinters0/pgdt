@@ -5054,8 +5054,8 @@ def run_reserve(session: Session) -> str:
     **It publishes a pair, not a total.** The quantity is the **fixed term and
     the per-reader term**, each with its spread, because the reserve constant is
     read off the first and `XzSource::partition_advice` off the second -- a table
-    reporting only resident would leave the decomposition exactly as `KD19`
-    records it. This is the opposite end of `rss-attribution`, which holds block
+    reporting only resident would leave the decomposition unstated, which is the
+    shape the phase spent three sessions fitting lines to. This is the opposite end of `rss-attribution`, which holds block
     count as its axis and publishes a *slope*: there the intercept is the
     allocator's baseline and a nuisance, here the intercept is the answer.
 

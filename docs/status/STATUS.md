@@ -92,8 +92,10 @@ buffer pool keep the chunk size a read loop announces, touching `io.rs`,
 implementation, touching `io.rs`, `cache.rs`, `index.rs`, `diagnostic.rs` and
 the CLI again; the cache-replacement work put a refusal in front of all three
 scan entry points, touching `cache.rs`, `index.rs`, `stream.rs` and the CLI
-once more; and the parallel-scan work moved `io.rs`, `scan.rs`, `stream.rs`,
-`batch.rs`, `map.rs` and the CLI again on top of that. All of them add
+once more; the parallel-scan work moved `io.rs`, `scan.rs`, `stream.rs`,
+`batch.rs`, `map.rs` and the CLI again on top of that; and the per-file-term
+repair separated a partition's cut size from its memory charge, moving `io.rs`
+and `leader.rs` once more. All of them add
 executable lines, so neither mechanical oracle applies: reachability excuses
 only a diff no command shape executes, and byte-identity settles generator
 changes alone.
@@ -330,13 +332,13 @@ goes").
 Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. What remains runs
-**`19.19`, `19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the
+**`19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-**The repair now runs ahead of the account, which is the reverse of what the
-spec wrote**: `19.19` is a defect with a failing unit test behind it, and every
-reading taken before it lands prices that defect — including the two sittings
-whose agreed-on `403 MiB` fixed term turned out to be a fitting artifact
-(`KD19`). Start with `19.19`.
+**The repair ran ahead of the account, which is the reverse of what the spec
+wrote**, so every reading taken from here prices the repaired arrangement.
+Start with `19.17.1` — and read `19.19`'s notes first, since the repair moved
+the thin allocation off 512 MiB and may leave no leg that dies for that slice to
+record.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -480,10 +482,11 @@ whose agreed-on `403 MiB` fixed term turned out to be a fitting artifact
       recommendation, capped at half of `MemAvailable` (`RT8`) where no limit
       is discovered — without which a corrected divisor makes a flagless `.xz`
       scan serial on an unlimited host. **The whole row is in the tree and the
-      box is held open because `19.15`'s gate did not pass**: the constant this
-      row carries leaves a flagless `.xz` scan 0.6% of a 512 MiB allocation at
-      the top of thirteen reps, so the reserve is reopened and the number the
-      row ships is not settled. Reviewed since: the margin the constant must
+      box is held open because the 20% margin is still not met**: after `19.19`'s
+      repair a flagless `.xz` scan leaves 30.1% of a 512 MiB allocation where it
+      left 0.6%, but 11.6% and 10.3% of a 1 GiB and a 1.5 GiB one — the thin
+      cell has moved to the middle of the range rather than gone, so the number
+      this row ships is still not settled. Reviewed since: the margin the constant must
       leave is now stated (worst rep leaves ≥20% of the limit), the
       proportional term is withdrawn, and `19.16` takes the reading the number
       comes from; this row also gains the **decline's report**, naming the limit
@@ -541,8 +544,13 @@ whose agreed-on `403 MiB` fixed term turned out to be a fitting artifact
       `403 MiB` fixed term that **does not exist** — that number is a line
       fitted to a concave curve over a window excluding the origin, and one
       reader holds 62.9 MiB where it predicts 436. Its candidates come from the
-      re-taken account instead, and the arrangement it measures is post-`19.19`,
-      since every reading before the repair prices a defect. It reports the
+      re-taken account instead, and the arrangement it measures is the repaired one
+      `19.19` left — every reading before it priced a defect. **The thin cell is
+      no longer 512 MiB**, which now leaves 30.1%, but 1 GiB and 1.5 GiB, at
+      11.6% and 10.3% over three reps
+      ([`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)),
+      so a candidate taken off `19.15`'s curve is aimed at the wrong end of the
+      axis. It reports the
       resolved count and the worst-rep headroom against the stated criterion,
       **worst rep leaves ≥20% of the limit**, and the constant it picks is what
       `19.13` ships. A `runs/` probe, not a figure.
@@ -579,17 +587,21 @@ whose agreed-on `403 MiB` fixed term turned out to be a fitting artifact
       positive excess at all. A sitting aimed at it would spend an hour to
       report that it moved nothing.
 
-      **What the excess actually is, is `KD19`, and `19.19` repairs it** — the
-      partition read taking `read_by_blocks`' copying arm. Modelling peak as
-      `~15 MiB + slots × unit + min(readers, POOL_DEPTH) × partition` is exact
-      at both serial cells and recovers 84/94/99% of the cross-block-size
-      difference, against the shipped model's 42/63/85%; the remainder tracks
+      **What the excess was is repaired**, `19.19` having put the cut back on
+      the source's own units. The account that named it modelled peak as
+      `~15 MiB + slots × unit + min(readers, POOL_DEPTH) × partition`, exact at
+      both serial cells and recovering 84/94/99% of the cross-block-size
+      difference against the shipped model's 42/63/85%; the remainder tracked
       the measured ~31 MiB-a-reader glibc arena term, which is unit-independent
-      and sits where the unit-scaled terms leave a gap. So this sitting runs
-      **after** `19.19`, and what it publishes is the repaired account. It ends
-      on a **name, not a residual**. Owns nothing now — `KD19` moved to
-      `19.19`. Evidence: [2026-09-11](history/2026-09-11.md), "`M81` and `M82`
-      are both withdrawn, and the account they were guarding is wrong".
+      and sits where the unit-scaled terms leave a gap. So what this sitting
+      publishes is the **repaired** account, and the arrangement it measures is
+      the one `19.19` left: the per-reader and fixed terms have both moved, the
+      thin allocation is no longer 512 MiB, and the three mechanism legs need
+      re-aiming or dropping before the hour is spent. It ends on a **name, not a
+      residual**. Owns nothing. Evidence:
+      [2026-09-11](history/2026-09-11.md), "`M81` and `M82` are both withdrawn,
+      and the account they were guarding is wrong", and
+      [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md).
 - [ ] **19.17.1** A killed leg is recorded and the sitting continues; a killed
       leg bars publication. Re-filed from the withdrawn `M82`, which was not
       out-of-band: it reverses the fail-fast `19.17` registered, whose own
@@ -606,24 +618,25 @@ whose agreed-on `403 MiB` fixed term turned out to be a fitting artifact
       renderer needs a third cell state, not a number. Whether it is needed at
       all is a question for the session after `19.19`: the repair may leave no
       leg that dies.
-- [ ] **19.19** The per-file term, billed where the file is open — the repair
-      `KD19` names, and **the one item in this phase whose evidence is a unit
-      test rather than a sitting**. Build the four-block `SeekTable` fixture,
-      call `XzSource::partition_advice`, feed `stream::cut`, and assert every
-      range spans one block: it fails today, because `partition_bytes` is both
-      the memory charge and the cut size and raising it to `reader_bytes` made
-      a partition 2.08–2.42 blocks. Restore the one-block partition (or make
-      `scan_partition`'s first read chunk-sized like its tail), and bill the
-      terms `reader_bytes` misses where the source is open. **The same slice
-      fixes `fit`'s divisor**: it divides the allowance by the source's
-      *recommendation* (68,192,032, charging an 8 MiB chunk slot because the
-      file is not yet open for reading) rather than by the 60,852,000
-      `BlockCache::affordable` compares against, so a 512 MiB allocation
-      resolves three readers where four fit. They are one arithmetic and
-      pricing them apart would price the charge twice. Acceptance is two-sided:
-      a flagless 128 MiB-block scan survives its allocation or declines the
-      block path, **and** the pre/post `runs/19.18-blocksize-charge-probe.py`
-      wall times show the four-worker ceiling lifted. Owns **`KD19`**.
+- [x] **19.19** The per-file term, billed where the file is open — `KD19`
+      struck. `Partitioning::window_end` is the cut size, separate from the
+      memory charge: a boundaried source's window ends at the `workers`-th
+      boundary past the frontier, so `stream::cut` thins nothing and every piece
+      lies inside one block, asserted from a **mid-block** frontier by
+      `a_block_decoding_partition_never_crosses_a_block_boundary` (which fails
+      on the old cut size). `XzSource::charged_chunk_bytes` is `fit`'s divisor
+      half: every charge is now stated against the chunk a scan settles at
+      rather than an unannounced pool's 8 MiB ceiling, so the number an
+      allowance is divided by is the number the resulting count then meets.
+      Both acceptance halves passed —
+      `runs/19.19-flagless-acceptance-probe.log` (the 128 MiB family declines at
+      512 MiB and survives at 1 GiB and above, nothing killed) and
+      `runs/19.18-blocksize-charge-probe.log` (4 → 6 readers 9.9 → 7.4 s, where
+      it was flat at 8.83 → 8.77). **Two findings the next slices inherit**: the
+      thin allocation has moved off 512 MiB — which now leaves 30.1% — to 1 GiB
+      and 1.5 GiB at 11.6% and 10.3%; and the tail read's duplicate block decode
+      is now named, `KD20`. Notes:
+      [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)
 
 ## Not started
 
@@ -666,8 +679,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD19 -->
-**`KD1`–`KD19` are allocated, and nothing at or below `KD19` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD20 -->
+**`KD1`–`KD20` are allocated, and nothing at or below `KD20` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -794,21 +807,13 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "The interior
   split".
 
-- **KD19** — a compressed parallel scan holds **one to four whole block units
-  per reader that nothing bills for**: `partition_bytes` is both the memory
-  charge and the cut size, so raising it to `reader_bytes` made every partition
-  2.08–2.42 blocks, which sends `read_by_blocks` down its copying arm and
-  allocates an unpoolable buffer of partition length held through the parse.
-  Resident runs 216–267 MiB above a stated budget at 24 MiB blocks and
-  443–791 MiB at 128 MiB, which is what kills a flagless scan of the second in a
-  1 GiB allocation; it also caps the fused workers at four, flat from 8.83 to
-  8.77 s where the pre-change figure scaled to twenty-four jobs. **The
-  `403 MiB + 31.2` fixed term two sittings reported does not exist** — it is a
-  line fitted to a concave curve over a window excluding the origin, refuted by
-  one reader holding 62.9 MiB against a predicted 436. **(b) owned by P19**,
-  slice **`19.19`**; discharged when a flagless 128 MiB-block scan survives its
-  allocation or declines the block path. `--parallel-memory` reverses a decline
-  and `MALLOC_ARENA_MAX=2` recovers the arena share meanwhile. Detail:
+- **KD20** — a block-decoding worker decodes its **successor's block as well as
+  its own**, nothing sharing the two: a piece is one block and its chunk-sized
+  tail read lands in the next one, so a parallel compressed scan does about
+  twice the decode work and its speedup is capped near half the reader count
+  (17.8 → 17.9 → 9.9 → 7.4 s over one, two, four and six readers). **(c)
+  unowned**; promoted by a phase taking up compressed scan throughput, no
+  defaults change reaching it. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Execution model and
   API surface".
 
@@ -829,4 +834,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+**The repair took the one-block partition rather than the chunk-sized first
+read, and that trades stated low-count throughput for the default's.** `19.19`'s
+row offered both: restore the one-block partition, *or* make
+`scan_partition`'s first read chunk-sized like its tail. The first was taken,
+because the second changes the plain path's read shape too — a plain partition
+is deliberately one eight-chunk read — and reworking a tested core path on a
+judgement call is what an unattended session is asked not to do. What it costs
+is visible in `runs/19.18-blocksize-charge-probe.log`: at a **stated** two
+readers a 24 MiB-block `parse` now takes 17.9 s against 11.2 s before, because a
+one-block piece amortises its tail block decode over one block instead of 2.42
+(`KD20`). At the flagless default the same change is 2.1–2.6× *faster*, since a
+flagless run resolves thirteen readers in 1 GiB rather than two, and the
+four-worker ceiling is gone. Reconsidering would mean either the chunk-sized
+first read — which does not remove the duplicate decode either — or an
+in-flight decode map in `BlockCache`, which is `KD20`'s fix and a concurrency
+change of its own.

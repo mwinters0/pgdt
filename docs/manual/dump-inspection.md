@@ -401,10 +401,10 @@ cgroup sample, an orchestrator's own log:
 $ pgdq parse --source koji.dump.xz
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
-2026-07-23T14:03:36.881975330Z  INFO no memory limit found: nothing is enforcing one on this process jobs=24 (recommended by the source) memory_bytes=1636608768 (no limit found: what this source asks for)
-2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1636608768
+2026-07-23T14:03:36.881975330Z  INFO no memory limit found: nothing is enforcing one on this process jobs=24 (recommended by the source) memory_bytes=1460448000 (no limit found: what this source asks for)
+2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1460448000
 2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
-2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1636608768
+2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1460448000
 2026-07-23T14:47:52.317660814Z  INFO scan complete bytes=784019857152 reached_eof=true
 ```
 

@@ -365,6 +365,13 @@ pub(crate) async fn scan_region(
 /// at its peak is the worker count times what the source said one costs —
 /// which is the number `Parallelism::memory_bytes` was divided by to reach
 /// that worker count in the first place.
+///
+/// **Wide in the source's partitions, not in its charge**
+/// (`Partitioning::window_end`). On a plain file those are the same number and
+/// this is the byte arithmetic it always was; on a block-decoding one the
+/// charge covers two block slots, a chunk and a decoder for one block of
+/// coverage, so sizing the window by it would offer `cut` more boundaries than
+/// there are workers and every piece would span two or three blocks.
 #[allow(clippy::too_many_arguments)]
 async fn run_region(
     source: &dyn ByteRangeSource,
@@ -375,7 +382,6 @@ async fn run_region(
     columns: usize,
     size: u64,
 ) -> Result<Option<Interior>> {
-    let window_bytes = (workers as u64).saturating_mul(advice.partition_bytes());
     let mut rows = 0u64;
     let mut census: Vec<ArrayShape> = vec![ArrayShape::default(); columns];
     let mut frontier = data_offset;
@@ -389,7 +395,7 @@ async fn run_region(
         if options.cancelled() {
             return Ok(None);
         }
-        let ranges = cut(frontier..(frontier + window_bytes).min(size), advice, workers);
+        let ranges = cut(frontier..advice.window_end(frontier, workers, size), advice, workers);
         let mut scans: Vec<PieceScan> = Vec::with_capacity(ranges.len());
         // One future per piece, each of them a read followed by the parse of
         // what it read, on the blocking pool. That is the fused worker: a
