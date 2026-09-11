@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import dataclasses
 import hashlib
 import inspect
 import io
@@ -4675,6 +4676,10 @@ class CensoredCells(unittest.TestCase):
     #: The leg killed in these renders: the 128 MiB file in a 1 GiB allocation,
     #: which is the one an actual sitting lost.
     KILLED = ("control_xz128", "1g")
+    #: The worst killed rep's `maxrss_bound_kib` is this plus `100 * rep`, so a
+    #: renderer that took the first rep rather than the worst prints a number
+    #: this test can tell apart.
+    BOUND_KIB = 900_000.0
 
     def _specs(self):
         return {
@@ -4703,18 +4708,36 @@ class CensoredCells(unittest.TestCase):
                 "resolved_jobs": str(2 + i % 5),
                 "resolved_budget": str(600 << 20),
             }
+        # The killed reps' own records, exactly as `time_run`'s kill branch
+        # writes them: the constraint line is rendered off `runs`, so a fixture
+        # with an empty one would exercise only the nothing-was-reported branch.
+        runs = []
         for spec in specs["flagless"]:
             if (spec.input, spec.memory) == self.KILLED:
                 key = spec.key(self.FIGURE)
                 killed[key] = killed_reps
                 rss[key] = rss[key][: total_reps - killed_reps]
+                for rep in range(killed_reps):
+                    runs.append(
+                        {
+                            "figure": self.FIGURE,
+                            "spec": dataclasses.asdict(spec),
+                            "seconds": None,
+                            "maxrss_kib": None,
+                            "killed": True,
+                            "maxrss_bound_kib": self.BOUND_KIB + 100 * rep,
+                            "seconds_to_kill": 4.0 + rep,
+                            "oom_kill": 1,
+                            "exit": 1,
+                        }
+                    )
         return {
             "readings": {k: [1.0] * total_reps for k in rss},
             "rss": rss,
             "killed": killed,
             "reported": reported,
             "input_sizes": {name: 1 << 30 for name in measure.INPUTS},
-            "runs": [],
+            "runs": runs,
         }
 
     def _render(self, **kwargs):
@@ -4748,6 +4771,87 @@ class CensoredCells(unittest.TestCase):
         body, _ = self._render(killed_reps=1)
         self.assertIn("1 rep(s) OOM-killed", body)
         self.assertIn("out of the fit", body)
+
+    def test_a_killed_leg_is_printed_as_a_constraint_and_names_its_allocation(self):
+        # The reading the fit cannot use and the figure must not lose: what the
+        # kill still proves. Discarded, it left `KILL_TOLERANT` recording a
+        # reading and the renderer throwing it away.
+        body, _ = self._render()
+        self.assertIn("What the killed legs still prove", body)
+        self.assertIn("**not** fitted", body)
+        self.assertIn(f"`-m {self.KILLED[1]}`", body)
+        self.assertIn("did not fit 1,024 MiB", body)
+
+    def test_the_constraint_carries_the_worst_reps_floor_and_calls_it_one(self):
+        # `maxrss_bound_kib` and `seconds_to_kill` reached `raw.json` with
+        # nothing reading them. The worst rep's pair, printed as one rep's, and
+        # labelled a floor rather than a peak.
+        body, _ = self._render()
+        worst = self.BOUND_KIB + 100 * 2
+        self.assertIn(measure.fmt_mib(worst), body)
+        self.assertIn("6.0 s in", body)
+        self.assertIn("a floor on the peak, not the peak", body)
+
+    def test_a_censored_leg_with_no_recorded_bound_says_so_rather_than_guessing(self):
+        # A sitting taken before the kill branch existed carries `killed` and no
+        # `runs`. An empty bound list means *nothing is known*, which is not the
+        # same as zero and must not print as a number.
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = self._raw()
+            raw["runs"] = []
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        self.assertIn("reported no bound before it died", body)
+        self.assertIn("did not fit 1,024 MiB", body)
+
+    def test_every_fit_states_the_window_it_covers(self):
+        # `evidence` rule 2 with the sign flipped: a leg is censored exactly
+        # when its resident ran closest to its ceiling, so a fit over what
+        # survives is a fit over the legs that had room. Naming only what left
+        # asks the reader to subtract from a tuple the table never prints.
+        body, _ = self._render()
+        section = body.split("The pair the constant is read off")[1].split(
+            "What the killed legs still prove"
+        )[0]
+        fits = [ln for ln in section.splitlines() if ln.startswith("- **")]
+        self.assertEqual(len(fits), len(measure.RESERVE_FLAGLESS_INPUTS))
+        for line in fits:
+            self.assertTrue(
+                "it covers" in line or "what is left is" in line,
+                f"the line states no window: {line}",
+            )
+            # Every window names allocations, not just reader counts.
+            self.assertTrue(
+                any(f"`{token}` at" in line for token, _ in measure.RESERVE_LIMITS),
+                f"the window names no allocation: {line}",
+            )
+
+    def test_the_no_fit_branch_states_its_window_too(self):
+        # "No fit" is a claim about a window as much as a fit is, and it was the
+        # branch that named only the declined legs. Reached by resolving one
+        # reader count everywhere, which is what leaves a single point.
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = self._raw()
+            for report in raw["reported"].values():
+                report["resolved_jobs"] = "4"
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_allocator_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        no_fit = [ln for ln in body.splitlines() if ln.startswith("- **") and "no fit" in ln]
+        self.assertEqual(len(no_fit), len(measure.RESERVE_FLAGLESS_INPUTS))
+        for line in no_fit:
+            self.assertIn("what is left is", line)
+            self.assertTrue(
+                any(f"`{token}` at" in line for token, _ in measure.RESERVE_LIMITS),
+                f"the window names no allocation: {line}",
+            )
 
     def test_the_figure_reports_its_kills_for_the_publication_bar(self):
         _, session = self._render()

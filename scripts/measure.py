@@ -3147,6 +3147,30 @@ class Session:
         prefix = f"{figure}/"
         return {k: n for k, n in self.killed.items() if k.startswith(prefix)}
 
+    def censored_bounds(self, figure: str, spec: RunSpec) -> list[tuple[float | None, float | None]]:
+        """What each OOM-killed rep of this spec still reported: the peak
+        resident set the wrapper had reached when the kernel reaped it, in KiB,
+        and the seconds it had run for.
+
+        **Both are lower bounds, and the pair is one rep's** — a renderer that
+        maxed the two columns separately would report a peak from one rep and a
+        duration from another. They are what `time_run`'s kill branch kept
+        (`maxrss_bound_kib`, `seconds_to_kill`), named apart from `rss` and
+        `readings` precisely so that no fit or headroom column picks them up.
+
+        Read off `records` rather than off a fourth dict, because that is where
+        the kill branch already puts them and `ReplaySession` already loads
+        them — so `--render` reproduces a constraint line without the sitting
+        having recorded anything new. A leg with no killed rep answers `[]`, and
+        so does a sitting taken before the kill branch existed: an empty list
+        means *nothing is known*, which is what the caller prints."""
+        want = dataclasses.asdict(spec)
+        return [
+            (r.get("maxrss_bound_kib"), r.get("seconds_to_kill"))
+            for r in self.records
+            if r.get("killed") and r.get("figure") == figure and r.get("spec") == want
+        ]
+
     def has(self, figure: str, spec: RunSpec) -> bool:
         return spec.key(figure) in self.readings
 
@@ -5222,6 +5246,59 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     return mean_y - slope * mean_x, slope
 
 
+def _censored_constraint(
+    session: Session, figure: str, spec: RunSpec, label: str, token: str, limit: int
+) -> str:
+    """One OOM-killed leg, written as the constraint it still proves.
+
+    **It is stated as "did not fit", not as `peak > limit`.** What the kill
+    reads off the apparatus is that the kernel reaped a process in that cgroup
+    ([`../docs/design/runtime-invariants.md`](../docs/design/runtime-invariants.md),
+    `RT9`), which says the arrangement did not run inside the allocation — a
+    fact about the *arrangement*, needing no argument about what the cgroup
+    charged to whom. `peak > limit` is the same finding with a reclaim-ordering
+    step in front of it that nothing in the register establishes, and it is not
+    needed: "the rule's own arrangement did not fit its allocation" is already
+    the thing a reserve constant is chosen against.
+
+    **The number beside it is a floor, and says so.** `maxrss_bound_kib` is
+    where the wrapper's reading had got to when the process was reaped, so it
+    is a lower bound on a peak that was never reached; `seconds_to_kill` is how
+    far in, which separates a leg that died opening its first block from one
+    that ran most of a scan. The worst rep's pair is printed, since a censored
+    leg's reps are not samples of one distribution and their median means
+    nothing.
+
+    **Not fitted, deliberately.** Interval censoring is the statistically right
+    treatment of a bound like this and the wrong size for four legs — see
+    `run_reserve`, which is where that refusal is argued. A constraint line is
+    what carries the reading without a second fitting technique in the harness.
+    """
+    killed = session.kills(figure, spec)
+    bounds = session.censored_bounds(figure, spec)
+    report = session.reported.get(spec.key(figure), {})
+    where = (
+        f"{report['resolved_jobs']} reader(s) inside "
+        f"{_fmt_budget_bytes(int(report['resolved_budget']))}"
+        if "resolved_jobs" in report and "resolved_budget" in report
+        else "an arrangement it never lived to report"
+    )
+    # The *worst* rep, as one rep: a peak from one and a duration from another
+    # would describe a run that did not happen.
+    worst = max((b for b in bounds if b[0] is not None), key=lambda b: b[0], default=None)
+    floor = (
+        f" The wrapper had reached **{fmt_mib(worst[0])}** when it was reaped"
+        + (f", {worst[1]:.1f} s in" if worst[1] is not None else "")
+        + " — a floor on the peak, not the peak."
+        if worst
+        else " The run reported no bound before it died, so the kill is all there is."
+    )
+    return (
+        f"- **{label}** at `-m {token}`: **did not fit {limit / MIB:,.0f} MiB** with {where} "
+        f"({killed} rep(s) killed)." + floor
+    )
+
+
 def run_reserve(session: Session) -> str:
     """What a scan holds resident **above** the budget it was told it could have.
 
@@ -5273,10 +5350,23 @@ def run_reserve(session: Session) -> str:
     it buys precision this table cannot support and puts a second fitting
     technique in the harness.
 
-    **The window the fit covers is not yet stated in its own output, and the
-    kill's one-sided constraint is not yet printed** — both admitted as `M84`
-    ([`../docs/design/roadmap.md`](../docs/design/roadmap.md), "Out-of-band
-    work"), which blocks `P19`.
+    **Each fit states the window it covers, in the legs that are in it.** Every
+    other clause names what *left* — declined, censored — and a reader holding
+    only those has to subtract them from a tuple the table never prints. It
+    matters here more than it would elsewhere, because a leg is censored exactly
+    when its resident ran closest to its ceiling: dropping every such leg leaves
+    a line through the legs that had room, which is
+    [`.claude/skills/evidence/SKILL.md`](../.claude/skills/evidence/SKILL.md)
+    rule 2's window trap with the sign flipped. Both branches say it — the
+    no-fit one too, since "no fit" is a claim about a window as much as a fit
+    is.
+
+    **A killed leg is then printed as a constraint, under the fits**
+    (`_censored_constraint`). It is the one reading in the table that says
+    resident is *above* a number rather than at one, which is worth more to a
+    reserve than another interior point; leaving it in `raw.json` unread was
+    `KILL_TOLERANT` recording a reading and the renderer discarding it, two
+    policies for one number.
     """
     figure = "reserve"
     stated = _reserve_specs()
@@ -5385,29 +5475,40 @@ def run_reserve(session: Session) -> str:
         ["Allocation", *(label for _, label, _ in RESERVE_FLAGLESS_INPUTS)], flagless_rows
     )
 
+    constraints: list[str] = []
     for name, label, unit in RESERVE_FLAGLESS_INPUTS:
         points, declined, censored_legs = [], [], []
-        for token, _ in RESERVE_LIMITS:
+        for token, limit in RESERVE_LIMITS:
             spec = by_flagless[(name, token)]
             readings = session.get_rss(figure, spec)
             # A censored leg is out of the fit whether or not a rep survived:
             # the kill removes the high end of the distribution, so what is
-            # left is a biased sample and a line through it reads low.
+            # left is a biased sample and a line through it reads low. It is
+            # not out of the *figure* — `_censored_constraint` is what it still
+            # says, printed under the fits.
             if session.kills(figure, spec):
                 censored_legs.append(token)
+                constraints.append(
+                    _censored_constraint(session, figure, spec, label, token, limit)
+                )
                 continue
             jobs, budget = resolved(spec)
             if budget < reader_bytes(unit):
                 declined.append(token)
                 continue
-            points.append((jobs, readings))
+            points.append((token, jobs, readings))
         censored_tail = (
             f". `{'`, `'.join(censored_legs)}` was OOM-killed and is out of the fit — a kill "
-            "removes the high end of the distribution, so what survives it is a biased sample"
+            "removes the high end of the distribution, so what survives it is a biased sample; "
+            "what it still proves is below"
             if censored_legs
             else ""
         )
-        if len({jobs for jobs, _ in points}) < 2:
+        # The window, said as the legs that are *in*. Every other clause here
+        # names what left — declined, censored — and a reader who has only
+        # those has to subtract them from a tuple they cannot see.
+        window = ", ".join(f"`{t}` at {j}r" for t, j, _ in points) or "no leg at all"
+        if len({jobs for _, jobs, _ in points}) < 2:
             fits.append(
                 f"- **{label}**: no fit — "
                 + (
@@ -5415,25 +5516,26 @@ def run_reserve(session: Session) -> str:
                     if declined
                     else ""
                 )
-                + "the legs that took it resolved "
-                f"{sorted({jobs for jobs, _ in points})} readers, which is "
-                f"{len({jobs for jobs, _ in points})} point(s)"
+                + f"what is left is {window}, which is "
+                f"{len({jobs for _, jobs, _ in points})} distinct reader count(s)"
                 + censored_tail
                 + "."
             )
             continue
-        fixed, per_reader = _least_squares([(j, median(r) / 1024) for j, r in points])
+        fixed, per_reader = _least_squares([(j, median(r) / 1024) for _, j, r in points])
         # The band is the same fit taken over the per-rep extremes rather than
         # the medians: a term's spread is what the reps permit it to be, and a
         # single residual says nothing about which of the two terms moved.
-        band = [_least_squares([(j, pick(r) / 1024) for j, r in points]) for pick in (min, max)]
+        band = [
+            _least_squares([(j, pick(r) / 1024) for _, j, r in points]) for pick in (min, max)
+        ]
         residual = max(
-            abs(median(r) / 1024 - (fixed + per_reader * j)) for j, r in points
+            abs(median(r) / 1024 - (fixed + per_reader * j)) for _, j, r in points
         )
         fits.append(
             f"- **{label}**: fixed **{fixed:,.0f} MiB** ({band[0][0]:,.0f}–{band[1][0]:,.0f}), "
             f"a reader **{per_reader:,.1f} MiB** ({band[0][1]:,.1f}–{band[1][1]:,.1f}), over "
-            f"{len(points)} legs at {', '.join(str(j) for j, _ in points)} readers; residuals "
+            f"the {len(points)} leg(s) it covers — {window}; residuals "
             f"reach ±{residual:,.0f} MiB"
             + (
                 f". `{'`, `'.join(declined)}` declined the block path and is not in the fit"
@@ -5529,8 +5631,19 @@ def run_reserve(session: Session) -> str:
         "which is why it is the axis.\n\n"
         + flagless_table
         + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
-        "block path, the band being the same fit over the per-rep extremes:\n\n"
+        "block path, the band being the same fit over the per-rep extremes. Each line names the "
+        "window it covers, since a leg is censored exactly when its resident ran closest to its "
+        "ceiling and a fit over what survives is a fit over the legs that had room:\n\n"
         + "\n".join(fits)
+        + (
+            "\n\n**What the killed legs still prove**, stated as constraints and **not** fitted: "
+            "a kill is the one reading here that says resident is *above* a number rather than "
+            "at one, and interval censoring is the right treatment of it at the wrong size for "
+            "four legs. This is the end of the axis the fit above does not cover:\n\n"
+            + "\n".join(constraints)
+            if constraints
+            else ""
+        )
         + f"\n\n**What each mechanism moves**, at one block size and one allocation — "
         f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
         + (f"{ref_jobs} readers" if ref_arrangement else "a count it never lived to report")
