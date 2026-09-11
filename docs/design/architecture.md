@@ -402,12 +402,13 @@ four 24 MiB slots and not the eight that two units a reader would suggest — an
 retention as the standing account of the excess. Roughly 280 MiB is accounted
 for by nothing, and it is what forces the reserve high enough to decline the
 block path on a small allocation, so the deficiency is the decline rather than
-the bytes. `(c)` unowned: no phase holds the intent, and the promotion trigger is
-a real input hitting that decline or a phase taking this path's resident set as
-its subject. A user has `--parallel-memory` to reverse the decline and the arena
-cap to recover its share, neither of which touches the remainder. Note that
-`rss-attribution` does **not** instrument this: its inputs are plain files, and
-it attributes the plain path's per-block growth.
+the bytes. `(b)` owned by P19, whose sitting either attributes the remainder or
+reports that its three legs could not. A user has `--parallel-memory` to reverse
+the decline and the arena cap to recover its share, neither of which touches the
+remainder. Note that `rss-attribution` does **not** instrument this: its inputs
+are plain files, and it attributes the plain path's per-block growth — which is
+why the compressed path gets an account of its own, publishing an intercept
+where that figure publishes a slope.
 
 **What the reserve must satisfy is a stated margin, and before this it was
 unstated.** The criterion is that the **worst observed rep leaves at least 20%

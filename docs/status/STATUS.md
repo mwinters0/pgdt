@@ -329,7 +329,9 @@ goes").
 
 Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
 **The numbers after the evidence slices are allocation order, not schedule** —
-the five orderings that bind are in the spec, not here.
+the five orderings that bind are in the spec, not here. What remains runs
+**`19.17`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the list below
+is numeric, so its first unticked box is not the next piece of work.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -443,7 +445,10 @@ the five orderings that bind are in the spec, not here.
       move with it ([2026-09-10](history/2026-09-10.md), "The container was
       sized off a number that moved"). It is also the first sitting that emits
       `parallel-peak-rss`'s corrected closing paragraph, the hand-written one
-      it replaces having credited the flat region to `POOL_DEPTH`.
+      it replaces having credited the flat region to `POOL_DEPTH`. As the
+      sitting that publishes `reserve` for the first time it also owes the
+      `Shared` edge onto `peak-rss` and the `Session.borrow` change that lets an
+      **RSS** reading cross a share, `borrow` copying wall clock only today.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build —
       `runs/measure-20260909T171423`, `--alone`, NOT PUBLISHABLE — with the
       inert worker-count-plus-one arena leg dropped. **`19.7`'s prediction is
@@ -526,6 +531,22 @@ the five orderings that bind are in the spec, not here.
       the resolved count and the worst-rep headroom against the stated
       criterion, **worst rep leaves ≥20% of the limit**, and the constant it
       picks is what `19.13` ships. A `runs/` probe, not a figure.
+- [ ] **19.17** The compressed account's instrument, no library code: `reserve`
+      gains **flagless legs beside its stated ones** — the stated ones stay,
+      being the only arrangement that can separate a reader's cost from a
+      budget byte's, since under discovery the two axes are one — plus the
+      reader-count axis at both block sizes, the three mechanism legs
+      (allocator, arena cap, path step) at one, and the `shares` edges
+      re-declared against `peak-rss` and `rss-attribution`. Reviewable cold
+      against `scripts/test_measure.py`.
+- [ ] **19.18** The sitting, **diagnostic** (`--alone`, NOT PUBLISHABLE, as
+      `19.6` and `19.12` were — `19.11` publishes `reserve` once, after the
+      constant ships): the compressed path's **fixed term and per-reader term**,
+      each with its spread, which is what the reserve constant and
+      `partition_advice` are read off. It ends on a **name, not a residual** —
+      each leg reports what it moves, the remainder is a number carrying a
+      mechanism or an explicit "no name". A reducible term earns `19.18.1` and
+      the constant is chosen after it. Owns **`KD19`**.
 
 ## Not started
 
@@ -700,10 +721,10 @@ here rather than reading as a phase nobody has sliced.
   which roughly 280 MiB is unexplained: the pools can hold 134 MiB of it and
   glibc arenas a further sixth, and nothing accounts for the rest. It is what
   forces the reserve high enough to decline the block path on a small
-  allocation. **(c) unowned**; promoted by a real input hitting that decline, or
-  by a phase that takes the compressed path's resident set as its subject.
-  `--parallel-memory` reverses the decline and `MALLOC_ARENA_MAX=2` recovers the
-  arena share in the meantime. Detail:
+  allocation. **(b) owned by P19**, slice **`19.18`**, which is the sitting that
+  attributes it or reports that three legs could not. `--parallel-memory`
+  reverses the decline and `MALLOC_ARENA_MAX=2` recovers the arena share in the
+  meantime. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Execution model and
   API surface".
 

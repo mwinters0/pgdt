@@ -154,6 +154,88 @@ a reading taken against a build this project does not ship. **A profile that
 comes back inconclusive is itself the answer**, and it is the answer that sends
 the repair out of this phase under a `KD<k>`.
 
+## The compressed path is accounted for before its default is chosen
+
+The plain path got this section and a prerequisite slice; the compressed path
+never did, and it is the one whose default this phase could not set. `19.15`
+measured a **~403 MiB fixed term** outside the stated budget of which roughly
+280 MiB is owed to nothing anyone has named — so the precondition at the top of
+this spec, that no default is defensible "until the resident set is a bounded
+function of the stated budget", is unmet on exactly the path the reserve
+constant exists for. That is a hole in this spec rather than a finding of
+`19.15`'s, and it is filled here.
+
+**The instrument publishes a pair, not a total.** The quantity is the **fixed
+term and the per-reader term**, each with its spread, because the reserve
+constant is read off the first and `XzSource::partition_advice` off the second —
+a figure reporting only resident would leave the decomposition exactly as
+`KD19` records it. This is the opposite end of `rss-attribution`, which holds
+block count as its axis and publishes a *slope*: there the intercept is the
+allocator's baseline and a nuisance, here the intercept is the answer.
+
+**The grid is asymmetric, deliberately.** The reader-count axis runs at **both**
+block sizes — `control_xz`'s 24 MiB and `control_xz128`'s 128 MiB — because the
+per-reader charge bills `2 × unit`, so a unit-shaped error is multiplied by the
+count and `19.14` has already been wrong about that charge once. The mechanism
+legs run at **one** block size only: this figure is gated `warm-parallel`, and
+crossing the mechanism legs with the block sizes buys a second cross of the
+expensive axis for no question anyone asked.
+
+**Three mechanism legs, and no scratch build.** The **allocator** legs
+(jemalloc, mimalloc) separate glibc fragmentation from anything structural and
+are nearly free, the harness already building and stamping those binaries for
+the `allocator` figure. The **arena cap** is already an axis. And the **path
+step** — a budget one byte below `reader_bytes`, so block decode is declined —
+prices the whole block path against the streaming fallback, which is the
+15.1 MiB against 474 MiB step and the largest single fact in `19.15`'s reading.
+That leg earns its place whatever the attribution finds: it is what an operator
+needs in order to decide whether `--parallel-memory` is worth setting, and no
+figure states it.
+
+A scratch build altering `POOL_DEPTH` or the retention list would attribute the
+pools directly and is **refused here**, because a figure cannot publish against
+a build that is not the shipped one. **If the three legs leave the remainder
+unexplained, that is the finding**, and it names a follow-up experiment rather
+than licensing an unpublishable build inside a figure's own sitting.
+
+**The sitting is diagnostic, and `19.11` still publishes.** `reserve` is
+registered but untaken, so it has no marker and no table to invalidate, and the
+account is taken `--alone` — NOT PUBLISHABLE — exactly as `19.6` and `19.12`
+took it. The reason is an ordering trap rather than thrift: `MEMORY_RESERVE`
+lives in `io.rs`, which this figure declares, so a table published before the
+constant changes goes stale the moment `19.13` ships the new one, and the
+expensive `warm-parallel` sitting would be paid twice to publish a number about
+to move. The closing sweep publishes it once, afterwards, and keeps what the
+harness already assigns to whichever sweep declares the `Shared` edge onto
+`peak-rss`: that edge, and the `Session.borrow` change that lets an **RSS**
+reading cross a share at all, `borrow` copying wall clock only today.
+
+**What ends the account is a name, not a residual.** Each of the three legs
+reports what it moves, the remainder is reported as a number, and it carries
+either a mechanism or an explicit "no name" with a follow-up. There is no
+threshold to drive the residual under, because the decision downstream is a
+*constant* and a constant needs only the fixed term's magnitude and spread,
+which `19.15` already has to ±36 MiB. What the attribution buys is knowing
+whether the term is **reducible**, and that is answered by whether any leg moves
+it. A fractional threshold would also be unmeetable by construction if the answer
+is glibc fragmentation, which no leg here can decompose further.
+
+**A reducible finding earns `19.18.1`, and `19.16` is unchanged behind it.** If a
+leg moves a term worth bounding, the fix is its own increment — the third level
+`../process.md` grants for a slice whose remainder appears because the evidence
+moved — and the constant is then chosen after it. Folding the choice into the
+account is refused: it rebuilds the mechanism-plus-evidence bundle this pair was
+split to avoid, and puts "ship a constant" in the same review as "attribute
+280 MiB", which are different confidences.
+
+**One hypothesis the account must be able to kill.** `BlockCache::slot`'s own
+documentation says a block evicted while a `Bytes` still views it stays alive
+until that view drops — a live-block count the pool does not bound, where every
+other term here is bounded by `slots()`. Nothing in `19.15`'s reading
+distinguishes that from allocator fragmentation, and the allocator legs are what
+separate them: fragmentation moves under jemalloc, retained views do not. It is
+stated as a hypothesis rather than a cause, because no reading has tested it.
+
 ## The span term is charged per source, not universally
 
 `plan_partitions` builds `divisor = footprint + max_source_span` and
@@ -680,6 +762,26 @@ back. That is the second time in this phase an arena claim has outlived the
 build it was measured on, which is the whole argument for keeping the
 instrument pointed at it.
 
+**The figure states the budget and the worker count, and that is not the
+arrangement the default produces — so it gains flagless legs.** Every reserve
+reading this phase has taken pins `--jobs` at this machine's
+`available_parallelism()` and states a budget, which is what `19.12` measured
+and what `19.15` then showed does not predict a flagless run: under discovery
+the count comes *down* with the budget, so the fit's two terms trade places and
+the thin point moves to the other end of the axis. A figure whose table is cited
+for what the shipped default holds must therefore measure the shipped default.
+
+**The stated legs stay, because they are the only ones that can separate the
+two terms.** Under discovery `budget = jobs × per_worker` exactly, so the
+budget axis and the count axis are the *same* axis and no fit over flagless legs
+alone can say whether a byte of resident is owed to a reader or to a budget
+byte — which is the question the fixed term turns on. Flagless legs say what the
+default holds; stated legs are what makes the number decomposable. Dropping
+either leaves a figure that cannot answer one of the two questions asked of it.
+
+Reasoning: [2026-09-11](../status/history/2026-09-11.md), "The budget rule's
+headroom fails at 512 MiB, and not where it was predicted to".
+
 ## Slice order: allocation, not schedule
 
 **This phase's slice numbers after its evidence slices are allocation order
@@ -701,8 +803,11 @@ Five orderings bind, and nothing else does:
 - **the closing sweep last, and after `KD16`**, since closing `KD16` re-bases a
   row that sweep publishes;
 - **the pool accounting, then the reserve re-take, then the divisor, then the
-  container gate, then the constant, then the budget rule** — `19.7`, `19.12`,
-  `19.14`, `19.15`, `19.16`, `19.13`. `19.15` and `19.16` joined this chain when
+  container gate, then the compressed account, then the constant, then the
+  budget rule** — `19.7`, `19.12`, `19.14`, `19.15`, `19.17`, `19.18`, `19.16`,
+  `19.13`. The account precedes the constant for the reason the plain account
+  precedes the plain default, and `19.17` precedes `19.18` because an instrument
+  is registered before it is read. `19.15` and `19.16` joined this chain when
   the gate failed: the rule's one constant now comes from `19.16`'s reading of a
   one-reader block path rather than from `19.12`'s fit, and `19.13` cannot ship
   a number that reading has not produced. The accounting change
@@ -772,7 +877,7 @@ being inserted.
 | **19.8** | The source's own worker default: the trait method, `XzSource`'s override, `ParallelArgs::resolve`, and `DEFAULT_JOBS` removed. |
 | **19.9** | Resolution tests, the status line's provenance — `(default: no limit found)` saying what it *means*, that no limit is being enforced — the below-floor `PlanNote`, the v1 fixture tree that tests `RT4`'s shape against the reader — carrying a `meminfo` too, so the no-limit branch's `MemAvailable` cap is driven from the same seam — and a test pinning the below-reserve arrangement so no floor can silently change it. |
 | **19.10** | The manual: the `MALLOC_ARENA_MAX` recommendation as `M76`'s reading leaves it, the new defaults, both flags' help text, and the moved whole-block-decode threshold — `19.7` declines a file whose blocks exceed half the budget, where today it declines one whose blocks exceed the budget. |
-| **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures against `19.14`'s raised `PARALLEL_BUDGET`. |
+| **19.11** | The closing sweep — publishes the reserve figure and `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures against `19.14`'s raised `PARALLEL_BUDGET`. It publishes `reserve` for the first time and so owes the two things the harness assigns to whichever sweep declares its `Shared` edge onto `peak-rss`: the edge, and the `Session.borrow` change that lets an **RSS** reading cross a share, `borrow` copying wall clock only today. |
 | **19.12** | The reserve re-taken diagnostically against `19.7`'s build, and the constant chosen from it; `RESERVE_ARENAS` drops its worker-count-plus-one leg. No shipped code, exactly as `19.6`. |
 | **19.13** | `discover_memory_limit`, `Parallelism::discover`, and the budget rule, carrying `19.12`'s constant — plus the source's own budget recommendation, which `ParallelArgs::resolve` asks for when `--parallel-memory` is absent as it already asks for a worker count when `--jobs` is. One slice because they are one review question: what a flagless invocation ends up with for a budget. |
 | **19.14** | `XzSource::partition_advice` charges a sub-stream what a reader holds — **two** units, the chunk, and `xz_seek::Reader::decode_footprint()` — rather than one; and `BlockCache::affordable` is restated against that same cost, so affording block decode and admitting a reader stop being two sentences. Raises `measure.PARALLEL_BUDGET` 1 GiB → 2 GiB with the harness prose that explains it, the old value no longer admitting the widest row's twenty-four workers; the readings follow at `19.11`. Corrects the manual's "on a compressed file the headroom you need is a multiple of the budget rather than a fixed margin", which is true of the shipped build and false the moment the charge is right — the falsified-claim rule puts it in this change, not in `19.10`. **Blocked on `xz-seek`**: `BlockTask::decode_into` takes only an output slice, so the decoder's own per-decode retention is not visible from here, and the phase waits for the crate to answer rather than shipping a constant standing in for it. |
@@ -780,7 +885,10 @@ being inserted.
 
 | **19.16** | The reserve constant, chosen from a reading rather than a fit: candidate reserves at 512 MiB and 768 MiB, ten reps each, against the **one-reader block path** that every candidate near the measured fixed term produces and that no sitting has measured. It reports the resolved count and the worst-rep headroom against the stated criterion — worst rep leaves at least 20% of the limit — and the constant it picks is what `19.13` then ships. A `runs/` probe on `19.15`'s apparatus, not a figure. |
 
-**`19.14`, `19.15` and `19.16` were admitted after this spec was written**, and take the
+| **19.17** | The compressed account's instrument, and no library code: `reserve` gains flagless legs beside its stated ones, the reader-count axis is registered at both block sizes, the three mechanism legs — allocator, arena cap, path step — are registered at one, and the `shares` edges against `peak-rss` and `rss-attribution` are re-declared. Reviewable cold against `scripts/test_measure.py`. |
+| **19.18** | The sitting, **diagnostic** — `--alone`, NOT PUBLISHABLE, as `19.6` and `19.12` were: the compressed path's **fixed term and per-reader term**, each with its spread, on a quiet machine. It either attributes the ~280 MiB `19.15` left unexplained or reports that the three legs could not, naming the follow-up experiment. Closes **`KD19`** or rewrites it to what is still true. |
+
+**`19.14` through `19.18` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
 spec's evidence section rejected: charging a compressed worker what it holds
 was refused because "it would admit fewer readers for exactly the same resident
@@ -791,7 +899,14 @@ because every reserve reading this phase took was made at `-m 3g` with the
 budget *stated*, while discovery's whole purpose is the small allocation
 nothing has ever run in. `19.16` exists because `19.15`'s failure left the
 constant needing an arrangement nothing had measured, and the phase had already
-paid once for extrapolating a fit onto an arrangement it never took. Reasoning:
+paid once for extrapolating a fit onto an arrangement it never took. `19.17` and
+`19.18` exist because this spec gave the plain path an account before its default
+and never wrote the compressed half — they are the missing prerequisite, not a
+follow-up, which is why they run **ahead of** `19.16`: a constant chosen before
+the attribution is chosen against the same unexplained term that broke the last
+one. They split at the seam `../process.md` names, the instrument being
+reviewable cold and the sitting being a machine-quiet reading whose review
+question is whether its numbers support a constant. Reasoning:
 [2026-09-09](../status/history/2026-09-09.md), "The reserve entries, reviewed:
 the divisor is wrong, not the rule".
 
