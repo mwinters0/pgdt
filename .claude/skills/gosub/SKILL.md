@@ -49,6 +49,7 @@ carries the real instructions:
 
 > Invoke the `go` skill (Skill tool, `skill: "go"`) and follow it exactly.
 > Land exactly one slice — the next unticked box in the STATUS checklist.
+> Report the number of the task you've selected before proceeding to implementation.
 >
 > If the slice requires launching a job you expect to run more than 30
 > minutes, read `.claude/skills/gosub/handoff.md` before you launch it and
