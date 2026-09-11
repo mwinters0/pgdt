@@ -7845,6 +7845,32 @@ minutes-long job rather than an instrumented re-run of a sweep: the counter
 keeps its own high-water and `malloc_info` keeps each arena's, so a snapshot at
 exit is not merely an end state.
 
+**The two halves do not cover the same memory, and differencing them is
+wrong.** `live_bytes` and `live_peak_bytes` count what passes through Rust's
+`GlobalAlloc`; the `mallinfo_*` and `malloc_*` lines are glibc's view of the
+whole process. A C library that calls `malloc` directly is invisible to the
+first and fully present in the second — and one is in the shipped build today:
+`vendor/xz-seek` declares `default = ["liblzma", "fast-checks"]` and
+`pgdump_query/Cargo.toml` takes it without `default-features = false`, so
+**`liblzma` is the active `.xz` backend** and the pure-Rust `xz4rust` is off.
+Every decoder allocation is C, including the 8 MiB LZMA2 dictionary both koji
+files declare — modelled at `XZ_DECODE_FOOTPRINT` = 9,471,776 bytes *per
+reader* ("The compressed source"). So the gap between the counter and glibc's
+totals is decoder working set **plus** allocator bookkeeping **plus**
+retention, and no reading here separates them. Naming that difference
+"retention" is the mistake this paragraph exists to stop.
+
+*Rejected:* reading it as a defect in the counter. `live_bytes` is the only
+number that says what *this program* asked for, which is exactly what a
+libc-level tool cannot separate out; the scope is what makes it useful, not a
+limitation of it. What is missing is a second instrument at the `malloc`
+boundary, which sees C and Rust alike and cannot tell them apart — the two are
+complementary, and the out-of-band ledger's `M86` is the libc-level half.
+Routing liblzma's own `lzma_stream.allocator` hook (present in `liblzma-sys`,
+not exposed by the safe `liblzma` wrapper) through the counter would close the
+gap from the other side, and belongs upstream in `xz-seek` rather than here,
+`vendor/` being read-only.
+
 **It reports on stderr, not on stdout.** stdout is the answer — rows, listings,
 JSON — and a diagnostic written into it corrupts a pipe, which is the same
 argument `init_status_output` makes for the status stream ("Status output").
