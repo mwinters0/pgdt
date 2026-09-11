@@ -886,23 +886,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.21`'s report is on stderr in a bracketed block, and the harness gained
-  `parse_instrument` for it** — where the row said `key=value` lines "which
-  `measure.parse_reported` already reads", and that function reads stdout. The
-  decision being asked for: is a marker-delimited block on stderr the right
-  channel for a build's self-report, or should an instrument write somewhere a
-  parser needs no delimiters for — a path named by a flag, say? What forced the
-  move off stdout is in the tree and is not a judgement call: `chunk_size.rs`'s
-  two parity tests fail under the feature, because stdout is the binary's
-  *answer* and the instrumented build stopped answering what the shipped one
-  does. What is a judgement call is the bracket. Reading `key=value` off the
-  whole of stderr would fold `rss_wrapper`'s own `maxrss_kib=<n>` — a *per-rep
-  reading* — into the dict of facts a run states about itself, where every
-  other entry is identical across reps and only the last rep's copy is kept; a
-  marker pair is the cheapest thing that separates two writers on one stream,
-  and it costs a five-line harness function plus a test holding the two
-  constants across two languages. If reconsidered, what changes is
-  `introspect::report_text`'s framing and `measure.parse_instrument`; no
-  reading depends on it, since `19.18` has not been taken. Detail:
-  [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md),
-  "Two calls made inside the row".
+_Nothing open._

@@ -7861,6 +7861,13 @@ identical across reps and only the last rep's copy is kept.
 `measure.parse_instrument` takes the bracketed block and nothing else; the
 markers carry no `=`, so they are invisible to the parse they delimit.
 
+**That transport is superseded and the bracket goes with it** — the out-of-band
+ledger's `M85` moves the report into a file whose path an environment variable
+names, which has one writer by construction where a shared stream is a framing
+protocol paid once per writer. It blocks `P19`, `19.18` being the sitting that
+reads this report. stderr over stdout is unaffected: that is the paragraph
+above, and it was never the open question.
+
 **`--version` names the instrument, and `measure.binary_allocator` refuses a
 binary that does.** A counting allocator still answers `(allocator: system)`,
 so without the refusal an instrumented build reads as the shipped one and every
