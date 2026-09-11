@@ -332,13 +332,15 @@ goes").
 Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. What remains runs
-**`19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the
+**`19.20`, `19.17.1`, `19.18`, `19.16`, `19.13`, `19.11`**, the sweep last; the
 list below is numeric, so its first unticked box is not the next piece of work.
 **The repair ran ahead of the account, which is the reverse of what the spec
-wrote**, so every reading taken from here prices the repaired arrangement.
-Start with `19.17.1` — and read `19.19`'s notes first, since the repair moved
-the thin allocation off 512 MiB and may leave no leg that dies for that slice to
-record.
+wrote**, and `19.20` now runs ahead of all of it: it decides the cut width by
+measurement, and the per-reader charge, the resident curve and the thin
+allocation all move with it — so `19.18`'s sitting and `19.16`/`19.13`'s
+constant would otherwise be taken against an arrangement about to change, which
+is the failure that already cost this phase once (`KD19`). Start with `19.20`,
+reading `19.19`'s notes first.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -637,6 +639,14 @@ record.
       and 1.5 GiB at 11.6% and 10.3%; and the tail read's duplicate block decode
       is now named, `KD20`. Notes:
       [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)
+- [ ] **19.20** The cut width, decided by measurement — `19.19`'s route
+      reopened. Make `scan_partition`'s first read chunk-sized, widen the cut
+      past one block, time it against both builds at stated and flagless
+      counts, and keep whichever wins; the outcome is open, since `19.14`'s
+      flat-above-four ceiling is still unexplained. Re-pins the invariant on
+      the read size rather than on the one-block piece. Amortises the
+      duplicate successor-block decode without removing it, so it closes no
+      register entry.
 
 ## Not started
 
@@ -834,19 +844,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The repair took the one-block partition rather than the chunk-sized first
-read, and that trades stated low-count throughput for the default's.** `19.19`'s
-row offered both: restore the one-block partition, *or* make
-`scan_partition`'s first read chunk-sized like its tail. The first was taken,
-because the second changes the plain path's read shape too — a plain partition
-is deliberately one eight-chunk read — and reworking a tested core path on a
-judgement call is what an unattended session is asked not to do. What it costs
-is visible in `runs/19.18-blocksize-charge-probe.log`: at a **stated** two
-readers a 24 MiB-block `parse` now takes 17.9 s against 11.2 s before, because a
-one-block piece amortises its tail block decode over one block instead of 2.42
-(`KD20`). At the flagless default the same change is 2.1–2.6× *faster*, since a
-flagless run resolves thirteen readers in 1 GiB rather than two, and the
-four-worker ceiling is gone. Reconsidering would mean either the chunk-sized
-first read — which does not remove the duplicate decode either — or an
-in-flight decode map in `BlockCache`, which is `KD20`'s fix and a concurrency
-change of its own.
+_Nothing open._

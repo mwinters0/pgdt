@@ -483,9 +483,20 @@ it — so the tail lands in the *next* block and forces that block's decode by
 this worker, while the sibling that owns it is decoding it too. Neither
 `BlockCache::lookup` nor `BlockCache::slot` has an in-flight map, so the two
 decodes run rather than one waiting on the other. The cost is about **twice the
-decode work**, which caps the speedup at roughly half the reader count: a
-stated-count `parse` of the 24 MiB-block control runs 17.8 → 17.9 → 9.9 → 7.4 s
-over one, two, four and six readers, against a serial scan's 17.8. **(c)
+decode work**, which puts a **ceiling** near half the reader count on the
+speedup: a stated-count `parse` of the 24 MiB-block control runs
+17.8 → 17.9 → 9.9 → 7.4 s over one, two, four and six readers, against a serial
+scan's 17.8. Measurement runs under that ceiling and falls further behind as
+the count grows — 1.8 where it allows 2.0, 2.4 where it allows 3.0, and 5.82×
+at twenty-four where it allows 12× — so it bounds the term rather than
+accounting for it, and the residual is unexplained.
+
+**The waste is one block per *piece*, so the cut width is what amortises it.**
+A one-block piece pays a whole wasted decode for one block of progress; the
+2.42-block piece that `19.14` cut by accident paid 41%, and an eight-block
+piece would pay 12.5%. That is why pinning the cut to the source's retained
+unit costs throughput at low stated counts, and why widening it is a candidate
+repair distinct from the in-flight map. **(c)
 unowned**; promoted by a phase taking up compressed scan throughput, since no
 defaults change reaches it. It is not new — it is what the arrangement before
 the charge-and-cut confusion also did, and it is inside the published

@@ -1024,6 +1024,7 @@ being inserted.
 
 | **19.17.1** | A killed leg is recorded as a reading and the sitting continues; a killed leg bars publication of the figure. An **earned third level**: `19.17` shipped the wrong contract, registering a `RESERVE_LIMITS` docstring that calls an OOM kill "a reading rather than an apparatus failure" beside a sweep that raises and loses the whole figure. Re-filed from the withdrawn `M82`, which was not out-of-band because it reverses that decision. Two facts the row did not have: the harness **cannot tell an OOM kill from any other failure**, `rss_wrapper` collapsing every signal death to exit 1 and `--rm` destroying the container before `inspect` could say — so the oracle is `/sys/fs/cgroup/memory.events`' `oom_kill` count, read inside the container after the timed command; and the licence is **per family**, never harness-wide, since `parallel-peak-rss` once measured 3067 MiB in a 3072 MiB container and a kill there is the apparatus failure that being loud caught. A killed cell is a *censored* reading and needs a third cell state rather than a number. |
 | **19.19** | The per-file term, billed where the file is open, and `fit`'s divisor — the repair the fifth amendment names, and the one slice in this phase whose evidence is a **unit test** rather than a sitting. `partition_bytes` is both the memory charge and `run_region`'s cut size, so `19.14` raising it to `reader_bytes` made every partition 2.08–2.42 blocks and sent `scan_partition`'s first read down `read_by_blocks`' copying arm, into an unpoolable buffer of partition length held through the parse and billed one chunk. Restore the one-block partition (or make that first read chunk-sized like its tail) and bill what `reader_bytes` misses where the source is open; in the same slice, divide the allowance by the affordability charge rather than by the recommendation, which costs a reader at every allocation. Acceptance is two-sided: the 128 MiB flagless family survives or declines with nothing killed, **and** the pre/post probe shows the four-worker throughput ceiling lifted. Owns **`KD19`**. |
+| **19.20** | The cut width, decided by measurement — the route `19.19` took on a judgement call, reopened. `19.19` fixed a partition-length first read by shrinking the cut to one block, which re-couples the cut to the source's retained unit and costs throughput below about five stated readers (2 readers: 11.2 s → 17.9 s on the 24 MiB control). The waste is one successor-block decode **per piece** (`KD20`), so the cut width is what amortises it: one block pays 100%, `19.14`'s 2.42-block piece paid 41%, eight blocks would pay 12.5% — and retention is capped at `BufferPool::slots`, not by piece width, so a wider cut does not widen the charge. Make `scan_partition`'s first read chunk-sized like its tail, widen the cut past one block, and time it against both existing builds at stated and flagless counts; keep whichever wins. **The outcome is open** — `19.14`'s flat-above-four ceiling is unexplained and may survive the read-shape fix, in which case what is shipped stays. Re-pin the invariant on the **read size** (no read exceeds `chunk_size`), which is what keeps every buffer poolable and survives either outcome; `a_block_decoding_partition_never_crosses_a_block_boundary` and `window_end`'s "every piece lies within a single unit" pin the arrangement under review and must not be left as settled intent. Does **not** close `KD20`: a wider cut amortises the wasted decode, only an in-flight map removes it. |
 
 **`19.14` through `19.19` were admitted after this spec was written**, and take the
 next free numbers rather than being inserted. `19.14` reverses a repair this
@@ -1073,9 +1074,15 @@ and the **refuted typed-`query` suspect** are the second branch: out of this
 phase, `KD17` allocated for the second of them, and 19.8 ships the plain default
 with the reason written down.
 
-**A repair reaching `leader::scan_partition` is out of this phase** — it changes
-what the leader does per piece for every source, which is the second branch's
-shape, not a default.
+**A repair reaching `leader::scan_partition` was ruled out of this phase and is
+now admitted, in `19.20`.** The original reason was that it changes what the
+leader does per piece for every source. That is true and is not the deciding
+consideration: which repair is right is decided by what the repairs do, not by
+which phase they are filed under, and `scan_partition` has exactly one caller —
+the cold interior split, whose plain arm a user reaches only by stating
+`--jobs`. Reasoning:
+[2026-09-11](../status/history/2026-09-11.md), "The route is judged on the
+repair, not on which phase it belongs to".
 
 **The plain source's own worker default is `Serial`, and 19.8 is not blocked on
 anything further.** A plain `parse` is slower than serial at every worker count

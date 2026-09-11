@@ -99,8 +99,12 @@ ceiling the acceptance asked to see lifted, and it is lifted.
 The term is named rather than left as a residual: **`KD20`**, each worker
 decoding its successor's block for its chunk-sized tail read, with no in-flight
 map to make the two misses one decode. At `w` workers a window advances `w`
-blocks in the time of two block decodes, so the speedup is about `w/2` — which
-is 1.0 at two readers, and matches 1.8 measured at four and 2.4 at six. It is
+blocks in the time of two block decodes, so the speedup is at most about `w/2`
+— **a ceiling, not a fit**. Measurement runs under it and falls further behind
+as `w` grows: 1.8 against 2.0 at four readers, 2.4 against 3.0 at six, and the
+published `parallel-scan-throughput` leg reaches 5.82× at twenty-four where the
+ceiling allows 12×. The residual is unexplained and is not claimed as
+accounted for. It is
 not a regression the repair introduced so much as one it restored: the
 arrangement before `19.14` did the same thing, and the published
 `parallel-scan-throughput` leg (5.82× at twenty-four workers) was taken under
