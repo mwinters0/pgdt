@@ -423,9 +423,10 @@ sitting.
       none at all, and `M90`, which puts the three-count guard at the model's own
       boundary and publishes a secant below it, so a sitting that loses legs to
       kills states a slope rather than an intercept nothing checks
-      ([`../design/out-of-band.md`](../design/out-of-band.md)). **`M91` blocks
-      it**: the gate reads a verdict that faults at both of `19.26`'s fault
-      lines, so a finding about the bound bars the sweep as a broken rule does.
+      ([`../design/out-of-band.md`](../design/out-of-band.md)), and `M91`, which
+      splits the verdict into bands so the acceptance reads the outer fault line
+      alone — a cell between `MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE`
+      publishes with its finding instead of barring the box.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
@@ -692,4 +693,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*Nothing open.*
+**An over-billed `reserve` cell no longer bars `19.11`'s box.** `M91` splits the
+charge model's verdict into bands and gives the gate the outer one, and the
+amendment that asked for it states acceptance as *no evaluated cell above
+`MEMORY_RESERVE`* — which an over-bill, a charge larger than anything the
+process held, is not. So a cell the harness calls `**over-bill**` now publishes
+with its finding where the previous acceptance ("the model holds at every
+evaluated cell") barred the box. The reasoning is the amendment's own: the gate
+asks whether the discovery kept the arrangement inside its allocation, and an
+over-bill is the side where it did. The argument the other way is that an
+over-bill is the one fault a grid search over reserve constants cannot report at
+all — it is a reader the allocation would have afforded and the rule refused —
+so it says `19.22`/`19.23` did not do their job as squarely as a breach does.
+Reconsidering it means making `ChargeFault.bars_acceptance` true of
+`BAND_OVER_BILL` too, in `scripts/measure.py`, and re-wording `19.11`'s
+acceptance to name the two bands rather than the reserve alone; nothing else
+reads the band.

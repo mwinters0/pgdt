@@ -2397,17 +2397,22 @@ class CompressedAccount(unittest.TestCase):
         billed = measure.charge_bytes(self.SEED_UNIT, 4)
         fault = measure.charge_model_problem(self.SEED_UNIT, 4, billed - 32 * measure.MIB)
         assert fault is not None
-        self.assertIn("over-billed", fault)
-        self.assertIn("fewer readers than the allocation affords", fault)
+        self.assertEqual(fault.band, measure.BAND_OVER_BILL)
+        self.assertIn("over-billed", fault.text)
+        self.assertIn("fewer readers than the allocation affords", fault.text)
+        # It charged more than the process held, so the allocation held by
+        # construction: `19.11` accepts on the reserve and this is not above it.
+        self.assertFalse(fault.bars_acceptance)
 
     def test_a_remainder_above_the_reserve_is_a_fault_and_names_the_constant(self):
         billed = measure.charge_bytes(self.SEED_UNIT, 4)
         held = billed + measure.LIBRARY_MEMORY_RESERVE + measure.MIB
         fault = measure.charge_model_problem(self.SEED_UNIT, 4, held)
         assert fault is not None
-        self.assertIn("unnamed", fault)
-        self.assertIn("MEMORY_RESERVE", fault)
-        self.assertIn("rule does not hold", fault)
+        self.assertEqual(fault.band, measure.BAND_RULE)
+        self.assertIn("unnamed", fault.text)
+        self.assertIn("MEMORY_RESERVE", fault.text)
+        self.assertIn("rule does not hold", fault.text)
         # And exactly at the reserve it is the *inner* fault only: the criterion
         # is what the constant promises, not a margin inside it, so the rule
         # still holds there and the bound is what is named.
@@ -2415,8 +2420,43 @@ class CompressedAccount(unittest.TestCase):
             self.SEED_UNIT, 4, billed + measure.LIBRARY_MEMORY_RESERVE
         )
         assert at_reserve is not None
-        self.assertIn("MEMORY_UNPOOLED_BOUND", at_reserve)
-        self.assertNotIn("rule does not hold", at_reserve)
+        self.assertIn("MEMORY_UNPOOLED_BOUND", at_reserve.text)
+        self.assertNotIn("rule does not hold", at_reserve.text)
+
+    def test_only_the_outer_line_bars_the_acceptance(self):
+        # `M91`: the gate `19.11` applies is `MEMORY_RESERVE` alone. The two
+        # inner faults are findings about a number with the allocation intact,
+        # and a verdict that cannot tell them from a breach bars the sweep on a
+        # reading the library itself calls survivable.
+        billed = measure.charge_bytes(self.SEED_UNIT, 4)
+        bars = {
+            measure.BAND_OVER_BILL: billed - measure.MIB,
+            measure.BAND_BOUND: billed + measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB,
+            measure.BAND_RULE: billed + measure.LIBRARY_MEMORY_RESERVE + measure.MIB,
+        }
+        for band, held in bars.items():
+            with self.subTest(band=band):
+                fault = measure.charge_model_problem(self.SEED_UNIT, 4, held)
+                assert fault is not None
+                self.assertEqual(fault.band, band)
+                self.assertEqual(fault.bars_acceptance, band == measure.BAND_RULE)
+
+    def test_the_bound_is_re_derived_on_the_grid_it_was_read_off(self):
+        # `19.26` read 256 MiB off `19.16`'s grid as the next 64 MiB step above
+        # a 214.6 MiB worst remainder. The re-derivation is that arithmetic over
+        # whatever sitting is in hand, which is what lets a cell above the bound
+        # publish with its finding instead of owing a re-take.
+        self.assertEqual(
+            measure.rederived_unpooled_bound(214.6 * measure.MIB),
+            measure.LIBRARY_MEMORY_UNPOOLED_BOUND,
+        )
+        # On a step exactly, the step itself covers it; above it, the next one.
+        step = measure.UNPOOLED_BOUND_STEP
+        self.assertEqual(measure.rederived_unpooled_bound(4 * step), 4 * step)
+        self.assertEqual(measure.rederived_unpooled_bound(4 * step + 1), 5 * step)
+        # And it is never zero: a sitting whose worst remainder is negative is
+        # an over-bill throughout, not a bound of nothing.
+        self.assertEqual(measure.rederived_unpooled_bound(-1.0), step)
 
     def test_the_two_ceilings_are_distinguishable_at_every_cell(self):
         # `19.26`'s reason for two lines rather than one: between them the
@@ -2431,10 +2471,10 @@ class CompressedAccount(unittest.TestCase):
         self.assertIsNone(measure.charge_model_problem(self.SEED_UNIT, 4, billed + inner))
         between = measure.charge_model_problem(self.SEED_UNIT, 4, billed + inner + measure.MIB)
         assert between is not None
-        self.assertIn("finding about the bound, not the rule", between)
+        self.assertIn("finding about the bound, not the rule", between.text)
         above = measure.charge_model_problem(self.SEED_UNIT, 4, billed + outer + measure.MIB)
         assert above is not None
-        self.assertIn("rule does not hold", above)
+        self.assertIn("rule does not hold", above.text)
 
     def test_the_mirrored_pool_depth_and_constants_are_the_librarys_own(self):
         # All three are hardcoded on `QUERY_SUBSTREAM_CAP`'s argument, so the
@@ -5954,14 +5994,18 @@ class ChargeModelSection(unittest.TestCase):
         ("control_xz128", "2g"): (5, 1342.6),
     }
 
-    def _seeded_body(self):
+    def _seeded_body(self, bumps=None):
         """The renderer over a fixture whose flagless legs are `19.16`'s own
-        readings, nothing killed."""
+        readings, nothing killed.
+
+        `bumps` adds MiB to one leg's worst rep, which is how a cell is put in a
+        chosen band of the criterion without inventing a second fixture."""
         raw = self._raw()
         raw["killed"] = {}
         units = {name: unit for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS}
         for spec in measure._reserve_flagless_specs():
             jobs, worst = self.SEEDED[(spec.input, spec.memory)]
+            worst += (bumps or {}).get((spec.input, spec.memory), 0.0)
             key = spec.key(self.FIGURE)
             raw["rss"][key] = [worst * 1024 - 20, worst * 1024 - 10, worst * 1024]
             raw["reported"][key] = {
@@ -5984,8 +6028,16 @@ class ChargeModelSection(unittest.TestCase):
 
     def test_the_criterion_is_stated_before_the_answer(self):
         body, _ = self._render()
-        section = body.split("The charge against what was held")[1]
-        criterion, _, verdict = section.partition("**The model")
+        section = body.split("The charge against what was held")[1].split(
+            "What the process says it held"
+        )[0]
+        # The prose above the table is the criterion; whatever follows the last
+        # row of it is the answer. Read that way rather than off the verdict's
+        # opening words, which name the band and so are not one sentence.
+        lines = section.splitlines()
+        last_row = max(i for i, ln in enumerate(lines) if ln.startswith("| "))
+        criterion = "\n".join(lines[:last_row])
+        verdict = "\n".join(lines[last_row + 1 :]).strip()
         self.assertIn("non-negative", criterion)
         self.assertIn("MEMORY_RESERVE", criterion)
         # Both ceilings, and which finding each is: a section stating one of
@@ -5993,6 +6045,9 @@ class ChargeModelSection(unittest.TestCase):
         self.assertIn("MEMORY_UNPOOLED_BOUND", criterion)
         self.assertIn("the **bound** is wrong", criterion)
         self.assertIn("over-bill", criterion)
+        # And that the column below says which of the three a cell crossed,
+        # since that is what decides how the cell is read (`M91`).
+        self.assertIn("names the band", criterion)
         self.assertTrue(verdict, "the section states a criterion and never answers it")
 
     def test_the_seeded_readings_pass_and_the_floor_is_its_own_column(self):
@@ -6026,10 +6081,69 @@ class ChargeModelSection(unittest.TestCase):
 
     def test_a_cell_outside_the_band_is_named_in_those_words(self):
         # The default fixture holds ~100 MiB against a charge of several
-        # hundred, which is the over-bill side of the criterion.
+        # hundred, which is the over-bill side of the criterion. It charged more
+        # than anything held, so the allocation held: the verdict reports it
+        # under the band that does not bar the box.
         body, _ = self._render()
-        self.assertIn("The model is refuted, and by these cells:", body)
         self.assertIn("over-billed", body)
+        self.assertIn("not a bar on the box", body)
+        self.assertNotIn("The rule is refuted", body)
+
+    def test_a_cell_above_the_bound_alone_publishes_with_its_finding(self):
+        # `M91`: between the two lines the allocation holds and the number the
+        # count is predicted against is wrong. The verdict says which, and
+        # re-derives the bound from the sitting's own remainders rather than
+        # owing a re-take.
+        bump = (measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB) / measure.MIB
+        body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
+        self.assertNotIn("The rule is refuted", body)
+        self.assertIn("not a bar on the box", body)
+        self.assertIn("MEMORY_UNPOOLED_BOUND", body)
+        # 13.8 MiB of remainder plus the bump, on the 64 MiB grid `19.26` read
+        # the constant off.
+        rederived = measure.rederived_unpooled_bound(
+            (13.8 + bump) * measure.MIB
+        )
+        self.assertIn(
+            f"re-derive `MEMORY_UNPOOLED_BOUND` at **{measure._fmt_budget_bytes(rederived)}**",
+            body,
+        )
+        self.assertIn("| **bound** |", body)
+
+    def test_a_cell_above_the_reserve_bars_the_box_and_says_so(self):
+        # The outer line, which is the one `19.11` accepts on: a remainder the
+        # reserve cannot cover is an arrangement the discovery cannot keep
+        # inside its allocation.
+        bump = (measure.LIBRARY_MEMORY_RESERVE + measure.MIB) / measure.MIB
+        body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
+        self.assertIn("The rule is refuted, and by these cells:", body)
+        self.assertIn("the sweep's box does not tick", body)
+        self.assertIn("| **rule** |", body)
+
+    def test_the_two_bands_are_reported_apart_in_one_sitting(self):
+        # The case one sentence over both cannot state: a cell of each band. The
+        # bar is named on the rule cells alone, and the bound cell is published
+        # beside it with its finding.
+        body = self._seeded_body(
+            bumps={
+                ("control_xz128", "1g"): (
+                    measure.LIBRARY_MEMORY_RESERVE + measure.MIB
+                ) / measure.MIB,
+                ("control_xz", "2g"): (
+                    measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB
+                ) / measure.MIB,
+            }
+        )
+        self.assertIn("The rule is refuted, and by these cells:", body)
+        self.assertIn("not a bar on the box", body)
+        barring = body.split("The rule is refuted")[1].split("Inside the rule")[0]
+        self.assertIn("128 MiB blocks** at `-m 1g`", barring)
+        self.assertNotIn("24 MiB blocks** at `-m 2g`", barring)
+        # And no bound is re-derived here: a sitting carrying a cell above the
+        # reserve has a worst remainder belonging to an arrangement the rule did
+        # not hold for, which is not a reading a constant may be sized to.
+        self.assertNotIn("re-derive `MEMORY_UNPOOLED_BOUND`", body)
+        self.assertIn("No bound is re-derived from this sitting", body)
 
     def test_a_declined_leg_is_absent_rather_than_evaluated(self):
         # The streaming fallback holds none of the model's terms, so a leg whose

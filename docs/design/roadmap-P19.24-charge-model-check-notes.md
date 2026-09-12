@@ -19,13 +19,13 @@ integer.
   pool's floor, which the per-reader charge does not bill.
 - `charge_model(unit, jobs, held)` — `(billed, floor, unnamed)`: what the rule
   charged, what the model names on top of it, and what neither names.
-- `charge_model_problem(unit, jobs, held)` — the two-sided criterion, or
-  `None`.
+- `charge_model_problem(unit, jobs, held)` — a `ChargeFault` naming the band
+  this cell crossed, or `None`.
 
 The renderer walks the flagless legs, prints a row per cell — readers, billed,
 pool floor, worst rep held, unnamed remainder, criterion — and ends on a
-verdict that either says the model holds at every cell or names each cell that
-refutes it.
+verdict that either says the model holds at every cell or names each refuting
+cell under the band it faulted in.
 
 **The criterion is stated before the answer, and neither side is a tolerance
 anybody picked.** The unnamed remainder must be **non-negative**, because a
@@ -90,8 +90,9 @@ arrangement nobody measured, while every cell here is a real reading and what a
 refutation falsifies is the library's claim about those readings. Barring
 publication would leave `measurements.md` able to carry only tables agreeing
 with the library. The gate is `19.11`'s acceptance instead, which is two-sided:
-the sweep publishes, **and** this verdict reads that the model holds at every
-evaluated cell.
+the sweep publishes, **and** this verdict carries no cell above
+`MEMORY_RESERVE` — the outer of the criterion's lines, and the only one the
+acceptance reads (`M91`).
 
 **A declined or censored leg is absent rather than evaluated.** The streaming
 fallback holds none of the model's terms, and a censored leg's reading is a

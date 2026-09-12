@@ -2515,7 +2515,65 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
     return billed, floor, held - billed
 
 
-def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
+#: The three bands `charge_model_problem` reports, and the one that bars the
+#: box. Only `BAND_RULE` is a remainder above `MEMORY_RESERVE`, which is what
+#: `19.11`'s acceptance reads — "no evaluated cell above `MEMORY_RESERVE`",
+#: not "no faulting cell", because the other two leave the allocation intact
+#: (`roadmap-P19-efficient-defaults.md`, `19.11`'s row, amended a third time).
+BAND_RULE = "rule"
+BAND_BOUND = "bound"
+BAND_OVER_BILL = "over-bill"
+
+#: The grid `19.26` read `MEMORY_UNPOOLED_BOUND` off: the candidate constants
+#: were 64 MiB apart, so the bound is the worst observed remainder rounded up to
+#: a step of it and `rederived_unpooled_bound` re-does that arithmetic over a
+#: sitting's own cells.
+UNPOOLED_BOUND_STEP = 64 << 20
+
+
+@dataclass(frozen=True)
+class ChargeFault:
+    """One cell's fault: which of the model's three lines it crossed, and the
+    sentence that says so.
+
+    **The band is the half `19.11` consumes.** The prose has said which line a
+    cell crossed since `19.26`, but the verdict that reads these collapsed every
+    fault into one refusal, so a cell the inner line calls *a finding about the
+    bound, the allocation intact* barred the sweep exactly as a breach of the
+    rule did. A fault carries its band so that the verdict can say which, and so
+    that the acceptance clause can read one of them (`M91`).
+    """
+
+    band: str
+    text: str
+
+    @property
+    def bars_acceptance(self) -> bool:
+        """Whether `19.11`'s gate fails on this cell.
+
+        `MEMORY_RESERVE` alone: an over-bill charged more than the process held
+        and a bound fault is a remainder still inside the reserve, so in both
+        the discovery kept the arrangement inside its allocation and what is
+        wrong is a number, not the rule.
+        """
+        return self.band == BAND_RULE
+
+
+def rederived_unpooled_bound(worst_unnamed: float) -> int:
+    """What `MEMORY_UNPOOLED_BOUND` would be if it were read off these cells:
+    the smallest 64 MiB step covering the worst unnamed remainder among them.
+
+    This is `19.26`'s own arithmetic — 214.6 MiB worst over `19.16`'s grid, the
+    next step up being 256 — re-done over whatever sitting is in hand, which is
+    why a cell above the bound publishes with its finding instead of barring the
+    sweep: the re-derivation is arithmetic over readings already taken, not a
+    re-take (`roadmap-P19.26-margin-constant-notes.md`).
+    """
+    steps = (max(0, int(worst_unnamed)) + UNPOOLED_BOUND_STEP - 1) // UNPOOLED_BOUND_STEP
+    return max(1, steps) * UNPOOLED_BOUND_STEP
+
+
+def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | None:
     """Why this leg refutes the charge model, or `None` where it does not.
 
     **Three fault lines, and none of them is a tolerance somebody picked.**
@@ -2540,37 +2598,44 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
     failed rule, and leaving it at the reserve would have made a bound the
     readings overran invisible until a kill.
 
+    **The band travels with the sentence**, because the verdict that reads this
+    is what `19.11` accepts on, and a distinction spent before it reaches its
+    only consumer is not a distinction (`M91`).
+
     Asked only of a leg that took the block path and survived: the streaming
     fallback holds none of these terms, and a censored leg's reading is a bound
     rather than a number.
     """
     billed, floor, unnamed = charge_model(unit, jobs, held)
     if unnamed < 0:
-        return (
+        return ChargeFault(
+            BAND_OVER_BILL,
             f"**over-billed by {_fmt_budget_bytes(-unnamed)}** — {jobs} reader(s) were charged "
             f"{_fmt_budget_bytes(billed)}"
             + (f", of which {_fmt_budget_bytes(floor)} is the pool floor" if floor else "")
             + f", and the whole process held {_fmt_budget_bytes(held)}. The rule admitted "
-            "fewer readers than the allocation affords."
+            "fewer readers than the allocation affords.",
         )
     if unnamed > LIBRARY_MEMORY_RESERVE:
-        return (
+        return ChargeFault(
+            BAND_RULE,
             f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
             f"{_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)} `MEMORY_RESERVE` that is meant to "
             f"cover it — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
             + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
             + f" against {_fmt_budget_bytes(held)} held. **The rule does not hold here**: the "
-            "discovery cannot keep this arrangement inside its allocation."
+            "discovery cannot keep this arrangement inside its allocation.",
         )
     if unnamed > LIBRARY_MEMORY_UNPOOLED_BOUND:
-        return (
+        return ChargeFault(
+            BAND_BOUND,
             f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
             f"{_fmt_budget_bytes(LIBRARY_MEMORY_UNPOOLED_BOUND)} `MEMORY_UNPOOLED_BOUND` the "
             f"margin predicts with — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
             + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
             + f" against {_fmt_budget_bytes(held)} held. **A finding about the bound, not the "
             "rule**: it is still inside `MEMORY_RESERVE`, so the allocation holds and what is "
-            "wrong is the number the count is predicted against."
+            "wrong is the number the count is predicted against.",
         )
     return None
 
@@ -6387,9 +6452,12 @@ def run_reserve(session: Session) -> str:
     # than the readings. Barring publication on it would leave
     # `measurements.md` able to carry only tables that agree with the library,
     # which is the opposite of what it is for. What gates the phase instead is
-    # `19.11`'s two-sided acceptance, which requires this verdict to read that
-    # the model holds.
-    model_rows, model_faults = [], []
+    # `19.11`'s two-sided acceptance, which reads this verdict — and reads
+    # **one** of its fault lines, `MEMORY_RESERVE`. So the verdict is written in
+    # bands: the cells above the reserve are the ones that bar the box, and the
+    # cells between the bound and the reserve publish with their finding and
+    # re-derive the bound from the sitting's own remainders (`M91`).
+    model_rows, model_faults, model_unnamed = [], [], []
     for name, label, unit in RESERVE_FLAGLESS_INPUTS:
         for token, _limit in RESERVE_LIMITS:
             spec = by_flagless[(name, token)]
@@ -6408,8 +6476,9 @@ def run_reserve(session: Session) -> str:
             held = max(readings) * 1024
             billed, floor, unnamed = charge_model(unit, jobs, held)
             fault = charge_model_problem(unit, jobs, held)
+            model_unnamed.append(unnamed)
             if fault:
-                model_faults.append(f"- **{label}** at `-m {token}`: {fault}")
+                model_faults.append((fault, f"- **{label}** at `-m {token}`: {fault.text}"))
             model_rows.append(
                 [
                     f"{label}, `-m {token}`",
@@ -6418,7 +6487,9 @@ def run_reserve(session: Session) -> str:
                     _fmt_budget_bytes(floor) if floor else "—",
                     fmt_mib(held / 1024),
                     _fmt_budget_bytes(unnamed),
-                    "met" if fault is None else "**refuted**",
+                    # The band, not a bare "refuted": which line a cell crossed
+                    # is what says whether it bars the box.
+                    "met" if fault is None else f"**{fault.band}**",
                 ]
             )
     model_table = md_table(
@@ -6434,11 +6505,56 @@ def run_reserve(session: Session) -> str:
         model_rows,
     )
     if model_faults:
-        model_verdict = "**The model is refuted, and by these cells:**\n\n" + "\n".join(
-            model_faults
-        )
+        barring = [line for fault, line in model_faults if fault.bars_acceptance]
+        inside = [line for fault, line in model_faults if not fault.bars_acceptance]
+        bands = []
+        if barring:
+            bands.append(
+                "**The rule is refuted, and by these cells:**\n\n"
+                + "\n".join(barring)
+                + "\n\nEach is a remainder above "
+                f"`MEMORY_RESERVE` ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is the "
+                "line `19.11` accepts on, so the sweep's box does not tick on this sitting."
+            )
+        if inside:
+            # The re-derivation runs over every evaluated cell rather than over
+            # the faulting ones — the bound is what covers the worst remainder
+            # the sitting saw, and the cells under it are as much evidence of
+            # that as the cells over it — but only where nothing bars. A cell
+            # above the reserve is an arrangement the rule did not keep inside
+            # its allocation, so its remainder describes a run that should not
+            # have happened and is not a reading a constant may be sized to.
+            tail = ""
+            if any(fault.band == BAND_BOUND for fault, _ in model_faults):
+                if barring:
+                    tail = (
+                        "\n\nNo bound is re-derived from this sitting: it carries a cell above "
+                        "`MEMORY_RESERVE`, so its worst remainder is a reading of an "
+                        "arrangement the rule did not hold for."
+                    )
+                else:
+                    worst = max(model_unnamed)
+                    tail = (
+                        "\n\nThe worst remainder over the "
+                        f"{len(model_rows)} evaluated cell(s) is {_fmt_budget_bytes(worst)}, so "
+                        "these readings re-derive `MEMORY_UNPOOLED_BOUND` at "
+                        f"**{_fmt_budget_bytes(rederived_unpooled_bound(worst))}** — the "
+                        f"smallest {_fmt_budget_bytes(UNPOOLED_BOUND_STEP)} step that covers "
+                        "it, which is `19.26`'s own arithmetic re-done over this sitting and "
+                        "not a re-take."
+                    )
+            bands.append(
+                "**Inside the rule, and so not a bar on the box** — `19.11` accepts on "
+                "`MEMORY_RESERVE` alone, and every cell here is under it:\n\n"
+                + "\n".join(inside)
+                + tail
+            )
+        model_verdict = "\n\n".join(bands)
     elif model_rows:
-        model_verdict = "**The model holds at every cell above.**"
+        model_verdict = (
+            "**The model holds at every cell above.** `19.11` accepts on the outer line — no "
+            "evaluated cell above `MEMORY_RESERVE` — and nothing here reaches either of them."
+        )
     else:
         # Not the same claim as the one above, and the difference is the whole
         # value of the check: every leg declined the block path or was censored,
@@ -6809,6 +6925,10 @@ def run_reserve(session: Session) -> str:
         "and the **bound** is wrong; above "
         f"**`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
         "construction what covers everything the charge does not bill, the **rule** is. The "
+        "`Criterion` column names the band rather than saying only that a cell faulted, because "
+        "the two are read differently: a cell above the reserve is an arrangement the discovery "
+        "cannot keep inside its allocation, and one below it is published with its finding and "
+        "re-derives the bound from these same remainders. The "
         "middle column is the "
         "second term of that bill, reported apart because it is the one unbounded in the block "
         "size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with "

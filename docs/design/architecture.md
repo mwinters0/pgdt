@@ -564,7 +564,10 @@ per-reader quantity. What it is, is unattributed — glibc's arena retention as
 far as any reading goes, with no term table summing to it — so
 `scripts/measure.py`'s `charge_model_problem` carries two fault lines rather
 than one: a cell above the bound is a finding about the bound, a cell above the
-reserve is the rule not holding, and one threshold cannot tell those apart.
+reserve is the rule not holding, and one threshold cannot tell those apart. Its
+verdict names which of the two a faulting cell is in, because the closing
+sweep's acceptance reads the outer line alone — a cell between them publishes
+with its finding and re-derives the bound from that sitting's own remainders.
 
 **What justifies the *value* is how wrong it may be before the promise breaks,
 and the rounding is only a rounding.** What the library promises is
