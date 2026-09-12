@@ -448,8 +448,16 @@ before the sitting.
       [2026-09-12](history/2026-09-12.md), "The charge over-bills the pool floor
       at every count"). **The gate has to be re-run on the repaired build** —
       the readings above were taken under the old charge, so the sitting that
-      releases this box is a fresh `--figure reserve --alone`. What this slice
-      then owes is unchanged: the sweep itself,
+      releases this box is a fresh `--figure reserve --alone`. **`M95` blocks it
+      now**: the charge is piecewise linear with a kink at `POOL_DEPTH`, and the
+      published fit is one straight line across it, which puts ≈421 MiB of the
+      bend into the 128 MiB family's intercept and reads its slope 31% low. The
+      gate itself is unaffected, being per cell, so this bars what the sitting
+      *publishes* rather than what it decides
+      ([`../design/out-of-band.md`](../design/out-of-band.md);
+      [2026-09-12](history/2026-09-12.md), "The fit is a straight line across a
+      kink the charge now states"). What this slice then owes is unchanged: the
+      sweep itself,
       `reserve`'s `Shared` edge onto `peak-rss` with the `Session.borrow` change
       that lets an RSS reading cross a share, `rss-attribution` published and
       `M74` closed, and both `parallel-*` figures re-taken.
@@ -731,17 +739,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`M93` deleted the floor-window half of `--check`'s reserve refusal, one day
-  after `M89` added it.** `M89` registered `544m` and `1088m` and a check that
-  fails an axis at whose every cell the pool term is clamped to zero; `M93`
-  restated the term as `(POOL_DEPTH.max(jobs) − 1) × unit`, which is billed at
-  every count, so there is no window left to register a limit inside and the
-  check can no longer fail. It is gone rather than restated — the function is
-  now `reserve_axis_problems` and keeps `M90`'s fit-ability half — and the two
-  limits stay as additive legs whose reader counts (two at 24 MiB blocks, one at
-  128) no other limit resolves. **What to weigh:** whether the *property* `M89`
-  was protecting has a successor worth a check. The property was "the criterion
-  evaluates the term at some cell"; the repair makes it unconditional, so the
-  honest answer looks like "nothing to check", but a session reading `M89`'s
-  row will find a guard that no longer exists. Reversing this means keeping a
-  vacuous refusal, which is a signal that is always green.
+*Nothing open.*

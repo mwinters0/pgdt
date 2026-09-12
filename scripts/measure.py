@@ -2742,10 +2742,17 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: and clamped off at four readers, so a limit had to be inserted under the
 #: clamp for any cell to bill it at all; restated as the retention list the pool
 #: really holds it is billed at **every** cell, and above four readers it is the
-#: larger half of the charge. The two limits stay because they are additive legs
-#: and because the counts they add are ones no other limit resolves — `544m` two
-#: readers of 24 MiB blocks, `1088m` one of 128 — which is what
-#: `reserve_axis_problems` now asks of the axis.
+#: larger half of the charge.
+#:
+#: **They stay, and the reason is the regime rather than the window.** Each adds
+#: a reader count no other limit resolves — `544m` two readers of 24 MiB blocks,
+#: `1088m` two of 128 — and both of those counts are **below `POOL_DEPTH`**,
+#: which is the side of the charge where the retention list is a constant
+#: `(POOL_DEPTH − 1)` units rather than growing with the count. That regime
+#: otherwise has two points on the 24 MiB family and **one** on the 128 MiB one,
+#: where a line through it is an intercept asserted as a measurement. So the two
+#: limits are the below-depth regime's coverage, which is a reason that outlives
+#: the window they were registered for.
 #:
 #: **Additive, so nothing already read moves**: `512m` keeps the axis's worst
 #: headroom and the other three keep theirs. `544m` is also close to the
@@ -3339,9 +3346,19 @@ def reserve_axis_problems() -> list[str]:
     is what `544m` and `1088m` were registered to reach. Restated as what the
     pool holds, `(POOL_DEPTH.max(jobs) − 1) × unit` is billed at **every** cell
     and is the larger half of the charge above four readers, so there is no
-    window left to register a limit inside and no cell that evades it. The two
-    limits stay: they are additive legs, and the reader counts they add are what
-    `RESERVE_FIT_MIN_COUNTS` is satisfied out of.
+    window left to register a limit inside and no cell that evades it.
+
+    **A second property was riding on that window, and it gets no successor
+    check either.** The window forced a limit *below* `POOL_DEPTH`, so it also
+    forced a cell onto the below-depth side of the charge's kink — the side
+    where the retention list is constant rather than growing with the count.
+    That coverage is real and is why `544m` and `1088m` stay (`RESERVE_LIMITS`),
+    but it is a property of what the *fit* needs, and the fit is being given the
+    charge's own two-regime model to subtract rather than a straight line to
+    find across the kink (`M95`). A check that the axis straddles `POOL_DEPTH`
+    would then be guarding a requirement nothing has; the term it would protect
+    is already held to the library's own constants by
+    `test_the_mirrored_pool_depth_and_constants_are_the_librarys_own`.
 
     **Asked of the registered limits rather than of a sitting**, which is what
     makes it a `--check` and not a verdict: an axis whose block-path limits
@@ -6094,6 +6111,20 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     publishes. Written out rather than taken from a library because the harness
     depends on nothing but the standard library, and because three lines of
     arithmetic are easier to check than an import is to justify.
+
+    **That model is a straight line and the mechanism's is not**, which is
+    `M95`'s subject and is stated here because it is true of what this function
+    returns today. The pool holds `workers` blocks in flight plus
+    `max(POOL_DEPTH, workers) − 1` retained (`WorkerMemory::pool_bytes`), so
+    held memory rises by one unit a reader below `POOL_DEPTH` and by two above
+    it — piecewise linear, with a real kink at four readers that is in the
+    measured resident and not only in the charge. Both registered families
+    straddle it, and a single line fitted across a kink puts the bend into the
+    intercept: over the charge's own held-unit values that is ≈49 MiB of
+    intercept bias at 24 MiB blocks and ≈421 MiB at 128, where the slope also
+    reads 1.37 units against a true 2.0. It does not reach `19.11`'s gate, which
+    is per cell and never reads a fitted line, and no figure publishes these
+    numbers yet.
 
     Raises on fewer than two distinct abscissae: a "fit" through one point is an
     intercept asserted as a measurement, which is exactly the mistake `19.15`
