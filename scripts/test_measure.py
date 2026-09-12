@@ -2020,14 +2020,44 @@ class CompressedAccount(unittest.TestCase):
         )
         with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
             problems = measure.reserve_floor_problems()
-        self.assertEqual(len(problems), len(measure.RESERVE_FLAGLESS_INPUTS))
-        for line, (_n, label, unit) in zip(problems, measure.RESERVE_FLAGLESS_INPUTS):
+        floor = [line for line in problems if "no registered limit grants a budget" in line]
+        self.assertEqual(len(floor), len(measure.RESERVE_FLAGLESS_INPUTS))
+        for line, (_n, label, unit) in zip(floor, measure.RESERVE_FLAGLESS_INPUTS):
             with self.subTest(block_size=label):
                 self.assertIn(label, line)
                 floor_limit = (
                     measure.charge_bytes(unit, 1) + measure.LIBRARY_MEMORY_RESERVE
                 )
                 self.assertIn(measure._fmt_budget_bytes(floor_limit), line)
+
+    def test_the_registered_axis_can_reach_three_distinct_reader_counts(self):
+        # `M90`: fit-ability is asked of the same registered limits, because an
+        # axis that can only ever publish a secant should fail before a sitting
+        # is spent rather than after. Necessary and not sufficient — a host with
+        # few cores collapses distinct fits onto one count, which is the
+        # per-sitting residue the secant covers.
+        self.assertEqual(measure.reserve_floor_problems(), [])
+        for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
+            with self.subTest(block_size=label):
+                counts = {
+                    measure.afforded_readers(unit, measure.discovered_budget(limit))
+                    for _, limit in measure.RESERVE_LIMITS
+                } - {0}
+                self.assertGreaterEqual(len(counts), measure.RESERVE_FIT_MIN_COUNTS)
+
+    def test_the_check_fires_where_the_axis_cannot_be_fitted(self):
+        # The two-sided half of the fit-ability check: dropping the limits that
+        # afford the 128 MiB family its distinct counts has to turn it red, and
+        # the line has to say which counts are left.
+        kept = tuple(
+            row for row in measure.RESERVE_LIMITS if row[0] not in ("1536m", "2g")
+        )
+        with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
+            problems = measure.reserve_floor_problems()
+        fitness = [line for line in problems if "distinct reader count(s)" in line]
+        self.assertEqual(len(fitness), 1)
+        self.assertIn("128 MiB blocks", fitness[0])
+        self.assertIn(f"under the {measure.RESERVE_FIT_MIN_COUNTS}", fitness[0])
 
     def test_check_fails_where_the_axis_bills_the_floor_nowhere(self):
         # Wired into `--check`, not only available to be called: the whole point
@@ -2041,7 +2071,21 @@ class CompressedAccount(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
         self.assertEqual(code, 1)
-        self.assertIn("never bills the block pool's floor", out.getvalue())
+        self.assertIn("never bills the\nblock pool's floor", out.getvalue())
+        self.assertIn("no registered limit grants a budget", out.getvalue())
+
+    def test_check_fails_where_the_axis_cannot_be_fitted(self):
+        # The same wiring for the half `M90` added: one refusal, two questions,
+        # and `--check` has to carry both or the second is a function nobody
+        # calls.
+        kept = tuple(
+            row for row in measure.RESERVE_LIMITS if row[0] not in ("1536m", "2g")
+        )
+        with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(code, 1)
+        self.assertIn("distinct reader count(s)", out.getvalue())
 
     def test_the_discovered_budget_is_the_library_rule_mirrored(self):
         # `limit.bytes.saturating_sub(MEMORY_RESERVE)`, read off the source
@@ -2467,6 +2511,28 @@ class CompressedAccount(unittest.TestCase):
         # stop repeating.
         with self.assertRaises(ValueError):
             measure._least_squares([(3, 474.0), (3, 503.0)])
+
+    def test_the_publication_guard_sits_in_front_of_the_arithmetic(self):
+        # `M90`: every fitted line in this harness crosses `_fit_or_secant`, so
+        # a fourth call site cannot skip the rule by not remembering it.
+        fixed, slope = measure._fit_or_secant([(1, 110.0), (2, 120.0), (4, 140.0)])
+        self.assertAlmostEqual(fixed, 100.0)
+        self.assertAlmostEqual(slope, 10.0)
+
+    def test_below_the_guard_the_slope_survives_and_the_intercept_does_not(self):
+        # The slope is the same number either way — at two distinct abscissae
+        # the least-squares slope *is* the secant between the group means — so
+        # withholding the intercept withholds the model's claim and nothing the
+        # axis measured.
+        points = [(1, 110.0), (1, 114.0), (4, 200.0)]
+        fixed, slope = measure._fit_or_secant(points)
+        self.assertIsNone(fixed)
+        self.assertAlmostEqual(slope, (200.0 - 112.0) / 3)
+        self.assertAlmostEqual(slope, measure._least_squares(points)[1])
+
+    def test_a_secant_needs_two_points_as_much_as_a_fit_does(self):
+        with self.assertRaises(ValueError):
+            measure._fit_or_secant([(3, 474.0), (3, 503.0)])
 
     # -- the edges it owes --------------------------------------------------
 
@@ -5557,7 +5623,7 @@ class CensoredCells(unittest.TestCase):
         self.assertEqual(len(fits), len(measure.RESERVE_FLAGLESS_INPUTS))
         for line in fits:
             self.assertTrue(
-                "it covers" in line or "what is left is" in line,
+                any(w in line for w in ("it covers", "what is left is", "left cover")),
                 f"the line states no window: {line}",
             )
             # Every window names allocations, not just reader counts.
@@ -5566,10 +5632,12 @@ class CensoredCells(unittest.TestCase):
                 f"the window names no allocation: {line}",
             )
 
-    def test_the_no_fit_branch_states_its_window_too(self):
-        # "No fit" is a claim about a window as much as a fit is, and it was the
+    def test_the_no_line_branch_states_its_window_too(self):
+        # "No line" is a claim about a window as much as a fit is, and it was the
         # branch that named only the declined legs. Reached by resolving one
-        # reader count everywhere, which is what leaves a single point.
+        # reader count everywhere, which is what leaves a single point — below
+        # even a secant, since a secant needs two abscissae as much as a fit
+        # does.
         with tempfile.TemporaryDirectory() as tmp:
             raw = self._raw()
             for report in raw["reported"].values():
@@ -5580,21 +5648,16 @@ class CensoredCells(unittest.TestCase):
                 measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
             ):
                 body = measure.run_reserve(session)
-        no_fit = [ln for ln in body.splitlines() if ln.startswith("- **") and "no fit" in ln]
-        self.assertEqual(len(no_fit), len(measure.RESERVE_FLAGLESS_INPUTS))
-        for line in no_fit:
+        no_line = [ln for ln in body.splitlines() if ln.startswith("- **") and "no line" in ln]
+        self.assertEqual(len(no_line), len(measure.RESERVE_FLAGLESS_INPUTS))
+        for line in no_line:
             self.assertIn("what is left is", line)
             self.assertTrue(
                 any(f"`{token}` at" in line for token, _ in measure.RESERVE_LIMITS),
                 f"the window names no allocation: {line}",
             )
 
-    def test_a_two_point_family_publishes_no_fit(self):
-        # `M89`: a two-term model passes exactly through two points, so the
-        # residual the fit prints beside it is zero by construction and cannot
-        # be told from a model that describes the mechanism. The guard is three
-        # distinct reader counts, and the no-fit line says which bound it hit.
-        self.assertEqual(measure.RESERVE_FIT_MIN_COUNTS, 3)
+    def _two_count_body(self):
         counts = [4, 4, 4, 4, 5, 5]
         with tempfile.TemporaryDirectory() as tmp:
             raw = self._raw()
@@ -5605,16 +5668,60 @@ class CensoredCells(unittest.TestCase):
             with unittest.mock.patch.object(
                 measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
             ):
-                body = measure.run_reserve(session)
+                return measure.run_reserve(session)
+
+    def test_a_two_point_family_publishes_a_secant_and_no_intercept(self):
+        # `M89` set the guard at three distinct reader counts, because a
+        # two-term model passes exactly through two points and prints `±0 MiB`
+        # as though it were a residual. `M90` is what it withholds: the slope
+        # between two counts is a difference the axis measured and carries no
+        # model claim, so it is published and the intercept is not.
+        self.assertEqual(measure.RESERVE_FIT_MIN_COUNTS, 3)
+        body = self._two_count_body()
         section = body.split("The pair the constant is read off")[1].split(
             "What the killed legs still prove"
         )[0]
         lines = [ln for ln in section.splitlines() if ln.startswith("- **")]
         self.assertEqual(len(lines), len(measure.RESERVE_FLAGLESS_INPUTS))
-        fitted = [ln for ln in lines if "no fit" not in ln]
-        self.assertFalse(fitted, f"a family under the guard published a fit: {fitted}")
         for line in lines:
-            self.assertIn("distinct reader count(s), under the 3", line)
+            with self.subTest(line=line):
+                self.assertIn("secant", line)
+                self.assertIn("a reader **", line)
+                self.assertIn("distinct reader count(s), under the 3", line)
+                # The two things the guard withholds, and nothing else: no
+                # intercept, and no residual value printed beside it.
+                self.assertNotIn("fixed **", line)
+                self.assertNotIn("residuals reach", line)
+                # Named endpoints, so a reader knows which difference it is.
+                self.assertIn(" → ", line)
+                self.assertTrue(
+                    any(f"`{token}`" in line for token, _ in measure.RESERVE_LIMITS),
+                    f"the secant names no allocation: {line}",
+                )
+
+    def test_the_instrument_family_crosses_the_same_guard(self):
+        # `M90`: the guard is a property of the model, so it cannot live in one
+        # renderer. `live_fit` admitted an intercept at two distinct counts
+        # while the flagless axis refused one in the same sitting.
+        body = self._two_count_body()
+        live = [ln for ln in body.splitlines() if "a reader" in ln and "secant" in ln]
+        self.assertTrue(
+            any("What a reader costs the program" in ln for ln in live),
+            "the instrument account published something other than a secant",
+        )
+        line = next(ln for ln in live if "What a reader costs the program" in ln)
+        self.assertNotIn("fixed **", line)
+        self.assertNotIn("a residual of", line)
+        # Named legs, not bare counts: a difference nobody can locate is a
+        # difference nobody can re-take.
+        self.assertIn(" → ", line)
+        self.assertTrue(
+            any(f"in {token}" in line for token in measure.RESERVE_INSTRUMENT_LIMITS),
+            f"the secant names no leg: {line}",
+        )
+        # The comparison a censored sitting would otherwise lose silently: it
+        # reads the slope alone, so a secant keeps it (`19.18`'s 98%).
+        self.assertIn("`BlockCache::reader_bytes` bills", line)
 
     def test_the_guard_is_above_the_arithmetic_floor_it_sits_on(self):
         # Two floors, deliberately: `_least_squares` refuses one point because

@@ -2433,6 +2433,34 @@ def block_path_afforded(unit: int, budget: int) -> bool:
     return budget >= charge_bytes(unit, 1)
 
 
+def afforded_readers(unit: int, budget: int) -> int:
+    """How many concurrent block-decoding readers of a file with `unit`-sized
+    blocks `budget` affords — the largest `k` with `charge_bytes(unit, k) <=
+    budget`, and zero where not even one fits.
+
+    `Parallelism::fit`, mirrored, with the recommendation left out: the count a
+    run actually resolves is `min(recommendation, fit)`, and the recommendation
+    is the machine's, so this is an upper bound on the resolved count rather
+    than a prediction of it.
+
+    **Used to reason about the registered axis, never to report a reading**, on
+    the same terms as `discovered_budget`. What it answers is whether
+    `RESERVE_LIMITS` can put three distinct reader counts on a flagless
+    family's line at all — the fit-ability half of `reserve_floor_problems` —
+    which is knowable before any run and, because the cap can only *collapse*
+    two limits onto one count, is a necessary condition rather than a
+    sufficient one. A sitting on a host with fewer cores than there are
+    distinct fits publishes a secant, which is the per-sitting half the static
+    check cannot reach.
+    """
+    if budget < charge_bytes(unit, 1):
+        return 0
+    k = 1
+    while charge_bytes(unit, k + 1) <= budget:
+        k += 1
+    return k
+
+
 def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
     """One leg's resident set, split into the two terms the model names and the
     one it does not: `(billed, floor, unnamed)`, all in bytes.
@@ -2677,14 +2705,28 @@ RESERVE_STEP_BUDGETS: tuple[int, ...] = (
     charge_bytes(RESERVE_MECHANISM_UNIT, 1) - 1,
 )
 
-#: How many distinct reader counts a flagless family must cover before its fit
-#: is published rather than refused.
+#: How many distinct reader counts a two-term fit must cover before its
+#: **intercept** is published.
 #:
 #: **Three, because the model has two terms.** `resident = fixed + readers ×
 #: per_reader` passes exactly through two points, so at two distinct counts the
 #: residual the table prints is **`±0 MiB` by construction** and cannot be told
 #: from a two-term model that happens to describe the mechanism. Three is the
 #: smallest number of points at which the residual is a reading.
+#:
+#: **It is a property of the model, not of one family.** Every reader of a
+#: fitted line here is reading `_least_squares`' two terms, so the guard lives
+#: at that boundary — `_fit_or_secant`, which all three call sites cross — and
+#: not in whichever renderer happened to notice it first (`M90`).
+#:
+#: **Below it the slope survives and the intercept does not.** Both traps the
+#: rule exists for (`.claude/skills/evidence/SKILL.md`, rule 2) are statements
+#: about the intercept: curvature outside the window folds into it, and a
+#: clamped term reads as a constant of the process. A difference between two
+#: distinct reader counts is a measured **secant** and carries no model claim,
+#: so it is published — named endpoints, no intercept, no residual — where
+#: refusing the whole line would withhold a number that is sound and silently
+#: withdraw `19.18`'s `98% of reader_bytes` comparison in a censored sitting.
 #:
 #: `_least_squares` keeps its own floor of two, which is where the arithmetic
 #: stops being defined; this is the *publication* rule above it, and it is the
@@ -3081,8 +3123,9 @@ def pinned_count_problems() -> list[str]:
 
 
 def reserve_floor_problems() -> list[str]:
-    """Block sizes on the flagless axis at which no registered limit bills the
-    block pool's floor.
+    """What is wrong with the registered flagless axis: a block size at which no
+    registered limit bills the block pool's floor, or at which the limits cannot
+    reach `RESERVE_FIT_MIN_COUNTS` distinct reader counts.
 
     **A criterion that never evaluates a term is not a check of it.** The model
     check's floor column is `pool_floor_bytes`, which is
@@ -3102,22 +3145,44 @@ def reserve_floor_problems() -> list[str]:
     `min(recommendation, fit)`, so a smaller recommendation lowers it and
     *raises* the floor — the window is a sufficient condition on every machine,
     not a prediction of this one's count.
+
+    **Fit-ability is folded in here rather than walked again**, because it is a
+    question about the same registered limits and the same discovered budgets:
+    an axis whose block-path limits afford fewer than `RESERVE_FIT_MIN_COUNTS`
+    distinct reader counts can only ever publish a secant, and a later axis edit
+    that quietly makes that true should fail before a sitting is spent rather
+    than after. It is a **necessary** condition and not a sufficient one, which
+    is the other direction from the floor's: the resolved count is
+    `min(recommendation, fit)`, so a host with fewer cores than there are
+    distinct fits collapses two of them onto one count. That residue is a
+    per-sitting property and is what the secant covers (`M90`); the static check
+    is not where the guarantee comes from.
     """
     bad = []
     for _name, label, unit in RESERVE_FLAGLESS_INPUTS:
         window = (charge_bytes(unit, 1), charge_bytes(unit, LIBRARY_POOL_DEPTH))
-        if any(
+        if not any(
             window[0] <= discovered_budget(limit) < window[1] for _, limit in RESERVE_LIMITS
         ):
-            continue
-        bad.append(
-            f"{label}: no registered limit grants a budget in "
-            f"[{_fmt_budget_bytes(window[0])}, {_fmt_budget_bytes(window[1])}), so every "
-            f"block-path leg resolves {LIBRARY_POOL_DEPTH} readers or more and "
-            "`pool_floor_bytes` is clamped to zero at every cell — register a limit of "
-            f"{_fmt_budget_bytes(window[0] + LIBRARY_MEMORY_RESERVE)} or more and under "
-            f"{_fmt_budget_bytes(window[1] + LIBRARY_MEMORY_RESERVE)}"
+            bad.append(
+                f"{label}: no registered limit grants a budget in "
+                f"[{_fmt_budget_bytes(window[0])}, {_fmt_budget_bytes(window[1])}), so every "
+                f"block-path leg resolves {LIBRARY_POOL_DEPTH} readers or more and "
+                "`pool_floor_bytes` is clamped to zero at every cell — register a limit of "
+                f"{_fmt_budget_bytes(window[0] + LIBRARY_MEMORY_RESERVE)} or more and under "
+                f"{_fmt_budget_bytes(window[1] + LIBRARY_MEMORY_RESERVE)}"
+            )
+        counts = sorted(
+            {afforded_readers(unit, discovered_budget(limit)) for _, limit in RESERVE_LIMITS}
+            - {0}
         )
+        if len(counts) < RESERVE_FIT_MIN_COUNTS:
+            bad.append(
+                f"{label}: the registered limits afford {len(counts)} distinct reader "
+                f"count(s) — {counts or 'none'} — under the {RESERVE_FIT_MIN_COUNTS} a "
+                "two-term fit needs, so this family publishes a secant however the sitting "
+                "goes; register a limit affording a count none of the others does"
+            )
     return bad
 
 
@@ -5861,6 +5926,35 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     return mean_y - slope * mean_x, slope
 
 
+def _fit_or_secant(points: Sequence[tuple[float, float]]) -> tuple[float | None, float]:
+    """`(fixed, per_reader)` where the points cover enough of the axis to
+    publish an intercept, and `(None, per_reader)` where they do not.
+
+    **The publication guard, at the boundary every fitted line crosses.**
+    `RESERVE_FIT_MIN_COUNTS` says why three; what this function adds is that the
+    rule is enforced once, in front of `_least_squares`, rather than in whichever
+    renderer remembered it — the harness has three call sites across two
+    families and only one of them carried the guard, so the instrument account
+    published an intercept in the same sitting the flagless axis refused one
+    (`M90`).
+
+    **The slope is the same number either way, which is why it survives.** With
+    exactly two distinct abscissae the least-squares slope *is* the secant
+    between the two groups' means — `(ȳ₂ − ȳ₁) / (x₂ − x₁)`, whatever the group
+    sizes — so the caller printing a secant is printing a reading of the axis,
+    not a second arithmetic path that has to be kept in step with the first.
+    What is withheld is the intercept and, with it, the residual, both of which
+    are the two-term model's claims rather than the data's.
+
+    Raises below two distinct abscissae, where `_least_squares` does: a secant
+    needs two points as much as a fit does.
+    """
+    fixed, slope = _least_squares(points)
+    if len({x for x, _ in points}) < RESERVE_FIT_MIN_COUNTS:
+        return None, slope
+    return fixed, slope
+
+
 def _censored_constraint(
     session: Session, figure: str, spec: RunSpec, label: str, token: str, limit: int
 ) -> str:
@@ -6159,29 +6253,54 @@ def run_reserve(session: Session) -> str:
         # names what left — declined, censored — and a reader who has only
         # those has to subtract them from a tuple they cannot see.
         window = ", ".join(f"`{t}` at {j}r" for t, j, _ in points) or "no leg at all"
-        if len({jobs for _, jobs, _ in points}) < RESERVE_FIT_MIN_COUNTS:
+        declined_tail = (
+            f". `{'`, `'.join(declined)}` declined the block path and is not in the line"
+            if declined
+            else ""
+        )
+        counts = {jobs for _, jobs, _ in points}
+        if len(counts) < 2:
+            # Not even a secant: one abscissa is a point, and a line through a
+            # point is an intercept asserted as a measurement.
             fits.append(
-                f"- **{label}**: no fit — "
+                f"- **{label}**: no line — "
                 + (
                     f"the block path is declined at {', '.join(f'`{t}`' for t in declined)} and "
                     if declined
                     else ""
                 )
-                + f"what is left is {window}, which is "
-                f"{len({jobs for _, jobs, _ in points})} distinct reader count(s), under the "
-                f"{RESERVE_FIT_MIN_COUNTS} a two-term model needs before its residual is a "
-                "reading rather than zero by construction"
+                + f"what is left is {window}, which is {len(counts)} distinct reader count(s), "
+                "under the 2 any line through them needs"
                 + censored_tail
                 + "."
             )
             continue
-        fixed, per_reader = _least_squares([(j, median(r) / 1024) for _, j, r in points])
-        # The band is the same fit taken over the per-rep extremes rather than
+        fixed, per_reader = _fit_or_secant([(j, median(r) / 1024) for _, j, r in points])
+        # The band is the same line taken over the per-rep extremes rather than
         # the medians: a term's spread is what the reps permit it to be, and a
         # single residual says nothing about which of the two terms moved.
         band = [
-            _least_squares([(j, pick(r) / 1024) for _, j, r in points]) for pick in (min, max)
+            _fit_or_secant([(j, pick(r) / 1024) for _, j, r in points]) for pick in (min, max)
         ]
+        if fixed is None:
+            # The secant. `RESERVE_FIT_MIN_COUNTS` is what withholds the
+            # intercept, and the residual goes with it: a two-term model has
+            # none at two points, so printing one would be printing zero as
+            # though it were a reading.
+            ends = " → ".join(
+                ", ".join(f"`{t}`" for t, j, _ in points if j == count) + f" at {count}r"
+                for count in (min(counts), max(counts))
+            )
+            fits.append(
+                f"- **{label}**: no intercept — a **secant**, not a fit: a reader "
+                f"**{per_reader:,.1f} MiB** ({band[0][1]:,.1f}–{band[1][1]:,.1f}) over "
+                f"{ends}. The {len(points)} leg(s) left cover {len(counts)} distinct reader "
+                f"count(s), under the {RESERVE_FIT_MIN_COUNTS} a two-term model needs before "
+                "its intercept is a reading, so none is published and no residual with it"
+                + declined_tail
+                + censored_tail
+            )
+            continue
         residual = max(
             abs(median(r) / 1024 - (fixed + per_reader * j)) for _, j, r in points
         )
@@ -6190,11 +6309,7 @@ def run_reserve(session: Session) -> str:
             f"a reader **{per_reader:,.1f} MiB** ({band[0][1]:,.1f}–{band[1][1]:,.1f}), over "
             f"the {len(points)} leg(s) it covers — {window}; residuals "
             f"reach ±{residual:,.0f} MiB"
-            + (
-                f". `{'`, `'.join(declined)}` declined the block path and is not in the fit"
-                if declined
-                else ""
-            )
+            + declined_tail
             + censored_tail
         )
 
@@ -6348,7 +6463,7 @@ def run_reserve(session: Session) -> str:
             ]
         )
         if not killed and got:
-            account_points.append((readers, live_peak, unattributed, fordblks))
+            account_points.append((readers, live_peak, unattributed, fordblks, spec.label))
         # The check: the same arrangement measured black-box. A term the
         # instrument names has to show up in the sum the wrapper measures, and
         # the two instruments share no mechanism — which is the independence
@@ -6420,28 +6535,57 @@ def run_reserve(session: Session) -> str:
     # Evaluated inside its own window, at the smallest arrangement, because an
     # intercept is a physical quantity only where the fit still holds where the
     # mechanism is simplest.
-    if len({r for r, _, _, _ in account_points}) >= 2:
-        live_fit = _least_squares([(r, p / MIB) for r, p, _, _ in account_points])
-        smallest = min(account_points)
-        at_smallest = live_fit[0] + live_fit[1] * smallest[0]
-        live_line = (
-            f"**What the program itself held**, least squares over the "
-            f"{len(account_points)} leg(s) that survived: fixed "
-            f"**{live_fit[0]:,.0f} MiB**, a reader **{live_fit[1]:,.1f} MiB**. At the "
-            f"smallest arrangement in its own window — {smallest[0]} reader(s) — it predicts "
-            f"{at_smallest:,.0f} MiB against {smallest[1] / MIB:,.0f} MiB measured, a residual "
-            f"of {abs(at_smallest - smallest[1] / MIB):,.0f} MiB."
+    #
+    # **It crosses the same publication guard the flagless axis does**, through
+    # `_fit_or_secant`. This family's coverage is a *per-sitting* property where
+    # the other's is a property of the axis: `RESERVE_INSTRUMENT_LIMITS` is
+    # derived from `RESERVE_LIMITS` and cannot be narrowed on its own, but
+    # `account_points` drops every killed leg and a kill takes the high-memory
+    # end, so two kills leave two counts (`M90`).
+    live_counts = {r for r, *_ in account_points}
+    if len(live_counts) >= 2:
+        live_fixed, live_per_reader = _fit_or_secant(
+            [(r, p / MIB) for r, p, _, _, _ in account_points]
         )
+        if live_fixed is None:
+            # Named legs, not bare counts: the secant is a difference between
+            # two runs, and a reader who cannot see which two cannot re-take it.
+            ends = " → ".join(
+                ", ".join(f"`{lab}`" for r, _, _, _, lab in account_points if r == count)
+                + f" at {count} reader(s)"
+                for count in (min(live_counts), max(live_counts))
+            )
+            live_line = (
+                f"**What a reader costs the program**, as a **secant** and not a fit: "
+                f"**{live_per_reader:,.1f} MiB** a reader over {ends}, across the "
+                f"{len(account_points)} leg(s) that survived. Those cover "
+                f"{len(live_counts)} distinct reader count(s), under the "
+                f"{RESERVE_FIT_MIN_COUNTS} a two-term model needs before its intercept is a "
+                "reading, so no fixed term and no residual are published."
+            )
+        else:
+            smallest = min(account_points)
+            at_smallest = live_fixed + live_per_reader * smallest[0]
+            live_line = (
+                f"**What the program itself held**, least squares over the "
+                f"{len(account_points)} leg(s) that survived: fixed "
+                f"**{live_fixed:,.0f} MiB**, a reader **{live_per_reader:,.1f} MiB**. At the "
+                f"smallest arrangement in its own window — {smallest[0]} reader(s) — it "
+                f"predicts {at_smallest:,.0f} MiB against {smallest[1] / MIB:,.0f} MiB "
+                f"measured, a residual of {abs(at_smallest - smallest[1] / MIB):,.0f} MiB."
+            )
         # The account against the model, which is the point of taking it: what a
         # reader costs the program, plus the C dictionary the counter is blind
         # to, against what `XzSource` bills a sub-stream. Computed here rather
         # than left to a reader, because it is the one comparison that says
         # whether the charge the budget rule divides by is the charge a reader
-        # actually is.
-        measured_reader = live_fit[1] * MIB + XZ_DICT_BYTES
+        # actually is. **It reads the slope alone**, which is why a secant keeps
+        # it: refusing the whole line would withdraw this comparison in exactly
+        # the censored sitting that needs it.
+        measured_reader = live_per_reader * MIB + XZ_DICT_BYTES
         billed = reader_bytes(RESERVE_MECHANISM_UNIT)
         live_line += (
-            f" Against the charge: {live_fit[1]:,.1f} MiB of Rust plus the "
+            f" Against the charge: {live_per_reader:,.1f} MiB of Rust plus the "
             f"{_fmt_budget_bytes(XZ_DICT_BYTES)} dictionary is "
             f"**{_fmt_budget_bytes(measured_reader)}** a reader, where "
             f"`BlockCache::reader_bytes` bills {_fmt_budget_bytes(billed)} a reader — "
@@ -6449,8 +6593,8 @@ def run_reserve(session: Session) -> str:
         )
     else:
         live_line = (
-            "**No fit over the program's own high-water**: the surviving legs resolved "
-            f"{len({r for r, _, _, _ in account_points})} distinct reader count(s), and a line "
+            "**No line over the program's own high-water**: the surviving legs resolved "
+            f"{len(live_counts)} distinct reader count(s), and a line "
             "through one point is an intercept asserted as a measurement."
         )
 
@@ -6459,7 +6603,7 @@ def run_reserve(session: Session) -> str:
     # remainder is *named* where glibc's own freed-and-held figure covers at
     # least half of it at every surviving leg.
     covered = [
-        (f / u if u > 0 else 1.0) for _, _, u, f in account_points
+        (f / u if u > 0 else 1.0) for _, _, u, f, _ in account_points
     ]
     if covered and min(covered) >= 0.5:
         verdict = (
@@ -6581,12 +6725,14 @@ def run_reserve(session: Session) -> str:
         "decoder and belongs to no fit and no charge below.\n\n"
         + flagless_table
         + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
-        "block path, the band being the same fit over the per-rep extremes. Each line names the "
+        "block path, the band being the same line over the per-rep extremes. Each line names the "
         "window it covers, since a leg is censored exactly when its resident ran closest to its "
         "ceiling and a fit over what survives is a fit over the legs that had room. A family "
-        f"covering fewer than {RESERVE_FIT_MIN_COUNTS} distinct reader counts publishes no fit: "
-        "the model has two terms, so below that the residual printed beside it is zero by "
-        "construction rather than a reading:\n\n"
+        f"covering fewer than {RESERVE_FIT_MIN_COUNTS} distinct reader counts publishes a "
+        "**secant** instead — the slope between its two ends, with no fixed term and no "
+        "residual: the model has two terms, so below that the residual printed beside it is "
+        "zero by construction rather than a reading, while the slope is a difference the axis "
+        "measured:\n\n"
         + "\n".join(fits)
         + (
             "\n\n**What the killed legs still prove**, stated as constraints and **not** fitted: "
@@ -9514,9 +9660,11 @@ def cmd_check(doc: Path) -> int:
         )
     if unbilled_floor:
         print(
-            "Block sizes whose flagless axis never bills the block pool's floor — the term is\n"
-            f"clamped off at {LIBRARY_POOL_DEPTH} readers, so an axis that reaches it nowhere "
-            "satisfies the\nmodel criterion without ever evaluating it:"
+            "Block sizes whose flagless axis is registered wrong — one that never bills the\n"
+            f"block pool's floor (the term is clamped off at {LIBRARY_POOL_DEPTH} readers, so "
+            "an axis reaching it\nnowhere satisfies the model criterion without ever evaluating "
+            f"it), or one whose limits\ncannot reach the {RESERVE_FIT_MIN_COUNTS} distinct "
+            "reader counts a two-term fit needs:"
         )
         for line in unbilled_floor:
             print(f"  {line}")
