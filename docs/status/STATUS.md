@@ -408,7 +408,10 @@ sitting.
       landed, so every flagless cell names the path it ran, and `M89` with it, so
       the amended acceptance — the verdict holds at every evaluated cell — now
       evaluates a cell that bills a pool floor at each block size rather than
-      none at all.
+      none at all. **`M90` blocks it**: the three-count fit guard `M89` added
+      covers one of the renderer's two fits, so a sitting that loses legs to
+      kills can still publish an intercept nothing checks
+      ([`../design/out-of-band.md`](../design/out-of-band.md)).
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
@@ -668,19 +671,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The three-point fit guard went on one of the `reserve` figure's two fits, not
-both.** `M89` named "the fit guard", and the argument it gave — a two-term model
-passes exactly through two points, so the residual printed beside it is zero by
-construction — is a property of the model, not of the family. It is therefore
-equally true of the *instrument* account's `live_peak = fixed + readers ×
-per_reader`, which still publishes below three distinct counts and prints its
-residual at the smallest arrangement. I left that one alone on scope discipline:
-the ledger row named one guard, and the instrument axis covers five distinct
-counts today, so nothing is at risk now. **What is being decided** is whether
-`RESERVE_FIT_MIN_COUNTS` is the figure's rule or the flagless family's — if the
-former, the instrument fit's `>= 2` at
-[`../../scripts/measure.py`](../../scripts/measure.py)'s `live_fit` should read
-the constant too, and a one-line change makes the pair consistent. Reversing
-this costs nothing; leaving it means a later edit to
-`RESERVE_INSTRUMENT_LIMITS` can reintroduce the defect on the half nothing
-guards.
+_Nothing open._
