@@ -481,6 +481,34 @@ before the sitting.
       `reserve`'s `Shared` edge onto `peak-rss` with the `Session.borrow` change
       that lets an RSS reading cross a share, `rss-attribution` published and
       `M74` closed, and both `parallel-*` figures re-taken.
+      **The gate sitting at `88cf781` completed and does not release this box,
+      for an apparatus reason rather than a library one**
+      (`runs/measure-20260912T204517/tables.md`, NOT PUBLISHABLE). No leg was
+      killed, and both one-reader cells came back `over-bill` — 24 MiB blocks at
+      `-m 512m` and 128 MiB at `-m 1g`, each over-billed by the whole of its
+      bill against a 15 MiB resident set. The cause is that
+      `target/release/pgdq` is timed and never rebuilt: the copy in the tree was
+      built before `M93`, `M94` and `M95` landed, so the sitting ran the charge
+      `M93` replaced against `measure.py`'s repaired mirror of it. It is settled
+      by arithmetic and not by a second sitting — all eight resolved budgets are
+      the pre-`M93` `WorkerMemory` exactly, and the resolved counts are
+      byte-identical to `880d09e`'s where `M93` had to move them. `M93`'s
+      prediction is therefore untested rather than refuted, and no constant
+      moves ([2026-09-12](history/2026-09-12.md), "The gate sitting timed a
+      binary three commits stale, and its verdict is about a library nobody
+      ran"). The hole is admitted as **`M101`**, blocking this phase: the
+      harness guards the census-off binary's provenance and not the binary every
+      figure is timed against ([`../design/out-of-band.md`](../design/out-of-band.md)).
+      **The gate is re-running on a hand-built `88cf781` binary** — launched
+      2026-09-12T21:18:06+00:00 under process group 2948753, writing
+      `runs/measure-20260912T211806/`, handoff at
+      `runs/gate-19.11-20260912-2118/HANDOFF.md`. Nothing else may build or test
+      while it runs. A follow-up session checks the resolved counts moved off
+      1/1/9/10/16/23 and 1/1/1/1/3/5 before reading anything else, then the
+      killed-leg lines and the verdict's bands. **That check is what the sitting
+      stands on**, a diagnostic sitting whose own budgets say which binary ran
+      needing no re-take; `M101` lands before the **sweep**, which publishes
+      twenty-one tables of which most carry no such fingerprint.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
