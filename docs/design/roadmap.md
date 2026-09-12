@@ -940,9 +940,16 @@ which is what makes the difference worth minding at the moment one is found.
   may decode a block at all, which is most of a small container and is what
   sends such a scan serial there (`architecture.md`, "Execution model and API
   surface"). A floor that followed the count instead would charge far less at
-  one and two readers. It is not taken in P19: that phase charges the floor
-  honestly and reports the decline, and reworking a pool's sizing rule needs
-  evidence P19's account does not produce. The cheap half of it — whether the
+  one and two readers. It is not taken in P19: that phase reports the decline,
+  and reworking a pool's sizing rule needs evidence P19's account does not
+  produce. **P19 does not charge the floor honestly, which is a separate
+  defect and is `19.22`'s** — `block_reader_bytes` bills `2 × unit` a reader,
+  so below `POOL_DEPTH` readers the pool holds `(POOL_DEPTH − jobs) × unit`
+  nobody paid for, confirmed to 1.4 MiB over five cells
+  ([2026-09-12](../status/history/2026-09-12.md), "The reserve entry closes on
+  384, and the grilling found the charge wrong below four readers"). Charging
+  it honestly is not this item: the item is whether the floor should follow the
+  count at all. The cheap half of it — whether the
   floor buys anything at all below `POOL_DEPTH` readers — is a reading, not a
   design. **That reading is now taken, and it says the floor buys nothing there.**
   At a 512 MiB limit on koji's block size, a `runs/` probe swept the reader

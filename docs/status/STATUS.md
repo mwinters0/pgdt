@@ -341,7 +341,11 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.13`, then `19.11`**.
+What remains runs **`19.24`, `19.22`, `19.23`, `19.13`, then `19.11`** — the
+three new rows were admitted on 2026-09-12 and take the next free numbers
+rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
+entry closes on 384, and the grilling found the charge wrong below four
+readers").
 
 **The account is taken, the term is named and the constant is read, so what
 remains is the rule and the sweep.** `19.18`'s sitting says the program holds
@@ -492,7 +496,7 @@ another look".
       structurally inert. Notes:
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
 - [ ] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
-      rule, carrying the constant **`19.16`** chose — plus the source's own budget
+      rule, carrying the **384 MiB** constant `19.16` chose and 2026-09-12's review affirmed — plus the source's own budget
       recommendation, capped at half of `MemAvailable` (`RT8`) where no limit
       is discovered — without which a corrected divisor makes a flagless `.xz`
       scan serial on an unlimited host. **The whole row is in the tree and what
@@ -505,9 +509,13 @@ another look".
       [`../manual/dump-inspection.md`](../manual/dump-inspection.md), two flag
       doc comments and the tests and comments in `main.rs` and `io.rs` that
       arithmetic on it, which `grep -rn '256 MiB'` finds. `19.16` read the number off five builds and its worst-rep
-      headrooms are the table this row must reproduce; the choice it left open
-      is under "Decisions worth another look". Everything else about the row is
-      already in the tree. `ParallelArgs::resolve` asks the source when
+      headrooms are the table this row must reproduce; the choice it left open was
+      reviewed on 2026-09-12 and 384 stands. Two things the row must **not**
+      claim: that 384 was validated to 2 GiB — it was validated to 2 GiB on 24
+      cores, a 64-core host resolving 28 readers and predicted to breach, which
+      is `19.23` — and that the reserve covers the block pool's floor, which
+      `19.22` bills instead ([2026-09-12](history/2026-09-12.md)). Everything
+      else about the row is already in the tree. `ParallelArgs::resolve` asks the source when
       `--parallel-memory` is absent, a discovered limit caps at
       `limit − 256 MiB` and no limit found caps at half of `MemAvailable`; a
       256 MiB container resolves to a budget of **zero**, which is one reader's
@@ -566,8 +574,14 @@ another look".
       legs that decide it is 0.2 and 0.3 percentage points against 2.1 points of
       apparatus noise**, measured where the reserve is provably inert, and the
       gate is non-monotonic — 448 fails between a passing 384 and a passing 512
-      on a two-rep tail. So the criterion's answer stands and the choice between
-      384 and 512 is under "Decisions worth another look". Two readings the
+      on a two-rep tail. **The choice was reviewed on 2026-09-12 and 384
+      stands**: reconstructed against the criterion it is the only candidate
+      inside both deciding legs' admissible ranges, (322, 381] at `1g` and
+      (367, 425] at `1536m`. The same review found two defects the reserve
+      cannot fix — the charge under-bills the block pool's floor below four
+      readers (`19.22`) and `2g`'s margin is bought by this box's 24-core clamp
+      (`19.23`) — and that arena retention is inside the per-reader charge, not
+      above it ([2026-09-12](history/2026-09-12.md)). Two readings the
       sitting was not taken for: below three readers the block path is **slower
       than declining** on the 24 MiB file, which is the reading
       [`../design/roadmap.md`](../design/roadmap.md)'s block-cache-floor Future
@@ -690,6 +704,28 @@ another look".
       against 383.0 MB resident, `hblkhd` **0** and 157.8 MB in `fordblks` —
       nine tenths of the gap, in the term no peak-RSS leg can separate. Notes:
       [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md)
+
+- [ ] **19.22** The charge bills the pool floor. `block_reader_bytes` bills
+      `2 × unit` a reader, which assumes `slots == jobs`, while
+      `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` — so
+      below four readers the pool holds `(POOL_DEPTH − jobs) × unit` nobody
+      paid for, confirmed to 1.4 MiB over five cells of `19.16`'s readings and
+      **unbounded in the block size** (96 MiB at 24 MiB blocks, 384 at 128,
+      2 GiB at 512). The cost stops being linear in `jobs`, so
+      `Parallelism::fit` **solves** for the largest affordable count instead of
+      dividing a cap by a per-worker scalar.
+- [ ] **19.23** The count answers to the criterion, not to the core count.
+      `2g` clears the margin only because `available_parallelism` clamps 28
+      readers to this box's 24; a 64-core host resolves 28 and is predicted to
+      breach at 13.3%. Once `19.22` makes the cost a model, `fit` refuses a
+      count whose predicted resident breaches the stated margin. Runs after
+      `19.22`, which is what gives it a model to predict from.
+- [ ] **19.24** The harness checks the model rather than searching for a
+      constant — a registered check that predicts held bytes per cell from the
+      charge model, measures, and asserts the residual is small and
+      non-negative. Seeded from readings already in the tree, so it needs no
+      sitting, and it runs **first**: it is what surfaces an under-bill, and
+      what would have caught `19.22`'s.
 
 ## Not started
 
@@ -877,26 +913,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The reserve is 384 MiB by the criterion, and the criterion cannot resolve
-  it** — `19.16` picked the smallest candidate whose worst rep leaves ≥20% of
-  the limit at every leg, which is what its row committed to, and `19.13` will
-  ship that. The decision being asked for: should it ship **512 MiB** instead,
-  the only candidate with margin to spare? What argues for 384 is that the
-  criterion was registered before the sitting and choosing differently after
-  reading the grid is the move this phase has been burned by twice, and that the
-  cost is one-sided — 384 slows only the 512 MiB container (4 readers → 2,
-  1.77×) and leaves every other leg within 8% of today's 256 MiB, where 512
-  costs a further 16–23% on three more legs and declines the block path in a
-  512 MiB container outright. What makes it worth a look is that **the reading
-  cannot separate 384 from a failure**: its two deciding legs clear the floor by
-  0.2 and 0.3 percentage points against **2.1 points** of measured apparatus
-  noise — five groups of ten reps of an arrangement the reserve provably cannot
-  move — and the gate is non-monotonic, 448 failing between a passing 384 and a
-  passing 512 on a two-rep tail in a cell whose median says 448 is 84 MiB
-  roomier. One rep 2.3 MiB higher at `xz24 1g` would have made 512 the
-  pick. Reversing it changes one line and the `19.13` edits that restate it, and
-  fires the decline's report in a 512 MiB container on koji's block size where
-  384 keeps the block path; widening the grid instead is another hour and, on
-  this scatter, would not settle it. Detail:
-  [`../design/roadmap-P19.16-reserve-constant-notes.md`](../design/roadmap-P19.16-reserve-constant-notes.md),
-  "The pick is inside the noise".
+_Nothing open._

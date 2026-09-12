@@ -163,9 +163,56 @@ one reader. This is the cell the spec row said no sitting had measured, and it
 is the cell that falsified `19.15`'s `403 MiB + 31.2 MiB` a reader, which
 predicts 436.
 
+## The charge under-bills the pool floor, which `19.22` bills
+
+Read out of this slice's own `readings.json` on 2026-09-12, with no new
+sitting. `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)`,
+while `block_reader_bytes` bills `2 × unit` a reader — which assumes
+`slots == jobs`. Below four readers the pool holds units nobody charged for,
+and the size of it is `(POOL_DEPTH − jobs) × unit`:
+
+| jobs | worst RSS | budget | excess | `(4−jobs) × unit` | residual |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 802.1 | 532.1 | 270.0 | 256.0 | 14.0 |
+| 3 | 939.9 | 798.1 | 141.8 | 128.0 | 13.8 |
+| 4 | 1077.7 | 1064.1 | 13.6 | 0.0 | 13.6 |
+| 5 | 1342.6 | 1330.2 | 12.4 | 0.0 | 12.4 |
+| 6 | 1607.5 | 1596.2 | 11.3 | 0.0 | 11.3 |
+
+`control_xz128`, five cells, residual flat at 11–14 MiB. **Unbounded in the
+block size** — 96 MiB at koji's 24 MiB blocks, 384 at 128, 2 GiB at 512 — which
+is why no reserve absorbs it, and why the roadmap's Future item saying P19
+"charges the floor honestly" was corrected rather than the constant raised.
+
+**It is not what 384 pays for.** On the 24 MiB file the term is 48/24/0 MiB and
+the mid-range cells that forced the constant up are all at eleven readers and
+above, where it is zero.
+
+## Arena retention is inside the charge, not above it
+
+Over the block-path regime the worst-resident slope is **57.28 MiB a reader
+against the 58.03 billed — 0.987**, so the per-reader charge is right to 1.3%.
+The excess `worst − 58.03 × jobs` is 135.7 MiB at two readers and 145.4 at
+twenty-four, wandering 83.6–214.6 with no trend across jobs 2…24. So `19.18`'s
+"retention rises with the count the allowance affords" is true of `fordblks`
+and does not reach the reserve, and a reserve computed from an arena count
+would be computing the term that is already billed.
+
+## What `19.24` inherits
+
+The two sections above are the model that slice checks, and both were derived
+from `readings.json` by arithmetic — no reading in them needs re-taking. The
+check's shape is: predict held bytes per cell, measure, assert the residual is
+small and **non-negative**, since a negative residual is an over-bill and a
+large positive one is the under-bill above.
+
 ## What `19.13` inherits
 
-- **The constant is 384 MiB**, and the pending choice above rides with it.
+- **The constant is 384 MiB**, affirmed by 2026-09-12's review.
+- **Two claims the row must not make**: that 384 was validated to 2 GiB — it
+  was validated to 2 GiB *on 24 cores*, a 64-core host resolving 28 readers and
+  predicted to breach at 13.3%, which is `19.23`'s — and that the reserve
+  covers the pool floor, which is `19.22`'s.
 - **`MEMORY_RESERVE`'s doc comment carries a refuted number** and is corrected
   by the change that ships the constant. It cites `403 MiB + 31.2 MiB` a reader
   as what "a block-decoding `.xz` scan holds" and says a 512 MiB allocation comes

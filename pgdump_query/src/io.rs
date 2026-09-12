@@ -930,6 +930,22 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// direction, and a caller who wants a plain scan's real headroom states a
 /// budget.
 ///
+/// **Sizing it from the arena count is refused, and the count is not the free
+/// variable it looks like.** glibc's own ceiling is `8 × ncores` — 192 on a
+/// 24-core host — and a scan never approaches it: arenas run at `readers + 2`
+/// (6/15/24/26 observed at 4/13/22/24 readers), so the thread count this crate
+/// chooses is what binds and the maximum never is. There is no getter for
+/// `M_ARENA_MAX` to read in any case, and *setting* it is refused separately
+/// and for a mechanical reason
+/// (`docs/design/roadmap-P19-efficient-defaults.md`, "The arena cap is a
+/// deployment setting, not a mechanism this binary ships"). The deeper reason
+/// the arithmetic would not help: retention is **already inside the per-reader
+/// charge** — the measured worst-resident slope is 0.987 of what
+/// `XzSource::block_reader_bytes` bills — so a reserve computed from an arena
+/// count would be reserving for a term that is billed twice
+/// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`, "Arena retention is
+/// inside the charge, not above it").
+///
 /// **Below it the budget goes to zero rather than to a floor.** A limit under
 /// this leaves nothing, and the three floors already in the mechanism —
 /// `crate::stream::worker_count`'s `.max(1)`, [`BufferPool::slots`]' clamp to
