@@ -873,18 +873,17 @@ which is what makes the difference worth minding at the moment one is found.
   cache holds up to four *units* however few readers there are — at 128 MiB
   blocks that is roughly 512 MiB a compressed scan must be charged before it
   may decode a block at all, which is most of a small container and is what
-  sends such a scan serial there (`architecture.md`, "Execution model and API
+  sends such a scan through the streaming decoder there (`architecture.md`, "Execution model and API
   surface"). A floor that followed the count instead would charge far less at
   one and two readers. It is not taken in P19: that phase reports the decline,
   and reworking a pool's sizing rule needs evidence P19's account does not
-  produce. **P19 charges the floor honestly, which was a separate defect and
-  was `19.22`'s** — the per-reader term bills `2 × unit` a reader, so below
-  `POOL_DEPTH` readers the pool holds `(POOL_DEPTH − jobs) × unit` that no
-  per-reader term carries, confirmed to 1.4 MiB over five cells
-  ([2026-09-12](../status/history/2026-09-12.md), "The reserve entry closes on
-  384, and the grilling found the charge wrong below four readers"), and
-  `io::WorkerMemory` is the shape that bills it
-  ([`architecture.md`](architecture.md), "Execution model and API surface").
+  produce. **P19 charges the pool honestly, which was a separate defect and was
+  `19.22`'s** — a reader holds one unit and the pool retains
+  `(POOL_DEPTH.max(jobs) − 1) × unit` beside it, which no per-reader term
+  carries ([2026-09-12](../status/history/2026-09-12.md), "The charge
+  over-bills the pool floor at every count"), and `io::WorkerMemory` is the
+  shape that bills it ([`architecture.md`](architecture.md), "Execution model
+  and API surface").
   That charge is not this item: the item is whether the floor should follow the
   count at all — and billing it is what makes the question answerable, the
   decline it widens now being the honest one. The cheap half of it — whether the

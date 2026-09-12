@@ -1986,49 +1986,27 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(sorted(byte_values), byte_values)
         self.assertGreaterEqual(len(measure.RESERVE_LIMITS), 3)
 
-    def test_the_axis_bills_the_pool_floor_at_both_block_sizes(self):
-        # `M89`: `pool_floor_bytes` is clamped off at `POOL_DEPTH` readers, so an
-        # axis whose every block-path leg resolves four or more satisfies the
-        # model criterion without the term `19.22` added ever being evaluated.
-        # The windows are disjoint, so one limit cannot cover both block sizes.
-        self.assertEqual(measure.reserve_floor_problems(), [])
+    def test_the_pool_term_is_billed_at_every_reader_count(self):
+        # `M93`: the term was `max(0, POOL_DEPTH - jobs) x unit` and so clamped
+        # to zero at four readers or more, which is why `M89` had to insert two
+        # limits under the clamp for any cell to evaluate it. Restated as what
+        # the pool holds it is billed everywhere, and past `POOL_DEPTH` it is
+        # the larger half of the charge — so there is no window left to miss.
         for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
             with self.subTest(block_size=label):
-                inside = [
-                    token
-                    for token, limit in measure.RESERVE_LIMITS
-                    if measure.charge_bytes(unit, 1)
-                    <= measure.discovered_budget(limit)
-                    < measure.charge_bytes(unit, measure.LIBRARY_POOL_DEPTH)
-                ]
-                self.assertTrue(inside, f"{label} reaches no floor-billing limit")
-                for token in inside:
-                    budget = measure.discovered_budget(dict(measure.RESERVE_LIMITS)[token])
-                    self.assertTrue(measure.block_path_afforded(unit, budget))
-                    # One reader at most, so the floor is three units or more.
-                    self.assertLess(budget, measure.charge_bytes(unit, 2))
-                    self.assertGreater(measure.pool_floor_bytes(unit, 1), 0)
-
-    def test_the_check_fires_where_no_limit_reaches_the_floor(self):
-        # The two-sided half: the check is worth nothing unless removing the
-        # inserted limits turns it red, and it has to name the window to
-        # register instead of only the block size.
-        kept = tuple(
-            row
-            for row in measure.RESERVE_LIMITS
-            if row[0] not in ("544m", "1088m")
-        )
-        with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
-            problems = measure.reserve_floor_problems()
-        floor = [line for line in problems if "no registered limit grants a budget" in line]
-        self.assertEqual(len(floor), len(measure.RESERVE_FLAGLESS_INPUTS))
-        for line, (_n, label, unit) in zip(floor, measure.RESERVE_FLAGLESS_INPUTS):
-            with self.subTest(block_size=label):
-                self.assertIn(label, line)
-                floor_limit = (
-                    measure.charge_bytes(unit, 1) + measure.LIBRARY_MEMORY_RESERVE
-                )
-                self.assertIn(measure._fmt_budget_bytes(floor_limit), line)
+                for jobs in (1, 2, 4, 5, 24):
+                    self.assertEqual(
+                        measure.pool_bytes(unit, jobs),
+                        (max(measure.LIBRARY_POOL_DEPTH, jobs) - 1) * unit,
+                    )
+                    self.assertGreater(measure.pool_bytes(unit, jobs), 0)
+                # And the charge is exactly one unit under what the two-unit
+                # per-reader term plus a decaying floor billed, at every count.
+                for jobs in (1, 2, 3, 4, 9, 24):
+                    was = jobs * (measure.reader_bytes(unit) + unit) + max(
+                        0, measure.LIBRARY_POOL_DEPTH - jobs
+                    ) * unit
+                    self.assertEqual(measure.charge_bytes(unit, jobs), was - unit)
 
     def test_the_registered_axis_can_reach_three_distinct_reader_counts(self):
         # `M90`: fit-ability is asked of the same registered limits, because an
@@ -2036,7 +2014,7 @@ class CompressedAccount(unittest.TestCase):
         # is spent rather than after. Necessary and not sufficient — a host with
         # few cores collapses distinct fits onto one count, which is the
         # per-sitting residue the secant covers.
-        self.assertEqual(measure.reserve_floor_problems(), [])
+        self.assertEqual(measure.reserve_axis_problems(), [])
         for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
             with self.subTest(block_size=label):
                 counts = {
@@ -2053,26 +2031,25 @@ class CompressedAccount(unittest.TestCase):
             row for row in measure.RESERVE_LIMITS if row[0] not in ("1536m", "2g")
         )
         with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
-            problems = measure.reserve_floor_problems()
+            problems = measure.reserve_axis_problems()
         fitness = [line for line in problems if "distinct reader count(s)" in line]
         self.assertEqual(len(fitness), 1)
         self.assertIn("128 MiB blocks", fitness[0])
         self.assertIn(f"under the {measure.RESERVE_FIT_MIN_COUNTS}", fitness[0])
 
-    def test_check_fails_where_the_axis_bills_the_floor_nowhere(self):
+    def test_check_fails_where_the_axis_cannot_be_fitted(self):
         # Wired into `--check`, not only available to be called: the whole point
-        # of `M89` is that the defect was invisible while nothing asked.
+        # of `M90` is that an axis that can only ever publish a secant should
+        # fail before a sitting is spent rather than after.
         kept = tuple(
-            row
-            for row in measure.RESERVE_LIMITS
-            if row[0] not in ("544m", "1088m")
+            row for row in measure.RESERVE_LIMITS if row[0] not in ("1536m", "2g")
         )
         with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
         self.assertEqual(code, 1)
-        self.assertIn("never bills the\nblock pool's floor", out.getvalue())
-        self.assertIn("no registered limit grants a budget", out.getvalue())
+        self.assertIn("distinct reader counts a two-term fit needs", out.getvalue())
+        self.assertIn("distinct reader count(s)", out.getvalue())
 
     def test_check_fails_where_the_axis_cannot_be_fitted(self):
         # The same wiring for the half `M90` added: one refusal, two questions,
@@ -2217,7 +2194,8 @@ class CompressedAccount(unittest.TestCase):
         # differs in nothing else. A wider gap would be a budget change with a
         # path change inside it — and a pair straddling `reader_bytes` instead
         # would run the streaming decoder on *both* legs, `19.22` having put one
-        # reader's pool floor inside `BlockCache::affordable` (`M88`).
+        # reader's share of the pool's retention list inside
+        # `BlockCache::affordable` (`M88`).
         afforded, declined = measure.RESERVE_STEP_BUDGETS
         self.assertEqual(afforded, measure.charge_bytes(measure.RESERVE_MECHANISM_UNIT, 1))
         self.assertEqual(declined, afforded - 1)
@@ -2246,12 +2224,13 @@ class CompressedAccount(unittest.TestCase):
 
     def test_the_reader_charge_is_the_librarys_own_three_terms(self):
         # Hand-computed on `QUERY_SUBSTREAM_CAP`'s argument, so the mirror is
-        # checked here rather than trusted: two block slots, the chunk buffer
-        # and the decoder's retention, which is 58.03 MiB at koji's block size.
-        self.assertEqual(measure.reader_bytes(24 << 20), 60_852_000)
+        # checked here rather than trusted: one block slot — the block being
+        # decoded, which is the block then retained (`M93`) — the chunk buffer
+        # and the decoder's retention, which is 34.03 MiB at koji's block size.
+        self.assertEqual(measure.reader_bytes(24 << 20), 35_686_176)
         self.assertEqual(
             measure.reader_bytes(128 << 20),
-            2 * (128 << 20) + measure.LIBRARY_CHUNK_BYTES + measure.XZ_DECODE_FOOTPRINT,
+            (128 << 20) + measure.LIBRARY_CHUNK_BYTES + measure.XZ_DECODE_FOOTPRINT,
         )
         self.assertEqual(measure.LIBRARY_CHUNK_BYTES, measure.CHUNK_DEFAULT)
 
@@ -2299,13 +2278,13 @@ class CompressedAccount(unittest.TestCase):
         # Mirrored by hand on `QUERY_SUBSTREAM_CAP`'s argument, so the source is
         # read here rather than the arithmetic trusted: `affordable` asks
         # `worker_memory(..).at(1) <= budget`, and `worker_memory` is the
-        # per-reader term `flooring`ed at `POOL_DEPTH`.
+        # per-reader term `pooling`ed at `POOL_DEPTH`.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
             "self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget",
             src,
         )
-        self.assertIn(".flooring(self.unit as u64, POOL_DEPTH)", src)
+        self.assertIn(".pooling(self.unit as u64, POOL_DEPTH)", src)
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
 
     def test_the_renderer_asks_the_path_question_in_one_way_only(self):
@@ -2321,18 +2300,20 @@ class CompressedAccount(unittest.TestCase):
         self.assertNotIn("budget < charge_bytes", source)
         self.assertEqual(source.count("block_path_afforded("), 4)
 
-    def test_the_smallest_allocation_declines_the_block_path_on_both_inputs(self):
-        # What `M88` records: the CLI grants `limit - MEMORY_RESERVE`, so a
-        # `512m` container affords 128 MiB and the line is 130.0 at 24 MiB
-        # blocks. Both flagless cells of that row read the fallback decoder, and
-        # the table has to say so rather than print them beside block-path cells
-        # as one series.
+    def test_the_smallest_allocation_splits_the_two_inputs_across_the_line(self):
+        # What `M88` records and `M93` moved: the CLI grants
+        # `limit - MEMORY_RESERVE`, so a `512m` container affords 128 MiB
+        # against a line of 106.03 MiB at 24 MiB blocks and 522.03 at 128. The
+        # bottom row of the axis therefore carries one cell of each path, which
+        # is exactly the case a table printing them as one series gets wrong.
         token, limit = measure.RESERVE_LIMITS[0]
         self.assertEqual(token, "512m")
         granted = limit - measure.LIBRARY_MEMORY_RESERVE
-        for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
-            with self.subTest(leg=label):
-                self.assertFalse(measure.block_path_afforded(unit, granted))
+        paths = {
+            label: measure.block_path_afforded(unit, granted)
+            for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS
+        }
+        self.assertEqual(paths, {"24 MiB blocks": True, "128 MiB blocks": False})
 
     # -- the charge model, and the cells it was seeded from ----------------
 
@@ -2340,11 +2321,14 @@ class CompressedAccount(unittest.TestCase):
     #: notes doc commits them: reader count, worst rep in MiB, the budget the
     #: run reported, and the residual that slice computed by hand after the
     #: sitting (`roadmap-P19.16-reserve-constant-notes.md`, "The charge
-    #: under-bills the pool floor").
+    #: under-bills the pool floor", read forward through `M93`'s one-unit
+    #: restatement).
     #:
     #: The model is *seeded* from them rather than fitted to them: every number
     #: in the middle two columns is arithmetic the harness now does at the cell,
-    #: and this is the check that it reproduces what was computed by hand.
+    #: and this is the check that it reproduces what was computed by hand — up
+    #: to the one unit `M93` found double-counted, which is a statement the
+    #: seeding makes rather than a reason to re-seed.
     SEED_UNIT = 128 << 20
     SEED_CELLS = (
         (2, 802.1, 532.1, 14.0),
@@ -2357,39 +2341,47 @@ class CompressedAccount(unittest.TestCase):
     def test_the_model_reproduces_the_readings_it_was_seeded_from(self):
         for jobs, worst, budget, residual in self.SEED_CELLS:
             with self.subTest(jobs=jobs):
-                billed, floor, unnamed = measure.charge_model(
+                billed, pool, unnamed = measure.charge_model(
                     self.SEED_UNIT, jobs, worst * measure.MIB
                 )
                 # The seed's budget column is what the *pre-`19.22`* rule
-                # resolved: the per-reader term times the count, with the pool
-                # floor unbilled. `19.22` bills that floor, so the model's
-                # `billed` is that column plus the floor — and the residual,
-                # which is what the account actually claims, is unmoved. Holding
-                # both shapes to the same five cells is the whole point of
-                # seeding it.
-                self.assertAlmostEqual((billed - floor) / measure.MIB, budget, places=1)
-                self.assertEqual(floor, measure.pool_floor_bytes(self.SEED_UNIT, jobs))
-                self.assertAlmostEqual(unnamed / measure.MIB, residual, places=1)
+                # resolved: two units a reader, with the pool unbilled. `19.22`
+                # bills the pool and `M93` took the double-counted unit back
+                # out, so today's bill is that column plus the pool less one
+                # unit — and the residual the slice computed by hand rises by
+                # exactly that unit, which is the whole of `M93` seen from the
+                # readings rather than from the source.
+                self.assertAlmostEqual(
+                    (billed - pool + jobs * self.SEED_UNIT) / measure.MIB, budget, places=1
+                )
+                self.assertEqual(pool, measure.pool_bytes(self.SEED_UNIT, jobs))
+                self.assertAlmostEqual(
+                    unnamed / measure.MIB, residual + self.SEED_UNIT / measure.MIB, places=1
+                )
                 self.assertIsNone(
                     measure.charge_model_problem(self.SEED_UNIT, jobs, worst * measure.MIB)
                 )
 
-    def test_the_pool_floor_is_named_rather_than_left_in_the_remainder(self):
+    def test_the_pool_term_is_named_rather_than_left_in_the_remainder(self):
         # The finding the check exists to surface, and what `19.22` bills: at
-        # two readers of a 128 MiB block file the pool holds 256 MiB no
-        # per-reader term carries, which is 95% of what such a term misses.
-        # Folded into the remainder it would read as a flat term on this grid
-        # and as a breach on a 512 MiB-block one.
+        # two readers of a 128 MiB block file the pool retains 384 MiB no
+        # per-reader term carries, which is nearly three times the remainder
+        # left over. Folded into that remainder it would read as a term nothing
+        # accounts for, and as a breach on a 512 MiB-block file.
         jobs, worst, _, _ = self.SEED_CELLS[0]
-        billed, floor, unnamed = measure.charge_model(
+        billed, pool, unnamed = measure.charge_model(
             self.SEED_UNIT, jobs, worst * measure.MIB
         )
-        self.assertGreater(floor, 0.9 * (floor + unnamed))
-        self.assertEqual(floor, (measure.LIBRARY_POOL_DEPTH - jobs) * self.SEED_UNIT)
-        # And it is gone at the depth the pool clamps to, which is what makes it
-        # a floor rather than a per-reader term.
-        self.assertEqual(measure.pool_floor_bytes(self.SEED_UNIT, measure.LIBRARY_POOL_DEPTH), 0)
-        self.assertEqual(measure.pool_floor_bytes(self.SEED_UNIT, 99), 0)
+        self.assertGreater(pool, 2 * unnamed)
+        self.assertEqual(pool, (measure.LIBRARY_POOL_DEPTH - 1) * self.SEED_UNIT)
+        # And it never goes away: past the depth the pool clamps to, every
+        # further reader brings a slot of it, which is what stops it being a
+        # floor (`M93`).
+        self.assertEqual(
+            measure.pool_bytes(self.SEED_UNIT, measure.LIBRARY_POOL_DEPTH),
+            (measure.LIBRARY_POOL_DEPTH - 1) * self.SEED_UNIT,
+        )
+        self.assertEqual(measure.pool_bytes(self.SEED_UNIT, 99), 98 * self.SEED_UNIT)
 
     def test_an_over_bill_is_a_fault_and_says_which_way_it_went(self):
         # The half a grid search over reserve constants cannot report: a charge
@@ -2546,16 +2538,18 @@ class CompressedAccount(unittest.TestCase):
             src,
         )
 
-    def test_the_library_bills_the_pool_floor_the_model_names(self):
-        # `charge_bytes` is `WorkerMemory::at` mirrored, so the floor's shape
-        # has to be the library's: a pool that clamped somewhere else would make
-        # every cell of the check arithmetic about a rule nothing implements.
+    def test_the_library_bills_the_pool_term_the_model_names(self):
+        # `charge_bytes` is `WorkerMemory::at` mirrored, so the pool term's
+        # shape has to be the library's: a pool that clamped somewhere else
+        # would make every cell of the check arithmetic about a rule nothing
+        # implements.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
-            "(self.floor_below.saturating_sub(workers) as u64).saturating_mul(self.floor_unit)",
+            "(self.pool_depth.max(workers).saturating_sub(1) as u64)"
+            ".saturating_mul(self.pool_unit)",
             src,
         )
-        self.assertIn(f".flooring(self.unit as u64, POOL_DEPTH)", src)
+        self.assertIn(".pooling(self.unit as u64, POOL_DEPTH)", src)
 
     # -- the resolution, read back off the run -----------------------------
 
@@ -5971,9 +5965,9 @@ class ChargeModelSection(unittest.TestCase):
     sitting that reports forty headroom percentages and leaves the account to
     whoever reads the log afterwards. Three things fail silently here. A
     **criterion stated after the answer** reads as a description of whatever
-    came back. A **pool floor folded into the remainder** reads as a flat term
-    on the two block sizes this harness registers and as a breach on a third,
-    which is the whole reason `19.22` exists. And a **declined or censored leg
+    came back. A **pool term folded into the remainder** reads as a term nothing
+    accounts for and as a breach on a larger block size, which is the whole
+    reason `19.22` exists. And a **declined or censored leg
     left in the table** evaluates the model at a leg that ran none of it.
     """
 
@@ -5998,16 +5992,16 @@ class ChargeModelSection(unittest.TestCase):
     #: (`roadmap-P19.16-reserve-constant-notes.md`). **`544m` and `1088m` are
     #: constructed**, no sitting having measured them: each is a one- or
     #: two-reader arrangement whose worst rep satisfies the criterion, chosen so
-    #: the model table carries a cell that **bills a pool floor** at each block
-    #: size, which is the arrangement `M89` put on the axis and which no cell of
-    #: the four-limit grid reached.
+    #: the model table carries a one-reader cell at each block size, which is the
+    #: arrangement `M89` put on the axis and which no cell of the four-limit grid
+    #: reached.
     #:
     #: **The budget a cell renders under is its own arrangement's charge, not
     #: its container's allowance** (`_seeded_body`), so a cell here takes the
     #: block path whatever `-m` it carries — which is why `control_xz128` at
-    #: `512m` bills 788 MiB inside 512. The fixture is exercising the renderer's
+    #: `512m` bills 660 MiB inside 512. The fixture is exercising the renderer's
     #: arithmetic over a reader count; which limits afford which count is
-    #: `reserve_floor_problems`' question and is checked there.
+    #: `reserve_axis_problems`' question and is checked there.
     SEEDED = {
         ("control_xz", "512m"): (2, 251.9),
         ("control_xz", "544m"): (1, 240.0),
@@ -6049,6 +6043,22 @@ class ChargeModelSection(unittest.TestCase):
             ):
                 return measure.run_reserve(session)
 
+    def _unnamed_at(self, cell):
+        """What the model leaves unnamed at one seeded cell, in bytes."""
+        units = {name: unit for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS}
+        jobs, worst = self.SEEDED[cell]
+        return worst * measure.MIB - measure.charge_bytes(units[cell[0]], jobs)
+
+    def _bump_to(self, cell, unnamed):
+        """MiB to add to one seeded cell's worst rep so that its unnamed
+        remainder lands at `unnamed` bytes.
+
+        Computed rather than written, because the bands are bounded on both
+        sides: a bump stated as "the bound plus a megabyte" lands in whichever
+        band the cell's own remainder plus that number falls in, which is the
+        `rule` band as often as not."""
+        return (unnamed - self._unnamed_at(cell)) / measure.MIB
+
     def _model_rows(self, body):
         section = body.split("The charge against what was held")[1].split(
             "What the process says it held"
@@ -6086,27 +6096,29 @@ class ChargeModelSection(unittest.TestCase):
         # Eight flagless legs, and every one of them took the block path at the
         # budget its own reported arrangement carries.
         self.assertEqual(len(rows), len(self.SEEDED) + 1)
-        floor = next(r for r in rows if "128 MiB blocks, `-m 512m`" in r)
-        # `(POOL_DEPTH - 2) x 128 MiB`, named rather than left in the remainder.
-        self.assertIn(measure._fmt_budget_bytes(2 * (128 << 20)), floor)
-        self.assertIn(measure._fmt_budget_bytes(14.0 * measure.MIB)[:4], floor)
+        pooled = next(r for r in rows if "128 MiB blocks, `-m 512m`" in r)
+        # `(POOL_DEPTH - 1) x 128 MiB`, named rather than left in the remainder.
+        self.assertIn(measure._fmt_budget_bytes(3 * (128 << 20)), pooled)
+        self.assertIn(measure._fmt_budget_bytes(142.0 * measure.MIB)[:5], pooled)
 
-    def test_the_floor_is_billed_at_a_cell_of_each_block_size(self):
-        # `M89`: the column exists to keep the floor out of the remainder, and a
-        # table in which every cell reads `—` there is a column that has never
-        # been exercised. The two inserted limits are what put one reader on the
-        # axis at each block size, and the floor at one reader is three units.
+    def test_the_pool_term_is_billed_at_every_cell_of_each_block_size(self):
+        # The column exists to keep the pool out of the remainder, and a table
+        # in which any cell reads `—` there is a cell whose bill has lost its
+        # larger half. Since `M93` the term never clamps off, so every row of
+        # every block size carries it.
         rows = self._model_rows(self._seeded_body())
         for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
             with self.subTest(block_size=label):
-                floored = [
-                    r
-                    for r in rows
-                    if r.startswith(f"| {label}, ")
-                    and measure._fmt_budget_bytes(3 * unit) in r
-                ]
-                self.assertTrue(floored, f"{label} bills no pool floor at any cell")
-                self.assertIn("| 1r |", floored[0])
+                mine = [r for r in rows if r.startswith(f"| {label}, ")]
+                self.assertTrue(mine, f"{label} has no cell at all")
+                for row in mine:
+                    readers = int(row.split("|")[2].strip().rstrip("r"))
+                    self.assertIn(
+                        measure._fmt_budget_bytes(
+                            (max(measure.LIBRARY_POOL_DEPTH, readers) - 1) * unit
+                        ),
+                        row,
+                    )
 
     def test_an_over_bill_is_named_in_those_words_and_bars(self):
         # The default fixture holds ~100 MiB against a charge of several
@@ -6128,16 +6140,15 @@ class ChargeModelSection(unittest.TestCase):
         # count is predicted against is wrong. The verdict says which, and
         # re-derives the bound from the sitting's own remainders rather than
         # owing a re-take.
-        bump = (measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB) / measure.MIB
+        over = measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB
+        bump = self._bump_to(("control_xz128", "1g"), over)
         body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
         self.assertNotIn("The model is refuted", body)
         self.assertIn("not a bar on the box", body)
         self.assertIn("MEMORY_UNPOOLED_BOUND", body)
-        # 13.8 MiB of remainder plus the bump, on the 64 MiB grid `19.26` read
-        # the constant off.
-        rederived = measure.rederived_unpooled_bound(
-            (13.8 + bump) * measure.MIB
-        )
+        # The bumped cell is the sitting's worst remainder, rounded up on the
+        # 64 MiB grid `19.26` read the constant off.
+        rederived = measure.rederived_unpooled_bound(over)
         self.assertIn(
             f"re-derive `MEMORY_UNPOOLED_BOUND` at **{measure._fmt_budget_bytes(rederived)}**",
             body,
@@ -6148,7 +6159,9 @@ class ChargeModelSection(unittest.TestCase):
         # The outer line, which is the one `19.11` accepts on: a remainder the
         # reserve cannot cover is an arrangement the discovery cannot keep
         # inside its allocation.
-        bump = (measure.LIBRARY_MEMORY_RESERVE + measure.MIB) / measure.MIB
+        bump = self._bump_to(
+            ("control_xz128", "1g"), measure.LIBRARY_MEMORY_RESERVE + measure.MIB
+        )
         body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
         self.assertIn("The model is refuted, and by these cells:", body)
         self.assertIn("the sweep's box does not tick", body)
@@ -6161,12 +6174,14 @@ class ChargeModelSection(unittest.TestCase):
         # beside it with its finding.
         body = self._seeded_body(
             bumps={
-                ("control_xz128", "1g"): (
-                    measure.LIBRARY_MEMORY_RESERVE + measure.MIB
-                ) / measure.MIB,
-                ("control_xz", "2g"): (
-                    measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB
-                ) / measure.MIB,
+                ("control_xz128", "1g"): self._bump_to(
+                    ("control_xz128", "1g"),
+                    measure.LIBRARY_MEMORY_RESERVE + measure.MIB,
+                ),
+                ("control_xz", "2g"): self._bump_to(
+                    ("control_xz", "2g"),
+                    measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB,
+                ),
             }
         )
         self.assertIn("The model is refuted, and by these cells:", body)

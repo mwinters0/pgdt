@@ -120,8 +120,9 @@ fn recourse_bytes(stderr: &str) -> u64 {
 
 /// The budget at the CLI: the one that sent a compressed read down the
 /// streaming path says so on stderr, once, naming the file's largest block and
-/// what one reader of it would have held — two block slots, the chunk buffer
-/// and the decoder's own retention — so the flag that says *raise it* also
+/// what one reader of it would have held — a block slot, the chunk buffer, the
+/// decoder's own retention and the pool's own slots — so the flag that says
+/// *raise it* also
 /// says what to raise it to. The rows go to stdout and are untouched by it.
 #[test]
 fn a_declined_block_path_is_announced_once_on_stderr() {
@@ -133,11 +134,11 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     let err = stderr_of(&out);
     assert_eq!(err.matches("streaming decoder").count(), 1, "said once, not per sub-stream: {err}");
     assert!(err.contains("memory budget of 400"), "the budget that declined it is named: {err}");
-    // The recourse is the whole of what a reader holds, so it is past the two
-    // 512-byte blocks by the decoder's own dictionary — read out of the
-    // sentence rather than restated, this being the CLI's view of a number the
-    // library owns.
-    assert!(recourse_bytes(&err) > 2 * 512, "{err}");
+    // The recourse is the whole of what a reader costs the rule, so it is past
+    // the four 512-byte blocks the pool keeps by the decoder's own dictionary —
+    // read out of the sentence rather than restated, this being the CLI's view
+    // of a number the library owns.
+    assert!(recourse_bytes(&err) > 4 * 512, "{err}");
 
     // A budget that affords a whole block says nothing at all about the read
     // path.

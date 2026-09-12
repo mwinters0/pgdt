@@ -96,18 +96,20 @@ struct ParallelArgs {
     /// available. A plain dump asks for nothing of its own and stays on 64 MiB.
     ///
     /// It is a real bound rather than a target: a `.xz` file that does not
-    /// leave room inside it for one reader — two of its blocks, a read buffer
-    /// and the decompressor's own working memory — is read through the
+    /// leave room inside it for one reader — one of its blocks, a read buffer
+    /// and the decompressor's own working memory, over the four block slots
+    /// the pool keeps whatever the worker count is — is read through the
     /// streaming decoder instead of being decoded a block at a time, which is
     /// correct but slower on backward reads. Raise it to buy the block path
     /// back on a file written with large blocks (`xz -9 -T0`,
     /// `xz --block-size=`).
     ///
     /// **It is also what decides how many of `--jobs`' workers read at once**,
-    /// on both commands: the budget divided by what one reader holds. For an
-    /// ordinary 24 MiB-block `.xz` that is about 58 MiB, so a 64 MiB budget
-    /// affords one — which is why a discovered budget is sized off the count
-    /// the source recommends rather than off a constant.
+    /// on both commands: the largest count whose whole cost fits inside it. For
+    /// an ordinary 24 MiB-block `.xz` the first reader is about 106 MiB and each
+    /// one past the fourth about 58, so a 64 MiB budget affords none of them —
+    /// which is why a discovered budget is sized off the count the source
+    /// recommends rather than off a constant.
     ///
     /// **On `query` it divides by two terms rather than one**: what a worker
     /// costs to read, plus the 64 MiB a sub-stream's held batch may pin
@@ -2534,13 +2536,13 @@ mod tests {
             Self { jobs, memory: Some(pgdump_query::WorkerMemory::per_worker(per_worker)) }
         }
 
-        /// A block-decoding source's shape: a per-worker charge, and the pool
-        /// floor the first `below` workers leave unfilled.
-        fn block_reader(jobs: usize, per_worker: u64, unit: u64, below: usize) -> Self {
+        /// A block-decoding source's shape: a per-worker charge, and the
+        /// retention list the pool shares over a `depth`-slot pool.
+        fn block_reader(jobs: usize, per_worker: u64, unit: u64, depth: usize) -> Self {
             Self {
                 jobs,
                 memory: Some(
-                    pgdump_query::WorkerMemory::per_worker(per_worker).flooring(unit, below),
+                    pgdump_query::WorkerMemory::per_worker(per_worker).pooling(unit, depth),
                 ),
             }
         }
@@ -2591,8 +2593,9 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/runtime").join(name)
     }
 
-    /// A `.xz`-shaped recommendation: twenty-four readers of 58 MiB each,
-    /// which is the ordinary 24 MiB-block dump the phase worked through.
+    /// A source recommending twenty-four readers of 58 MiB each and no pool
+    /// of its own — the flat shape every source but the block-decoding one
+    /// states. The block-decoding shape is `BLOCK_READER` beside its unit.
     const READER: u64 = 58 << 20;
 
     /// **A discovered limit is what a flagless run resolves inside, on both
@@ -2638,33 +2641,39 @@ mod tests {
     }
 
     /// **No limit found leaves the source's recommendation standing**, capped
-    /// **A shared floor lowers the recommended count, and only where it
-    /// binds.** A block-decoding source holds `POOL_DEPTH` block units however
-    /// few readers there are, so below four of them the allowance buys fewer
-    /// than a division by the per-reader charge would say — and at or above
-    /// four the floor is filled and the two agree exactly. Pinned on both
-    /// sides, because a charge that bound everywhere would be an over-bill and
-    /// one that bound nowhere would be the defect `19.22` closed.
+    /// **A shared pool lowers the recommended count at every allocation**, and
+    /// hardest at the small ones. A block-decoding source's pool retains a
+    /// unit for every slot but the one a reader is filling — `POOL_DEPTH - 1`
+    /// of them below four readers and `jobs - 1` above — so the allowance
+    /// always buys fewer than a division by the per-reader charge would say.
+    /// Pinned at both ends, because a charge that bound nowhere would be the
+    /// defect `19.22` closed and one billing two units a reader would be the
+    /// over-bill `M93` removed.
     #[test]
-    fn a_shared_floor_lowers_a_recommended_count_only_where_it_binds() {
+    fn a_shared_pool_lowers_a_recommended_count_at_every_allocation() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
         const UNIT: u64 = 24 << 20;
-        let source = || Recommends::block_reader(24, READER, UNIT, 4);
+        // What one reader of an ordinary 24 MiB-block dump holds: the block it
+        // is decoding — which is the block it then retains — the chunk buffer
+        // a straddling read is assembled into, and the decoder.
+        const BLOCK_READER: u64 = 34 << 20;
+        let source = || Recommends::block_reader(24, BLOCK_READER, UNIT, 4);
 
-        // v1, a 512 MiB limit: 128 MiB after the reserve. Two readers of
-        // 58 MiB fit that on their own, and with the two units of floor they
-        // leave standing they do not — so one reader is the honest answer, and
-        // the budget is the whole allowance rather than what one reader bills.
+        // v1, a 512 MiB limit: 128 MiB after the reserve, which a division by
+        // the per-reader charge calls three readers. The three units the pool
+        // retains beside a single reader leave only 22 MiB of that, so a
+        // second reader does not fit and one is the honest answer — spending
+        // 34 + 3 x 24 = 106 MiB of the 128.
         let tight = flagless.resolve_in(&runtime_root("v1-limit"), &source());
         assert_eq!(tight.parallelism().jobs(), 1);
-        assert_eq!(tight.parallelism().memory_bytes(), Some(128 << 20));
+        assert_eq!(tight.parallelism().memory_bytes(), Some(BLOCK_READER + 3 * UNIT));
 
         // v2, a 1 GiB limit: 563.2 MiB once the reserve and the margin are
-        // both left, which is nine readers — above the pool's depth, where
-        // the floor is zero and the count is the same one a division gives.
+        // both left. A division says sixteen readers; the pool slot each of
+        // them past the first also takes is what makes it ten.
         let roomy = flagless.resolve_in(&runtime_root("v2-limit"), &source());
-        assert_eq!(roomy.parallelism().jobs(), 9);
-        assert_eq!(roomy.parallelism().memory_bytes(), Some(9 * READER));
+        assert_eq!(roomy.parallelism().jobs(), 10);
+        assert_eq!(roomy.parallelism().memory_bytes(), Some(10 * BLOCK_READER + 9 * UNIT));
     }
 
     /// only by half of `MemAvailable` (`RT8`) — which is the branch a `min`

@@ -1787,11 +1787,11 @@ async fn map_for_query(
 /// existed) is bounded by `jobs` alone.
 ///
 /// **The budget is *solved* against the source's cost, not divided by it**
-/// ([`crate::io::WorkerMemory::affords`]). A block-decoding source holds a
-/// pool floor below `POOL_DEPTH` readers that no per-worker term carries, so a
-/// division admits readers whose share of that floor the allowance never
-/// granted — the same repair [`Parallelism::fit`] takes on the *recommended*
-/// count, applied to the delivered one.
+/// ([`crate::io::WorkerMemory::affords`]). A block-decoding source shares a
+/// retention list that no per-worker term carries, so a division admits
+/// readers whose share of that list the allowance never granted — the same
+/// repair [`Parallelism::fit`] takes on the *recommended* count, applied to
+/// the delivered one.
 ///
 /// **Shared with the leader**, which asks the same question of an open `COPY`
 /// block's interior (`crate::leader::scan_region`): how many readers may run
@@ -2156,7 +2156,7 @@ fn plan_partitions(
         !advice.is_empty() && advice.iter().all(|a| a.retained_unit() == RetainedUnit::Partition);
     let charged_span = if retains_partitions { None } else { max_source_span };
     // The charge the count is solved against: the largest per-worker footprint
-    // above, carrying that source's own pool floor, plus whatever span this
+    // above, carrying that source's own shared pool term, plus whatever span this
     // caller pins on top of it.
     let charge = advice
         .iter()
@@ -2939,25 +2939,26 @@ mod tests {
         assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), per(32 << 20)), 1);
     }
 
-    /// **A shared floor is billed, so the budget is solved rather than
-    /// divided.** The block pool holds `POOL_DEPTH` units whatever the count,
-    /// which a per-worker charge does not carry: at 16 MiB a worker with a
-    /// 16 MiB floor under four readers, a 64 MiB budget affords three where a
-    /// division would have said four.
+    /// **A shared pool is billed, so the budget is solved rather than
+    /// divided.** The block pool retains a unit for every slot but the one a
+    /// reader is filling — `POOL_DEPTH - 1` of them below four readers and
+    /// `jobs - 1` above — which a per-worker charge does not carry: at 16 MiB
+    /// a worker over a four-slot pool of 16 MiB units, a 64 MiB budget affords
+    /// one where a division would have said four.
     #[test]
-    fn a_shared_floor_is_billed_before_the_count_is_handed_back() {
+    fn a_shared_pool_is_billed_before_the_count_is_handed_back() {
         let eight = Parallelism::workers(8, 64 << 20);
-        let charge = WorkerMemory::per_worker(16 << 20).flooring(16 << 20, 4);
-        // Four readers cost 64 MiB flat, three cost 48 + 16 = 64, two cost
-        // 32 + 32 = 64 — so this budget affords four and the division agrees.
-        assert_eq!(worker_count(eight, charge), 4);
-        // One byte short of it, and the floor is what the count answers to:
-        // every count from one to four costs the same 64 MiB here, so nothing
-        // fits and the serial floor is what is left.
+        let charge = WorkerMemory::per_worker(16 << 20).pooling(16 << 20, 4);
+        // One reader costs 16 + 3 x 16 = 64 MiB, two cost 32 + 48 = 80 — so
+        // this budget affords exactly one where the division said four.
+        assert_eq!(worker_count(eight, charge), 1);
+        // One byte short of it, and nothing fits at all: the serial floor is
+        // what is left, which is never zero.
         assert_eq!(worker_count(Parallelism::workers(8, (64 << 20) - 1), charge), 1);
-        // Above the pool's depth the floor is gone and the cost is linear
-        // again: six readers of 16 MiB in 96 MiB is six.
-        assert_eq!(worker_count(Parallelism::workers(8, 96 << 20), charge), 6);
+        // Above the pool's own depth every reader takes a slot with it, so the
+        // cost is `n x 32 - 16` MiB: 240 MiB affords eight, and 224 seven.
+        assert_eq!(worker_count(Parallelism::workers(8, 240 << 20), charge), 8);
+        assert_eq!(worker_count(Parallelism::workers(8, 224 << 20), charge), 7);
     }
 
     /// Grouping keeps the pieces in file order and contiguous, which is what

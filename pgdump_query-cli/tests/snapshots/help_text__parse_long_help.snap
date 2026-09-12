@@ -63,15 +63,17 @@ Options:
           nothing of its own and stays on 64 MiB.
           
           It is a real bound rather than a target: a `.xz` file that does not leave room inside it
-          for one reader — two of its blocks, a read buffer and the decompressor's own working
-          memory — is read through the streaming decoder instead of being decoded a block at a time,
-          which is correct but slower on backward reads. Raise it to buy the block path back on a
-          file written with large blocks (`xz -9 -T0`, `xz --block-size=`).
+          for one reader — one of its blocks, a read buffer and the decompressor's own working
+          memory, over the four block slots the pool keeps whatever the worker count is — is read
+          through the streaming decoder instead of being decoded a block at a time, which is correct
+          but slower on backward reads. Raise it to buy the block path back on a file written with
+          large blocks (`xz -9 -T0`, `xz --block-size=`).
           
           **It is also what decides how many of `--jobs`' workers read at once**, on both commands:
-          the budget divided by what one reader holds. For an ordinary 24 MiB-block `.xz` that is
-          about 58 MiB, so a 64 MiB budget affords one — which is why a discovered budget is sized
-          off the count the source recommends rather than off a constant.
+          the largest count whose whole cost fits inside it. For an ordinary 24 MiB-block `.xz` the
+          first reader is about 106 MiB and each one past the fourth about 58, so a 64 MiB budget
+          affords none of them — which is why a discovered budget is sized off the count the source
+          recommends rather than off a constant.
           
           **On `query` it divides by two terms rather than one**: what a worker costs to read, plus
           the 64 MiB a sub-stream's held batch may pin (`docs/design/architecture.md`, "Execution

@@ -293,89 +293,85 @@ advice off the read path taken rather than off the seek table.
 **A source's cost is a shape rather than a scalar, and a budget is *solved*
 against it rather than divided by it.** `Partitioning::worker_memory` and
 `ByteRangeSource::default_worker_memory` both answer a `WorkerMemory`: the
-per-worker term above — `partition_bytes` — and a **shared floor**,
-`floor_unit` bytes for every worker short of `floor_below`.
+per-worker term above — `partition_bytes` — and a **shared pool**,
+`(pool_depth.max(workers) − 1) × pool_unit`.
 `WorkerMemory::at(n)` is what `n` readers cost, and `WorkerMemory::affords(cap,
 most)` is the largest count inside `cap` — the one arithmetic
 `Parallelism::fit` and `crate::stream::worker_count` both call, so the
 recommended count and the delivered one answer to the same charge.
 
-**The floor is the block pool's, and it is arithmetic from that pool rather
-than a margin.** `BufferPool::slots` clamps the block pool at
-`POOL_DEPTH.max(jobs)`; the free list and the retention list share those slots
-(`BufferPool::reserve`) and each reader is decoding into a buffer besides, so
-the pool holds `slots + jobs` units against a bill of `2 × jobs`. At or above
-`POOL_DEPTH` readers the two agree exactly and the floor is zero; below it the
-difference is `(POOL_DEPTH − jobs) × unit`, which five cells of `19.16`'s
-readings confirm to 1.4 MiB. It is **unbounded in the block size** — 96 MiB at
-koji's 24 MiB blocks, 384 at 128, 2 GiB at 512 — so no reserve can absorb it,
-which is why it is billed rather than reserved for.
+**The pool term is the block pool's retention list, and it is arithmetic from
+that pool rather than a margin.** `BufferPool::slots` clamps the block pool at
+`POOL_DEPTH.max(jobs)`, and `BlockCache::slot` drains the retention list to
+`slots − 1` *before* it obtains the buffer a decode writes into — which
+`BlockCache::retain` then pushes onto that same list. So a reader's in-flight
+block **becomes** one of the retained ones rather than sitting beside them, and
+what the pool holds is `slots − 1 + workers`: **one** unit a reader, and
+`(POOL_DEPTH.max(workers) − 1)` units shared. The `+ workers` half is real
+because the block pool is never granted a wait — it is left at
+`WaitPolicy::NeverWait` deliberately, a retained block being normally the block
+some reader holds a view into, so a drain frees no slot for a caller waiting on
+one and `obtain` allocates rather than blocking. The shared half is
+**unbounded in the block size** — at one reader 72 MiB at koji's 24 MiB blocks,
+384 at 128 and 1.5 GiB at 512, and a further unit a reader past `POOL_DEPTH` —
+so no reserve can absorb it, which is why it is billed rather than reserved for.
 
-**The premise is wrong by one unit, at every count, and that is what bars the
-closing sweep.** What the pool holds is `slots − 1 + workers`, not
-`slots + workers`: `BlockCache::slot` evicts the retention list to
-`pool.slots() − 1` *before* it obtains a buffer, and `BlockCache::retain` then
-pushes that same buffer's block, so a reader's in-flight block **becomes** one
-of the retained ones rather than sitting beside them. The `+ workers` term is
-nonetheless real, because the block pool is never granted a wait — it is left
-at `WaitPolicy::NeverWait` deliberately, a retained block being normally the
-block some reader holds a view into, so a drain frees no slot for a caller
-waiting on one — and `obtain` therefore allocates rather than blocking, one
-block per reader.
-
-So the charge is `(workers + max(workers, POOL_DEPTH)) × unit` where the
-arrangement holds one unit less, and the excess is **uniform in the count**
-rather than a property of the low-count regime. It is visible only at one
-reader: above that, glibc arena retention (+127 to +153 MiB across the
-2026-09-12 sitting's block-path legs) is larger than a unit and the cell reads
-as met. The five confirming cells at two readers and more therefore do not
-confirm the premise — they cannot see a term this size.
-
-Both one-reader cells of that sitting read the excess directly: `affordable`
-wants 130.0 MiB at 24 MiB blocks where the arrangement held 111.1, and 650.0 at
-128 where it held 526.9, the two differing by 104.3 MiB for a 104 MiB
+**The charge billed one unit more than that, at every count, until `M93`.** It
+said `2 × workers + max(0, POOL_DEPTH − workers)` units, charging a reader two
+units for a decode buffer and a retained block that are one buffer. The excess
+was visible only at a single reader: above that, glibc arena retention (+127 to
++153 MiB across the 2026-09-12 sitting's block-path legs) is larger than a unit
+and the cell read as met — so the five cells of `19.16`'s readings once taken
+to confirm the old shape, all at two readers and more, cannot see a term this
+size. Both one-reader cells of that sitting read it directly: `affordable`
+wanted 130.0 MiB at 24 MiB blocks where the arrangement held 111.1, and 650.0
+at 128 where it held 526.9, the two differing by 104.3 MiB for a 104 MiB
 difference in unit. The account closes at both — four units plus the ~15.1 MiB
 base the `-m 512m` streaming legs read directly — and the instrument legs
 confirm it independently, Rust's live high-water at `544m` being 98.1 MiB,
 which is four 24 MiB units with `liblzma`'s ~9.5 MiB invisible to that counter
-by construction.
-
-*Rejected:* that the repair is blocked because `slots` is a function of the
-budget being solved. `slots` is `(budget / unit).clamp(1, POOL_DEPTH.max(jobs))`,
-so the budget enters only as the branch that **lowers** it, and the charge is a
-bound rather than an exact count — charging the depth argument is therefore
-budget-independent, and wherever the budget's branch wins the pool holds less
-than charged. There is no fixed point to restate. The repair states the block
-term as what the mechanism holds: one unit per reader for the block in flight,
-and `(POOL_DEPTH.max(workers) − 1) × unit` shared for the retention list. It
-moves the decline line below — 130.0 MiB → 106 at 24 MiB blocks, 650.0 → 522 at
-128 — and it leaves the **cut** width alone, `Partitioning::partition_bytes`
-being consulted only on the `PartitionBoundaries::Anywhere` arm while a
-compressed source cuts on `At` at `BOUNDARIED_PARTITION_UNITS` boundaries
-([`out-of-band.md`](out-of-band.md), `M93`;
+by construction ([`out-of-band.md`](out-of-band.md), `M93`;
 [2026-09-12](../status/history/2026-09-12.md), "The charge over-bills the pool
 floor at every count").
 
-**Billing it widens the decline, and that is the finding rather than the
+*Rejected: keeping two units a reader and carrying an explicit negative unit.*
+It produces the same `WorkerMemory::at(n)` — the two spellings agree at every
+count — and it fixes the gate, which is asked at `at(1)`. What it leaves wrong
+is `bytes_per_worker()`, whose consumers ask what **one reader** holds:
+`leader::scan_region` declines to split a region smaller than that, and
+`stream::plan_partitions` picks the costliest advice by it.
+
+*Rejected: that the repair is blocked because `slots` is a function of the
+budget being solved.* `slots` is `(budget / unit).clamp(1, POOL_DEPTH.max(jobs))`,
+so the budget enters only as the branch that **lowers** it, and the charge is a
+bound rather than an exact count — charging the depth argument is therefore
+budget-independent, and wherever the budget's branch wins the pool holds less
+than charged. There is no fixed point to restate.
+
+**The cut width is not among what the charge moves.**
+`Partitioning::partition_bytes` is consulted only on the
+`PartitionBoundaries::Anywhere` arm, while a compressed source cuts on `At` at
+`BOUNDARIED_PARTITION_UNITS` boundaries, so `19.20`'s measured "one unit stays"
+is independent of every restatement above.
+
+**Billing the pool widens the decline, and that is the finding rather than the
 cost.** `BlockCache::affordable` asks the budget for *one* reader's charge and
-that reader's floor with it — `POOL_DEPTH` units plus the chunk and the
-decoder, where two units plus those were the old line — so a 24 MiB-block file
-wants 130 MiB where it wanted 58, and a 128 MiB-block one 650 where it wanted
-266. A 512 MiB allocation therefore reads koji's shape through the streaming
-decoder. That is the first arrangement in which the stated number is true, the
-pool having held four units under it either way; and the probe that swept the
-reader count at exactly that limit says the block path buys nothing there
-anyway — two readers is 6% slower than declining and one reader 3%, holding
-250 MiB and 63 MiB against the fallback's 15 ([`roadmap.md`](roadmap.md), "A
-block cache whose retention floor tracks the reader count"). The decline is
+that reader's share of the retention list with it — `POOL_DEPTH` units plus the
+chunk and the decoder — so a 24 MiB-block file wants **106.03 MiB** where the
+per-reader term alone is 34.03, and a 128 MiB-block one **522.03** against
+138.03. The library's own 64 MiB default therefore reads every ordinary `.xz`
+dump through the streaming decoder, while a 512 MiB allocation, which grants
+128 MiB, affords one block-decoding reader of koji's shape and declines a
+128 MiB-block file. That is the first arrangement in which the stated number is
+true, the pool having held four units under it either way. The decline is
 reported (`stream::compressed_block_path_declined`) and `--parallel-memory`
 reverses it.
 
-*Rejected: shrinking the floor instead of billing it.* A block cache whose
-retention floor followed the reader count would charge far less at one and two
+*Rejected: shrinking the retention list instead of billing it.* A block cache
+whose list followed the reader count would charge far less at one and two
 readers — but that reworks a pool's sizing rule on evidence this account does
 not produce, so it is a `Future` item ([`roadmap.md`](roadmap.md)). The two are
-not alternatives: an honestly billed floor is what makes "should the floor be
+not alternatives: an honestly billed pool is what makes "should the pool be
 smaller" a question anybody can answer.
 
 *Rejected: raising `DEFAULT_MEMORY_BUDGET` so that the library default clears
@@ -383,12 +379,14 @@ the widened line.* Under the 64 MiB constant a caller that states nothing now
 reads every ordinary `.xz` dump through the streaming decoder, where before
 `19.22` a 24 MiB-block file took the block path — which reads as a default that
 regressed and is not one. **64 MiB never afforded an honest reader of such a
-file**: two units alone is 48 MiB and the chunk and decoder take ~10.5 more,
-leaving 4.6 MiB, so every pooling rule that pools at all exceeds it — even
-`slots = jobs + 1`, the least that does not drain the retention list before
-every decode, wants 82.5 MiB at one reader. The path was reachable only while
-the charge billed a floor of zero, so what changed is the charge becoming true
-and not the grant becoming smaller. The argument that moving the constant would
+file under the shipped pool.** `slots` is `POOL_DEPTH.max(jobs)`, so one reader
+of koji's shape holds four units — 96 MiB, before the ~10.5 the chunk and the
+decoder take — whatever the count. What would bring it inside 64 is a pool whose
+depth followed the reader count, which is the `Future` item above and not a
+reason to move this constant: `slots = jobs + 1`, the least that does not drain
+the retention list before every decode, would hold two units and 58.5 MiB at one
+reader. The path was reachable only while the charge billed a pool of zero, so
+what changed is the charge becoming true and not the grant becoming smaller. The argument that moving the constant would
 make one number answer two unrelated questions is the reverse of the case:
 `affordable` compares against the budget *in force*, whose fallback is this
 constant, so it already decides the compressed gate — and sizing it to clear
@@ -403,11 +401,10 @@ embedder is told rather than left to infer it.
 
 *Rejected: a per-file term subtracted once, before the allowance is divided.*
 That was the shape while a unit-independent fixed term was still believed in,
-and the floor is not one — it **decays** with the reader count, so subtracting
-it whole over-bills every count above one and declines allocations that fit,
-which is the mirror of the error the divisor made in the other direction.
-Solving costs a handful of evaluations, `floor_below` being `POOL_DEPTH`, and
-is right at every point on the axis rather than at one end of it.
+and the pool term is not one — it is flat below `POOL_DEPTH` readers and grows
+by a unit a reader above, so subtracting one number whole is wrong at one end
+of the axis or the other. Solving costs a handful of evaluations, the only
+non-linear stretch being under `pool_depth`, and is right at every point on it.
 
 <!-- deficiency: KD21 -->
 **The block pool's slot ceiling follows the worker count a caller *announced*,
@@ -422,7 +419,7 @@ caller states **both** `--jobs` and a `--parallel-memory` too small for that
 many: the slot count is then bounded by the pool's byte budget rather than by
 the delivered count, and the free and retention lists fill to it while each
 delivered reader decodes into a buffer besides. `--jobs 24 --parallel-memory 1g`
-on a 128 MiB-block file delivers three readers, gives the block pool seven
+on a 128 MiB-block file delivers four readers, gives the block pool seven
 slots, and holds about **1,280 MiB against the 1,024 stated**. It is not
 `WorkerMemory`'s to fix and predates it: what would close it is the pool being
 told the *delivered* count — which `worker_count` computes after
@@ -665,30 +662,31 @@ the readings rather than by construction
 criterion twice, because `MEMORY_RESERVE` already contains one";
 [`roadmap-P19.26-margin-constant-notes.md`](roadmap-P19.26-margin-constant-notes.md)).
 
-**The block pool's floor is the charge's second term, not the reserve's.**
-`BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while the
-per-reader term bills `2 × unit`, so below four readers the pool holds
-`(POOL_DEPTH − jobs) × unit` that no per-reader term carries — 14 MiB residual
-across five cells of the same readings, and **unbounded in the block size**
-(96 MiB at 24 MiB blocks, 384 at 128, 2 GiB at 512), which is why no constant
-absorbs it and why it is billed rather than reserved for — and why it
-**over-bills by one unit at every count**, which is the account beside
-`partition_bytes` above. It is also not what
-384 pays for: on the 24 MiB file that term is 48/24/0 MiB and the legs that
-forced the constant up are all at eleven readers and above, where it is zero.
-`WorkerMemory` carries both terms, which is what lets a budget be solved
-against the charge rather than divided by it; the shape is described above,
-beside `partition_bytes`.
+**The block pool's retention list is the charge's second term, not the
+reserve's.** `BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` and
+`BlockCache::slot` drains to one below it, so the pool holds
+`(POOL_DEPTH.max(jobs) − 1) × unit` beside the one unit each reader has in
+flight — **unbounded in the block size** (at one reader 72 MiB at 24 MiB
+blocks, 384 at 128, 1.5 GiB at 512, and a further unit a reader above
+`POOL_DEPTH`), which is why no constant absorbs it and why it is billed rather
+than reserved for. It is therefore not what 384 pays for at any count: it is
+inside the budget the run resolves, and what the reserve covers is the
+remainder above that budget. `WorkerMemory` carries both terms, which is what
+lets a budget be solved against the charge rather than divided by it; the shape
+is described above, beside `partition_bytes`.
 
 **What sits above the charge has no trend in the reader count, and that is an
 account rather than a fit.** Over the block-path regime the worst-resident slope
-is 57.28 MiB a reader against the 58.03 `BlockCache::reader_bytes` bills —
-0.987, so glibc's arena retention is already inside the per-reader charge — and
-the remainder `worst − 58.03 × jobs` is 135.7 MiB at two readers and 145.4 at
-twenty-four, wandering 83.5–214.6 across the whole grid. A reserve computed from
-an arena count would therefore be reserving for a term that is billed twice.
-That remainder is what `io::MEMORY_UNPOOLED_BOUND` bounds, above; the reserve is
-the cap and no longer claims to bound it.
+is 57.28 MiB a reader against the **58.03 one more reader adds** past
+`POOL_DEPTH` — `WorkerMemory::at(n+1) − at(n)`, the 34.03 MiB per-reader term
+plus the pool slot that reader brings with it — 0.987, so glibc's arena
+retention is already inside the charge. The remainder `worst − 58.03 × jobs`,
+which is `WorkerMemory::at(jobs)`'s own remainder at four readers and above, is
+135.7 MiB at two readers and 145.4 at twenty-four, wandering 83.5–214.6 across
+the whole grid. A reserve computed from an arena count would therefore be
+reserving for a term that is billed twice. That remainder is what
+`io::MEMORY_UNPOOLED_BOUND` bounds, above; the reserve is the cap and no longer
+claims to bound it.
 
 **There is no fixed term, and the `403 MiB + 31.2 MiB a reader` that two
 sittings reported is an artifact of the window they fitted over.** This is the
@@ -705,15 +703,18 @@ against nothing, and `19.15`'s "~340 MiB unattributed" was measuring the
 fitting window.
 
 **The concavity has a mechanism, and it is this pool's own slot arithmetic.**
-With a flagless budget of about `jobs × 2 × unit`, `BufferPool::slots` runs
-**2, 4, 4, 4, 5, 6** over one to six readers — a two-unit step from one reader
-to two, flat through four, then one unit a reader. Big jump, flat middle,
-linear tail: a fit that starts at three readers projects that jump onto the
-y-axis. The same term is therefore *fixed* at one end of the axis and
-*per-reader* at the other, which is the whole reason no constant reserve can
-cover it — and it is the opposite of the argument this section used to make,
-that the `POOL_DEPTH.max(jobs)` clamp is what makes the overhead roughly
-constant.
+Under the budget those sittings ran on — about `jobs × 2 × unit`, the rule
+before `19.22` billed the pool — `BufferPool::slots` runs **2, 4, 4, 4, 5, 6**
+over one to six readers: a two-unit step from one reader to two, flat through
+four, then one unit a reader. Big jump, flat middle, linear tail, and a fit that
+starts at three readers projects that jump onto the y-axis. The same term is
+therefore *fixed* at one end of the axis and *per-reader* at the other, which is
+the whole reason no constant reserve can cover it — and it is the opposite of
+the argument this section used to make, that the `POOL_DEPTH.max(jobs)` clamp is
+what makes the overhead roughly constant. Under the shipped charge the budget is
+`WorkerMemory::at(jobs)`, which grants the pool its full `POOL_DEPTH.max(jobs)`
+at every count, so what it holds runs **4, 5, 6, 7, 9, 11** units — convex, and
+the charge's own arithmetic rather than a residue of it.
 
 **What the resident set above the budget is made of has a name, and the process
 was asked rather than differenced.** Read through the introspection build
@@ -723,8 +724,10 @@ reader** of *program* memory — the counting allocator's own high-water, linear
 over the four to twenty-four readers those allocations resolve, and predicting
 its own smallest cell to within a megabyte. Add `liblzma`'s 8 MiB dictionary,
 which is a C allocation the counter cannot see, and a reader costs **57.0 MiB**
-against the **58.0 MiB** `BlockCache::reader_bytes` bills it: **the charge
-is right to 2%**, and it is not what puts a flagless scan against its ceiling.
+against the **58.0 MiB** one more reader adds past `POOL_DEPTH`
+(`WorkerMemory::at(n+1) − at(n)`, the per-reader term plus the pool slot that
+reader brings): **the charge is right to 2%**, and it is not what puts a
+flagless scan against its ceiling.
 What does is **glibc arena retention** — `mallinfo`'s `fordblks`, freed by the
 program and kept by the allocator, 102–413 MiB across those limits, covering
 the whole gap between the program's high-water and the heap's, with `hblkhd`
@@ -745,8 +748,9 @@ for.
 **A partition is `io::BOUNDARIED_PARTITION_UNITS` of the source's own units;
 the charge for one is a different number, and the two are computed apart.**
 `XzSource::partition_advice` states `partition_bytes` as
-`BlockCache::reader_bytes` — two block slots, a chunk and the decoder's
-retention — and that is what a budget is divided by to reach a reader count.
+`BlockCache::reader_bytes` — one block slot, a chunk and the decoder's
+retention — and that, with the pool term beside it, is what a budget is solved
+against to reach a reader count.
 What a window is *cut* into is `Partitioning::window_end`: on a boundaried
 source it ends a window at the `workers × k`-th boundary past the frontier, so
 `stream::cut`'s thinning takes every `k`-th one and every piece spans at most
@@ -879,10 +883,10 @@ open question, which is the honest state.
 **Raising the reserve is also what declines the block path, because
 `BlockCache::affordable` reads off the budget.** The two are one knob and not
 two: a reserve `R` admits block decode only where `limit − R` covers one
-reader's charge **and that reader's pool floor** (`WorkerMemory::at(1)`), so at
-384 MiB neither a 24 MiB-block file nor a 128 MiB-block one takes the block
-path in a 512 MiB allocation — 128 MiB is left, against the 130 the first of
-them wants. The
+reader's charge **and that reader's share of the pool's retention list**
+(`WorkerMemory::at(1)`), so at 384 MiB a 512 MiB allocation leaves 128 MiB —
+enough for the 106.03 a 24 MiB-block file wants and not for the 522.03 a
+128 MiB-block one does. The
 floor is therefore left implicit — *rejected: a named `BLOCK_PATH_MIN_LIMIT`
 constant checked separately*, which is a second number deriving the same
 boundary and free to drift out of step with the first, exactly the divergence
@@ -1028,8 +1032,8 @@ the environment overriding what the user typed is not.
 
 Written instead as `min(want, discovered)` it breaks the case it exists for: on
 an unlimited host discovery falls back to today's 64 MiB constant, one
-compressed reader costs about 58 MiB, and the minimum would make the scan
-serial — shipping a source-dependent worker default that never fires on the
+compressed reader of an ordinary `.xz` dump costs 106 MiB with its share of the
+pool, and the minimum would make the scan serial — shipping a source-dependent worker default that never fires on the
 machine most likely to run it. A count nothing can afford is not a
 recommendation ([`roadmap.md`](roadmap.md), "A default runs as fast as the
 allocation permits").
@@ -2068,13 +2072,14 @@ That falsifies the premise the rejection above rests on — *the pool sizes
 itself from the stated budget and not from how many readers were admitted* is
 true of the pool and not of the resident set — so the divisor is the only
 thing that bounds the per-reader term, and it is what has to charge honestly.
-It charged one unit where `affordable` and `slot` both said two — 25 MiB a
-sub-stream against a measured 59.4, where the plain path charges
-`POOL_MAX_BYTES` and measures 8.03 against 8. **It now charges what a reader
-holds**: `2 × unit + chunk_bytes + xz_seek::Reader::decode_footprint()`, which
-is 58.03 MiB on koji's 24 MiB blocks and an 8 MiB dictionary against that
-measured 59.4, so resident is the budget plus a constant, which is what the
-budget rule was written for. The decoder's term could not be reached when this
+It charged one unit and nothing for the decoder — 25 MiB a sub-stream against a
+measured 59.4, where the plain path charges `POOL_MAX_BYTES` and measures 8.03
+against 8. **It now charges what a reader holds**, and the pool's own retention
+list beside it: `unit + chunk_bytes + xz_seek::Reader::decode_footprint()` a
+reader, which is 34.03 MiB on koji's 24 MiB blocks and an 8 MiB dictionary, plus
+`(POOL_DEPTH.max(jobs) − 1) × unit` shared — so one more reader past the depth
+costs 58.03 against that measured 59.4, and resident is the budget plus a
+constant, which is what the budget rule was written for. The decoder's term could not be reached when this
 was found — `dict_size` is on the block header and the seek-table walk read
 none — and the fix was upstream rather than a constant standing in for it: the
 walk now records each stream's first block's dictionary, and one published
@@ -2096,18 +2101,16 @@ row at the twenty-four workers it is labelled
 ([`measurements.md`](measurements.md), "What a second scan worker buys, and
 where the plain path stops").
 
-**`BlockCache::affordable` is that same number, asked of one reader**, so
+**`BlockCache::affordable` is that same charge, asked of one reader**, so
 affording block decode and admitting a reader are one sentence rather than two
 that can drift apart — which is how the divisor came to charge one unit while
-`affordable` and `slot` both said two. It went from one unit to two because a
-coupled count of one is precisely the un-poolable shape rejected above — a
-retained cap of zero, drained before every decode — and then took the chunk and
+`affordable` was comparing against something else. The charge took the chunk and
 the decoder with it, because **those two are paid on the streaming path as
 well**: the fallback assembles reads into a chunk buffer and keeps a decoder of
-its own, so they are not what a decline saves. They come off the top and the two
-block slots are what must fit under them. Koji's 24 MiB blocks still decode at
-the 64 MiB default — 58.03 MiB against 64 — and `--parallel-memory` remains the
-lever that reverses a decline, with
+its own, so they are not what a decline saves. They come off the top and the
+`POOL_DEPTH` block slots are what must fit under them, which is why koji's
+24 MiB blocks no longer decode at the 64 MiB default — 106.03 MiB against 64 —
+and why `--parallel-memory` is the lever that reverses a decline, with
 `PlanNoteKind::CompressedBlockPathDeclined` naming the whole charge as the
 number to clear, read off the source
 (`ByteRangeSource::block_decode_bytes`) rather than re-derived by the note.

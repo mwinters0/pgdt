@@ -2292,13 +2292,15 @@ XZ_DICT_BYTES = 8_388_608
 
 def reader_bytes(unit: int) -> int:
     """What **one** concurrent block-decoding reader of a file with `unit`-sized
-    blocks holds: two block slots, the chunk buffer a straddling read is
-    assembled into, and the decoder's own retention.
+    blocks holds: one block slot — the block it is decoding, which is the block
+    it then retains — the chunk buffer a straddling read is assembled into, and
+    the decoder's own retention.
 
     `BlockCache::reader_bytes`, mirrored — the per-worker term of the charge
     `BlockCache::affordable` compares a budget against, and what
     `XzSource::partition_advice` charges a sub-stream. It is not the whole
-    charge: `charge_bytes` adds the pool floor below `POOL_DEPTH` readers.
+    charge: `charge_bytes` adds the retention list the pool shares, which is
+    `POOL_DEPTH - 1` units at one reader and `jobs - 1` above the depth.
 
     **It is one number and not two, at the default chunk every leg here runs
     at.** `BlockCache::reader_bytes` takes its chunk term from
@@ -2309,22 +2311,21 @@ def reader_bytes(unit: int) -> int:
     budget to are the same charge. Charging the unannounced pool's
     `POOL_MAX_BYTES` ceiling instead ran the recommendation 7 MiB a reader high
     and cost a reader at every allocation, which `19.19` repaired (`io.rs`,
-    `charged_chunk_bytes`). So a flagless run's resolved budget **is** this
-    number times its count — 1,460,448,000 at 24 readers of 24 MiB blocks — and
-    a budget read off a run's own report and divided by its count is this number
-    back — **at or above `POOL_DEPTH` readers**, where the floor is zero;
-    below it the reported budget carries `pool_floor_bytes` besides, which is
-    what `charge_bytes` states. It splits again only for a caller that states a `--chunk-size` other
-    than the default, which no leg of this figure does.
+    `charged_chunk_bytes`). A flagless run's resolved budget is **never** this
+    number times its count: the shared retention list is billed at every count,
+    so a budget read off a run's own report carries `pool_bytes` besides, which
+    is what `charge_bytes` states. It splits again only for a caller that states
+    a `--chunk-size` other than the default, which no leg of this figure does.
 
     **Hand-computed, on `QUERY_SUBSTREAM_CAP`'s argument.** A Python
     reimplementation of the library's arithmetic is a second authority that goes
     stale silently; a mirror checked by hand against the source once is exactly
     as good until one of its terms moves, at which point the figure is already
     stale on the paths its `depends` names. At 24 MiB blocks this is
-    58.03 MiB, which is the number `19.14` shipped and `19.12` measured.
+    34.03 MiB — 58.03 until `M93` found the second unit double-counted with the
+    pool's own list.
     """
-    return 2 * unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
+    return unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
 
 
 #: `pgdump_query::io::POOL_DEPTH`, mirrored: the floor `BufferPool::slots`
@@ -2332,12 +2333,13 @@ def reader_bytes(unit: int) -> int:
 #:
 #: It lives with the charge rather than with the other library mirrors because
 #: it is the second term of that charge: the block pool is sized
-#: `POOL_DEPTH.max(jobs)` while the per-reader term bills `2 x unit` a reader,
-#: so below four readers the pool holds `(POOL_DEPTH - jobs) x unit` that no
-#: per-reader term carries. That is `pool_floor_bytes`, which `19.22` made the
-#: library bill (`io.rs`, `WorkerMemory`); naming it as a column of its own is
-#: what keeps it out of the residual, where it would read as a flat term on the
-#: two block sizes registered here and as a breach on a third.
+#: `POOL_DEPTH.max(jobs)` and `BlockCache::slot` drains to one below it before
+#: obtaining the buffer `retain` then pushes back, so the pool holds
+#: `(POOL_DEPTH.max(jobs) - 1) x unit` on top of the one unit each reader has in
+#: flight. That is `pool_bytes`, which `19.22` made the library bill and `M93`
+#: restated as what the pool holds (`io.rs`, `WorkerMemory`); naming it as a
+#: column of its own is what keeps it out of the residual, where it would read
+#: as a term nothing accounts for.
 LIBRARY_POOL_DEPTH = 4
 
 #: `pgdump_query::io::MEMORY_RESERVE`, mirrored: what `Parallelism::discover`
@@ -2372,40 +2374,39 @@ LIBRARY_MEMORY_RESERVE = 384 << 20
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
 
-def pool_floor_bytes(unit: int, jobs: int) -> int:
-    """What the block pool holds at `jobs` readers on top of the per-reader
-    term: `(POOL_DEPTH - jobs) x unit`, and zero at four readers or more.
+def pool_bytes(unit: int, jobs: int) -> int:
+    """What the block pool retains at `jobs` readers on top of the per-reader
+    term: `(POOL_DEPTH.max(jobs) - 1) x unit`, and never zero.
 
-    `WorkerMemory`'s floor, mirrored — the second term of the library's charge
-    since `19.22`, where it was unbilled before. Kept as a column of its own
-    rather than folded into `charge_bytes` because it is **unbounded in the
-    block size** where every other term is not: at one reader, where it is
-    largest, 72 MiB at koji's 24 MiB blocks, 384 at 128, 1.5 GiB at 512. A model
-    that hid it inside a flat remainder would read as a constant on the two block
-    sizes this harness registers and as a breach on a third.
+    `WorkerMemory::pool_bytes`, mirrored — the second term of the library's
+    charge since `19.22`, where it was unbilled before, and restated by `M93`
+    as what the pool holds rather than as a floor that decays. Kept as a column
+    of its own rather than folded into `charge_bytes` because it is **unbounded
+    in the block size** where every other term is not: at one reader 72 MiB at
+    koji's 24 MiB blocks, 384 at 128, 1.5 GiB at 512, and growing by a unit a
+    reader past `POOL_DEPTH`. A model that hid it inside a flat remainder would
+    read as a term nothing accounts for.
 
-    **Billed at one registered limit per block size, and zero at every other
-    cell**, which is why the magnitudes above are stated at one reader: the term
-    is clamped off at `POOL_DEPTH` readers, and every other block-path leg on
-    the axis resolves more than four. `544m` and `1088m` are the two limits
-    inserted under that clamp, each affording exactly one reader of its own
-    block size (`RESERVE_LIMITS`), and `reserve_floor_problems` is what fails an
-    axis that bills the term nowhere — a criterion satisfied only at cells where
-    the term is clamped to zero is a criterion that never evaluates it.
+    **Billed at every cell**, which is what `M93` changed: the term was
+    `max(0, POOL_DEPTH - jobs) x unit` and so clamped off at four readers, and
+    the charge carried the missing unit inside a per-reader term of two. The two
+    spellings agree nowhere — the old one bills exactly one unit more at every
+    count, which is what the 2026-09-12 gate sitting read off its one-reader
+    cells (130.0 MiB billed against 111.1 held at 24 MiB blocks).
     """
-    return max(0, LIBRARY_POOL_DEPTH - jobs) * unit
+    return max(LIBRARY_POOL_DEPTH, jobs, 1) * unit - unit
 
 
 def charge_bytes(unit: int, jobs: int) -> int:
     """What the budget rule charges `jobs` concurrent block-decoding readers of
     a file with `unit`-sized blocks, in bytes: the per-reader term times the
-    count, plus the pool floor those readers leave unfilled.
+    count, plus the retention list those readers share.
 
     `WorkerMemory::at`, mirrored — what `Parallelism::fit` solves a cap against
     and what `stream::worker_count` solves a budget against, so under discovery
     it is also the budget a run reports for itself.
     """
-    return jobs * reader_bytes(unit) + pool_floor_bytes(unit, jobs)
+    return jobs * reader_bytes(unit) + pool_bytes(unit, jobs)
 
 
 def discovered_budget(limit: int) -> int:
@@ -2420,17 +2421,16 @@ def discovered_budget(limit: int) -> int:
     predicted resident, `charge + MEMORY_UNPOOLED_BOUND` since `19.26`, must
     leave a fifth of the limit — so what a run reports is at most this and
     often less. That makes this an upper bound on the
-    budget rather than a prediction of it, which is what both uses below want:
-    a lower count *raises* the pool floor, so the floor window stays a
-    sufficient condition, and the count comparison stays an upper bound.
+    budget rather than a prediction of it, which is what the use below wants:
+    a count comparison that stays an upper bound.
 
     **Used to reason about the registered axis, never to report a reading.**
     Every number this figure publishes reads the budget back off the run's own
     `scan started` line, because a harness predicting it would be a second
     authority on the rule under test. What this answers instead is a question
-    about `RESERVE_LIMITS` itself — whether the limits registered there bracket
-    the window in which a term is billed at all — which is settled before any
-    run exists and cannot be read off one (`reserve_floor_problems`).
+    about `RESERVE_LIMITS` itself — whether the limits registered there can put
+    three distinct reader counts on a line — which is settled before any run
+    exists and cannot be read off one (`reserve_axis_problems`).
     """
     return max(0, limit - LIBRARY_MEMORY_RESERVE)
 
@@ -2441,11 +2441,13 @@ def block_path_afforded(unit: int, budget: int) -> bool:
     fallback.
 
     `BlockCache::affordable`, mirrored: `worker_memory(..).at(1) <= budget`,
-    which is `charge_bytes(unit, 1)` — the per-reader charge **plus that one
-    reader's pool floor**. `19.22` is what put the floor inside it, and the line
-    moved a long way: at 24 MiB blocks from 58.03 MiB to 130.0, and at 128 MiB
-    blocks from 266 to 650. So `reader_bytes <= budget` is not this comparison
-    and has not been since (`io.rs`, `BlockCache::affordable`).
+    which is `charge_bytes(unit, 1)` — the per-reader charge **plus the
+    retention list that one reader leaves standing**. `19.22` is what put the
+    list inside it and `M93` is what stopped it being double-counted, so the
+    line has been 106.03 MiB at 24 MiB blocks and 522.03 at 128 since — against
+    34.03 and 138.03 for the per-reader term alone. So `reader_bytes <= budget`
+    is not this comparison and has not been since `19.22` (`io.rs`,
+    `BlockCache::affordable`).
 
     **One function because the renderer asks the question at four places** — the
     flagless cell's own label, the fit's window, the model check's exclusion and
@@ -2478,7 +2480,7 @@ def afforded_readers(unit: int, budget: int) -> int:
     **Used to reason about the registered axis, never to report a reading**, on
     the same terms as `discovered_budget`. What it answers is whether
     `RESERVE_LIMITS` can put three distinct reader counts on a flagless
-    family's line at all — the fit-ability half of `reserve_floor_problems` —
+    family's line at all — which `reserve_axis_problems` asks —
     which is knowable before any run and, because the cap can only *collapse*
     two limits onto one count, is a necessary condition rather than a
     sufficient one. A sitting on a host with fewer cores than there are
@@ -2499,9 +2501,9 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
 
     - **billed** is what the budget rule charged — `charge_bytes(unit, jobs)`,
       which under discovery is also the budget the run reports for itself.
-    - **floor** is `pool_floor_bytes`, the part of that bill the block pool's
-      floor accounts for — inside `billed`, reported beside it because it is
-      the one term unbounded in the block size.
+    - **pool** is `pool_bytes`, the part of that bill the block pool's
+      retention list accounts for — inside `billed`, reported beside it because
+      it is the one term unbounded in the block size.
     - **unnamed** is `held - billed`, which is glibc's arena retention as far
       as any reading here goes (`roadmap-P19.18-compressed-account-notes.md`).
 
@@ -2511,8 +2513,8 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
     (`.claude/skills/evidence/SKILL.md`, rule 1).
     """
     billed = charge_bytes(unit, jobs)
-    floor = pool_floor_bytes(unit, jobs)
-    return billed, floor, held - billed
+    pool = pool_bytes(unit, jobs)
+    return billed, pool, held - billed
 
 
 #: The three bands `charge_model_problem` reports. Every one of the module's
@@ -2659,13 +2661,13 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
     fallback holds none of these terms, and a censored leg's reading is a bound
     rather than a number.
     """
-    billed, floor, unnamed = charge_model(unit, jobs, held)
+    billed, pool, unnamed = charge_model(unit, jobs, held)
     if unnamed < 0:
         return ChargeFault(
             BAND_OVER_BILL,
             f"**over-billed by {_fmt_budget_bytes(-unnamed)}** — {jobs} reader(s) were charged "
             f"{_fmt_budget_bytes(billed)}"
-            + (f", of which {_fmt_budget_bytes(floor)} is the pool floor" if floor else "")
+            + (f", of which {_fmt_budget_bytes(pool)} is the pool's retention list" if pool else "")
             + f", and the whole process held {_fmt_budget_bytes(held)}. The rule admitted "
             "fewer readers than the allocation affords.",
         )
@@ -2675,7 +2677,7 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
             f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
             f"{_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)} `MEMORY_RESERVE` that is meant to "
             f"cover it — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
-            + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
+            + (f", of which {_fmt_budget_bytes(pool)} is the pool's list," if pool else "")
             + f" against {_fmt_budget_bytes(held)} held. **The rule does not hold here**: the "
             "discovery cannot keep this arrangement inside its allocation.",
         )
@@ -2685,7 +2687,7 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
             f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
             f"{_fmt_budget_bytes(LIBRARY_MEMORY_UNPOOLED_BOUND)} `MEMORY_UNPOOLED_BOUND` the "
             f"margin predicts with — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
-            + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
+            + (f", of which {_fmt_budget_bytes(pool)} is the pool's list," if pool else "")
             + f" against {_fmt_budget_bytes(held)} held. **A finding about the bound, not the "
             "rule**: it is still inside `MEMORY_RESERVE`, so the allocation holds and what is "
             "wrong is the number the count is predicted against.",
@@ -2696,7 +2698,7 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
 #: The two compressed inputs the flagless axis is read over: the registered
 #: input, what the table calls it, and its block size.
 #:
-#: **Both block sizes, because the per-reader charge bills `2 × unit`.** A
+#: **Both block sizes, because the charge is a multiple of the unit.** A
 #: unit-shaped error in that charge is multiplied by the reader count, and
 #: `19.14` has already been wrong about the charge once; a fit taken at one
 #: block size cannot tell a term that scales with the unit from one that does
@@ -2704,7 +2706,7 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
 #: deliberately").
 #:
 #: The block size is declared here rather than read off the file because it is
-#: what `reader_bytes` and `pool_floor_bytes` are functions of, and the renderer
+#: what `reader_bytes` and `pool_bytes` are functions of, and the renderer
 #: needs it to say which legs took the block path at all — `parse` emits no
 #: decline note, that being a `PlanNote` on a query's `TableStream`, so
 #: `block_path_afforded` over the run's own reported budget is what answers it.
@@ -2722,42 +2724,34 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: number decides both terms of the arrangement — which is why these legs carry
 #: a **per-spec** container limit where every other figure takes its own.
 #:
-#: **512 MiB is the bottom of the range, and since `19.22` it is below the block
-#: path rather than at it.** It is where `19.15` measured 474 MiB median against
-#: 503.7 worst and the margin the gate asks for failed, taken when the path was
-#: afforded at the per-reader term alone; the floor now charged with that one
-#: reader puts the 24 MiB leg's line at 130.0 MiB against the 128 MiB a
-#: `512m` allocation grants, so this row reads the streaming fallback on both
-#: inputs and says so per cell (`block_path_afforded`, and `M88`). It is kept as
-#: the bottom of the axis because the rule's own worst headroom is there and a
-#: fallback leg is still a leg the allocation has to hold. 1 GiB and 1.5 GiB are
-#: where that sitting read 23.7% and 35.2% of headroom, so the fit has the whole
-#: shape of the curve in it rather than its worst end; and 2 GiB is where the
-#: 24 MiB leg's count saturates at the source's own recommendation, which is
-#: what separates "the allowance ran out" from "the recommendation did".
+#: **512 MiB is the bottom of the range.** It is where `19.15` measured 474 MiB
+#: median against 503.7 worst and the margin the gate asks for failed. The
+#: 128 MiB leg reads the streaming fallback there — 128 MiB granted against a
+#: 522.03 MiB line — and the 24 MiB leg takes the block path at one reader,
+#: which each cell says for itself (`block_path_afforded`, and `M88`). It is
+#: kept as the bottom of the axis because the rule's own worst headroom is
+#: there and a fallback leg is still a leg the allocation has to hold. 1 GiB
+#: and 1.5 GiB are where that sitting read 23.7% and 35.2% of headroom, so the
+#: fit has the whole shape of the curve in it rather than its worst end; and
+#: 2 GiB is where the 24 MiB leg's count saturates at the source's own
+#: recommendation, which is what separates "the allowance ran out" from "the
+#: recommendation did".
 #:
-#: **544 MiB and 1088 MiB are where the pool floor is billed at all, one per
-#: block size** (`reserve_floor_problems`, which fails the axis that reaches
-#: neither). `pool_floor_bytes` is `max(0, POOL_DEPTH − jobs) × unit`, so it is
-#: clamped off at four readers, and the other four limits resolve 4, 6, 11, 19
-#: or 24 on every block-path leg — so before these two, no cell billed the term
-#: `19.22` added and `19.24` gave a column of its own. Raising the bottom of the
-#: axis does not reach it and nor does extending the top: more allowance means more readers
-#: means the term stays clamped at zero. What reaches it is a limit **inserted
-#: under the clamp**, and the two windows are disjoint — a 24 MiB leg bills a
-#: floor for a limit in [514.03, 616.13) MiB and a 128 MiB leg for one in
-#: [1034.03, 1448.13), so one limit cannot cover both. These two sit one reader
-#: in: `544m` grants 160 MiB against the 130.03 one reader of 24 MiB blocks
-#: costs, and `1088m` grants 704 against 650.03 at 128 MiB blocks, so each
-#: resolves a single reader and bills three units of floor with it — 72 MiB and
-#: 384 MiB respectively, which is the over-bill side of the criterion and the
-#: side no grid search over reserve constants can report.
+#: **544 MiB and 1088 MiB were registered to reach a term that no longer
+#: decays** (`M89`, then `M93`). The term was `max(0, POOL_DEPTH − jobs) × unit`
+#: and clamped off at four readers, so a limit had to be inserted under the
+#: clamp for any cell to bill it at all; restated as the retention list the pool
+#: really holds it is billed at **every** cell, and above four readers it is the
+#: larger half of the charge. The two limits stay because they are additive legs
+#: and because the counts they add are ones no other limit resolves — `544m` two
+#: readers of 24 MiB blocks, `1088m` one of 128 — which is what
+#: `reserve_axis_problems` now asks of the axis.
 #:
 #: **Additive, so nothing already read moves**: `512m` keeps the axis's worst
-#: headroom, the other three keep theirs, and `544m` is also the smallest
-#: arrangement the mechanism has — one reader against a window of 11 to 24 —
-#: which is where a fit over the 24 MiB family is checked rather than
-#: extrapolated (`.claude/skills/evidence/SKILL.md`, rule 2).
+#: headroom and the other three keep theirs. `544m` is also close to the
+#: smallest arrangement the mechanism has, which is where a fit over the 24 MiB
+#: family is checked rather than extrapolated
+#: (`.claude/skills/evidence/SKILL.md`, rule 2).
 #:
 #: **A leg may be OOM-killed, and that is a reading rather than an apparatus
 #: failure** — see `KILL_TOLERANT`, which is where that licence is granted and
@@ -2865,9 +2859,10 @@ RESERVE_MECHANISM_UNIT = next(
 #: 474 MiB step `19.15` read across two *limits*, priced here at one byte.
 #:
 #: **It is `charge_bytes(unit, 1)` and not `reader_bytes(unit)`**: `19.22` put
-#: that one reader's pool floor inside `BlockCache::affordable`, so a pair
-#: straddling the per-reader term alone would have run the streaming decoder on
-#: *both* legs and published their difference as the cost of a path neither took.
+#: that one reader's share of the retention list inside `BlockCache::affordable`,
+#: so a pair straddling the per-reader term alone would have run the streaming
+#: decoder on *both* legs and published their difference as the cost of a path
+#: neither took.
 #:
 #: It earns its place whatever the attribution finds: it is what an operator
 #: needs in order to decide whether `--parallel-memory` is worth setting, and no
@@ -3331,37 +3326,29 @@ def charge_band_problems() -> list[str]:
     return bad
 
 
-def reserve_floor_problems() -> list[str]:
-    """What is wrong with the registered flagless axis: a block size at which no
-    registered limit bills the block pool's floor, or at which the limits cannot
-    reach `RESERVE_FIT_MIN_COUNTS` distinct reader counts.
+def reserve_axis_problems() -> list[str]:
+    """What is wrong with the registered flagless axis: a block size at which
+    the registered limits cannot reach `RESERVE_FIT_MIN_COUNTS` distinct reader
+    counts.
 
-    **A criterion that never evaluates a term is not a check of it.** The model
-    check's floor column is `pool_floor_bytes`, which is
-    `max(0, POOL_DEPTH − jobs) × unit` and therefore clamped to zero at four
-    readers or more; for as long as every block-path leg on the axis resolved
-    more than four, `19.11`'s acceptance — the verdict holds at every evaluated
-    cell — was satisfiable without the term `19.22` added ever being billed
-    anywhere. That is the over-bill side of the criterion, and it is the side a
-    grid search over reserve constants cannot report at all, because a charge
-    that is too large reads there as headroom.
+    **It no longer asks whether the pool term is billed anywhere**, and that is
+    `M93` rather than a check being dropped. The term was
+    `max(0, POOL_DEPTH − jobs) × unit`, clamped to zero at four readers or more,
+    so an axis whose every block-path leg resolved more than four satisfied
+    `19.11`'s acceptance without ever evaluating the term `19.22` added — which
+    is what `544m` and `1088m` were registered to reach. Restated as what the
+    pool holds, `(POOL_DEPTH.max(jobs) − 1) × unit` is billed at **every** cell
+    and is the larger half of the charge above four readers, so there is no
+    window left to register a limit inside and no cell that evades it. The two
+    limits stay: they are additive legs, and the reader counts they add are what
+    `RESERVE_FIT_MIN_COUNTS` is satisfied out of.
 
     **Asked of the registered limits rather than of a sitting**, which is what
-    makes it a `--check` and not a verdict: a limit bills the floor exactly when
-    its discovered budget affords one block-decoding reader of that file and
-    cannot afford `POOL_DEPTH` of them, and both comparisons are the library's
-    own arithmetic over numbers that exist before any run. The resolved count is
-    `min(recommendation, fit)`, so a smaller recommendation lowers it and
-    *raises* the floor — the window is a sufficient condition on every machine,
-    not a prediction of this one's count.
-
-    **Fit-ability is folded in here rather than walked again**, because it is a
-    question about the same registered limits and the same discovered budgets:
-    an axis whose block-path limits afford fewer than `RESERVE_FIT_MIN_COUNTS`
-    distinct reader counts can only ever publish a secant, and a later axis edit
-    that quietly makes that true should fail before a sitting is spent rather
-    than after. It is a **necessary** condition and not a sufficient one, which
-    is the other direction from the floor's: the resolved count is
+    makes it a `--check` and not a verdict: an axis whose block-path limits
+    afford fewer than `RESERVE_FIT_MIN_COUNTS` distinct reader counts can only
+    ever publish a secant, and a later axis edit that quietly makes that true
+    should fail before a sitting is spent rather than after. It is a
+    **necessary** condition and not a sufficient one: the resolved count is
     `min(recommendation, fit)`, so a host with fewer cores than there are
     distinct fits collapses two of them onto one count. That residue is a
     per-sitting property and is what the secant covers (`M90`); the static check
@@ -3369,18 +3356,6 @@ def reserve_floor_problems() -> list[str]:
     """
     bad = []
     for _name, label, unit in RESERVE_FLAGLESS_INPUTS:
-        window = (charge_bytes(unit, 1), charge_bytes(unit, LIBRARY_POOL_DEPTH))
-        if not any(
-            window[0] <= discovered_budget(limit) < window[1] for _, limit in RESERVE_LIMITS
-        ):
-            bad.append(
-                f"{label}: no registered limit grants a budget in "
-                f"[{_fmt_budget_bytes(window[0])}, {_fmt_budget_bytes(window[1])}), so every "
-                f"block-path leg resolves {LIBRARY_POOL_DEPTH} readers or more and "
-                "`pool_floor_bytes` is clamped to zero at every cell — register a limit of "
-                f"{_fmt_budget_bytes(window[0] + LIBRARY_MEMORY_RESERVE)} or more and under "
-                f"{_fmt_budget_bytes(window[1] + LIBRARY_MEMORY_RESERVE)}"
-            )
         counts = sorted(
             {afforded_readers(unit, discovered_budget(limit)) for _, limit in RESERVE_LIMITS}
             - {0}
@@ -6587,7 +6562,7 @@ def run_reserve(session: Session) -> str:
             "Leg",
             "Readers",
             "Billed",
-            "of which pool floor",
+            "of which pool list",
             "Worst rep held",
             "Unnamed",
             "Criterion",
@@ -6992,7 +6967,7 @@ def run_reserve(session: Session) -> str:
         "two hold different things and a column mixing them is two series printed as one: a leg "
         "takes the block path only where the budget it resolved affords one block-decoding "
         "reader of that file — `BlockCache::affordable`, which since `19.22` charges that "
-        "reader's pool floor with it, so the line is "
+        "reader's share of the pool's retention list with it, so the line is "
         f"{_fmt_budget_bytes(charge_bytes(RESERVE_FLAGLESS_INPUTS[0][2], 1))} at "
         f"{RESERVE_FLAGLESS_INPUTS[0][1]} and "
         f"{_fmt_budget_bytes(charge_bytes(RESERVE_FLAGLESS_INPUTS[-1][2], 1))} at "
@@ -7099,7 +7074,8 @@ def run_reserve(session: Session) -> str:
         f"{fmt_rss_delta(step_medians[0] - step_medians[-1])} between the two, "
         f"{step_medians[0] / max(step_medians[-1], 1):.1f}×. `BlockCache::affordable` compares "
         "the budget against what **one** reader costs — the per-reader term plus that one "
-        "reader's pool floor, which `19.22` put inside it — so the pair straddles that "
+        "reader's share of the pool's retention list, which `19.22` put inside it — so the pair "
+        "straddles that "
         f"comparison at {_fmt_budget_bytes(charge_bytes(RESERVE_MECHANISM_UNIT, 1))} and differs "
         "in nothing else. It is what an operator deciding whether to set `--parallel-memory` "
         "needs, and no other figure states it:\n\n"
@@ -9895,7 +9871,7 @@ def cmd_check(doc: Path) -> int:
     missing = [f.id for f in ALL_FIGURES if f.id not in found]
     unpinned = worker_count_problems()
     misspinned = pinned_count_problems()
-    unbilled_floor = reserve_floor_problems()
+    thin_axis = reserve_axis_problems()
     unargued_band = charge_band_problems()
     scaffolding = scaffolding_in(text)
 
@@ -9946,15 +9922,13 @@ def cmd_check(doc: Path) -> int:
             f"`--workers` for the\ndecode instrument, and `PARALLEL_JOBS` for the "
             f"{len(JOBS_AXIS)} families whose axis it is), so no\nfigure below inherits one.\n"
         )
-    if unbilled_floor:
+    if thin_axis:
         print(
-            "Block sizes whose flagless axis is registered wrong — one that never bills the\n"
-            f"block pool's floor (the term is clamped off at {LIBRARY_POOL_DEPTH} readers, so "
-            "an axis reaching it\nnowhere satisfies the model criterion without ever evaluating "
-            f"it), or one whose limits\ncannot reach the {RESERVE_FIT_MIN_COUNTS} distinct "
-            "reader counts a two-term fit needs:"
+            "Block sizes whose flagless axis is registered wrong — one whose limits cannot\n"
+            f"reach the {RESERVE_FIT_MIN_COUNTS} distinct reader counts a two-term fit needs, "
+            "so the family publishes a\nsecant however the sitting goes:"
         )
-        for line in unbilled_floor:
+        for line in thin_axis:
             print(f"  {line}")
         print()
     if unargued_band:
@@ -10119,7 +10093,7 @@ def cmd_check(doc: Path) -> int:
             or dangling
             or unpinned
             or misspinned
-            or unbilled_floor
+            or thin_axis
             or unargued_band
             or undeclared
             or unknown_outside

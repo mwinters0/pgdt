@@ -127,11 +127,12 @@ pub trait ByteRangeSource: Send + Sync {
     /// that path to be taken at all, whether or not it was
     /// (`docs/design/architecture.md`, "The compressed source").
     ///
-    /// **One reader's charge *plus the pool floor it leaves*, because that is
-    /// the line the gate actually draws** ([`BlockCache::affordable`]): a pool
-    /// serving one reader still holds [`POOL_DEPTH`] slots, so the recourse a
-    /// declined source names would be short of the budget that buys the path
-    /// back if it named the per-reader term alone.
+    /// **One reader's charge *plus the retention list it leaves behind*,
+    /// because that is the line the gate actually draws**
+    /// ([`BlockCache::affordable`]): a pool serving one reader still holds
+    /// [`POOL_DEPTH`] slots, so the recourse a declined source names would be
+    /// short of the budget that buys the path back if it named the per-reader
+    /// term alone.
     ///
     /// `None` for a source with no such path to take, which is every source
     /// but a compressed one.
@@ -211,11 +212,12 @@ pub trait ByteRangeSource: Send + Sync {
     /// layer above, which has a person's flags to fill in.
     ///
     /// **It is a [`WorkerMemory`] rather than a scalar, because one source's
-    /// cost is not linear in the count.** A block-decoding source holds a pool
-    /// floor below [`POOL_DEPTH`] readers that no per-worker term can express,
-    /// so the recommendation is a shape a budget is *solved* against
+    /// cost is not linear in the count.** A block-decoding source shares a
+    /// retention list that no per-worker term can express — it is
+    /// `(POOL_DEPTH − 1)` units at one reader and `(jobs − 1)` above the
+    /// depth — so the recommendation is a shape a budget is *solved* against
     /// ([`Parallelism::fit`]) rather than a number it is divided by. Every
-    /// other source states its per-worker term and no floor, which is the same
+    /// other source states its per-worker term and no pool, which is the same
     /// division it always was.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         None
@@ -448,8 +450,8 @@ pub enum PartitionRead {
 /// **It does not widen what a reader holds.** Retention on this path is capped
 /// by [`BufferPool::slots`] and not by the piece — [`BlockCache::slot`] drains
 /// to one below the slot count before every decode — so a worker walking `k`
-/// units holds the unit it views and the unit it is decoding exactly as it
-/// does at one, which is the two units [`BlockCache::reader_bytes`] charges.
+/// units holds the one unit it is decoding and viewing exactly as it does at
+/// one, which is the single unit [`BlockCache::reader_bytes`] charges.
 /// The cut width and the memory charge are therefore genuinely independent
 /// numbers, which is the whole reason [`Partitioning::window_end`] exists
 /// apart from [`Partitioning::partition_bytes`].
@@ -469,69 +471,81 @@ const BOUNDARIED_PARTITION_UNITS: usize = 1;
 ///
 /// - **per worker**, paid once for each concurrent reader, which is what
 ///   [`Partitioning::partition_bytes`] states; and
-/// - a **shared floor**, `floor_unit` bytes for every worker *below*
-///   `floor_below` — buffers a pool holds whatever the count, and so the term
-///   that is largest when the count is smallest.
+/// - a **shared pool**, `(pool_depth.max(workers) − 1) × pool_unit` — the
+///   buffers a pool retains beside the one each worker is filling, which is
+///   the block pool's retention list and nothing every other source has.
 ///
-/// **The floor is the block pool's, and it is a real quantity rather than a
-/// safety margin.** [`BufferPool::slots`] clamps a pool at
-/// `POOL_DEPTH.max(jobs)`, so below [`POOL_DEPTH`] readers the block pool
-/// holds `(POOL_DEPTH − jobs)` units that a per-reader charge of two units
-/// each never billed: the pool's free list and its retention together take
-/// `slots` of them and each reader is decoding into one besides, which is
-/// `slots + jobs` against a bill of `2 × jobs`. It is **unbounded in the block
-/// size** — 96 MiB at koji's 24 MiB blocks, 384 MiB at 128 and 2 GiB at 512 —
-/// which is why [`MEMORY_RESERVE`] cannot absorb it and why it is billed here
-/// instead.
+/// **The pool term is arithmetic from [`BufferPool`], not a safety margin.**
+/// [`BufferPool::slots`] clamps a pool at `POOL_DEPTH.max(jobs)`, and
+/// [`BlockCache::slot`] drains the retention list to `slots − 1` *before* it
+/// obtains the buffer a decode writes into — which [`BlockCache::retain`] then
+/// pushes onto that same list. So the pool holds `slots − 1` retained units
+/// beside the one unit each worker has in flight, and neither half is per
+/// worker alone: at one reader the shared half is `(POOL_DEPTH − 1)` units the
+/// allowance was never asked for, and above [`POOL_DEPTH`] it is `(jobs − 1)`,
+/// because the depth is the caller's own count. It is **unbounded in the block
+/// size** — 72 MiB at koji's 24 MiB blocks, 384 MiB at 128 and 1.5 GiB at 512,
+/// at a single reader — which is why [`MEMORY_RESERVE`] cannot absorb it and
+/// why it is billed here instead.
 ///
 /// **A budget is solved against this, never divided by it**
 /// ([`WorkerMemory::affords`]). `cap / per_worker` is the arithmetic this type
 /// replaces, and it errs in the one direction that matters: it admits readers
-/// whose share of the floor the allowance never granted.
+/// whose share of the pool the allowance never granted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WorkerMemory {
     per_worker: u64,
-    floor_unit: u64,
-    floor_below: usize,
+    pool_unit: u64,
+    pool_depth: usize,
 }
 
 impl WorkerMemory {
     /// A cost that is `per_worker` bytes a worker and nothing else — every
     /// source's shape but the block-decoding one's.
     pub const fn per_worker(per_worker: u64) -> Self {
-        Self { per_worker, floor_unit: 0, floor_below: 0 }
+        Self { per_worker, pool_unit: 0, pool_depth: 0 }
     }
 
-    /// State that a pool holds `unit` bytes for each worker short of `below`,
-    /// on top of the per-worker term.
-    pub const fn flooring(mut self, unit: u64, below: usize) -> Self {
-        self.floor_unit = unit;
-        self.floor_below = below;
+    /// State that a pool retains `unit` bytes for every slot but the one the
+    /// worker in flight is filling, over a pool `depth` slots deep or one slot
+    /// per worker, whichever is more — on top of the per-worker term.
+    pub const fn pooling(mut self, unit: u64, depth: usize) -> Self {
+        self.pool_unit = unit;
+        self.pool_depth = depth;
         self
     }
 
-    /// The per-worker term alone — what one more concurrent reader adds once
-    /// the floor is filled, and what a *cut* is sized by
-    /// ([`Partitioning::window_end`]).
+    /// The per-worker term alone — **what one concurrent reader holds on its
+    /// own**, and what a *cut* is sized by ([`Partitioning::window_end`]).
+    ///
+    /// It is deliberately not "what one more reader adds", which is not one
+    /// number: the shared pool grows by a unit for every reader past
+    /// `pool_depth` and by nothing below it, so the marginal cost is this term
+    /// under the depth and this term plus a unit above it. What stays true at
+    /// every count is that a reader holds this much of its own —
+    /// [`WorkerMemory::at`] is what a caller sizing an allowance asks.
     pub const fn bytes_per_worker(self) -> u64 {
         self.per_worker
     }
 
-    /// The shared floor at `workers` readers: zero at or above `floor_below`.
-    pub fn floor_bytes(self, workers: usize) -> u64 {
-        (self.floor_below.saturating_sub(workers) as u64).saturating_mul(self.floor_unit)
+    /// The shared pool at `workers` readers: `pool_depth.max(workers) − 1`
+    /// units, which is [`BufferPool::slots`] less the slot a decode is writing
+    /// into — never zero for a pooling source, and largest at the extremes of
+    /// the count rather than at one end of it.
+    pub fn pool_bytes(self, workers: usize) -> u64 {
+        (self.pool_depth.max(workers).saturating_sub(1) as u64).saturating_mul(self.pool_unit)
     }
 
     /// What `workers` concurrent readers cost, in bytes.
     pub fn at(self, workers: usize) -> u64 {
-        self.per_worker.saturating_mul(workers as u64).saturating_add(self.floor_bytes(workers))
+        self.per_worker.saturating_mul(workers as u64).saturating_add(self.pool_bytes(workers))
     }
 
     /// Whether this source states no cost at all, which is the declining
     /// default and every source before a cost was stated: such a source is
     /// bounded by the caller's own count and by nothing here.
     pub const fn is_zero(self) -> bool {
-        self.per_worker == 0 && self.floor_unit == 0
+        self.per_worker == 0 && self.pool_unit == 0
     }
 
     /// The same shape with `extra` bytes added to the per-worker term — what a
@@ -546,22 +560,28 @@ impl WorkerMemory {
     /// cap too small for even one worker is a real arrangement, and one worker
     /// is what the floors inside the mechanism deliver there.
     ///
-    /// **Two regimes, because the cost need not be monotone.** At or above
-    /// `floor_below` the floor is gone and the cost is one multiplication, so
-    /// the largest affordable count there is a single division. Below it the
-    /// floor decays as the count rises, so a larger count can cost *less*;
-    /// those candidates are enumerated rather than divided for, and there are
-    /// at most [`POOL_DEPTH`] of them.
+    /// **Two regimes, because the cost is piecewise linear.** At or above
+    /// `pool_depth` every reader adds its own term *and* a pool slot, so the
+    /// cost is `n × (per_worker + pool_unit) − pool_unit` and the largest
+    /// affordable count there is a single division. Below the depth the shared
+    /// pool is a constant `(pool_depth − 1)` units, so the cost is linear again
+    /// with a different intercept; those candidates are enumerated rather than
+    /// divided for, and there are at most [`POOL_DEPTH`] of them.
+    ///
+    /// The cost is non-decreasing in the count on both pieces, so the first
+    /// regime's answer is final whenever it reaches the depth at all.
     pub fn affords(self, cap: u64, most: usize) -> usize {
         let most = most.max(1);
-        let above = match self.per_worker {
+        let above = match self.per_worker.saturating_add(self.pool_unit) {
             0 => most,
-            per_worker => usize::try_from(cap / per_worker).unwrap_or(usize::MAX).min(most),
+            slope => usize::try_from(cap.saturating_add(self.pool_unit) / slope)
+                .unwrap_or(usize::MAX)
+                .min(most),
         };
-        if above >= self.floor_below {
+        if above >= self.pool_depth {
             return above.max(1);
         }
-        (1..=most.min(self.floor_below)).rev().find(|workers| self.at(*workers) <= cap).unwrap_or(1)
+        (1..=most.min(self.pool_depth)).rev().find(|workers| self.at(*workers) <= cap).unwrap_or(1)
     }
 }
 
@@ -572,8 +592,8 @@ impl WorkerMemory {
 pub struct Partitioning {
     boundaries: PartitionBoundaries,
     /// What concurrent readers of this source cost — the per-worker term every
-    /// constructor takes, plus whatever shared floor
-    /// [`Partitioning::flooring`] has stated ([`WorkerMemory`]).
+    /// constructor takes, plus whatever shared pool
+    /// [`Partitioning::pooling`] has stated ([`WorkerMemory`]).
     memory: WorkerMemory,
     retained: RetainedUnit,
     read: PartitionRead,
@@ -623,11 +643,12 @@ impl Partitioning {
         self
     }
 
-    /// State that this source holds `unit` bytes for every worker short of
-    /// `below`, on top of the per-worker charge — the block pool's floor, and
-    /// nothing every other source has ([`WorkerMemory`]).
-    pub fn flooring(mut self, unit: u64, below: usize) -> Self {
-        self.memory = self.memory.flooring(unit, below);
+    /// State that this source's pool retains `unit` bytes for every slot but
+    /// the one a worker is filling, over a pool `depth` slots deep or one per
+    /// worker — the block pool's retention list, and nothing every other
+    /// source has ([`WorkerMemory`]).
+    pub fn pooling(mut self, unit: u64, depth: usize) -> Self {
+        self.memory = self.memory.pooling(unit, depth);
         self
     }
 
@@ -650,10 +671,11 @@ impl Partitioning {
     ///
     /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`] read chunks, which
     /// a worker takes in one buffer. For a block-decoding compressed one it is
-    /// the block unit **twice** — the block being decoded and the one the
-    /// reader retains beside it — plus the chunk buffer a read straddling a
-    /// boundary is assembled into, plus the decoder's own retention: 58 MiB
-    /// against the 24 MiB blocks koji's download carries.
+    /// the block unit **once** — the block being decoded, which is the block
+    /// the reader then retains — plus the chunk buffer a read straddling a
+    /// boundary is assembled into, plus the decoder's own retention: 34 MiB
+    /// against the 24 MiB blocks koji's download carries. The rest of the
+    /// retention list is shared and is [`WorkerMemory`]'s second term.
     ///
     /// **The decoder's own retention is inside it, and it is a published
     /// number rather than a guess.** `xz_seek::Reader::decode_footprint()` —
@@ -1029,9 +1051,10 @@ impl Parallelism {
     ///
     /// **It solves rather than divides** ([`WorkerMemory::affords`]), because
     /// one source's cost is not linear in the count: a block-decoding source
-    /// holds a pool floor below [`POOL_DEPTH`] readers, so `cap / per_worker`
-    /// hands back a count whose floor the allowance never granted. The budget
-    /// it names is what that many workers actually spend, floor included,
+    /// shares a retention list no per-worker term carries, so `cap / per_worker`
+    /// hands back a count whose share of that list the allowance never granted.
+    /// The budget it names is what that many workers actually spend, pool
+    /// included,
     /// which is what keeps the number the run reports for itself true.
     ///
     /// **`charge_ceiling` is the margin, and it bounds the count alone.**
@@ -1146,12 +1169,12 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// resolved arrangement a property of the allocation and not of the machine's
 /// core count. What this constant covers is the flat term below.
 ///
-/// **What it does not cover, and never had to, is the block pool's floor.**
-/// [`BufferPool::slots`] clamps that pool at `POOL_DEPTH.max(jobs)` while the
-/// per-reader term bills `2 × unit`, so below four readers the pool holds
-/// `(POOL_DEPTH − jobs) × unit` that no per-reader term carries — unbounded in
-/// the block size, which is why it is billed by [`WorkerMemory`] rather than
-/// reserved for here
+/// **What it does not cover, and never had to, is the block pool's retention
+/// list.** [`BufferPool::slots`] clamps that pool at `POOL_DEPTH.max(jobs)`
+/// while a reader holds one unit of its own, so the pool holds
+/// `(POOL_DEPTH.max(jobs) − 1) × unit` that no per-reader term carries —
+/// unbounded in the block size, which is why it is billed by [`WorkerMemory`]
+/// rather than reserved for here
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
 /// **One constant, taken from the compressed leg, over-reserving the plain
@@ -2349,72 +2372,72 @@ impl BlockCache {
     }
 
     /// What **one concurrent reader** of this file holds while it decodes
-    /// whole blocks, in bytes: the block unit twice, the chunk buffer a
-    /// straddling read is assembled into, and the decoder's own retention
+    /// whole blocks, in bytes: one block unit, the chunk buffer a straddling
+    /// read is assembled into, and the decoder's own retention
     /// (`docs/design/architecture.md`, "The compressed source").
     ///
-    /// **Two units, because a coupled count of one is the shape this pool
-    /// rejects by name.** [`BlockCache::slot`] drains the retention list to
-    /// `slots() - 1` before taking a slot, so a one-slot pool retains nothing
-    /// and drains before every decode — it stops pooling exactly when a caller
-    /// is holding a block. A reader therefore holds the block it is decoding
-    /// and the one it kept, and that is the same sentence as "the coupled
-    /// count is at least two" rather than a constant of its own.
+    /// **One unit, because the block a reader decodes *becomes* the block it
+    /// retains.** [`BlockCache::slot`] drains the retention list to
+    /// `slots() - 1` before taking a slot, and [`BlockCache::retain`] then
+    /// pushes that same buffer's block onto the list it just drained — so the
+    /// two are one buffer and not two. What sits beside them is the rest of
+    /// the retention list, which is `slots() - 1` units shared by every reader
+    /// and is [`WorkerMemory`]'s second term rather than this one.
     ///
     /// It is one number with two consumers — [`BlockCache::affordable`], which
     /// asks whether the budget admits a single such reader, and
     /// [`XzSource::partition_advice`], which is what a caller's budget is
     /// divided by to reach a worker count. They were two statements of one
-    /// cost until the divisor was found charging a *single* unit and nothing
-    /// for the decoder, 25 MiB against a measured 59.4.
+    /// cost until the divisor was found charging nothing for the decoder,
+    /// 25 MiB against a measured 59.4.
     fn reader_bytes(&self, chunk_bytes: u64, decode_bytes: u64) -> u64 {
-        (self.unit as u64)
-            .saturating_mul(2)
-            .saturating_add(chunk_bytes)
-            .saturating_add(decode_bytes)
+        (self.unit as u64).saturating_add(chunk_bytes).saturating_add(decode_bytes)
     }
 
     /// What **the block path costs at `workers` concurrent readers**: the
-    /// per-reader charge above, plus the pool floor those readers leave
-    /// unfilled ([`WorkerMemory`]).
+    /// per-reader charge above, plus the retention list those readers share
+    /// ([`WorkerMemory`]).
     ///
-    /// **The floor is `(POOL_DEPTH − workers) × unit`, and it is arithmetic
-    /// from this pool rather than a measured term.** [`BufferPool::slots`]
-    /// clamps the block pool at `POOL_DEPTH.max(jobs)`; the free list and the
-    /// retention list share those slots ([`BufferPool::reserve`]) and each
-    /// reader is decoding into a buffer besides, so the pool holds
-    /// `slots + workers` units against a bill of `2 × workers`. Above
-    /// [`POOL_DEPTH`] readers the two agree exactly and the floor is zero;
-    /// below it the difference is what nobody paid for. It is confirmed
-    /// against five cells of `19.16`'s readings to 1.4 MiB
+    /// **The shared term is `(POOL_DEPTH.max(workers) − 1) × unit`, and it is
+    /// arithmetic from this pool rather than a measured term.**
+    /// [`BufferPool::slots`] clamps the block pool at `POOL_DEPTH.max(jobs)`;
+    /// the free list and the retention list share those slots
+    /// ([`BufferPool::reserve`]), and [`BlockCache::slot`] drains to
+    /// `slots - 1` before obtaining the buffer [`BlockCache::retain`] then
+    /// pushes onto that same list — so the pool holds `slots - 1 + workers`
+    /// units and no more. Charging `2 × workers` plus a decaying floor billed
+    /// one unit past that at *every* count, which is what the acceptance
+    /// sitting of 2026-09-12 read off the one-reader cells: 130.0 MiB billed
+    /// against 111.1 held at 24 MiB blocks, 650.0 against 526.9 at 128
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     fn worker_memory(&self, chunk_bytes: u64, decode_bytes: u64) -> WorkerMemory {
         WorkerMemory::per_worker(self.reader_bytes(chunk_bytes, decode_bytes))
-            .flooring(self.unit as u64, POOL_DEPTH)
+            .pooling(self.unit as u64, POOL_DEPTH)
     }
 
     /// Whether `budget` admits one such reader — the line that decides between
     /// block decode and the streaming reader
     /// (`docs/design/architecture.md`, "The compressed source").
     ///
-    /// **It is asked of *one* reader and charges that reader's pool floor with
-    /// it**, which is what makes the stated budget true rather than nearly
-    /// true: a pool serving a single reader still holds [`POOL_DEPTH`] slots,
-    /// so admitting the path on the per-reader charge alone allows
-    /// `(POOL_DEPTH − 1)` units the caller never granted. The decline it
-    /// widens is accepted rather than worked around — at 128 MiB blocks the
-    /// line moves from 266 MiB to 650 — because it is the first arrangement in
-    /// which a large-block file's stated number holds, the decline is reported
+    /// **It is asked of *one* reader and charges that reader's share of the
+    /// retention list with it**, which is what makes the stated budget true
+    /// rather than nearly true: a pool serving a single reader still holds
+    /// [`POOL_DEPTH`] slots, so admitting the path on the per-reader charge
+    /// alone allows `(POOL_DEPTH − 1)` units the caller never granted. The
+    /// decline it widens is accepted rather than worked around — at 128 MiB
+    /// blocks the line moves from 138 MiB to 522 — because it is the first
+    /// arrangement in which a large-block file's stated number holds, the
+    /// decline is reported
     /// (`crate::stream::compressed_block_path_declined`), and a caller who
     /// wants the path back states a budget.
     ///
     /// **The chunk and the decoder come off the top, and what is left must
-    /// hold two blocks.** Both are paid on the streaming path too — that
-    /// fallback assembles reads into a chunk buffer and keeps a decoder of its
-    /// own — so they are not what the decline saves; the two block slots are.
-    /// Stating it as one comparison against the whole per-reader cost is what
-    /// keeps the decline and the divisor from being two sentences that can
-    /// drift apart.
+    /// hold [`POOL_DEPTH`] blocks.** Both are paid on the streaming path too —
+    /// that fallback assembles reads into a chunk buffer and keeps a decoder
+    /// of its own — so they are not what the decline saves; the block slots
+    /// are. Stating it as one comparison against the whole per-reader cost is
+    /// what keeps the decline and the divisor from being two sentences that
+    /// can drift apart.
     ///
     /// **This is where a constant used to be.** The refusal was a fixed
     /// 256 MiB beside a fixed 64 MiB budget, two unrelated numbers of which
@@ -2716,8 +2739,8 @@ impl XzSource {
     /// What concurrent block-decoding readers of this file would cost, whether
     /// or not the budget admits one: [`BlockCache::worker_memory`] over this
     /// source's own chunk size ([`XzSource::charged_chunk_bytes`]) and decoder
-    /// charge — the per-reader charge and the pool floor below it, as one
-    /// shape.
+    /// charge — the per-reader charge and the retention list shared beside
+    /// it, as one shape.
     ///
     /// **It is the one composition site**, which is what keeps the
     /// recommendation ([`ByteRangeSource::default_worker_memory`]), the gate
@@ -2928,14 +2951,15 @@ impl XzSource {
         // keeps the default for the same reason it keeps the retained unit:
         // there a read is assembled into a chunk buffer, and nothing is gained
         // by asking for a longer one.
-        // **And the block pool's floor is stated beside the per-reader
-        // charge.** `BufferPool::slots` clamps that pool at
-        // `POOL_DEPTH.max(jobs)`, so below four readers it holds units the
-        // per-reader charge never billed; stating it here is what lets
+        // **And the block pool's retention list is stated beside the
+        // per-reader charge.** `BufferPool::slots` clamps that pool at
+        // `POOL_DEPTH.max(jobs)` and `BlockCache::slot` drains to one below
+        // it, so the pool holds `slots - 1` units on top of the one each
+        // reader has in flight; stating it here is what lets
         // `crate::stream::worker_count` solve for a count rather than divide
         // by one ([`BlockCache::worker_memory`]).
         Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
-            .flooring(cache.unit as u64, POOL_DEPTH)
+            .pooling(cache.unit as u64, POOL_DEPTH)
             .retaining(RetainedUnit::Partition)
             .reading(PartitionRead::Whole { unit: cache.unit as u64 })
     }
@@ -3118,7 +3142,7 @@ impl ByteRangeSource for XzSource {
     }
 
     /// **What readers of this file hold**: [`XzSource::block_worker_memory`] —
-    /// the per-reader charge plus the block pool's floor, which is the shape
+    /// the per-reader charge plus the block pool's retention list, which is the shape
     /// `crate::stream::worker_count` and [`Parallelism::fit`] both solve
     /// against to hand back a count. `None` where there is no block path to
     /// buy — a file with no blocks, or one whose largest block is not a length
@@ -3783,22 +3807,22 @@ mod tests {
         let one = source.partitions(from..from + 10);
         assert_eq!(one.max_partitions(), Some(1));
 
-        // A partition costs what one concurrent reader holds: two block slots
-        // — the one being decoded and the one retained beside it — the chunk
-        // buffer a straddling read is assembled into, and the decoder's own
-        // retention, which is a published number rather than a guess. The
+        // A partition costs what one concurrent reader holds: one block slot
+        // — the one being decoded, which is the one it then retains — the
+        // chunk buffer a straddling read is assembled into, and the decoder's
+        // own retention, which is a published number rather than a guess. The
         // chunk term is the one a scan settles at, no read loop having
         // announced one here ([`XzSource::charged_chunk_bytes`]).
         let unit = source.blocks.as_ref().unwrap().unit as u64;
         assert_eq!(
             whole.partition_bytes(),
-            2 * unit + crate::DEFAULT_CHUNK_SIZE as u64 + source.decode_bytes
+            unit + crate::DEFAULT_CHUNK_SIZE as u64 + source.decode_bytes
         );
         assert_eq!(whole.worker_memory().bytes_per_worker(), whole.partition_bytes());
 
         // **And the gate is that same charge at one reader**, which is the
-        // per-reader term plus the pool floor a single reader leaves unfilled
-        // — `(POOL_DEPTH - 1)` units nobody else is there to take
+        // per-reader term plus the retention list a single reader leaves
+        // standing — `(POOL_DEPTH - 1)` units nobody else is there to take
         // ([`WorkerMemory`]). That is what a budget has to clear for the block
         // path to be taken at all, so it is what a declined source names as
         // the recourse.
@@ -3833,8 +3857,8 @@ mod tests {
         assert_eq!(decoding.retained_unit(), RetainedUnit::Partition);
         assert_eq!(
             decoding.partition_bytes(),
-            2 * 4096 + (1 << 20) + (9 << 20),
-            "two block slots, the chunk buffer, and the decoder's own retention"
+            4096 + (1 << 20) + (9 << 20),
+            "one block slot, the chunk buffer, and the decoder's own retention"
         );
 
         let streaming = XzSource::partition_advice(&table, None, 1 << 20, 9 << 20, 0..4 * 4096);
@@ -3930,7 +3954,7 @@ mod tests {
         let size = blocks * 4096;
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
         let advice = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
-        // The charge is two blocks, a chunk and the decoder — three orders of
+        // The charge is a block, a chunk and the decoder — three orders of
         // magnitude above the 4 KiB unit here, which is what made a window
         // sized by it swallow the whole file.
         assert!(advice.partition_bytes() > size, "the charge is not the cut size");
@@ -3983,43 +4007,44 @@ mod tests {
         assert_eq!(advice.window_end(0, 3, 17), 17, "the limit binds");
     }
 
-    /// **Whole-block decode is declined unless the budget affords the two
-    /// blocks a reader holds *and* the pool floor beside them.** A pool of one
-    /// slot retains nothing — `BlockCache::slot` drains to `slots() - 1`
-    /// before every decode — so it stops pooling exactly when a caller is
-    /// holding a block, which is why a reader is charged two units; and
-    /// `BufferPool::slots` clamps this pool at `POOL_DEPTH.max(jobs)`, so a
-    /// single reader leaves `(POOL_DEPTH - 1)` units standing that nothing
-    /// else is there to fill. [`POOL_DEPTH`] units is therefore the line, not
-    /// two.
+    /// **Whole-block decode is declined unless the budget affords the one
+    /// block a reader holds *and* the retention list beside it.** A reader's
+    /// decode buffer and the block it then retains are the same buffer —
+    /// `BlockCache::slot` drains the list to `slots() - 1` and
+    /// `BlockCache::retain` pushes that buffer's block back onto it — so a
+    /// reader is charged one unit; and `BufferPool::slots` clamps this pool at
+    /// `POOL_DEPTH.max(jobs)`, so a single reader leaves `(POOL_DEPTH - 1)`
+    /// units of list that nothing else is there to fill. [`POOL_DEPTH`] units
+    /// is therefore the line, and it always was — what moved is which term
+    /// carries which unit.
     #[test]
-    fn the_block_path_wants_room_for_two_blocks_and_the_pool_floor() {
+    fn the_block_path_wants_room_for_one_block_and_the_retention_list() {
         let table = four_block_table();
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
         // The two terms a decline does not save, held at zero so that this
         // test is about the block slots alone; the test above is where they
         // bind.
         let unit = cache.unit as u64;
-        let floor = POOL_DEPTH as u64 - 1;
+        let retained = POOL_DEPTH as u64 - 1;
 
         assert!(
-            cache.affordable(0, 0, unit * (2 + floor)),
-            "two units for the reader, and the floor the pool holds beside it"
+            cache.affordable(0, 0, unit * (1 + retained)),
+            "one unit for the reader, and the list the pool retains beside it"
         );
         cache.pool.set_limits(cache.unit * 2, POOL_DEPTH);
         assert_eq!(cache.pool.slots(), 2);
 
         assert!(
-            !cache.affordable(0, 0, unit * (2 + floor) - 1),
-            "a byte short of the floor is the un-poolable shape, so it is declined"
+            !cache.affordable(0, 0, unit * (1 + retained) - 1),
+            "a byte short of the list is a pool the budget never granted, so it is declined"
         );
-        // Two units alone were the whole of the old line, and the floor is
-        // what it left unbilled.
-        assert!(!cache.affordable(0, 0, unit * 2));
+        // One unit alone is the per-reader term, and the retained list is what
+        // it does not carry.
+        assert!(!cache.affordable(0, 0, unit));
         // And the reader's other two terms are inside the same number: the
         // same budget that afforded the blocks declines them once a chunk
         // buffer and a decoder are charged beside it.
-        assert!(!cache.affordable(1, 1, unit * (2 + floor)));
+        assert!(!cache.affordable(1, 1, unit * (1 + retained)));
     }
 
     /// **One slot count covers the retained blocks and the free ones
@@ -4362,30 +4387,30 @@ mod tests {
             let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
             cache.affordable(crate::DEFAULT_CHUNK_SIZE as u64, DECODE, budget)
         };
-        // **`POOL_DEPTH` units, not two.** A single reader is charged the two
-        // blocks it holds *and* the pool floor beside them
+        // **`POOL_DEPTH` units, not one.** A single reader is charged the
+        // block it holds *and* the retention list beside it
         // ([`BlockCache::worker_memory`]), so koji's 24 MiB blocks want
-        // 5 x 24 MiB plus the chunk and the decoder — 131 MiB — where the
-        // per-reader term alone was 58 and fitted the default. The default
+        // 4 x 24 MiB plus the chunk and the decoder — 107 MiB — where the
+        // per-reader term alone is 34 and fits the default. The default
         // budget therefore declines an ordinary compressed dump, which is the
         // first arrangement in which that stated number is true: the pool held
         // four units under it either way (`docs/design/architecture.md`,
         // "Execution model and API surface").
         assert!(!affordable(24 << 20, DEFAULT_MEMORY_BUDGET));
-        assert!(affordable(24 << 20, 131 << 20));
+        assert!(affordable(24 << 20, 107 << 20));
         // 128 and 192 MiB blocks — `xz --block-size=128MiB`, and `xz -9 -T0`,
         // whose block is three times its 64 MiB dictionary — are declined at
         // the default and taken once the caller allows the room.
         assert!(!affordable(128 << 20, DEFAULT_MEMORY_BUDGET));
         assert!(!affordable(192 << 20, DEFAULT_MEMORY_BUDGET));
-        assert!(!affordable(192 << 20, 512 << 20), "five units of 192 MiB is 960");
-        assert!(affordable(192 << 20, 971 << 20));
-        // **The unavoidable terms come off the top.** Five 24 MiB blocks fit a
-        // 120 MiB budget on their own and the file is declined all the same,
+        assert!(!affordable(192 << 20, 768 << 20), "four units of 192 MiB is 768");
+        assert!(affordable(192 << 20, 779 << 20));
+        // **The unavoidable terms come off the top.** Four 24 MiB blocks fit a
+        // 96 MiB budget on their own and the file is declined all the same,
         // because a reader of it also holds the chunk buffer and the decoder —
         // both of which the streaming fallback holds too, which is why they
         // bound the decision rather than being saved by it.
-        assert!(!affordable(24 << 20, 120 << 20));
+        assert!(!affordable(24 << 20, 96 << 20));
         // A file with no blocks at all — `xz -c /dev/null` writes one — has no
         // unit to size a slot with, so there is no cache to ask.
         let empty = xz_seek::SeekTable {
@@ -4971,10 +4996,12 @@ mod tests {
     fn the_count_answers_to_the_margin_and_not_to_the_recommendation() {
         let root = FakeRoot::new();
         root.v2("/leaf").v2_limits("/leaf", Some(&(2u64 << 30).to_string()), None);
-        // What one reader of an ordinary 24 MiB-block `.xz` holds, and the
-        // pool floor below four readers of it.
-        let reader = 58 << 20;
-        let memory = WorkerMemory::per_worker(reader).flooring(24 << 20, POOL_DEPTH);
+        // What one reader of a 128 MiB-block `.xz` holds, and the retention
+        // list the pool keeps beside it — the block size at which a 2 GiB
+        // limit resolves well inside either host's core count, so that what
+        // binds is unambiguous.
+        let reader = 138 << 20;
+        let memory = WorkerMemory::per_worker(reader).pooling(128 << 20, POOL_DEPTH);
 
         let narrow = Parallelism::discover_in(root.path(), 24, Some(memory));
         let wide = Parallelism::discover_in(root.path(), 64, Some(memory));
@@ -4983,7 +5010,7 @@ mod tests {
 
         // And what it resolves to leaves the margin: the charge plus the
         // unpooled bound is under four fifths of the limit, where the cap
-        // alone would have admitted twenty-eight readers and left 13%.
+        // alone would have admitted a sixth reader.
         let limit = 2u64 << 30;
         let charge = wide.memory_bytes().unwrap();
         assert!(
@@ -5009,24 +5036,22 @@ mod tests {
     /// `BlockCache::affordable` reads, so the compressed block path is not
     /// declined by the margin at any limit.
     ///
-    /// The arrangement is a 128 MiB-block file at a 1088 MiB limit, which is
-    /// where that window sits now that the prediction uses
-    /// [`MEMORY_UNPOOLED_BOUND`]: the allowance must fall under one reader's
+    /// The arrangement is a 128 MiB-block file at a 960 MiB limit, which is
+    /// where that window sits: the allowance must fall under one reader's
     /// charge while the cap stays above it, and at 24 MiB blocks no limit does
-    /// both. It is also the acceptance leg the `reserve` figure registers for
-    /// the pool floor, so the cell this pins is one a sitting reads.
+    /// both.
     #[test]
     fn the_margin_never_takes_the_last_reader_or_the_budget_it_spends() {
         let root = FakeRoot::new();
-        // 1088 MiB: the cap is 704 MiB and the margin allowance 614.4, against
-        // the 650 MiB one block-decoding reader of a 128 MiB-block file is
+        // 960 MiB: the cap is 576 MiB and the margin allowance 512, against
+        // the 522 MiB one block-decoding reader of a 128 MiB-block file is
         // charged.
-        root.v2("/leaf").v2_limits("/leaf", Some(&(1088u64 << 20).to_string()), None);
-        let memory = WorkerMemory::per_worker(266 << 20).flooring(128 << 20, POOL_DEPTH);
+        root.v2("/leaf").v2_limits("/leaf", Some(&(960u64 << 20).to_string()), None);
+        let memory = WorkerMemory::per_worker(138 << 20).pooling(128 << 20, POOL_DEPTH);
         let tight = Parallelism::discover_in(root.path(), 24, Some(memory));
         assert_eq!(tight.jobs(), 1);
         assert_eq!(tight.memory_bytes(), Some(memory.at(1)));
-        assert!(memory.at(1) > margin_allowance(1088 << 20), "the margin cannot afford it");
+        assert!(memory.at(1) > margin_allowance(960 << 20), "the margin cannot afford it");
     }
 
     /// **The margin binds at a large limit and is inert at a small one**, which
@@ -5189,17 +5214,49 @@ mod tests {
         );
     }
 
+    /// **The closed form agrees with a search, over the whole grid.**
+    /// [`WorkerMemory::affords`] answers in one division above `pool_depth`
+    /// and by enumeration below it, which is two pieces of arithmetic where
+    /// the question is one — and the boundary between them is exactly where a
+    /// shape with a pool term stops being `n × (per_worker + pool_unit)`. So
+    /// it is checked against the definition it is an optimisation of: the
+    /// largest `n` in `1..=most` with `at(n) <= cap`, never zero.
+    #[test]
+    fn the_afforded_count_is_the_largest_one_the_cap_holds() {
+        let shapes = [
+            WorkerMemory::default(),
+            WorkerMemory::per_worker(0).pooling(24 << 20, POOL_DEPTH),
+            WorkerMemory::per_worker(34 << 20),
+            WorkerMemory::per_worker(34 << 20).pooling(24 << 20, POOL_DEPTH),
+            WorkerMemory::per_worker(138 << 20).pooling(128 << 20, POOL_DEPTH),
+            WorkerMemory::per_worker(1).pooling(1, 1),
+            WorkerMemory::per_worker(7).pooling(3, 9),
+        ];
+        for memory in shapes {
+            for cap in [0u64, 1, 3, 7, 16, 100, 24 << 20, 128 << 20, 1 << 30, u64::MAX] {
+                for most in [1usize, 2, 4, 5, 11, 64] {
+                    let want = (1..=most).rev().find(|n| memory.at(*n) <= cap).unwrap_or(1);
+                    assert_eq!(
+                        memory.affords(cap, most),
+                        want,
+                        "{memory:?} at cap {cap} most {most}"
+                    );
+                }
+            }
+        }
+    }
+
     /// **A source recommends what its workers hold**, so that "no limit found"
     /// cannot mean "serial": one reader of an ordinary compressed dump costs
     /// more than the 64 MiB fallback, and a count nothing can afford is not a
     /// recommendation. The plain source inherits the silence it inherits for
     /// the worker count.
     ///
-    /// **A shape rather than a scalar**, because the block pool's floor is not
-    /// per worker: `block_decode_bytes` is that same shape evaluated at one
-    /// reader — the gate's own number — and is strictly above the per-worker
-    /// term, while at [`POOL_DEPTH`] readers the floor is gone and the cost is
-    /// the per-worker term times the count.
+    /// **A shape rather than a scalar**, because the block pool's retention
+    /// list is not per worker: `block_decode_bytes` is that same shape
+    /// evaluated at one reader — the gate's own number — and is strictly above
+    /// the per-worker term, while past [`POOL_DEPTH`] readers every further
+    /// reader adds a unit of list as well as its own term.
     #[test]
     fn a_compressed_source_recommends_what_its_workers_hold() {
         assert_eq!(BareSource.default_worker_memory(), None);
@@ -5210,15 +5267,17 @@ mod tests {
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
         let memory = source.default_worker_memory().expect("a block path to price");
+        let unit = source.blocks.as_ref().expect("a block cache").unit as u64;
         assert_eq!(source.block_decode_bytes(), Some(memory.at(1)));
-        assert!(
-            memory.at(1) > memory.bytes_per_worker(),
-            "one reader leaves a pool floor nobody else fills"
+        assert_eq!(
+            memory.at(1),
+            memory.bytes_per_worker() + (POOL_DEPTH as u64 - 1) * unit,
+            "one reader leaves a retention list nobody else fills"
         );
         assert_eq!(
-            memory.at(POOL_DEPTH),
-            memory.bytes_per_worker() * POOL_DEPTH as u64,
-            "at the pool's own depth the floor is filled and the cost is linear"
+            memory.at(POOL_DEPTH + 2),
+            memory.bytes_per_worker() * (POOL_DEPTH as u64 + 2) + (POOL_DEPTH as u64 + 1) * unit,
+            "past the pool's own depth each reader brings a slot of list with it"
         );
     }
 

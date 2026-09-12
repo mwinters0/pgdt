@@ -187,10 +187,12 @@ tables is tens of megabytes resident before any chunk size is chosen.
 **An `.xz` source costs more than a plain one**, and by an amount the *file*
 chooses as much as you: it decodes a whole compressed block at a time and keeps
 as many of them as the budget affords, so a file of 24 MiB blocks adds about
-58 MiB resident for every worker the budget allows — two of those blocks, the
-read buffer, and the decompressor's own working memory — over a floor of four
-blocks the pool keeps whatever the worker count is. So the first worker on such
-a file costs about 130 MiB and each one after it about 58. That is what buys
+34 MiB resident for every worker the budget allows — the block that worker is
+decoding, the read buffer, and the decompressor's own working memory — over a
+pool that keeps a block for every slot but the one being filled: three of them
+at one worker, and one more for each worker past four. So the first worker on
+such a file costs about 106 MiB, the next three about 34 each, and every one
+after that about 58. That is what buys
 reading the same block repeatedly for free; the block size is set when the file is compressed
 (`xz --block-size=`), not when it is read. A file whose blocks leave the budget
 no room for one such reader is read a different way — see `--parallel-memory`
@@ -210,8 +212,8 @@ file.** It is a bound rather than a target: pgdq will not exceed it by
 allocating a buffer bigger than you allowed. The one place that bites is `.xz`
 input. A compressed file is normally read a whole block at a
 time, which is what makes reading the same block twice free — but that needs
-room for **five** blocks at one worker: the two that worker holds, one being
-kept while the next is decoded, and three more, because the pool keeps four
+room for **four** blocks at one worker: the one that worker is decoding, which
+is the one it then keeps, and three more, because the pool keeps four slots
 whatever the worker count is. The decompressor's own working memory goes beside
 them — mostly the dictionary size the file's own header declares, which is
 about 9 MB all told for an ordinarily compressed file. A file whose blocks do
@@ -221,15 +223,15 @@ it costs is that reading *backwards* means decoding forward from the start of
 the block again, which `query` does and `parse` never does.
 
 Whether that happens is a question about *your* budget rather than about the
-file alone: a 24 MiB-block file needs about 130 MiB, and one written by
-`xz -9 -T0` — whose threaded blocks are about 192 MiB — needs about 970 MiB.
+file alone: a 24 MiB-block file needs about 106 MiB, and one written by
+`xz -9 -T0` — whose threaded blocks are about 192 MiB — needs about 778 MiB.
 **`query` tells you when the budget is short**, once, on stderr, naming the
 file's largest block beside the budget that declined it — and, where you did
 not state that budget, where it came from, since the number to change is then
 your allocation and not a flag:
 
 ```
-warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 681608992 byte(s) or more to read it a block at a time — the budget in force is 67108864 (discovered: /sys/fs/cgroup/memory.max states a limit of 469762048 byte(s))
+warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 547391264 byte(s) or more to read it a block at a time — the budget in force is 67108864 (discovered: /sys/fs/cgroup/memory.max states a limit of 469762048 byte(s))
 ```
 
 If you have the memory, `--parallel-memory 805306368` buys the block path back.
@@ -255,9 +257,9 @@ nothing of its own and stays on the 64 MiB pgdq has always used, whatever the
 limit above it says. And where the ceiling affords fewer readers than the file
 would have run, **the worker count comes down with the budget** instead of being
 asked for and left undelivered: the same compressed file in a 512 MiB container
-gets 128 MiB, which is short of the 130 one block-decoding reader wants, so it
-reads with a single worker through the streaming decoder — and the run says as
-much before it starts (below, "Status on stderr").
+gets 128 MiB, which affords the 106 one block-decoding reader wants and not
+the 140 two of them do, so it reads a block at a time with a single worker —
+and the run says as much before it starts (below, "Status on stderr").
 
 **A flagless run also leaves a fifth of the limit free, and that is a second
 thing the worker count answers to.** What kills a container is one run's peak
@@ -299,9 +301,8 @@ sooner — and fewer still where the file itself has fewer blocks than that:
 pgdq splits a compressed file at its block boundaries, so a file with six
 blocks reads with six workers on a machine of any width. **How many of those workers actually read is then bounded by
 `--parallel-memory`**: one reader of an ordinary 24 MiB-block file wants about
-130 MiB once the pool's four-block floor is counted, so a budget of 64 MiB
-delivers one worker whatever `--jobs` says, reading through the streaming
-decoder. Left
+106 MiB once the pool's four slots are counted, so a budget of 64 MiB delivers
+one worker whatever `--jobs` says, reading through the streaming decoder. Left
 unstated the budget is chosen to afford the count, and where the allocation
 cannot afford it the count itself is lowered to what can be paid for. **A
 budget you state lowers a count the file recommended in exactly the same way**
@@ -343,9 +344,9 @@ can.
 > is; two pieces need about 145 MiB. On an `.xz` file read a block at a time
 > there is no second cost: the batch holds its rows inside the block its own
 > worker already decoded, so the pieces are bounded by what one reader holds —
-> two blocks, a read buffer and the decompressor's own working memory, over the
-> pool's floor of four blocks. That is about 130 MiB for the first piece on a
-> file of 24 MiB blocks and about 58 for each one after it, so a 64 MiB budget
+> a block, a read buffer and the decompressor's own working memory, over the
+> pool's four slots. That is about 106 MiB for the first piece on a
+> file of 24 MiB blocks and 34 to 58 for each one after it, so a 64 MiB budget
 > affords none of them there — the file is read through the streaming decoder
 > instead — and `--parallel-memory` is what buys them back. `parse` carries no batch cost on
 > either shape — it builds none — so its `--jobs` is bound by the decode cost
@@ -376,9 +377,9 @@ file `--jobs` and `--parallel-memory` are worth raising together: more workers
 with no room to hold what they decode buys less than either number suggests.
 
 > **On an `.xz` file, expect a parallel scan to hold more than
-> `--parallel-memory` names.** The budget charges every reader both of the
-> blocks it holds — the one being decoded and the one kept beside it — and the
-> pool's own floor of four blocks besides, so what a scan holds beyond the
+> `--parallel-memory` names.** The budget charges every reader the block it
+> holds and the pool's own slots besides — four of them at up to four workers,
+> and one per worker above that — so what a scan holds beyond the
 > budget is the part no byte budget covers at all:
 > threads, decoder state kept outside the pools, and the allocator's own
 > retention. That part is roughly a fixed margin rather than a share of the
@@ -513,7 +514,7 @@ fewer of them. Either way one line follows, once per scan:
 
 ```
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=67108864
-2026-07-23T14:03:36.912771904Z  INFO scan arrangement jobs=1 asked=24 bound_by="source" would_hold_bytes=130023424
+2026-07-23T14:03:36.912771904Z  INFO scan arrangement jobs=1 asked=24 bound_by="source" would_hold_bytes=111183648
 ```
 
 `jobs=` is what is running, `asked=` is what `scan started` announced,
