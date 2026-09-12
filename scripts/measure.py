@@ -6520,10 +6520,18 @@ def run_reserve(session: Session) -> str:
             # The re-derivation runs over every evaluated cell rather than over
             # the faulting ones — the bound is what covers the worst remainder
             # the sitting saw, and the cells under it are as much evidence of
-            # that as the cells over it — but only where nothing bars. A cell
-            # above the reserve is an arrangement the rule did not keep inside
-            # its allocation, so its remainder describes a run that should not
-            # have happened and is not a reading a constant may be sized to.
+            # that as the cells over it — but only where nothing bars.
+            #
+            # Withholding it from the whole sitting rather than from the
+            # faulting family is deliberate: a sitting carrying a barring cell
+            # does not publish at all, so a number withheld from it strands
+            # nothing, and the re-derivation is a property of a publishable
+            # sitting. The narrower reason — that a barring cell's remainder
+            # describes an arrangement the rule did not keep inside its
+            # allocation, and so is not a reading a constant may be sized to —
+            # is true and is what invites a per-family carve-out that would buy
+            # a number nobody reads (reviewed 2026-09-12; that day's entry,
+            # "The gate names bands").
             tail = ""
             if any(fault.band == BAND_BOUND for fault, _ in model_faults):
                 if barring:
