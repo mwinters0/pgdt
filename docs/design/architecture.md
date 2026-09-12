@@ -526,8 +526,8 @@ is a *fraction*, so the two agree at one limit and diverge either side of it.
 the same limit on a 64-core host resolves twenty-eight readers of a
 24 MiB-block file and is predicted to breach at 13.3%. So `Parallelism::fit`
 takes a second condition beside the cap: the largest count whose **predicted
-resident** — `WorkerMemory::at(n)` plus `MEMORY_RESERVE`, the only bound this
-crate has on what a scan holds outside its pools — leaves
+resident** — `WorkerMemory::at(n)` plus `io::MEMORY_UNPOOLED_BOUND`, this
+crate's bound on what a scan holds outside its pools — leaves
 `io::MEMORY_MARGIN_PERCENT` of the limit unused. The resolved arrangement is
 then a property of the allocation and not of the machine's width.
 
@@ -540,24 +540,48 @@ margin: it is a share of a limit the environment stated, and a
 `--parallel-memory` somebody typed is not one — that operator has made the
 headroom decision themselves.
 
-**It applies the criterion twice, and the reserve is why.** 384 MiB is the
-smallest constant meeting the criterion on `19.16`'s grid *under the cap rule*,
-so at the leg that decided it `charge ≤ limit − reserve` already **is** the
-criterion: the reserve decomposes as `0.2 × 1 GiB + 178.9 MiB` to within
-0.3 MiB, and re-subtracting it costs exactly `0.2 × limit`. That is every count
-the margin moved, to within the discreteness of a reader — 11→7 at 1 GiB,
-19→14 at 1536m, 28→21 at 2 GiB, against `0.2 × limit ÷ 58.03 MiB` of 3.5,
-5.3 and 7.1. What the margin is *for* is sound and unaffected: a constant
-reserve leaves a shrinking share as the limit grows, which is the large-limit
-breach above. What over-corrects is fixing that end by subtracting a constant
-margin at every limit.
+**The criterion is enforced once, and the two constants are what keep it
+so.** `io::MEMORY_UNPOOLED_BOUND` is **256 MiB** and it is the only number the
+prediction reads; `MEMORY_RESERVE` is the cap and the only number a discovered
+limit hands back. They were one constant until `19.26`, and one constant
+applied the criterion twice: 384 MiB is the smallest meeting it on `19.16`'s
+grid *under the cap rule*, so at the leg that decided it `charge ≤ limit −
+reserve` already **is** the criterion — the reserve decomposes as `0.2 × 1 GiB
++ 178.9 MiB` to within 0.3 MiB, and subtracting it again cost exactly
+`0.2 × limit`, which is every count the margin moved to within the discreteness
+of a reader. What the margin is *for* was never in question: a constant reserve
+leaves a shrinking share as the limit grows, which is the large-limit breach
+above.
 
-**The repair is a second constant bounding what a scan holds outside its pools,
-and it is `19.26`'s.** It is a derivation rather than a measurement — `19.16`'s
-readings need no re-taking — and it loosens nothing, because the criterion stays
-where it is and is enforced once
+**The bound is read off `19.16`'s grid under today's charge rather than
+fitted**, and it needed no sitting: the unnamed remainder `held − at(jobs)` over
+every surviving block-path leg of those four hundred runs is 83.5–214.6 MiB on
+a 24 MiB-block file and 10.9–13.8 MiB on a 128 MiB-block one, and 256 MiB is
+the next 64 MiB step above the worst of them — 64 MiB being the granularity of
+the candidate grid the reading comes off, and the 41.4 MiB it adds the same
+order as that apparatus's own 2.1-percentage-point scatter. **It is a bound and
+not a term**: the remainder has no trend across three to twenty-four readers,
+and it is *smaller* where the blocks are larger, which is the opposite of a
+per-reader quantity. What it is, is unattributed — glibc's arena retention as
+far as any reading goes, with no term table summing to it — so
+`scripts/measure.py`'s `charge_model_problem` carries two fault lines rather
+than one: a cell above the bound is a finding about the bound, a cell above the
+reserve is the rule not holding, and one threshold cannot tell those apart.
+
+**So the margin binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` —
+640 MiB — and is inert below it**, where `limit − MEMORY_RESERVE` is the
+tighter of the two conditions. That is the shape the fraction was added for, and
+it is what the old arrangement lost: a 512 MiB allocation resolved one reader of
+an ordinary compressed file where its cap affords two. At the registered
+allocations the counts are 9 at 1 GiB, 10 at 1088m, 16 at 1536m and 23 at 2 GiB
+on a 24 MiB-block file, against 7/8/14/21 before; the two one-reader floor legs
+(`544m` and `1088m` at their own block size) are unmoved, the margin never
+taking the last reader. Evaluated against `19.16`'s own worst remainders every
+one of those leaves at least 24% of its limit, which is the criterion met with
+the readings rather than by construction
 ([2026-09-12](../status/history/2026-09-12.md), "The margin applies the
-criterion twice, because `MEMORY_RESERVE` already contains one").
+criterion twice, because `MEMORY_RESERVE` already contains one";
+[`roadmap-P19.26-margin-constant-notes.md`](roadmap-P19.26-margin-constant-notes.md)).
 
 **The block pool's floor is the charge's second term, not the reserve's.**
 `BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while the
@@ -572,13 +596,15 @@ forced the constant up are all at eleven readers and above, where it is zero.
 against the charge rather than divided by it; the shape is described above,
 beside `partition_bytes`.
 
-**What the reserve does cover is flat, and that is an account rather than a
-fit.** Over the block-path regime the worst-resident slope is 57.28 MiB a reader
-against the 58.03 `BlockCache::reader_bytes` bills — 0.987, so glibc's arena retention
-is already inside the per-reader charge — and what sits above the charge,
-`worst − 58.03 × jobs`, is 135.7 MiB at two readers and 145.4 at twenty-four,
-wandering 83.6–214.6 with no trend. A reserve computed from an arena count
-would therefore be reserving for a term that is billed twice.
+**What sits above the charge has no trend in the reader count, and that is an
+account rather than a fit.** Over the block-path regime the worst-resident slope
+is 57.28 MiB a reader against the 58.03 `BlockCache::reader_bytes` bills —
+0.987, so glibc's arena retention is already inside the per-reader charge — and
+the remainder `worst − 58.03 × jobs` is 135.7 MiB at two readers and 145.4 at
+twenty-four, wandering 83.5–214.6 across the whole grid. A reserve computed from
+an arena count would therefore be reserving for a term that is billed twice.
+That remainder is what `io::MEMORY_UNPOOLED_BOUND` bounds, above; the reserve is
+the cap and no longer claims to bound it.
 
 **There is no fixed term, and the `403 MiB + 31.2 MiB a reader` that two
 sittings reported is an artifact of the window they fitted over.** This is the

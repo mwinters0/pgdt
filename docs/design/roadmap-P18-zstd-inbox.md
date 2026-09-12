@@ -76,3 +76,32 @@ they generalize or stay per-codec, which is a naming and layout question rather
 than an envelope one.
 
 **Origin.** 2026-09-02, grilling the compressed-input work.
+
+---
+
+## The budget rule's two constants are both xz-derived, and one of them predicts every source's resident
+
+**Fact.** `io::MEMORY_RESERVE` (384 MiB, the cap a discovered limit hands back)
+and `io::MEMORY_UNPOOLED_BOUND` (256 MiB, what `margin_allowance` predicts a
+count's resident with) were both read off one grid: 400 runs over `.xz` inputs
+at 24 MiB and 128 MiB block sizes ([`architecture.md`](architecture.md),
+"Execution model and API surface";
+[`roadmap-P19.26-margin-constant-notes.md`](roadmap-P19.26-margin-constant-notes.md)).
+The second bounds what a scan holds *outside* what `WorkerMemory::at` bills, and
+the measured remainder is not flat in the codec's parameters: 83.5–214.6 MiB at
+24 MiB blocks against 10.9–13.8 MiB at 128, i.e. **an order of magnitude
+smaller where the decode unit is larger**.
+
+**Why this phase cares.** A new decompressing source states its own
+`default_worker_memory`, which is the per-worker term — and nothing obliges it
+to look at the constant its resident is then *predicted* against. The two are
+separate numbers in separate places, so a source whose decoder retains more per
+unit than `liblzma` does gets a correct charge and an optimistic prediction, and
+the failure surfaces as a cgroup kill at a large limit rather than as an error.
+So the phase either argues the bound carries over — the term is glibc arena
+retention as far as any reading goes, which is not codec-specific — or re-derives
+it, which needs no new sitting if the phase's own resident readings cover more
+than one reader count. `scripts/measure.py`'s `charge_model_problem` is what
+would report it: its inner fault line is exactly this constant.
+
+**Origin.** `19.26`, 2026-09-12.

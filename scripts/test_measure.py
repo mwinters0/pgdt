@@ -2407,27 +2407,56 @@ class CompressedAccount(unittest.TestCase):
         assert fault is not None
         self.assertIn("unnamed", fault)
         self.assertIn("MEMORY_RESERVE", fault)
-        # And exactly at the reserve it is not a fault: the criterion is what
-        # the constant promises, not a margin inside it.
-        self.assertIsNone(
-            measure.charge_model_problem(
-                self.SEED_UNIT,
-                4,
-                measure.charge_bytes(self.SEED_UNIT, 4) + measure.LIBRARY_MEMORY_RESERVE,
-            )
+        self.assertIn("rule does not hold", fault)
+        # And exactly at the reserve it is the *inner* fault only: the criterion
+        # is what the constant promises, not a margin inside it, so the rule
+        # still holds there and the bound is what is named.
+        at_reserve = measure.charge_model_problem(
+            self.SEED_UNIT, 4, billed + measure.LIBRARY_MEMORY_RESERVE
         )
+        assert at_reserve is not None
+        self.assertIn("MEMORY_UNPOOLED_BOUND", at_reserve)
+        self.assertNotIn("rule does not hold", at_reserve)
 
-    def test_the_mirrored_pool_depth_and_reserve_are_the_librarys_own(self):
-        # Both are hardcoded on `QUERY_SUBSTREAM_CAP`'s argument, so the mirror
-        # is checked here rather than trusted. The reserve especially: it is the
-        # model's upper bound, so a constant that moved in the library and not
-        # here would check the rule against a promise it no longer makes.
+    def test_the_two_ceilings_are_distinguishable_at_every_cell(self):
+        # `19.26`'s reason for two lines rather than one: between them the
+        # allocation holds and the number the count is predicted against is
+        # wrong; above the outer one the allocation does not. A single threshold
+        # cannot say which, whichever of the two it is set at.
+        billed = measure.charge_bytes(self.SEED_UNIT, 4)
+        inner = measure.LIBRARY_MEMORY_UNPOOLED_BOUND
+        outer = measure.LIBRARY_MEMORY_RESERVE
+        self.assertLess(inner, outer)
+        # Exactly at the bound: inside both, so no fault at all.
+        self.assertIsNone(measure.charge_model_problem(self.SEED_UNIT, 4, billed + inner))
+        between = measure.charge_model_problem(self.SEED_UNIT, 4, billed + inner + measure.MIB)
+        assert between is not None
+        self.assertIn("finding about the bound, not the rule", between)
+        above = measure.charge_model_problem(self.SEED_UNIT, 4, billed + outer + measure.MIB)
+        assert above is not None
+        self.assertIn("rule does not hold", above)
+
+    def test_the_mirrored_pool_depth_and_constants_are_the_librarys_own(self):
+        # All three are hardcoded on `QUERY_SUBSTREAM_CAP`'s argument, so the
+        # mirror is checked here rather than trusted. The two byte constants
+        # especially: they are the model's two upper bounds, so one that moved
+        # in the library and not here would check the rule against a promise it
+        # no longer makes.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
         self.assertIn(
             f"pub const MEMORY_RESERVE: u64 = {measure.LIBRARY_MEMORY_RESERVE >> 20} << 20;",
             src,
         )
+        self.assertIn(
+            "pub const MEMORY_UNPOOLED_BOUND: u64 = "
+            f"{measure.LIBRARY_MEMORY_UNPOOLED_BOUND >> 20} << 20;",
+            src,
+        )
+        # And the margin predicts with the second rather than the first, which
+        # is the whole of `19.26`: the two were one number, and the doubling was
+        # invisible in every reading the harness takes.
+        self.assertIn("saturating_sub(MEMORY_UNPOOLED_BOUND)", src)
 
     def test_the_recommendation_and_the_affordability_charge_are_one_number(self):
         # What `reader_bytes`' docstring asserts, and what the model rests on:
@@ -5959,6 +5988,10 @@ class ChargeModelSection(unittest.TestCase):
         criterion, _, verdict = section.partition("**The model")
         self.assertIn("non-negative", criterion)
         self.assertIn("MEMORY_RESERVE", criterion)
+        # Both ceilings, and which finding each is: a section stating one of
+        # them would read as a criterion while answering the other question.
+        self.assertIn("MEMORY_UNPOOLED_BOUND", criterion)
+        self.assertIn("the **bound** is wrong", criterion)
         self.assertIn("over-bill", criterion)
         self.assertTrue(verdict, "the section states a criterion and never answers it")
 

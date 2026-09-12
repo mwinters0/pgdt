@@ -2610,19 +2610,20 @@ mod tests {
     fn a_flagless_run_resolves_inside_a_discovered_limit_on_either_cgroup_version() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
 
-        // v2, a 1 GiB `memory.max`: 640 MiB after the reserve, and 435.2 MiB
-        // once the margin is left as well — seven readers of 58 MiB.
+        // v2, a 1 GiB `memory.max`: 640 MiB after the reserve, and 563.2 MiB
+        // once the margin is left as well — nine readers of 58 MiB.
         let v2 = flagless.resolve_in(&runtime_root("v2-limit"), &Recommends::reader(24, READER));
-        assert_eq!(v2.parallelism().jobs(), 7);
-        assert_eq!(v2.parallelism().memory_bytes(), Some(7 * READER));
+        assert_eq!(v2.parallelism().jobs(), 9);
+        assert_eq!(v2.parallelism().memory_bytes(), Some(9 * READER));
         assert_eq!(v2.limit.as_ref().map(|l| l.bytes), Some(1 << 30));
 
-        // v1, a 512 MiB `memory.limit_in_bytes`: 128 MiB after the reserve and
-        // 25.6 once the margin is left, which no reader meets — so this is the
-        // floor arrangement, one reader holding what one reader spends.
+        // v1, a 512 MiB `memory.limit_in_bytes`: 128 MiB after the reserve,
+        // and the margin is inert below the 640 MiB crossover — it allows
+        // 153.6, which is more than the cap — so the cap is what two readers
+        // of 58 MiB are fitted inside.
         let v1 = flagless.resolve_in(&runtime_root("v1-limit"), &Recommends::reader(24, READER));
-        assert_eq!(v1.parallelism().jobs(), 1);
-        assert_eq!(v1.parallelism().memory_bytes(), Some(READER));
+        assert_eq!(v1.parallelism().jobs(), 2);
+        assert_eq!(v1.parallelism().memory_bytes(), Some(2 * READER));
         assert_eq!(
             v1.limit.as_ref().map(|l| l.read_from.clone()),
             Some(runtime_root("v1-limit").join("sys/fs/cgroup/memory/svc/memory.limit_in_bytes")),
@@ -2658,12 +2659,12 @@ mod tests {
         assert_eq!(tight.parallelism().jobs(), 1);
         assert_eq!(tight.parallelism().memory_bytes(), Some(128 << 20));
 
-        // v2, a 1 GiB limit: 435.2 MiB once the reserve and the margin are
-        // both left, which is seven readers — above the pool's depth, where
+        // v2, a 1 GiB limit: 563.2 MiB once the reserve and the margin are
+        // both left, which is nine readers — above the pool's depth, where
         // the floor is zero and the count is the same one a division gives.
         let roomy = flagless.resolve_in(&runtime_root("v2-limit"), &source());
-        assert_eq!(roomy.parallelism().jobs(), 7);
-        assert_eq!(roomy.parallelism().memory_bytes(), Some(7 * READER));
+        assert_eq!(roomy.parallelism().jobs(), 9);
+        assert_eq!(roomy.parallelism().memory_bytes(), Some(9 * READER));
     }
 
     /// only by half of `MemAvailable` (`RT8`) — which is the branch a `min`
@@ -2811,8 +2812,8 @@ mod tests {
         assert_eq!(
             resolved,
             vec![
-                (7, Some(7 * READER)),
-                (1, Some(READER)),
+                (9, Some(9 * READER)),
+                (2, Some(2 * READER)),
                 (24, Some(24 * READER)),
                 (4, Some(4 * READER)),
                 (1, Some(0)),
@@ -2868,7 +2869,7 @@ mod tests {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
         let discovered = flagless.resolve_in(&runtime_root("v2-limit"), &reader);
         let line = discovered.budget_display();
-        assert!(line.starts_with(&format!("{} (discovered:", 7 * READER)), "{line}");
+        assert!(line.starts_with(&format!("{} (discovered:", 9 * READER)), "{line}");
         assert!(line.contains("sys/fs/cgroup/pgdq/memory.max"), "{line}");
         assert!(line.contains(&format!("{}", 1u64 << 30)), "{line}");
 

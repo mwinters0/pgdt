@@ -26,10 +26,10 @@ pub use index::{
 };
 pub use io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, KnownCompression, LocalFileSource,
-    MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MemoryLimit, Parallelism, PartitionBoundaries,
-    PartitionRead, Partitioning, Recognized, RetainedUnit, WaitPolicy, WorkerMemory, XzSource,
-    available_memory, available_memory_in, discover_memory_limit, discover_memory_limit_in,
-    open_local,
+    MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND, MemoryLimit, Parallelism,
+    PartitionBoundaries, PartitionRead, Partitioning, Recognized, RetainedUnit, WaitPolicy,
+    WorkerMemory, XzSource, available_memory, available_memory_in, discover_memory_limit,
+    discover_memory_limit_in, open_local,
 };
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,

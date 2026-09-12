@@ -96,7 +96,8 @@ once more; the parallel-scan work moved `io.rs`, `scan.rs`, `stream.rs`,
 `batch.rs`, `map.rs` and the CLI again on top of that; and the per-file-term
 repair separated a partition's cut size from its memory charge, moving `io.rs`
 and `leader.rs` once more; and the margin on the resolved count moved `io.rs`
-again, though **no registered command shape's arrangement moves with it** —
+again, twice — `19.23` adding it and `19.26` giving it its own constant —
+though **no registered command shape's arrangement moves with either** —
 the margin can only lower a count above one, every shape but the jobs-axis
 families states `--jobs 1`, and those three state a budget as well, which is
 the arm that never reaches a discovered limit. All of them add
@@ -345,13 +346,13 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.26`, `19.25`, then `19.11`** — the
+What remains runs **`19.25`, then `19.11`** — the
 five new rows were admitted on 2026-09-12 and take the next free numbers
 rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
 entry closes on 384, and the grilling found the charge wrong below four
 readers"; "A `parse` reports what was asked for and never what ran"; "The
 margin applies the criterion twice, because `MEMORY_RESERVE` already contains
-one"). `19.26` leads because it moves the counts `19.25` reports.
+one").
 
 **All three defaults are shipped, so what remains is the charge and the
 sweep.** `19.18`'s sitting says the program holds
@@ -365,9 +366,11 @@ five builds and picked **384 MiB**, the smallest meeting the 20% margin, and
 reserve's to cover**: `19.22` made a source's cost a shape rather than a scalar
 (`io::WorkerMemory`) and every budget is now solved against it. Nor is the
 margin at a large limit: `19.23` put the criterion itself in front of the
-count, so what a limit resolves is the same on a host of any width — and the
-prediction it refuses against is `at(n) + MEMORY_RESERVE`, which is
-conservative by however much the constant exceeds the flat term. **The harness
+count, so what a limit resolves is the same on a host of any width — and since
+`19.26` the prediction it refuses against is `at(n) + MEMORY_UNPOOLED_BOUND`,
+**256 MiB** read off `19.16`'s grid under today's charge, so the criterion is
+enforced once rather than twice and the margin is inert below a 640 MiB limit,
+where the cap is already tighter. **The harness
 checks that account rather than searching for it** —
 `19.24` prints the charge against what was held at every flagless cell, with
 the pool floor as its own named column and a criterion registered before the
@@ -485,14 +488,12 @@ sitting.
       `.xz` `parse` is serial whatever `--jobs` says, and the library states the
       delivered count on the `scan started`/`scan complete` channel. Runs after
       `19.23`, which decides the count it reports.
-- [ ] **19.26** The margin predicts with its own constant, because the reserve
-      already contains one — `19.23` applies the criterion twice, at a cost of
-      exactly `0.2 × limit` per leg. The bound on what a scan holds outside its
-      pools is re-derived from `19.16`'s `readings.json` by arithmetic under
-      today's charge model; `MEMORY_RESERVE` keeps the budget cap, and the
-      harness faults at both constants so a finding about the bound is
-      distinguishable from a failure of the rule. Runs before `19.11`, whose
-      flagless axis it moves.
+- [x] **19.26** The margin predicts with its own constant:
+      `io::MEMORY_UNPOOLED_BOUND` is **256 MiB**, derived by arithmetic over
+      `19.16`'s 400 runs under today's charge, and the harness faults at both
+      constants. The flagless axis moves — 9/10/16/23 readers where it read
+      7/8/14/21 — and the two pool-floor legs do not. Notes:
+      [`../design/roadmap-P19.26-margin-constant-notes.md`](../design/roadmap-P19.26-margin-constant-notes.md)
 
 ## Not started
 
@@ -504,7 +505,8 @@ sitting.
   budget rule are in the tree carrying the 384 MiB reserve `19.16` read and the
   20% margin `19.23` put in front of the count. What
   remains is the report that makes a `parse` say what ran (`19.25`), and the
-  closing sweep. Its checklist is above and its spec is
+  closing sweep, whose flagless axis `19.26` moved. Its checklist is above and
+  its spec is
   [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
   Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
   table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
@@ -689,4 +691,18 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+1. **`MEMORY_UNPOOLED_BOUND` is 256 MiB, which is the worst remainder
+   `19.16`'s grid holds rounded up one 64 MiB step.** The decision is the
+   *value*, not the split — `19.26`'s spec row required a second constant, and
+   the arithmetic is in
+   [`../design/roadmap-P19.26-margin-constant-notes.md`](../design/roadmap-P19.26-margin-constant-notes.md).
+   What is being asked: 41.4 MiB of margin above a 214.6 MiB worst observation
+   is roughly that apparatus's own scatter, so the bound is bracketed rather
+   than comfortable, and it is the number every flagless count is now predicted
+   against — a 24 MiB-block file in a 2 GiB container resolves 23 readers and is
+   predicted to leave 22.3%, against 24.3% using the worst measured remainder.
+   Going one step further to 320 MiB costs exactly one reader at each of `1g`,
+   `1088m`, `1536m` and `2g` on the 24 MiB-block file and one at `1536m` and
+   `2g` on the 128 MiB one, for 0.3 percentage points more predicted headroom at
+   2 GiB. Nothing would be re-measured either way: the readings are in the tree
+   and the choice is which end of them to stand on.

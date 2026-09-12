@@ -1039,8 +1039,8 @@ impl Parallelism {
     /// most this arrangement may be *charged* if its predicted resident is to
     /// leave [`MEMORY_MARGIN_PERCENT`] of that limit unused
     /// ([`margin_allowance`]) — predicted resident being `memory.at(n)` plus
-    /// [`MEMORY_RESERVE`], which is the only bound this crate has on what a
-    /// scan holds outside its pools. A budget somebody **typed** carries no
+    /// [`MEMORY_UNPOOLED_BOUND`], which is this crate's bound on what a scan
+    /// holds outside its pools. A budget somebody **typed** carries no
     /// such ceiling: the margin is a statement about a limit, and a stated
     /// budget is not one. The floor is still one worker, so the ceiling can
     /// lower a count and never decline the one reader the mechanism's own
@@ -1122,8 +1122,16 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// two block sizes and four container limits with nothing stated
 /// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`). What one reader
 /// holds is billed to within 1.3% by [`BlockCache::reader_bytes`], so what
-/// this covers is the flat excess above that charge — 83.6–214.6 MiB with no
-/// trend across two to twenty-four readers — and not a per-reader term.
+/// this covers is the excess above that charge and not a per-reader term.
+///
+/// **It is the cap, and it is not the bound on that excess.** Those were one
+/// number until `19.26` and the doubling was invisible: this constant is the
+/// smallest meeting the criterion *under the cap rule*, so it already contains
+/// `0.2 × 1 GiB` and subtracting it again as a predicted flat term applied the
+/// same criterion twice. What bounds the excess is
+/// [`MEMORY_UNPOOLED_BOUND`], which is what [`margin_allowance`] predicts
+/// with; this one still comes off the top of a discovered limit and still
+/// decides what [`BlockCache::affordable`] sees.
 /// **Raising this constant is also what declines the block path**, since
 /// [`BlockCache::affordable`] reads off the budget this leaves: the two are one
 /// knob, and the floor below which a compressed scan is serial is implicit in
@@ -1205,6 +1213,21 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// Enforcing the criterion on the count is what makes the answer a property of
 /// the allocation rather than of the host's width.
 ///
+/// **Enforced once, against [`MEMORY_UNPOOLED_BOUND`].** The predicted
+/// resident a count is held to is `WorkerMemory::at(n)` plus that bound, not
+/// plus [`MEMORY_RESERVE`]: the reserve is the smallest constant meeting this
+/// criterion under the *cap* rule, so it decomposes as `0.2 × 1 GiB +
+/// 178.9 MiB` and predicting with it subtracted the margin a second time, at a
+/// cost of exactly `0.2 × limit` per limit
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// **So it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and
+/// nowhere below**, which is 640 MiB at today's two constants: under that the
+/// cap `limit − MEMORY_RESERVE` is the tighter of the two conditions and this
+/// one is inert. That is the intended shape — a constant reserve leaves a
+/// shrinking *share* as the limit grows, so the large end is the end that
+/// needed a fraction.
+///
 /// **It bounds the count and never the budget, and it cannot decline a
 /// reader.** [`Parallelism::fit`] keeps one worker at whatever the cap is —
 /// the arrangement below the reserve is real and the mechanism's own floors
@@ -1224,27 +1247,63 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// stated criterion rather than against a hedge.
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
+/// What a scan holds resident **outside the pools the budget bills**, bounded:
+/// the runtime's threads, glibc's per-thread arena retention, the decoder
+/// state a compressed source keeps beyond [`BlockCache::reader_bytes`], and
+/// the binary itself. [`margin_allowance`] predicts with it, and nothing else
+/// reads it.
+///
+/// **A bound, not a term, and it is read off a grid rather than fitted.**
+/// `19.16`'s four hundred runs — five reserve constants over two block sizes
+/// and four container limits, ten reps each — are re-read under today's charge
+/// ([`WorkerMemory::at`]), and the unnamed remainder `held − at(jobs)` over
+/// every surviving block-path leg runs **83.5–214.6 MiB** on a 24 MiB-block
+/// file and **10.9–13.8 MiB** on a 128 MiB-block one. 256 MiB is the next
+/// 64 MiB step above the worst of those, 64 MiB being the granularity of the
+/// candidate grid the reading comes off; the 41.4 MiB it adds is the same
+/// order as that apparatus's own scatter, which was 2.1 percentage points of
+/// the limit at an arrangement the constant provably could not move
+/// (`docs/design/roadmap-P19.26-margin-constant-notes.md`).
+///
+/// **It does not scale with the reader count, and it is *smaller* where the
+/// blocks are larger** — the opposite of a per-reader term, which is why the
+/// whole of it is carried as a constant rather than divided by anything. The
+/// remainder wanders inside its range with no trend across three to
+/// twenty-four readers.
+///
+/// **What it is, is unattributed.** As far as any reading here goes it is
+/// glibc's arena retention (`19.18`); no term table sums to it, and the
+/// harness's own account says so in those words. `scripts/measure.py`'s
+/// `charge_model_problem` faults a cell whose remainder exceeds this, which is
+/// the finding that would move it — and separately at [`MEMORY_RESERVE`],
+/// which is the rule failing rather than the bound being low.
+///
+/// **Why it is not [`MEMORY_RESERVE`], which used to stand here.** That
+/// constant is the smallest meeting [`MEMORY_MARGIN_PERCENT`] under the *cap*
+/// rule, so it already contains `0.2 × 1 GiB`; predicting with it enforced the
+/// criterion twice and cost `0.2 × limit` at every limit — 11→7 readers at
+/// 1 GiB where 9 is what the criterion alone asks for. The two numbers are
+/// separate because they answer separate questions: the reserve is what a
+/// discovered limit hands back before anything is spent, and this is what the
+/// arrangement is predicted to hold on top of what it spends.
+pub const MEMORY_UNPOOLED_BOUND: u64 = 256 << 20;
+
 /// The most a resolved arrangement may be **charged** under a discovered
 /// `limit` if its predicted resident is to leave [`MEMORY_MARGIN_PERCENT`] of
-/// that limit unused: `(100 − margin)% of limit`, less [`MEMORY_RESERVE`].
+/// that limit unused: `(100 − margin)% of limit`, less
+/// [`MEMORY_UNPOOLED_BOUND`].
 ///
-/// **The predicted resident is `charge + MEMORY_RESERVE`, and the reserve is
-/// the only bound this crate has on the second term.** What a scan holds
-/// outside its pools is flat in the reader count and measured in the low
-/// hundreds of megabytes, and [`MEMORY_RESERVE`] is by construction what
-/// covers it — the same statement `scripts/measure.py`'s `charge_model` holds
-/// the `reserve` figure's every cell to. **That applies the criterion twice**:
-/// the reserve is the smallest constant meeting it under the *cap* rule, so it
-/// decomposes as `0.2 × 1 GiB + 178.9 MiB` and re-subtracting it here costs
-/// exactly `0.2 × limit` — every count this ceiling moves, to within a reader.
-/// `19.26` gives the prediction its own constant; the criterion is unchanged
-/// and stays enforced, once
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// **The predicted resident is `charge + MEMORY_UNPOOLED_BOUND`**, that
+/// constant being what bounds the one term the charge does not bill. Using
+/// [`MEMORY_RESERVE`] here instead applied [`MEMORY_MARGIN_PERCENT`] twice,
+/// the reserve being the smallest constant meeting that criterion under the
+/// cap rule (`docs/design/architecture.md`, "Execution model and API
+/// surface").
 ///
 /// Integer arithmetic, rounding **down** the fraction of the limit so the
 /// allowance errs small.
 fn margin_allowance(limit: u64) -> u64 {
-    (limit / 100).saturating_mul(100 - MEMORY_MARGIN_PERCENT).saturating_sub(MEMORY_RESERVE)
+    (limit / 100).saturating_mul(100 - MEMORY_MARGIN_PERCENT).saturating_sub(MEMORY_UNPOOLED_BOUND)
 }
 
 /// A cgroup v1 `memory.limit_in_bytes` at or above this reads as *no limit*
@@ -4860,7 +4919,7 @@ mod tests {
         assert_eq!(squeezed.memory_bytes(), Some(512 << 20));
         assert_eq!(squeezed.jobs(), 1);
 
-        // Eight readers of 16 MiB is 128 MiB, inside the 435.2 MiB the margin
+        // Eight readers of 16 MiB is 128 MiB, inside the 563.2 MiB the margin
         // allows as well as inside the cap, so both numbers stand.
         let roomy =
             Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(16 << 20)));
@@ -4869,13 +4928,13 @@ mod tests {
 
         // And in between, the count is what the margin affords and the budget
         // is exactly what that many readers spend — never the cap itself,
-        // which is the over-ask this pairing exists to remove. Four readers of
-        // 100 MiB is 400, against a margin allowance of 435.2 and a cap of
+        // which is the over-ask this pairing exists to remove. Five readers of
+        // 100 MiB is 500, against a margin allowance of 563.2 and a cap of
         // 640: six would fit the cap and is refused.
         let fitted =
             Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(100 << 20)));
-        assert_eq!(fitted.jobs(), 4);
-        assert_eq!(fitted.memory_bytes(), Some(400 << 20));
+        assert_eq!(fitted.jobs(), 5);
+        assert_eq!(fitted.memory_bytes(), Some(500 << 20));
         assert!(fitted.memory_bytes() < Some(cap), "the cap itself would be the over-ask");
     }
 
@@ -4901,17 +4960,17 @@ mod tests {
         assert_eq!(narrow.memory_bytes(), wide.memory_bytes());
 
         // And what it resolves to leaves the margin: the charge plus the
-        // reserve is under four fifths of the limit, where the cap alone would
-        // have admitted twenty-eight readers and left 13%.
+        // unpooled bound is under four fifths of the limit, where the cap
+        // alone would have admitted twenty-eight readers and left 13%.
         let limit = 2u64 << 30;
         let charge = wide.memory_bytes().unwrap();
         assert!(
-            charge + MEMORY_RESERVE <= limit / 100 * (100 - MEMORY_MARGIN_PERCENT),
+            charge + MEMORY_UNPOOLED_BOUND <= limit / 100 * (100 - MEMORY_MARGIN_PERCENT),
             "predicted resident {} breaches the margin",
-            charge + MEMORY_RESERVE
+            charge + MEMORY_UNPOOLED_BOUND
         );
         assert!(
-            memory.at(wide.jobs() + 1) + MEMORY_RESERVE
+            memory.at(wide.jobs() + 1) + MEMORY_UNPOOLED_BOUND
                 > limit / 100 * (100 - MEMORY_MARGIN_PERCENT),
             "one more reader would still have fitted, so the margin is not what bound it"
         );
@@ -4927,18 +4986,52 @@ mod tests {
     /// still reports the budget it spends — which is what
     /// `BlockCache::affordable` reads, so the compressed block path is not
     /// declined by the margin at any limit.
+    ///
+    /// The arrangement is a 128 MiB-block file at a 1088 MiB limit, which is
+    /// where that window sits now that the prediction uses
+    /// [`MEMORY_UNPOOLED_BOUND`]: the allowance must fall under one reader's
+    /// charge while the cap stays above it, and at 24 MiB blocks no limit does
+    /// both. It is also the acceptance leg the `reserve` figure registers for
+    /// the pool floor, so the cell this pins is one a sitting reads.
     #[test]
     fn the_margin_never_takes_the_last_reader_or_the_budget_it_spends() {
         let root = FakeRoot::new();
-        // 544 MiB: the cap is 160 MiB and the margin allowance 51.2, against
-        // the 130 MiB one block-decoding reader of a 24 MiB-block file is
+        // 1088 MiB: the cap is 704 MiB and the margin allowance 614.4, against
+        // the 650 MiB one block-decoding reader of a 128 MiB-block file is
         // charged.
-        root.v2("/leaf").v2_limits("/leaf", Some(&(544u64 << 20).to_string()), None);
-        let memory = WorkerMemory::per_worker(58 << 20).flooring(24 << 20, POOL_DEPTH);
+        root.v2("/leaf").v2_limits("/leaf", Some(&(1088u64 << 20).to_string()), None);
+        let memory = WorkerMemory::per_worker(266 << 20).flooring(128 << 20, POOL_DEPTH);
         let tight = Parallelism::discover_in(root.path(), 24, Some(memory));
         assert_eq!(tight.jobs(), 1);
         assert_eq!(tight.memory_bytes(), Some(memory.at(1)));
-        assert!(memory.at(1) > margin_allowance(544 << 20), "the margin cannot afford it");
+        assert!(memory.at(1) > margin_allowance(1088 << 20), "the margin cannot afford it");
+    }
+
+    /// **The margin binds at a large limit and is inert at a small one**, which
+    /// is the shape it exists for: a constant reserve leaves a shrinking
+    /// *share* as the limit grows, so the fraction is needed at the top end and
+    /// the subtraction already covers the bottom. The crossover is arithmetic
+    /// rather than a reading — `limit − MEMORY_RESERVE` and
+    /// `(100 − margin)% × limit − MEMORY_UNPOOLED_BOUND` are equal at
+    /// `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` — and it is pinned here
+    /// because nothing else would notice either constant moving past the other.
+    #[test]
+    fn the_margin_is_the_tighter_condition_only_above_the_crossover() {
+        let crossover = 5 * (MEMORY_RESERVE - MEMORY_UNPOOLED_BOUND);
+        assert_eq!(crossover, 640 << 20);
+        // Equal there but for the rounding: `limit / 100` discards under a
+        // hundred bytes, so the allowance errs small by that much and never
+        // the other way.
+        assert!(crossover - MEMORY_RESERVE - margin_allowance(crossover) < 100);
+        // Below it the cap is what a count is solved against, so the margin
+        // can lower nothing; above it the margin is, at every limit.
+        assert!(
+            margin_allowance(crossover - (64 << 20)) > (crossover - (64 << 20)) - MEMORY_RESERVE
+        );
+        assert!(
+            margin_allowance(crossover + (64 << 20)) < (crossover + (64 << 20)) - MEMORY_RESERVE
+        );
+        assert!(margin_allowance(4 << 30) < (4 << 30) - MEMORY_RESERVE);
     }
 
     /// **Below the reserve the budget goes to zero rather than to a floor.**

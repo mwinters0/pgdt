@@ -2351,6 +2351,23 @@ LIBRARY_POOL_DEPTH = 4
 #: harness chose.
 LIBRARY_MEMORY_RESERVE = 384 << 20
 
+#: `pgdump_query::io::MEMORY_UNPOOLED_BOUND`, mirrored: this crate's bound on
+#: what a scan holds resident outside the pools its charge bills, and what
+#: `margin_allowance` predicts a count's resident with.
+#:
+#: **The inner of the model's two fault lines**, where `LIBRARY_MEMORY_RESERVE`
+#: is the outer one. A remainder above this is a finding about the *bound* — the
+#: library predicts counts with a number the readings have overrun, so the
+#: margin is not leaving what it claims — while a remainder above the reserve is
+#: the *rule* failing, an arrangement the discovery cannot keep inside its
+#: allocation. One threshold cannot tell those apart, which is why there are
+#: two, and both are registered before the sitting.
+#:
+#: Read off `19.16`'s grid under today's charge rather than fitted: the worst
+#: surviving block-path remainder there is 214.6 MiB and this is the next
+#: 64 MiB step above it (`19.26`).
+LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
+
 
 def pool_floor_bytes(unit: int, jobs: int) -> int:
     """What the block pool holds at `jobs` readers on top of the per-reader
@@ -2397,8 +2414,9 @@ def discovered_budget(limit: int) -> int:
 
     **The margin is deliberately left out**, as the recommendation is. Since
     `19.23` the resolved *count* also answers to `MEMORY_MARGIN_PERCENT` — its
-    predicted resident must leave a fifth of the limit — so what a run reports
-    is at most this and often less. That makes this an upper bound on the
+    predicted resident, `charge + MEMORY_UNPOOLED_BOUND` since `19.26`, must
+    leave a fifth of the limit — so what a run reports is at most this and
+    often less. That makes this an upper bound on the
     budget rather than a prediction of it, which is what both uses below want:
     a lower count *raises* the pool floor, so the floor window stays a
     sufficient condition, and the count comparison stays an upper bound.
@@ -2497,16 +2515,27 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
 def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
     """Why this leg refutes the charge model, or `None` where it does not.
 
-    **Two-sided, and neither side is a tolerance somebody picked.**
+    **Three fault lines, and none of them is a tolerance somebody picked.**
 
     - **Non-negative.** A negative remainder is an *over-bill*: the rule charged
       bytes nothing holds, so it admitted fewer readers than the allocation
       afforded. It is the failure a grid search over reserve constants cannot
       report at all, because a too-large charge shows up there as headroom.
-    - **No larger than `MEMORY_RESERVE`.** The reserve is by construction what
-      covers everything the charge does not bill, so a remainder above it is a
-      leg the rule cannot keep inside its allocation — the gate failing, stated
-      per cell instead of per sitting.
+    - **No larger than `MEMORY_UNPOOLED_BOUND`**, the inner line: that constant
+      is what `margin_allowance` predicts a count's resident with, so a cell
+      above it is a leg whose headroom is smaller than the library promised —
+      a finding about the *bound*, which `19.26` read off `19.16`'s grid.
+    - **No larger than `MEMORY_RESERVE`**, the outer line: the reserve is by
+      construction what covers everything the charge does not bill, so a
+      remainder above it is a leg the *rule* cannot keep inside its allocation
+      — the gate failing, stated per cell instead of per sitting.
+
+    **Two lines rather than one, because they are different findings.** Between
+    them the allocation still holds and the number the count is predicted
+    against is wrong; above the outer one the allocation does not. Moving the
+    single threshold inward would have made a slightly low bound read as a
+    failed rule, and leaving it at the reserve would have made a bound the
+    readings overran invisible until a kill.
 
     Asked only of a leg that took the block path and survived: the streaming
     fallback holds none of these terms, and a censored leg's reading is a bound
@@ -2527,7 +2556,18 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
             f"{_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)} `MEMORY_RESERVE` that is meant to "
             f"cover it — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
             + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
-            + f" against {_fmt_budget_bytes(held)} held."
+            + f" against {_fmt_budget_bytes(held)} held. **The rule does not hold here**: the "
+            "discovery cannot keep this arrangement inside its allocation."
+        )
+    if unnamed > LIBRARY_MEMORY_UNPOOLED_BOUND:
+        return (
+            f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
+            f"{_fmt_budget_bytes(LIBRARY_MEMORY_UNPOOLED_BOUND)} `MEMORY_UNPOOLED_BOUND` the "
+            f"margin predicts with — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
+            + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
+            + f" against {_fmt_budget_bytes(held)} held. **A finding about the bound, not the "
+            "rule**: it is still inside `MEMORY_RESERVE`, so the allocation holds and what is "
+            "wrong is the number the count is predicted against."
         )
     return None
 
@@ -6756,12 +6796,17 @@ def run_reserve(session: Session) -> str:
             else ""
         )
         + "\n\n**The charge against what was held**, cell by cell, which is the check this "
-        "figure runs rather than a constant it searches for. The criterion is two-sided and is "
-        "registered before the sitting: the unnamed remainder must be **non-negative**, a "
-        "negative one being an over-bill — bytes the rule charged that nothing holds, and so a "
-        "reader the allocation would have afforded — and it must be **no larger than "
-        f"`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
-        "construction what covers everything the charge does not bill. The middle column is the "
+        "figure runs rather than a constant it searches for. The criterion has three lines and "
+        "all of them are registered before the sitting: the unnamed remainder must be "
+        "**non-negative**, a negative one being an over-bill — bytes the rule charged that "
+        "nothing holds, and so a reader the allocation would have afforded — and it is read "
+        "against two ceilings, which say different things. Above "
+        f"**`MEMORY_UNPOOLED_BOUND`** ({_fmt_budget_bytes(LIBRARY_MEMORY_UNPOOLED_BOUND)}), the "
+        "number `margin_allowance` predicts a count's resident with, the allocation still holds "
+        "and the **bound** is wrong; above "
+        f"**`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
+        "construction what covers everything the charge does not bill, the **rule** is. The "
+        "middle column is the "
         "second term of that bill, reported apart because it is the one unbounded in the block "
         "size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with "
         f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH}, so below four readers the pool holds "
