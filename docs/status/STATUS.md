@@ -628,8 +628,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD24 -->
-**`KD1`–`KD24` are allocated, and nothing at or below `KD24` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD25 -->
+**`KD1`–`KD25` are allocated, and nothing at or below `KD25` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -790,6 +790,15 @@ here rather than reading as a phase nobody has sliced.
   flat in the count and never above the stated budget. **(c) unowned**;
   promoted by a caller announcing a large chunk, or by a phase reworking
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Billed against
+  held: one row per buffer the process keeps".
+
+- **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS × chunk` a reader
+  where the path holds `POOL_DEPTH` chunks flat, and recommends no count at
+  all, so plain readers are bounded by a charge describing nothing held — 8 MiB
+  billed against 4 held at the shipped chunk, and unbounded above a budget of
+  `8 MiB × jobs`. **(c) unowned**; promoted by a reading showing plain parallel
+  beating serial, which is that path's own reopening condition. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Billed against
   held: one row per buffer the process keeps".
 

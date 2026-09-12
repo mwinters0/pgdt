@@ -2036,6 +2036,60 @@ against a term the bound already covers
 ([2026-09-12](../status/history/2026-09-12.md), "The chunk pool's floor is
 priced, and 4 MiB does not buy a third term").
 
+<!-- deficiency: KD25 -->
+
+**`KD25`: the plain source bills its cut size per reader and recommends no
+count, so the only thing bounding plain readers is a charge that describes
+nothing held.** `LocalFileSource::partitions` advises
+`PLAIN_PARTITION_CHUNKS × chunk` capped at `POOL_MAX_BYTES` — 8 MiB a reader at
+the shipped chunk — and `stream::plan_partitions` reads that straight back as a
+per-worker footprint. What the path holds is a different shape entirely:
+`hint_parallelism` sizes the pool `set_limits(budget, POOL_DEPTH)`, a depth that
+never rises with `jobs`, and the interior split grants `WaitPolicy::MayWait`, so
+free plus charged never exceeds `slots = ⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` —
+**4 MiB at the shipped chunk, flat in the reader count**. `19.20`'s own probe is
+the reading: 9.4 MiB at `--jobs 24 --parallel-memory 256m`, 7.7 at two readers,
+5.7 serial, a marginal 0.077 MiB a reader against a bill that grows by 8.
+
+**The bill is not a count bound, which is the part that looks like one.**
+`Parallelism::fit` and `stream::worker_count` both *solve*
+`WorkerMemory::affords`, so 8 MiB a reader caps the count only while the budget
+is small: `--jobs 24 --parallel-memory 64m` delivers 8 readers because `64/8` is
+8, while the same command at `256m` delivers all 24 — against the same four
+slots, with the surplus blocked in `BufferPool::obtain`. That arrangement is
+already shipped, already reachable and already measured, so the over-bill buys a
+budget-dependent threshold unrelated to anything held rather than a ceiling. It
+is therefore a defect and not a property: a property would be the bound the
+charge looks like it is providing, and it is not providing one.
+
+**The fix is two halves and the second is the load-bearing one.** The bill
+becomes a pooling term rather than a per-worker one; and `LocalFileSource` gains
+a `recommended_workers` shaped like its own slot count, so the count is bounded
+by the pool explicitly where today it is bounded by an inflated charge or not at
+all — the source overrides neither that method nor `worker_memory` today, taking
+the trait defaults, which is why the charge arrives entirely through
+`partition_bytes`. Exactness is not available either way: `pool_bytes` is
+`(pool_depth.max(workers) − 1) × unit`, which grows above the depth, so a term
+flat in the count is the same third `WorkerMemory` shape `KD24` priced and
+refused — on 4 MiB there, on the whole of this source's charge here, which is
+why whoever takes this decides that question too rather than inheriting the
+refusal.
+
+Three things bound how much it matters. `partition_bytes` has a **third**
+consumer — `leader::scan_region`'s floor, which leaves a region smaller than one
+partition to the serial path — so moving the number cuts regions in the last
+8 MiB of a file where today it does not. The two read loops want different
+shapes, `MayWait` making the free list and the in-flight buffers one population
+on the parse path where `NeverWait` makes them two on the query path. And every
+arrangement in dispute is one a user reaches only by typing `--jobs n` at a path
+whose worker default is serial precisely because a plain `parse` is slower than
+serial at every worker count measured ("What parallelism buys, and where it
+stops"). It is an **over**-bill, so it declines readers rather than overrunning
+an allocation, and `19.11`'s gate cannot reach it — that figure's legs are
+`pgdq parse` over a compressed input
+([2026-09-12](../status/history/2026-09-12.md), "`M97` is priced, and the bill
+is not the part that needs deciding").
+
 <!-- section: cut-width -->
 
 ### The cut width is one unit, and it was chosen against the default rather than against a stated count

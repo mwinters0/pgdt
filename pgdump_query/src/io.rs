@@ -2234,7 +2234,13 @@ impl ByteRangeSource for LocalFileSource {
     /// interior split caps what is outstanding at [`BufferPool::slots`], so
     /// this source holds `POOL_DEPTH` chunks flat in the reader count while
     /// [`Partitioning::partition_bytes`] bills [`PLAIN_PARTITION_CHUNKS`] of
-    /// them per reader (`docs/design/out-of-band.md`, `M97`).
+    /// them per reader. That over-bill is not the count bound it resembles —
+    /// `Parallelism::fit` solves rather than divides, so a budget above
+    /// `8 MiB × jobs` affords every stated reader against the same four slots
+    /// — and this source recommends no count of its own to bound them with
+    /// instead (`docs/design/architecture.md`, "Billed against held: one row
+    /// per buffer the process keeps").
+    // deficiency: KD25
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         let chunk = self.pool.slot_bytes();
         let bytes = chunk.saturating_mul(PLAIN_PARTITION_CHUNKS).min(POOL_MAX_BYTES).max(chunk);
