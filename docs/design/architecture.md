@@ -557,9 +557,7 @@ above.
 fitted**, and it needed no sitting: the unnamed remainder `held − at(jobs)` over
 every surviving block-path leg of those four hundred runs is 83.5–214.6 MiB on
 a 24 MiB-block file and 10.9–13.8 MiB on a 128 MiB-block one, and 256 MiB is
-the next 64 MiB step above the worst of them — 64 MiB being the granularity of
-the candidate grid the reading comes off, and the 41.4 MiB it adds the same
-order as that apparatus's own 2.1-percentage-point scatter. **It is a bound and
+the worst of them rounded up to a 64 MiB step. **It is a bound and
 not a term**: the remainder has no trend across three to twenty-four readers,
 and it is *smaller* where the blocks are larger, which is the opposite of a
 per-reader quantity. What it is, is unattributed — glibc's arena retention as
@@ -567,6 +565,42 @@ far as any reading goes, with no term table summing to it — so
 `scripts/measure.py`'s `charge_model_problem` carries two fault lines rather
 than one: a cell above the bound is a finding about the bound, a cell above the
 reserve is the rule not holding, and one threshold cannot tell those apart.
+
+**What justifies the *value* is how wrong it may be before the promise breaks,
+and the rounding is only a rounding.** What the library promises is
+`MEMORY_MARGIN_PERCENT`, not the bound; the bound is an input to it, so the
+question is the remainder at which the criterion is missed —
+`0.8 × limit − at(n)`, per cell. At the four 24 MiB-block allocations the
+margin governs that is 296.9, 290.1, 300.3 and 303.6 MiB, so the true remainder
+would have to run **75–89 MiB above the worst of 270 legs** — 35–41% larger than
+anything measured — before a resolved arrangement leaves less than a fifth of
+its limit, and 2.3–3.3× larger before the allocation is exhausted. Comparing
+the bound's 41.4 MiB of margin to the apparatus's own 2.1-percentage-point
+scatter instead is what once read this number as bracketed: the scatter is
+what the *worst observation* is uncertain by, and the criterion's own slack is
+three times it.
+
+*Rejected: 320 MiB, the next step up.* It buys 2.8 percentage points of
+headroom against the worst measured remainder at 2 GiB — 24.3% to 27.2% — and
+its own prediction is 0.3 points *worse* there, the step being 64 MiB where the
+reader it removes returns 58.03. It costs a reader at each of `1g`, `1088m`,
+`1536m` and `2g` on a 24 MiB-block file and at `1536m` and `2g` on a
+128 MiB-block one, whose remainder is 13.8 MiB and needs nothing. And because
+the bound is *subtracted*, its weight grows as the limit shrinks: the crossover
+`5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` falls 640 MiB → 320 MiB, so the
+margin starts binding across the band it was added to leave alone, taking a
+24 MiB-block file from 4 readers to 2 at `640m`, 3 to 1 at `600m` and 2 to 1 at
+`576m`. Priced at the registered allocations alone that cost reads as one
+reader a cell, which is how the step looked affordable.
+
+*Rejected: 224 MiB, tighter.* It costs the 128 MiB family nothing and buys a
+reader at every 24 MiB-block allocation, and its 2 GiB leg lands on **24**
+readers — the one arrangement `19.16` measured directly, at 24.9–27.0% worst-rep
+headroom, where 23 is bracketed rather than matched. But it spends the whole
+cushion to do it: the criterion's slack falls to 17–31 MiB over the worst
+observation, inside that apparatus's own scatter, and its `1536m` leg resolves
+seventeen readers, which is the count at which the 214.6 MiB worst remainder was
+observed. A bound is only useful in the direction a cgroup kills in.
 
 **So the margin binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` —
 640 MiB — and is inert below it**, where `limit − MEMORY_RESERVE` is the

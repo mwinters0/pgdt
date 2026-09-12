@@ -2364,8 +2364,11 @@ LIBRARY_MEMORY_RESERVE = 384 << 20
 #: two, and both are registered before the sitting.
 #:
 #: Read off `19.16`'s grid under today's charge rather than fitted: the worst
-#: surviving block-path remainder there is 214.6 MiB and this is the next
-#: 64 MiB step above it (`19.26`).
+#: surviving block-path remainder there is 214.6 MiB and this is that rounded up
+#: to a 64 MiB step. What justifies the value is the slack to
+#: `MEMORY_MARGIN_PERCENT` failing — 75-89 MiB above that worst observation at
+#: the allocations the margin governs — rather than the rounding
+#: (`19.26`; `docs/design/architecture.md`, "Execution model and API surface").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
 

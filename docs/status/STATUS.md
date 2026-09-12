@@ -418,13 +418,14 @@ sitting.
       until a `--figure reserve --alone` sitting completes with no killed leg**,
       so it is behind `19.19` and `19.17.1`, not merely behind `19.13`. `M88`
       landed, so every flagless cell names the path it ran, `M89` with it, so
-      the amended acceptance — the verdict holds at every evaluated cell — now
+      the amended acceptance — no evaluated cell above `MEMORY_RESERVE` — now
       evaluates a cell that bills a pool floor at each block size rather than
       none at all, and `M90`, which puts the three-count guard at the model's own
       boundary and publishes a secant below it, so a sitting that loses legs to
       kills states a slope rather than an intercept nothing checks
-      ([`../design/out-of-band.md`](../design/out-of-band.md)). Nothing blocks it
-      now.
+      ([`../design/out-of-band.md`](../design/out-of-band.md)). **`M91` blocks
+      it**: the gate reads a verdict that faults at both of `19.26`'s fault
+      lines, so a finding about the bound bars the sweep as a broken rule does.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
@@ -691,18 +692,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-1. **`MEMORY_UNPOOLED_BOUND` is 256 MiB, which is the worst remainder
-   `19.16`'s grid holds rounded up one 64 MiB step.** The decision is the
-   *value*, not the split — `19.26`'s spec row required a second constant, and
-   the arithmetic is in
-   [`../design/roadmap-P19.26-margin-constant-notes.md`](../design/roadmap-P19.26-margin-constant-notes.md).
-   What is being asked: 41.4 MiB of margin above a 214.6 MiB worst observation
-   is roughly that apparatus's own scatter, so the bound is bracketed rather
-   than comfortable, and it is the number every flagless count is now predicted
-   against — a 24 MiB-block file in a 2 GiB container resolves 23 readers and is
-   predicted to leave 22.3%, against 24.3% using the worst measured remainder.
-   Going one step further to 320 MiB costs exactly one reader at each of `1g`,
-   `1088m`, `1536m` and `2g` on the 24 MiB-block file and one at `1536m` and
-   `2g` on the 128 MiB one, for 0.3 percentage points more predicted headroom at
-   2 GiB. Nothing would be re-measured either way: the readings are in the tree
-   and the choice is which end of them to stand on.
+*Nothing open.*

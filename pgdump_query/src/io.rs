@@ -1258,12 +1258,34 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// and four container limits, ten reps each — are re-read under today's charge
 /// ([`WorkerMemory::at`]), and the unnamed remainder `held − at(jobs)` over
 /// every surviving block-path leg runs **83.5–214.6 MiB** on a 24 MiB-block
-/// file and **10.9–13.8 MiB** on a 128 MiB-block one. 256 MiB is the next
-/// 64 MiB step above the worst of those, 64 MiB being the granularity of the
-/// candidate grid the reading comes off; the 41.4 MiB it adds is the same
-/// order as that apparatus's own scatter, which was 2.1 percentage points of
-/// the limit at an arrangement the constant provably could not move
+/// file and **10.9–13.8 MiB** on a 128 MiB-block one. 256 MiB is the worst of
+/// those rounded up to a 64 MiB step
 /// (`docs/design/roadmap-P19.26-margin-constant-notes.md`).
+///
+/// **What justifies the value is the criterion's slack, not the rounding.**
+/// What this crate promises is [`MEMORY_MARGIN_PERCENT`]; the bound is an input
+/// to it, so what matters is the remainder at which the promise breaks —
+/// `0.8 × limit − at(n)`, which at the four 24 MiB-block allocations the margin
+/// governs is 296.9, 290.1, 300.3 and 303.6 MiB. The true remainder would have
+/// to run 75–89 MiB above the worst of 270 legs, 35–41% above anything
+/// measured, before an arrangement leaves less than a fifth of its limit, and
+/// 2.3–3.3× above it before the allocation is exhausted.
+///
+/// *Rejected: 320 MiB.* It buys 2.8 points of headroom against the worst
+/// measured remainder at 2 GiB and makes its own prediction 0.3 points worse
+/// there, the step being 64 MiB where the reader it removes returns 58.03. It
+/// costs a reader at each of `1g`, `1088m`, `1536m` and `2g` at 24 MiB blocks
+/// and at `1536m` and `2g` at 128, where the remainder is 13.8 MiB. And since
+/// the bound is subtracted, its weight grows as the limit falls: the crossover
+/// drops to 320 MiB, so the margin binds across the band it exists to leave
+/// alone — 4 readers to 2 at `640m`, 3 to 1 at `600m`, 2 to 1 at `576m`.
+///
+/// *Rejected: 224 MiB.* It costs the 128 MiB family nothing and buys a reader
+/// at every 24 MiB-block allocation, its 2 GiB leg landing on the 24 readers
+/// `19.16` measured directly rather than the 23 that is only bracketed — but
+/// the criterion's slack falls to 17–31 MiB, inside that apparatus's own
+/// scatter, and its `1536m` leg resolves the seventeen readers at which the
+/// 214.6 MiB worst remainder was observed.
 ///
 /// **It does not scale with the reader count, and it is *smaller* where the
 /// blocks are larger** — the opposite of a per-reader term, which is why the
