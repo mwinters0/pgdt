@@ -551,6 +551,10 @@ async fn map_forward(
     // Whether the `COPY` block currently open is one `target_settled` would
     // count — see the `CopyEnd` arm, which is the only reader.
     let mut open_block_targets = false;
+    // Whether `scan started`'s `jobs=` has already been corrected for this
+    // scan — see [`report_shortfall`], which is the only reader and the only
+    // writer.
+    let mut shortfall_reported = false;
 
     loop {
         // Once per chunk, before anything is read: this is the check that
@@ -645,7 +649,7 @@ async fn map_forward(
                         // totals as the serial scanner would have stated them, or
                         // declines and leaves the region where it is; the caller's
                         // `--jobs` is what decides whether a cut pays.
-                        let scanned = leader::scan_region(
+                        let outcome = leader::scan_region(
                             source,
                             scan_options,
                             header_offset,
@@ -654,7 +658,8 @@ async fn map_forward(
                             size,
                         )
                         .await?;
-                        match scanned {
+                        report_shortfall(&mut shortfall_reported, outcome.shortfall);
+                        match outcome.scan {
                             RegionScan::Closed(interior) => {
                                 // The workers counted the rows, so the census
                                 // they folded stands in for the `on_row` calls
@@ -809,6 +814,38 @@ async fn map_forward(
     // and it is the line that tells a long scan's silence apart from a hang.
     tracing::info!(bytes = size, reached_eof = true, "scan complete");
     Ok(MapStop::Reached)
+}
+
+/// Correct `scan started`'s `jobs=` where the leader delivered fewer readers
+/// than the caller asked for, **once per scan**, and say what would buy the
+/// arrangement back.
+///
+/// `scan started` names what was asked for, because the source's advice has
+/// not been read when it fires — the leader reads it standing on an open
+/// `COPY` block, and on a compressed source whose largest block the budget
+/// cannot hold the answer is one reader whatever `--jobs` said. Until this
+/// line existed a `parse` had no way at all to say so: the decline that says
+/// it on a query is a [`PlanNote`] on a `TableStream`, which a `parse` has
+/// none of (`docs/design/architecture.md`, "Status output").
+///
+/// **Silence means the count ran as announced.** The line is a correction and
+/// not a restatement, so it is emitted only where the two differ; `flag` is
+/// what keeps a dump with ten thousand `COPY` blocks from printing ten
+/// thousand copies of one scan-wide fact, which is also why
+/// [`crate::leader::Shortfall`] reports no reason that a later block could
+/// answer differently.
+fn report_shortfall(flag: &mut bool, shortfall: Option<leader::Shortfall>) {
+    let Some(shortfall) = shortfall.filter(|_| !*flag) else {
+        return;
+    };
+    *flag = true;
+    tracing::info!(
+        jobs = shortfall.delivered,
+        asked = shortfall.asked,
+        bound_by = shortfall.bound_by.as_str(),
+        would_hold_bytes = shortfall.would_hold_bytes,
+        "scan arrangement",
+    );
 }
 
 /// What closing one `COPY` block asks of the loop that closed it.

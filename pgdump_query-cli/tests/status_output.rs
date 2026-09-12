@@ -588,3 +588,97 @@ fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
     let plain = started_of(plain_dump().to_str().unwrap(), cache_dir.path().join("plain.dqcache"));
     assert!(plain.contains("jobs=1"), "{plain}");
 }
+
+/// Lines correcting the arrangement (`stream::report_shortfall`).
+fn arrangement_lines(stderr: &str) -> Vec<&str> {
+    stderr.lines().filter(|l| l.contains("scan arrangement")).collect()
+}
+
+/// **`parse` says what ran, where until now it only said what was asked
+/// for.** A compressed source whose largest block the budget cannot hold
+/// reads through the streaming decoder and is therefore serial whatever
+/// `--jobs` says — a decline `query` announces on a plan note and `parse` has
+/// no plan notes to carry. The correction is on the status channel both
+/// commands already have, once per scan, naming the delivered count beside
+/// the announced one and the budget that would buy the path back
+/// (`docs/design/architecture.md`, "Status output").
+///
+/// What only the binary can say is that the line reaches real stderr and that
+/// the two numbers on it actually disagree with `scan started`'s.
+#[test]
+fn a_parse_a_declined_source_runs_serially_says_so_once() {
+    let (_xz_dir, compressed) = seekable_xz();
+    let dir = tempfile::tempdir().unwrap();
+
+    // 400 bytes is below the fixture's 512-byte block unit, so the block path
+    // is declined and the source advises one partition over the whole file —
+    // the same arrangement `parallelism.rs` asserts the `query` decline in.
+    let out = run(&[
+        "parse",
+        "--source",
+        compressed.to_str().unwrap(),
+        "--dqcache",
+        dir.path().join("declined.dqcache").to_str().unwrap(),
+        "--jobs",
+        "2",
+        "--parallel-memory",
+        "400",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let started = main_scan_lines(&stderr)
+        .into_iter()
+        .find(|l| l.contains("started"))
+        .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"));
+    assert!(started.contains("jobs=2"), "the line that says what was asked for: {started}");
+
+    let corrections = arrangement_lines(&stderr);
+    assert_eq!(corrections.len(), 1, "said once for the scan, not once a block: {stderr}");
+    let line = corrections[0];
+    assert!(line.contains("jobs=1"), "the delivered count: {line}");
+    assert!(line.contains("asked=2"), "beside the announced one: {line}");
+    assert!(line.contains("source"), "the source is what refused, not the divisor: {line}");
+    // The recourse is the whole of what one reader of the declined path holds,
+    // so it is past the two 512-byte blocks by the decoder's own retention —
+    // and it is the source's own number, which is why nothing here restates it.
+    let (_, tail) = line.split_once("would_hold_bytes=").expect(line);
+    let bytes: u64 = tail.split_whitespace().next().expect(line).parse().expect(line);
+    assert!(bytes > 2 * 512, "{line}");
+
+    // A budget that affords a whole block corrects nothing: the source would
+    // be split, and every region of this fixture being too small to cut is a
+    // property of the blocks rather than of the arrangement.
+    let out = run(&[
+        "parse",
+        "--source",
+        compressed.to_str().unwrap(),
+        "--dqcache",
+        dir.path().join("afforded.dqcache").to_str().unwrap(),
+        "--jobs",
+        "2",
+        "--parallel-memory",
+        "536870912",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(arrangement_lines(&stderr_of(&out)).is_empty(), "{}", stderr_of(&out));
+
+    // And a plain file, which has no container to decline, is corrected by the
+    // budget instead — the other of the two rules, reported by name.
+    let out = run(&[
+        "parse",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        dir.path().join("plain.dqcache").to_str().unwrap(),
+        "--jobs",
+        "2",
+        "--parallel-memory",
+        "400",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let corrections = arrangement_lines(&stderr);
+    assert_eq!(corrections.len(), 1, "{stderr}");
+    assert!(corrections[0].contains("jobs=1"), "{}", corrections[0]);
+    assert!(corrections[0].contains("budget"), "{}", corrections[0]);
+}

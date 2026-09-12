@@ -270,6 +270,93 @@ pub(crate) enum RegionScan {
     Cancelled,
 }
 
+/// What the leader made of one region, and what it delivered short of what
+/// the caller asked for.
+///
+/// The second half exists because the two are known at the same instant and
+/// nowhere else: [`scan_region`] is the only party that sees the source's
+/// advice, and a caller that reads only [`RegionScan`] cannot tell a region
+/// the leader cut from one it was never able to
+/// (`docs/design/architecture.md`, "Status output").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RegionOutcome {
+    /// What happened to the region.
+    pub(crate) scan: RegionScan,
+    /// What the arrangement delivered, where it delivered less than
+    /// [`crate::Parallelism::jobs`] asked for and the reason will still hold
+    /// at the next block. `None` where the full count ran, where one reader
+    /// was asked for, or where the only thing standing in the way is this
+    /// region's own size ([`Shortfall`]).
+    pub(crate) shortfall: Option<Shortfall>,
+}
+
+/// Which rule cut the delivered reader count below the count asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BoundBy {
+    /// The source advises a single partition **over the whole file**, so it
+    /// declines to be split at all. A compressed source whose largest block
+    /// the budget cannot hold is the shape that reaches it
+    /// ([`crate::io::ByteRangeSource::block_decode_bytes`]).
+    Source,
+    /// The source would be split, and the caller's memory budget affords
+    /// fewer readers of it than were asked for
+    /// (`crate::stream::worker_count`).
+    Budget,
+}
+
+impl BoundBy {
+    /// The token the status line carries. Stable, lowercase, and in the
+    /// library's own vocabulary rather than any caller's flag names — the
+    /// convention [`crate::stream::PlanNote::message`] set.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Budget => "budget",
+        }
+    }
+}
+
+/// A count asked for and not delivered, with the bytes the arrangement it
+/// refused would have held.
+///
+/// **It reports the two rules that answer for the arrangement, and not the
+/// one that answers for a block.** Both of the reasons below are read off the
+/// source's advice over *the rest of the file* and the caller's budget, so
+/// one line stands for the whole scan. A `COPY` region smaller than one of
+/// the source's partitions is the third way to be left serial and is
+/// deliberately not reported: it is a property of that block rather than of
+/// the arrangement, it is the documented behaviour of a dump of small tables
+/// (`docs/design/architecture.md`, "The interior split"), and a dump with ten
+/// thousand small blocks would otherwise carry ten thousand lines saying so.
+/// What that costs is that a `--jobs 24` scan of a dump of small tables runs
+/// serially and says nothing, which is the one case this line does not
+/// cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Shortfall {
+    /// Readers the caller asked for — [`crate::Parallelism::jobs`], which is
+    /// the number `scan started` already announced.
+    pub(crate) asked: usize,
+    /// Readers the leader runs instead: one where the source declines to be
+    /// split, and what the budget affords otherwise.
+    pub(crate) delivered: usize,
+    /// Which rule cut it.
+    pub(crate) bound_by: BoundBy,
+    /// **What the arrangement that was refused would have held resident**,
+    /// which is the number a budget has to clear to buy it — the source's own
+    /// arithmetic in both arms, never re-derived here.
+    ///
+    /// Under [`BoundBy::Budget`] it is what `asked` readers of the advice in
+    /// force would hold ([`crate::io::Partitioning::worker_memory`]). Under
+    /// [`BoundBy::Source`] it is what one reader of the container path costs
+    /// ([`crate::io::ByteRangeSource::block_decode_bytes`]) — the budget that
+    /// buys that path back, since the source is only reported as declining
+    /// where it declines over the whole file.
+    ///
+    /// `None` for a source with no such path to name, which is every source
+    /// that simply declines to be split.
+    pub(crate) would_hold_bytes: Option<u64>,
+}
+
 /// Scan the interior of the `COPY` block that opens at `data_offset` with
 /// concurrent fused workers, and answer the block's totals.
 ///
@@ -315,16 +402,19 @@ pub(crate) async fn scan_region(
     data_offset: u64,
     columns: usize,
     size: u64,
-) -> Result<RegionScan> {
+) -> Result<RegionOutcome> {
     let advice = source.partitions(data_offset..size);
     let partition_bytes = advice.partition_bytes();
     let workers = worker_count(options.parallelism, advice.worker_memory());
-    if workers <= 1
-        || partition_bytes == 0
-        || advice.max_partitions() == Some(1)
-        || size.saturating_sub(data_offset) < partition_bytes
-    {
-        return Ok(RegionScan::Declined);
+    // Whether this region could hold one of the source's own partitions — the
+    // floor above, and the one refusal that is about *this* block rather than
+    // about the arrangement. A source that states no cost at all states no
+    // floor either, and is declined for advising nothing rather than for the
+    // size of what it was asked about.
+    let region_fits = partition_bytes > 0 && size.saturating_sub(data_offset) >= partition_bytes;
+    let shortfall = shortfall(source, options, &advice, workers, size);
+    if workers <= 1 || !region_fits || advice.max_partitions() == Some(1) {
+        return Ok(RegionOutcome { scan: RegionScan::Declined, shortfall });
     }
 
     // **This loop grants the wait, and it is the only one that does**
@@ -343,14 +433,65 @@ pub(crate) async fn scan_region(
     let scanned = run_region(source, options, &advice, workers, data_offset, columns, size).await;
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
-    match scanned? {
-        Some(interior) => Ok(RegionScan::Closed(interior)),
-        None if options.cancelled() => Ok(RegionScan::Cancelled),
+    let scan = match scanned? {
+        Some(interior) => RegionScan::Closed(interior),
+        None if options.cancelled() => RegionScan::Cancelled,
         // Every window ran to the end of the file and none of them held the
         // terminator, which is the serial scanner's `UnterminatedCopyBlock`
         // reached the parallel way.
-        None => Err(Error::UnterminatedCopyBlock { header_offset }),
+        None => return Err(Error::UnterminatedCopyBlock { header_offset }),
+    };
+    Ok(RegionOutcome { scan, shortfall })
+}
+
+/// What this arrangement delivers short of what was asked, for the two
+/// reasons that outlive the region — the fact `scan started` cannot carry,
+/// because the source's advice is not read until the leader is standing on an
+/// open block (`docs/design/architecture.md`, "Status output").
+///
+/// **The source arm is asked about the whole file**, not about the region the
+/// leader is standing on: a block-decoding source past its last boundary
+/// advises a single partition too, and that is a fact about where the leader
+/// is standing rather than about the source. It is the same question
+/// `stream::compressed_block_path_declined` asks, asked the same way, and the
+/// second call is paid only on the path that is about to report something.
+///
+/// **Both numbers come off the source**, which is the whole reason this is
+/// answered here rather than by a caller comparing two counts of its own: the
+/// budget that buys the arrangement back is the source's own arithmetic, and a
+/// second copy of it parts company with the first at the next change to a
+/// charge ([`crate::io::ByteRangeSource::block_decode_bytes`]).
+fn shortfall(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    advice: &Partitioning,
+    workers: usize,
+    size: u64,
+) -> Option<Shortfall> {
+    let asked = options.parallelism.jobs();
+    if asked <= 1 {
+        return None;
     }
+    // The source's refusal is reported ahead of the budget's, and the two are
+    // routinely both true: a budget too small for one block of a compressed
+    // file also affords one reader of the streaming advice it falls back to.
+    // The source's is the more actionable of the two, naming the path that was
+    // given up rather than the fallback that was taken.
+    if advice.max_partitions() == Some(1) && source.partitions(0..size).max_partitions() == Some(1)
+    {
+        return Some(Shortfall {
+            asked,
+            delivered: 1,
+            bound_by: BoundBy::Source,
+            would_hold_bytes: source.block_decode_bytes(),
+        });
+    }
+    (workers < asked).then(|| Shortfall {
+        asked,
+        delivered: workers.max(1),
+        bound_by: BoundBy::Budget,
+        would_hold_bytes: Some(advice.worker_memory().at(asked)),
+    })
 }
 
 /// The window loop: hand out `workers` pieces at a time until one of them
@@ -902,7 +1043,7 @@ mod tests {
                     .await
                     .unwrap();
                     assert_eq!(
-                        got,
+                        got.scan,
                         RegionScan::Closed(block.interior.clone()),
                         "{} block at {} under {jobs} jobs",
                         path.display(),
@@ -1011,7 +1152,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-                if matches!(got, RegionScan::Closed(_)) {
+                if matches!(got.scan, RegionScan::Closed(_)) {
                     scheduled_blocks += 1;
                 }
                 let reads = source.reads.lock().unwrap();
@@ -1092,7 +1233,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-                if matches!(got, RegionScan::Closed(_)) {
+                if matches!(got.scan, RegionScan::Closed(_)) {
                     scheduled_blocks += 1;
                 }
                 // The piece is eight chunks wide and the stated unit is three,
@@ -1155,7 +1296,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(got, RegionScan::Declined);
+        assert_eq!(got.scan, RegionScan::Declined);
 
         let shipped = ScanOptions {
             parallelism: Parallelism::workers(8, crate::io::DEFAULT_MEMORY_BUDGET),
@@ -1172,7 +1313,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(got, RegionScan::Declined, "a kilobyte block against a 1 MiB partition");
+        assert_eq!(got.scan, RegionScan::Declined, "a kilobyte block against a 1 MiB partition");
     }
 
     /// Cancellation is answered between windows, and it is neither a closed
@@ -1197,7 +1338,105 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(got, RegionScan::Cancelled);
+        assert_eq!(got.scan, RegionScan::Cancelled);
+    }
+
+    /// **A count asked for is not a count delivered, and this is the only
+    /// party that knows the difference**: the budget is solved against the
+    /// source's own advice here, and `scan started` has already announced the
+    /// number the caller typed (`docs/design/architecture.md`, "Status
+    /// output").
+    ///
+    /// The shortfall is answered whatever became of the region, so a block too
+    /// small to cut still carries the arrangement-wide fact — which is what
+    /// lets `stream::map_forward` correct its own line once rather than once a
+    /// block.
+    #[tokio::test]
+    async fn a_budget_affording_fewer_readers_than_asked_for_answers_a_shortfall() {
+        let path = fixture(16, "types", "default");
+        let file = std::fs::read(&path).unwrap();
+        let size = file.len() as u64;
+        let block = &reference(&file)[0];
+        let source = LocalFileSource::open(&path).unwrap();
+        source.hint_read_size(8);
+        // `scheduled` announces an 8-byte chunk, so a partition is 64 bytes:
+        // 128 of them buys two readers where four were asked for.
+        let advice = source.partitions(block.data_offset..size);
+        assert_eq!(advice.partition_bytes(), 64, "the fixture's own partition size moved");
+
+        let options =
+            ScanOptions { parallelism: Parallelism::workers(4, 128), ..scheduled(&source, 4) };
+        let got = scan_region(
+            &source,
+            &options,
+            block.header_offset,
+            block.data_offset,
+            block.columns,
+            size,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            got.shortfall,
+            Some(Shortfall {
+                asked: 4,
+                delivered: 2,
+                bound_by: BoundBy::Budget,
+                // What the four that were asked for would have held — the
+                // source's own per-worker term, not a count this crate
+                // divided for.
+                would_hold_bytes: Some(64 * 4),
+            }),
+        );
+    }
+
+    /// **Silence is the claim that the count ran as announced**, so the two
+    /// arrangements that deliver what was asked answer no shortfall at all: a
+    /// caller that asked for one reader, and a budget that affords every
+    /// reader asked for. The region floor is deliberately not a shortfall
+    /// either — the second case here is a block far too small to cut, and it
+    /// still reports nothing ([`Shortfall`]).
+    #[tokio::test]
+    async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
+        let path = fixture(16, "types", "default");
+        let file = std::fs::read(&path).unwrap();
+        let size = file.len() as u64;
+        let block = &reference(&file)[0];
+        let source = LocalFileSource::open(&path).unwrap();
+
+        let serial = scheduled(&source, 1);
+        let got = scan_region(
+            &source,
+            &serial,
+            block.header_offset,
+            block.data_offset,
+            block.columns,
+            size,
+        )
+        .await
+        .unwrap();
+        assert_eq!(got.scan, RegionScan::Declined, "one job is the serial path");
+        assert_eq!(got.shortfall, None, "one reader asked for is one reader delivered");
+
+        // A 1 MiB partition against a kilobyte block: declined for its size,
+        // which is a fact about this block and not about the arrangement.
+        let shipped = ScanOptions {
+            parallelism: Parallelism::workers(8, crate::io::DEFAULT_MEMORY_BUDGET),
+            ..ScanOptions::default()
+        };
+        source.hint_read_size(shipped.chunk_size);
+        let got = scan_region(
+            &source,
+            &shipped,
+            block.header_offset,
+            block.data_offset,
+            block.columns,
+            size,
+        )
+        .await
+        .unwrap();
+        assert_eq!(got.scan, RegionScan::Declined);
+        assert_eq!(got.shortfall, None, "a region too small to cut is not a shortfall");
     }
 
     /// **Only the leader may say a block is unterminated**, which is the other
@@ -1254,7 +1493,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(got, RegionScan::Closed(block.interior.clone()), "{jobs} jobs");
+            assert_eq!(got.scan, RegionScan::Closed(block.interior.clone()), "{jobs} jobs");
         }
     }
 }

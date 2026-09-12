@@ -8964,6 +8964,48 @@ that already covers the file; a target the cache already settles) are "nothing
 to do" and earn no line — a `pgdq parse` against an already-cached file already
 says so on stdout (see "`parse` resumes, and saves as it goes", above).
 
+**`scan arrangement` is the correction, and it is the only line that says what
+ran.** `scan started`'s `jobs=` is what the caller asked for, and it has to be:
+the source's advice is not read until the leader is standing on an open `COPY`
+block, one line later. On a compressed source whose largest block the budget
+cannot hold the delivered count is **one whatever `--jobs` said** — and until
+this line existed a `parse` had no way at all to say so, the decline that says
+it on a query being a `PlanNote` on a `TableStream`, which a `parse` has none
+of. So `leader::scan_region`, the one party that sees the advice, answers a
+`Shortfall` beside its `RegionScan`, and `map_forward` prints it **once per
+scan**: the delivered count, the announced one beside it, which rule cut it
+(`bound_by=source`/`budget`), and what the refused arrangement would have held
+resident — the source's own number in both arms
+([`ByteRangeSource::block_decode_bytes`] where the source declined a container
+path, [`Partitioning::worker_memory`] at the asked-for count where the budget
+did). Silence is the claim that the count ran as announced.
+
+**It reports the two rules that answer for the arrangement, and not the one
+that answers for a block.** A `COPY` region smaller than one of the source's
+partitions is the third way to be left serial, and it is deliberately not
+reported: it is a property of that block rather than of the run, it is the
+documented behaviour of a dump of small tables (above, "The interior split"),
+and a dump with ten thousand small blocks would otherwise carry ten thousand
+copies of one line. What that costs is stated rather than hidden — a `--jobs 24`
+scan of a dump of small tables runs serially and this line says nothing — and
+it is the one arrangement the correction does not cover. The source arm is
+asked about the **whole file** rather than about the region for the same
+reason: a block-decoding source standing past its last block boundary advises
+one partition too, and reporting that would be reporting where the leader is
+standing.
+
+*Rejected: a `parse`-side decline line in the CLI.* It would print a decline
+beside a `jobs=` line that is itself wrong in the same arrangement, and it
+would oblige the CLI to re-derive the source's own arithmetic — which
+[`stream::compressed_block_path_declined`] refuses by name, for the reason the
+decline and the divisor were collapsed into one `reader_bytes` (above, "The
+compressed source"). *Rejected: lifting the plan notes out of `TableStream` so
+both commands read them.* That is a public surface change buying nothing the
+status channel does not already reach, `map_forward` running behind both
+commands and already naming the arrangement
+([2026-09-12](../status/history/2026-09-12.md), "A `parse` reports what was
+asked for and never what ran").
+
 **The memory budget is printed as a quantity, never as `Option`'s own
 spelling.** `Parallelism::memory_bytes` answers `None` where the caller stated
 no budget at all by design — "the caller said nothing" and "the caller said

@@ -316,7 +316,9 @@ It states what is asked for rather than what you get: two input shapes admit no
 parallelism at all whatever you set, and a plain file gets fewer workers than
 you named. Both are below. The `scan started` line says the count that was
 resolved (below, "Status on stderr"), which is where to look if you want to know
-what a flagless run chose.
+what a flagless run chose — and where the run then delivers fewer readers than
+that, a `scan arrangement` line beneath it says so and says what would buy them
+back.
 
 For `query` it cuts the row reading up: the parts of the file holding the rows
 you asked for are split into at most this many pieces, read at the same time,
@@ -492,6 +494,31 @@ asked for one, and it names its own origin the same way:
 
 `scan started` below repeats the two resolved numbers without the provenance,
 so a log line naming a scan says what produced everything that follows it.
+
+**`scan arrangement` is what says how many readers really ran.** `scan
+started`'s `jobs=` is the count that was resolved before the file was opened,
+and two things can still cut it: a compressed dump whose largest block the
+budget cannot hold is read through the streaming decoder and is **serial
+whatever `--jobs` said**, and a budget too small for the readers asked for buys
+fewer of them. Either way one line follows, once per scan:
+
+```
+2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=67108864
+2026-07-23T14:03:36.912771904Z  INFO scan arrangement jobs=1 asked=24 bound_by="source" would_hold_bytes=130023424
+```
+
+`jobs=` is what is running, `asked=` is what `scan started` announced,
+`bound_by=` is which of the two cut it — `source` for a container path the
+budget could not afford, `budget` for readers it could not afford — and
+`would_hold_bytes=` is what the arrangement that was refused would have held,
+which is the number to raise `--parallel-memory` to. **No such line means the
+count ran as announced.**
+
+One case it does not cover: a `COPY` block smaller than one of the pieces the
+file would be split into is read serially whatever you asked for, and that is
+not reported, because on a dump of many small tables it would be reported for
+almost every block. So a `--jobs 24` scan of a dump of small tables can run
+serially and print no correction at all.
 
 A query's mapping pass may print `scan complete` at the offset it stopped
 rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file
