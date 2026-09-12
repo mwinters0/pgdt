@@ -263,6 +263,13 @@ impl Resolved {
     /// first is telling the user what will run
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
+    ///
+    /// **The first half is not yet true on one arm**, and `M87` is what makes
+    /// it so: [`ParallelArgs::resolve_in`] reaches
+    /// [`pgdump_query::Parallelism::discover_in`] — where the lowering happens
+    /// — only where `--parallel-memory` was absent, so a stated budget with no
+    /// `--jobs` prints a recommendation the allowance never reduced
+    /// (`docs/design/architecture.md`, "Status output").
     fn jobs_display(&self) -> String {
         let jobs = self.parallelism.jobs();
         match self.recommended_jobs {

@@ -341,11 +341,11 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.24`, `19.22`, `19.23`, then `19.11`** — the
-three new rows were admitted on 2026-09-12 and take the next free numbers
+What remains runs **`19.24`, `19.22`, `19.23`, `19.25`, then `19.11`** — the
+four new rows were admitted on 2026-09-12 and take the next free numbers
 rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
 entry closes on 384, and the grilling found the charge wrong below four
-readers").
+readers"; "A `parse` reports what was asked for and never what ran"). **`M87` lands ahead of `19.23`**, which reworks the `fit` its arm bypasses.
 
 **All three defaults are shipped, so what remains is the charge and the
 sweep.** `19.18`'s sitting says the program holds
@@ -721,6 +721,16 @@ than this one (`19.23`).
       non-negative. Seeded from readings already in the tree, so it needs no
       sitting, and it runs **first of the three**, behind `19.13`: it is what
       surfaces an under-bill, and what would have caught `19.22`'s.
+- [ ] **19.25** A `parse` says what ran, not what was asked for. Plan notes
+      belong to a query's replay, so `19.13`'s decline report never reaches a
+      `parse` — and the gap is wider than the decline: `leader::scan_region`
+      refuses to cut on `advice.max_partitions() == Some(1)`, so a declined
+      `.xz` `parse` is **serial whatever `--jobs` says**, while the mode report
+      names the count that was asked for. The library states the delivered
+      count and what the refused cut would have cost, on the `scan
+      started`/`scan complete` channel both commands already carry; the CLI
+      keeps `Resolved::plan_note_origin`'s provenance. Runs after `19.23`,
+      which decides the count it reports.
 
 ## Not started
 
@@ -731,8 +741,8 @@ than this one (`19.23`).
   worker default comes from the source, and the memory-limit discovery and the
   budget rule are in the tree carrying the 384 MiB reserve `19.16` read. What
   remains is the charge repair the constant cannot stand in for (`19.22`,
-  `19.23`), the model check that would have caught it (`19.24`), and the
-  closing sweep. Its checklist is above and its spec is
+  `19.23`), the model check that would have caught it (`19.24`), the report
+  that makes a `parse` say what ran (`19.25`), and the closing sweep. Its checklist is above and its spec is
   [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
   Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
   table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
@@ -909,19 +919,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A declined block path is reported on `query` and not on `parse`.** `19.13`
-  owed the implicit block-path floor a report naming the limit that caused it
-  ([`../design/architecture.md`](../design/architecture.md), "Execution model
-  and API surface"). What landed appends the budget's provenance to the plan
-  notes the CLI already prints — which belong to a query's replay, so a
-  flagless `parse` whose block path is declined still prints no warning. The
-  call: a `parse` decline is the *same* arithmetic as a lowered count
-  (`cap < per_reader` is what makes `fit` return one), so the mode report
-  already says `jobs=1 (recommended by the source; lowered from N by the
-  allocation)` beside the file that stated the limit, and a second line saying
-  the block path went with it would be a new channel for a fact already on
-  screen. Reconsidering it means either a `parse`-side decline line or lifting
-  the note out of `TableStream` so both commands read it — the latter is a
-  library surface change and would be a slice, not an edit. What it costs
-  today: a `parse` under a **stated** small budget says nothing at all, where
-  the same run as a `query` says three things.
+_Nothing open._

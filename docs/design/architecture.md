@@ -638,12 +638,35 @@ already names the number that person typed, and the recourse is to raise it.
 
 Every plan note carries the clause rather than the decline alone, because all
 three of them name a budget as the thing that bound the plan and the question
-"which number do I change" is the same on each. The note that reaches a
-`parse` is none of them — plan notes belong to a query's replay — but a
-flagless `parse` whose block path is declined has had its *count* lowered to one
-by the same arithmetic, which the mode report already states as
-`(recommended by the source; lowered from N by the allocation)` beside the file
-that stated the limit.
+"which number do I change" is the same on each.
+
+**The note that reaches a `parse` is none of them, and the mode report does not
+stand in for them.** Plan notes belong to a query's replay, so a `parse` is told
+only what the mode report says — and that line names the count that was *asked
+for*. It coincides with what runs in one arrangement only: a flagless `parse`
+whose block path is declined has had its count lowered to one by the same
+arithmetic, printed as `(recommended by the source; lowered from N by the
+allocation)`. Where `--jobs` was stated the count is printed as typed, and where
+`--parallel-memory` was stated `ParallelArgs::resolve_in` does not consult the
+allowance at all, so a recommended count is printed unlowered beside a run that
+will not deliver it. The decline is not a `query`-only cost either:
+`leader::scan_region` refuses to cut on `advice.max_partitions() == Some(1)`,
+which is the shape a declined source advertises, so a declined `.xz` `parse` is
+serial whatever `--jobs` says. Both halves are `P19`'s to close — the allowance
+arm as an out-of-band repair, the report as a slice that states the
+**delivered** count on the `scan started`/`scan complete` channel both commands
+carry ("Status output", below), where `scan_region` is the one party that sees
+the advice.
+
+*Rejected: a `parse`-side decline line in the CLI.* It would print a decline
+beside a `jobs=` line that is itself wrong in the same arrangement, and it
+obliges the CLI to re-derive the source's arithmetic —
+`stream::compressed_block_path_declined` refuses that by name, reading
+`block_decode_bytes()` off the source so the recourse and the rule cannot part
+company. *Rejected: lifting the plan notes out of `TableStream`* so both
+commands read them. That is a public surface change buying nothing the existing
+status channel does not already reach, `stream::map_forward` running behind both
+commands and already naming the arrangement.
 
 **Below the reserve the budget goes to zero, and the arrangement that produces
 is named rather than emergent.** At or under a `MEMORY_RESERVE`-sized limit
@@ -8758,6 +8781,15 @@ numbers carrying their own provenance:
   staying `stream::worker_count`'s to decide from the budget. The same two
   readers therefore appear under `jobs=2` and under `jobs=24`, and only the
   first is telling the user what will run.
+
+  **The lowering has a hole, and it is `M87`'s to close**:
+  `ParallelArgs::resolve_in` reaches `Parallelism::discover_in` — which is where
+  `fit` lowers — only on the arm where `--parallel-memory` was absent, so a
+  stated budget with no `--jobs` prints a recommendation unlowered. The rule
+  scopes the lowering to the absence of `--jobs`, and `--jobs` is absent there,
+  so the arm is an oversight rather than a decision
+  ([2026-09-12](../status/history/2026-09-12.md), "A `parse` reports what was
+  asked for and never what ran").
 
 **The mode is reported because the quiet failure is a recommendation nobody can
 see was reduced.** Under an orchestrator the operator assigned an allocation

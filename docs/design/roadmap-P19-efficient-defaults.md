@@ -1109,6 +1109,7 @@ being inserted.
 | **19.22** | **The charge bills the pool floor.** `block_reader_bytes` charges `2 × unit` a reader, which assumes `slots == jobs`; `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)`, so below four readers the pool holds units nobody paid for — `(POOL_DEPTH − jobs) × unit`, confirmed to 1.4 MiB over five cells of `19.16`'s readings. The cost is no longer linear in `jobs`, so `Parallelism::fit` **solves** for the largest affordable count rather than dividing a cap by a per-worker scalar. Unbounded in the block size (96 MiB at 24 MiB blocks, 384 at 128, 2 GiB at 512), which is why no reserve absorbs it. |
 | **19.23** | **The count answers to the criterion, not to the core count.** `2g` clears the margin only because `available_parallelism` clamps 28 readers to this machine's 24; a 64-core host resolves 28 and is predicted to breach. Once `19.22` makes the cost a model, `fit` refuses a count whose predicted resident breaches the stated margin, which removes the dependence rather than documenting it. |
 | **19.24** | **The harness checks the model, rather than searching for a constant.** `19.16` spent 400 runs to pick one integer and the account that mattered came out of arithmetic over its `readings.json` afterwards. A registered check predicts held bytes per cell from the charge model, measures, and asserts the residual is small and non-negative — which is what surfaces an under-bill, and what a grid search structurally cannot report. Seeded from readings already in the tree; no new sitting. |
+| **19.25** | **A `parse` says what ran, not what was asked for.** `19.13`'s decline report reaches a query's replay only — plan notes are `plan_partitions`' — and on `parse` nothing ever reports that the delivered worker count differs from the announced one. The gap is wider than the decline: `leader::scan_region` refuses to cut on `advice.max_partitions() == Some(1)`, so a declined `.xz` `parse` is **serial whatever `--jobs` says**, and the mode report's recommended count is lowered only where `--parallel-memory` was absent. The library states the delivered count and what it would have taken, at the one site that sees the advice, on the `scan started`/`scan complete` channel both commands already carry ([`architecture.md`](architecture.md), "Status output"); the CLI keeps `Resolved::plan_note_origin`'s provenance clause. **Not a new public channel and not a CLI re-derivation** — the two routes the closed entry priced are both refused below. Runs after `19.23`, which is what decides the delivered count it reports. |
 
 
 **`19.14` through `19.21` were admitted after this spec was written**, and take the
@@ -1160,6 +1161,32 @@ because the accounting half is a rework of an already-tested concurrent
 structure and earns its own review. Reasoning:
 [2026-09-09](../status/history/2026-09-09.md), "The reserve rule's two entries,
 closed".
+
+**`19.25` was admitted after this spec was written, and it takes the next free
+number rather than being inserted.** The row above at "The decline the repair
+widens is accepted, and reported" committed the phase to reporting the decline
+and named `19.13` as where; what it did not settle is *which command* reports
+it, and `19.13` shipped the report onto plan notes, which belong to a query's
+replay. Reviewing that call found the asymmetry wider than the decline — a
+`parse` reports what was asked for and never what ran, on a path where the
+answer is routinely serial — so the row is a slice rather than a ledger item:
+it reverses this spec's implicit reading that the mode report already covers a
+flagless `parse`.
+
+Two routes were priced and both refused. **A `parse`-side decline line in the
+CLI** would print a decline beside a `jobs=` line that is itself wrong in the
+same arrangement, and would oblige the CLI to re-derive the source's own
+arithmetic — which `stream::compressed_block_path_declined` refuses by name,
+for the reason `19.19` collapsed the divisor and the decline into one
+`reader_bytes`. **Lifting the plan notes out of `TableStream`** so both
+commands read them is a public surface change that buys nothing the existing
+status channel does not already reach, since `stream::map_forward` runs behind
+both commands and already names the arrangement. What is reported is therefore
+the **delivered** count and what the refused cut would have cost, stated where
+`leader::scan_region` sees the advice.
+
+Reasoning: [2026-09-12](../status/history/2026-09-12.md), "A `parse` reports
+what was asked for and never what ran".
 
 **19.2's account has been taken, and it lands on both branches rather than one.**
 The fork above asks which of two causes the account lands on; it names three,
