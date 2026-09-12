@@ -499,16 +499,16 @@ before the sitting.
       ran"). The hole is admitted as **`M101`**, blocking this phase: the
       harness guards the census-off binary's provenance and not the binary every
       figure is timed against ([`../design/out-of-band.md`](../design/out-of-band.md)).
-      **The gate is re-running on a hand-built `88cf781` binary** — launched
-      2026-09-12T21:18:06+00:00 under process group 2948753, writing
-      `runs/measure-20260912T211806/`, handoff at
-      `runs/gate-19.11-20260912-2118/HANDOFF.md`. Nothing else may build or test
-      while it runs. A follow-up session checks the resolved counts moved off
-      1/1/9/10/16/23 and 1/1/1/1/3/5 before reading anything else, then the
-      killed-leg lines and the verdict's bands. **That check is what the sitting
-      stands on**, a diagnostic sitting whose own budgets say which binary ran
-      needing no re-take; `M101` lands before the **sweep**, which publishes
-      twenty-one tables of which most carry no such fingerprint.
+      **The gate passed on a hand-built `88cf781` binary**
+      (`runs/measure-20260912T211806/tables.md`, NOT PUBLISHABLE): no leg was
+      killed and all ten evaluated cells read `met`, the worst unnamed remainder
+      155.9 MiB against a 256 MiB `MEMORY_UNPOOLED_BOUND` — `M93`'s predicted
+      153.4. The binary check it stands on is satisfied: the resolved counts
+      moved to 1/2/10/11/17/24 and 1/1/1/1/4/5, matching the instrument legs the
+      harness builds for itself, where the stale sitting's were byte-identical
+      to `880d09e`'s. **What is left of this box is the sweep**, and `M101`
+      lands before it — a diagnostic sitting's own budgets say which binary ran,
+      where most of the twenty-one published tables carry no such fingerprint.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
