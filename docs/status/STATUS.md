@@ -404,11 +404,12 @@ sitting.
       `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures,
       which were taken before `partition_bytes` changed. **It does not start
       until a `--figure reserve --alone` sitting completes with no killed leg**,
-      so it is behind `19.19` and `19.17.1`, not merely behind `19.13`. Nothing
-      out-of-band blocks it now: `M88` landed, so every flagless cell names the
-      path it ran — below a ~515 MiB allocation a compressed leg runs the
-      streaming decoder, and the table says so rather than reading as one
-      series ([`../design/out-of-band.md`](../design/out-of-band.md)).
+      so it is behind `19.19` and `19.17.1`, not merely behind `19.13`. `M88`
+      landed, so every flagless cell names the path it ran. **`M89` blocks it**:
+      no cell on the four-limit axis bills a pool floor, the term being clamped
+      off above four readers, so the amended acceptance is satisfiable without
+      the criterion ever evaluating it
+      ([`../design/out-of-band.md`](../design/out-of-band.md)).
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
@@ -668,18 +669,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The reserve axis keeps its `512m` bottom row, which now measures the streaming
-fallback rather than the block path.** `M88` corrected the mirror of
-`BlockCache::affordable`, and the consequence is that two of the eight flagless
-cells changed mechanism without moving: `-m 512m` grants 128 MiB against a
-130.0 MiB line at 24 MiB blocks, and `-m 1g` grants 640 against 650 at 128 MiB
-blocks. The call was to leave `RESERVE_LIMITS` alone and let each cell name its
-path, because the rule's own worst headroom is at that limit and a fallback leg
-is still a leg the allocation has to hold. What it costs is the 128 MiB fit:
-`1536m` and `2g` are the only legs left on that line, so a two-point fit
-publishes an intercept and a slope with no residual to check them against —
-which is the thin-window shape `19.12` was burned by. Reconsidering means either
-raising the bottom of the axis to an allocation that affords the block path on
-both inputs (~1034 MiB for the 128 MiB leg) or adding a fifth limit above `2g`,
-and either is an apparatus change owing a `19.11` re-plan rather than a
-re-render.
+_Nothing open._

@@ -2359,10 +2359,16 @@ def pool_floor_bytes(unit: int, jobs: int) -> int:
     `WorkerMemory`'s floor, mirrored — the second term of the library's charge
     since `19.22`, where it was unbilled before. Kept as a column of its own
     rather than folded into `charge_bytes` because it is **unbounded in the
-    block size** where every other term is not: 96 MiB at koji's 24 MiB blocks,
-    384 at 128, 2 GiB at 512. A model that hid it inside a flat remainder would
-    read as a constant on the two block sizes this harness registers and as a
-    breach on a third.
+    block size** where every other term is not: at one reader, where it is
+    largest, 72 MiB at koji's 24 MiB blocks, 384 at 128, 1.5 GiB at 512. A model
+    that hid it inside a flat remainder would read as a constant on the two block
+    sizes this harness registers and as a breach on a third.
+
+    **Zero at every cell this figure currently publishes**, which is why the
+    magnitudes above are stated at one reader rather than at a registered leg:
+    the term is clamped off at `POOL_DEPTH` readers and every block-path
+    flagless leg resolves more than four, so the model check's floor column
+    reads `—` throughout. `M89` is what puts a leg under the clamp.
     """
     return max(0, LIBRARY_POOL_DEPTH - jobs) * unit
 
