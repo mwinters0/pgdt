@@ -2657,9 +2657,12 @@ class CompressedAccount(unittest.TestCase):
         # cannot compute it without reimplementing the rule under test.
         log = (
             "2026-09-11T03:33:02Z  INFO running inside a stated memory allocation "
+            "limit_bytes=536870912 limit_read_from=/sys/fs/cgroup/memory.max "
+            "jobs_flag=(not stated) parallel_memory_flag=(not stated)\n"
+            "2026-09-11T03:33:02Z  INFO resolved the arrangement "
             "jobs=3 (recommended by the source; lowered from 24 by the allocation) "
             "memory_bytes=204576096 (discovered: /sys/fs/cgroup/memory.max states a "
-            "limit of 536870912 byte(s)) limit_bytes=536870912\n"
+            "limit of 536870912 byte(s))\n"
             "2026-09-11T03:33:02Z  INFO preamble scan started bytes=3221227790 "
             "chunk_size=1048576 jobs=3 memory_bytes=204576096\n"
             "2026-09-11T03:33:18Z  INFO scan started bytes=3221227790 resumed_from=425 "

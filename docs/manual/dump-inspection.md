@@ -439,9 +439,10 @@ cgroup sample, an orchestrator's own log:
 
 ```
 $ pgdq parse --source koji.dump.xz
+2026-07-23T14:02:11.104297118Z  INFO no memory limit found: nothing is enforcing one on this process jobs_flag=(not stated) parallel_memory_flag=(not stated)
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
-2026-07-23T14:03:36.881975330Z  INFO no memory limit found: nothing is enforcing one on this process jobs=24 (recommended by the source) memory_bytes=1460448000 (no limit found: what this source asks for)
+2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1460448000 (no limit found: what this source asks for)
 2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1460448000
 2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1460448000
@@ -464,15 +465,27 @@ The seek-table lines only appear on a fresh `.xz` file — the walk they report
 is what a cache's persisted table exists to skip (above, "`.xz` files are read
 directly").
 
-**The third line is the one that says what this run is going to do, and
-where each number came from.** It is printed once, before the scan opens, by
-`parse` and by `query` alike, and it opens with which of two situations pgdq
-found itself in: `running inside a stated memory allocation`, naming the limit
-in `limit_bytes`, or `no memory limit found: nothing is enforcing one on this
-process`. That distinction is the whole reason the line exists — under an
+**Two of those lines say what this run is going to do, and where each number
+came from.** Both are printed by `parse` and by `query` alike, and they are two
+rather than one because half of the answer needs the file and half does not.
+
+The **first** comes before anything is read, so a mistyped flag is confirmed
+straight away rather than after an `.xz` file's seek-table walk — which on the
+dump above is the minute and a half between it and the next pair. It opens with
+which of two situations pgdq found itself in: `running inside a stated memory
+allocation`, naming the limit in `limit_bytes` and the file that set it in
+`limit_read_from`, or `no memory limit found: nothing is enforcing one on this
+process`. That distinction is the whole reason the pair exists — under an
 allocation somebody set, pgdq fills it; with nothing set, pgdq is a guest on a
 machine nobody promised it and stays inside half of what the kernel reports
-free, which can quietly buy fewer readers than the file could have used.
+free, which can quietly buy fewer readers than the file could have used. Beside
+it are your two flags exactly as typed — `jobs_flag` and
+`parallel_memory_flag`, reading `(not stated)` where you gave none — which is
+the line to check a value against when a run does something you did not expect.
+
+The **second**, `resolved the arrangement`, comes once the file has been opened
+and asked what it recommends. It is the only one that can report a count cut to
+fit, since the cutting is that recommendation meeting the budget.
 
 `jobs` is the worker count, and it reads differently depending on who chose
 it. `(recommended by the source)` is the flagless case above: an `.xz` dump
@@ -506,8 +519,8 @@ asked for one, and it names its own origin the same way:
 so a log line naming a scan says what produced everything that follows it.
 
 **`scan arrangement` is what says how many readers really ran.** `scan
-started`'s `jobs=` is the count that was resolved before the file was opened,
-and two things can still cut it: a compressed dump whose largest block the
+started`'s `jobs=` is the count `resolved the arrangement` announced, and two
+things can still cut it: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
 whatever `--jobs` said**, and a budget too small for the readers asked for buys
 fewer of them. Either way one line follows, once per scan:

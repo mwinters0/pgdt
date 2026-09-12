@@ -9,10 +9,14 @@ API surface".
 ## What landed
 
 - **The mode report.** `Resolved` (CLI) carries the arrangement plus its
-  provenance, and `Resolved::announce` prints one line per scanning command,
-  before the scan opens: `running inside a stated memory allocation` naming
-  `limit_bytes`, or `no memory limit found: nothing is enforcing one on this
-  process`. Both numbers carry their origin — `jobs=N (stated)` /
+  provenance, announced per scanning command: `running inside a stated memory
+  allocation` naming `limit_bytes`, or `no memory limit found: nothing is
+  enforcing one on this process`. **`M79` split it in two** — the mode, the
+  limit and the flags as typed are printed by `Discovered::announce` before the
+  source is opened, and `Resolved::announce` follows with `resolved the
+  arrangement` once the file has been asked what it recommends
+  ([`architecture.md`](architecture.md), "Status output"). Both numbers carry
+  their origin — `jobs=N (stated)` /
   `(recommended by the source)` / `(recommended by the source; lowered from M
   by the allocation)`, and `memory_bytes=N` with four spellings, `(stated)`,
   `(discovered: <file> states a limit of N byte(s))`, `(no limit found: what
@@ -23,13 +27,15 @@ API surface".
 - **`PlanNoteKind::AllocationBelowFloor`** — a budget affording less than one
   reader of the source, keyed on `memory_bytes < Partitioning::partition_bytes`.
 - **The three root-taking seams are public**: `discover_memory_limit_in`,
-  `available_memory_in`, `Parallelism::discover_in`, plus the CLI's
-  `ParallelArgs::resolve_in`.
+  `available_memory_in`, `Parallelism::discover_in`, plus the CLI's own —
+  `ParallelArgs::discover_in`, which production takes, and
+  `ParallelArgs::resolve_in`, which composes both halves for a test and is
+  `#[cfg(test)]` since `M79`, a run having a line to print between them.
 - **The fixture tree**, `pgdump_query-cli/tests/data/runtime/` — five committed
   roots (`v2-limit`, `v1-limit`, `no-limit`, `cramped`, `below-reserve`) with a
   `README.md` saying what each states.
-- **Tests**: five resolution tests in `main.rs` over those roots, two mode-report
-  tests in `tests/status_output.rs` against the real binary, two below-floor
+- **Tests**: five resolution tests in `main.rs` over those roots, three
+  mode-report tests in `tests/status_output.rs` against the real binary, two below-floor
   tests in `pgdump_query/tests/partitioned_replay.rs`, and one in `io.rs` for the
   limit's own provenance.
 - **The manual's falsified claim**, corrected here rather than at `19.10`:

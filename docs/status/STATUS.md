@@ -416,7 +416,7 @@ before the sitting.
       stated `--jobs` wins outright in both directions. Notes:
       [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
 - [x] **19.9** The resolution is tested and a run says what it resolved: the
-      CLI's **mode report**, one line per scanning command, with both numbers
+      CLI's **mode report**, on every scanning command, with both numbers
       carrying their provenance. Notes:
       [`../design/roadmap-P19.9-resolution-report-notes.md`](../design/roadmap-P19.9-resolution-report-notes.md)
 - [x] **19.10** The manual and both flags' help text, on the correction that a

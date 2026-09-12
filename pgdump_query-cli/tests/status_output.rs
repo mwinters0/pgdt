@@ -131,6 +131,25 @@ fn main_scan_lines(stderr: &str) -> Vec<&str> {
     stderr.lines().filter(|l| l.contains("scan") && !l.contains("preamble")).collect()
 }
 
+/// The CLI's **first** report line — what was stated or discovered, printed
+/// before the dump is opened. Keyed on the mode sentence, which is the half of
+/// the resolution that needs no source.
+fn stated_report(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .find(|l| l.contains("memory limit") || l.contains("memory allocation"))
+        .unwrap_or_else(|| panic!("no stated report: {stderr}"))
+}
+
+/// The CLI's **second** report line — what the source's recommendation and the
+/// allowance fitted to, printed once the file has been opened and asked.
+fn resolved_report(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .find(|l| l.contains("resolved the arrangement"))
+        .unwrap_or_else(|| panic!("no resolved report: {stderr}"))
+}
+
 /// A fresh `parse` of a plain file states the arrangement once and says when
 /// each of its two passes finishes — the pair the manual shows
 /// (`docs/manual/dump-inspection.md`, "Status on stderr").
@@ -302,8 +321,13 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
 /// can recover it: `Parallelism` carries the number and not where it came
 /// from, so a discovered budget and a stated one reach the library identical
 /// (`docs/design/architecture.md`, "Status output"). What only the binary can
-/// say is that the line is emitted at all, on both scanning commands, and
-/// that it agrees with what this machine actually reports.
+/// say is that the lines are emitted at all, on both scanning commands, and
+/// that they agree with what this machine actually reports.
+///
+/// **The report is two lines, and which fact is on which is the point.** The
+/// mode, the limit and the flags as typed need no source, so they go first;
+/// only the second line can name a count the allowance lowered, since the
+/// lowering is the source's recommendation meeting the budget.
 ///
 /// The mode itself is asserted against `discover_memory_limit` rather than
 /// against either wording, for the same reason the budget assertions are:
@@ -324,27 +348,40 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
-    let report = stderr
-        .lines()
-        .find(|l| l.contains("memory limit") || l.contains("memory allocation"))
-        .unwrap_or_else(|| panic!("no mode report: {stderr}"));
+    let stated = stated_report(&stderr);
+    let resolved = resolved_report(&stderr);
+    // Nothing was typed, and the line says so rather than leaving the reader
+    // to infer it from a number's absence.
+    assert!(stated.contains("jobs_flag=(not stated)"), "{stated}");
+    assert!(stated.contains("parallel_memory_flag=(not stated)"), "{stated}");
     // A flagless plain scan takes the source's own recommendation, which is
     // the serial path — and says so as a recommendation rather than as
     // something a person typed.
-    assert!(report.contains("jobs=1 (recommended by the source)"), "{report}");
+    assert!(resolved.contains("jobs=1 (recommended by the source)"), "{resolved}");
     match pgdump_query::discover_memory_limit() {
         None => {
-            assert!(report.contains("no memory limit found"), "{report}");
-            assert!(report.contains("(default: no limit found)"), "{report}");
+            assert!(stated.contains("no memory limit found"), "{stated}");
+            assert!(resolved.contains("(default: no limit found)"), "{resolved}");
         }
         Some(limit) => {
-            assert!(report.contains("running inside a stated memory allocation"), "{report}");
-            assert!(report.contains(&format!("limit_bytes={}", limit.bytes)), "{report}");
-            assert!(report.contains("(discovered:"), "{report}");
+            assert!(stated.contains("running inside a stated memory allocation"), "{stated}");
+            assert!(stated.contains(&format!("limit_bytes={}", limit.bytes)), "{stated}");
+            assert!(
+                stated.contains(&format!("limit_read_from={}", limit.read_from.display())),
+                "{stated}"
+            );
+            assert!(resolved.contains("(discovered:"), "{resolved}");
         }
     }
+    // The stated half comes first: everything on it was true before the file
+    // was touched, and on an `.xz` source touching the file is the expensive
+    // part.
+    assert!(
+        stderr.find(stated).unwrap() < stderr.find(resolved).unwrap(),
+        "the stated half precedes the resolved one: {stderr}"
+    );
 
-    // The same line on `query`, which resolves the same two numbers for its
+    // The same pair on `query`, which resolves the same two numbers for its
     // mapping pass and its replay and must announce them once.
     let out = run(&[
         "query",
@@ -358,11 +395,51 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
-    let reports: Vec<&str> = stderr
+    let stated: Vec<&str> = stderr
         .lines()
         .filter(|l| l.contains("memory limit") || l.contains("memory allocation"))
         .collect();
-    assert_eq!(reports.len(), 1, "resolved once, announced once: {stderr}");
+    assert_eq!(stated.len(), 1, "discovered once, announced once: {stderr}");
+    let resolved: Vec<&str> =
+        stderr.lines().filter(|l| l.contains("resolved the arrangement")).collect();
+    assert_eq!(resolved.len(), 1, "resolved once, announced once: {stderr}");
+}
+
+/// **The stated half is printed before the seek-table walk, which is the whole
+/// of why it is a line of its own.** Opening a fresh `.xz` source walks every
+/// stream footer before it can advise anything — 85 s on the koji download
+/// (`CLAUDE.local.md`) — so a mistyped `--parallel-memory` would otherwise go
+/// unconfirmed until after a wait it had no bearing on
+/// (`docs/design/architecture.md`, "Status output").
+///
+/// Asserted on a fixture whose walk is instant, since what is being pinned is
+/// the **order** of two lines and not the duration between them.
+#[test]
+fn the_stated_half_is_reported_before_the_seek_table_walk() {
+    let (_dir, xz) = seekable_xz();
+    let out_dir = tempfile::tempdir().unwrap();
+    let cache = out_dir.path().join("out.dqcache");
+    let out = run(&[
+        "parse",
+        "--source",
+        xz.to_str().unwrap(),
+        "--dqcache",
+        cache.to_str().unwrap(),
+        "--parallel-memory",
+        "268435456",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let stated = stderr.find(stated_report(&stderr)).unwrap();
+    let walk = stderr.find("seek table build started").expect(&stderr);
+    let resolved = stderr.find(resolved_report(&stderr)).unwrap();
+    assert!(stated < walk, "the flags are confirmed before the walk: {stderr}");
+    assert!(walk < resolved, "the arrangement waits on the source: {stderr}");
+    // And the typed value is there to be checked against what was meant.
+    assert!(
+        stderr[stated..walk].contains("parallel_memory_flag=268435456"),
+        "the flag as typed: {stderr}"
+    );
 }
 
 /// **A stated flag is reported as stated, on both numbers.** The provenance is
@@ -386,13 +463,13 @@ fn the_mode_report_marks_a_stated_flag_as_stated() {
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
-    let report = stderr
-        .lines()
-        .find(|l| l.contains("memory limit") || l.contains("memory allocation"))
-        .unwrap_or_else(|| panic!("no mode report: {stderr}"));
-    assert!(report.contains("jobs=3 (stated)"), "{report}");
-    assert!(report.contains("memory_bytes=268435456 (stated)"), "{report}");
-    assert!(!report.contains("recommended"), "{report}");
+    let stated = stated_report(&stderr);
+    assert!(stated.contains("jobs_flag=3"), "{stated}");
+    assert!(stated.contains("parallel_memory_flag=268435456"), "{stated}");
+    let resolved = resolved_report(&stderr);
+    assert!(resolved.contains("jobs=3 (stated)"), "{resolved}");
+    assert!(resolved.contains("memory_bytes=268435456 (stated)"), "{resolved}");
+    assert!(!resolved.contains("recommended"), "{resolved}");
 }
 
 /// **`(default)` says nobody asked, not that nobody could ask.** The serial

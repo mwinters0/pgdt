@@ -9269,17 +9269,44 @@ where it carries none, so the line always reads as a number and never as a
 claim that a caller asked for exactly 64 MiB when nobody did.
 
 **Since discovery the marker distinguishes less than `scan started` can say,
-so the provenance is a second line and the CLI is what emits it.** A budget
-read off the environment reaches the library identical to a stated one —
-`Parallelism` carries the number and not where it came from — and `(default)`
-therefore survives on `scan started` only for the one arrangement that carries
-no number at all. Provenance cannot be recovered downstream and it is not the
-library's to know: whether a flag was *typed* is knowable only at the CLI, and
-whether a limit was *read* only to the walk that read it. So the CLI resolves
-once per scanning command and announces the result before the scan opens —
-`running inside a stated memory allocation`, naming `limit_bytes`, or `no
-memory limit found: nothing is enforcing one on this process` — with both
-numbers carrying their own provenance:
+so the provenance is the CLI's to emit.** A budget read off the environment
+reaches the library identical to a stated one — `Parallelism` carries the
+number and not where it came from — and `(default)` therefore survives on
+`scan started` only for the one arrangement that carries no number at all.
+Provenance cannot be recovered downstream and it is not the library's to know:
+whether a flag was *typed* is knowable only at the CLI, and whether a limit was
+*read* only to the walk that read it.
+
+**It is two lines, because half of the resolution is knowable before the file
+is opened and the other half is not.** Opening a fresh `.xz` source walks every
+stream footer before it can advise anything — 85 s on the koji download — and
+until the source has been asked there is no recommendation to lower and no
+arrangement to report, so a single line would hold a mistyped
+`--parallel-memory` behind a wait it has no bearing on. `ParallelArgs::discover`
+therefore answers what needs no dump and `Discovered::resolve` folds in what the
+source says, each announcing its own half:
+
+- **What was stated or discovered**, printed by `Discovered::announce` before
+  `open_for_scan`: the mode — `running inside a stated memory allocation`,
+  naming `limit_bytes` and the `limit_read_from` file, or `no memory limit
+  found: nothing is enforcing one on this process` — and the two flags exactly
+  as typed, `jobs_flag` and `parallel_memory_flag`, `(not stated)` where they
+  were not. **This is the one line that names the flags as flags**: every other
+  status line names the arrangement in the library's vocabulary, and this one
+  reports what a shell actually passed, which only the CLI's own spelling
+  answers.
+- **What the recommendation and the allowance fit**, printed by
+  `Resolved::announce` once the source is open: `resolved the arrangement`,
+  carrying `jobs` and `memory_bytes` with their provenance. **Only this line can
+  name a count the allowance lowered**, the lowering being the source's
+  recommendation meeting the budget.
+
+The limit is read **once**, in `discover_in`, and carried into the resolution
+rather than re-read by the second line: `memory.high` is writable by whoever set
+it, so two walks could answer differently and two status lines disagreeing about
+the allocation is worse than either being stale.
+
+Both numbers on the second line carry their own provenance:
 
 - `memory_bytes` has four spellings, because there are four ways to arrive at a
   number and only the first is the user's own: `(stated)`; `(discovered: <file>

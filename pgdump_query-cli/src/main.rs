@@ -128,6 +128,113 @@ struct ParallelArgs {
 }
 
 impl ParallelArgs {
+    /// [`Discovered::resolve`] under `/`, composing both halves in one
+    /// call — which is what a test wants and what production cannot use,
+    /// a run having a line to print between them.
+    #[cfg(test)]
+    fn resolve(&self, source: &dyn ByteRangeSource) -> Resolved {
+        self.resolve_in(Path::new("/"), source)
+    }
+
+    /// [`ParallelArgs::resolve`] against an arbitrary filesystem root, for the
+    /// reason [`pgdump_query::discover_memory_limit_in`] takes one: the arms
+    /// worth pinning are a v1 hierarchy, an unlimited host and an allocation
+    /// under the reserve, and no machine is more than one of those at a time
+    /// (`pgdump_query-cli/tests/data/runtime/`).
+    #[cfg(test)]
+    fn resolve_in(&self, root: &Path, source: &dyn ByteRangeSource) -> Resolved {
+        self.discover_in(root).resolve(source)
+    }
+
+    /// The half of the resolution that needs no dump: the flags as typed, and
+    /// the limit this process runs under.
+    ///
+    /// **It is a separate step because the two halves become knowable at
+    /// different moments, and one of those moments is 85 s later.** Opening an
+    /// `.xz` source with no persisted seek table walks every stream footer
+    /// before it can advise anything — the koji download's 31,150 of them cost
+    /// 85 s (`CLAUDE.local.md`) — and until the source has been asked there is
+    /// no recommendation to lower and no arrangement to report. Everything on
+    /// this side is already true before the file is touched, so a run says it
+    /// first and a mistyped flag is confirmed against the walk it did not
+    /// affect rather than after it
+    /// (`docs/design/architecture.md`, "Status output").
+    fn discover(&self) -> Discovered<'_> {
+        self.discover_in(Path::new("/"))
+    }
+
+    /// [`ParallelArgs::discover`] against an arbitrary filesystem root, for the
+    /// same reason [`ParallelArgs::resolve_in`] takes one.
+    fn discover_in<'a>(&'a self, root: &'a Path) -> Discovered<'a> {
+        // **Read even where `--parallel-memory` was stated**, because the mode
+        // is a fact about the run and not about the flag: a user who pinned a
+        // budget inside a 512 MiB cgroup is still owed the sentence saying so.
+        // It costs a handful of small reads and no I/O against the dump.
+        //
+        // Read **once**, here, rather than by each of the two lines that
+        // reports it: a second walk could answer differently — `memory.high`
+        // is writable by whoever set it — and two status lines disagreeing
+        // about the allocation is worse than either being stale.
+        Discovered { args: self, root, limit: pgdump_query::discover_memory_limit_in(root) }
+    }
+}
+
+/// What a run knows about its own allowance **before the dump is opened**: the
+/// two flags exactly as they were typed, and the memory limit this process is
+/// running under with the file that stated it.
+///
+/// Nothing here is downstream of the source, which is the whole of why it is
+/// its own step ([`ParallelArgs::discover`]).
+struct Discovered<'a> {
+    args: &'a ParallelArgs,
+    /// The filesystem root the limit was read under, kept because
+    /// `Parallelism::discover_in` asks the same root again for what the
+    /// machine reports free.
+    root: &'a Path,
+    /// The memory limit this process runs under, and the file that stated it.
+    limit: Option<pgdump_query::MemoryLimit>,
+}
+
+impl Discovered<'_> {
+    /// A flag's value exactly as typed, or `(not stated)`.
+    ///
+    /// **Parenthesised, like every other provenance marker on these lines**, so
+    /// that absence can never be read as a value — and spelled out rather than
+    /// left off, because the line exists for the person checking what their
+    /// shell actually passed.
+    fn flag_display(value: Option<u64>) -> String {
+        match value {
+            Some(v) => v.to_string(),
+            None => "(not stated)".to_string(),
+        }
+    }
+
+    /// Say what was stated or discovered, before a byte of the dump is read.
+    ///
+    /// **The flags are named as flags here, and nowhere else.** Every other
+    /// status line names the arrangement in the library's own vocabulary
+    /// (`docs/design/architecture.md`, "Status output"); this one reports what
+    /// was *typed*, so the CLI's own spelling is the only one that answers the
+    /// question it is printed for.
+    fn announce(&self) {
+        let jobs_flag = Self::flag_display(self.args.jobs.map(|j| j as u64));
+        let parallel_memory_flag = Self::flag_display(self.args.parallel_memory);
+        match &self.limit {
+            Some(limit) => tracing::info!(
+                limit_bytes = limit.bytes,
+                limit_read_from = %limit.read_from.display(),
+                jobs_flag = %jobs_flag,
+                parallel_memory_flag = %parallel_memory_flag,
+                "running inside a stated memory allocation",
+            ),
+            None => tracing::info!(
+                jobs_flag = %jobs_flag,
+                parallel_memory_flag = %parallel_memory_flag,
+                "no memory limit found: nothing is enforcing one on this process",
+            ),
+        }
+    }
+
     /// The [`Parallelism`] these flags state over `source`, filling in what was
     /// omitted.
     ///
@@ -185,30 +292,17 @@ impl ParallelArgs {
     /// `Workers` arrangement has nowhere to put "nobody stated one" —
     /// `memory_bytes` is not an `Option` on that variant — so it carries
     /// `DEFAULT_MEMORY_BUDGET` bare, exactly as a stated `--jobs 8` always did.
-    fn resolve(&self, source: &dyn ByteRangeSource) -> Resolved {
-        self.resolve_in(Path::new("/"), source)
-    }
-
-    /// [`ParallelArgs::resolve`] against an arbitrary filesystem root, for the
-    /// reason [`pgdump_query::discover_memory_limit_in`] takes one: the arms
-    /// worth pinning are a v1 hierarchy, an unlimited host and an allocation
-    /// under the reserve, and no machine is more than one of those at a time
-    /// (`pgdump_query-cli/tests/data/runtime/`).
-    fn resolve_in(&self, root: &Path, source: &dyn ByteRangeSource) -> Resolved {
+    fn resolve(self, source: &dyn ByteRangeSource) -> Resolved {
+        let args = self.args;
         // Asked of the source only where `--jobs` was absent — a stated count
         // is not a recommendation and has nothing to be lowered from, which is
         // what the mode report reads this back for.
-        let recommended_jobs = match self.jobs {
+        let recommended_jobs = match args.jobs {
             Some(_) => None,
             None => Some(source.default_workers()),
         };
-        let jobs = self.jobs.or(recommended_jobs).unwrap_or(1);
-        // **Read even where `--parallel-memory` was stated**, because the mode
-        // is a fact about the run and not about the flag: a user who pinned a
-        // budget inside a 512 MiB cgroup is still owed the sentence saying so.
-        // It costs a handful of small reads and no I/O against the dump.
-        let limit = pgdump_query::discover_memory_limit_in(root);
-        let parallelism = match self.parallel_memory {
+        let jobs = args.jobs.or(recommended_jobs).unwrap_or(1);
+        let parallelism = match args.parallel_memory {
             // A stated budget is taken whole — the flag wins outright — but a
             // *recommended* count still answers to it, exactly as it answers
             // to a discovered one. What the rule is scoped to is the absence
@@ -221,8 +315,8 @@ impl ParallelArgs {
             },
             None => {
                 let discovered =
-                    Parallelism::discover_in(root, jobs, source.default_worker_memory());
-                match (self.jobs, discovered.memory_bytes()) {
+                    Parallelism::discover_in(self.root, jobs, source.default_worker_memory());
+                match (args.jobs, discovered.memory_bytes()) {
                     // A stated count is not lowered by the environment: the
                     // flag states what is asked for, and what the budget
                     // delivers still binds through `stream::worker_count`.
@@ -235,8 +329,8 @@ impl ParallelArgs {
         };
         Resolved {
             parallelism,
-            limit,
-            budget_stated: self.parallel_memory.is_some(),
+            limit: self.limit,
+            budget_stated: args.parallel_memory.is_some(),
             recommended_jobs,
         }
     }
@@ -348,8 +442,14 @@ impl Resolved {
         format!(" — the budget in force is {}", self.budget_display())
     }
 
-    /// Say, once per scanning command and before the scan opens, which of two
-    /// arrangements this run is in and how much of it it is taking.
+    /// Say, once per scanning command and before the scan starts, what the
+    /// source's recommendation and the allowance fitted to.
+    ///
+    /// **This is the only line that can name a count the allowance lowered**,
+    /// and it is why the report is two lines rather than one: the lowering is
+    /// the source's recommendation meeting the budget, so neither number exists
+    /// until the file has been opened and asked
+    /// ([`Discovered::announce`] carries the half that does).
     ///
     /// **The mode is reported because the quiet failure is a recommendation
     /// nobody can see was reduced.** Under an orchestrator the operator
@@ -360,19 +460,11 @@ impl Resolved {
     /// says so ([2026-09-10](../../docs/status/history/2026-09-10.md), "The
     /// no-limit cap is affirmed, and a run says which mode it is in").
     fn announce(&self) {
-        match &self.limit {
-            Some(limit) => tracing::info!(
-                jobs = %self.jobs_display(),
-                memory_bytes = %self.budget_display(),
-                limit_bytes = limit.bytes,
-                "running inside a stated memory allocation",
-            ),
-            None => tracing::info!(
-                jobs = %self.jobs_display(),
-                memory_bytes = %self.budget_display(),
-                "no memory limit found: nothing is enforcing one on this process",
-            ),
-        }
+        tracing::info!(
+            jobs = %self.jobs_display(),
+            memory_bytes = %self.budget_display(),
+            "resolved the arrangement",
+        );
     }
 }
 
@@ -1177,8 +1269,16 @@ async fn main() -> Result<()> {
             // read nothing, so no footer walk is spent reaching it — and the
             // same is true of the stored-size mismatch, which `open_for_scan`
             // answers with the library's own error before opening anything.
+            //
+            // **The flags and the limit are announced ahead of this**, since
+            // neither waits on the file: opening a fresh `.xz` walks its
+            // stream footers first, which is 85 s on the koji download, and a
+            // mistyped `--parallel-memory` should not go unconfirmed through it
+            // (`docs/design/architecture.md`, "Status output").
+            let stated = parallel.discover();
+            stated.announce();
             let source = open_for_scan(&file, &mode)?;
-            let parallel = parallel.resolve(source.as_ref());
+            let parallel = stated.resolve(source.as_ref());
             parallel.announce();
             if preamble_only_flag {
                 let (metadata, diagnostics) =
@@ -1339,8 +1439,12 @@ async fn main() -> Result<()> {
             // reported having read nothing, rather than paying a footer walk
             // and a whole scan over a map that cannot be trusted. `parse` is
             // the command that rebuilds it.
+            // Announced in two lines, the first ahead of the open, exactly as
+            // `parse` does and for the same reason.
+            let stated = parallel.discover();
+            stated.announce();
             let source = open_for_scan(&file, &mode)?;
-            let parallel = parallel.resolve(source.as_ref());
+            let parallel = stated.resolve(source.as_ref());
             parallel.announce();
             let mut header_printed = false;
             let mut any_batch = false;
