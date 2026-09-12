@@ -351,7 +351,7 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
 **`19.11`, the closing sweep, is all that remains** — the
-five new rows were admitted on 2026-09-12 and took the next free numbers
+new rows were admitted on 2026-09-12 and took the next free numbers
 rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
 entry closes on 384, and the grilling found the charge wrong below four
 readers"; "A `parse` reports what was asked for and never what ran"; "The
@@ -456,7 +456,16 @@ before the sitting.
       *publishes* rather than what it decides
       ([`../design/out-of-band.md`](../design/out-of-band.md);
       [2026-09-12](history/2026-09-12.md), "The fit is a straight line across a
-      kink the charge now states"). What this slice then owes is unchanged: the
+      kink the charge now states"). **`M96` has landed and left `M94` and `M95`
+      the only rows in the way**: the billed-against-held pass enumerated every
+      pool, buffer and retained structure on all three read paths
+      ([`../design/architecture.md`](../design/architecture.md), "Billed against
+      held") and turned up three further discrepancies — `M97`, an 8× over-bill
+      on the plain path, `M98`, a query-path under-bill of every block a batch's
+      span pins past the first, and `M99`, the seek table held twice — **none of
+      which this sitting can reach**, its legs being `pgdq parse` over a
+      compressed input ([2026-09-12](history/2026-09-12.md), "Billed against
+      held, in one pass"). What this slice then owes is unchanged: the
       sweep itself,
       `reserve`'s `Shared` edge onto `peak-rss` with the `Session.borrow` change
       that lets an RSS reading cross a share, `rss-attribution` published and
@@ -739,4 +748,24 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*Nothing open.*
+**`M98` is filed as an ordinary ledger row, and it falsifies a guarantee the
+crate states in those words.** `BlockCache::affordable`'s own doc says charging
+a reader its share of the retention list "is what makes the stated budget true
+rather than nearly true", and `19.22` widened the decline to keep that true. The
+billed-against-held pass found that a `pgdq query` sub-stream's
+`RetainedChunks` pins every block its `max_source_span` touches while the charge
+bills one — up to four blocks against one at the 64 MiB default over koji's
+24 MiB blocks — so on the query path the stated budget is exceeded by up to
+three units a reader and the guarantee is false as shipped
+([`../design/out-of-band.md`](../design/out-of-band.md), `M98`;
+[`../design/architecture.md`](../design/architecture.md), "Billed against
+held"). **The call was to queue it rather than promote it**, on `M96`'s own
+terms — that row's whole point is that nothing is fixed or re-scoped in the
+enumerating pass — and because it changes no decision `19.11` reads: the
+`reserve` figure's legs are `pgdq parse`, which builds no batches. What the
+maintainer may want instead is a `KD<k>`, since an under-bill that can overrun
+an allocation is a property of the shipped thing rather than a queued fix, and
+the register is where a session touching the query path would meet it; the row
+alone is met only by whoever picks the row up. Reversing this costs one register
+entry and one paragraph beside `plan_partitions`, and nothing already written
+has to move.

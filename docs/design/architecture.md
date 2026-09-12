@@ -31,6 +31,7 @@ through.
 | If you are touching… | Read |
 |---|---|
 | the async/IO trait, batch sizing, push vs. pull | [Execution model and API surface](#execution-model-and-api-surface) |
+| what the charge bills against what the process holds, before adding a term to either | [Billed against held: one row per buffer the process keeps](#billed-against-held-one-row-per-buffer-the-process-keeps) |
 | how wide a partition is, how a worker reads it, before proposing to change either | [The cut width…](#the-cut-width-is-one-unit-and-it-was-chosen-against-the-default-rather-than-against-a-stated-count) (`cut-width`) |
 | `.xz` input, source recognition, `XzSource`, the seek table | [The compressed source](#the-compressed-source) |
 | `scan.rs`, `copy.rs`, a new `Event` variant, a read loop's buffer, how a field's bytes become a `str` | [Bytes and structure](#bytes-and-structure) |
@@ -194,9 +195,10 @@ source is willing to be split, and what one concurrent reader costs it resident
 read chunks each**: a positioned read costs the same at every offset, and the
 multiple is what keeps a worker's tail read from doubling the file ("A worker
 is two reads…", below, and `io::PLAIN_PARTITION_CHUNKS`). A
-block-decoding `XzSource` answers **at these block boundaries, a block plus a
-chunk buffer each** — 32 MiB against koji's 24 MiB blocks — which is what keeps
-two workers from decoding one block twice ("The compressed source"). The
+block-decoding `XzSource` answers **at these block boundaries, a block, a
+chunk buffer and a decoder each** — 34.03 MiB against koji's 24 MiB blocks —
+which is what keeps two workers from decoding one block twice ("The compressed
+source"). The
 default is one partition at no stated cost: a source that has not thought about
 concurrency must not be split by a caller that assumed silence was consent.
 P14 inherits the question with a different answer, a ranged-GET size.
@@ -264,8 +266,9 @@ duplicates another's.
 
 **`partition_bytes` is what one concurrent reader of the source holds, and the
 source states the whole of it.** For a block-decoding compressed source that is
-the block unit **twice** — the block being decoded and the one retained beside
-it — plus the chunk buffer a straddling read is assembled into, plus the
+the block unit **once** — the block being decoded *is* the block that reader
+then retains, the rest of the retention list being the shared term below
+(`M93`) — plus the chunk buffer a straddling read is assembled into, plus the
 decoder's own retention: `xz_seek::Reader::decode_footprint()`, the LZMA2
 dictionary, the compressed input buffer and the backend's own state, one number
 costing no source read and the same whatever range is read, so `XzSource` asks
@@ -1875,6 +1878,77 @@ default) discovers structure only as far as needed to answer the current query,
 persisting whatever it found along the way — so a query for table X that scans
 past A, B and C leaves the cache useful for those too. Eager (`pgdq parse`)
 scans the whole file up front before answering anything.
+
+### Billed against held: one row per buffer the process keeps
+
+`WorkerMemory` is a **bill**, and what follows is the whole of what the process
+actually holds beside it — one row per pool, per buffer and per retained
+structure, with the discrepancy named where the two differ. It is an account in
+`.claude/skills/evidence/SKILL.md`'s sense: arithmetic from the source, no
+reading taken for it, and every number below is either a constant in `io.rs` or
+a `size_of` over a vendored struct.
+
+**It exists because five charge defects were found one per sitting.** `M87`,
+`M88`, `M93`, `M94` and `M95` are all the same kind of thing and not one of them
+needed a run — two were arithmetic over a table already taken, two were read off
+the source, one was a stale mirror — so the stream was gated on somebody reading
+the account carefully, and finding them one at a time cost `19.11`'s acceptance
+criterion four amendments against a model that kept moving underneath them
+([`out-of-band.md`](out-of-band.md), `M96`).
+
+The arrangement the numbers are stated at is koji's download — `unit` 24 MiB,
+`chunk` the 1 MiB `DEFAULT_CHUNK_SIZE`, `decode_footprint` 9,471,776 B —
+at `w` delivered readers, with `slots` the block pool's
+`(block_budget / unit).clamp(1, POOL_DEPTH.max(jobs))`.
+
+**A block-decoding `XzSource`** — the arrangement every `reserve` cell runs:
+
+| Buffer | What bills it | What the code holds | Δ |
+|---|---|---|---|
+| the block a reader decodes into | `BlockCache::reader_bytes`' unit term, `w × unit` | `w × unit`, one `BlockCache::slot` per concurrent decode | — |
+| the block retention list | the pool term, `(POOL_DEPTH.max(w) − 1) × unit` | `(slots − 1) × unit` — `slot` drains to one below the count before every `obtain` | none under discovery, where `jobs` and `w` are one number; `KD21` where a stated `--jobs` outruns a stated budget |
+| the block pool's free list | nothing of its own: `BufferPool::reserve` takes the retained blocks out of the free list's share, so the two populations share one slot count | `(slots − retained) × unit`, inside the row above | — |
+| a block evicted while a `Bytes` still views it | nothing — it is on neither list, so `BufferPool::held_bytes` does not see it either | one unit per live view | `parse` holds one view a reader and that view is of the block it just retained, which is MRU and not what a drain takes; `query` is `M98` |
+| the chunk buffer a straddling read is assembled into | `reader_bytes`' chunk term, `w × chunk` | at most one a reader — `leader::scan_partition` keeps exactly one read alive | the bill is the ceiling |
+| the chunk pool's free list | nothing | `(budget / chunk).clamp(1, POOL_DEPTH) × chunk` — **4 MiB** at the default chunk, flat in `w` | `M94` |
+| the decoder, one per concurrent decode | `reader_bytes`' decoder term, `w × decode_footprint` | the LZMA2 dictionary, the backend's state and the compressed input chunk, per `BlockTask::decode_into` | — |
+| the streaming `Reader`'s live decode | nothing | nothing: `Reader::live` is an `Option` and this path calls `block_task` only | — |
+| the seek table | nothing | **twice** — `XzSource::table` and the `Reader`'s own copy, `XzSource::assembled` cloning one out of the other, at 80 B a stream and 32 B a block: 6.65 MiB on koji's 31,150-stream download, 0.35 MiB on its `--block-size=128MiB` recompression | `M99` |
+
+**The same source on the streaming fallback**, which is what the 64 MiB default
+budget reaches on every ordinary `.xz` dump:
+
+| Buffer | What bills it | What the code holds | Δ |
+|---|---|---|---|
+| the chunk buffer | `Partitioning::single(chunk_bytes)`, and this arm advises one partition | one | — |
+| the chunk pool's free list | nothing | 4 MiB | `M94` |
+| the one live decoder | nothing, **deliberately**: it sits behind the source's mutex however many readers run, so it is a fixed cost of the source and not a reader's | dictionary + state + input chunk, 9.03 MiB on koji | declared; inside `MEMORY_UNPOOLED_BOUND` |
+| `Reader::discard` | nothing | 256 KiB, and only once something is actually skipped | same |
+| the seek table | nothing | as above | `M99` |
+
+**`LocalFileSource`:**
+
+| Buffer | What bills it | What the code holds | Δ |
+|---|---|---|---|
+| the body read | `PLAIN_PARTITION_CHUNKS × chunk` capped at `POOL_MAX_BYTES`, so `w × 8 MiB` | one **chunk** — `19.20` made the read shape the source's own statement and a plain source states `PartitionRead::Chunked` — and the interior split's `WaitPolicy::MayWait` caps what is outstanding at `slots`, so the whole path holds `POOL_DEPTH × chunk` **flat in the reader count** | `M97`, an over-bill of 8× a reader and unbounded in `w` |
+| the chunk pool's free list | nothing | inside the row above | `M97` |
+
+**Above the source, billed by nothing and bounded by `MEMORY_UNPOOLED_BOUND`
+rather than by a charge** — this is the list that constant's 83.5–214.6 MiB is
+the unnamed remainder over:
+
+- `scan::ChunkCarry`, one unterminated line a reader, `ScanOptions::max_line_bytes` the ceiling;
+- `batch::RetainedChunks`, which *is* charged where the source retains by the read chunk (`plan_partitions` adds `max_source_span` per worker) and is dropped where it retains by the partition — `M98`;
+- the Arrow builders and the emitted batch, deliberately the caller's ("Three flush triggers");
+- `DumpIndex`, which grows with the dump's span count and is what `peak-rss` is mostly reading;
+- the runtime's threads and glibc's per-thread arena retention, which `19.18` identified as the bulk of it.
+
+**What the `reserve` figure can and cannot see.** Its legs are `pgdq parse` over
+a compressed input, so they reach the first table and the third bullet-list
+entry and nothing else: `M97` is plain-path, `M98` is query-path, and `M99` is
+kilobytes on a 3 GiB fixture against megabytes on koji. None of the three moves
+`19.11`'s gate, and that is a statement about the figure's command shapes rather
+than about their size.
 
 <!-- section: cut-width -->
 

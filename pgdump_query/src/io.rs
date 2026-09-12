@@ -670,7 +670,11 @@ impl Partitioning {
     /// else.
     ///
     /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`] read chunks, which
-    /// a worker takes in one buffer. For a block-decoding compressed one it is
+    /// is the **cut** size and no longer what a worker of it holds: since
+    /// `19.20` a plain partition is read [`PartitionRead::Chunked`], one chunk
+    /// at a time, so this over-bills that source eightfold at the shipped
+    /// default and the number has two consumers again
+    /// (`docs/design/out-of-band.md`, `M97`). For a block-decoding compressed one it is
     /// the block unit **once** — the block being decoded, which is the block
     /// the reader then retains — plus the chunk buffer a read straddling a
     /// boundary is assembled into, plus the decoder's own retention: 34 MiB
@@ -1680,22 +1684,16 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// percent of the read while it halves how finely a region can be cut and how
 /// many readers a stated budget affords.
 ///
-/// **The product is capped at [`POOL_MAX_BYTES`], which bounds what one worker
-/// allocates and no longer buys it any pooling.** [`BufferPool`] serves
-/// exactly one read unit ([`ByteRangeSource::hint_read_size`]) and the parallel
-/// plain path has two — this partition read and `scan_partition`'s chunk-sized
-/// tail read — so the partition read is not the announced one and
-/// [`BufferPool::keeps`] drops it on release whatever its size: a worker pays
-/// a fresh `calloc` per partition, and the cap is what keeps that allocation
-/// from following a raised `ScanOptions::chunk_size` to hundreds of megabytes.
-/// It cost pooling before `19.7` too — the free list held these buffers only
-/// because the pool was under-reporting them eightfold, which is the
-/// accounting that change repaired. What the cap costs is that the multiple
-/// shrinks as the announced chunk grows, reaching **one** at
+/// **The product is capped at [`POOL_MAX_BYTES`].** That cap was what bounded
+/// a worker's own allocation while `scan_partition` read a whole piece in one
+/// `read_range`; since `19.20` it reads [`PartitionRead::Chunked`] instead, so
+/// nothing allocates a partition-length buffer and what the cap now bounds is
+/// the **cut** — how finely a region can be divided, and, because this number
+/// is still [`Partitioning::partition_bytes`], what a budget is divided by
+/// (`docs/design/out-of-band.md`, `M97`). What the cap costs is that the
+/// multiple shrinks as the announced chunk grows, reaching **one** at
 /// [`POOL_MAX_BYTES`] and above — the double read this constant exists to
-/// remove, returned to the caller who raised `ScanOptions::chunk_size`. The
-/// fix for both is the two-unit arrangement [`XzSource`] already runs; see
-/// `docs/design/architecture.md`, "The interior split".
+/// remove, returned to the caller who raised `ScanOptions::chunk_size`.
 ///
 /// **The shipped default sits exactly on the cap** — 1 MiB × 8 is
 /// [`POOL_MAX_BYTES`] — and the two constants are justified independently, so
@@ -1993,6 +1991,15 @@ impl BufferPool {
     /// the remainder to the second pool, so that one stated budget bounds the
     /// source rather than each of its pools separately
     /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// **It bounds the two lists and not a buffer a caller is still holding.**
+    /// A [`PooledBuffer`] taken by [`BufferPool::obtain`] is on neither list
+    /// until it is released, and a [`BlockCache`] block evicted while a
+    /// [`Bytes`] still views it is on neither list at all — so what this
+    /// answers is the pool's own retention, which is the quantity
+    /// [`XzSource::apportion`] divides. What a caller pins on top of it is
+    /// billed separately or not at all
+    /// (`docs/design/architecture.md`, "Billed against held").
     fn held_bytes(&self) -> usize {
         self.slots().saturating_mul(self.slot_bytes())
     }
@@ -2009,12 +2016,13 @@ impl BufferPool {
     /// what [`XzSource::apportion`] divides a budget with.
     ///
     /// **What it costs is the second read unit a single-unit pool could never
-    /// account for.** The parallel plain path releases a partition-sized body
-    /// read into a pool whose slot is a *chunk* ([`PLAIN_PARTITION_CHUNKS`]),
-    /// and that buffer is now dropped rather than pooled — the under-report
-    /// was what made it look pooled. The fix is the two-unit arrangement
-    /// [`XzSource`] already runs, filed as the roadmap Future item "A two-unit
-    /// plain source"; a ceiling here would only hide it again
+    /// account for**, which on the plain path is no longer a body read: since
+    /// `19.20` that path reads [`PartitionRead::Chunked`], so every buffer it
+    /// takes is the announced length and this rule keeps all of them. The
+    /// remaining two-unit source is [`XzSource`], which takes a second pool
+    /// rather than a second hint; the roadmap Future item "A two-unit plain
+    /// source" is what a plain source acquiring a second unit would want, and
+    /// a ceiling here would only hide it again
     /// (`docs/design/architecture.md`, "The interior split").
     fn keeps(&self, len: usize) -> bool {
         len <= self.slot_bytes()
@@ -2211,10 +2219,13 @@ impl ByteRangeSource for LocalFileSource {
     /// `crate::ScanOptions::chunk_size` scales this with it, and a chunk
     /// already at or past [`POOL_MAX_BYTES`] is a partition on its own.
     ///
-    /// What a partition holds resident is that whole number of chunks in one
-    /// buffer, not a chunk: `crate::leader::scan_partition` reads its piece in
-    /// a single `read_range`, so `partition_bytes` is a length this source
-    /// really does allocate.
+    /// **It is the cut size, and since `19.20` it is no longer what a
+    /// partition holds.** `crate::leader::scan_partition` reads a
+    /// [`PartitionRead::Chunked`] piece one announced chunk at a time and the
+    /// interior split caps what is outstanding at [`BufferPool::slots`], so
+    /// this source holds `POOL_DEPTH` chunks flat in the reader count while
+    /// [`Partitioning::partition_bytes`] bills [`PLAIN_PARTITION_CHUNKS`] of
+    /// them per reader (`docs/design/out-of-band.md`, `M97`).
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         let chunk = self.pool.slot_bytes();
         let bytes = chunk.saturating_mul(PLAIN_PARTITION_CHUNKS).min(POOL_MAX_BYTES).max(chunk);

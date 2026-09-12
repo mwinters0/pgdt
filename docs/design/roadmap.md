@@ -930,7 +930,11 @@ which is what makes the difference worth minding at the moment one is found.
   at the compressed default, which is a different mechanism but the same
   question asked of the same number ([`architecture.md`](architecture.md),
   "cut-width"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
-  before it lands, not a spec.
+  before it lands, not a spec. **It also raises what the charge bills**, the
+  same product being `Partitioning::partition_bytes` — which since the read
+  became chunked over-bills the plain path already
+  ([`out-of-band.md`](out-of-band.md), `M97`), so whichever of the two lands
+  first decides whether the other is arithmetic or a second decision.
 
 - **TOC attribution across an intervening statement, so `--disable-triggers`
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and
