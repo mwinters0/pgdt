@@ -584,8 +584,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD22 -->
-**`KD1`–`KD22` are allocated, and nothing at or below `KD22` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD23 -->
+**`KD1`–`KD23` are allocated, and nothing at or below `KD23` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -731,6 +731,15 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "The interior
   split".
 
+- **KD23** — a `pgdq query` sub-stream can pin several decoded blocks where
+  the budget bills one: a query partition is cut over a whole `CopyBlock` rather
+  than through the leader's window, so `BOUNDARIED_PARTITION_UNITS` does not
+  bound it and a held batch's `max_source_span` reaches up to four of koji's
+  24 MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
+  memory, the repair reversing a recorded decision either way. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Billed against
+  held: one row per buffer the process keeps".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -748,24 +757,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**`M98` is filed as an ordinary ledger row, and it falsifies a guarantee the
-crate states in those words.** `BlockCache::affordable`'s own doc says charging
-a reader its share of the retention list "is what makes the stated budget true
-rather than nearly true", and `19.22` widened the decline to keep that true. The
-billed-against-held pass found that a `pgdq query` sub-stream's
-`RetainedChunks` pins every block its `max_source_span` touches while the charge
-bills one — up to four blocks against one at the 64 MiB default over koji's
-24 MiB blocks — so on the query path the stated budget is exceeded by up to
-three units a reader and the guarantee is false as shipped
-([`../design/out-of-band.md`](../design/out-of-band.md), `M98`;
-[`../design/architecture.md`](../design/architecture.md), "Billed against
-held"). **The call was to queue it rather than promote it**, on `M96`'s own
-terms — that row's whole point is that nothing is fixed or re-scoped in the
-enumerating pass — and because it changes no decision `19.11` reads: the
-`reserve` figure's legs are `pgdq parse`, which builds no batches. What the
-maintainer may want instead is a `KD<k>`, since an under-bill that can overrun
-an allocation is a property of the shipped thing rather than a queued fix, and
-the register is where a session touching the query path would meet it; the row
-alone is met only by whoever picks the row up. Reversing this costs one register
-entry and one paragraph beside `plan_partitions`, and nothing already written
-has to move.
+*Nothing open.*

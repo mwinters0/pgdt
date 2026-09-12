@@ -1938,17 +1938,48 @@ rather than by a charge** — this is the list that constant's 83.5–214.6 MiB 
 the unnamed remainder over:
 
 - `scan::ChunkCarry`, one unterminated line a reader, `ScanOptions::max_line_bytes` the ceiling;
-- `batch::RetainedChunks`, which *is* charged where the source retains by the read chunk (`plan_partitions` adds `max_source_span` per worker) and is dropped where it retains by the partition — `M98`;
+- `batch::RetainedChunks`, which *is* charged where the source retains by the read chunk (`plan_partitions` adds `max_source_span` per worker) and is dropped where it retains by the partition — `KD23`;
 - the Arrow builders and the emitted batch, deliberately the caller's ("Three flush triggers");
 - `DumpIndex`, which grows with the dump's span count and is what `peak-rss` is mostly reading;
 - the runtime's threads and glibc's per-thread arena retention, which `19.18` identified as the bulk of it.
 
 **What the `reserve` figure can and cannot see.** Its legs are `pgdq parse` over
 a compressed input, so they reach the first table and the third bullet-list
-entry and nothing else: `M97` is plain-path, `M98` is query-path, and `M99` is
+entry and nothing else: `M97` is plain-path, `KD23` is query-path, and `M99` is
 kilobytes on a 3 GiB fixture against megabytes on koji. None of the three moves
 `19.11`'s gate, and that is a statement about the figure's command shapes rather
 than about their size.
+
+<!-- deficiency: KD23 -->
+
+**`KD23`: a query partition is not one unit wide, so the block path's stated
+budget is false on that path.** `RetainedUnit::Partition` drops the span term
+for a block-decoding source, and the reason it gives is that a batch is confined
+to a partition which `partition_bytes` has already charged for. That reason
+holds wherever a partition is one unit wide — which `leader::run_region`
+guarantees, sizing its window with `Partitioning::window_end` and held to
+`BOUNDARIED_PARTITION_UNITS` by
+`a_block_decoding_partition_spans_at_most_the_cut_width`. **The query path never
+crosses that window.** `stream::plan_partitions` calls `stream::cut` over the
+whole `CopyBlock` with `want = min(workers, max_partitions)`, and
+`max_partitions` is every block boundary in the region, so a piece spans as many
+units as the region holds over the worker count — a region of 100 blocks cut for
+24 workers gives pieces of about four. Within a piece the pin is bounded by
+`QueryOptions::max_source_span`, 64 MiB by default, which over koji's 24 MiB
+blocks touches up to four of them against the one `partition_bytes` bills.
+
+It is an **under**-bill, so it never declines a path or bars the gate; it
+inflates the unnamed remainder, and on the query path a stated budget can be
+overrun by up to three units a reader. Two repairs, and they are not equivalent:
+charging the span on the block path too undoes the reason
+`RetainedUnit::Partition` exists for this source and widens the decline on every
+compressed query, where **giving `plan_partitions` the window loop the leader
+already runs** leaves the charge alone and makes the rationale true as written.
+The second is the better-looking one and neither is decided — the repair reverses
+a recorded decision either way, so it is a slice to be grilled rather than a
+ledger row, which is why `M98`'s row was withdrawn
+([2026-09-12](../status/history/2026-09-12.md), "A query partition is not one
+unit wide").
 
 <!-- section: cut-width -->
 

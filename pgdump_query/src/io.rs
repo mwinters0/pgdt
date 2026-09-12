@@ -369,6 +369,15 @@ pub enum RetainedUnit {
     /// charged for it — so adding the span would count the same bytes twice.
     /// A block-decoding source's answer, whose retained unit is the decoded
     /// block a partition is made of.
+    ///
+    /// **That rationale holds only where a partition is one unit wide, which
+    /// the leader's window guarantees and a query's cut does not** — `KD23`.
+    /// [`crate::leader::run_region`] sizes its window with
+    /// [`Partitioning::window_end`] and is held to
+    /// [`BOUNDARIED_PARTITION_UNITS`]; `crate::stream::plan_partitions` cuts a
+    /// whole `CopyBlock` into `min(workers, max_partitions)` pieces, so a piece
+    /// spans as many units as the region holds over the worker count, and
+    /// `partition_bytes` has charged for one of them.
     Partition,
 }
 
@@ -2432,9 +2441,16 @@ impl BlockCache {
     ///
     /// **It is asked of *one* reader and charges that reader's share of the
     /// retention list with it**, which is what makes the stated budget true
-    /// rather than nearly true: a pool serving a single reader still holds
+    /// rather than nearly true **on the scan path**: a pool serving a single
+    /// reader still holds
     /// [`POOL_DEPTH`] slots, so admitting the path on the per-reader charge
-    /// alone allows `(POOL_DEPTH − 1)` units the caller never granted. The
+    /// alone allows `(POOL_DEPTH − 1)` units the caller never granted.
+    ///
+    /// **It does not hold on the query path, and `KD23` is that defect.** A
+    /// query partition is cut over a whole `CopyBlock` rather than through
+    /// [`Partitioning::window_end`]'s window, so it is not bounded by
+    /// [`BOUNDARIED_PARTITION_UNITS`] and a held batch can pin several units
+    /// where this charges one. The
     /// decline it widens is accepted rather than worked around — at 128 MiB
     /// blocks the line moves from 138 MiB to 522 — because it is the first
     /// arrangement in which a large-block file's stated number holds, the
