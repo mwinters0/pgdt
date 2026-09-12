@@ -6029,11 +6029,19 @@ def run_reserve(session: Session) -> str:
     # `readings.json` after the sitting, and the reason it is here is that the
     # hand version died with the session that wrote it.
     #
-    # **It reports; it does not raise.** A remainder outside the band is a
-    # finding about the library, not an apparatus fault, so it may not cost the
-    # sitting the legs behind it — the argument `KILL_TOLERANT` already makes
-    # about a kill, which is the harder case. What carries the finding is the
-    # verdict line, which names every failing cell in those words.
+    # **It reports; it neither raises nor bars publication — two levers, not
+    # one.** `KILL_TOLERANT` pulls both: the sitting survives a kill *and*
+    # `emit` refuses to publish the figure that lost the leg. So the precedent
+    # settles the first half here and says nothing about the second, which
+    # turns on what a cell is. A censored cell is a bound on a peak the process
+    # never reached, so the table above it describes an arrangement nobody
+    # measured; every cell here is a real reading of a real run, and what a
+    # refutation falsifies is the library's claim about those readings rather
+    # than the readings. Barring publication on it would leave
+    # `measurements.md` able to carry only tables that agree with the library,
+    # which is the opposite of what it is for. What gates the phase instead is
+    # `19.11`'s two-sided acceptance, which requires this verdict to read that
+    # the model holds.
     model_rows, model_faults = [], []
     for name, label, unit in RESERVE_FLAGLESS_INPUTS:
         for token, _limit in RESERVE_LIMITS:

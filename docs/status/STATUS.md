@@ -653,31 +653,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.24`'s model check reports a refutation; it does not bar publication.**
-  The spec row says the check "asserts the residual is small and
-  non-negative", and what landed states the criterion, prints a per-cell table
-  and ends on a verdict naming every failing cell in those words — it never
-  raises and never marks the sitting unpublishable. The ground is
-  `KILL_TOLERANT`'s, one step milder: a remainder outside the band is a finding
-  about the library rather than an apparatus fault, and failing on it would cost
-  an hour-long `--alone` sitting the legs behind the first bad cell, which is
-  the failure that row was itself written against. The consequence to weigh is
-  that `19.11` can publish a `reserve` table whose own verdict line says the
-  model is refuted. **What would change if reconsidered**: a refuted model joins
-  the OOM kill in `emit`'s `NOT PUBLISHABLE` set, which is a publication policy
-  and so a decision rather than a check — it is deliberately not taken
-  unattended ([`../design/roadmap-P19.24-charge-model-check-notes.md`](../design/roadmap-P19.24-charge-model-check-notes.md),
-  "The three calls made inside the row").
-- **A withdrawn out-of-band row whose mechanism a later slice removed is left
-  standing.** `M81`'s `Why` cell argues that
-  `XzSource::default_memory_per_worker` "runs 7 MiB a reader above the
-  affordability charge, deliberately". `19.19` made the two one number
-  (`charged_chunk_bytes`), so that sentence is now false, while the withdrawal
-  it supports is still correct. It was left alone because a withdrawn row
-  records a decision taken on its date and the ledger's detail is meant to live
-  in the dated entry it cites; the same paragraph inside
-  `measure.reader_bytes`' docstring **was** corrected, because that one is a
-  live mirror the charge model rests on. **What would change if reconsidered**:
-  either the row gets a clause saying its mechanism was later removed, or the
-  ledger states that a row is read as of its Date — which is a rule about the
-  ledger and so escalates rather than being settled in-loop.
+_Nothing open._

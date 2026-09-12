@@ -80,14 +80,18 @@ a third: it is `(POOL_DEPTH − jobs) × unit`, so 96 MiB at koji's blocks, 384 
 large number" into "an under-bill", which is what the row asked for and what
 `19.22` repairs.
 
-**The check reports; it does not raise.** A remainder outside the band is a
-finding about the library, not an apparatus fault, so it may not cost an
-hour-long sitting the legs behind it — the argument `KILL_TOLERANT` already
-makes about an OOM kill, which is the harder case. The verdict line names every
-failing cell in those words, and a sitting that refutes the model publishes that
-sentence. Barring publication on it was the alternative and is not taken here:
-it would be a new publication policy, which is a decision rather than a check,
-and it is filed under `STATUS.md`'s "Decisions worth another look".
+**The check reports; it neither raises nor bars publication.** Those are two
+levers rather than one, and `KILL_TOLERANT` pulls both — the sitting survives a
+kill *and* `emit` refuses to publish the figure that lost the leg
+(`19.17.1`'s row states it as two clauses). So the precedent settles the first
+half and is silent on the second, which turns on what a cell is: a censored cell
+is a bound on a peak the process never reached, so its table describes an
+arrangement nobody measured, while every cell here is a real reading and what a
+refutation falsifies is the library's claim about those readings. Barring
+publication would leave `measurements.md` able to carry only tables agreeing
+with the library. The gate is `19.11`'s acceptance instead, which is two-sided:
+the sweep publishes, **and** this verdict reads that the model holds at every
+evaluated cell.
 
 **A declined or censored leg is absent rather than evaluated.** The streaming
 fallback holds none of the model's terms, and a censored leg's reading is a
@@ -110,11 +114,11 @@ that claims two charges would be a model of neither — and
 `test_the_recommendation_and_the_affordability_charge_are_one_number` pins the
 `io.rs` line that makes it one, so a future split fails rather than falsifies.
 
-**`M81`'s withdrawal row still argues from the pre-`19.19` split**, in the
-out-of-band ledger. It is left alone: a withdrawn row records a decision taken
-on its date, the withdrawal itself is still correct, and whether such a row is
-corrected or read as of its date is a question about the ledger rather than
-about this slice — filed under "Decisions worth another look".
+**`M81`'s withdrawal row carried the same paragraph** and is now one line, as
+the ledger's own rule requires: the row is an index entry, the account belongs
+in the dated history entry it points at, and that entry already held every
+sentence of it. Trimming removed the falsified mechanism from the ledger with no
+new rule and no loss — `M82`'s row had the same defect and the same remedy.
 
 ## What `19.22` inherits
 
