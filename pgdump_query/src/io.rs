@@ -2675,8 +2675,24 @@ impl XzSource {
     }
 
     /// The one place the two constructors agree: the table is lifted out of
-    /// the reader so nothing but the fallback path ever locks it, and the
+    /// the reader so the source's own lookups never take its mutex, and the
     /// block pool is sized from that table or refused.
+    ///
+    /// **What the lift buys is every table read outside the reader's lock** —
+    /// [`ByteRangeSource::size`], [`XzSource::partitions`],
+    /// [`XzSource::default_workers`], and the `blocks_in` span arithmetic
+    /// [`XzSource::read_by_blocks`] does on every read. It is not *all* of
+    /// them: the block path still locks once per cache **miss**, to build a
+    /// `BlockTask` out of the reader's own decode settings
+    /// ([`XzSource::block`]), and a hit takes no lock at all.
+    ///
+    /// **It costs a second copy of the table, and nothing bills either** —
+    /// `KD26`. `xz_seek::Reader` owns its `SeekTable` by value and keeps the
+    /// original, so the clone here is a duplicate rather than a move: 80 B a
+    /// stream and 32 B a block, held twice, which is kilobytes on a fixture
+    /// and 6.65 MiB on koji's 31,150-stream download
+    /// (`docs/design/architecture.md`, "Billed against held").
+    // deficiency: KD26
     fn assembled(
         path: PathBuf,
         stat_file: Arc<std::fs::File>,
@@ -4234,6 +4250,40 @@ mod tests {
         if cores > blocks {
             assert_eq!(source.default_workers(), blocks, "the file is what binds here");
         }
+    }
+
+    /// **The seek table is held twice, at a stated cost per entry** — `KD26`,
+    /// the register entry this test is the check for
+    /// (`docs/design/architecture.md`, "Billed against held").
+    ///
+    /// Two halves, and neither is checked anywhere else. The **duplication**:
+    /// `XzSource::assembled` clones the table out of the reader, which owns
+    /// its own by value, so the two `blocks` vectors are distinct allocations
+    /// with equal contents. The **per-entry cost**: 80 B a stream and 32 B a
+    /// block is what the account's megabytes are arithmetic over, and it is a
+    /// property of a vendored struct rather than of anything here — `M77`'s
+    /// re-vendor took `StreamEntry` from 64 B to 80 by adding
+    /// `first_block_dict_size`, and nothing noticed. So a sync that grows
+    /// either entry fails here rather than silently moving a published number.
+    ///
+    /// It asserts what is wrong as well as what is true, which is deliberate:
+    /// the day the reader can share the table is the day this test fails, and
+    /// that is exactly when `KD26` can be struck — no marker here, because a
+    /// failing assertion is a louder signal than one.
+    #[test]
+    fn the_seek_table_is_held_twice_at_a_stated_cost_per_entry() {
+        assert_eq!(std::mem::size_of::<xz_seek::StreamEntry>(), 80);
+        assert_eq!(std::mem::size_of::<xz_seek::BlockEntry>(), 32);
+
+        let compressed = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        let reader = source.reader.lock().unwrap();
+        let theirs = reader.index();
+        assert_eq!(&*source.table, theirs, "the two copies must agree");
+        assert!(
+            !std::ptr::eq(source.table.blocks.as_ptr(), theirs.blocks.as_ptr()),
+            "the source's table is a clone of the reader's, not a share",
+        );
     }
 
     /// Reading forward in chunks that each land inside one block, straddle a

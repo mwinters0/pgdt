@@ -628,8 +628,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD25 -->
-**`KD1`–`KD25` are allocated, and nothing at or below `KD25` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD26 -->
+**`KD1`–`KD26` are allocated, and nothing at or below `KD26` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -802,6 +802,16 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Billed against
   held: one row per buffer the process keeps".
 
+- **KD26** — a compressed source holds its seek table twice, `XzSource` and
+  `xz_seek::Reader` each owning one, and no charge bills either: 6.65 MiB on
+  koji's 31,150-stream download against kilobytes on the fixtures
+  `MEMORY_UNPOOLED_BOUND` was read off, and the only unbilled term that grows
+  with the file rather than the count. **(c) unowned**; promoted by a file whose
+  stream or block count is orders of magnitude above koji's, or by a re-sync
+  letting the reader share the table. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Billed against
+  held: one row per buffer the process keeps".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -819,4 +829,20 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*Nothing open.*
+**`M99` landed as a pricing rather than being withdrawn, and the upstream
+change that would close half of `KD26` is not scheduled.** The row asked two
+questions and both are answered *no* — the seek table stays held twice and stays
+unbilled — which is `M94`'s shape, so it landed rather than being withdrawn as
+`M97` and `M98` were: neither answer reverses a recorded decision. What that
+leaves unscheduled is the cheap half. `xz_seek::Reader` takes its `SeekTable`
+**by value** in both constructors, and a handle it could share — an `Arc` field,
+or a `Builder::open_with_shared_table` — would remove 3.33 MiB on koji's
+download and make billing the remaining copy free. That is a small change to a
+crate this project owns, in the sibling checkout, whose own keystone landed at
+`M78`. It was not proposed here because `vendor/xz-seek/` is read-only by
+standing rule and the crate's API is its own design decision, and because
+2.6% of `MEMORY_UNPOOLED_BOUND` on the largest file in hand does not force it.
+**Reconsidering it means opening that crate's queue rather than this one's**; if
+it is scheduled there, `KD26` drops to the billing half alone and the test
+`the_seek_table_is_held_twice_at_a_stated_cost_per_entry` is what fails at the
+re-sync to say so.

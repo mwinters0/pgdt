@@ -133,3 +133,37 @@ than one reader count. `scripts/measure.py`'s `charge_model_problem` is what
 would report it: its inner fault line is exactly this constant.
 
 **Origin.** `19.26`, 2026-09-12.
+
+---
+
+## A source's own file index is unbilled and grows with the input, and that was decided rather than overlooked
+
+**Fact.** `XzSource` holds its seek table — one 80 B entry a stream, one 32 B a
+block — and `xz_seek::Reader` holds a second copy of it, and no charge bills
+either: 6.65 MiB held on koji's 31,150-stream download against 8.2 KiB on the
+3 GiB fixtures `MEMORY_UNPOOLED_BOUND` was read off. It is the only unbilled
+term in the account that grows with the *input* rather than with the reader
+count, the decode unit or the announced chunk. **Not billing it was argued from
+an ordering, not from its size**: the index is built before `hint_parallelism`
+states a budget, so a charge carrying it could not refuse a file whose index
+does not fit — it would only subtract an already-spent allocation from the
+allowance a worker count is solved against. That buys accuracy in the account
+and no protection, at the cost of the count-independent third `WorkerMemory`
+term `KD24` priced and refused. Registered as `KD26`
+([`architecture.md`](architecture.md), "Billed against held: one row per buffer
+the process keeps").
+
+**Why this phase cares.** A seekable source of this phase's codec carries the
+same kind of structure — a `.gzi` index over a `bgzip`-style file is one entry
+a block — so the phase meets this decision in its own terms and inherits both
+halves of the answer: the ordering argument that says an index need not be
+billed, and the warning that the argument is only sound while the index stays
+small next to the bound, which is a property of the producer's frame size
+rather than of the codec. It also inherits a shape to avoid — the duplicate
+exists because `xz_seek::Reader` takes its table **by value**, so a decoder
+crate written or vendored for this phase should hand out a shareable handle
+instead.
+
+**Origin.** `M99`, 2026-09-12
+([`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek
+table is held twice, and the walk runs before the budget does").

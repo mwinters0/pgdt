@@ -1913,7 +1913,7 @@ at `w` delivered readers, with `slots` the block pool's
 | the chunk pool's free list | nothing | `(budget / chunk).clamp(1, POOL_DEPTH) × chunk` — **4 MiB** at the default chunk, flat in `w` | `KD24` |
 | the decoder, one per concurrent decode | `reader_bytes`' decoder term, `w × decode_footprint` | the LZMA2 dictionary, the backend's state and the compressed input chunk, per `BlockTask::decode_into` | — |
 | the streaming `Reader`'s live decode | nothing | nothing: `Reader::live` is an `Option` and this path calls `block_task` only | — |
-| the seek table | nothing | **twice** — `XzSource::table` and the `Reader`'s own copy, `XzSource::assembled` cloning one out of the other, at 80 B a stream and 32 B a block: 6.65 MiB on koji's 31,150-stream download, 0.35 MiB on its `--block-size=128MiB` recompression | `M99` |
+| the seek table | nothing | **twice** — `XzSource::table` and the `Reader`'s own copy, `XzSource::assembled` cloning one out of the other, at 80 B a stream and 32 B a block: 6.65 MiB on koji's 31,150-stream download, 0.35 MiB on its `--block-size=128MiB` recompression | `KD26` |
 
 **The same source on the streaming fallback**, which is what the 64 MiB default
 budget reaches on every ordinary `.xz` dump:
@@ -1924,7 +1924,7 @@ budget reaches on every ordinary `.xz` dump:
 | the chunk pool's free list | nothing | 4 MiB | `KD24` |
 | the one live decoder | nothing, **deliberately**: it sits behind the source's mutex however many readers run, so it is a fixed cost of the source and not a reader's | dictionary + state + input chunk, 9.03 MiB on koji | declared; inside `MEMORY_UNPOOLED_BOUND` |
 | `Reader::discard` | nothing | 256 KiB, and only once something is actually skipped | same |
-| the seek table | nothing | as above | `M99` |
+| the seek table | nothing | as above | `KD26` |
 
 **`LocalFileSource`:**
 
@@ -1945,7 +1945,7 @@ the unnamed remainder over:
 
 **What the `reserve` figure can and cannot see.** Its legs are `pgdq parse` over
 a compressed input, so they reach the first table and the third bullet-list
-entry and nothing else: `M97` is plain-path, `KD23` is query-path, and `M99` is
+entry and nothing else: `KD25` is plain-path, `KD23` is query-path, and `KD26` is
 kilobytes on a 3 GiB fixture against megabytes on koji. None of the three moves
 `19.11`'s gate, and that is a statement about the figure's command shapes rather
 than about their size. `KD24` it *does* reach — every leg runs at the default
@@ -2089,6 +2089,77 @@ an allocation, and `19.11`'s gate cannot reach it — that figure's legs are
 `pgdq parse` over a compressed input
 ([2026-09-12](../status/history/2026-09-12.md), "`M97` is priced, and the bill
 is not the part that needs deciding").
+
+<!-- deficiency: KD26 -->
+
+**`KD26`: the seek table is held twice and billed nowhere, and it is the one
+unbilled term in the account that grows with the file.** `XzSource::assembled`
+— the one place both constructors agree — builds `Arc::new(reader.index().clone())`
+and then moves the reader, whose own `table` field keeps the original;
+`xz_seek::Reader` owns its `SeekTable` by value, so that is a duplicate and not
+a move. `ByteRangeSource::seek_table` makes a third, transiently, when a cache
+envelope is built.
+
+**Priced at the three files in hand.** One copy is `80 × streams + 32 × blocks`,
+those two per-entry sizes being properties of a vendored struct rather than of
+anything here — `M77`'s re-vendor took `StreamEntry` from 64 B to 80 by adding
+`first_block_dict_size` and nothing noticed, so
+`the_seek_table_is_held_twice_at_a_stated_cost_per_entry` pins both, along with
+the duplication itself:
+
+| File | Shape | One copy | Held |
+|---|---|---|---|
+| koji's upstream download | 31,150 streams of one block each | 3.33 MiB | **6.65 MiB** |
+| its `--block-size=128MiB` recompression | 1 stream, ~5,700 blocks | 0.17 MiB | 0.35 MiB |
+| the 3.00 GiB `.xz` control | 1 stream, 129 blocks | 4.11 KiB | 8.2 KiB |
+
+**The shape is what makes it an entry; the size would not.** 6.65 MiB is 2.6% of
+`MEMORY_UNPOOLED_BOUND`, and that constant bounds the unnamed remainder measured
+over a grid of 3 GiB fixtures — where, by the third row above, this term is eight
+kilobytes. The bound's derivation therefore never saw it. What it grows with is
+the producer's `--block-size`, through the file's stream and block counts:
+224 B held per block in the one-block-per-stream shape against 64 B in the
+single-stream one, which is why two copies of one dump differ by 19×.
+
+**Unlike `KD24`, the stated budget does not bound it.** That entry's ceiling is
+`slots × chunk` and `BufferPool::slots` divides the same budget by the same
+chunk, so it cannot exceed the allowance by construction. This table is built by
+the footer walk inside `XzSource::open`, **before `hint_parallelism` states a
+budget at all** — it is a precondition of the source existing rather than
+something the budget rule sizes. Nothing bounds it in the file's own terms
+either: a one-block stream is about fifty bytes on disk at its smallest
+(12 B header, ≥20 B block, ≥8 B index, 12 B footer) against 224 B held, so a
+degenerate file's table is more than four times the file it describes. Real
+files are nowhere near that — koji's download spends 1.29 MB a stream and is
+charged 112 B, one part in eleven thousand.
+
+**That ordering is what decides the billing question, and it decides it
+against.** Because the walk precedes the budget, a charge carrying the table
+would not refuse a file whose table does not fit; it would subtract an
+already-spent allocation from the allowance a worker count is solved against.
+So billing buys accuracy in the account and no protection at all, and it costs
+exactly the count-independent third `WorkerMemory` term `KD24` priced and
+refused — a per-worker term and a pooling term are all the type has, neither can
+stand in for a quantity that is one per *source*, and adding a third reaches
+`at`, `affords`, `is_zero`, `plus_per_worker` and every consumer of them. The
+term stays unbilled and named, as `KD24`'s does.
+
+**Removing the duplicate would make billing free, and it is not available
+here.** `vendor/xz-seek/` is read-only and `xz_seek::Reader` takes its
+`SeekTable` by value in both constructors, so sharing one `Arc` between reader
+and source is an upstream API change arriving by re-sync ("The compressed
+source"). The alternative — dropping `XzSource::table` and reading the reader's
+copy under its mutex — reverses this mechanism's recorded arrangement, *the seek
+table the source holds beside the reader — no I/O and no lock*, and puts that
+lock on `size`, `partitions`, `default_workers` and the `blocks_in` span
+arithmetic every block-path read does, where today only a block-cache **miss**
+takes it.
+
+It is an **under**-bill, so it never declines a path and never bars `19.11`'s
+gate — and that figure could not reach it in any case, its legs being `pgdq
+parse` over 3 GiB fixtures whose tables are kilobytes
+([2026-09-12](../status/history/2026-09-12.md), "The seek table is held twice,
+and the walk runs before the budget does").
 
 <!-- section: cut-width -->
 
