@@ -1233,11 +1233,13 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// outside its pools is flat in the reader count and measured in the low
 /// hundreds of megabytes, and [`MEMORY_RESERVE`] is by construction what
 /// covers it — the same statement `scripts/measure.py`'s `charge_model` holds
-/// the `reserve` figure's every cell to. Using it here is therefore
-/// conservative rather than exact: the reserve was picked as the smallest
-/// constant meeting the criterion on a grid, so at limits where it clears the
-/// criterion by a margin of its own this refuses a count the readings admit
-/// (`docs/design/roadmap-P19.23-count-margin-notes.md`).
+/// the `reserve` figure's every cell to. **That applies the criterion twice**:
+/// the reserve is the smallest constant meeting it under the *cap* rule, so it
+/// decomposes as `0.2 × 1 GiB + 178.9 MiB` and re-subtracting it here costs
+/// exactly `0.2 × limit` — every count this ceiling moves, to within a reader.
+/// `19.26` gives the prediction its own constant; the criterion is unchanged
+/// and stays enforced, once
+/// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
 /// Integer arithmetic, rounding **down** the fraction of the limit so the
 /// allowance errs small.

@@ -540,16 +540,24 @@ margin: it is a share of a limit the environment stated, and a
 `--parallel-memory` somebody typed is not one — that operator has made the
 headroom decision themselves.
 
-**It is conservative rather than exact, and the reserve is why.** 384 MiB is
-the smallest constant meeting the criterion on `19.16`'s grid, so it is larger
-than the flat term it covers — 83.6–214.6 MiB measured — by whatever margin the
-deciding leg needed. Predicting resident from it therefore refuses counts the
-readings admit: at a 1 GiB limit the rule resolves seven readers of a
-24 MiB-block file where eleven measured 20.2% headroom. The alternative is a
-second calibrated constant for the flat term, which is a number picked off a
-probe to loosen a safety rule, and the direction of the error is the one this
-phase has chosen everywhere else
-([`roadmap-P19.23-count-margin-notes.md`](roadmap-P19.23-count-margin-notes.md)).
+**It applies the criterion twice, and the reserve is why.** 384 MiB is the
+smallest constant meeting the criterion on `19.16`'s grid *under the cap rule*,
+so at the leg that decided it `charge ≤ limit − reserve` already **is** the
+criterion: the reserve decomposes as `0.2 × 1 GiB + 178.9 MiB` to within
+0.3 MiB, and re-subtracting it costs exactly `0.2 × limit`. That is every count
+the margin moved, to within the discreteness of a reader — 11→7 at 1 GiB,
+19→14 at 1536m, 28→21 at 2 GiB, against `0.2 × limit ÷ 58.03 MiB` of 3.5,
+5.3 and 7.1. What the margin is *for* is sound and unaffected: a constant
+reserve leaves a shrinking share as the limit grows, which is the large-limit
+breach above. What over-corrects is fixing that end by subtracting a constant
+margin at every limit.
+
+**The repair is a second constant bounding what a scan holds outside its pools,
+and it is `19.26`'s.** It is a derivation rather than a measurement — `19.16`'s
+readings need no re-taking — and it loosens nothing, because the criterion stays
+where it is and is enforced once
+([2026-09-12](../status/history/2026-09-12.md), "The margin applies the
+criterion twice, because `MEMORY_RESERVE` already contains one").
 
 **The block pool's floor is the charge's second term, not the reserve's.**
 `BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while the

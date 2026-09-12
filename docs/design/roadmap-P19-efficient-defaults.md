@@ -567,6 +567,40 @@ allocation resolves three readers where four fit. The two are one arithmetic.
 Reasoning: [2026-09-11](../status/history/2026-09-11.md), "`M81` and `M82` are
 both withdrawn, and the account they were guarding is wrong".
 
+**A sixth amendment: the margin predicts with a term of its own, because the
+reserve already contains a margin.** The first amendment states the criterion
+and `19.23` enforced it on the count, predicting resident as `charge(n) +
+MEMORY_RESERVE`. That is the same criterion applied twice. `19.16` chose 384 MiB
+as the *smallest* constant meeting the criterion under `budget = limit −
+reserve`, so at the leg that decided it the cap rule already **is** the
+criterion — the reserve decomposes as `0.2 × 1 GiB + 178.9 MiB` to within
+0.3 MiB — and re-subtracting it costs exactly `0.2 × limit`, which is every
+count `19.23` moved to within a reader. So:
+
+- **The prediction gets its own constant, bounding what a scan holds outside
+  its pools**, and `MEMORY_RESERVE` keeps the budget cap. Two constants, two
+  jobs, each stating what it bounds: the reserve's doc comment currently claims
+  to be the bound on the flat term and stops being that.
+- **The constant is derived, not measured.** `19.16`'s `readings.json` needs no
+  re-taking — its own notes say so — and the bound is the flat term's upper end
+  re-derived from those readings under today's charge model, which bills the
+  pool floor that `19.19` and `19.22` moved into it. The 83.6–214.6 MiB range
+  predates both, so quoting it directly would be conservative rather than
+  wrong.
+- **This is not the fractional budget ceiling returning**, and not a loosening.
+  The criterion is unchanged and still enforced on the count; what changes is
+  that it is enforced once.
+- **The harness gets two fault lines, not one.** `charge_model_problem` faults
+  at the new constant *and* at the reserve, both registered before the sitting:
+  a cell over the inner threshold is a finding about the bound, a cell over the
+  reserve is a failure of the rule. A single tightened threshold cannot tell
+  those apart, and would turn an informative sweep into a red one.
+- **It runs before `19.11`.** The counts it moves are the closing sweep's whole
+  flagless axis, so deciding after publication guarantees a re-take.
+
+Reasoning: [2026-09-12](../status/history/2026-09-12.md), "The margin applies
+the criterion twice, because `MEMORY_RESERVE` already contains one".
+
 **The reserve is one constant, taken from the compressed leg, and it
 over-reserves the plain path by roughly the difference.** The two paths' fixed
 terms are a factor of thirty apart — a plain `parse` holds 5.86 MiB above its
@@ -1110,6 +1144,7 @@ being inserted.
 | **19.23** | **The count answers to the criterion, not to the core count.** `2g` clears the margin only because `available_parallelism` clamps 28 readers to this machine's 24; a 64-core host resolves 28 and is predicted to breach. Once `19.22` makes the cost a model, `fit` refuses a count whose predicted resident breaches the stated margin, which removes the dependence rather than documenting it. |
 | **19.24** | **The harness checks the model, rather than searching for a constant.** `19.16` spent 400 runs to pick one integer and the account that mattered came out of arithmetic over its `readings.json` afterwards. A registered check predicts held bytes per cell from the charge model, measures, and asserts the residual is small and non-negative — which is what surfaces an under-bill, and what a grid search structurally cannot report. Seeded from readings already in the tree; no new sitting. |
 | **19.25** | **A `parse` says what ran, not what was asked for.** `19.13`'s decline report reaches a query's replay only — plan notes are `plan_partitions`' — and on `parse` nothing ever reports that the delivered worker count differs from the announced one. The gap is wider than the decline: `leader::scan_region` refuses to cut on `advice.max_partitions() == Some(1)`, so a declined `.xz` `parse` is **serial whatever `--jobs` says**, and the mode report's recommended count is lowered only where `--parallel-memory` was absent. The library states the delivered count and what it would have taken, at the one site that sees the advice, on the `scan started`/`scan complete` channel both commands already carry ([`architecture.md`](architecture.md), "Status output"); the CLI keeps `Resolved::plan_note_origin`'s provenance clause. **Not a new public channel and not a CLI re-derivation** — the two routes the closed entry priced are both refused below. Runs after `19.23`, which is what decides the delivered count it reports. |
+| **19.26** | **The margin predicts with its own constant, because the reserve already contains one.** `19.23` enforces the criterion on the count and predicts resident as `charge(n) + MEMORY_RESERVE`, which applies it twice: 384 MiB is the smallest constant meeting the criterion under the cap rule, so it decomposes as `0.2 × 1 GiB + 178.9 MiB` and re-subtracting it costs `0.2 × limit` — every count `19.23` moved, to within a reader. Name a second constant bounding what a scan holds outside its pools, **re-derived from `19.16`'s `readings.json` by arithmetic** under today's charge model rather than quoted from the pre-`19.19` 83.6–214.6 MiB range, and predict with it; `MEMORY_RESERVE` keeps the budget cap and its doc comment stops claiming to bound the flat term. `charge_model_problem` gains a **second, tighter fault line** at the new constant and keeps the reserve as the outer one, both registered before the sitting: a cell over the inner threshold is a finding about the bound, a cell over the reserve is a failure of the rule, and one threshold cannot tell those apart. The manual's four-fifths paragraph names 384 MiB as the term the margin predicts with and is falsified by this row. Runs **before `19.11`**, whose flagless axis it moves. |
 
 
 **`19.14` through `19.21` were admitted after this spec was written**, and take the

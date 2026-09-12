@@ -345,11 +345,13 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.25`, then `19.11`** — the
-four new rows were admitted on 2026-09-12 and take the next free numbers
+What remains runs **`19.26`, `19.25`, then `19.11`** — the
+five new rows were admitted on 2026-09-12 and take the next free numbers
 rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
 entry closes on 384, and the grilling found the charge wrong below four
-readers"; "A `parse` reports what was asked for and never what ran").
+readers"; "A `parse` reports what was asked for and never what ran"; "The
+margin applies the criterion twice, because `MEMORY_RESERVE` already contains
+one"). `19.26` leads because it moves the counts `19.25` reports.
 
 **All three defaults are shipped, so what remains is the charge and the
 sweep.** `19.18`'s sitting says the program holds
@@ -483,6 +485,14 @@ sitting.
       `.xz` `parse` is serial whatever `--jobs` says, and the library states the
       delivered count on the `scan started`/`scan complete` channel. Runs after
       `19.23`, which decides the count it reports.
+- [ ] **19.26** The margin predicts with its own constant, because the reserve
+      already contains one — `19.23` applies the criterion twice, at a cost of
+      exactly `0.2 × limit` per leg. The bound on what a scan holds outside its
+      pools is re-derived from `19.16`'s `readings.json` by arithmetic under
+      today's charge model; `MEMORY_RESERVE` keeps the budget cap, and the
+      harness faults at both constants so a finding about the bound is
+      distinguishable from a failure of the rule. Runs before `19.11`, whose
+      flagless axis it moves.
 
 ## Not started
 
@@ -679,24 +689,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`19.23` predicts resident with `MEMORY_RESERVE`, and that is stricter than
-  the criterion it enforces.** The margin check needs a predicted resident, and
-  the only bound this crate has on what a scan holds outside its pools is the
-  reserve — also what `charge_model` holds every `reserve` cell to. But 384 MiB
-  was picked as the *smallest* constant meeting the criterion on `19.16`'s
-  grid, so it exceeds the flat term it covers (measured 83.6–214.6 MiB) by
-  whatever the deciding leg needed, and predicting with it refuses counts the
-  readings admit: a 24 MiB-block `.xz` in a 1 GiB container resolves **7**
-  readers where **11** measured 20.2% headroom, 1536m goes 19 → 14 and 2g
-  24 → 21 (`../design/roadmap-P19.23-count-margin-notes.md`, "What the sweep
-  inherits"). **What is being decided:** whether to keep the conservative
-  prediction, or to name the flat term as a second constant (≈215 MiB, which
-  resolves 10 at 1 GiB) and predict with that. I took the conservative one:
-  the alternative is a number read off a `runs/` probe in order to *loosen* a
-  safety rule, on the axis where being wrong kills the process, and this phase
-  has been burned twice by picking a number after reading the data. **What
-  would change it:** `19.11`'s sitting now measures headroom against a rule
-  that guarantees 20% rather than a grid that happened to leave it, so it will
-  say directly how much of the reserve the margin is double-counting — and it
-  may equally argue for *lowering* the reserve, which the margin has made
-  possible and which nothing here does.
+_Nothing open._
