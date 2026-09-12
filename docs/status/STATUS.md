@@ -371,7 +371,10 @@ to cover**: `19.22` made a source's cost a shape rather than a scalar
 (`io::WorkerMemory`), every budget is now solved against it, and `M93` restated
 the block half of it as what the pool actually holds — one unit a reader plus
 `(POOL_DEPTH.max(jobs) − 1)` shared, one unit less than the charge billed at
-every count. Nor is the
+every count. `M94` is priced and closed the other way: the chunk pool's free
+list is unbilled by 4 MiB at the shipped chunk, and since the repair needs a
+count-independent term `WorkerMemory` cannot carry, it is registered as `KD24`
+and left inside `MEMORY_UNPOOLED_BOUND`. Nor is the
 margin at a large limit: `19.23` put the criterion itself in front of the
 count, so what a limit resolves is the same on a host of any width — and since
 `19.26` the prediction it refuses against is `at(n) + MEMORY_UNPOOLED_BOUND`,
@@ -456,8 +459,9 @@ before the sitting.
       *publishes* rather than what it decides
       ([`../design/out-of-band.md`](../design/out-of-band.md);
       [2026-09-12](history/2026-09-12.md), "The fit is a straight line across a
-      kink the charge now states"). **`M96` has landed and left `M94` and `M95`
-      the only rows in the way**: the billed-against-held pass enumerated every
+      kink the charge now states"). **`M96` has landed and `M94` is priced, so
+      `M95` is the only row left in the way**: the billed-against-held pass
+      enumerated every
       pool, buffer and retained structure on all three read paths
       ([`../design/architecture.md`](../design/architecture.md), "Billed against
       held") and turned up three further discrepancies — `M97`, an 8× over-bill
@@ -465,7 +469,12 @@ before the sitting.
       span pins past the first, and `M99`, the seek table held twice — **none of
       which this sitting can reach**, its legs being `pgdq parse` over a
       compressed input ([2026-09-12](history/2026-09-12.md), "Billed against
-      held, in one pass"). What this slice then owes is unchanged: the
+      held, in one pass"). `M94` it *does* reach, and the answer is that it
+      stays unbilled: the chunk pool's free list is 4 MiB at the shipped chunk,
+      flat in the count, and billing a count-independent term needs a third one
+      in `WorkerMemory` — so it is a register entry and the sitting's unnamed
+      remainder carries it ([2026-09-12](history/2026-09-12.md), "The chunk
+      pool's floor is priced, and 4 MiB does not buy a third term"). What this slice then owes is unchanged: the
       sweep itself,
       `reserve`'s `Shared` edge onto `peak-rss` with the `Session.borrow` change
       that lets an RSS reading cross a share, `rss-attribution` published and
@@ -584,8 +593,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD23 -->
-**`KD1`–`KD23` are allocated, and nothing at or below `KD23` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD24 -->
+**`KD1`–`KD24` are allocated, and nothing at or below `KD24` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -737,6 +746,15 @@ here rather than reading as a phase nobody has sliced.
   bound it and a held batch's `max_source_span` reaches up to four of koji's
   24 MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
   memory, the repair reversing a recorded decision either way. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Billed against
+  held: one row per buffer the process keeps".
+
+- **KD24** — the chunk pool's free list is billed nowhere, so a compressed
+  source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks —
+  4 MiB at the shipped chunk, 64 MiB against 16 billed at `--chunk-size 16m`,
+  flat in the count and never above the stated budget. **(c) unowned**;
+  promoted by a caller announcing a large chunk, or by a phase reworking
+  `WorkerMemory`, which has no count-independent term to bill it with. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Billed against
   held: one row per buffer the process keeps".
 

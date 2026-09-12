@@ -2756,6 +2756,13 @@ impl XzSource {
     /// compared against what a reader really holds while it reads, which is a
     /// chunk and not a pool ceiling, so raising it would decline the block path
     /// on files that fit.
+    ///
+    /// **It is charged once a reader, and the chunk pool's free list beside it
+    /// is charged nowhere** — `KD24`, an under-bill of
+    /// `slots × slot_bytes` flat in the count and linear in whatever chunk the
+    /// caller announced, 4 MiB at the shipped default and bounded by the stated
+    /// budget (`docs/design/architecture.md`, "Billed against held").
+    // deficiency: KD24
     fn charged_chunk_bytes(&self) -> u64 {
         match self.pool.announced_bytes() {
             Some(len) => len as u64,

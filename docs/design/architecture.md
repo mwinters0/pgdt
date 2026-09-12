@@ -1910,7 +1910,7 @@ at `w` delivered readers, with `slots` the block pool's
 | the block pool's free list | nothing of its own: `BufferPool::reserve` takes the retained blocks out of the free list's share, so the two populations share one slot count | `(slots − retained) × unit`, inside the row above | — |
 | a block evicted while a `Bytes` still views it | nothing — it is on neither list, so `BufferPool::held_bytes` does not see it either | one unit per live view | `parse` holds one view a reader and that view is of the block it just retained, which is MRU and not what a drain takes; `query` is `M98` |
 | the chunk buffer a straddling read is assembled into | `reader_bytes`' chunk term, `w × chunk` | at most one a reader — `leader::scan_partition` keeps exactly one read alive | the bill is the ceiling |
-| the chunk pool's free list | nothing | `(budget / chunk).clamp(1, POOL_DEPTH) × chunk` — **4 MiB** at the default chunk, flat in `w` | `M94` |
+| the chunk pool's free list | nothing | `(budget / chunk).clamp(1, POOL_DEPTH) × chunk` — **4 MiB** at the default chunk, flat in `w` | `KD24` |
 | the decoder, one per concurrent decode | `reader_bytes`' decoder term, `w × decode_footprint` | the LZMA2 dictionary, the backend's state and the compressed input chunk, per `BlockTask::decode_into` | — |
 | the streaming `Reader`'s live decode | nothing | nothing: `Reader::live` is an `Option` and this path calls `block_task` only | — |
 | the seek table | nothing | **twice** — `XzSource::table` and the `Reader`'s own copy, `XzSource::assembled` cloning one out of the other, at 80 B a stream and 32 B a block: 6.65 MiB on koji's 31,150-stream download, 0.35 MiB on its `--block-size=128MiB` recompression | `M99` |
@@ -1921,7 +1921,7 @@ budget reaches on every ordinary `.xz` dump:
 | Buffer | What bills it | What the code holds | Δ |
 |---|---|---|---|
 | the chunk buffer | `Partitioning::single(chunk_bytes)`, and this arm advises one partition | one | — |
-| the chunk pool's free list | nothing | 4 MiB | `M94` |
+| the chunk pool's free list | nothing | 4 MiB | `KD24` |
 | the one live decoder | nothing, **deliberately**: it sits behind the source's mutex however many readers run, so it is a fixed cost of the source and not a reader's | dictionary + state + input chunk, 9.03 MiB on koji | declared; inside `MEMORY_UNPOOLED_BOUND` |
 | `Reader::discard` | nothing | 256 KiB, and only once something is actually skipped | same |
 | the seek table | nothing | as above | `M99` |
@@ -1948,7 +1948,9 @@ a compressed input, so they reach the first table and the third bullet-list
 entry and nothing else: `M97` is plain-path, `KD23` is query-path, and `M99` is
 kilobytes on a 3 GiB fixture against megabytes on koji. None of the three moves
 `19.11`'s gate, and that is a statement about the figure's command shapes rather
-than about their size.
+than about their size. `KD24` it *does* reach — every leg runs at the default
+chunk, so 4 MiB of the unnamed remainder it measures is that entry, flat at
+every count and inside `MEMORY_UNPOOLED_BOUND` by a factor of 64.
 
 <!-- deficiency: KD23 -->
 
@@ -1980,6 +1982,59 @@ a recorded decision either way, so it is a slice to be grilled rather than a
 ledger row, which is why `M98`'s row was withdrawn
 ([2026-09-12](../status/history/2026-09-12.md), "A query partition is not one
 unit wide").
+
+<!-- deficiency: KD24 -->
+
+**`KD24`: the chunk pool's free list is billed nowhere, so a stated budget is
+short by up to `POOL_DEPTH` chunks.** `XzSource::apportion` gives that pool
+`POOL_DEPTH` slots and never raises them with the worker count, while
+`BlockCache::reader_bytes` bills one chunk **a reader** for the buffer a
+straddling read is assembled into — a different population from the free list,
+which holds what previous reads released. The unbilled ceiling is
+`⌊budget / chunk⌋.clamp(1, POOL_DEPTH) × chunk`, and both of its shapes matter:
+it is **flat in the reader count**, because the depth is a constant and not
+`POOL_DEPTH.max(jobs)`; and it **grows with the chunk the caller announces**,
+because the slot size is `ScanOptions::chunk_size` itself.
+
+**Priced at the two chunks that exist.** At the shipped 1 MiB
+`DEFAULT_CHUNK_SIZE` it is **4 MiB** — 3.8% of the 106.0 MiB the block path
+bills one reader on koji's 24 MiB blocks, and a sixty-fourth of
+`MEMORY_UNPOOLED_BOUND`, which is the constant that exists to cover exactly
+this kind of unnamed byte. At `--chunk-size 16m` under the 64 MiB
+`DEFAULT_MEMORY_BUDGET` it is **64 MiB held against 16 billed**, which is the
+whole budget: there the block path is declined anyway (`affordable` asks
+`24 + 16 + 9.5 + 3 × 24 = 121.5 MiB` of a 64 MiB allowance), so the arrangement
+is one streaming reader billing `Partitioning::single(chunk_bytes)`. What bounds
+it in every case is `BufferPool::slots`' own division: `slots ≤ ⌊budget/chunk⌋`,
+so the term **cannot exceed the stated budget**. The one arrangement that can is
+a chunk larger than the whole budget, where `slots` floors at one and the pool
+keeps a single buffer bigger than the allowance — the deliberate floor
+("a pool that can hold nothing is not a pool"), not this entry.
+
+It is an **under**-bill, so it never declines a path and never bars `19.11`'s
+gate; it inflates the unnamed remainder that `MEMORY_UNPOOLED_BOUND` covers.
+**What the pool holds is already the user's to read** — `--chunk-size`'s help
+and [`../manual/dump-inspection.md`](../manual/dump-inspection.md) both say the
+pool keeps four buffers of the size you ask for or the budget's worth, whichever
+is fewer — so nobody is surprised in resident bytes. What is wrong is internal:
+the charge that picks a worker count and decides the block path does not carry
+the term, which is why this is an entry and not a property.
+
+*The fix is a third term in `WorkerMemory`, and that is why this is an entry
+rather than a repair.* The shape has a per-worker term that grows with the count
+and a pooling term that grows with it past `POOL_DEPTH`; a chunk pool whose
+depth never moves needs a **count-independent** one, which nothing in the type
+can express. Adding it changes `at`, `affords`, `is_zero` and `plus_per_worker`,
+and every consumer reads one of those — `Parallelism::fit`,
+`stream::worker_count`, `stream::plan_partitions`, `leader::scan_region`,
+`BlockCache::affordable`, the CLI's mirror of the charge and `measure.py`'s
+`charge_model`. The bill would rise, so `MEMORY_UNPOOLED_BOUND` stays sound
+either way — a larger bill can only shrink the remainder it bounds — but the
+decline line and `19.26`'s flagless axis both move for 4 MiB at the shipped
+default. That is a slice's worth of rework on a tested core path, weighed
+against a term the bound already covers
+([2026-09-12](../status/history/2026-09-12.md), "The chunk pool's floor is
+priced, and 4 MiB does not buy a third term").
 
 <!-- section: cut-width -->
 
