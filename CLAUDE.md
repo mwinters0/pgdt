@@ -202,16 +202,21 @@ ones** — it is a standing constraint, and it pre-answers where new code goes.
 `docs/design/roadmap.md` holds the project goals, the standing rules that cut
 across all work, and the index of phases still ahead. **Read its "Standing
 rules" before making a design decision that a later phase inherits**; read the
-phase section before grilling or specifying that phase. Its "Out-of-band work"
-section is the ledger for work that belongs to no phase — **add a one-line row
-there when landing a change that changes no spec'd decision and fits one
-session**, pointing at the history entry that says why. Such a change gets no
-spec and no notes doc. If it would change a decision, it is not out-of-band:
-grill it, amend the spec, and give it a slice number. `M<k>` numbers work like
-`P<k>`: allocated on discovery, never reused, and the ledger's row order is
-allocation order rather than landing order. The rows themselves are struck at
-each keystone; that section's watermark says which numbers are already spent,
-so the next item takes the number after it.
+phase section before grilling or specifying that phase.
+
+`docs/design/out-of-band.md` is the ledger for work that belongs to no phase.
+**Read it whole — not a grep of it — before allocating an `M<k>`, and before
+picking up work when no slice is the obvious next thing**; it is a work queue
+as well as a record, and a row read past is both a spent number reissued and an
+outstanding item missed. **Add a one-line row when landing a change that
+changes no spec'd decision and fits one session**, pointing at the history
+entry that says why. Such a change gets no spec and no notes doc. If it would
+change a decision, it is not out-of-band: grill it, amend the spec, and give it
+a slice number. `M<k>` numbers work like `P<k>`: allocated on discovery, never
+reused, and the ledger's row order is allocation order rather than landing
+order. The rows themselves are struck at each keystone; that file's watermark
+says which numbers are already spent, so the next item takes the number after
+it.
 
 **A phase is identified by `P<k>`, which is not a position.** Phases are
 allocated numbers as they are *discovered*, run in whatever order suits, and
@@ -509,7 +514,7 @@ completed phase's spec and notes have been struck** at a keystone review
 (`docs/process.md`, "The keystone: striking the centering") and live only in
 git; `architecture.md` replaces them, filed by subject. The out-of-band ledger
 went the same way, leaving a watermark of spent `M<k>` numbers in
-`docs/design/roadmap.md`. **Don't cite a phase or an out-of-band number for
+`docs/design/out-of-band.md`. **Don't cite a phase or an out-of-band number for
 something already built** — cite the mechanism's section in `architecture.md`
 instead.
 

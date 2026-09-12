@@ -39,7 +39,7 @@ you spend reading code is context the loop cannot spend on rounds.
   finish — stop.
 - The current text of STATUS's **"Decisions worth another look"** section.
 - The unticked slice boxes in the active phase's checklist, in order.
-- The rows in `docs/design/roadmap.md`'s **"Out-of-band work"** ledger whose
+- The rows in `docs/design/out-of-band.md`, the **out-of-band ledger**, whose
   Date is empty, and which of them name the open phase in `Blocks`. A blocking
   row is what the round will pick up ahead of the next slice, so it is part of
   knowing what the round was supposed to do.

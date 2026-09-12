@@ -152,6 +152,7 @@ scope to fill it.
 | `CLAUDE.local.md` | Facts about *this machine and this operator* | Anything another machine would need |
 | `docs/design/historical/initial.md` | The original handoff, frozen | Edits. It is history, not a live doc |
 | `docs/design/roadmap.md` | Project goals, standing policies, the phase index | Full phase specs (they get their own files) |
+| `docs/design/out-of-band.md` | The ledger of one-session work belonging to no phase | An account of a row; anything a spec records |
 | `docs/design/roadmap-P<N>-<slug>.md` | **What** phase `P<N>` does and **why** — the binding spec | How it landed in code |
 | `docs/design/roadmap-P<N>-<slug>-notes.md` | **How** it landed: module map, and the facts later phases inherit | Restatement of the spec; a changelog |
 | `docs/design/roadmap-P<N>.<M>-<slug>-notes.md` | The same, for one slice, until the phase wraps | Anything that should have gone in the spec |
@@ -554,8 +555,8 @@ the phase's checklist stops being "what this phase committed to" the moment
 unrelated work is appended to it, and between phases there is nothing to
 append to at all.
 
-So the roadmap carries a standing **out-of-band ledger**: an item gets a
-number (`M1`, `M2`, …) and **one terse line** — date, what changed, whether it
+So the doc set carries a standing **out-of-band ledger** beside the roadmap: an
+item gets a number (`M1`, `M2`, …) and **one terse line** — date, what changed, whether it
 blocks the open phase, and a
 pointer to the dated history entry that says why. No spec, because there was
 no intent doc; **no notes doc, because the history entry is the notes.** That
@@ -594,6 +595,18 @@ The ledger is an index, not an account: its lines stay one line, and the detail
 lives in the history entry. It grows until a keystone, which strikes it along
 with the phase docs — see "The out-of-band ledger is struck too" below. Between
 keystones, treat it as permanent.
+
+**It starts as a roadmap section and moves to its own file once it outgrows
+one.** The roadmap is an index and stays roughly the size it was; the ledger
+only grows. The failure that forces the split is specific and silent: a session
+that reads part of the register allocates a number already spoken for, and
+nothing downstream catches it, because the row it collided with is the row
+nobody read. The rows are a work queue as well as a record, so an unread tail is
+unstarted work at the same time. Split it at the point where reading it whole
+stops being automatic, leave the roadmap a pointer under the same heading, and
+retarget the read-triggers — a register split out and still pointed at through
+its old home has bought nothing, since the cost is what a trigger pulls into
+context at the moment of work.
 
 ---
 
@@ -830,7 +843,7 @@ Four questions settle almost every case.
 | Something outside our control that we now depend on | the **assumptions register** |
 | A rule that will still apply three phases from now | a **standing-constraint** doc, or a named roadmap section |
 | Something a *distant, unspecified* phase will need to know | that phase's **inbox** |
-| A one-session change that belongs to no phase | the roadmap's **out-of-band ledger**, one line, pointing at a history entry |
+| A one-session change that belongs to no phase | the **out-of-band ledger**, one line, pointing at a history entry |
 | Something a *user* needs, with no rationale attached | the **manual** |
 | How the agent should behave in this repo | **CLAUDE.md** |
 | A path, a host, a piece of hardware, an operator preference | **CLAUDE.local.md** |
@@ -891,6 +904,7 @@ docs/
   design/
     historical/initial.md                          frozen at bootstrap
     roadmap.md                                     lives forever
+    out-of-band.md                                 split out of the roadmap; struck at the keystone
     roadmap-P1-mvp.md                              written at phase start
     roadmap-P1-mvp-notes.md                        written as P1 lands
     roadmap-P2-typed-columns.md

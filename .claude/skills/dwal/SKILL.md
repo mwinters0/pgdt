@@ -84,8 +84,8 @@ entry you just closed.
 
 ## 5. Admit the work the answer unblocked
 
-An answer usually implies work. Route it by `docs/design/roadmap.md`'s
-"Out-of-band work" admission rule, which is not a judgement call — the ledger
+An answer usually implies work. Route it by `docs/design/out-of-band.md`'s
+admission rule, which is not a judgement call — the ledger
 states both sides of it, and `CLAUDE.md` restates the test. Where it comes out
 out-of-band, the number goes after the ledger's watermark, the Date column
 stays empty until it lands, and the row points at today's history entry.

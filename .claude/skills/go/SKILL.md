@@ -15,8 +15,10 @@ question, review an approach, or unblock you. Work accordingly.
    deficiencies", and "Decisions worth another look".
 3. Read the current phase spec and the notes docs of the slices already
    landed in this phase.
-4. Read `docs/design/roadmap.md`'s **"Out-of-band work"** ledger, for the rows
-   whose Date is empty.
+4. Read `docs/design/out-of-band.md`, the **out-of-band ledger**, for the rows
+   whose Date is empty. Read it whole — the rows are in allocation order, not
+   landing order, so the outstanding ones are scattered through it and a
+   partial read is how one goes unpicked-up.
 5. **If the slice you pick takes, reads, or reasons from a measurement —
    invoke the `evidence` skill before designing it.** That includes a slice
    whose deliverable is a reading, one that fits a model to numbers already
