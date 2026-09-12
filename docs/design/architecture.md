@@ -500,10 +500,12 @@ off five builds rather than extrapolated.** Five binaries differing in nothing
 but this number — 256, 320, 384, 448 and 512 MiB — were run over the whole
 flagless family, two block sizes by four container limits, ten reps each: 384 is
 the smallest whose worst rep leaves at least 20% of the limit at every leg. The
-criterion is what picks it rather than the verdict line: at a 1 GiB limit the
-margin caps the count at eleven, which needs a reserve in (322, 381]; at
-1.5 GiB it caps it at nineteen, needing (367, 425]; 384 is the only candidate on
-the grid inside both. Earlier constants failed where the readings had not yet
+criterion is what picks it rather than the verdict line: on that grid, where the
+count came from `limit − reserve` alone, the readings admit at most eleven
+readers at a 1 GiB limit, which needs a reserve in (322, 381], and at most
+nineteen at 1.5 GiB, needing (367, 425]; 384 is the only candidate inside both.
+(Those are the counts *that grid* resolved; the margin below now resolves fewer
+at both.) Earlier constants failed where the readings had not yet
 separated the reserve from the defects beneath it — a 24 MiB-block file in a
 512 MiB allocation once came within three megabytes of its limit and a
 128 MiB-block one was OOM-killed in a 1 GiB allocation, both measuring the
@@ -515,12 +517,39 @@ chosen. The readings are in
 and
 [`roadmap-P19.16-reserve-constant-notes.md`](roadmap-P19.16-reserve-constant-notes.md).
 
-**One thing the constant was not shown to do, and it is not a reserve's to
-fix.** It was validated up to a 2 GiB limit **on a 24-core host**, where
-`available_parallelism` clamps the count the allowance would otherwise afford:
-the same limit on a 64-core host resolves twenty-eight readers and is predicted
-to breach the margin at 13.3%, so the count has to answer to the criterion and
-not only to the core count.
+**The count answers to the criterion, which is what a constant reserve cannot
+do on its own.** A constant leaves *constant* headroom — roughly
+`MEMORY_RESERVE` less what a scan holds outside its pools — and the criterion
+is a *fraction*, so the two agree at one limit and diverge either side of it.
+384 MiB was validated up to a 2 GiB limit **on a 24-core host**, where
+`available_parallelism` clamped the count the allowance would otherwise afford;
+the same limit on a 64-core host resolves twenty-eight readers of a
+24 MiB-block file and is predicted to breach at 13.3%. So `Parallelism::fit`
+takes a second condition beside the cap: the largest count whose **predicted
+resident** — `WorkerMemory::at(n)` plus `MEMORY_RESERVE`, the only bound this
+crate has on what a scan holds outside its pools — leaves
+`io::MEMORY_MARGIN_PERCENT` of the limit unused. The resolved arrangement is
+then a property of the allocation and not of the machine's width.
+
+**It bounds the count and nothing else.** The floor is still one worker at
+whatever the cap is, so a margin the smallest arrangement cannot meet costs
+nothing and the block path is never declined by it; and the budget reported is
+still `min(limit − reserve, at(n))`, which is what that many readers spend and
+what `BlockCache::affordable` reads. Only a **discovered** limit carries the
+margin: it is a share of a limit the environment stated, and a
+`--parallel-memory` somebody typed is not one — that operator has made the
+headroom decision themselves.
+
+**It is conservative rather than exact, and the reserve is why.** 384 MiB is
+the smallest constant meeting the criterion on `19.16`'s grid, so it is larger
+than the flat term it covers — 83.6–214.6 MiB measured — by whatever margin the
+deciding leg needed. Predicting resident from it therefore refuses counts the
+readings admit: at a 1 GiB limit the rule resolves seven readers of a
+24 MiB-block file where eleven measured 20.2% headroom. The alternative is a
+second calibrated constant for the flat term, which is a number picked off a
+probe to loosen a safety rule, and the direction of the error is the one this
+phase has chosen everywhere else
+([`roadmap-P19.23-count-margin-notes.md`](roadmap-P19.23-count-margin-notes.md)).
 
 **The block pool's floor is the charge's second term, not the reserve's.**
 `BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while the
@@ -707,7 +736,10 @@ unstated.** The criterion is that the **worst observed rep leaves at least 20%
 of the limit**, with the median reported beside it as context rather than as the
 gate — worst-rep because a cgroup's killer reads one run's peak and not a median
 of three, accepting that a tail is something this project can only ever
-estimate and that ten reps is the estimate. Without a stated margin the
+estimate and that ten reps is the estimate. It is `io::MEMORY_MARGIN_PERCENT`,
+and the rule now enforces it on the count rather than leaving it to a
+constant's choice (above, "The count answers to the criterion"). Without a
+stated margin the
 rule had none: `budget = limit − reserve` aims resident *at* the limit by
 construction, so the only margin it leaves on its own is
 `Parallelism::fit`'s quantisation, which grants whole readers and therefore
@@ -816,7 +848,9 @@ source recommends a budget as it recommends a worker count —
 
 - a **discovered** limit is a cap: `memory.at(jobs)`, or
   `DEFAULT_MEMORY_BUDGET` where the source recommends nothing, taken no higher
-  than `limit − MEMORY_RESERVE`;
+  than `limit − MEMORY_RESERVE` — with the *count* held to the margin besides,
+  which is the tighter of the two above one reader (above, "The count answers
+  to the criterion");
 - **no limit found** has no cap from the environment at all, only half of
   `/proc/meminfo`'s `MemAvailable` (`RT8`).
 
@@ -1189,11 +1223,16 @@ rests on that rather than on a ceiling of its own.** Because `slots()` caps at
 for a per-reader cost `C`, resident saturates at `jobs × C` plus the fixed
 term and every byte of budget above that is taken by nothing — at 256 cores
 against a 128 GiB limit, ~15 GiB, bounded by the worker count and not by the
-allocation. That is why the discovered default is `limit − reserve` with **no
-fractional ceiling** over it: the property a fraction would assert is one this
-clamp already proves. **So a change that unclamps `slots()` makes a large
-budget suddenly real**, and it has to price that against the rule, not only
-against the pool. **What that remedy is
+allocation. That is why the discovered **budget** is `limit − reserve` with
+**no fractional ceiling** over it: the property a fraction would assert there —
+"do not take an allocation we cannot show we use" — is one this clamp already
+proves. *That* is the rejected fraction, and the margin on the **count** is not
+it: this one asserts headroom against a killer rather than inertness, binds
+where the inertness argument never did — at large limits, where the count is
+what grows — and is checked against a criterion this phase stated (above, "The
+count answers to the criterion"). **So a change that unclamps `slots()` makes a
+large budget suddenly real**, and it has to price that against the rule, not
+only against the pool. **What that remedy is
 worth is not decided by the runtime, and there is no one number for it.** A
 controlled probe ran this same
 arrangement — `--jobs 4 --parallel-memory 268435456` — over a 3.00 GiB

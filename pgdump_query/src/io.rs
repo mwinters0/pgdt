@@ -930,7 +930,11 @@ impl Parallelism {
     ///   you cannot use", and it is allowed to fall **below**
     ///   [`DEFAULT_MEMORY_BUDGET`], because reasserting that constant under a
     ///   small limit would put today's default back in the one case discovery
-    ///   was built for;
+    ///   was built for. The **count** answers to a second condition beside
+    ///   that cap: its predicted resident must leave
+    ///   [`MEMORY_MARGIN_PERCENT`] of the limit unused
+    ///   ([`margin_allowance`]), which is what stops the answer depending on
+    ///   how many cores the host happens to have;
     /// - no limit found caps at half of [`available_memory`], which costs
     ///   nothing wherever there is room — resident saturates at
     ///   `jobs × per-reader`, so every byte above that is structurally inert —
@@ -952,18 +956,24 @@ impl Parallelism {
     /// environments this machine cannot be put into
     /// (`pgdump_query-cli/tests/data/runtime/`).
     pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
-        let cap = match discover_memory_limit_in(root) {
-            Some(limit) => Some(limit.bytes.saturating_sub(MEMORY_RESERVE)),
+        let (cap, ceiling) = match discover_memory_limit_in(root) {
+            Some(limit) => (
+                Some(limit.bytes.saturating_sub(MEMORY_RESERVE)),
+                Some(margin_allowance(limit.bytes)),
+            ),
             // Nothing discovered and nothing recommended: no cap to state, and
             // no recommendation to cap. That is today's default, unchanged.
-            None if memory.is_none() => None,
+            None if memory.is_none() => (None, None),
             // `MemAvailable` unreadable is the one shape with a recommendation
-            // and no ceiling to hold it under.
-            None => Some(available_memory_in(root).map_or(u64::MAX, |available| available / 2)),
+            // and no ceiling to hold it under — and no limit to take a margin
+            // of either, the halving being the margin there.
+            None => {
+                (Some(available_memory_in(root).map_or(u64::MAX, |available| available / 2)), None)
+            }
         };
         match cap {
             Some(cap) => {
-                let (jobs, budget) = Self::fit(jobs, memory, cap);
+                let (jobs, budget) = Self::fit(jobs, memory, cap, ceiling);
                 Self::workers(jobs, budget)
             }
             None if jobs > 1 => Self::workers(jobs, DEFAULT_MEMORY_BUDGET),
@@ -983,6 +993,11 @@ impl Parallelism {
     /// a **count**, never the absence of a budget: a caller holding a count
     /// somebody stated calls [`Parallelism::workers`] and keeps it.
     ///
+    /// **No margin here**, unlike `discover_for`: [`MEMORY_MARGIN_PERCENT`] is
+    /// a share of a *limit* the environment states, and a budget somebody
+    /// typed is not one — an operator who states bytes has made the headroom
+    /// decision themselves.
+    ///
     /// **Only the count moves.** Where `discover_for` hands back the budget
     /// the lowered count spends — because it chose that budget and must not
     /// name one the allowance never granted — the budget here is the caller's
@@ -993,7 +1008,7 @@ impl Parallelism {
         memory: Option<WorkerMemory>,
         memory_bytes: u64,
     ) -> Self {
-        Self::workers(Self::fit(jobs, memory, memory_bytes).0, memory_bytes)
+        Self::workers(Self::fit(jobs, memory, memory_bytes, None).0, memory_bytes)
     }
 
     /// The largest pair `(count, budget)` that fits inside `cap`: as many of
@@ -1018,12 +1033,32 @@ impl Parallelism {
     /// hands back a count whose floor the allowance never granted. The budget
     /// it names is what that many workers actually spend, floor included,
     /// which is what keeps the number the run reports for itself true.
-    fn fit(jobs: usize, memory: Option<WorkerMemory>, cap: u64) -> (usize, u64) {
+    ///
+    /// **`charge_ceiling` is the margin, and it bounds the count alone.**
+    /// Where the cap came from a discovered limit the caller also states the
+    /// most this arrangement may be *charged* if its predicted resident is to
+    /// leave [`MEMORY_MARGIN_PERCENT`] of that limit unused
+    /// ([`margin_allowance`]) — predicted resident being `memory.at(n)` plus
+    /// [`MEMORY_RESERVE`], which is the only bound this crate has on what a
+    /// scan holds outside its pools. A budget somebody **typed** carries no
+    /// such ceiling: the margin is a statement about a limit, and a stated
+    /// budget is not one. The floor is still one worker, so the ceiling can
+    /// lower a count and never decline the one reader the mechanism's own
+    /// floors deliver; and the budget stays `cap`-bounded rather than
+    /// ceiling-bounded, so what a lowered count reports is still what it
+    /// spends (`docs/design/architecture.md`, "Execution model and API
+    /// surface").
+    fn fit(
+        jobs: usize,
+        memory: Option<WorkerMemory>,
+        cap: u64,
+        charge_ceiling: Option<u64>,
+    ) -> (usize, u64) {
         let jobs = jobs.max(1);
         let Some(memory) = memory.filter(|memory| !memory.is_zero()) else {
             return (jobs, DEFAULT_MEMORY_BUDGET.min(cap));
         };
-        let affords = memory.affords(cap, jobs);
+        let affords = memory.affords(charge_ceiling.map_or(cap, |ceiling| cap.min(ceiling)), jobs);
         (affords, cap.min(memory.at(affords)))
     }
 }
@@ -1094,10 +1129,14 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// knob, and the floor below which a compressed scan is serial is implicit in
 /// it rather than stated separately.
 ///
-/// **One thing it was not shown to do.** It was validated to a 2 GiB limit
-/// *on a 24-core host*, where `std::thread::available_parallelism` clamps the
-/// count the allowance would otherwise afford; a host with more cores resolves
-/// more readers at the same limit and is predicted to breach the margin.
+/// **What it was validated over, and what now carries the rest.** It was
+/// measured to a 2 GiB limit *on a 24-core host*, where
+/// `std::thread::available_parallelism` clamps the count the allowance would
+/// otherwise afford — so the criterion held at that limit by the host's width
+/// rather than by this number. It is no longer asked to: the count answers to
+/// the criterion directly ([`MEMORY_MARGIN_PERCENT`]), which is what makes the
+/// resolved arrangement a property of the allocation and not of the machine's
+/// core count. What this constant covers is the flat term below.
 ///
 /// **What it does not cover, and never had to, is the block pool's floor.**
 /// [`BufferPool::slots`] clamps that pool at `POOL_DEPTH.max(jobs)` while the
@@ -1142,6 +1181,69 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// [`DEFAULT_MEMORY_BUDGET`] there would put today's constant back under a new
 /// name in the one case discovery exists for.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
+
+/// How much of a **discovered** memory limit a resolved arrangement must leave
+/// unused, as a percentage of the limit — the criterion [`MEMORY_RESERVE`] was
+/// chosen against, enforced on the worker count instead of being left to hold
+/// by accident.
+///
+/// **Twenty percent, and it is this phase's judgement rather than a derived
+/// number** (`docs/design/roadmap-P19-efficient-defaults.md`, "The margin is
+/// now stated"). A cgroup's killer reads one run's peak, so the criterion is
+/// about the worst rep and not the median; ten reps is the estimate of a tail
+/// this project can make.
+///
+/// **A constant reserve leaves constant headroom, and the criterion is a
+/// fraction — so the two only agree at one limit.** `limit − MEMORY_RESERVE`
+/// aims resident *at* the limit by construction, leaving roughly
+/// `MEMORY_RESERVE` minus what a scan holds outside its pools however large
+/// the limit is; as a *share* of the limit that shrinks, so the criterion is
+/// met at a 1 GiB limit and not at 2 GiB. It looked met at 2 GiB only because
+/// `std::thread::available_parallelism` on a 24-core host clamped the count
+/// below what the allowance afforded — a 64-core host resolves twenty-eight
+/// readers of a 24 MiB-block file there and is predicted to breach at 13.3%.
+/// Enforcing the criterion on the count is what makes the answer a property of
+/// the allocation rather than of the host's width.
+///
+/// **It bounds the count and never the budget, and it cannot decline a
+/// reader.** [`Parallelism::fit`] keeps one worker at whatever the cap is —
+/// the arrangement below the reserve is real and the mechanism's own floors
+/// deliver it — and reports the budget that count spends, capped by
+/// `limit − MEMORY_RESERVE` as before. So a margin the smallest arrangement
+/// cannot meet costs nothing, and [`BlockCache::affordable`] reads the same
+/// budget it always did.
+///
+/// *Rejected: a fractional **budget** ceiling*, which is a different rule that
+/// this one must not be read as reinstating. That one asserted "do not take an
+/// allocation we cannot show we use" and was dropped because
+/// [`BufferPool::slots`]' clamp already proves it: resident saturates at
+/// `jobs × C` and every byte above is inert
+/// (`docs/design/architecture.md`, "Execution model and API surface"). This
+/// asserts headroom against a killer, binds where that one never did — at
+/// large limits, where the count is what grows — and is checked against a
+/// stated criterion rather than against a hedge.
+pub const MEMORY_MARGIN_PERCENT: u64 = 20;
+
+/// The most a resolved arrangement may be **charged** under a discovered
+/// `limit` if its predicted resident is to leave [`MEMORY_MARGIN_PERCENT`] of
+/// that limit unused: `(100 − margin)% of limit`, less [`MEMORY_RESERVE`].
+///
+/// **The predicted resident is `charge + MEMORY_RESERVE`, and the reserve is
+/// the only bound this crate has on the second term.** What a scan holds
+/// outside its pools is flat in the reader count and measured in the low
+/// hundreds of megabytes, and [`MEMORY_RESERVE`] is by construction what
+/// covers it — the same statement `scripts/measure.py`'s `charge_model` holds
+/// the `reserve` figure's every cell to. Using it here is therefore
+/// conservative rather than exact: the reserve was picked as the smallest
+/// constant meeting the criterion on a grid, so at limits where it clears the
+/// criterion by a margin of its own this refuses a count the readings admit
+/// (`docs/design/roadmap-P19.23-count-margin-notes.md`).
+///
+/// Integer arithmetic, rounding **down** the fraction of the limit so the
+/// allowance errs small.
+fn margin_allowance(limit: u64) -> u64 {
+    (limit / 100).saturating_mul(100 - MEMORY_MARGIN_PERCENT).saturating_sub(MEMORY_RESERVE)
+}
 
 /// A cgroup v1 `memory.limit_in_bytes` at or above this reads as *no limit*
 /// (`docs/design/runtime-invariants.md`, `RT4`).
@@ -4736,6 +4838,10 @@ mod tests {
     /// it.** The reserve comes off the top and the source's recommendation is
     /// taken no higher — "do not take what you cannot use" — while a
     /// recommendation that already fits is left alone.
+    ///
+    /// The count is held to [`MEMORY_MARGIN_PERCENT`] besides, which is the
+    /// tighter of the two conditions at every limit; the budget is still what
+    /// the resolved count spends.
     #[test]
     fn a_discovered_limit_caps_the_recommendation_at_the_limit_less_the_reserve() {
         let root = FakeRoot::new();
@@ -4744,26 +4850,93 @@ mod tests {
 
         // Eight readers of 512 MiB each is 4 GiB against a cap of 640 MiB, so
         // the count comes down with the budget rather than being printed
-        // beside one it cannot spend: one reader is what fits.
+        // beside one it cannot spend: one reader is what fits. The budget is
+        // still `cap`-bounded and not margin-bounded, so the floor arrangement
+        // reports what one reader holds.
         let squeezed =
             Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(512 << 20)));
         assert_eq!(squeezed.memory_bytes(), Some(512 << 20));
         assert_eq!(squeezed.jobs(), 1);
 
-        // Eight readers of 16 MiB fit whole, so both numbers stand.
+        // Eight readers of 16 MiB is 128 MiB, inside the 435.2 MiB the margin
+        // allows as well as inside the cap, so both numbers stand.
         let roomy =
             Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(16 << 20)));
         assert_eq!(roomy.memory_bytes(), Some(128 << 20));
         assert_eq!(roomy.jobs(), 8);
 
-        // And in between, the count is what the cap affords and the budget is
-        // exactly what that many readers spend — never the cap itself, which
-        // is the over-ask this pairing exists to remove.
+        // And in between, the count is what the margin affords and the budget
+        // is exactly what that many readers spend — never the cap itself,
+        // which is the over-ask this pairing exists to remove. Four readers of
+        // 100 MiB is 400, against a margin allowance of 435.2 and a cap of
+        // 640: six would fit the cap and is refused.
         let fitted =
             Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(100 << 20)));
-        assert_eq!(fitted.jobs(), 6);
-        assert_eq!(fitted.memory_bytes(), Some(600 << 20));
+        assert_eq!(fitted.jobs(), 4);
+        assert_eq!(fitted.memory_bytes(), Some(400 << 20));
         assert!(fitted.memory_bytes() < Some(cap), "the cap itself would be the over-ask");
+    }
+
+    /// **The resolved count answers to the criterion rather than to the host's
+    /// width.** Before this the margin at a large limit was bought by
+    /// `available_parallelism` clamping the count below what the allowance
+    /// afforded, so the same allocation on a wider host resolved more readers
+    /// and left less headroom — the one thing `MEMORY_RESERVE` was never shown
+    /// to do. A recommendation above what the margin allows now resolves the
+    /// same arrangement whatever the recommendation is.
+    #[test]
+    fn the_count_answers_to_the_margin_and_not_to_the_recommendation() {
+        let root = FakeRoot::new();
+        root.v2("/leaf").v2_limits("/leaf", Some(&(2u64 << 30).to_string()), None);
+        // What one reader of an ordinary 24 MiB-block `.xz` holds, and the
+        // pool floor below four readers of it.
+        let reader = 58 << 20;
+        let memory = WorkerMemory::per_worker(reader).flooring(24 << 20, POOL_DEPTH);
+
+        let narrow = Parallelism::discover_in(root.path(), 24, Some(memory));
+        let wide = Parallelism::discover_in(root.path(), 64, Some(memory));
+        assert_eq!(narrow.jobs(), wide.jobs(), "the host's core count is not the answer");
+        assert_eq!(narrow.memory_bytes(), wide.memory_bytes());
+
+        // And what it resolves to leaves the margin: the charge plus the
+        // reserve is under four fifths of the limit, where the cap alone would
+        // have admitted twenty-eight readers and left 13%.
+        let limit = 2u64 << 30;
+        let charge = wide.memory_bytes().unwrap();
+        assert!(
+            charge + MEMORY_RESERVE <= limit / 100 * (100 - MEMORY_MARGIN_PERCENT),
+            "predicted resident {} breaches the margin",
+            charge + MEMORY_RESERVE
+        );
+        assert!(
+            memory.at(wide.jobs() + 1) + MEMORY_RESERVE
+                > limit / 100 * (100 - MEMORY_MARGIN_PERCENT),
+            "one more reader would still have fitted, so the margin is not what bound it"
+        );
+        assert!(
+            memory.at(wide.jobs() + 1) <= limit - MEMORY_RESERVE,
+            "the cap alone would have afforded more, which is what the margin is for"
+        );
+    }
+
+    /// **A margin the smallest arrangement cannot meet costs nothing.** The
+    /// floor is one worker at whatever the cap is, so a limit whose margin
+    /// allowance is under one reader's charge still resolves that reader and
+    /// still reports the budget it spends — which is what
+    /// `BlockCache::affordable` reads, so the compressed block path is not
+    /// declined by the margin at any limit.
+    #[test]
+    fn the_margin_never_takes_the_last_reader_or_the_budget_it_spends() {
+        let root = FakeRoot::new();
+        // 544 MiB: the cap is 160 MiB and the margin allowance 51.2, against
+        // the 130 MiB one block-decoding reader of a 24 MiB-block file is
+        // charged.
+        root.v2("/leaf").v2_limits("/leaf", Some(&(544u64 << 20).to_string()), None);
+        let memory = WorkerMemory::per_worker(58 << 20).flooring(24 << 20, POOL_DEPTH);
+        let tight = Parallelism::discover_in(root.path(), 24, Some(memory));
+        assert_eq!(tight.jobs(), 1);
+        assert_eq!(tight.memory_bytes(), Some(memory.at(1)));
+        assert!(memory.at(1) > margin_allowance(544 << 20), "the margin cannot afford it");
     }
 
     /// **Below the reserve the budget goes to zero rather than to a floor.**
@@ -4954,7 +5127,7 @@ mod tests {
 
         // Four readers' worth of allowance, as `Parallelism::fit` would spend
         // it, then the scan's own announcement and its charge.
-        let (jobs, budget) = Parallelism::fit(24, Some(memory), memory.at(4));
+        let (jobs, budget) = Parallelism::fit(24, Some(memory), memory.at(4), None);
         assert_eq!(jobs, 4);
         let parallelism = Parallelism::workers(jobs, budget);
         source.hint_read_size(crate::DEFAULT_CHUNK_SIZE);

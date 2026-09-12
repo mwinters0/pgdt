@@ -2395,6 +2395,14 @@ def discovered_budget(limit: int) -> int:
     `Parallelism::discover_in`, mirrored — `limit.bytes.saturating_sub(
     MEMORY_RESERVE)` (`io.rs`).
 
+    **The margin is deliberately left out**, as the recommendation is. Since
+    `19.23` the resolved *count* also answers to `MEMORY_MARGIN_PERCENT` — its
+    predicted resident must leave a fifth of the limit — so what a run reports
+    is at most this and often less. That makes this an upper bound on the
+    budget rather than a prediction of it, which is what both uses below want:
+    a lower count *raises* the pool floor, so the floor window stays a
+    sufficient condition, and the count comparison stays an upper bound.
+
     **Used to reason about the registered axis, never to report a reading.**
     Every number this figure publishes reads the budget back off the run's own
     `scan started` line, because a harness predicting it would be a second
@@ -2438,10 +2446,13 @@ def afforded_readers(unit: int, budget: int) -> int:
     blocks `budget` affords — the largest `k` with `charge_bytes(unit, k) <=
     budget`, and zero where not even one fits.
 
-    `Parallelism::fit`, mirrored, with the recommendation left out: the count a
-    run actually resolves is `min(recommendation, fit)`, and the recommendation
-    is the machine's, so this is an upper bound on the resolved count rather
-    than a prediction of it.
+    `Parallelism::fit`, mirrored, with the recommendation **and the margin**
+    left out: the count a run actually resolves is `min(recommendation,
+    fit-under-margin)`, the recommendation is the machine's and the margin
+    (`MEMORY_MARGIN_PERCENT`, `19.23`) lowers the fit further at every limit,
+    so this is an upper bound on the resolved count rather than a prediction of
+    it. Both omissions push the same way, which is what keeps the fit-ability
+    check below a necessary condition.
 
     **Used to reason about the registered axis, never to report a reading**, on
     the same terms as `discovered_budget`. What it answers is whether

@@ -259,6 +259,19 @@ gets 128 MiB, which is short of the 130 one block-decoding reader wants, so it
 reads with a single worker through the streaming decoder — and the run says as
 much before it starts (below, "Status on stderr").
 
+**A flagless run also leaves a fifth of the limit free, and that is a second
+thing the worker count answers to.** The 384 MiB above covers what a scan holds
+outside the buffers the budget names; the fifth is headroom on top of it,
+because what kills a container is one run's peak and not its average. So pgdq
+takes the largest worker count whose predicted total — the readers' own
+buffers plus that 384 MiB — still fits in four fifths of the limit, and reads
+with that many. In a 1 GiB container a 24 MiB-block `.xz` reads with seven
+readers rather than the eleven the ceiling alone would buy. It never costs you
+the last reader: one worker runs at any limit, however small, and the budget
+reported is always what that many workers actually spend. If you would rather
+have the readers than the headroom, state `--parallel-memory` — a number you
+type is taken as typed, headroom included.
+
 Two things follow, and both are deliberate. **A very small allocation gets a
 very small budget rather than a floor**: at 384 MiB or less there is nothing
 left after the reserve, and pgdq reads compressed input through the streaming decoder and
@@ -464,8 +477,9 @@ asked for one, and it names its own origin the same way:
 
 - `(stated)` — your `--parallel-memory`.
 - `(discovered: <file> states a limit of N byte(s))` — what this *dump* asks
-  for, inside a cgroup limit less the 384 MiB reserve; it is the smaller of the
-  two and not the ceiling itself. The cgroup file is named because a
+  for, inside a cgroup limit less the 384 MiB reserve and the fifth of the
+  limit a flagless run leaves free; it is the smallest of the three and not the
+  ceiling itself. The cgroup file is named because a
   `memory.high` throttle and a `memory.max` kill are different things and either
   can be set on a parent cgroup you did not create.
 - `(no limit found: what this source asks for)` — the number above: what
