@@ -404,7 +404,10 @@ sitting.
       `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures,
       which were taken before `partition_bytes` changed. **It does not start
       until a `--figure reserve --alone` sitting completes with no killed leg**,
-      so it is behind `19.19` and `19.17.1`, not merely behind `19.13`.
+      so it is behind `19.19` and `19.17.1`, not merely behind `19.13`. `M88`
+      blocks it too: below a ~515 MiB allocation a compressed leg now runs the
+      streaming decoder, so a leg must say which path it ran before the figure
+      is published ([`../design/out-of-band.md`](../design/out-of-band.md)).
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
@@ -664,21 +667,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The 64 MiB library default now declines the block path on every real `.xz`
-  dump, and `DEFAULT_MEMORY_BUDGET` was left where it is.** `19.22` made
-  `BlockCache::affordable` bill one reader's pool floor with it, so the line is
-  `POOL_DEPTH` units rather than two — about 130 MiB on koji's 24 MiB blocks,
-  where the per-reader term alone was 58 and fitted inside the 64 MiB constant.
-  The CLI is unaffected, since it discovers a limit and takes the budget the
-  source asks for; what changes is the **library** default. An embedder that
-  states no `Parallelism` gets `Parallelism::default()` and therefore reads
-  every compressed dump through the streaming decoder, where an ordinary one
-  used to take the block path. The call was to leave the constant alone: it is
-  the *serial path's* budget, chosen as `POOL_DEPTH` slots of the largest chunk
-  size the read-chunk sweep measured, and moving it so that a block-path gate
-  clears would make one number answer two unrelated questions. If reconsidered,
-  the two shapes are a larger `DEFAULT_MEMORY_BUDGET` — which also grows the
-  plain path's pool, for no measured reason — or a compressed-source budget
-  default inside the library, which is the CLI's `ParallelArgs::resolve`
-  arithmetic moved down a layer and needs the source open before it can be
-  asked.
+_Nothing open._

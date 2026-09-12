@@ -333,6 +333,29 @@ not produce, so it is a `Future` item ([`roadmap.md`](roadmap.md)). The two are
 not alternatives: an honestly billed floor is what makes "should the floor be
 smaller" a question anybody can answer.
 
+*Rejected: raising `DEFAULT_MEMORY_BUDGET` so that the library default clears
+the widened line.* Under the 64 MiB constant a caller that states nothing now
+reads every ordinary `.xz` dump through the streaming decoder, where before
+`19.22` a 24 MiB-block file took the block path — which reads as a default that
+regressed and is not one. **64 MiB never afforded an honest reader of such a
+file**: two units alone is 48 MiB and the chunk and decoder take ~10.5 more,
+leaving 4.6 MiB, so every pooling rule that pools at all exceeds it — even
+`slots = jobs + 1`, the least that does not drain the retention list before
+every decode, wants 82.5 MiB at one reader. The path was reachable only while
+the charge billed a floor of zero, so what changed is the charge becoming true
+and not the grant becoming smaller. The argument that moving the constant would
+make one number answer two unrelated questions is the reverse of the case:
+`affordable` compares against the budget *in force*, whose fallback is this
+constant, so it already decides the compressed gate — and sizing it to clear
+that gate would be picking the number for the second question while the first
+still depends on it. It stays the serial path's budget, which is also the
+smallest grant that costs the plain path nothing (`POOL_DEPTH` slots at the
+largest chunk the read-chunk sweep measured), and a caller wanting the block
+path states one — `Parallelism::discover` exists for exactly the caller that
+would otherwise reimplement the reserve arithmetic. The decline is a
+`PlanNote::CompressedBlockPathDeclined`, which is `pub` and re-exported, so an
+embedder is told rather than left to infer it.
+
 *Rejected: a per-file term subtracted once, before the allowance is divided.*
 That was the shape while a unit-independent fixed term was still believed in,
 and the floor is not one — it **decays** with the reader count, so subtracting
@@ -361,6 +384,19 @@ told the *delivered* count — which `worker_count` computes after
 `hint_parallelism` has already run — or `BufferPool::slots` reserving for the
 decodes in flight. Both rework a pool's sizing rule, which is the same evidence
 the `roadmap.md` Future item on the retention floor is waiting for.
+
+**One fact that item and this entry share, and neither was carrying:
+`POOL_DEPTH` is the *plain* path's replay depth.** It is the free-list depth a
+chunk pool needs so that `batch::RetainedChunks` releasing a flushed batch does
+not find an empty list, and it is sized against a chunk — at most
+`POOL_MAX_BYTES`, 8 MiB. The block pool inherits it as a floor while its unit is
+whatever block the file was written with, up to 512 MiB, so the number governing
+that floor was never chosen against that pool's unit. `XzSource::apportion`'s
+own defence of the floor argues only for the minimum — a block pool of one
+drains before every decode, because the free and retention lists share the slots
+— and that argues for two, not four. Neither the four nor the two has been
+measured against what block retention buys a seeking query, which is the reading
+both the Future item and this entry are waiting on.
 
 **`Parallelism` is the caller's half of that same question**, and it sits on
 both option structs: `ScanOptions::parallelism` and `QueryOptions::parallelism`,
