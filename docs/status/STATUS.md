@@ -341,11 +341,14 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.24`, `19.22`, `19.23`, `19.13`, then `19.11`** — the
+What remains runs **`19.13`, `19.24`, `19.22`, `19.23`, then `19.11`** — the
 three new rows were admitted on 2026-09-12 and take the next free numbers
 rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
 entry closes on 384, and the grilling found the charge wrong below four
-readers").
+readers"). **`19.13` ships the constant first**, ahead of the three rows that
+change what it has to cover: it is the row that makes discovery work at all,
+and re-taking a number after `19.22` is cheaper than leaving the rule
+unshipped behind it.
 
 **The account is taken, the term is named and the constant is read, so what
 remains is the rule and the sweep.** `19.18`'s sitting says the program holds
@@ -724,8 +727,8 @@ another look".
       constant — a registered check that predicts held bytes per cell from the
       charge model, measures, and asserts the residual is small and
       non-negative. Seeded from readings already in the tree, so it needs no
-      sitting, and it runs **first**: it is what surfaces an under-bill, and
-      what would have caught `19.22`'s.
+      sitting, and it runs **first of the three**, behind `19.13`: it is what
+      surfaces an under-bill, and what would have caught `19.22`'s.
 
 ## Not started
 
