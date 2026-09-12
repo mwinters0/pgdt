@@ -6,10 +6,10 @@ the environment's answer instead of a constant. The spec row is
 "Slices"; how the mechanism works now is
 [`architecture.md`](architecture.md), "Execution model and API surface".
 
-**The box is not ticked, and that is the spec's own ordering**: `19.15` runs
-against this build before `19.13` lands, so the code is written first and the
-box ticked second. Nothing is missing from the row — see "What `19.15` runs
-against", below.
+**The rule landed before its constant.** The spec's ordering is that `19.15`
+runs against this build before `19.13` lands, so the mechanism below was written
+and tested against a 256 MiB scratch reserve, `19.16` read the number off five
+builds of it, and the box was ticked only when **384 MiB** was swapped in.
 
 ## What landed
 
@@ -17,7 +17,13 @@ against", below.
   `discover_memory_limit_in(root)` beneath it so the v1 arm can be executed on
   a v2 machine.
 - `io::available_memory()` — `RT8`'s `MemAvailable`, on the same root seam.
-- `io::MEMORY_RESERVE` — 256 MiB, `19.12`'s constant.
+- `io::MEMORY_RESERVE` — **384 MiB**, `19.16`'s constant: the smallest of five
+  candidates whose worst rep leaves at least 20% of the limit at every leg of
+  the flagless family
+  ([`roadmap-P19.16-reserve-constant-notes.md`](roadmap-P19.16-reserve-constant-notes.md)).
+  Its doc comment states what the number does **not** cover — a host with more
+  than 24 cores, and the block pool's floor below four readers — because both
+  were found after the constant was chosen and neither is a reserve's to fix.
 - `Parallelism::discover()` and `Parallelism::discover_for(jobs, per_worker)`,
   over `discover_in(root, …)` and `Parallelism::fit`.
 - `ByteRangeSource::default_memory_per_worker()` — what **one** worker of this
@@ -59,8 +65,8 @@ over-ask — a budget the count cannot spend — and handing back `per_worker` a
 the floor is the opposite one, a budget the allowance never granted. Both `min`s
 are load-bearing.
 
-**A budget of zero is a legitimate resolved value.** At or below a 256 MiB
-limit `limit − MEMORY_RESERVE` is nothing, and the arrangement that produces is
+**A budget of zero is a legitimate resolved value.** At or below a
+reserve-sized limit `limit − MEMORY_RESERVE` is nothing, and the arrangement that produces is
 one reader's worth on the streaming path, out of three floors that already
 exist (`worker_count`'s `.max(1)`, `BufferPool::slots`' clamp to one,
 `affordable` refusing block decode). `parse_parallel_memory` still refuses a
@@ -80,8 +86,8 @@ that did not exist until now. Two of them changed shape here:
   and a source recommending nothing — a flagless plain scan on an unlimited
   host. `architecture.md`, "Status output", now says so, and names the
   three-way distinction the line is to gain.
-- **The below-reserve arrangement is reachable and observed.** A `-m 256m`
-  container prints `memory_bytes=0` today, with no note saying why. That is
+- **The below-reserve arrangement is reachable and observed.** A container at
+  or under the reserve prints `memory_bytes=0` today, with no note saying why. That is
   `19.9`'s `PlanNote`, and the number to key it on is `budget <
   what one slot needs` rather than anything about the limit.
 
@@ -96,9 +102,9 @@ reader's own and should stay wherever the reader is.
 
 ## What `19.15` runs against
 
-`19.15`'s probe is a scratch build of this rule, and this *is* that build. Its
-first job is the reserve's headroom through the 1.25–1.5 GiB band. Four
-readings taken here as a smoke check, not as the probe — `fixtures/16/types/default.sql`
+`19.15`'s probe is a scratch build of this rule, carrying the 256 MiB reserve
+this row later replaced. Four
+readings taken here as a smoke check against that build, not as the probe — `fixtures/16/types/default.sql`
 at 24,621 bytes and an `xz --block-size=4096` copy of it with **seven** blocks,
 one rep each, `postgres:16`, no quiet machine — say the rule fires as designed
 and nothing more:
@@ -118,6 +124,38 @@ last of them beside a budget of zero. The recommendation is `7 × 16.03 MiB`,
 which the 512 MiB, 3 GiB and no-limit legs all clear — so above 512 MiB it is
 the *source* that binds here, which is the arrangement `19.15`'s unlimited arm
 is built to exercise without an unbounded run.
+
+## The decline's report, and where the clause went
+
+The spec owes the implicit block-path floor a **report** naming the limit that
+caused it ([`architecture.md`](architecture.md), "Execution model and API
+surface"). What landed is a clause, not a line: `Resolved::plan_note_origin`
+returns ` — the budget in force is <Resolved::budget_display>` and
+`announce_plan_notes` appends it to **every** plan note it prints.
+
+Three calls inside that, none of which the spec made:
+
+- **The clause is `budget_display` itself rather than a second spelling.** The
+  mode report and a warning cannot then disagree about where a budget came
+  from — the same reason the decline's *recourse* is read off the source
+  instead of re-derived.
+- **All three notes carry it, not the decline alone.** Every `PlanNote` names a
+  memory budget as the thing that bound the plan, so "which number do I change"
+  is the same question on each, and a rule with one exception is a rule someone
+  will get wrong when a fourth note is added.
+- **A stated `--parallel-memory` gets no clause.** The note already names the
+  number that person typed; appending `(stated)` to it is noise. This is what
+  keeps `parallelism.rs`'s existing decline assertions — all of which state a
+  budget — reading exactly as they did.
+
+**`parse` gains nothing here, and that is the judgement to check.** Plan notes
+belong to a query's replay, so a `parse` whose block path is declined prints no
+warning. What it does print is the mode report, and under a flagless run the
+decline and a lowered count are the *same* arithmetic — `cap < per_reader` is
+what makes `fit` return one — so the line already reads `jobs=1 (recommended by
+the source; lowered from N by the allocation)` beside the file that stated the
+limit. A `parse` under a **stated** small budget is the case that stays silent,
+and there the number is the user's own.
 
 ## Calls the spec did not decide
 
@@ -175,10 +213,12 @@ is built to exercise without an unbounded run.
 Two registered command shapes state no `--parallel-memory`: `peak-rss`'s
 `control` row and the `reserve` figure's `control` leg, both `--jobs 1` on a
 plain file, both there precisely to read *the shipped default*. Under
-discovery that value is now `min(64 MiB, limit − 256 MiB)`, and both run in a
-container of 3 GiB or more — so both still resolve to 64 MiB and the harness's
-emitted sentence ("with no budget stated runs at the library's 64 MiB default")
-stays true. It stops being true below a limit of about 320 MiB. A future
+discovery that value is now `min(64 MiB, limit − MEMORY_RESERVE)`, and both run
+in a container of 3 GiB or more — so both still resolve to 64 MiB and the
+harness's emitted sentence ("with no budget stated runs at the library's 64 MiB
+default") stays true. It stops being true below a limit of about 448 MiB, which
+moved with the reserve and is the number to re-check if either container
+shrinks. A future
 change that shrinks either container is what to watch: the apparatus rule pins
 a worker count on every shape, and after this slice the *budget* on those two
 shapes is a property of the container as well.

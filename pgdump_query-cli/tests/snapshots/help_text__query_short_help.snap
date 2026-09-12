@@ -54,7 +54,7 @@ Options:
                                    is never lowered that way
       --parallel-memory <BYTES>    What those workers may hold between them in read buffers, in
                                    bytes. Left unstated, pgdq reads the memory limit it is running
-                                   under — the smallest cgroup limit that binds — less a 256 MiB
+                                   under — the smallest cgroup limit that binds — less a 384 MiB
                                    reserve, and takes inside that what the file asks for: one
                                    reader's worth for each worker it would run, rather than the
                                    whole allowance. Where no limit is set that same number is held

@@ -88,7 +88,7 @@ struct ParallelArgs {
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.
     /// Left unstated, pgdq reads the memory limit it is running under — the
-    /// smallest cgroup limit that binds — less a 256 MiB reserve, and takes
+    /// smallest cgroup limit that binds — less a 384 MiB reserve, and takes
     /// inside that what the file asks for: one reader's worth for each worker
     /// it would run, rather than the whole allowance. Where no limit is set
     /// that same number is held under half the memory the machine reports
@@ -156,8 +156,8 @@ impl ParallelArgs {
     /// decide from the budget as it always was.
     ///
     /// **A discovered limit can put the budget below `DEFAULT_MEMORY_BUDGET`,
-    /// and that is the point.** A 256 MiB allocation leaves nothing after the
-    /// reserve, and the three floors inside the mechanism make that one
+    /// and that is the point.** An allocation at or under the reserve leaves
+    /// nothing of it, and the three floors inside the mechanism make that one
     /// reader's worth on the streaming path — where reasserting the constant
     /// would hand a tight cgroup the same 64 MiB an unlimited host gets.
     ///
@@ -299,6 +299,27 @@ impl Resolved {
             (None, Some(_)) => format!("{bytes} (no limit found: what this source asks for)"),
             (None, None) => format!("{bytes} (default: no limit found)"),
         }
+    }
+
+    /// The clause a plan note carries when the budget that produced it was
+    /// **not** stated — the half of the story the library cannot tell.
+    ///
+    /// Every [`pgdump_query::PlanNote`] names a memory budget as the thing that
+    /// bound the plan, and the widest of them is the compressed block path
+    /// going serial, which is a throughput cliff. Where that budget came off
+    /// the environment the note alone leaves an operator to infer *which*
+    /// number to change from a status line that says only what was resolved, so
+    /// the CLI appends the provenance — the same [`Resolved::budget_display`]
+    /// the mode report prints, so the two cannot part company
+    /// (`docs/design/architecture.md`, "Status output").
+    ///
+    /// **Empty where `--parallel-memory` was stated**, because the note already
+    /// names the number that person typed and the recourse is to raise it.
+    fn plan_note_origin(&self) -> String {
+        if self.budget_stated {
+            return String::new();
+        }
+        format!(" — the budget in force is {}", self.budget_display())
     }
 
     /// Say, once per scanning command and before the scan opens, which of two
@@ -923,15 +944,21 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     }
 }
 
-/// Say, once per query and on stderr, when a stated `--jobs` could not
-/// be delivered in full. Every sub-stream of a partitioned replay carries the
+/// Say, once per query and on stderr, when the memory budget in force cut the
+/// plan short. Every sub-stream of a partitioned replay carries the
 /// same [`pgdump_query::TableStream::plan_notes`], settled before any of them
 /// runs, so reading it off the first is reading the whole query's answer —
 /// unlike [`announce_comparisons`], this needs no block to have resolved
 /// first.
-fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>) {
+///
+/// **Each note is followed by where its budget came from**
+/// ([`Resolved::plan_note_origin`]), which is the CLI's fact and not the
+/// library's: a note says a budget declined something, and only this layer
+/// knows whether that number was typed or read off a cgroup.
+fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolved) {
+    let origin = parallel.plan_note_origin();
     for note in stream.plan_notes() {
-        eprintln!("warning: {}", note.message());
+        eprintln!("warning: {}{origin}", note.message());
     }
 }
 
@@ -1331,7 +1358,7 @@ async fn main() -> Result<()> {
             // `announce_comparisons` below, which waits on the first
             // resolved schema.
             if let Some(first) = streams.first() {
-                announce_plan_notes(first);
+                announce_plan_notes(first, &parallel);
             }
             let mut announced = false;
             let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
@@ -2548,18 +2575,18 @@ mod tests {
     fn a_flagless_run_resolves_inside_a_discovered_limit_on_either_cgroup_version() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
 
-        // v2, a 1 GiB `memory.max`: 768 MiB after the reserve, which is
-        // thirteen readers of 58 MiB.
+        // v2, a 1 GiB `memory.max`: 640 MiB after the reserve, which is
+        // eleven readers of 58 MiB.
         let v2 = flagless.resolve_in(&runtime_root("v2-limit"), &Recommends::reader(24, READER));
-        assert_eq!(v2.parallelism().jobs(), 13);
-        assert_eq!(v2.parallelism().memory_bytes(), Some(13 * READER));
+        assert_eq!(v2.parallelism().jobs(), 11);
+        assert_eq!(v2.parallelism().memory_bytes(), Some(11 * READER));
         assert_eq!(v2.limit.as_ref().map(|l| l.bytes), Some(1 << 30));
 
-        // v1, a 512 MiB `memory.limit_in_bytes`: 256 MiB after the reserve,
-        // which is four.
+        // v1, a 512 MiB `memory.limit_in_bytes`: 128 MiB after the reserve,
+        // which is two.
         let v1 = flagless.resolve_in(&runtime_root("v1-limit"), &Recommends::reader(24, READER));
-        assert_eq!(v1.parallelism().jobs(), 4);
-        assert_eq!(v1.parallelism().memory_bytes(), Some(4 * READER));
+        assert_eq!(v1.parallelism().jobs(), 2);
+        assert_eq!(v1.parallelism().memory_bytes(), Some(2 * READER));
         assert_eq!(
             v1.limit.as_ref().map(|l| l.read_from.clone()),
             Some(runtime_root("v1-limit").join("sys/fs/cgroup/memory/svc/memory.limit_in_bytes")),
@@ -2613,7 +2640,7 @@ mod tests {
     /// `a_budget_below_one_readers_worth_says_the_allocation_bound_it`).
     ///
     /// Pinned here so that a later change to the reserve, to the floors, or to
-    /// the fit cannot silently make a 256 MiB container something else.
+    /// the fit cannot silently make a container under it something else.
     #[test]
     fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {
         let root = runtime_root("below-reserve");
@@ -2668,8 +2695,8 @@ mod tests {
         assert_eq!(
             resolved,
             vec![
-                (13, Some(13 * READER)),
-                (4, Some(4 * READER)),
+                (11, Some(11 * READER)),
+                (2, Some(2 * READER)),
                 (24, Some(24 * READER)),
                 (4, Some(4 * READER)),
                 (1, Some(0)),
@@ -2725,7 +2752,7 @@ mod tests {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
         let discovered = flagless.resolve_in(&runtime_root("v2-limit"), &reader);
         let line = discovered.budget_display();
-        assert!(line.starts_with(&format!("{} (discovered:", 13 * READER)), "{line}");
+        assert!(line.starts_with(&format!("{} (discovered:", 11 * READER)), "{line}");
         assert!(line.contains("sys/fs/cgroup/pgdq/memory.max"), "{line}");
         assert!(line.contains(&format!("{}", 1u64 << 30)), "{line}");
 
@@ -2737,6 +2764,39 @@ mod tests {
             flagless.resolve_in(&runtime_root("no-limit"), &plain).budget_display(),
             format!("{} (default: no limit found)", 64 << 20)
         );
+    }
+
+    /// **A plan note names the budget that bound the plan; the clause beside it
+    /// names where that budget came from.** The widest of the three notes is a
+    /// compressed source declining the block path, which is a throughput cliff
+    /// — and under discovery the number to change is the *allocation*, which
+    /// the note itself cannot know about (`docs/design/architecture.md`,
+    /// "Execution model and API surface").
+    ///
+    /// A stated budget gets no clause: the note already names what was typed.
+    #[test]
+    fn a_plan_note_says_where_the_budget_that_bound_it_came_from() {
+        let reader = Recommends::reader(24, READER);
+
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+        let clause = flagless.resolve_in(&runtime_root("v1-limit"), &reader).plan_note_origin();
+        assert!(clause.starts_with(" — the budget in force is "), "{clause}");
+        assert!(clause.contains("memory.limit_in_bytes"), "the file that stated it: {clause}");
+        assert!(clause.contains(&format!("{}", 512u64 << 20)), "the limit itself: {clause}");
+
+        // No limit found still earns a clause — the budget is the source's own
+        // ask, which is equally not the user's.
+        let unlimited = flagless.resolve_in(&runtime_root("no-limit"), &reader);
+        assert_eq!(
+            unlimited.plan_note_origin(),
+            format!(
+                " — the budget in force is {} (no limit found: what this source asks for)",
+                24 * READER
+            )
+        );
+
+        let stated = ParallelArgs { jobs: None, parallel_memory: Some(400) };
+        assert_eq!(stated.resolve_in(&runtime_root("v1-limit"), &reader).plan_note_origin(), "");
     }
 
     /// The budget a flagless resolution lands on **here**, on whatever machine

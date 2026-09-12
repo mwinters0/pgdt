@@ -219,10 +219,12 @@ Whether that happens is a question about *your* budget rather than about the
 file alone: a 24 MiB-block file needs about 58 MiB, and one written by
 `xz -9 -T0` — whose threaded blocks are about 192 MiB — needs about 400 MiB.
 **`query` tells you when the budget is short**, once, on stderr, naming the
-file's largest block beside the budget that declined it:
+file's largest block beside the budget that declined it — and, where you did
+not state that budget, where it came from, since the number to change is then
+your allocation and not a flag:
 
 ```
-warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 278955808 byte(s) or more to read it a block at a time
+warning: this .xz source has 5700 block(s) to seek by, but its largest is 134217728 byte(s) and a memory budget of 67108864 byte(s) leaves no room for one reader of it — so it is read through the streaming decoder and every backward read decodes forward from its block's start; raise the memory budget to 278955808 byte(s) or more to read it a block at a time — the budget in force is 67108864 (discovered: /sys/fs/cgroup/memory.max states a limit of 469762048 byte(s))
 ```
 
 If you have the memory, `--parallel-memory 536870912` buys the block path back.
@@ -234,10 +236,10 @@ the file reads fine, just with more decoding on backward reads.
 **Where the default comes from, when you state nothing.** pgdq reads the
 memory limit it is actually running under — the cgroup limit a container or a
 systemd unit sets, taking the smallest that binds, including limits set above
-you that your own cgroup does not show — and takes that minus a fixed 256 MiB
+you that your own cgroup does not show — and takes that minus a fixed 384 MiB
 for everything a byte budget does not cover: threads, the allocator's own
-retention, the program itself. So a container given 512 MiB has 256 MiB to read
-inside, and one given 3 GiB has 2.75 GiB, without you restating on the
+retention, the program itself. So a container given 512 MiB has 128 MiB to read
+inside, and one given 3 GiB has 2.625 GiB, without you restating on the
 command line what you already told the orchestrator.
 
 **That number is a ceiling, not the budget.** What pgdq takes inside it is what
@@ -248,12 +250,12 @@ nothing of its own and stays on the 64 MiB pgdq has always used, whatever the
 limit above it says. And where the ceiling affords fewer readers than the file
 would have run, **the worker count comes down with the budget** instead of being
 asked for and left undelivered: the same compressed file in a 512 MiB container
-reads with four readers holding about 230 MiB, and the run says as much before
+reads with two readers holding about 116 MiB, and the run says as much before
 it starts (below, "Status on stderr").
 
 Two things follow, and both are deliberate. **A very small allocation gets a
-very small budget rather than a floor**: at 256 MiB there is nothing left after
-the reserve, and pgdq reads compressed input through the streaming decoder and
+very small budget rather than a floor**: at 384 MiB or less there is nothing
+left after the reserve, and pgdq reads compressed input through the streaming decoder and
 plain input a chunk at a time, which is correct and slower. `query` says so on
 stderr when it happens, naming the budget in force beside what one reader of
 that file holds, so a slow run inside a tight container is never silent about
@@ -352,7 +354,7 @@ with no room to hold what they decode buys less than either number suggests.
 > above what `--parallel-memory` names rather than at it — a few hundred
 > megabytes above it on a compressed file, which is roughly a fixed margin
 > rather than something that grows with the budget you set. A flagless run
-> already leaves that margin for itself — the 256 MiB reserve above — so this
+> already leaves that margin for itself — the 384 MiB reserve above — so this
 > is advice about a budget *you* state. `MALLOC_ARENA_MAX` bounds the arena
 > count if you want to set it, and 2 is the smallest useful value. **It gives
 > real memory back on a compressed scan.** It comes off that fixed part rather
@@ -445,7 +447,7 @@ asked for one, and it names its own origin the same way:
 
 - `(stated)` — your `--parallel-memory`.
 - `(discovered: <file> states a limit of N byte(s))` — what this *dump* asks
-  for, inside a cgroup limit less the 256 MiB reserve; it is the smaller of the
+  for, inside a cgroup limit less the 384 MiB reserve; it is the smaller of the
   two and not the ceiling itself. The cgroup file is named because a
   `memory.high` throttle and a `memory.max` kill are different things and either
   can be set on a parent cgroup you did not create.

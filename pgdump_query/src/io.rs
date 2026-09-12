@@ -840,7 +840,8 @@ impl Parallelism {
     ///
     /// **The floor is one worker at whatever `cap` is**, not one worker's
     /// worth of bytes. A cap too small for even a single reader is a real
-    /// arrangement — a 256 MiB cgroup resolves to a budget of zero — and the
+    /// arrangement — a cgroup at or under [`MEMORY_RESERVE`] resolves to a budget
+    /// of zero — and the
     /// three floors already inside the mechanism turn it into one reader on
     /// the streaming path. Handing back `per_worker` there would be the one
     /// thing this function exists to stop: a budget the allowance never
@@ -898,26 +899,42 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// — the runtime's threads, glibc's per-thread arenas, the decoder state a
 /// compressed source keeps outside its pools, and the binary itself.
 ///
-/// **It is a subtraction rather than a fraction, and the evidence is what
-/// chose the shape.** Resident above a stated budget is roughly *constant*
-/// rather than proportional, because [`BufferPool::slots`] clamps at
-/// `POOL_DEPTH.max(jobs)` — so a percentage would under-reserve at a small
-/// limit and over-reserve at a large one, which is backwards: the small cgroup
-/// is where being wrong kills the process
+/// **It is a subtraction rather than a fraction, and the shape argument is
+/// what chose it.** A percentage would under-reserve at a small limit and
+/// over-reserve at a large one, which is backwards: the small cgroup is where
+/// being wrong kills the process
 /// (`docs/design/roadmap-P19-efficient-defaults.md`, "What is discovered, and
-/// what the default makes of it").
+/// what the default makes of it"). It survives its old justification — that
+/// resident above a stated budget is roughly constant *because*
+/// [`BufferPool::slots`] clamps at `POOL_DEPTH.max(jobs)` — which is false and
+/// inverted: that clamp is what makes resident concave in the reader count
+/// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
 /// **What it must satisfy: the worst observed rep leaves at least 20% of the
 /// limit**, the median being context rather than the gate, because a cgroup's
 /// killer reads one run's peak. The criterion bounds this number rather than
-/// describing it — measured in real cgroups with nothing stated, a
-/// block-decoding `.xz` scan holds `403 MiB + 31.2 MiB` a reader, so a 512 MiB
-/// allocation comes within three megabytes of its limit at the top of thirteen
-/// reps (`docs/design/architecture.md`, "Execution model and API surface").
+/// describing it, and **384 MiB is the smallest of five candidates measured
+/// against it** — 256, 320, 384, 448 and 512 MiB, each a build of its own, over
+/// two block sizes and four container limits with nothing stated
+/// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`). What one reader
+/// holds is billed to within 1.3% by `XzSource::block_reader_bytes`, so what
+/// this covers is the flat excess above that charge — 83.6–214.6 MiB with no
+/// trend across two to twenty-four readers — and not a per-reader term.
 /// **Raising this constant is also what declines the block path**, since
 /// [`BlockCache::affordable`] reads off the budget this leaves: the two are one
 /// knob, and the floor below which a compressed scan is serial is implicit in
 /// it rather than stated separately.
+///
+/// **Two things it was not shown to do.** It was validated to a 2 GiB limit
+/// *on a 24-core host*, where `std::thread::available_parallelism` clamps the
+/// count the allowance would otherwise afford; a host with more cores resolves
+/// more readers at the same limit and is predicted to breach the margin. And
+/// it does not cover the block pool's floor: [`BufferPool::slots`] clamps that
+/// pool at `POOL_DEPTH.max(jobs)` while `XzSource::block_reader_bytes` bills
+/// `2 × unit` a reader, so below four readers the pool holds
+/// `(POOL_DEPTH − jobs) × unit` nobody paid for — unbounded in the block size,
+/// which is why it is a charge to repair rather than a reserve to raise
+/// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
 /// **One constant, taken from the compressed leg, over-reserving the plain
 /// path by roughly the difference.** The two paths' fixed terms are almost two
@@ -953,7 +970,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// reader's worth on the streaming path. Reasserting
 /// [`DEFAULT_MEMORY_BUDGET`] there would put today's constant back under a new
 /// name in the one case discovery exists for.
-pub const MEMORY_RESERVE: u64 = 256 << 20;
+pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// A cgroup v1 `memory.limit_in_bytes` at or above this reads as *no limit*
 /// (`docs/design/runtime-invariants.md`, `RT4`).
@@ -4468,7 +4485,7 @@ mod tests {
         root.v2("/leaf").v2_limits("/leaf", Some("1073741824"), None);
         let cap = (1024 << 20) - MEMORY_RESERVE;
 
-        // Eight readers of 512 MiB each is 4 GiB against a cap of 768 MiB, so
+        // Eight readers of 512 MiB each is 4 GiB against a cap of 640 MiB, so
         // the count comes down with the budget rather than being printed
         // beside one it cannot spend: one reader is what fits.
         let squeezed = Parallelism::discover_in(root.path(), 8, Some(512 << 20));
@@ -4484,15 +4501,15 @@ mod tests {
         // exactly what that many readers spend — never the cap itself, which
         // is the over-ask this pairing exists to remove.
         let fitted = Parallelism::discover_in(root.path(), 8, Some(100 << 20));
-        assert_eq!(fitted.jobs(), 7);
-        assert_eq!(fitted.memory_bytes(), Some(700 << 20));
+        assert_eq!(fitted.jobs(), 6);
+        assert_eq!(fitted.memory_bytes(), Some(600 << 20));
         assert!(fitted.memory_bytes() < Some(cap), "the cap itself would be the over-ask");
     }
 
     /// **Below the reserve the budget goes to zero rather than to a floor.**
-    /// Reasserting [`DEFAULT_MEMORY_BUDGET`] here would hand a 256 MiB cgroup
-    /// exactly what an unlimited host gets, in the one case discovery was built
-    /// for. What zero produces is one reader's worth on the streaming path,
+    /// Reasserting [`DEFAULT_MEMORY_BUDGET`] here would hand a cgroup too small
+    /// to clear the reserve exactly what an unlimited host gets, in the one case
+    /// discovery was built for. What zero produces is one reader's worth on the streaming path,
     /// through the three floors already in the mechanism.
     #[test]
     fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {

@@ -377,8 +377,8 @@ roughly constant *because* `BufferPool::slots` clamps at `POOL_DEPTH.max(jobs)`
 reader count, and the concavity is what produced the phantom fixed term below.
 The subtraction survives its own justification because of the shape argument
 above, which never depended on the overhead being constant.
-`io::MEMORY_RESERVE` is **256 MiB**, read off the compressed leg of the reserve
-measurement, and it over-reserves the plain path by a wide margin: the two
+`io::MEMORY_RESERVE` is **384 MiB**, and it over-reserves the plain path by a
+wide margin: the two
 paths' fixed terms are almost two orders of magnitude apart, a plain `parse`
 holding 5.86 MiB above its pool where a block-decoding one holds a few hundred.
 *Rejected: a per-source reserve*, or a `discover()` that answers a range or
@@ -387,19 +387,48 @@ open, and a source's own answer is downstream of recognition, which is I/O.
 Over-reserving is the safe direction and an operator who wants a plain scan's
 real headroom states the flag.
 
-**That constant does not yet meet its own margin on the compressed path, and
-where it fails has moved.** Run in real cgroups with nothing stated, a
-block-decoding `.xz` scan of a 24 MiB-block file inside a 512 MiB allocation
-once came within three megabytes of its limit at the top of thirteen reps, and
-the same shape over a 128 MiB-block file was OOM-killed outright in a 1 GiB
-allocation; both were measuring the partition defect below rather than the
-reserve. Repaired, the 512 MiB leg leaves **30.1%** and the 128 MiB legs
-survive or decline at every registered limit — and the margin now fails in the
-*middle* of the range instead, 1 GiB and 1.5 GiB leaving 11.6% and 10.3%
-against a criterion of 20%. The readings are in
-[`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md)
+**384 MiB is the smallest constant that meets the margin below, and it was read
+off five builds rather than extrapolated.** Five binaries differing in nothing
+but this number — 256, 320, 384, 448 and 512 MiB — were run over the whole
+flagless family, two block sizes by four container limits, ten reps each: 384 is
+the smallest whose worst rep leaves at least 20% of the limit at every leg. The
+criterion is what picks it rather than the verdict line: at a 1 GiB limit the
+margin caps the count at eleven, which needs a reserve in (322, 381]; at
+1.5 GiB it caps it at nineteen, needing (367, 425]; 384 is the only candidate on
+the grid inside both. Earlier constants failed where the readings had not yet
+separated the reserve from the defects beneath it — a 24 MiB-block file in a
+512 MiB allocation once came within three megabytes of its limit and a
+128 MiB-block one was OOM-killed in a 1 GiB allocation, both measuring the
+partition defect below — and after those repairs the thin point moved to the
+*middle* of the range, 1 GiB and 1.5 GiB, which is where this number was
+chosen. The readings are in
+[`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md),
+[`roadmap-P19.19-per-file-term-notes.md`](roadmap-P19.19-per-file-term-notes.md)
 and
-[`roadmap-P19.19-per-file-term-notes.md`](roadmap-P19.19-per-file-term-notes.md).
+[`roadmap-P19.16-reserve-constant-notes.md`](roadmap-P19.16-reserve-constant-notes.md).
+
+**Two things the constant was not shown to do, and neither is a reserve's to
+fix.** It was validated up to a 2 GiB limit **on a 24-core host**, where
+`available_parallelism` clamps the count the allowance would otherwise afford:
+the same limit on a 64-core host resolves twenty-eight readers and is predicted
+to breach the margin at 13.3%, so the count has to answer to the criterion and
+not only to the core count. And it does not cover the **block pool's floor**:
+`BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while
+`XzSource::block_reader_bytes` bills `2 × unit` a reader, so below four readers
+the pool holds `(POOL_DEPTH − jobs) × unit` nobody paid for — 14 MiB residual
+across five cells of the same readings, and **unbounded in the block size**
+(96 MiB at 24 MiB blocks, 384 at 128, 2 GiB at 512), which is why no constant
+absorbs it. It is also not what 384 pays for: on the 24 MiB file that term is
+48/24/0 MiB and the legs that forced the constant up are all at eleven readers
+and above, where it is zero.
+
+**What the reserve does cover is flat, and that is an account rather than a
+fit.** Over the block-path regime the worst-resident slope is 57.28 MiB a reader
+against the 58.03 `block_reader_bytes` bills — 0.987, so glibc's arena retention
+is already inside the per-reader charge — and what sits above the charge,
+`worst − 58.03 × jobs`, is 135.7 MiB at two readers and 145.4 at twenty-four,
+wandering 83.6–214.6 with no trend. A reserve computed from an arena count
+would therefore be reserving for a term that is billed twice.
 
 **There is no fixed term, and the `403 MiB + 31.2 MiB a reader` that two
 sittings reported is an artifact of the window they fitted over.** This is the
@@ -565,15 +594,14 @@ unstated.** The criterion is that the **worst observed rep leaves at least 20%
 of the limit**, with the median reported beside it as context rather than as the
 gate — worst-rep because a cgroup's killer reads one run's peak and not a median
 of three, accepting that a tail is something this project can only ever
-estimate and that thirteen reps is the estimate. Without a stated margin the
+estimate and that ten reps is the estimate. Without a stated margin the
 rule had none: `budget = limit − reserve` aims resident *at* the limit by
-construction, so every margin it has ever left was an accident of two
-over-estimates — `Parallelism::fit`'s quantisation, which grants only whole
-readers, and a per-reader charge that bills 65.03 MiB against a marginal
-31.2 MiB measured. Both scale with the reader count, which is why the thin point
-is the *smallest* limit that reaches the block path rather than the largest, and
-why the headroom predicted from a fit taken at a pinned count of twenty-four
-was inverted along the axis.
+construction, so the only margin it leaves on its own is
+`Parallelism::fit`'s quantisation, which grants whole readers and therefore
+spends less than the cap wherever the cap is not a multiple of one reader. That
+is largest where the count is smallest, which is why the criterion has to be
+stated rather than read off the arithmetic, and why a headroom predicted from a
+fit taken at a pinned count of twenty-four was inverted along the axis.
 
 *Rejected: promoting that criterion to a standing rule* over every source that
 gains a per-worker charge. There is no second site for it to govern —
@@ -588,20 +616,39 @@ open question, which is the honest state.
 **Raising the reserve is also what declines the block path, because
 `BlockCache::affordable` reads off the budget.** The two are one knob and not
 two: a reserve `R` admits block decode only where `limit − R` covers one
-reader's `reader_bytes`, so a reserve near the measured fixed term makes a
-compressed scan serial below roughly `R + 65 MiB` with nothing else written. The
+reader's `reader_bytes`, so at 384 MiB a 24 MiB-block file still takes the block
+path in a 512 MiB allocation and a 128 MiB-block one does not. The
 floor is therefore left implicit — *rejected: a named `BLOCK_PATH_MIN_LIMIT`
 constant checked separately*, which is a second number deriving the same
 boundary and free to drift out of step with the first, exactly the divergence
 collapsing the divisor and the decline into one `reader_bytes` removed from the
-adjacent function. What the implicit floor owes instead is a **report**: a
-compressed scan going serial is a throughput cliff, so the decline names the
-limit that caused it rather than leaving an operator to infer it from a status
-line that says only what was resolved.
+adjacent function.
+
+**What the implicit floor owes instead is a report, and it is the CLI that
+completes it.** A compressed scan going serial is a throughput cliff, and
+`PlanNoteKind::CompressedBlockPathDeclined` names the budget that declined it
+and the number to raise it to — but *not* where that budget came from, because
+the library is not told. So `ParallelArgs::resolve`'s provenance
+(`Resolved::plan_note_origin`, "Status output" below) is appended to every plan
+note the CLI prints, in the same `Resolved::budget_display` spelling the mode
+report uses, and the decline therefore names the limit that caused it rather
+than leaving an operator to infer it from a status line that says only what was
+resolved. **Nothing is appended where `--parallel-memory` was stated**: the note
+already names the number that person typed, and the recourse is to raise it.
+
+Every plan note carries the clause rather than the decline alone, because all
+three of them name a budget as the thing that bound the plan and the question
+"which number do I change" is the same on each. The note that reaches a
+`parse` is none of them — plan notes belong to a query's replay — but a
+flagless `parse` whose block path is declined has had its *count* lowered to one
+by the same arithmetic, which the mode report already states as
+`(recommended by the source; lowered from N by the allocation)` beside the file
+that stated the limit.
 
 **Below the reserve the budget goes to zero, and the arrangement that produces
-is named rather than emergent.** At a 256 MiB limit `limit − reserve` is
-nothing, and three independent floors then decide the behaviour between them —
+is named rather than emergent.** At or under a `MEMORY_RESERVE`-sized limit
+`limit − reserve` is nothing, and three independent floors then decide the
+behaviour between them —
 `stream::worker_count`'s `.max(1)`, `BufferPool::slots`' clamp to one, and
 `BlockCache::affordable` refusing block decode — which is one reader's worth on
 the *streaming* path. Reasserting `DEFAULT_MEMORY_BUDGET` there would put
@@ -663,8 +710,8 @@ the over-ask and why it does not survive being divided by is beside the charge
 ("Execution model and API surface" above, and `io.rs`).
 
 The floor is one worker at whatever the cap is, not one worker's
-worth of bytes: a 256 MiB cgroup resolves to a budget of zero, and the three
-floors below turn that into one reader on the streaming path.
+worth of bytes: a cgroup at or under the reserve resolves to a budget of zero,
+and the three floors below turn that into one reader on the streaming path.
 
 **Only a *recommended* count is lowered.** `ParallelArgs::resolve` keeps a
 count that came from `--jobs` and takes only the budget, because "a stated flag
@@ -8724,6 +8771,16 @@ no-limit cap is affirmed, and a run says which mode it is in").
 is a fact about the run and not about the flag: a person who pinned a budget
 inside a 512 MiB cgroup is still owed the sentence saying so. It costs a handful
 of small `/sys` and `/proc` reads and no I/O against the dump.
+
+**The same provenance is appended to every plan note the CLI prints**
+(`Resolved::plan_note_origin`). A `PlanNote` names the memory budget that bound
+the plan and the number to raise it to, and under discovery that number is the
+*allocation* — which the library cannot say, for the reason above. The clause is
+`Resolved::budget_display` itself rather than a second spelling of the same
+fact, so the mode report and a warning can never disagree about where a budget
+came from; it is empty where `--parallel-memory` was stated, the note already
+naming what was typed. Which notes exist and why the decline is the one that
+owes this most is above, "Execution model and API surface".
 
 *Rejected: putting the provenance on `scan started` itself, in the slot that
 already prints `(default)`.* That slot is the library's, and a library caller

@@ -12,8 +12,11 @@ non-zero and nothing OOM-killed. **Its margin at the two legs that decide it is
 0.2 and 0.3 percentage points, and the apparatus's own noise at a comparable
 arrangement is 2.1** — so the criterion selects 384 and the reading cannot
 separate it from a failure. That is the one thing this slice hands over that is
-not a number: see "The pick is inside the noise", below, and the entry under
-`STATUS.md`'s "Decisions worth another look".
+not a number: see "The pick is inside the noise", below. It was put to review
+and **384 stands** — reconstructed against the criterion it is the only
+candidate on this grid inside both deciding legs' admissible ranges
+([2026-09-12](../status/history/2026-09-12.md), "The reserve entry closes on
+384, and the grilling found the charge wrong below four readers").
 
 ## Apparatus
 
@@ -107,8 +110,8 @@ None of that overturns the pick. The criterion was registered before the
 sitting, 384 met it and no smaller candidate did, and choosing differently after
 reading the data is the move the phase has already been burned by twice. What it
 does mean is that "384 passes and 448 fails" may not be re-derived as a property
-of the constant, and that the maintainer has a real choice between the
-criterion's answer and the one candidate with margin to spare.
+of the constant. The choice between the criterion's answer and the one candidate
+with margin to spare was put to review and settled on the criterion, above.
 
 ## What the constant costs, in the column nobody was studying
 
@@ -226,9 +229,10 @@ large positive one is the under-bill above.
   readers) and still declines it on the 128 MiB one; the reserve at which the
   24 MiB file declines is between 448 and 512. The decline's report is `19.13`'s
   row.
-- **The candidate binaries and the sitting stay** under `runs/` until `19.13`
-  has shipped: `runs/pgdq-19.16-r384` is the arrangement it must reproduce, and
-  a resolved count that disagrees with the table above is an apparatus fault
-  rather than a reading.
+- **The candidate binaries and the sitting are `runs/` artifacts**, and
+  `19.13` has shipped: `runs/pgdq-19.16-r384` is the arrangement the tree now
+  reproduces, and a resolved count that disagrees with the table above is an
+  apparatus fault rather than a reading. Nothing in the repo reads them, so
+  they are deletable.
 - **`19.11` inherits nothing publishable.** No figure moved and no harness path
   changed.
