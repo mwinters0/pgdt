@@ -765,13 +765,10 @@ here rather than reading as a phase nobody has sliced.
   model and API surface".
 
 - **KD22** — the leader cuts a window of `workers × partition_bytes` from a
-  `COPY` block's start and drains every piece before merging, so a block far
-  smaller than that window is found by reading and parsing the whole window and
-  discarding all of it: **149× the bytes of a serial scan at `--jobs 4` and
-  268× at `--jobs 8`**, on a 57.6 MiB dump of 2,000 small blocks, 34× the wall
-  time. Reached with no flag typed on a compressed dump, `XzSource` recommending
-  one worker per core. **(c) unowned**; promoted by a phase taking up leader
-  scheduling. Detail:
+  `COPY` block's start and drains every piece before merging, so a dump of
+  blocks much smaller than that window is read and parsed two orders of
+  magnitude over, worse at every worker added and reached with no flag typed.
+  **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
   [`../design/architecture.md`](../design/architecture.md), "The interior
   split".
 
