@@ -46,6 +46,8 @@
 //! sequential walk needs no escape and still verifies every block including the
 //! file's last, where nothing ever seeks away.
 
+use std::sync::Arc;
+
 use crate::backend::{self, Backend};
 use crate::decode::{BlockDecode, DEFAULT_MEMLIMIT};
 use crate::error::{Error, Result};
@@ -209,7 +211,7 @@ impl Builder {
     pub fn open<S: CompressedSource>(self, source: S) -> Result<Reader<S>> {
         let backend = self.compiled_backend()?;
         let table = SeekTable::from_source(&source)?;
-        Ok(self.with(source, table, backend))
+        Ok(self.with(source, Arc::new(table), backend))
     }
 
     /// Open a reader over `source` from a [`SeekTable`] the caller already
@@ -242,11 +244,21 @@ impl Builder {
     ///
     /// [`Error::BackendUnavailable`] comes first of all, before the table is
     /// looked at — see [`Builder::open`].
+    ///
+    /// # A table already behind an `Arc` goes in without a copy
+    ///
+    /// `table` is anything that becomes an `Arc<SeekTable>`: a `SeekTable` by
+    /// value is moved behind a new one, and an `Arc<SeekTable>` the caller
+    /// already holds is **the allocation the reader uses** — so a caller keeping
+    /// the table beside a reader it locks shares one table with it rather than
+    /// holding two. [`Reader::index_shared`] is the same handle from the other
+    /// side, for a reader that walked.
     pub fn open_with_table<S: CompressedSource>(
         self,
         source: S,
-        table: SeekTable,
+        table: impl Into<Arc<SeekTable>>,
     ) -> Result<Reader<S>> {
+        let table = table.into();
         let backend = self.compiled_backend()?;
         let size = source.size().map_err(|e| Error::io(0, e))?;
         table.validate(size)?;
@@ -254,7 +266,12 @@ impl Builder {
     }
 
     /// The reader both constructors build once the table is in hand.
-    fn with<S: CompressedSource>(self, source: S, table: SeekTable, backend: Backend) -> Reader<S> {
+    fn with<S: CompressedSource>(
+        self,
+        source: S,
+        table: Arc<SeekTable>,
+        backend: Backend,
+    ) -> Reader<S> {
         Reader {
             source,
             table,
@@ -314,7 +331,9 @@ struct Live {
 /// [`Reader::new`] opens with the defaults; [`Builder`] is where the knobs are.
 pub struct Reader<S: CompressedSource> {
     source: S,
-    table: SeekTable,
+    /// Shared rather than owned, so that [`Reader::index_shared`] can hand out
+    /// an alias and [`Builder::open_with_table`] can take one in.
+    table: Arc<SeekTable>,
     memlimit: u64,
     verify: Verify,
     backend: Backend,
@@ -346,6 +365,24 @@ impl<S: CompressedSource> Reader<S> {
     /// position to confuse a cold-start cost with.
     pub fn index(&self) -> &SeekTable {
         &self.table
+    }
+
+    /// The seek table this reader is using, as a handle that aliases it.
+    ///
+    /// **Not a clone of the table**: the `Arc` returned is the one the reader
+    /// holds, so `&*reader.index_shared()` and [`Reader::index`] are the same
+    /// address and the table exists once however many handles are out. It is
+    /// the extraction half for a caller that keeps a reader behind a lock —
+    /// [`Reader::read_at`] is `&mut self` — and wants [`SeekTable`]'s queries
+    /// (`uncompressed_size`, `blocks_in`) answerable without taking that lock.
+    /// Cloning out of [`Reader::index`] answers the same queries at the cost of a
+    /// second table for the life of the process, 80 bytes a stream and 32 a
+    /// block.
+    ///
+    /// [`Builder::open_with_table`] takes an `Arc<SeekTable>` back the same way,
+    /// so a table read from a caller's own storage can be shared from the start.
+    pub fn index_shared(&self) -> Arc<SeekTable> {
+        Arc::clone(&self.table)
     }
 
     /// The work of decoding one block, as a value a caller can schedule.

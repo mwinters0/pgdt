@@ -24,6 +24,8 @@
 //! The [`SeekTable`] a reader built is a plain value: [`Reader::index`] hands
 //! it out, the off-by-default `serde` feature serializes it, and
 //! [`Builder::open_with_table`] takes it back without walking the file again.
+//! [`Reader::index_shared`] and an `Arc<SeekTable>` passed back share the
+//! reader's own table rather than copying it.
 //!
 //! **Blocks are independent, and [`Reader::block_task`] hands one out as work.**
 //! A [`BlockTask`] is `Copy` and `Send`, says which compressed bytes the block

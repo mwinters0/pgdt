@@ -2577,8 +2577,10 @@ pub struct XzSource {
     path: PathBuf,
     stat_file: Arc<std::fs::File>,
     data_file: Arc<std::fs::File>,
-    /// The seek table, held beside the reader so that `size()`, `seek_table()`
-    /// and the per-read `blocks_in` lookup take no lock at all.
+    /// The seek table, aliased beside the reader so that `size()`,
+    /// `seek_table()` and the per-read `blocks_in` lookup take no lock at all.
+    /// The `Arc` is the reader's own ([`XzSource::assembled`]), so this is a
+    /// handle onto one table rather than a second copy of it.
     table: Arc<xz_seek::SeekTable>,
     /// The streaming reader: the fallback decode path, and the only thing that
     /// can hand out an `xz_seek::BlockTask`. Behind a `Mutex` because
@@ -2674,11 +2676,11 @@ impl XzSource {
         Ok(Self::assembled(path, stat_file, data_file, reader))
     }
 
-    /// The one place the two constructors agree: the table is lifted out of
-    /// the reader so the source's own lookups never take its mutex, and the
-    /// block pool is sized from that table or refused.
+    /// The one place the two constructors agree: the reader's table is aliased
+    /// so the source's own lookups never take its mutex, and the block pool is
+    /// sized from that table or refused.
     ///
-    /// **What the lift buys is every table read outside the reader's lock** —
+    /// **What the alias buys is every table read outside the reader's lock** —
     /// [`ByteRangeSource::size`], [`XzSource::partitions`],
     /// [`XzSource::default_workers`], and the `blocks_in` span arithmetic
     /// [`XzSource::read_by_blocks`] does on every read. It is not *all* of
@@ -2686,12 +2688,17 @@ impl XzSource {
     /// `BlockTask` out of the reader's own decode settings
     /// ([`XzSource::block`]), and a hit takes no lock at all.
     ///
-    /// **It costs a second copy of the table, and nothing bills either** —
-    /// `KD26`. `xz_seek::Reader` owns its `SeekTable` by value and keeps the
-    /// original, so the clone here is a duplicate rather than a move: 80 B a
-    /// stream and 32 B a block, held twice, which is kilobytes on a fixture
-    /// and 6.65 MiB on koji's 31,150-stream download
-    /// (`docs/design/architecture.md`, "Billed against held").
+    /// **It costs no second copy**: `xz_seek::Reader::index_shared` hands out
+    /// the `Arc` the reader itself holds, so the table exists once however many
+    /// handles are out, and [`XzSource::with_table`] passes a cached table
+    /// straight in rather than having it copied behind a new one.
+    ///
+    /// **Nothing bills the one copy that is left** — `KD26`, 80 B a stream and
+    /// 32 B a block, kilobytes on a fixture and 3.33 MiB on koji's
+    /// 31,150-stream download. It is unbilled on an ordering rather than a
+    /// size: the walk that builds it runs inside [`XzSource::open`], before any
+    /// budget is announced (`docs/design/architecture.md`, "Billed against
+    /// held").
     // deficiency: KD26
     fn assembled(
         path: PathBuf,
@@ -2699,7 +2706,7 @@ impl XzSource {
         data_file: Arc<std::fs::File>,
         reader: xz_seek::Reader<std::fs::File>,
     ) -> Self {
-        let table = Arc::new(reader.index().clone());
+        let table = reader.index_shared();
         let blocks = BlockCache::for_table(&table).map(Arc::new);
         let decode_bytes = reader.decode_footprint();
         let source = Self {
@@ -4252,37 +4259,51 @@ mod tests {
         }
     }
 
-    /// **The seek table is held twice, at a stated cost per entry** — `KD26`,
-    /// the register entry this test is the check for
-    /// (`docs/design/architecture.md`, "Billed against held").
+    /// **The seek table is held once, at a stated cost per entry** — the check
+    /// for what is left of `KD26` (`docs/design/architecture.md`, "Billed
+    /// against held").
     ///
-    /// Two halves, and neither is checked anywhere else. The **duplication**:
-    /// `XzSource::assembled` clones the table out of the reader, which owns
-    /// its own by value, so the two `blocks` vectors are distinct allocations
-    /// with equal contents. The **per-entry cost**: 80 B a stream and 32 B a
-    /// block is what the account's megabytes are arithmetic over, and it is a
-    /// property of a vendored struct rather than of anything here — `M77`'s
-    /// re-vendor took `StreamEntry` from 64 B to 80 by adding
-    /// `first_block_dict_size`, and nothing noticed. So a sync that grows
-    /// either entry fails here rather than silently moving a published number.
+    /// Two things, and neither is checked anywhere else. The **share**:
+    /// `XzSource::assembled` takes the reader's own `Arc` through
+    /// `xz_seek::Reader::index_shared`, so the source's table and the reader's
+    /// are one allocation and the entry's duplication half is closed. Both
+    /// constructors go through `assembled`, so a cached table shares the same
+    /// way. The **per-entry cost**: 80 B a stream and 32 B a block is what the
+    /// account's megabytes are arithmetic over, and it is a property of a
+    /// vendored struct rather than of anything here — `M77`'s re-vendor took
+    /// `StreamEntry` from 64 B to 80 by adding `first_block_dict_size`, and
+    /// nothing noticed. So a sync that grows either entry fails here rather
+    /// than silently moving a published number.
     ///
-    /// It asserts what is wrong as well as what is true, which is deliberate:
-    /// the day the reader can share the table is the day this test fails, and
-    /// that is exactly when `KD26` can be struck — no marker here, because a
-    /// failing assertion is a louder signal than one.
+    /// The pointer assertion is what makes the share a checked property rather
+    /// than an upstream courtesy: a re-sync that took the alias back out would
+    /// fail here rather than quietly restoring the second copy.
     #[test]
-    fn the_seek_table_is_held_twice_at_a_stated_cost_per_entry() {
+    fn the_seek_table_is_held_once_at_a_stated_cost_per_entry() {
         assert_eq!(std::mem::size_of::<xz_seek::StreamEntry>(), 80);
         assert_eq!(std::mem::size_of::<xz_seek::BlockEntry>(), 32);
 
         let compressed = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
+
+        // The walking constructor: the reader built the table and hands its
+        // own handle out.
         let source = XzSource::open(compressed.path()).unwrap();
-        let reader = source.reader.lock().unwrap();
-        let theirs = reader.index();
-        assert_eq!(&*source.table, theirs, "the two copies must agree");
+        let persisted = source.seek_table().unwrap();
+        {
+            let reader = source.reader.lock().unwrap();
+            assert!(
+                std::ptr::eq(&*source.table, reader.index()),
+                "the source's table must be the reader's own, not a clone of it",
+            );
+        }
+
+        // The cached one: a table handed in is the reader's table too, so the
+        // caller's copy is dropped rather than becoming a third.
+        let cached = XzSource::with_table(compressed.path(), persisted).unwrap();
+        let reader = cached.reader.lock().unwrap();
         assert!(
-            !std::ptr::eq(source.table.blocks.as_ptr(), theirs.blocks.as_ptr()),
-            "the source's table is a clone of the reader's, not a share",
+            std::ptr::eq(&*cached.table, reader.index()),
+            "a cached table must be shared with the reader it was handed to",
         );
     }
 

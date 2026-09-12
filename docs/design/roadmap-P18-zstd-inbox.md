@@ -111,8 +111,8 @@ would report it: its inner fault line is exactly this constant.
 ## A source's own file index is unbilled and grows with the input, and that was decided rather than overlooked
 
 **Fact.** `XzSource` holds its seek table — one 80 B entry a stream, one 32 B a
-block — and `xz_seek::Reader` holds a second copy of it, and no charge bills
-either: 6.65 MiB held on koji's 31,150-stream download against 8.2 KiB on the
+block — shared with the `xz_seek::Reader` that built it, and no charge bills it:
+3.33 MiB held on koji's 31,150-stream download against 4.11 KiB on the
 3 GiB fixtures `MEMORY_UNPOOLED_BOUND` was read off. It is the only unbilled
 term in the account that grows with the *input* rather than with the reader
 count, the decode unit or the announced chunk. **Not billing it was argued from
@@ -131,10 +131,10 @@ a frame — so the phase meets this decision in its own terms and inherits both
 halves of the answer: the ordering argument that says an index need not be
 billed, and the warning that the argument is only sound while the index stays
 small next to the bound, which is a property of the producer's frame size
-rather than of the codec. It also inherits a shape to avoid — the duplicate
-exists because `xz_seek::Reader` takes its table **by value**, so a decoder
-crate written or vendored for this phase should hand out a shareable handle
-instead.
+rather than of the codec. It also inherits a shape to insist on — `xz_seek`
+took its table **by value** and so held a second copy of it until `M102`
+widened that API, so a decoder crate written or vendored for this phase should
+hand out a shareable handle from the start.
 
 **Origin.** `M99`, 2026-09-12
 ([`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek

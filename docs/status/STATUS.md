@@ -468,7 +468,7 @@ before the sitting.
       ([`../design/architecture.md`](../design/architecture.md), "Billed against
       held") and turned up three further discrepancies — `M97`, an 8× over-bill
       on the plain path, `M98`, a query-path under-bill of every block a batch's
-      span pins past the first, and `M99`, the seek table held twice — **none of
+      span pins past the first, and `M99`, the unbilled seek table — **none of
       which this sitting can reach**, its legs being `pgdq parse` over a
       compressed input ([2026-09-12](history/2026-09-12.md), "Billed against
       held, in one pass"). `M94` it *does* reach, and the answer is that it
@@ -513,6 +513,11 @@ before the sitting.
       which binary ran, where most of the twenty-one published tables carry no
       such fingerprint ([`../design/out-of-band.md`](../design/out-of-band.md);
       [`../design/measurements.md`](../design/measurements.md), "The apparatus").
+      **`M102` has landed too, and it was the last row admitted as blocking**:
+      the re-sync takes `xz_seek`'s shared seek table, so the sweep and the gate
+      sitting ahead of it both run on a tree where `pgdump_query/src/io.rs` and
+      `vendor/xz-seek/src/` are already at the arrangement they will publish
+      against ([`../design/out-of-band.md`](../design/out-of-band.md)).
       **What is left of this box is the sweep.**
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
@@ -799,11 +804,12 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Billed against
   held: one row per buffer the process keeps".
 
-- **KD26** — a compressed source holds its seek table twice and no charge bills
-  either, the only unbilled term in the account that grows with the file rather
-  than the count. **(c) unowned**; the duplication half closes at `M102`, the
-  re-sync taking `xz_seek`'s shared-table accessor, and what is left is the
-  billing half, which stands on an ordering rather than a size. Detail:
+- **KD26** — no charge bills a compressed source's seek table, the only
+  unbilled term in the account that grows with the file rather than the count —
+  3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
+  read off. **(c) unowned**; promoted by a source whose index is not small
+  beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
+  has no per-source term to bill it with. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Billed against
   held: one row per buffer the process keeps".
 
