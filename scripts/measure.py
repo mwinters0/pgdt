@@ -2393,6 +2393,14 @@ def pool_bytes(unit: int, jobs: int) -> int:
     spellings agree nowhere — the old one bills exactly one unit more at every
     count, which is what the 2026-09-12 gate sitting read off its one-reader
     cells (130.0 MiB billed against 111.1 held at 24 MiB blocks).
+
+    **It has two consumers and they read it for opposite purposes.**
+    `charge_bytes` adds it, because the budget rule bills it; `_depooled`
+    subtracts it, because a term known before the sitting has no business in a
+    fitted intercept — and the shape that makes it worth billing apart is the
+    same shape that makes a straight line across it wrong, being constant below
+    `POOL_DEPTH` and per-reader above (`M95`). A change to this function moves
+    both a charge and a published line.
     """
     return max(LIBRARY_POOL_DEPTH, jobs, 1) * unit - unit
 
@@ -6112,19 +6120,15 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     depends on nothing but the standard library, and because three lines of
     arithmetic are easier to check than an import is to justify.
 
-    **That model is a straight line and the mechanism's is not**, which is
-    `M95`'s subject and is stated here because it is true of what this function
-    returns today. The pool holds `workers` blocks in flight plus
-    `max(POOL_DEPTH, workers) − 1` retained (`WorkerMemory::pool_bytes`), so
-    held memory rises by one unit a reader below `POOL_DEPTH` and by two above
-    it — piecewise linear, with a real kink at four readers that is in the
-    measured resident and not only in the charge. Both registered families
-    straddle it, and a single line fitted across a kink puts the bend into the
-    intercept: over the charge's own held-unit values that is ≈49 MiB of
-    intercept bias at 24 MiB blocks and ≈421 MiB at 128, where the slope also
-    reads 1.37 units against a true 2.0. It does not reach `19.11`'s gate, which
-    is per cell and never reads a fitted line, and no figure publishes these
-    numbers yet.
+    **It is never given a resident set, and that is `M95`.** The mechanism is
+    piecewise linear where this model is straight: the pool holds `workers`
+    blocks in flight plus `max(POOL_DEPTH, workers) − 1` retained
+    (`WorkerMemory::pool_bytes`), so held memory rises by one unit a reader
+    below `POOL_DEPTH` and by two above it, with a real kink at four readers
+    that is in the measured resident and not only in the charge. Every caller
+    therefore hands this function a **remainder** — `_depooled` has already
+    taken that term off each ordinate — and what comes back are the two terms
+    the sitting does not know in advance.
 
     Raises on fewer than two distinct abscissae: a "fit" through one point is an
     intercept asserted as a measurement, which is exactly the mistake `19.15`
@@ -6141,7 +6145,41 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     return mean_y - slope * mean_x, slope
 
 
-def _fit_or_secant(points: Sequence[tuple[float, float]]) -> tuple[float | None, float]:
+def _depooled(
+    points: Sequence[tuple[float, float]], unit: int
+) -> list[tuple[float, float]]:
+    """`points` — `(readers, MiB)` — with the block pool's retention list taken
+    off each ordinate, leaving the remainder a line may honestly be fitted to.
+
+    **The charge is piecewise linear and a straight line across its kink is a
+    biased line** (`M95`). `pool_bytes` is `(POOL_DEPTH.max(workers) − 1) ×
+    unit`: constant below `POOL_DEPTH` and growing by a unit a reader above it,
+    so what a leg holds rises by one unit a reader at the bottom of the axis and
+    by two at the top, and both registered families straddle the bend
+    (`RESERVE_LIMITS`). Fitting one line across it puts the bend into the
+    intercept — over the charge's own held-unit values ≈49 MiB of intercept bias
+    at 24 MiB blocks and ≈421 MiB at 128, where the slope reads 1.37 units
+    against a true 2.0.
+
+    **Subtracting rather than fitting a second regime is `19.24`'s principle one
+    table over**: every quantity in the term is known before the sitting and
+    already mirror-checked against the library's own constants, so taking it off
+    is arithmetic and not a degree of freedom. What is left — a fixed cost and a
+    per-reader cost outside the pools the charge bills — is regime-free and is
+    the part the sitting genuinely measures, which is why
+    `RESERVE_FIT_MIN_COUNTS` is unchanged: the remainder still has two terms.
+
+    **Only a block-path leg may be handed here.** A leg on the streaming
+    fallback holds no block pool at all, so subtracting a retention list from it
+    would invent a negative term; callers drop those legs from the line by name
+    (`block_path_afforded`), the way the flagless family always has.
+    """
+    return [(x, y - pool_bytes(unit, int(x)) / MIB) for x, y in points]
+
+
+def _fit_or_secant(
+    points: Sequence[tuple[float, float]], unit: int
+) -> tuple[float | None, float]:
     """`(fixed, per_reader)` where the points cover enough of the axis to
     publish an intercept, and `(None, per_reader)` where they do not.
 
@@ -6161,11 +6199,19 @@ def _fit_or_secant(points: Sequence[tuple[float, float]]) -> tuple[float | None,
     What is withheld is the intercept and, with it, the residual, both of which
     are the two-term model's claims rather than the data's.
 
+    **It is also where the pool term comes off**, for the same reason: the
+    de-pooling is a property of the mechanism rather than of one table, and a
+    renderer that forgot it would publish an intercept carrying the charge's own
+    bend (`_depooled`, `M95`). So both terms this returns are the remainder's —
+    the cost *outside* the block pool's retention list — and a caller computing
+    residuals against them measures its ordinates through `_depooled` too.
+
     Raises below two distinct abscissae, where `_least_squares` does: a secant
     needs two points as much as a fit does.
     """
-    fixed, slope = _least_squares(points)
-    if len({x for x, _ in points}) < RESERVE_FIT_MIN_COUNTS:
+    remainder = _depooled(points, unit)
+    fixed, slope = _least_squares(remainder)
+    if len({x for x, _ in remainder}) < RESERVE_FIT_MIN_COUNTS:
         return None, slope
     return fixed, slope
 
@@ -6490,12 +6536,21 @@ def run_reserve(session: Session) -> str:
                 + "."
             )
             continue
-        fixed, per_reader = _fit_or_secant([(j, median(r) / 1024) for _, j, r in points])
+        # Every line here is over the **remainder**: `_fit_or_secant` takes the
+        # block pool's retention list off each ordinate first, that term being
+        # known before the sitting and the reason a single straight line across
+        # the axis reads its intercept ≈49 MiB high at 24 MiB blocks and
+        # ≈421 MiB high at 128 (`_depooled`, `M95`). Only block-path legs reach
+        # here, which is what makes the subtraction well defined.
+        fixed, per_reader = _fit_or_secant(
+            [(j, median(r) / 1024) for _, j, r in points], unit
+        )
         # The band is the same line taken over the per-rep extremes rather than
         # the medians: a term's spread is what the reps permit it to be, and a
         # single residual says nothing about which of the two terms moved.
         band = [
-            _fit_or_secant([(j, pick(r) / 1024) for _, j, r in points]) for pick in (min, max)
+            _fit_or_secant([(j, pick(r) / 1024) for _, j, r in points], unit)
+            for pick in (min, max)
         ]
         if fixed is None:
             # The secant. `RESERVE_FIT_MIN_COUNTS` is what withholds the
@@ -6508,7 +6563,8 @@ def run_reserve(session: Session) -> str:
             )
             fits.append(
                 f"- **{label}**: no intercept — a **secant**, not a fit: a reader "
-                f"**{per_reader:,.1f} MiB** ({band[0][1]:,.1f}–{band[1][1]:,.1f}) over "
+                f"**{per_reader:,.1f} MiB** outside the pool "
+                f"({band[0][1]:,.1f}–{band[1][1]:,.1f}) over "
                 f"{ends}. The {len(points)} leg(s) left cover {len(counts)} distinct reader "
                 f"count(s), under the {RESERVE_FIT_MIN_COUNTS} a two-term model needs before "
                 "its intercept is a reading, so none is published and no residual with it"
@@ -6516,12 +6572,17 @@ def run_reserve(session: Session) -> str:
                 + censored_tail
             )
             continue
+        # Measured through `_depooled` as well, so the residual is a residual of
+        # the line that was actually fitted rather than of a line over a
+        # quantity nobody fitted.
         residual = max(
-            abs(median(r) / 1024 - (fixed + per_reader * j)) for _, j, r in points
+            abs(y - (fixed + per_reader * j))
+            for (j, y) in _depooled([(j, median(r) / 1024) for _, j, r in points], unit)
         )
         fits.append(
-            f"- **{label}**: fixed **{fixed:,.0f} MiB** ({band[0][0]:,.0f}–{band[1][0]:,.0f}), "
-            f"a reader **{per_reader:,.1f} MiB** ({band[0][1]:,.1f}–{band[1][1]:,.1f}), over "
+            f"- **{label}**: outside the pool — fixed **{fixed:,.0f} MiB** "
+            f"({band[0][0]:,.0f}–{band[1][0]:,.0f}), a reader **{per_reader:,.1f} MiB** "
+            f"({band[0][1]:,.1f}–{band[1][1]:,.1f}), over "
             f"the {len(points)} leg(s) it covers — {window}; residuals "
             f"reach ±{residual:,.0f} MiB"
             + declined_tail
@@ -6744,7 +6805,9 @@ def run_reserve(session: Session) -> str:
             ]
         )
         if not killed and got:
-            account_points.append((readers, live_peak, unattributed, fordblks, spec.label))
+            account_points.append(
+                (readers, live_peak, unattributed, fordblks, spec.label, got[1])
+            )
         # The check: the same arrangement measured black-box. A term the
         # instrument names has to show up in the sum the wrapper measures, and
         # the two instruments share no mechanism — which is the independence
@@ -6812,10 +6875,13 @@ def run_reserve(session: Session) -> str:
     )
 
     # The program's own two terms, read off the counter rather than off a
-    # difference of resident sets: `live_peak = fixed + readers x per_reader`.
-    # Evaluated inside its own window, at the smallest arrangement, because an
-    # intercept is a physical quantity only where the fit still holds where the
-    # mechanism is simplest.
+    # difference of resident sets: `live_peak = fixed + readers x per_reader`,
+    # **outside the block pool's retention list**, which `_fit_or_secant` takes
+    # off first — the counter sees those buffers like any other Rust allocation,
+    # so the charge's kink at `POOL_DEPTH` is in this series exactly as it is in
+    # the resident one (`_depooled`, `M95`). Evaluated inside its own window, at
+    # the smallest arrangement, because an intercept is a physical quantity only
+    # where the fit still holds where the mechanism is simplest.
     #
     # **It crosses the same publication guard the flagless axis does**, through
     # `_fit_or_secant`. This family's coverage is a *per-sitting* property where
@@ -6823,37 +6889,54 @@ def run_reserve(session: Session) -> str:
     # derived from `RESERVE_LIMITS` and cannot be narrowed on its own, but
     # `account_points` drops every killed leg and a kill takes the high-memory
     # end, so two kills leave two counts (`M90`).
-    live_counts = {r for r, *_ in account_points}
+    #
+    # **A leg that declined the block path is dropped from the line by name**,
+    # as the flagless family drops one: it holds no block pool, so there is no
+    # retention list to subtract and it is not on the same mechanism's line. No
+    # registered limit declines at this block size today, which is what makes
+    # this a guard rather than a filter.
+    line_points = [
+        pt for pt in account_points if block_path_afforded(RESERVE_MECHANISM_UNIT, pt[5])
+    ]
+    live_counts = {r for r, *_ in line_points}
     if len(live_counts) >= 2:
         live_fixed, live_per_reader = _fit_or_secant(
-            [(r, p / MIB) for r, p, _, _, _ in account_points]
+            [(r, p / MIB) for r, p, _, _, _, _ in line_points], RESERVE_MECHANISM_UNIT
         )
         if live_fixed is None:
             # Named legs, not bare counts: the secant is a difference between
             # two runs, and a reader who cannot see which two cannot re-take it.
             ends = " → ".join(
-                ", ".join(f"`{lab}`" for r, _, _, _, lab in account_points if r == count)
+                ", ".join(f"`{lab}`" for r, _, _, _, lab, _ in line_points if r == count)
                 + f" at {count} reader(s)"
                 for count in (min(live_counts), max(live_counts))
             )
             live_line = (
                 f"**What a reader costs the program**, as a **secant** and not a fit: "
-                f"**{live_per_reader:,.1f} MiB** a reader over {ends}, across the "
-                f"{len(account_points)} leg(s) that survived. Those cover "
+                f"**{live_per_reader:,.1f} MiB** a reader outside the pool over {ends}, "
+                f"across the {len(line_points)} leg(s) that survived. Those cover "
                 f"{len(live_counts)} distinct reader count(s), under the "
                 f"{RESERVE_FIT_MIN_COUNTS} a two-term model needs before its intercept is a "
                 "reading, so no fixed term and no residual are published."
             )
         else:
-            smallest = min(account_points)
+            smallest = min(line_points)
             at_smallest = live_fixed + live_per_reader * smallest[0]
+            # The check `evidence` rule 2 asks for, and it is made against the
+            # **remainder** at that leg rather than against its raw high-water,
+            # because the remainder is what was fitted.
+            held_smallest = _depooled(
+                [(smallest[0], smallest[1] / MIB)], RESERVE_MECHANISM_UNIT
+            )[0][1]
             live_line = (
-                f"**What the program itself held**, least squares over the "
-                f"{len(account_points)} leg(s) that survived: fixed "
+                f"**What the program itself held outside the block pool**, least squares over "
+                f"the {len(line_points)} leg(s) that survived, the pool's retention list "
+                f"subtracted first because it is known before the sitting and bends the line "
+                f"at `POOL_DEPTH`: fixed "
                 f"**{live_fixed:,.0f} MiB**, a reader **{live_per_reader:,.1f} MiB**. At the "
                 f"smallest arrangement in its own window — {smallest[0]} reader(s) — it "
-                f"predicts {at_smallest:,.0f} MiB against {smallest[1] / MIB:,.0f} MiB "
-                f"measured, a residual of {abs(at_smallest - smallest[1] / MIB):,.0f} MiB."
+                f"predicts {at_smallest:,.0f} MiB against {held_smallest:,.0f} MiB "
+                f"measured, a residual of {abs(at_smallest - held_smallest):,.0f} MiB."
             )
         # The account against the model, which is the point of taking it: what a
         # reader costs the program, plus the C dictionary the counter is blind
@@ -6863,19 +6946,26 @@ def run_reserve(session: Session) -> str:
         # actually is. **It reads the slope alone**, which is why a secant keeps
         # it: refusing the whole line would withdraw this comparison in exactly
         # the censored sitting that needs it.
+        #
+        # **The two sides are commensurable only because the slope is the
+        # remainder's.** `reader_bytes` is the per-worker term *without* the
+        # pool's retention list — `19.22` put that list in `charge_bytes` and
+        # `M93` restated it as what the pool holds — so a slope still carrying
+        # the list would be compared against a bill that does not, which is a
+        # unit a reader of disagreement above `POOL_DEPTH` (`M95`).
         measured_reader = live_per_reader * MIB + XZ_DICT_BYTES
         billed = reader_bytes(RESERVE_MECHANISM_UNIT)
         live_line += (
-            f" Against the charge: {live_per_reader:,.1f} MiB of Rust plus the "
-            f"{_fmt_budget_bytes(XZ_DICT_BYTES)} dictionary is "
+            f" Against the charge: {live_per_reader:,.1f} MiB of Rust outside the pool plus "
+            f"the {_fmt_budget_bytes(XZ_DICT_BYTES)} dictionary is "
             f"**{_fmt_budget_bytes(measured_reader)}** a reader, where "
             f"`BlockCache::reader_bytes` bills {_fmt_budget_bytes(billed)} a reader — "
             f"{measured_reader / billed * 100:.0f}% of it."
         )
     else:
         live_line = (
-            "**No line over the program's own high-water**: the surviving legs resolved "
-            f"{len(live_counts)} distinct reader count(s), and a line "
+            "**No line over the program's own high-water**: the surviving block-path legs "
+            f"resolved {len(live_counts)} distinct reader count(s), and a line "
             "through one point is an intercept asserted as a measurement."
         )
 
@@ -6884,7 +6974,7 @@ def run_reserve(session: Session) -> str:
     # remainder is *named* where glibc's own freed-and-held figure covers at
     # least half of it at every surviving leg.
     covered = [
-        (f / u if u > 0 else 1.0) for _, _, u, f, _ in account_points
+        (f / u if u > 0 else 1.0) for _, _, u, f, _, _ in account_points
     ]
     if covered and min(covered) >= 0.5:
         verdict = (
@@ -7006,14 +7096,23 @@ def run_reserve(session: Session) -> str:
         "decoder and belongs to no fit and no charge below.\n\n"
         + flagless_table
         + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
-        "block path, the band being the same line over the per-rep extremes. Each line names the "
+        "block path, the band being the same line over the per-rep extremes. **Both terms are "
+        "what a leg held *outside* the block pool's retention list**: that term is "
+        "`(POOL_DEPTH.max(jobs) − 1) × unit`, known before the sitting and mirror-checked "
+        "against the library's own constants, and it is constant below "
+        f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH} and grows by a unit a reader above — so a leg's "
+        "resident rises by one unit a reader at the bottom of this axis and by two at the top, "
+        "and both families straddle the bend. Subtracting it and fitting the remainder is how a "
+        "known term stays out of the intercept; fitting one straight line across the kink "
+        "instead reads the intercept ≈49 MiB high at 24 MiB blocks and ≈421 MiB high at 128, "
+        "and the slope 31% low. Each line names the "
         "window it covers, since a leg is censored exactly when its resident ran closest to its "
         "ceiling and a fit over what survives is a fit over the legs that had room. A family "
         f"covering fewer than {RESERVE_FIT_MIN_COUNTS} distinct reader counts publishes a "
         "**secant** instead — the slope between its two ends, with no fixed term and no "
-        "residual: the model has two terms, so below that the residual printed beside it is "
-        "zero by construction rather than a reading, while the slope is a difference the axis "
-        "measured:\n\n"
+        "residual: the remainder still has two terms, so below that the residual printed beside "
+        "it is zero by construction rather than a reading, while the slope is a difference the "
+        "axis measured:\n\n"
         + "\n".join(fits)
         + (
             "\n\n**What the killed legs still prove**, stated as constraints and **not** fitted: "
@@ -7046,9 +7145,11 @@ def run_reserve(session: Session) -> str:
         "middle column is the "
         "second term of that bill, reported apart because it is the one unbounded in the block "
         "size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with "
-        f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH}, so below four readers the pool holds "
-        "`(POOL_DEPTH − jobs) × unit` that the per-reader term does not carry, and `19.22` "
-        "bills it (`io.rs`, `WorkerMemory`). What is left is glibc's arena retention, named by "
+        f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH} and `BlockCache::slot` drains to one below it "
+        "before taking the buffer `retain` pushes back, so the pool holds "
+        "`(POOL_DEPTH.max(jobs) − 1) × unit` on top of the block each reader has in flight — "
+        "billed at **every** count since `19.22`, and one unit less than it was before `M93` "
+        "(`io.rs`, `WorkerMemory`). What is left is glibc's arena retention, named by "
         "the instrument legs below rather "
         "than inferred here. A leg that declined the block path is absent, holding none of these "
         "terms; a censored one is absent too, its reading being a bound:\n\n"

@@ -2298,7 +2298,10 @@ class CompressedAccount(unittest.TestCase):
         self.assertNotIn("budget < reader_bytes", source)
         self.assertNotIn("budget >= charge_bytes", source)
         self.assertNotIn("budget < charge_bytes", source)
-        self.assertEqual(source.count("block_path_afforded("), 4)
+        # Five since `M95`: the instrument account's line drops a declined leg
+        # by the same question, because a leg holding no block pool has no
+        # retention list for `_depooled` to subtract.
+        self.assertEqual(source.count("block_path_afforded("), 5)
 
     def test_the_smallest_allocation_splits_the_two_inputs_across_the_line(self):
         # What `M88` records and `M93` moved: the CLI grants
@@ -2604,10 +2607,17 @@ class CompressedAccount(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure._least_squares([(3, 474.0), (3, 503.0)])
 
+    # A block size of zero makes `pool_bytes` vanish, so the three guard tests
+    # below are about the guard alone and not about `M95`'s subtraction; the
+    # de-pooling has its own tests after them.
+    NO_POOL = 0
+
     def test_the_publication_guard_sits_in_front_of_the_arithmetic(self):
         # `M90`: every fitted line in this harness crosses `_fit_or_secant`, so
         # a fourth call site cannot skip the rule by not remembering it.
-        fixed, slope = measure._fit_or_secant([(1, 110.0), (2, 120.0), (4, 140.0)])
+        fixed, slope = measure._fit_or_secant(
+            [(1, 110.0), (2, 120.0), (4, 140.0)], self.NO_POOL
+        )
         self.assertAlmostEqual(fixed, 100.0)
         self.assertAlmostEqual(slope, 10.0)
 
@@ -2617,14 +2627,93 @@ class CompressedAccount(unittest.TestCase):
         # withholding the intercept withholds the model's claim and nothing the
         # axis measured.
         points = [(1, 110.0), (1, 114.0), (4, 200.0)]
-        fixed, slope = measure._fit_or_secant(points)
+        fixed, slope = measure._fit_or_secant(points, self.NO_POOL)
         self.assertIsNone(fixed)
         self.assertAlmostEqual(slope, (200.0 - 112.0) / 3)
         self.assertAlmostEqual(slope, measure._least_squares(points)[1])
 
     def test_a_secant_needs_two_points_as_much_as_a_fit_does(self):
         with self.assertRaises(ValueError):
-            measure._fit_or_secant([(3, 474.0), (3, 503.0)])
+            measure._fit_or_secant([(3, 474.0), (3, 503.0)], self.NO_POOL)
+
+    # -- the kink the fit must not cross (`M95`) ----------------------------
+
+    def test_the_term_taken_off_each_point_is_the_librarys_own(self):
+        # Not a second spelling of the pool's arithmetic: `_depooled` subtracts
+        # `pool_bytes`, which is `WorkerMemory::pool_bytes` mirrored, so the
+        # thing removed from the ordinate is exactly the thing the charge bills.
+        unit = measure.RESERVE_MECHANISM_UNIT
+        for jobs in (1, 2, 3, 4, 5, 11, 29):
+            with self.subTest(jobs=jobs):
+                (_, left), = measure._depooled([(jobs, 1000.0)], unit)
+                self.assertAlmostEqual(
+                    1000.0 - left, measure.pool_bytes(unit, jobs) / measure.MIB
+                )
+
+    def test_the_fit_recovers_the_two_unknown_terms_across_the_kink(self):
+        # The synthetic mechanism, exactly: a fixed cost, a per-reader cost and
+        # the pool's retention list, read at counts either side of `POOL_DEPTH`.
+        # A line over the remainder recovers the two terms the sitting does not
+        # know; a line over the resident set does not, and cannot, because the
+        # quantity it is fitting has a bend in it.
+        unit, fixed, per_reader = measure.RESERVE_MECHANISM_UNIT, 120.0, 31.0
+        counts = [1, 2, 11, 12, 20, 29]
+        held = [
+            (k, fixed + per_reader * k + measure.pool_bytes(unit, k) / measure.MIB)
+            for k in counts
+        ]
+        got_fixed, got_per_reader = measure._fit_or_secant(held, unit)
+        self.assertAlmostEqual(got_fixed, fixed)
+        self.assertAlmostEqual(got_per_reader, per_reader)
+        raw_fixed, raw_per_reader = measure._least_squares(held)
+        # 25 MiB of it at these counts, which is the bend measured from the true
+        # fixed term; `M95`'s 49 MiB is the same bias measured from the
+        # above-kink regime's own intercept of minus one unit.
+        self.assertGreater(raw_fixed - fixed, 20.0)
+        self.assertGreater(raw_per_reader, per_reader)
+
+    def test_the_bias_a_straight_line_across_the_kink_carries(self):
+        # `M95`'s own arithmetic, over the charge's held-unit values alone, at
+        # the reader counts the registered axis resolves. It is why the
+        # subtraction exists, and it is checkable without a sitting.
+        for unit, counts, bias, slope_units in (
+            (24 << 20, [1, 2, 11, 12, 20, 29], 49.0, 1.90),
+            (128 << 20, [1, 2, 4, 6], 421.0, 1.37),
+        ):
+            with self.subTest(unit=unit):
+                held = [
+                    (k, (k * unit + measure.pool_bytes(unit, k)) / measure.MIB)
+                    for k in counts
+                ]
+                intercept, slope = measure._least_squares(held)
+                # The regime the axis mostly sits in holds `2k - 1` units, so a
+                # faithful line there has an intercept of minus one unit.
+                self.assertAlmostEqual(
+                    intercept + unit / measure.MIB, bias, delta=1.0
+                )
+                self.assertAlmostEqual(slope / (unit / measure.MIB), slope_units, places=2)
+                # And the remainder is a line through the origin with a slope of
+                # exactly one unit, at every count on both sides of the bend.
+                self.assertEqual(
+                    [round(y, 6) for _, y in measure._depooled(held, unit)],
+                    [round(k * unit / measure.MIB, 6) for k in counts],
+                )
+
+    def test_no_line_is_fitted_without_crossing_the_de_pooling(self):
+        # The same argument `RESERVE_FIT_MIN_COUNTS` makes about the guard: the
+        # subtraction is a property of the mechanism, not of one renderer, so
+        # `_least_squares` is reached through `_fit_or_secant` and nowhere else.
+        source = (measure.REPO / "scripts/measure.py").read_text()
+        calls = [
+            ln for ln in source.splitlines()
+            if "_least_squares(" in ln and not ln.lstrip().startswith("def ")
+        ]
+        self.assertEqual(
+            [ln.strip() for ln in calls],
+            ["fixed, slope = _least_squares(remainder)"],
+            "a fitted line that does not cross `_depooled` publishes the charge's own bend "
+            "as an intercept (`M95`)",
+        )
 
     # -- the edges it owes --------------------------------------------------
 
@@ -5724,6 +5813,30 @@ class CensoredCells(unittest.TestCase):
                 f"the window names no allocation: {line}",
             )
 
+    def test_every_published_term_names_the_pool_it_excludes(self):
+        # `M95`: both terms of every line here are the **remainder** — what a
+        # leg held outside the block pool's retention list, which is subtracted
+        # before the fit because it is known in advance and bends the line at
+        # `POOL_DEPTH`. A reader who takes them for the whole of what a leg held
+        # is out by that term: 72 MiB at one reader of 24 MiB blocks, 384 at
+        # 128, and a unit a reader more above four.
+        body, _ = self._render()
+        section = body.split("The pair the constant is read off")[1].split(
+            "What the killed legs still prove"
+        )[0]
+        self.assertIn("(POOL_DEPTH.max(jobs) − 1) × unit", section)
+        fits = [ln for ln in section.splitlines() if ln.startswith("- **")]
+        self.assertEqual(len(fits), len(measure.RESERVE_FLAGLESS_INPUTS))
+        for line in fits:
+            self.assertIn("outside the pool", line)
+        live = next(
+            ln for ln in body.splitlines() if ln.startswith("**What the program itself held")
+        )
+        self.assertIn("outside the block pool", live)
+        # And the comparison that reads the slope: both sides exclude the list,
+        # `reader_bytes` being the per-worker term without it.
+        self.assertIn("outside the pool plus", live)
+
     def test_the_no_line_branch_states_its_window_too(self):
         # "No line" is a claim about a window as much as a fit is, and it was the
         # branch that named only the declined legs. Reached by resolving one
@@ -5779,6 +5892,8 @@ class CensoredCells(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn("secant", line)
                 self.assertIn("a reader **", line)
+                # The slope is the remainder's too (`M95`).
+                self.assertIn("outside the pool", line)
                 self.assertIn("distinct reader count(s), under the 3", line)
                 # The two things the guard withholds, and nothing else: no
                 # intercept, and no residual value printed beside it.
@@ -5812,8 +5927,11 @@ class CensoredCells(unittest.TestCase):
             f"the secant names no leg: {line}",
         )
         # The comparison a censored sitting would otherwise lose silently: it
-        # reads the slope alone, so a secant keeps it (`19.18`'s 98%).
+        # reads the slope alone, so a secant keeps it (`19.18`'s 98%). Both
+        # sides exclude the pool's retention list, which is what makes them
+        # commensurable (`M95`).
         self.assertIn("`BlockCache::reader_bytes` bills", line)
+        self.assertIn("outside the pool", line)
 
     def test_the_guard_is_above_the_arithmetic_floor_it_sits_on(self):
         # Two floors, deliberately: `_least_squares` refuses one point because
