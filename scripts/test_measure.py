@@ -2158,6 +2158,109 @@ class CompressedAccount(unittest.TestCase):
             ),
         )
 
+    # -- the charge model, and the cells it was seeded from ----------------
+
+    #: `19.16`'s own readings, off `control_xz128` at a 384 MiB reserve, as its
+    #: notes doc commits them: reader count, worst rep in MiB, the budget the
+    #: run reported, and the residual that slice computed by hand after the
+    #: sitting (`roadmap-P19.16-reserve-constant-notes.md`, "The charge
+    #: under-bills the pool floor").
+    #:
+    #: The model is *seeded* from them rather than fitted to them: every number
+    #: in the middle two columns is arithmetic the harness now does at the cell,
+    #: and this is the check that it reproduces what was computed by hand.
+    SEED_UNIT = 128 << 20
+    SEED_CELLS = (
+        (2, 802.1, 532.1, 14.0),
+        (3, 939.9, 798.1, 13.8),
+        (4, 1077.7, 1064.1, 13.6),
+        (5, 1342.6, 1330.2, 12.4),
+        (6, 1607.5, 1596.2, 11.3),
+    )
+
+    def test_the_model_reproduces_the_readings_it_was_seeded_from(self):
+        for jobs, worst, budget, residual in self.SEED_CELLS:
+            with self.subTest(jobs=jobs):
+                billed, floor, unnamed = measure.charge_model(
+                    self.SEED_UNIT, jobs, worst * measure.MIB
+                )
+                # The billed term *is* the budget a flagless run resolves for
+                # itself, which is what makes the model checkable against a
+                # column the run prints.
+                self.assertAlmostEqual(billed / measure.MIB, budget, places=1)
+                self.assertEqual(floor, measure.pool_floor_bytes(self.SEED_UNIT, jobs))
+                self.assertAlmostEqual(unnamed / measure.MIB, residual, places=1)
+                self.assertIsNone(
+                    measure.charge_model_problem(self.SEED_UNIT, jobs, worst * measure.MIB)
+                )
+
+    def test_the_pool_floor_is_named_rather_than_left_in_the_remainder(self):
+        # The finding the check exists to surface: at two readers of a 128 MiB
+        # block file the pool holds 256 MiB nobody billed, which is 95% of what
+        # the charge misses. Folded into the remainder it would read as a flat
+        # term on this grid and as a breach on a 512 MiB-block one.
+        jobs, worst, _, _ = self.SEED_CELLS[0]
+        billed, floor, unnamed = measure.charge_model(
+            self.SEED_UNIT, jobs, worst * measure.MIB
+        )
+        self.assertGreater(floor, 0.9 * (floor + unnamed))
+        self.assertEqual(floor, (measure.LIBRARY_POOL_DEPTH - jobs) * self.SEED_UNIT)
+        # And it is gone at the depth the pool clamps to, which is what makes it
+        # a floor rather than a per-reader term.
+        self.assertEqual(measure.pool_floor_bytes(self.SEED_UNIT, measure.LIBRARY_POOL_DEPTH), 0)
+        self.assertEqual(measure.pool_floor_bytes(self.SEED_UNIT, 99), 0)
+
+    def test_an_over_bill_is_a_fault_and_says_which_way_it_went(self):
+        # The half a grid search over reserve constants cannot report: a charge
+        # that is too large shows up there as headroom.
+        billed = 4 * measure.reader_bytes(self.SEED_UNIT)
+        fault = measure.charge_model_problem(self.SEED_UNIT, 4, billed - 32 * measure.MIB)
+        assert fault is not None
+        self.assertIn("over-billed", fault)
+        self.assertIn("fewer readers than the allocation affords", fault)
+
+    def test_a_remainder_above_the_reserve_is_a_fault_and_names_the_constant(self):
+        billed = 4 * measure.reader_bytes(self.SEED_UNIT)
+        held = billed + measure.LIBRARY_MEMORY_RESERVE + measure.MIB
+        fault = measure.charge_model_problem(self.SEED_UNIT, 4, held)
+        assert fault is not None
+        self.assertIn("unnamed", fault)
+        self.assertIn("MEMORY_RESERVE", fault)
+        # And exactly at the reserve it is not a fault: the criterion is what
+        # the constant promises, not a margin inside it.
+        self.assertIsNone(
+            measure.charge_model_problem(
+                self.SEED_UNIT,
+                4,
+                4 * measure.reader_bytes(self.SEED_UNIT) + measure.LIBRARY_MEMORY_RESERVE,
+            )
+        )
+
+    def test_the_mirrored_pool_depth_and_reserve_are_the_librarys_own(self):
+        # Both are hardcoded on `QUERY_SUBSTREAM_CAP`'s argument, so the mirror
+        # is checked here rather than trusted. The reserve especially: it is the
+        # model's upper bound, so a constant that moved in the library and not
+        # here would check the rule against a promise it no longer makes.
+        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
+        self.assertIn(
+            f"pub const MEMORY_RESERVE: u64 = {measure.LIBRARY_MEMORY_RESERVE >> 20} << 20;",
+            src,
+        )
+
+    def test_the_recommendation_and_the_affordability_charge_are_one_number(self):
+        # What `reader_bytes`' docstring asserts, and what the model rests on:
+        # the charge the rule divides an allowance by is the charge the gate
+        # then compares a budget to. They were two numbers 7 MiB apart until
+        # `19.19`, and the mirror would be a model of neither if they split
+        # again.
+        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        self.assertIn(
+            "fn default_memory_per_worker(&self) -> Option<u64> {\n"
+            "        self.block_reader_bytes()",
+            src,
+        )
+
     # -- the resolution, read back off the run -----------------------------
 
     def test_the_resolved_arrangement_is_read_off_the_runs_own_log(self):
@@ -5458,6 +5561,166 @@ class CensoredCells(unittest.TestCase):
                 body = measure.run_reserve(session)
         self.assertNotIn("OOM-killed", body)
         self.assertEqual(session.figure_kills(self.FIGURE), {})
+
+
+class ChargeModelSection(unittest.TestCase):
+    """The model check the reserve renderer prints, cell by cell.
+
+    What it is written against is the shape `19.16` had to do by hand: a
+    sitting that reports forty headroom percentages and leaves the account to
+    whoever reads the log afterwards. Three things fail silently here. A
+    **criterion stated after the answer** reads as a description of whatever
+    came back. A **pool floor folded into the remainder** reads as a flat term
+    on the two block sizes this harness registers and as a breach on a third,
+    which is the whole reason `19.22` exists. And a **declined or censored leg
+    left in the table** evaluates the model at a leg that ran none of it.
+    """
+
+    FIGURE = CensoredCells.FIGURE
+    KILLED = CensoredCells.KILLED
+    BOUND_KIB = CensoredCells.BOUND_KIB
+
+    # The reserve renderer's one fixture, borrowed rather than rebuilt: a
+    # second raw dict is a second account of what a sitting records, and the
+    # two drift.
+    _specs = CensoredCells._specs
+    _report = CensoredCells._report
+    _raw = CensoredCells._raw
+    _render = CensoredCells._render
+
+    #: One flagless arrangement per input and limit, as `19.16`'s r384 grid
+    #: read them: reader count and worst rep in MiB. The 24 MiB rows are that
+    #: sitting's headroom column inverted against its container limit; the
+    #: 128 MiB rows are its pool-floor table
+    #: (`roadmap-P19.16-reserve-constant-notes.md`).
+    SEEDED = {
+        ("control_xz", "512m"): (2, 251.9),
+        ("control_xz", "1g"): (11, 817.2),
+        ("control_xz", "1536m"): (19, 1224.2),
+        ("control_xz", "2g"): (24, 1515.5),
+        ("control_xz128", "512m"): (2, 802.1),
+        ("control_xz128", "1g"): (3, 939.9),
+        ("control_xz128", "1536m"): (4, 1077.7),
+        ("control_xz128", "2g"): (5, 1342.6),
+    }
+
+    def _seeded_body(self):
+        """The renderer over a fixture whose flagless legs are `19.16`'s own
+        readings, nothing killed."""
+        raw = self._raw()
+        raw["killed"] = {}
+        units = {name: unit for name, _, unit in measure.RESERVE_FLAGLESS_INPUTS}
+        for spec in measure._reserve_flagless_specs():
+            jobs, worst = self.SEEDED[(spec.input, spec.memory)]
+            key = spec.key(self.FIGURE)
+            raw["rss"][key] = [worst * 1024 - 20, worst * 1024 - 10, worst * 1024]
+            raw["reported"][key] = {
+                "resolved_jobs": str(jobs),
+                "resolved_budget": str(jobs * measure.reader_bytes(units[spec.input])),
+            }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                return measure.run_reserve(session)
+
+    def _model_rows(self, body):
+        section = body.split("The charge against what was held")[1].split(
+            "What the process says it held"
+        )[0]
+        return [ln for ln in section.splitlines() if ln.startswith("| ")]
+
+    def test_the_criterion_is_stated_before_the_answer(self):
+        body, _ = self._render()
+        section = body.split("The charge against what was held")[1]
+        criterion, _, verdict = section.partition("**The model")
+        self.assertIn("non-negative", criterion)
+        self.assertIn("MEMORY_RESERVE", criterion)
+        self.assertIn("over-bill", criterion)
+        self.assertTrue(verdict, "the section states a criterion and never answers it")
+
+    def test_the_seeded_readings_pass_and_the_floor_is_its_own_column(self):
+        body = self._seeded_body()
+        self.assertIn("The model holds at every cell above.", body)
+        rows = self._model_rows(body)
+        # Eight flagless legs, and every one of them took the block path at the
+        # budget its own reported arrangement carries.
+        self.assertEqual(len(rows), len(self.SEEDED) + 1)
+        floor = next(r for r in rows if "128 MiB blocks, `-m 512m`" in r)
+        # `(POOL_DEPTH - 2) x 128 MiB`, named rather than left in the remainder.
+        self.assertIn(measure._fmt_budget_bytes(2 * (128 << 20)), floor)
+        self.assertIn(measure._fmt_budget_bytes(14.0 * measure.MIB)[:4], floor)
+
+    def test_a_cell_outside_the_band_is_named_in_those_words(self):
+        # The default fixture holds ~100 MiB against a charge of several
+        # hundred, which is the over-bill side of the criterion.
+        body, _ = self._render()
+        self.assertIn("The model is refuted, and by these cells:", body)
+        self.assertIn("over-billed", body)
+
+    def test_a_declined_leg_is_absent_rather_than_evaluated(self):
+        # The streaming fallback holds none of the model's terms, so a leg whose
+        # reported budget cannot afford one reader is not a cell of it.
+        raw = self._raw()
+        raw["killed"] = {}
+        spec = next(
+            s
+            for s in measure._reserve_flagless_specs()
+            if (s.input, s.memory) == ("control_xz128", "512m")
+        )
+        for other in measure._reserve_flagless_specs():
+            jobs, worst = self.SEEDED[(other.input, other.memory)]
+            key = other.key(self.FIGURE)
+            raw["rss"][key] = [worst * 1024]
+            units = {n: u for n, _, u in measure.RESERVE_FLAGLESS_INPUTS}
+            raw["reported"][key] = {
+                "resolved_jobs": str(jobs),
+                "resolved_budget": str(jobs * measure.reader_bytes(units[other.input])),
+            }
+        raw["reported"][spec.key(self.FIGURE)] = {
+            "resolved_jobs": "1",
+            "resolved_budget": str(measure.reader_bytes(128 << 20) - 1),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        rows = self._model_rows(body)
+        self.assertEqual(len(rows), len(self.SEEDED))
+        self.assertFalse([r for r in rows if "128 MiB blocks, `-m 512m`" in r])
+
+    def test_no_cell_at_all_is_said_rather_than_read_as_a_pass(self):
+        # "Every cell holds" and "there were no cells" are not the same claim,
+        # and the second is what a sitting where everything declined produces.
+        raw = self._raw()
+        raw["killed"] = {}
+        for spec in measure._reserve_flagless_specs():
+            raw["reported"][spec.key(self.FIGURE)] = {
+                "resolved_jobs": "1",
+                "resolved_budget": "1",
+            }
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        self.assertIn("The model was evaluated at no cell", body)
+        self.assertNotIn("The model holds at every cell", body)
+        self.assertEqual(len(self._model_rows(body)), 1)
+
+    def test_a_censored_leg_is_absent_rather_than_evaluated(self):
+        # A kill leaves a bound on a peak never reached, which is not a `held`
+        # the model may be evaluated at — the exclusion the fit already makes.
+        body, _ = self._render()
+        rows = self._model_rows(body)
+        self.assertFalse([r for r in rows if f"`-m {self.KILLED[1]}`" in r and "128 MiB" in r])
 
 
 class CensoredSittingsBarPublication(unittest.TestCase):

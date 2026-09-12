@@ -2299,19 +2299,20 @@ def reader_bytes(unit: int) -> int:
     `BlockCache::affordable` compares a budget against and the number
     `XzSource::partition_advice` charges a sub-stream.
 
-    **It is the charge at the steady-state slot size, which is not the one the
-    source *recommends* against.** `BlockCache::reader_bytes` takes the pool's
-    current slot as its chunk term, and that is `DEFAULT_CHUNK_SIZE` once a read
-    loop has announced one and `POOL_MAX_BYTES` — 8 MiB — before any has. So
-    `XzSource::default_memory_per_worker`, asked before the file is opened for
-    reading, answers **7 MiB more per reader** at every block size, deliberately
-    (`io.rs`, "runs about a tenth high"), and a flagless run's resolved budget is
-    that larger number times its count: 1,636,608,768 at 24 readers of 24 MiB
-    blocks, where a reader of that file actually holds 60,852,000. Only the
-    smaller number answers "did this leg take the block path", which is what this
-    mirror is for and what the path step's two budgets straddle. A budget read
-    off a run's own report and divided by its count is the *other* number and
-    cannot stand in for this one.
+    **It is one number and not two, at the default chunk every leg here runs
+    at.** `BlockCache::reader_bytes` takes its chunk term from
+    `XzSource::charged_chunk_bytes`, which answers `DEFAULT_CHUNK_SIZE` whenever
+    no read loop has announced a length — so the charge
+    `XzSource::default_memory_per_worker` recommends against *before* the file is
+    open for reading and the charge `BlockCache::affordable` then compares a
+    budget to are the same charge. Charging the unannounced pool's
+    `POOL_MAX_BYTES` ceiling instead ran the recommendation 7 MiB a reader high
+    and cost a reader at every allocation, which `19.19` repaired (`io.rs`,
+    `charged_chunk_bytes`). So a flagless run's resolved budget **is** this
+    number times its count — 1,460,448,000 at 24 readers of 24 MiB blocks — and
+    a budget read off a run's own report and divided by its count is this number
+    back. It splits again only for a caller that states a `--chunk-size` other
+    than the default, which no leg of this figure does.
 
     **Hand-computed, on `QUERY_SUBSTREAM_CAP`'s argument.** A Python
     reimplementation of the library's arithmetic is a second authority that goes
@@ -2321,6 +2322,104 @@ def reader_bytes(unit: int) -> int:
     58.03 MiB, which is the number `19.14` shipped and `19.12` measured.
     """
     return 2 * unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
+
+
+#: `pgdump_query::io::POOL_DEPTH`, mirrored: the floor `BufferPool::slots`
+#: clamps a pool's slot count to, whatever worker count was announced to it.
+#:
+#: It lives with the charge rather than with the other library mirrors because
+#: it is the one library number the per-reader charge does **not** carry: the
+#: block pool is sized `POOL_DEPTH.max(jobs)` while
+#: `XzSource::block_reader_bytes` bills `2 x unit` a reader, so below four
+#: readers the pool holds `(POOL_DEPTH - jobs) x unit` nobody paid for. That is
+#: `pool_floor_bytes`, and naming it is what keeps it out of the residual
+#: (`roadmap-P19.16-reserve-constant-notes.md`, "The charge under-bills the pool
+#: floor").
+LIBRARY_POOL_DEPTH = 4
+
+#: `pgdump_query::io::MEMORY_RESERVE`, mirrored: what `Parallelism::discover`
+#: holds back from a discovered limit before it divides.
+#:
+#: It is the model's upper bound rather than a term in it. The rule's promise is
+#: that everything a scan holds above what it billed fits inside this number, so
+#: a leg whose unnamed remainder exceeds it is a leg the rule cannot keep inside
+#: its allocation — which is the criterion `charge_model_problem` applies, and
+#: the reason the bound is a library constant rather than a tolerance the
+#: harness chose.
+LIBRARY_MEMORY_RESERVE = 384 << 20
+
+
+def pool_floor_bytes(unit: int, jobs: int) -> int:
+    """What the block pool holds at `jobs` readers that `reader_bytes` does not
+    bill: `(POOL_DEPTH - jobs) x unit`, and zero at four readers or more.
+
+    Named as a term rather than left inside the residual because it is
+    **unbounded in the block size** where the residual is not — 96 MiB at
+    koji's 24 MiB blocks, 384 at 128, 2 GiB at 512 — so a reserve cannot absorb
+    it and a model that folded it into a flat remainder would read as a constant
+    on the two block sizes this harness registers and as a breach on a third.
+    Repairing the charge is `19.22`; naming it here is what lets the check
+    report an under-bill rather than a large number.
+    """
+    return max(0, LIBRARY_POOL_DEPTH - jobs) * unit
+
+
+def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
+    """One leg's resident set, split into the two terms the model names and the
+    one it does not: `(billed, floor, unnamed)`, all in bytes.
+
+    - **billed** is what the budget rule charged — `jobs x reader_bytes(unit)`,
+      which under discovery is also the budget the run reports for itself.
+    - **floor** is `pool_floor_bytes`: held, and not billed.
+    - **unnamed** is `held - billed - floor`, which is glibc's arena retention
+      as far as any reading here goes (`roadmap-P19.18-compressed-account-notes.md`).
+
+    **This is an account and not a fit** — every term is arithmetic from the
+    source, evaluated at the cell, which is what `19.16` did by hand over
+    `readings.json` after 400 runs had been spent searching for a constant
+    (`.claude/skills/evidence/SKILL.md`, rule 1).
+    """
+    billed = jobs * reader_bytes(unit)
+    floor = pool_floor_bytes(unit, jobs)
+    return billed, floor, held - billed - floor
+
+
+def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
+    """Why this leg refutes the charge model, or `None` where it does not.
+
+    **Two-sided, and neither side is a tolerance somebody picked.**
+
+    - **Non-negative.** A negative remainder is an *over-bill*: the rule charged
+      bytes nothing holds, so it admitted fewer readers than the allocation
+      afforded. It is the failure a grid search over reserve constants cannot
+      report at all, because a too-large charge shows up there as headroom.
+    - **No larger than `MEMORY_RESERVE`.** The reserve is by construction what
+      covers everything the charge does not bill, so a remainder above it is a
+      leg the rule cannot keep inside its allocation — the gate failing, stated
+      per cell instead of per sitting.
+
+    Asked only of a leg that took the block path and survived: the streaming
+    fallback holds none of these terms, and a censored leg's reading is a bound
+    rather than a number.
+    """
+    billed, floor, unnamed = charge_model(unit, jobs, held)
+    if unnamed < 0:
+        return (
+            f"**over-billed by {_fmt_budget_bytes(-unnamed)}** — {jobs} reader(s) were charged "
+            f"{_fmt_budget_bytes(billed)}"
+            + (f" beside {_fmt_budget_bytes(floor)} of unbilled pool floor" if floor else "")
+            + f", and the whole process held {_fmt_budget_bytes(held)}. The rule admitted "
+            "fewer readers than the allocation affords."
+        )
+    if unnamed > LIBRARY_MEMORY_RESERVE:
+        return (
+            f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
+            f"{_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)} `MEMORY_RESERVE` that is meant to "
+            f"cover it — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
+            + (f" plus {_fmt_budget_bytes(floor)} of unbilled pool floor" if floor else "")
+            + f" against {_fmt_budget_bytes(held)} held."
+        )
+    return None
 
 
 #: The two compressed inputs the flagless axis is read over: the registered
@@ -5921,6 +6020,79 @@ def run_reserve(session: Session) -> str:
             + censored_tail
         )
 
+    # -- the charge against what was held -----------------------------------
+    #
+    # The model check, per cell. Every other reading in this figure is a number
+    # somebody then has to reason about; this is the arithmetic done in the
+    # renderer, at the cell, against a criterion registered before the sitting
+    # (`charge_model_problem`). It is what `19.16` did by hand over
+    # `readings.json` after the sitting, and the reason it is here is that the
+    # hand version died with the session that wrote it.
+    #
+    # **It reports; it does not raise.** A remainder outside the band is a
+    # finding about the library, not an apparatus fault, so it may not cost the
+    # sitting the legs behind it — the argument `KILL_TOLERANT` already makes
+    # about a kill, which is the harder case. What carries the finding is the
+    # verdict line, which names every failing cell in those words.
+    model_rows, model_faults = [], []
+    for name, label, unit in RESERVE_FLAGLESS_INPUTS:
+        for token, _limit in RESERVE_LIMITS:
+            spec = by_flagless[(name, token)]
+            readings = session.get_rss(figure, spec)
+            # A censored leg's reading is a bound on a peak never reached, so it
+            # is not a `held` this model may be evaluated at — the same
+            # exclusion the fit above makes, for the same reason.
+            if session.kills(figure, spec) or not readings:
+                continue
+            jobs, budget = resolved(spec)
+            # A declined leg ran the streaming fallback, which holds none of
+            # these terms. Excluded by what the leg *did*, read off its own
+            # reported budget, rather than by which token it carries.
+            if budget < reader_bytes(unit):
+                continue
+            held = max(readings) * 1024
+            billed, floor, unnamed = charge_model(unit, jobs, held)
+            fault = charge_model_problem(unit, jobs, held)
+            if fault:
+                model_faults.append(f"- **{label}** at `-m {token}`: {fault}")
+            model_rows.append(
+                [
+                    f"{label}, `-m {token}`",
+                    f"{jobs}r",
+                    _fmt_budget_bytes(billed),
+                    _fmt_budget_bytes(floor) if floor else "—",
+                    fmt_mib(held / 1024),
+                    _fmt_budget_bytes(unnamed),
+                    "met" if fault is None else "**refuted**",
+                ]
+            )
+    model_table = md_table(
+        [
+            "Leg",
+            "Readers",
+            "Billed",
+            "Pool floor, unbilled",
+            "Worst rep held",
+            "Unnamed",
+            "Criterion",
+        ],
+        model_rows,
+    )
+    if model_faults:
+        model_verdict = "**The model is refuted, and by these cells:**\n\n" + "\n".join(
+            model_faults
+        )
+    elif model_rows:
+        model_verdict = "**The model holds at every cell above.**"
+    else:
+        # Not the same claim as the one above, and the difference is the whole
+        # value of the check: every leg declined the block path or was censored,
+        # so the model was evaluated nowhere and says nothing about the charge.
+        model_verdict = (
+            "**The model was evaluated at no cell**: every flagless leg either declined the "
+            "block path or was censored, so nothing here bears on the charge."
+        )
+
     # -- the attribution: what the process says it held ---------------------
     #
     # This is the half no subtraction between whole runs produces. Every column
@@ -6227,6 +6399,24 @@ def run_reserve(session: Session) -> str:
             if constraints
             else ""
         )
+        + "\n\n**The charge against what was held**, cell by cell, which is the check this "
+        "figure runs rather than a constant it searches for. The criterion is two-sided and is "
+        "registered before the sitting: the unnamed remainder must be **non-negative**, a "
+        "negative one being an over-bill — bytes the rule charged that nothing holds, and so a "
+        "reader the allocation would have afforded — and it must be **no larger than "
+        f"`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
+        "construction what covers everything the charge does not bill. The middle column is the "
+        "one term the charge misses and the model names: `BufferPool::slots` clamps the block "
+        f"pool at `POOL_DEPTH.max(jobs)` with `POOL_DEPTH` = {LIBRARY_POOL_DEPTH}, while "
+        "`XzSource::block_reader_bytes` bills `2 × unit` a reader, so below four readers the "
+        "pool holds `(POOL_DEPTH − jobs) × unit` nobody paid for — named here rather than left "
+        "inside the remainder, because it is unbounded in the block size where the remainder is "
+        "not. What is left is glibc's arena retention, named by the instrument legs below rather "
+        "than inferred here. A leg that declined the block path is absent, holding none of these "
+        "terms; a censored one is absent too, its reading being a bound:\n\n"
+        + model_table
+        + "\n\n"
+        + model_verdict
         + "\n\n**What the process says it held**, on the introspection build running the "
         "same flagless shape as the axis above. Nothing here is a figure: the build takes an "
         "atomic on every allocation and `pgdq --version` names it, so it is never timed. The "
