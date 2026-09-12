@@ -1986,6 +1986,76 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(sorted(byte_values), byte_values)
         self.assertGreaterEqual(len(measure.RESERVE_LIMITS), 3)
 
+    def test_the_axis_bills_the_pool_floor_at_both_block_sizes(self):
+        # `M89`: `pool_floor_bytes` is clamped off at `POOL_DEPTH` readers, so an
+        # axis whose every block-path leg resolves four or more satisfies the
+        # model criterion without the term `19.22` added ever being evaluated.
+        # The windows are disjoint, so one limit cannot cover both block sizes.
+        self.assertEqual(measure.reserve_floor_problems(), [])
+        for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
+            with self.subTest(block_size=label):
+                inside = [
+                    token
+                    for token, limit in measure.RESERVE_LIMITS
+                    if measure.charge_bytes(unit, 1)
+                    <= measure.discovered_budget(limit)
+                    < measure.charge_bytes(unit, measure.LIBRARY_POOL_DEPTH)
+                ]
+                self.assertTrue(inside, f"{label} reaches no floor-billing limit")
+                for token in inside:
+                    budget = measure.discovered_budget(dict(measure.RESERVE_LIMITS)[token])
+                    self.assertTrue(measure.block_path_afforded(unit, budget))
+                    # One reader at most, so the floor is three units or more.
+                    self.assertLess(budget, measure.charge_bytes(unit, 2))
+                    self.assertGreater(measure.pool_floor_bytes(unit, 1), 0)
+
+    def test_the_check_fires_where_no_limit_reaches_the_floor(self):
+        # The two-sided half: the check is worth nothing unless removing the
+        # inserted limits turns it red, and it has to name the window to
+        # register instead of only the block size.
+        kept = tuple(
+            row
+            for row in measure.RESERVE_LIMITS
+            if row[0] not in ("544m", "1088m")
+        )
+        with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
+            problems = measure.reserve_floor_problems()
+        self.assertEqual(len(problems), len(measure.RESERVE_FLAGLESS_INPUTS))
+        for line, (_n, label, unit) in zip(problems, measure.RESERVE_FLAGLESS_INPUTS):
+            with self.subTest(block_size=label):
+                self.assertIn(label, line)
+                floor_limit = (
+                    measure.charge_bytes(unit, 1) + measure.LIBRARY_MEMORY_RESERVE
+                )
+                self.assertIn(measure._fmt_budget_bytes(floor_limit), line)
+
+    def test_check_fails_where_the_axis_bills_the_floor_nowhere(self):
+        # Wired into `--check`, not only available to be called: the whole point
+        # of `M89` is that the defect was invisible while nothing asked.
+        kept = tuple(
+            row
+            for row in measure.RESERVE_LIMITS
+            if row[0] not in ("544m", "1088m")
+        )
+        with unittest.mock.patch.object(measure, "RESERVE_LIMITS", kept):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(code, 1)
+        self.assertIn("never bills the block pool's floor", out.getvalue())
+
+    def test_the_discovered_budget_is_the_library_rule_mirrored(self):
+        # `limit.bytes.saturating_sub(MEMORY_RESERVE)`, read off the source
+        # rather than trusted, since the whole point of the check above is that
+        # it reasons in the library's own arithmetic.
+        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        self.assertIn("limit.bytes.saturating_sub(MEMORY_RESERVE)", src)
+        self.assertEqual(
+            measure.discovered_budget(512 << 20), (512 << 20) - measure.LIBRARY_MEMORY_RESERVE
+        )
+        # Saturating, not negative: a container at or under the reserve.
+        self.assertEqual(measure.discovered_budget(measure.LIBRARY_MEMORY_RESERVE), 0)
+        self.assertEqual(measure.discovered_budget(0), 0)
+
     def test_every_flagless_leg_is_read_under_the_uncapped_arena(self):
         # The shipped constant comes from the operator who capped nothing; the
         # capped arrangement is a mechanism leg, not the axis.
@@ -5519,6 +5589,43 @@ class CensoredCells(unittest.TestCase):
                 f"the window names no allocation: {line}",
             )
 
+    def test_a_two_point_family_publishes_no_fit(self):
+        # `M89`: a two-term model passes exactly through two points, so the
+        # residual the fit prints beside it is zero by construction and cannot
+        # be told from a model that describes the mechanism. The guard is three
+        # distinct reader counts, and the no-fit line says which bound it hit.
+        self.assertEqual(measure.RESERVE_FIT_MIN_COUNTS, 3)
+        counts = [4, 4, 4, 4, 5, 5]
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = self._raw()
+            for key, report in raw["reported"].items():
+                report["resolved_jobs"] = str(counts[sum(map(ord, key)) % len(counts)])
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        section = body.split("The pair the constant is read off")[1].split(
+            "What the killed legs still prove"
+        )[0]
+        lines = [ln for ln in section.splitlines() if ln.startswith("- **")]
+        self.assertEqual(len(lines), len(measure.RESERVE_FLAGLESS_INPUTS))
+        fitted = [ln for ln in lines if "no fit" not in ln]
+        self.assertFalse(fitted, f"a family under the guard published a fit: {fitted}")
+        for line in lines:
+            self.assertIn("distinct reader count(s), under the 3", line)
+
+    def test_the_guard_is_above_the_arithmetic_floor_it_sits_on(self):
+        # Two floors, deliberately: `_least_squares` refuses one point because
+        # the line is undefined there, and the publication guard refuses two
+        # because the residual is. Collapsing them would make the arithmetic
+        # answer the publication question.
+        self.assertGreater(measure.RESERVE_FIT_MIN_COUNTS, 2)
+        fixed, slope = measure._least_squares([(1, 100.0), (2, 200.0)])
+        self.assertAlmostEqual(fixed, 0.0)
+        self.assertAlmostEqual(slope, 100.0)
+
     def test_the_figure_reports_its_kills_for_the_publication_bar(self):
         _, session = self._render()
         kills = session.figure_kills(self.FIGURE)
@@ -5677,18 +5784,36 @@ class ChargeModelSection(unittest.TestCase):
     _raw = CensoredCells._raw
     _render = CensoredCells._render
 
-    #: One flagless arrangement per input and limit, as `19.16`'s r384 grid
-    #: read them: reader count and worst rep in MiB. The 24 MiB rows are that
-    #: sitting's headroom column inverted against its container limit; the
-    #: 128 MiB rows are its pool-floor table
-    #: (`roadmap-P19.16-reserve-constant-notes.md`).
+    #: One flagless arrangement per input and limit: reader count and worst rep
+    #: in MiB.
+    #:
+    #: The four original limits are `19.16`'s r384 grid as it read them — the
+    #: 24 MiB rows are that sitting's headroom column inverted against its
+    #: container limit, the 128 MiB rows its pool-floor table
+    #: (`roadmap-P19.16-reserve-constant-notes.md`). **`544m` and `1088m` are
+    #: constructed**, no sitting having measured them: each is a one- or
+    #: two-reader arrangement whose worst rep satisfies the criterion, chosen so
+    #: the model table carries a cell that **bills a pool floor** at each block
+    #: size, which is the arrangement `M89` put on the axis and which no cell of
+    #: the four-limit grid reached.
+    #:
+    #: **The budget a cell renders under is its own arrangement's charge, not
+    #: its container's allowance** (`_seeded_body`), so a cell here takes the
+    #: block path whatever `-m` it carries — which is why `control_xz128` at
+    #: `512m` bills 788 MiB inside 512. The fixture is exercising the renderer's
+    #: arithmetic over a reader count; which limits afford which count is
+    #: `reserve_floor_problems`' question and is checked there.
     SEEDED = {
         ("control_xz", "512m"): (2, 251.9),
+        ("control_xz", "544m"): (1, 240.0),
         ("control_xz", "1g"): (11, 817.2),
+        ("control_xz", "1088m"): (12, 860.0),
         ("control_xz", "1536m"): (19, 1224.2),
         ("control_xz", "2g"): (24, 1515.5),
         ("control_xz128", "512m"): (2, 802.1),
+        ("control_xz128", "544m"): (1, 760.0),
         ("control_xz128", "1g"): (3, 939.9),
+        ("control_xz128", "1088m"): (2, 900.0),
         ("control_xz128", "1536m"): (4, 1077.7),
         ("control_xz128", "2g"): (5, 1342.6),
     }
@@ -5741,6 +5866,23 @@ class ChargeModelSection(unittest.TestCase):
         # `(POOL_DEPTH - 2) x 128 MiB`, named rather than left in the remainder.
         self.assertIn(measure._fmt_budget_bytes(2 * (128 << 20)), floor)
         self.assertIn(measure._fmt_budget_bytes(14.0 * measure.MIB)[:4], floor)
+
+    def test_the_floor_is_billed_at_a_cell_of_each_block_size(self):
+        # `M89`: the column exists to keep the floor out of the remainder, and a
+        # table in which every cell reads `—` there is a column that has never
+        # been exercised. The two inserted limits are what put one reader on the
+        # axis at each block size, and the floor at one reader is three units.
+        rows = self._model_rows(self._seeded_body())
+        for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
+            with self.subTest(block_size=label):
+                floored = [
+                    r
+                    for r in rows
+                    if r.startswith(f"| {label}, ")
+                    and measure._fmt_budget_bytes(3 * unit) in r
+                ]
+                self.assertTrue(floored, f"{label} bills no pool floor at any cell")
+                self.assertIn("| 1r |", floored[0])
 
     def test_a_cell_outside_the_band_is_named_in_those_words(self):
         # The default fixture holds ~100 MiB against a charge of several

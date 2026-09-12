@@ -2364,11 +2364,14 @@ def pool_floor_bytes(unit: int, jobs: int) -> int:
     that hid it inside a flat remainder would read as a constant on the two block
     sizes this harness registers and as a breach on a third.
 
-    **Zero at every cell this figure currently publishes**, which is why the
-    magnitudes above are stated at one reader rather than at a registered leg:
-    the term is clamped off at `POOL_DEPTH` readers and every block-path
-    flagless leg resolves more than four, so the model check's floor column
-    reads `—` throughout. `M89` is what puts a leg under the clamp.
+    **Billed at one registered limit per block size, and zero at every other
+    cell**, which is why the magnitudes above are stated at one reader: the term
+    is clamped off at `POOL_DEPTH` readers, and every other block-path leg on
+    the axis resolves more than four. `544m` and `1088m` are the two limits
+    inserted under that clamp, each affording exactly one reader of its own
+    block size (`RESERVE_LIMITS`), and `reserve_floor_problems` is what fails an
+    axis that bills the term nowhere — a criterion satisfied only at cells where
+    the term is clamped to zero is a criterion that never evaluates it.
     """
     return max(0, LIBRARY_POOL_DEPTH - jobs) * unit
 
@@ -2383,6 +2386,24 @@ def charge_bytes(unit: int, jobs: int) -> int:
     it is also the budget a run reports for itself.
     """
     return jobs * reader_bytes(unit) + pool_floor_bytes(unit, jobs)
+
+
+def discovered_budget(limit: int) -> int:
+    """What a flagless run inside a container of `limit` bytes resolves as its
+    budget: `limit − MEMORY_RESERVE`, floored at zero.
+
+    `Parallelism::discover_in`, mirrored — `limit.bytes.saturating_sub(
+    MEMORY_RESERVE)` (`io.rs`).
+
+    **Used to reason about the registered axis, never to report a reading.**
+    Every number this figure publishes reads the budget back off the run's own
+    `scan started` line, because a harness predicting it would be a second
+    authority on the rule under test. What this answers instead is a question
+    about `RESERVE_LIMITS` itself — whether the limits registered there bracket
+    the window in which a term is billed at all — which is settled before any
+    run exists and cannot be read off one (`reserve_floor_problems`).
+    """
+    return max(0, limit - LIBRARY_MEMORY_RESERVE)
 
 
 def block_path_afforded(unit: int, budget: int) -> bool:
@@ -2515,6 +2536,29 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: 24 MiB leg's count saturates at the source's own recommendation, which is
 #: what separates "the allowance ran out" from "the recommendation did".
 #:
+#: **544 MiB and 1088 MiB are where the pool floor is billed at all, one per
+#: block size** (`reserve_floor_problems`, which fails the axis that reaches
+#: neither). `pool_floor_bytes` is `max(0, POOL_DEPTH − jobs) × unit`, so it is
+#: clamped off at four readers, and the other four limits resolve 4, 6, 11, 19
+#: or 24 on every block-path leg — so before these two, no cell billed the term
+#: `19.22` added and `19.24` gave a column of its own. Raising the bottom of the
+#: axis does not reach it and nor does extending the top: more allowance means more readers
+#: means the term stays clamped at zero. What reaches it is a limit **inserted
+#: under the clamp**, and the two windows are disjoint — a 24 MiB leg bills a
+#: floor for a limit in [514.03, 616.13) MiB and a 128 MiB leg for one in
+#: [1034.03, 1448.13), so one limit cannot cover both. These two sit one reader
+#: in: `544m` grants 160 MiB against the 130.03 one reader of 24 MiB blocks
+#: costs, and `1088m` grants 704 against 650.03 at 128 MiB blocks, so each
+#: resolves a single reader and bills three units of floor with it — 72 MiB and
+#: 384 MiB respectively, which is the over-bill side of the criterion and the
+#: side no grid search over reserve constants can report.
+#:
+#: **Additive, so nothing already read moves**: `512m` keeps the axis's worst
+#: headroom, the other three keep theirs, and `544m` is also the smallest
+#: arrangement the mechanism has — one reader against a window of 11 to 24 —
+#: which is where a fit over the 24 MiB family is checked rather than
+#: extrapolated (`.claude/skills/evidence/SKILL.md`, rule 2).
+#:
 #: **A leg may be OOM-killed, and that is a reading rather than an apparatus
 #: failure** — see `KILL_TOLERANT`, which is where that licence is granted and
 #: bounded. The rule aims resident at the limit by construction, so every
@@ -2523,7 +2567,9 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: kill at `1g` before the per-file charge was repaired.
 RESERVE_LIMITS: tuple[tuple[str, int], ...] = (
     ("512m", 512 << 20),
+    ("544m", 544 << 20),
     ("1g", 1 << 30),
+    ("1088m", 1088 << 20),
     ("1536m", 1536 << 20),
     ("2g", 2 << 30),
 )
@@ -2630,6 +2676,20 @@ RESERVE_STEP_BUDGETS: tuple[int, ...] = (
     charge_bytes(RESERVE_MECHANISM_UNIT, 1),
     charge_bytes(RESERVE_MECHANISM_UNIT, 1) - 1,
 )
+
+#: How many distinct reader counts a flagless family must cover before its fit
+#: is published rather than refused.
+#:
+#: **Three, because the model has two terms.** `resident = fixed + readers ×
+#: per_reader` passes exactly through two points, so at two distinct counts the
+#: residual the table prints is **`±0 MiB` by construction** and cannot be told
+#: from a two-term model that happens to describe the mechanism. Three is the
+#: smallest number of points at which the residual is a reading.
+#:
+#: `_least_squares` keeps its own floor of two, which is where the arithmetic
+#: stops being defined; this is the *publication* rule above it, and it is the
+#: one a reader of the table is relying on.
+RESERVE_FIT_MIN_COUNTS = 3
 
 
 def fmt_chunk(size: int) -> str:
@@ -3017,6 +3077,47 @@ def pinned_count_problems() -> list[str]:
         stated = set(_WORKER_COUNT.findall(_script(command)))
         if stated != {f"--jobs {SWEEP_JOBS}"}:
             bad.append(f"{command} states {', '.join(sorted(stated)) or 'nothing'}")
+    return bad
+
+
+def reserve_floor_problems() -> list[str]:
+    """Block sizes on the flagless axis at which no registered limit bills the
+    block pool's floor.
+
+    **A criterion that never evaluates a term is not a check of it.** The model
+    check's floor column is `pool_floor_bytes`, which is
+    `max(0, POOL_DEPTH − jobs) × unit` and therefore clamped to zero at four
+    readers or more; for as long as every block-path leg on the axis resolved
+    more than four, `19.11`'s acceptance — the verdict holds at every evaluated
+    cell — was satisfiable without the term `19.22` added ever being billed
+    anywhere. That is the over-bill side of the criterion, and it is the side a
+    grid search over reserve constants cannot report at all, because a charge
+    that is too large reads there as headroom.
+
+    **Asked of the registered limits rather than of a sitting**, which is what
+    makes it a `--check` and not a verdict: a limit bills the floor exactly when
+    its discovered budget affords one block-decoding reader of that file and
+    cannot afford `POOL_DEPTH` of them, and both comparisons are the library's
+    own arithmetic over numbers that exist before any run. The resolved count is
+    `min(recommendation, fit)`, so a smaller recommendation lowers it and
+    *raises* the floor — the window is a sufficient condition on every machine,
+    not a prediction of this one's count.
+    """
+    bad = []
+    for _name, label, unit in RESERVE_FLAGLESS_INPUTS:
+        window = (charge_bytes(unit, 1), charge_bytes(unit, LIBRARY_POOL_DEPTH))
+        if any(
+            window[0] <= discovered_budget(limit) < window[1] for _, limit in RESERVE_LIMITS
+        ):
+            continue
+        bad.append(
+            f"{label}: no registered limit grants a budget in "
+            f"[{_fmt_budget_bytes(window[0])}, {_fmt_budget_bytes(window[1])}), so every "
+            f"block-path leg resolves {LIBRARY_POOL_DEPTH} readers or more and "
+            "`pool_floor_bytes` is clamped to zero at every cell — register a limit of "
+            f"{_fmt_budget_bytes(window[0] + LIBRARY_MEMORY_RESERVE)} or more and under "
+            f"{_fmt_budget_bytes(window[1] + LIBRARY_MEMORY_RESERVE)}"
+        )
     return bad
 
 
@@ -5796,9 +5897,10 @@ def _censored_constraint(
     nothing.
 
     **Not fitted, deliberately.** Interval censoring is the statistically right
-    treatment of a bound like this and the wrong size for four legs — see
-    `run_reserve`, which is where that refusal is argued. A constraint line is
-    what carries the reading without a second fitting technique in the harness.
+    treatment of a bound like this and the wrong size for a family of
+    `RESERVE_LIMITS`' size — see `run_reserve`, which is where that refusal is
+    argued. A constraint line is what carries the reading without a second
+    fitting technique in the harness.
     """
     killed = session.kills(figure, spec)
     bounds = session.censored_bounds(figure, spec)
@@ -5884,9 +5986,9 @@ def run_reserve(session: Session) -> str:
     correctly observes the bias argument is not load-bearing.
 
     *Rejected:* fitting the censored point as an interval-censored observation.
-    It is the statistically right answer and the wrong size for four points —
-    it buys precision this table cannot support and puts a second fitting
-    technique in the harness.
+    It is the statistically right answer and the wrong size for a family of
+    `RESERVE_LIMITS`' size — it buys precision this table cannot support and puts
+    a second fitting technique in the harness.
 
     **Each fit states the window it covers, in the legs that are in it.** Every
     other clause names what *left* — declined, censored — and a reader holding
@@ -6057,7 +6159,7 @@ def run_reserve(session: Session) -> str:
         # names what left — declined, censored — and a reader who has only
         # those has to subtract them from a tuple they cannot see.
         window = ", ".join(f"`{t}` at {j}r" for t, j, _ in points) or "no leg at all"
-        if len({jobs for _, jobs, _ in points}) < 2:
+        if len({jobs for _, jobs, _ in points}) < RESERVE_FIT_MIN_COUNTS:
             fits.append(
                 f"- **{label}**: no fit — "
                 + (
@@ -6066,7 +6168,9 @@ def run_reserve(session: Session) -> str:
                     else ""
                 )
                 + f"what is left is {window}, which is "
-                f"{len({jobs for _, jobs, _ in points})} distinct reader count(s)"
+                f"{len({jobs for _, jobs, _ in points})} distinct reader count(s), under the "
+                f"{RESERVE_FIT_MIN_COUNTS} a two-term model needs before its residual is a "
+                "reading rather than zero by construction"
                 + censored_tail
                 + "."
             )
@@ -6479,13 +6583,17 @@ def run_reserve(session: Session) -> str:
         + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
         "block path, the band being the same fit over the per-rep extremes. Each line names the "
         "window it covers, since a leg is censored exactly when its resident ran closest to its "
-        "ceiling and a fit over what survives is a fit over the legs that had room:\n\n"
+        "ceiling and a fit over what survives is a fit over the legs that had room. A family "
+        f"covering fewer than {RESERVE_FIT_MIN_COUNTS} distinct reader counts publishes no fit: "
+        "the model has two terms, so below that the residual printed beside it is zero by "
+        "construction rather than a reading:\n\n"
         + "\n".join(fits)
         + (
             "\n\n**What the killed legs still prove**, stated as constraints and **not** fitted: "
             "a kill is the one reading here that says resident is *above* a number rather than "
-            "at one, and interval censoring is the right treatment of it at the wrong size for "
-            "four legs. This is the end of the axis the fit above does not cover:\n\n"
+            "at one, and interval censoring is the right treatment of it at the wrong size "
+            f"for {len(RESERVE_LIMITS)} legs. This is the end of the axis the fit above does "
+            "not cover:\n\n"
             + "\n".join(constraints)
             if constraints
             else ""
@@ -9354,6 +9462,7 @@ def cmd_check(doc: Path) -> int:
     missing = [f.id for f in ALL_FIGURES if f.id not in found]
     unpinned = worker_count_problems()
     misspinned = pinned_count_problems()
+    unbilled_floor = reserve_floor_problems()
     scaffolding = scaffolding_in(text)
 
     print(
@@ -9403,6 +9512,15 @@ def cmd_check(doc: Path) -> int:
             f"`--workers` for the\ndecode instrument, and `PARALLEL_JOBS` for the "
             f"{len(JOBS_AXIS)} families whose axis it is), so no\nfigure below inherits one.\n"
         )
+    if unbilled_floor:
+        print(
+            "Block sizes whose flagless axis never bills the block pool's floor — the term is\n"
+            f"clamped off at {LIBRARY_POOL_DEPTH} readers, so an axis that reaches it nowhere "
+            "satisfies the\nmodel criterion without ever evaluating it:"
+        )
+        for line in unbilled_floor:
+            print(f"  {line}")
+        print()
     outside_dates = outside_sittings(text)
     if outside:
         print(
@@ -9556,6 +9674,7 @@ def cmd_check(doc: Path) -> int:
             or dangling
             or unpinned
             or misspinned
+            or unbilled_floor
             or undeclared
             or unknown_outside
             or both
