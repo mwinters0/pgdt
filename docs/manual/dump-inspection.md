@@ -280,11 +280,14 @@ blocks reads with six workers on a machine of any width. **How many of those wor
 `--parallel-memory`**: one reader of an ordinary 24 MiB-block file wants about
 58 MiB, so a budget of 64 MiB delivers one worker whatever `--jobs` says. Left
 unstated the budget is chosen to afford the count, and where the allocation
-cannot afford it the count itself is lowered to what can be paid for — but a
-budget *you* state is what decides how many of those workers there really
-are. Whatever the file would choose, a `--jobs` you type wins outright, in
-both directions: `--jobs 1` reads a compressed dump serially, and `--jobs 8`
-splits a plain one.
+cannot afford it the count itself is lowered to what can be paid for. **A
+budget you state lowers a count the file recommended in exactly the same way**
+— `--parallel-memory 67108864` on that dump reports one worker, not
+twenty-four, because one is what it will get. Whatever the file would choose, a
+`--jobs` you type wins outright, in both directions: `--jobs 1` reads a
+compressed dump serially, `--jobs 8` splits a plain one, and neither is lowered
+by any budget — how many of those workers really read is then decided from the
+budget, as it always was.
 
 It states what is asked for rather than what you get: two input shapes admit no
 parallelism at all whatever you set, and a plain file gets fewer workers than
@@ -438,9 +441,12 @@ it. `(recommended by the source)` is the flagless case above: an `.xz` dump
 takes the CPUs the process was given, where a plain dump would say `jobs=1
 (recommended by the source)`. Where the memory available could not afford that
 many readers it says so — `(recommended by the source; lowered from 24 by the
-allocation)` — and that lowered number is what will actually run. A `--jobs`
-you typed is printed `(stated)` and is never lowered: it says what was asked
-for, and how much of it the budget delivers is decided later.
+allocation)` — and that lowered number is what will actually run. A
+`--parallel-memory` you typed lowers it the same way, and the clause then reads
+`by the stated budget`, so the number to raise is named rather than left to be
+guessed at. A `--jobs` you typed is printed `(stated)` and is never lowered: it
+says what was asked for, and how much of it the budget delivers is decided
+later.
 
 `memory_bytes` is the byte budget actually governing reads, whether or not you
 asked for one, and it names its own origin the same way:

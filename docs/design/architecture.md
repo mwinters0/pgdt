@@ -643,20 +643,19 @@ three of them name a budget as the thing that bound the plan and the question
 **The note that reaches a `parse` is none of them, and the mode report does not
 stand in for them.** Plan notes belong to a query's replay, so a `parse` is told
 only what the mode report says — and that line names the count that was *asked
-for*. It coincides with what runs in one arrangement only: a flagless `parse`
+for*. It coincides with what runs where the count is a **recommendation**: one
 whose block path is declined has had its count lowered to one by the same
-arithmetic, printed as `(recommended by the source; lowered from N by the
-allocation)`. Where `--jobs` was stated the count is printed as typed, and where
-`--parallel-memory` was stated `ParallelArgs::resolve_in` does not consult the
-allowance at all, so a recommended count is printed unlowered beside a run that
-will not deliver it. The decline is not a `query`-only cost either:
-`leader::scan_region` refuses to cut on `advice.max_partitions() == Some(1)`,
-which is the shape a declined source advertises, so a declined `.xz` `parse` is
-serial whatever `--jobs` says. Both halves are `P19`'s to close — the allowance
-arm as an out-of-band repair, the report as a slice that states the
-**delivered** count on the `scan started`/`scan complete` channel both commands
-carry ("Status output", below), where `scan_region` is the one party that sees
-the advice.
+arithmetic, printed as `(recommended by the source; lowered from N by …)`,
+whether the budget that lowered it was discovered or typed. Where `--jobs` was
+stated the count is printed as typed, and what that delivers is
+`stream::worker_count`'s to decide from the budget. The decline is not a
+`query`-only cost either: `leader::scan_region` refuses to cut on
+`advice.max_partitions() == Some(1)`, which is the shape a declined source
+advertises, so a declined `.xz` `parse` is serial whatever `--jobs` says. That
+remaining half is `P19`'s to close, as a slice that states the **delivered**
+count on the `scan started`/`scan complete` channel both commands carry
+("Status output", below), where `scan_region` is the one party that sees the
+advice.
 
 *Rejected: a `parse`-side decline line in the CLI.* It would print a decline
 beside a `jobs=` line that is itself wrong in the same arrangement, and it
@@ -8782,12 +8781,17 @@ numbers carrying their own provenance:
   readers therefore appear under `jobs=2` and under `jobs=24`, and only the
   first is telling the user what will run.
 
-  **The lowering has a hole, and it is `M87`'s to close**:
-  `ParallelArgs::resolve_in` reaches `Parallelism::discover_in` — which is where
-  `fit` lowers — only on the arm where `--parallel-memory` was absent, so a
-  stated budget with no `--jobs` prints a recommendation unlowered. The rule
-  scopes the lowering to the absence of `--jobs`, and `--jobs` is absent there,
-  so the arm is an oversight rather than a decision
+  **A recommended count answers to the allowance however that allowance
+  arrived**, which is what the rule's scope says: it is the absence of `--jobs`
+  that makes a count lowerable, not the absence of a budget. So
+  `ParallelArgs::resolve_in` lowers on both arms — through
+  `Parallelism::discover_in` where the number was read off the environment, and
+  through `Parallelism::recommended_within` where `--parallel-memory` was typed
+  — and the two differ only in what happens to the **budget**: discovery hands
+  back the bytes the lowered count spends, having chosen them, while a stated
+  budget is taken whole, a stated flag winning outright. The clause names which
+  did the lowering, because they are different numbers to change:
+  `by the allocation` against `by the stated budget`
   ([2026-09-12](../status/history/2026-09-12.md), "A `parse` reports what was
   asked for and never what ran").
 

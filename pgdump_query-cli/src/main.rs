@@ -67,8 +67,9 @@ struct ParallelArgs {
     /// How many workers pgdq may ask for. Left unstated, the file decides: a
     /// plain dump reads serially, and an `.xz` one takes the CPUs this process
     /// was given, or its own block count where that is smaller — lowered again
-    /// to the number of readers the memory allocation can pay for, where that
-    /// is fewer. A count stated here is never lowered that way.
+    /// to the number of readers the memory budget can pay for, where that is
+    /// fewer, whether that budget was discovered or stated with
+    /// `--parallel-memory`. A count stated here is never lowered that way.
     ///
     /// **It states what is asked for, not what is delivered.** Two input
     /// shapes admit no parallelism whatever this says: a `.xz` file with one
@@ -155,6 +156,14 @@ impl ParallelArgs {
     /// what is delivered, and what is delivered is `stream::worker_count`'s to
     /// decide from the budget as it always was.
     ///
+    /// **A stated budget does not exempt a recommended count from that
+    /// rule.** The flag it is scoped to is `--jobs`, so where
+    /// `--parallel-memory` is typed and `--jobs` is not, the source's
+    /// recommendation is still cut to what those bytes afford — through
+    /// `Parallelism::recommended_within`, which is `discover_for`'s lowering
+    /// over a budget that arrived typed rather than discovered. Only the count
+    /// moves: the budget is taken whole, a stated flag winning outright.
+    ///
     /// **A discovered limit can put the budget below `DEFAULT_MEMORY_BUDGET`,
     /// and that is the point.** An allocation at or under the reserve leaves
     /// nothing of it, and the three floors inside the mechanism make that one
@@ -198,7 +207,18 @@ impl ParallelArgs {
         // It costs a handful of small reads and no I/O against the dump.
         let limit = pgdump_query::discover_memory_limit_in(root);
         let parallelism = match self.parallel_memory {
-            Some(stated) => Parallelism::workers(jobs, stated),
+            // A stated budget is taken whole — the flag wins outright — but a
+            // *recommended* count still answers to it, exactly as it answers
+            // to a discovered one. What the rule is scoped to is the absence
+            // of `--jobs`, which is absent on this arm too.
+            Some(stated) => match recommended_jobs {
+                Some(asked) => Parallelism::recommended_within(
+                    asked,
+                    source.default_memory_per_worker(),
+                    stated,
+                ),
+                None => Parallelism::workers(jobs, stated),
+            },
             None => {
                 let discovered =
                     Parallelism::discover_in(root, jobs, source.default_memory_per_worker());
@@ -264,20 +284,19 @@ impl Resolved {
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
     ///
-    /// **The first half is not yet true on one arm**, and `M87` is what makes
-    /// it so: [`ParallelArgs::resolve_in`] reaches
-    /// [`pgdump_query::Parallelism::discover_in`] — where the lowering happens
-    /// — only where `--parallel-memory` was absent, so a stated budget with no
-    /// `--jobs` prints a recommendation the allowance never reduced
-    /// (`docs/design/architecture.md`, "Status output").
+    /// **What did the lowering is named, because the two are different
+    /// numbers to change.** A discovered budget is the environment's, so the
+    /// clause says `by the allocation`; a `--parallel-memory` the user typed
+    /// lowers the count just as hard and the recourse is their own flag, so it
+    /// says `by the stated budget`. [`Resolved::budget_display`] on the line
+    /// beside it then says which number that was.
     fn jobs_display(&self) -> String {
         let jobs = self.parallelism.jobs();
         match self.recommended_jobs {
             None => format!("{jobs} (stated)"),
             Some(asked) if asked > jobs => {
-                format!(
-                    "{jobs} (recommended by the source; lowered from {asked} by the allocation)"
-                )
+                let by = if self.budget_stated { "the stated budget" } else { "the allocation" };
+                format!("{jobs} (recommended by the source; lowered from {asked} by {by})")
             }
             Some(_) => format!("{jobs} (recommended by the source)"),
         }
@@ -2661,10 +2680,61 @@ mod tests {
 
         // A stated budget still wins outright here: the allocation is what
         // discovery answers, not a ceiling imposed on a person who typed one.
+        // The *count* beside it is nobody's statement, so it is cut to what
+        // those bytes afford — six readers of 58 MiB inside 400 MiB.
         let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
         let resolved = stated.resolve_in(&root, &Recommends::reader(24, READER));
         assert_eq!(resolved.parallelism().memory_bytes(), Some(400 << 20));
+        assert_eq!(resolved.parallelism().jobs(), 6);
+    }
+
+    /// **A recommended count answers to the allowance however the budget
+    /// arrived.** The rule is scoped to the absence of `--jobs`
+    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
+    /// permits"), and `--jobs` is absent when only `--parallel-memory` is
+    /// typed — so the source's recommendation is cut by a stated budget
+    /// exactly as it is by a discovered one, and the run no longer announces a
+    /// count it will not deliver.
+    ///
+    /// **Only the count moves.** The budget is the user's own number and is
+    /// taken whole, which is what separates this from discovery, where the
+    /// budget handed back is the one the lowered count spends.
+    #[test]
+    fn a_stated_budget_lowers_a_recommended_count_and_keeps_its_own_bytes() {
+        let root = runtime_root("no-limit");
+        let source = Recommends::reader(24, READER);
+
+        // 32 MiB affords no whole reader at all, which is the floor: one.
+        let tight = ParallelArgs { jobs: None, parallel_memory: Some(32 << 20) };
+        let resolved = tight.resolve_in(&root, &source);
+        assert_eq!(resolved.parallelism().jobs(), 1);
+        assert_eq!(resolved.parallelism().memory_bytes(), Some(32 << 20));
+        assert_eq!(
+            resolved.jobs_display(),
+            "1 (recommended by the source; lowered from 24 by the stated budget)",
+            "the clause names the flag to raise, not a cgroup nobody set"
+        );
+        assert_eq!(resolved.budget_display(), format!("{} (stated)", 32u64 << 20));
+
+        // Room for more than the source asked for leaves the recommendation
+        // standing, and the line says nothing about a lowering.
+        let roomy = ParallelArgs { jobs: None, parallel_memory: Some(64 << 30) };
+        let resolved = roomy.resolve_in(&root, &source);
         assert_eq!(resolved.parallelism().jobs(), 24);
+        assert_eq!(resolved.jobs_display(), "24 (recommended by the source)");
+
+        // A stated count is still printed as typed and never lowered, with
+        // the same budget beside it — the asymmetry this arm preserves.
+        let both = ParallelArgs { jobs: Some(24), parallel_memory: Some(32 << 20) };
+        let resolved = both.resolve_in(&root, &source);
+        assert_eq!(resolved.parallelism().jobs(), 24);
+        assert_eq!(resolved.jobs_display(), "24 (stated)");
+
+        // A source recommending no per-worker cost has nothing to divide by,
+        // so its count is left where it is.
+        let plain = tight.resolve_in(&root, &Recommends::jobs(1));
+        assert_eq!(plain.parallelism().jobs(), 1);
+        assert_eq!(plain.parallelism().memory_bytes(), Some(32 << 20));
     }
 
     /// **The check `introspect` owes: the instrument must not move the plan it

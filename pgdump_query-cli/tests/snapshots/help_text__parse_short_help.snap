@@ -32,9 +32,10 @@ Options:
       --jobs <N>                 How many workers pgdq may ask for. Left unstated, the file decides:
                                  a plain dump reads serially, and an `.xz` one takes the CPUs this
                                  process was given, or its own block count where that is smaller —
-                                 lowered again to the number of readers the memory allocation can
-                                 pay for, where that is fewer. A count stated here is never lowered
-                                 that way
+                                 lowered again to the number of readers the memory budget can pay
+                                 for, where that is fewer, whether that budget was discovered or
+                                 stated with `--parallel-memory`. A count stated here is never
+                                 lowered that way
       --parallel-memory <BYTES>  What those workers may hold between them in read buffers, in bytes.
                                  Left unstated, pgdq reads the memory limit it is running under —
                                  the smallest cgroup limit that binds — less a 384 MiB reserve, and

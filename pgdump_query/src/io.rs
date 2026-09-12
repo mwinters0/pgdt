@@ -834,6 +834,27 @@ impl Parallelism {
         }
     }
 
+    /// [`Parallelism::discover_for`]'s lowering against a budget the caller
+    /// already holds — a *recommended* `jobs` cut to what `memory_bytes`
+    /// affords at `per_worker` each, with the budget kept exactly as stated.
+    ///
+    /// **A recommended count answers to the allowance however that allowance
+    /// arrived.** `discover_for` reads the number off the environment and
+    /// lowers the count to fit it; this is the same rule where the number was
+    /// *typed* instead (`docs/design/roadmap.md`, "A default runs as fast as
+    /// the allocation permits"). What the rule is scoped to is the absence of
+    /// a **count**, never the absence of a budget: a caller holding a count
+    /// somebody stated calls [`Parallelism::workers`] and keeps it.
+    ///
+    /// **Only the count moves.** Where `discover_for` hands back the budget
+    /// the lowered count spends — because it chose that budget and must not
+    /// name one the allowance never granted — the budget here is the caller's
+    /// own, and lowering it would be overruling a stated flag
+    /// (`docs/design/architecture.md`, "Status output").
+    pub fn recommended_within(jobs: usize, per_worker: Option<u64>, memory_bytes: u64) -> Self {
+        Self::workers(Self::fit(jobs, per_worker, memory_bytes).0, memory_bytes)
+    }
+
     /// The largest pair `(count, budget)` that fits inside `cap`: as many of
     /// `jobs` workers as `cap` affords at `per_worker` each, and exactly what
     /// that many of them spend.
@@ -4577,6 +4598,34 @@ mod tests {
             Parallelism::discover_in(blind.path(), 24, Some(per_worker)).memory_bytes(),
             Some(per_worker * 24)
         );
+    }
+
+    /// **A recommended count is lowered by a stated budget exactly as it is by
+    /// a discovered one, and only the count moves.** Where
+    /// [`Parallelism::discover_in`] hands back the bytes the lowered count
+    /// spends — it chose them, and must not name a budget the allowance never
+    /// granted — the budget here was stated by the caller and is taken whole.
+    #[test]
+    fn a_stated_budget_lowers_a_recommendation_without_being_lowered_itself() {
+        let per_worker = 58 << 20;
+
+        // Six readers fit inside 400 MiB; the seventh does not.
+        let cut = Parallelism::recommended_within(24, Some(per_worker), 400 << 20);
+        assert_eq!(cut.jobs(), 6);
+        assert_eq!(cut.memory_bytes(), Some(400 << 20), "the stated bytes, not 6 × per_worker");
+
+        // Room for the whole recommendation leaves it standing.
+        let roomy = Parallelism::recommended_within(24, Some(per_worker), 64 << 30);
+        assert_eq!(roomy.jobs(), 24);
+        assert_eq!(roomy.memory_bytes(), Some(64 << 30));
+
+        // The floor is one worker at whatever was stated, which is
+        // `Parallelism::workers`' serial arrangement carrying the budget.
+        let tight = Parallelism::recommended_within(24, Some(per_worker), 32 << 20);
+        assert_eq!(tight, Parallelism::Serial { memory_bytes: Some(32 << 20) });
+
+        // Nothing to divide by leaves the count where it is.
+        assert_eq!(Parallelism::recommended_within(8, None, 32 << 20).jobs(), 8);
     }
 
     /// **An unlimited environment falls back to today's constant**, which is

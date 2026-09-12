@@ -98,8 +98,9 @@ Options:
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count
-          where that is smaller — lowered again to the number of readers the memory allocation can
-          pay for, where that is fewer. A count stated here is never lowered that way.
+          where that is smaller — lowered again to the number of readers the memory budget can pay
+          for, where that is fewer, whether that budget was discovered or stated with
+          `--parallel-memory`. A count stated here is never lowered that way.
           
           **It states what is asked for, not what is delivered.** Two input shapes admit no
           parallelism whatever this says: a `.xz` file with one block, and an `INSERT` run
