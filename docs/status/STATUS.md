@@ -545,8 +545,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD21 -->
-**`KD1`–`KD21` are allocated, and nothing at or below `KD21` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD22 -->
+**`KD1`–`KD22` are allocated, and nothing at or below `KD22` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -681,6 +681,17 @@ here rather than reading as a phase nobody has sliced.
   Detail: [`../design/architecture.md`](../design/architecture.md), "Execution
   model and API surface".
 
+- **KD22** — the leader cuts a window of `workers × partition_bytes` from a
+  `COPY` block's start and drains every piece before merging, so a block far
+  smaller than that window is found by reading and parsing the whole window and
+  discarding all of it: **149× the bytes of a serial scan at `--jobs 4` and
+  268× at `--jobs 8`**, on a 57.6 MiB dump of 2,000 small blocks, 34× the wall
+  time. Reached with no flag typed on a compressed dump, `XzSource` recommending
+  one worker per core. **(c) unowned**; promoted by a phase taking up leader
+  scheduling. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "The interior
+  split".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -698,21 +709,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**`19.25`'s correction reports two of the three ways a `parse` is left
-serial, and the third is the one a user is most likely to meet.** `scan
-arrangement` fires where the caller's budget affords fewer readers than were
-asked for and where the source declines to be split at all; it stays silent
-where the *region* — one `COPY` block — is smaller than one of the source's
-partitions, which is how a dump of small tables reads at any `--jobs`. The
-decision was scope: that refusal is per block, so reporting it under a
-once-per-scan gate would report the first small block and then suppress the
-real answer for the rest of the file, and reporting it per block would put a
-line under nearly every block of nearly every dump. What it costs is that
-`pgdq parse --jobs 24` over a dump of small tables runs serially and prints no
-correction — the arrangement a user is most likely to be surprised by, and the
-one the spec row's "says what ran" reads as covering. Reconsidering it means
-picking a mechanism, not relaxing this gate: the honest shape is a count folded
-across regions and stated at `scan complete`, which costs an accumulator
-through three emission sites and says nothing until the scan is over. Detail:
-[`../design/roadmap-P19.25-delivered-count-notes.md`](../design/roadmap-P19.25-delivered-count-notes.md),
-"The three calls that are not obvious".
+*Nothing open.*

@@ -41,16 +41,23 @@ number the line above already carries, on every scan pgdq ever runs.
 
 **Two refusals are reported and a third is not.** `scan_region` declines for
 three reasons: the caller's count or budget affords one reader, the source
-advises a single partition, or *this region* is smaller than one partition. The
-first two are properties of the arrangement and are still true at the next
-block; the third is a property of the block. Reporting it would put a line
-under nearly every block of a dump of small tables, and once-per-scan
-deduplication would then report the first small block and suppress the real
-answer for the rest of the file. The cost is stated in the code, in
-`architecture.md` and in the manual rather than hidden: **a `--jobs 24` scan of
-a dump of small tables runs serially and this line says nothing.** If that ever
-needs covering, the honest shape is a count folded across regions and stated at
-`scan complete`, not a relaxation of this gate.
+advises a single partition, or the floor — what remains of the *file* from this
+block's data start is shorter than one partition. The first two are properties
+of the arrangement and are still true at the next block; the third is an end of
+file condition, since the region's extent is not known here and the remainder
+is the only bound available. Being serial on a tail shorter than one reader's
+charge is the right arrangement, so there is nothing to correct, and a line
+saying so would fire on the last block of every file.
+
+**What silence does not mean** is that the arrangement was a good one. The
+gate's contract is narrow on purpose — it corrects `scan started`'s `jobs=` and
+nothing else — and the arrangement it cannot speak to is `KD22`: a block far
+smaller than the `workers × partition_bytes` window it is cut from is found by
+reading the whole window and discarding it, which delivers the announced count
+while reading 268× a serial scan's bytes at `--jobs 8`. That is a defect in the
+leader, not a gap in this line; widening the line to carry an over-read ratio
+would cost an accumulator across regions and help nobody it is aimed at
+(`docs/design/architecture.md`, "The interior split").
 
 **The source arm is asked about the whole file, not about the region.** A
 block-decoding source standing on a region past its last block boundary advises

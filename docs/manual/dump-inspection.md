@@ -357,9 +357,18 @@ For `parse` it cuts the *inside* of a `COPY` block up. Once pgdq has read a
 block's `COPY … FROM stdin;` header it knows everything until the block's end
 marker is rows, so it hands that stretch out to this many readers at once and
 folds their answers back into the one result — the same block list, the same
-row counts, the same cache, whatever you set. A block too small to be worth
-splitting is read the way it always was, so a dump of many small tables mostly
-ignores the flag and a dump of a few huge ones mostly does not.
+row counts, the same cache, whatever you set.
+
+**Raise it for a dump of a few large tables; leave it at `--jobs 1` for a dump
+of many small ones.** pgdq cannot know where a block ends until it finds the
+end marker, so each reader is given a stretch sized for a large block. Where
+the block really is that large, the readers share it. Where it is much smaller,
+they read past its end and that work is thrown away — and every reader you add
+widens the stretch that gets thrown away, so on a dump of many small tables a
+high `--jobs` is **slower** than `--jobs 1`, several times over, and reads many
+times more from the disk. The answer is identical either way; only the time
+differs. There is no line warning you about this, so if a scan of a
+small-table dump is slower than you expected, try `--jobs 1`.
 
 It also bounds how many decoded `.xz` blocks are kept at once — one per worker
 you allowed, if `--parallel-memory` leaves room for them. So on a compressed
@@ -514,11 +523,11 @@ budget could not afford, `budget` for readers it could not afford — and
 which is the number to raise `--parallel-memory` to. **No such line means the
 count ran as announced.**
 
-One case it does not cover: a `COPY` block smaller than one of the pieces the
-file would be split into is read serially whatever you asked for, and that is
-not reported, because on a dump of many small tables it would be reported for
-almost every block. So a `--jobs 24` scan of a dump of small tables can run
-serially and print no correction at all.
+**What no line means is that the count ran — not that it was the right
+count.** On a dump of many small tables every reader you asked for does run,
+and reading past the end of each small block is what most of them spend their
+time on, so the scan is slower than `--jobs 1` with nothing printed to say so.
+See `--jobs` above.
 
 A query's mapping pass may print `scan complete` at the offset it stopped
 rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file

@@ -322,15 +322,16 @@ impl BoundBy {
 /// **It reports the two rules that answer for the arrangement, and not the
 /// one that answers for a block.** Both of the reasons below are read off the
 /// source's advice over *the rest of the file* and the caller's budget, so
-/// one line stands for the whole scan. A `COPY` region smaller than one of
-/// the source's partitions is the third way to be left serial and is
-/// deliberately not reported: it is a property of that block rather than of
-/// the arrangement, it is the documented behaviour of a dump of small tables
-/// (`docs/design/architecture.md`, "The interior split"), and a dump with ten
-/// thousand small blocks would otherwise carry ten thousand lines saying so.
-/// What that costs is that a `--jobs 24` scan of a dump of small tables runs
-/// serially and says nothing, which is the one case this line does not
-/// cover.
+/// one line stands for the whole scan. [`scan_region`]'s floor is the third
+/// way to be left serial and is deliberately not reported: it fires where
+/// what remains of the *file* is shorter than one partition, so it is an end
+/// of file condition and would fire on the last block of every file.
+///
+/// **Silence means the announced count ran, never that the arrangement was a
+/// good one.** A scan whose blocks are far smaller than the window each is
+/// cut from delivers the count it announced and reads orders of magnitude
+/// more than a serial scan would, reporting nothing here because nothing was
+/// cut short (`KD22`, `docs/design/architecture.md`, "The interior split").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Shortfall {
     /// Readers the caller asked for — [`crate::Parallelism::jobs`], which is

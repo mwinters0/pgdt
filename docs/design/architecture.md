@@ -5395,9 +5395,37 @@ speculative cut does, so a seek table does not by itself say whether a worker
 starts inside a block. The leader makes speculation unnecessary rather than
 cheap — a worker is never wrong, so there is no validation path, no rollback,
 and no window in which a bad guess sits in the map. What it costs is a dump of
-many small blocks, where the leader crosses a boundary per block and the scan
-is serial; that shape is the 4000-block fixture, and being serial on 1.9 MB is
-not a cost.
+many small blocks, where the leader crosses a boundary per block; on a file
+smaller than one partition that is simply a serial scan, which is the
+4000-block fixture and not a cost on 1.9 MB, and on a larger one it is the
+over-read below (`KD22`).
+
+<!-- deficiency: KD22 -->
+**A block much smaller than the window is found by reading the whole window,
+and that is `KD22`.** The leader cannot know where the region ends — finding it
+*is* the work — so it cuts `workers × partition_bytes` from the block's data
+start (`Partitioning::window_end`), dispatches a piece per worker, and drains
+**every** piece before `merge` folds them; `merge` then stops at the first
+terminator and everything after it is discarded, after which `map_forward`
+re-reads those bytes serially. Where the block fills the window this is the
+whole point of the arrangement. Where it does not, each added reader widens the
+window it is thrown away from, so the waste grows with `--jobs` rather than
+shrinking: on a 57.6 MiB dump of 2,000 blocks of ~29 KB, a serial scan reads
+57.6 MiB, `--jobs 4` reads 8,594 MiB (149×) and `--jobs 8` reads 15,462 MiB
+(268×) — 1.37 s against 0.04 s, and 3.89 s of CPU against 0.03. A probe, not a
+figure. **It is reached with no flag typed**, on a compressed dump:
+`XzSource::default_workers` is one worker per core, and the boundaried cut
+takes `workers` whole blocks, so each small `COPY` block costs `workers` block
+decodes. The one refusal that would catch it — `scan_region`'s floor — compares
+against what is left of the *file* rather than of the region, so it fires only
+on a remainder shorter than one partition, which is why every fixture is
+immune: they are smaller than one partition end to end. `scan arrangement` is
+silent here and is right to be — the announced count did run — so silence from
+that line means the count was delivered and never that the arrangement was a
+good one (below, "Status output"). The fix is not the cut width, which `19.20`
+measured and settled, and not the floor, which is about memory: it is for the
+leader to learn the region's extent before committing a window, and that is a
+design question nobody has grilled.
 
 *Rejected:* **pipelining across blocks**, keeping workers busy inside block `k`
 while the leader runs ahead to `k+1`. Finding block `k`'s end *is* the work the
@@ -8981,17 +9009,27 @@ path, [`Partitioning::worker_memory`] at the asked-for count where the budget
 did). Silence is the claim that the count ran as announced.
 
 **It reports the two rules that answer for the arrangement, and not the one
-that answers for a block.** A `COPY` region smaller than one of the source's
-partitions is the third way to be left serial, and it is deliberately not
-reported: it is a property of that block rather than of the run, it is the
-documented behaviour of a dump of small tables (above, "The interior split"),
-and a dump with ten thousand small blocks would otherwise carry ten thousand
-copies of one line. What that costs is stated rather than hidden — a `--jobs 24`
-scan of a dump of small tables runs serially and this line says nothing — and
-it is the one arrangement the correction does not cover. The source arm is
-asked about the **whole file** rather than about the region for the same
-reason: a block-decoding source standing past its last block boundary advises
-one partition too, and reporting that would be reporting where the leader is
+that answers for a block.** `scan_region`'s floor is the third way to be left
+serial, and it is deliberately not reported: it fires where what remains of the
+*file* is shorter than one partition — the leader cannot know the region's
+extent, so the remainder is the only bound it has (above, "The interior split")
+— which makes it an end-of-file condition and a property of where the leader is
+standing rather than of the run. Being serial on a tail shorter than one
+reader's charge is the correct arrangement and not a shortfall, and a line
+saying so would fire on the last block of every file.
+
+**Silence therefore means the announced count ran, and never that the
+arrangement was a good one.** The two are different claims, and this line only
+makes the first: a scan whose blocks are far smaller than the window each is
+cut from delivers exactly the count it announced while reading orders of
+magnitude more than a serial scan would, and says nothing here because nothing
+was cut short (`KD22`, above). Widening the line to cover that would mean
+accumulating an over-read ratio across regions whose only consumer is a
+diagnostic — and would not help the user it is aimed at, who is helped by the
+leader not doing it. The source arm is asked about the **whole file** rather
+than about the region for the reason the floor is not reported at all: a
+block-decoding source standing past its last block boundary advises one
+partition too, and reporting that would be reporting where the leader is
 standing.
 
 *Rejected: a `parse`-side decline line in the CLI.* It would print a decline
