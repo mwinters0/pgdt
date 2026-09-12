@@ -362,375 +362,104 @@ than this one (`19.23`).
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
       [`../design/roadmap-P19.1-runtime-invariants-notes.md`](../design/roadmap-P19.1-runtime-invariants-notes.md)
-- [x] **19.2** The plain-path account — both instruments run and read. A plain
-      `parse` at `--jobs ≥ 2` reads every byte **twice** (3.02 GiB off a
-      3.00 GiB file serially, 6.02 GiB parallel, flat in the worker count),
-      which is the 1→2 step; the `--alone` sitting against a clamp-lifted
-      scratch build confirms a second, *depth* term above four workers but does
-      **not** account for the 4→8 step it was charged with, and refutes
-      `POOL_DEPTH` outright as the cause of the typed-`query` flatness. The
-      harness change that buys the first half landed: the profile recipe now
-      prints a *pair* of profiles read against each other
-      (`measure.PROFILE_AXIS`). The account is routed: both of the spec's
-      branches fire, on different terms, and the plain arm's default is serial.
-      Notes:
+- [x] **19.2** The plain-path account, both instruments run and read: a plain
+      `parse` at `--jobs ≥ 2` reads every byte twice, and `POOL_DEPTH` is
+      refuted as the cause of the typed-`query` flatness. Notes:
       [`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md)
 - [x] **19.3** The CLI runs a `current_thread` runtime, and `rt-multi-thread`
-      is gone from the workspace. At `--jobs 4` on this 24-CPU machine the
-      process holds **8 threads against 34**, writing a byte-identical cache;
-      the interrupt guard still saves and exits 143 under `SIGTERM`. Claimed as
-      a thread-count result only — the plain control is too small a shape for
-      the arena set to show. Notes:
+      is gone from the workspace. Notes:
       [`../design/roadmap-P19.3-current-thread-runtime-notes.md`](../design/roadmap-P19.3-current-thread-runtime-notes.md)
 - [x] **19.4** `Serial` carries an optional budget, so the worker count's
       collapse at `--jobs 1` no longer takes the stated bytes down with it —
-      `KD16` struck. `Parallelism::default()` is the one value stating no
-      budget, which is what keeps the status line's `(default)` honest. Notes:
+      `KD16` struck. Notes:
       [`../design/roadmap-P19.4-serial-budget-notes.md`](../design/roadmap-P19.4-serial-budget-notes.md)
-- [x] **19.5** `Partitioning` states its retained unit; the span term is added
-      only for a chunk-shaped source; and a plain source's partition is
-      **eight** read chunks capped at `POOL_MAX_BYTES` — `19.2`'s repair 1,
-      folded in here, which caps a worker's tail read at 12.5% of a partition
-      where it used to read the file twice. A block-decoding `.xz` is charged
-      the decode footprint alone and its plan note reads `max_source_span:
-      None`. The leader's floor rose with the partition, so five test apparatus
-      constants moved with it and `determinism.rs`'s shipped-configuration leg
-      now sizes its dump off the source. Notes:
+- [x] **19.5** `Partitioning` states its retained unit, and a plain source's
+      partition is eight read chunks capped at `POOL_MAX_BYTES` — `19.2`'s
+      repair 1, folded in here. Notes:
       [`../design/roadmap-P19.5-retained-unit-notes.md`](../design/roadmap-P19.5-retained-unit-notes.md)
-- [x] **19.6** The reserve figure is registered (`measure.UNTAKEN`, no marker in
-      the doc) and taken diagnostically — `runs/measure-20260909T084032`,
-      `--alone`, NOT PUBLISHABLE. **A constant exists on the plain path and not
-      on the compressed one**: plain holds 37.4 MiB whatever is stated, while a
-      block-decoding `.xz` at `--jobs 24` reads `160 MiB + 54 MiB` a sub-stream
-      against a divisor charging 25 MiB — 243 MiB resident at a 64 MiB budget
-      and 1242 MiB at 512 MiB. Reviewed since: the multiple is the block pool's
-      doubled ceiling, `19.7` couples the two counts and the budget rule ships
-      unamended. The three `MALLOC_ARENA_MAX` legs agree within the spreads,
-      the one disjoint pair reversing sign, and `M76` takes the controlled
-      reading that says whether the manual's 200 MiB survived `19.3`. Notes:
+- [x] **19.6** The reserve figure registered and taken diagnostically
+      (`--alone`, NOT PUBLISHABLE): a fixed term exists on the plain path and
+      not on the compressed one. Notes:
       [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md)
-- [x] **19.7** `BufferPool`'s accounting alone. `keeps` is one sentence —
-      `len <= slot_bytes()` — so `held_bytes()` is a bound rather than an
-      eightfold under-report; the block pool's free and retained lists share
-      one slot count through `BufferPool::reserve`, halving a ceiling that was
-      `2 × slots × unit`; and `BlockCache::affordable` wants room for **two**
-      units, which moves the whole-block-decode decline to a largest block
-      above *half* the budget (~30 MiB at the default, koji's 24 MiB still
-      decoding). The parallel plain path lost its partition-buffer pooling
-      with the under-report that hid it — flagged below. Notes:
+- [x] **19.7** `BufferPool`'s accounting alone — `held_bytes()` becomes a bound,
+      the block pool's two lists share one slot count, and `affordable` wants
+      room for two units. Notes:
       [`../design/roadmap-P19.7-pool-accounting-notes.md`](../design/roadmap-P19.7-pool-accounting-notes.md)
-- [x] **19.8** The source's own worker default; `DEFAULT_JOBS` removed.
-      `ByteRangeSource::default_workers` is a defaulted recommendation —
-      `LocalFileSource` inherits **one**, `XzSource` answers
-      `available_parallelism()` — and `ParallelArgs::resolve` asks the open
-      source whenever `--jobs` was omitted, a stated flag winning outright in
-      both directions. So a flagless `.xz` `parse` now reports `jobs=24` here
-      and a plain one still reports `jobs=1`. The budget loses its `(default)`
-      marker on the compressed path, `Parallelism::Workers` having nowhere to
-      record that nobody stated one — the slot `19.9`'s provenance work already
-      owns. Notes:
+- [x] **19.8** The source's own worker default; `DEFAULT_JOBS` removed. A
+      stated `--jobs` wins outright in both directions. Notes:
       [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
-- [x] **19.9** The resolution is tested and a run says what it resolved. The
-      **mode report** is one line per scanning command, before the scan opens:
-      `running inside a stated memory allocation` naming `limit_bytes`, or `no
-      memory limit found: nothing is enforcing one on this process`, with both
-      numbers carrying their provenance — `jobs=` as `(stated)` or
-      `(recommended by the source; lowered from N by the allocation)`, and
-      `memory_bytes=` in four spellings including `(discovered: <file> states a
-      limit of N byte(s))` and `(default: no limit found)`. It is a **second,
-      CLI-emitted line** rather than `scan started`'s existing slot, which is
-      the library's and cannot know where a number came from — flagged below.
-      `discover_memory_limit` now answers a `MemoryLimit` carrying the file
-      that stated it; `PlanNoteKind::AllocationBelowFloor` is the below-floor
-      note, keyed on the budget against one reader's unit and not on the span;
-      and the three root-taking seams are public, so five committed roots under
-      `pgdump_query-cli/tests/data/runtime/` pin a resolution against a v1
-      hierarchy, an unlimited host and an allocation under the reserve. The
-      manual's `(default)` claim went false with the report and was corrected
-      here. Notes:
+- [x] **19.9** The resolution is tested and a run says what it resolved: the
+      CLI's **mode report**, one line per scanning command, with both numbers
+      carrying their provenance. Notes:
       [`../design/roadmap-P19.9-resolution-report-notes.md`](../design/roadmap-P19.9-resolution-report-notes.md)
-- [x] **19.10** The manual and both flags' help text. The correction that
-      mattered is that a **discovered limit is a ceiling, not the budget**:
-      `limit − 256 MiB` bounds what pgdq may take and what it *does* take is
-      what the file asks for, so a plain dump in a 3 GiB container runs at
-      64 MiB and a 24 MiB-block `.xz` at ~1.4 GiB, and where the ceiling
-      affords fewer readers the **count** comes down with the budget. Three
-      sentences the phase's own code had falsified went with it — the largest
-      block cleared "twice over" (now plus the chunk and the decoder), 48 MiB a
-      worker (now ~58), and "each worker also holds the block it is decoding"
-      as the account of what a compressed scan holds above its budget, which
-      `19.14` charged. `MALLOC_ARENA_MAX` says the cap buys real memory back on
-      both shapes and in different places, with **no number** — `19.11`'s
-      sitting is what can publish one. `19.9`'s below-floor note reached the
-      manual here. Notes:
+- [x] **19.10** The manual and both flags' help text, on the correction that a
+      **discovered limit is a ceiling, not the budget**. Notes:
       [`../design/roadmap-P19.10-manual-notes.md`](../design/roadmap-P19.10-manual-notes.md)
 - [ ] **19.11** The closing sweep — publishes the reserve figure and
-      `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures
-      against `19.14`'s raised `PARALLEL_BUDGET` in the `4g` container that
-      budget now derives, `PARALLEL_MEMORY` having been a literal that did not
-      move with it ([2026-09-10](history/2026-09-10.md), "The container was
-      sized off a number that moved"). It is also the first sitting that emits
-      `parallel-peak-rss`'s corrected closing paragraph, the hand-written one
-      it replaces having credited the flat region to `POOL_DEPTH`. As the
-      sitting that publishes `reserve` for the first time it also owes the
-      `Shared` edge onto `peak-rss` and the `Session.borrow` change that lets an
-      **RSS** reading cross a share, `borrow` copying wall clock only today.
-
-      **It does not start until a `--figure reserve --alone` sitting completes
-      with no killed leg**, which is what the spec makes publication
-      conditional on and which `19.17.1` made a question a run answers — banner,
-      `raw.json` and exit code — rather than one that could not be asked — so it is behind `19.19` and `19.17.1`, not merely behind
-      `19.13`. It also re-takes `parallel-scan-throughput` and
-      `parallel-peak-rss`, both of which were taken before `partition_bytes`
-      changed and describe partitioning this code no longer does.
-- [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build —
-      `runs/measure-20260909T171423`, `--alone`, NOT PUBLISHABLE — with the
-      inert worker-count-plus-one arena leg dropped. **`19.7`'s prediction is
-      refuted**: the compressed legs did not halve, the line moving from
-      `160 MiB + 54.3` a sub-stream to `180 MiB + 59.4`, and the bytes a
-      tighter pool declines to keep are retained by the calling thread's arena
-      instead. The arena null goes with it — a plain scan is now
-      `16 MiB + 8.0 MiB` a worker uncapped and **flat** at `MALLOC_ARENA_MAX=2`.
-      The constant is **256 MiB**, the uncapped compressed leg's fixed term
-      rather than its worst cell. Reviewed since: what the sitting actually
-      found is a **divisor** charging 25 MiB for a sub-stream that holds 59.4,
-      so `19.14` corrects the charge and the rule's fraction is dropped as
-      structurally inert. Notes:
+      `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures,
+      which were taken before `partition_bytes` changed. **It does not start
+      until a `--figure reserve --alone` sitting completes with no killed leg**,
+      so it is behind `19.19` and `19.17.1`, not merely behind `19.13`.
+- [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
+      (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
+      sitting found is a divisor under-charging a sub-stream. Notes:
       [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
-- [x] **19.13** `discover_memory_limit`, `Parallelism::discover`, and the budget
-      rule, carrying the **384 MiB** constant `19.16` chose and 2026-09-12's
-      review affirmed — plus the source's own budget
-      recommendation, capped at half of `MemAvailable` (`RT8`) where no limit
-      is discovered — without which a corrected divisor makes a flagless `.xz`
-      scan serial on an unlimited host. `MEMORY_RESERVE` is 384 MiB and its doc
-      comment states the two things the constant was **not** shown to do: it was
-      validated to 2 GiB *on 24 cores* (`19.23`) and it does not cover the block
-      pool's floor (`19.22`). The **decline's report** names the limit that sent
-      a compressed scan serial —
-      `Resolved::plan_note_origin` appends the mode report's own
-      `budget_display` spelling to every plan note the CLI prints, and nothing
-      at all where `--parallel-memory` was stated. `ParallelArgs::resolve` asks the source when
-      `--parallel-memory` is absent, a discovered limit caps at
-      `limit − MEMORY_RESERVE` and no limit found caps at half of
-      `MemAvailable`; an allocation at or under the reserve resolves to a budget
-      of **zero**, which is one reader's
-      worth on the streaming path. The falsified half of the manual moved with
-      it. **The recommended count and the recommended budget settle as a
-      consistent pair** on any cpu-to-memory shape: `XzSource::default_workers`
-      caps at `SeekTable::block_count()`, the source's budget recommendation is
-      stated **per worker** rather than as a total for its own count, and
-      `Parallelism::fit` reduces the count alongside the budget where the
-      allowance affords fewer workers — a stated `--jobs` keeping its count,
-      that rule governing the absence of a flag and never its presence
-      ([2026-09-10](history/2026-09-10.md), "The recommended
-      pair has to be consistent"). Notes:
+- [x] **19.13** `discover_memory_limit`, `Parallelism::discover` and the budget
+      rule, shipping the **384 MiB** `MEMORY_RESERVE` `19.16` chose, the
+      source's own budget recommendation, and the decline's report. Notes:
       [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md)
-- [x] **19.14** A compressed sub-stream is charged what one reader holds —
-      `2 × unit + chunk + xz_seek::Reader::decode_footprint()`, **58.03 MiB**
-      against koji's 24 MiB blocks where the old divisor billed 25 for a
-      sub-stream `19.12` measured at 59.4. `BlockCache::affordable` is that
-      same number asked of one reader, through the one `reader_bytes` both
-      call, so the decline moved to ~27 MiB of block under the 64 MiB default
-      and the decline's message names the whole charge as the recourse — read
-      off the source through a new defaulted `block_decode_bytes`.
-      `measure.PARALLEL_BUDGET` is 2 GiB, which is what keeps the widest `.xz`
-      rows at twenty-four readers, and `QUERY_SUBSTREAM_CAP` empties with it.
-      **The default budget now affords one reader of an ordinary compressed
-      dump**, which is what `19.13`'s source budget recommendation repairs.
+- [x] **19.14** A compressed sub-stream is charged what one reader holds,
+      through the one `reader_bytes` the charge and the decline both call.
       Notes:
       [`../design/roadmap-P19.14-reader-charge-notes.md`](../design/roadmap-P19.14-reader-charge-notes.md)
 - [x] **19.15** The budget rule run in real cgroups, and **the gate does not
-      pass**: a flagless `.xz` `parse` in a **512 MiB** allocation resolves three
-      readers and holds 474 MiB median, **509 MiB at its worst of thirteen reps —
-      0.6% of the limit** — against a 19.5% spread, nothing killed. The thin band
-      is not where it was predicted: 1.5 GiB leaves 33% and 1 GiB leaves 9%,
-      because `19.12`'s `180 + 59.4` a sub-stream was fitted across a *stated*
-      budget and refits as **403 MiB + 31.2 MiB a reader** once the count comes
-      down with the budget — so the **fixed** term, not the per-reader one,
-      exceeds the 256 MiB reserve. `MALLOC_ARENA_MAX=2` buys a sixth of it, so
-      the standing arena account does not explain it. The reopening the spec
-      named is refused by the same reading, a proportional reserve being smaller
-      where the failure is. Reviewed since: the spec's reserve decisions are
-      amended and the constant is `19.16`'s to choose. Everything else resolved as designed,
-      including the unlimited arm at 8 GiB, where the source's recommendation
-      binds; `KD18`'s shape costs 80.5 MiB inside a 1 GiB container rather than
-      209, the budget admitting eight of the twenty-four workers stated. A
-      `runs/` probe, not a figure. Notes:
+      pass** — 0.6% of the limit left at the worst rep, and the fixed term
+      rather than the per-reader one is what exceeds the reserve. A `runs/`
+      probe, not a figure. Notes:
       [`../design/roadmap-P19.15-budget-probe-notes.md`](../design/roadmap-P19.15-budget-probe-notes.md)
-- [x] **19.16** The reserve constant, from a reading rather than a fit — and
-      it is **384 MiB**, the smallest of five candidates whose worst rep leaves
-      ≥20% of the limit at every leg. Five builds differing only in
-      `MEMORY_RESERVE` — 256, 320, 384, 448, 512 — over the whole flagless
-      family, ten reps, 400 runs, nothing killed and nothing non-zero
-      (`runs/19.16-reserve-constant-20260911-2210/`). The rule resolves exactly
-      at all forty cells: the count is
-      `min(24, max(1, floor((limit − reserve) / per_reader)))` and the budget
-      asked for is `count × per_reader` to the byte. **The margin at the two
-      legs that decide it is 0.2 and 0.3 percentage points against 2.1 points of
-      apparatus noise**, measured where the reserve is provably inert, and the
-      gate is non-monotonic — 448 fails between a passing 384 and a passing 512
-      on a two-rep tail. **The choice was reviewed on 2026-09-12 and 384
-      stands**: reconstructed against the criterion it is the only candidate
-      inside both deciding legs' admissible ranges, (322, 381] at `1g` and
-      (367, 425] at `1536m`. The same review found two defects the reserve
-      cannot fix — the charge under-bills the block pool's floor below four
-      readers (`19.22`) and `2g`'s margin is bought by this box's 24-core clamp
-      (`19.23`) — and that arena retention is inside the per-reader charge, not
-      above it ([2026-09-12](history/2026-09-12.md)). Two readings the
-      sitting was not taken for: below three readers the block path is **slower
-      than declining** on the 24 MiB file, which is the reading
-      [`../design/roadmap.md`](../design/roadmap.md)'s block-cache-floor Future
-      item asks for; and the flagless one-reader block path holds 62.1–62.9 MiB,
-      landing on `parallel-peak-rss`'s published serial cell from a budget
-      thirty-five times smaller. A `runs/` probe, not a figure. Notes:
+- [x] **19.16** The reserve constant, from a reading rather than a fit — **384
+      MiB**, over five builds and 400 runs, reviewed on 2026-09-12 and standing.
+      A `runs/` probe, not a figure. Notes:
       [`../design/roadmap-P19.16-reserve-constant-notes.md`](../design/roadmap-P19.16-reserve-constant-notes.md)
-- [x] **19.17** The compressed account's instrument, no library code.
-      `reserve` is four families now: the stated budget axis unchanged, **eight
-      flagless legs** whose axis is the container limit — two block sizes at
-      `512m`/`1g`/`1536m`/`2g`, so the reader count comes down with the
-      allocation as a flagless run's does — the three mechanism legs at one
-      block size and one limit, and the path step, one byte either side of
-      `reader_bytes`. The resolved count is **read back off the run's own `scan
-      started` line**, never computed, and a container limit rides on the
-      `RunSpec` rather than in the command shape, `RunSpec.key` carrying it only
-      where there is one. The flagless family is the register's one shape
-      stating no count and declares itself at both ends:
-      `flagless_flag_problems` fails it for stating either flag. The `shares`
-      edges are re-declared as **one edge and one stated non-edge** — `peak-rss`
-      carries the serial baseline, `rss-attribution` shares no run with any leg
-      here — both computed by a test rather than asserted; whether the row
-      wanted a third edge is flagged below. Notes:
+- [x] **19.17** The compressed account's instrument, no library code: `reserve`
+      becomes four families, the flagless one reading its resolved count off the
+      run's own `scan started` line. Notes:
       [`../design/roadmap-P19.17-compressed-instrument-notes.md`](../design/roadmap-P19.17-compressed-instrument-notes.md)
-- [x] **19.18** The compressed path's resident account —
-      `runs/measure-20260911T214041`, `--alone`, **NOT PUBLISHABLE**, three
-      reps, nothing killed. It ends on a **name**: the program itself holds
-      `4 MiB + 49.0 MiB a reader`, and 49.0 plus `liblzma`'s 8 MiB dictionary
-      is **57.0 MiB** against the **58.0 MiB** `XzSource::block_reader_bytes`
-      bills — **the charge is right to 2%** — while the excess above the
-      budget is **glibc arena retention**: `fordblks` 102–413 MiB across the
-      four limits, covering the whole gap, `hblkhd` **zero** on runs that
-      decoded 24 MiB blocks throughout, arenas 6/15/24/26 at 4/13/22/24 readers, and `MALLOC_ARENA_MAX=2` taking `fordblks` to 68.2 MiB
-      with arenas at 2. **The two allocator legs are dropped rather than
-      re-aimed** — they cannot test glibc's own threshold — and what replaced
-      them is a fifth family running the flagless shape on `19.21`'s
-      instrument, whose **check passes at every limit**: the same resolved
-      arrangement (4/13/22/24 readers) and resident within 0–3%, two
-      instruments sharing no mechanism. What `19.16` inherits is that the
-      constant covers retention rather than a fixed term, that the thin cell is
-      the *middle* of the range (8.8% at `1536m`/22r against `512m`'s 33.2%),
-      and that the black-box fit's 129/358 MiB intercepts are that retention
-      folded into a window starting at four readers. Owns nothing. Notes:
+- [x] **19.18** The compressed path's resident account (`--alone`, NOT
+      PUBLISHABLE): the charge is right to 2%, and the excess above the budget
+      is **glibc arena retention**. Owns nothing. Notes:
       [`../design/roadmap-P19.18-compressed-account-notes.md`](../design/roadmap-P19.18-compressed-account-notes.md)
 - [x] **19.17.1** A killed leg is recorded and the sitting continues; a killed
-      leg bars publication. The premise was re-tested before it was built and
-      **holds** on three legs that are not predictions: the registration and the
-      code contradicted each other in the tree; the harness could not tell an
-      OOM kill from a parse error at all (verified in the apparatus — the
-      wrapper exits **1** for both, and only `memory.events`' `oom_kill`
-      separates them, 1 against 0); and `19.11`'s gate, *completes with no
-      killed leg*, was unanswerable while a kill stopped the sitting completing.
-      `measure.OOM_ORACLE` reads the container's own counter after the timed
-      command and is appended in `time_run` rather than in `_script`, so no
-      figure's recorded shape carries it; `measure.KILL_TOLERANT` holds the
-      licence to **one family** — the flagless legs, mechanism legs included by
-      prefix — and everywhere else a kill still ends the figure, now saying that
-      the kernel did it. A censored rep enters neither `readings` nor `rss`, is
-      kept in `raw.json` as `maxrss_bound_kib`/`seconds_to_kill`, and a
-      **partly** killed leg leaves the fit too, its survivors being the reps
-      that stayed under the ceiling. The bar is a note above the table as well
-      as a run banner, and the sitting exits non-zero. Notes:
+      leg bars publication. An **earned third level** — `19.17` shipped the
+      wrong contract. Notes:
       [`../design/roadmap-P19.17.1-killed-leg-notes.md`](../design/roadmap-P19.17.1-killed-leg-notes.md)
 - [x] **19.19** The per-file term, billed where the file is open — `KD19`
-      struck. `Partitioning::window_end` is the cut size, separate from the
-      memory charge: a boundaried source's window ends at the `workers`-th
-      boundary past the frontier, so `stream::cut` thins nothing and every piece
-      lies inside one block, asserted from a **mid-block** frontier by
-      `a_block_decoding_partition_never_crosses_a_block_boundary` (which fails
-      on the old cut size). `XzSource::charged_chunk_bytes` is `fit`'s divisor
-      half: every charge is now stated against the chunk a scan settles at
-      rather than an unannounced pool's 8 MiB ceiling, so the number an
-      allowance is divided by is the number the resulting count then meets.
-      Both acceptance halves passed —
-      `runs/19.19-flagless-acceptance-probe.log` (the 128 MiB family declines at
-      512 MiB and survives at 1 GiB and above, nothing killed) and
-      `runs/19.18-blocksize-charge-probe.log` (4 → 6 readers 9.9 → 7.4 s, where
-      it was flat at 8.83 → 8.77). **Two findings the next slices inherit**: the
-      thin allocation has moved off 512 MiB — which now leaves 30.1% — to 1 GiB
-      and 1.5 GiB at 11.6% and 10.3%; and the tail read's duplicate block decode
-      is now named, `KD20`. Notes:
+      struck, the cut size separated from the memory charge, and the tail read's
+      duplicate block decode named as `KD20`. Notes:
       [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)
-- [x] **19.20** The cut width, decided by measurement — **one unit stays, and
-      the read shape is now the source's own statement.** Six binaries in one
-      sitting: at two stated readers a wider cut follows the `w / (1 + 1/k)`
-      account within 10% and buys up to 1.64×, and at the flagless default it
-      reverses — 4.84 s at one unit against 9.19/9.50/9.71 at two/four/eight —
-      so the width the phase's own shape wants is the one shipped. The
-      chunk-sized body read the row asked for is **refused on the compressed
-      path** (931 MiB median against 855 in a 1 GiB allocation, killed one run
-      in three) and **kept on the plain one**, where it holds 9.4 MiB at
-      `--jobs 24` against 209.2 and runs faster — so `io::PartitionRead` makes
-      the shape the source's to state, **`KD18` is struck**, and the read-size
-      invariant the row wanted pinned is what the reading refused rather than
-      what it confirmed — the spec row is amended to say so, and
-      `PartitionRead::Whole`'s dependence on the width is bounded by `M83`
-      ([2026-09-11](history/2026-09-11.md), "`19.20`'s refused clause, and the
-      read shape as the source's statement").
-      `BOUNDARIED_PARTITION_UNITS` and a
-      widened `a_block_decoding_partition_spans_at_most_the_cut_width` are what
-      keep one unit a measured choice rather than settled intent. `KD20` is
-      unclosed and now knows the width is not its fix. Notes:
+- [x] **19.20** The cut width, decided by measurement — **one unit stays**, the
+      read shape becomes the source's own statement, `KD18` is struck, and
+      `KD20` now knows the width is not its fix. Notes:
       [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md)
-
-- [x] **19.21** The introspection the compressed account needs. `introspect`
-      is a third off-by-default feature joining `alloc.rs`'s guard — refused
-      beside `jemalloc`/`mimalloc` because it counts one heap and reads
-      glibc's — under which `pgdq` reports twelve `key=value` lines plus
-      `malloc_info`'s raw XML, carrying each arena's own high-water. **Into the
-      file `PGDQ_INTROSPECT_OUT` names** (`M85` replaced the slice's own
-      marker-bracketed stderr block), so the instrument writes to no stream:
-      stdout is the answer and `chunk_size.rs`'s parity tests are what refuse a
-      diagnostic in it, and a file has one writer where stderr already carries
-      `rss_wrapper`'s per-rep `maxrss_kib` by the same grammar. `pgdq
-      --version` names the instrument and `measure.binary_allocator` **raises**
-      on it, so "never timed" is mechanical. The check is
-      `the_instrument_build_resolves_what_the_default_build_resolves`, compiled
-      into both configurations over all five runtime roots. A first probe (not
-      a figure): on `control_xz` at `--jobs 4`, live high-water 209.8 MB
-      against 383.0 MB resident, `hblkhd` **0** and 157.8 MB in `fordblks` —
-      nine tenths of the gap, in the term no peak-RSS leg can separate. Notes:
+- [x] **19.21** The introspection the compressed account needs: `introspect`, a
+      third off-by-default feature, whose build `measure.binary_allocator`
+      refuses — so "never timed" is mechanical. Notes:
       [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md)
-
-- [ ] **19.22** The charge bills the pool floor. `block_reader_bytes` bills
-      `2 × unit` a reader, which assumes `slots == jobs`, while
-      `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` — so
-      below four readers the pool holds `(POOL_DEPTH − jobs) × unit` nobody
-      paid for, confirmed to 1.4 MiB over five cells of `19.16`'s readings and
-      **unbounded in the block size** (96 MiB at 24 MiB blocks, 384 at 128,
-      2 GiB at 512). The cost stops being linear in `jobs`, so
-      `Parallelism::fit` **solves** for the largest affordable count instead of
-      dividing a cap by a per-worker scalar.
-- [ ] **19.23** The count answers to the criterion, not to the core count.
-      `2g` clears the margin only because `available_parallelism` clamps 28
-      readers to this box's 24; a 64-core host resolves 28 and is predicted to
-      breach at 13.3%. Once `19.22` makes the cost a model, `fit` refuses a
-      count whose predicted resident breaches the stated margin. Runs after
+- [ ] **19.22** The charge bills the pool floor: `block_reader_bytes` assumes
+      `slots == jobs`, so below four readers the block pool holds units nobody
+      paid for, unbounded in the block size. `Parallelism::fit` solves for the
+      largest affordable count instead of dividing by a per-worker scalar.
+- [ ] **19.23** The count answers to the criterion, not to the core count — a
+      64-core host resolves 28 readers and is predicted to breach. Runs after
       `19.22`, which is what gives it a model to predict from.
 - [ ] **19.24** The harness checks the model rather than searching for a
-      constant — a registered check that predicts held bytes per cell from the
-      charge model, measures, and asserts the residual is small and
-      non-negative. Seeded from readings already in the tree, so it needs no
-      sitting, and it runs **first of the three**, behind `19.13`: it is what
-      surfaces an under-bill, and what would have caught `19.22`'s.
-- [ ] **19.25** A `parse` says what ran, not what was asked for. Plan notes
-      belong to a query's replay, so `19.13`'s decline report never reaches a
-      `parse` — and the gap is wider than the decline: `leader::scan_region`
-      refuses to cut on `advice.max_partitions() == Some(1)`, so a declined
-      `.xz` `parse` is **serial whatever `--jobs` says**, while the mode report
-      names the count that was asked for. The library states the delivered
-      count and what the refused cut would have cost, on the `scan
-      started`/`scan complete` channel both commands already carry; the CLI
-      keeps `Resolved::plan_note_origin`'s provenance. Runs after `19.23`,
-      which decides the count it reports.
+      constant: a registered check that predicts held bytes per cell, measures,
+      and asserts the residual is small and non-negative. Needs no sitting, and
+      runs **first of the three**, behind `19.13`.
+- [ ] **19.25** A `parse` says what ran, not what was asked for: a declined
+      `.xz` `parse` is serial whatever `--jobs` says, and the library states the
+      delivered count on the `scan started`/`scan complete` channel. Runs after
+      `19.23`, which decides the count it reports.
 
 ## Not started
 
