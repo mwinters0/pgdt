@@ -118,7 +118,7 @@ trait ByteRangeSource: Send + Sync {
     }
     fn block_decode_bytes(&self) -> Option<u64> { None }
     fn default_workers(&self) -> usize   { 1 }
-    fn default_memory_per_worker(&self) -> Option<u64> { None }
+    fn default_worker_memory(&self) -> Option<WorkerMemory> { None }
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     fn hint_wait_policy(&self, _policy: WaitPolicy) {}
 }
@@ -182,7 +182,7 @@ so that the decline's message names the recourse without re-deriving the
 source's own rule ("The compressed source"). The other five are answered by
 every source: `hint_read_size`, `hint_parallelism` and `hint_wait_policy` are
 about the caller rather than the source and are described below, `partitions`
-is next, and `default_workers` and `default_memory_per_worker` are the source's
+is next, and `default_workers` and `default_worker_memory` are the source's
 own recommendations for the two numbers a caller states its parallelism in, also
 below.
 
@@ -290,6 +290,78 @@ decode, which is what makes the same number per-reader there. The two arms of
 one source therefore charge differently, which is the point of reading the
 advice off the read path taken rather than off the seek table.
 
+**A source's cost is a shape rather than a scalar, and a budget is *solved*
+against it rather than divided by it.** `Partitioning::worker_memory` and
+`ByteRangeSource::default_worker_memory` both answer a `WorkerMemory`: the
+per-worker term above — `partition_bytes` — and a **shared floor**,
+`floor_unit` bytes for every worker short of `floor_below`.
+`WorkerMemory::at(n)` is what `n` readers cost, and `WorkerMemory::affords(cap,
+most)` is the largest count inside `cap` — the one arithmetic
+`Parallelism::fit` and `crate::stream::worker_count` both call, so the
+recommended count and the delivered one answer to the same charge.
+
+**The floor is the block pool's, and it is arithmetic from that pool rather
+than a margin.** `BufferPool::slots` clamps the block pool at
+`POOL_DEPTH.max(jobs)`; the free list and the retention list share those slots
+(`BufferPool::reserve`) and each reader is decoding into a buffer besides, so
+the pool holds `slots + jobs` units against a bill of `2 × jobs`. At or above
+`POOL_DEPTH` readers the two agree exactly and the floor is zero; below it the
+difference is `(POOL_DEPTH − jobs) × unit`, which five cells of `19.16`'s
+readings confirm to 1.4 MiB. It is **unbounded in the block size** — 96 MiB at
+koji's 24 MiB blocks, 384 at 128, 2 GiB at 512 — so no reserve can absorb it,
+which is why it is billed rather than reserved for.
+
+**Billing it widens the decline, and that is the finding rather than the
+cost.** `BlockCache::affordable` asks the budget for *one* reader's charge and
+that reader's floor with it — `POOL_DEPTH` units plus the chunk and the
+decoder, where two units plus those were the old line — so a 24 MiB-block file
+wants 130 MiB where it wanted 58, and a 128 MiB-block one 650 where it wanted
+266. A 512 MiB allocation therefore reads koji's shape through the streaming
+decoder. That is the first arrangement in which the stated number is true, the
+pool having held four units under it either way; and the probe that swept the
+reader count at exactly that limit says the block path buys nothing there
+anyway — two readers is 6% slower than declining and one reader 3%, holding
+250 MiB and 63 MiB against the fallback's 15 ([`roadmap.md`](roadmap.md), "A
+block cache whose retention floor tracks the reader count"). The decline is
+reported (`stream::compressed_block_path_declined`) and `--parallel-memory`
+reverses it.
+
+*Rejected: shrinking the floor instead of billing it.* A block cache whose
+retention floor followed the reader count would charge far less at one and two
+readers — but that reworks a pool's sizing rule on evidence this account does
+not produce, so it is a `Future` item ([`roadmap.md`](roadmap.md)). The two are
+not alternatives: an honestly billed floor is what makes "should the floor be
+smaller" a question anybody can answer.
+
+*Rejected: a per-file term subtracted once, before the allowance is divided.*
+That was the shape while a unit-independent fixed term was still believed in,
+and the floor is not one — it **decays** with the reader count, so subtracting
+it whole over-bills every count above one and declines allocations that fit,
+which is the mirror of the error the divisor made in the other direction.
+Solving costs a handful of evaluations, `floor_below` being `POOL_DEPTH`, and
+is right at every point on the axis rather than at one end of it.
+
+<!-- deficiency: KD21 -->
+**The block pool's slot ceiling follows the worker count a caller *announced*,
+not the one delivered. That is `KD21`.** `XzSource::apportion` sizes that pool
+`POOL_DEPTH.max(jobs)` from the number `hint_parallelism` was given, while
+`stream::worker_count` decides afterwards how many readers actually run. Under
+discovery the two are the same number — `Parallelism::fit` names a budget of
+`WorkerMemory::at(n)` for the count `n` it chose, and `worker_count` re-derives
+`n` from exactly that budget — which is why the charge above is exact at every
+cell of the `reserve` figure rather than merely close. They diverge when a
+caller states **both** `--jobs` and a `--parallel-memory` too small for that
+many: the slot count is then bounded by the pool's byte budget rather than by
+the delivered count, and the free and retention lists fill to it while each
+delivered reader decodes into a buffer besides. `--jobs 24 --parallel-memory 1g`
+on a 128 MiB-block file delivers three readers, gives the block pool seven
+slots, and holds about **1,280 MiB against the 1,024 stated**. It is not
+`WorkerMemory`'s to fix and predates it: what would close it is the pool being
+told the *delivered* count — which `worker_count` computes after
+`hint_parallelism` has already run — or `BufferPool::slots` reserving for the
+decodes in flight. Both rework a pool's sizing rule, which is the same evidence
+the `roadmap.md` Future item on the retention floor is waiting for.
+
 **`Parallelism` is the caller's half of that same question**, and it sits on
 both option structs: `ScanOptions::parallelism` and `QueryOptions::parallelism`,
 because a query runs a mapping scan and a replay and the two split differently.
@@ -319,7 +391,7 @@ downstream.** `stream::cut` cuts at block boundaries and there is no seam past
 the last one, so a four-block file runs four readers however wide the machine
 is — which was once a reason the recommendation need *not* know its own block
 count. It has to now, for two reasons that arrived together: the count is
-multiplied into a budget request (`default_memory_per_worker`, below), so a
+multiplied into a budget request (`default_worker_memory`, below), so a
 file that cannot supply work for twenty-four readers would otherwise ask for
 twenty-four readers' memory; and the resolved arrangement is printed, so a
 recommendation of twenty-four beside a budget affording six is two numbers
@@ -407,24 +479,29 @@ chosen. The readings are in
 and
 [`roadmap-P19.16-reserve-constant-notes.md`](roadmap-P19.16-reserve-constant-notes.md).
 
-**Two things the constant was not shown to do, and neither is a reserve's to
+**One thing the constant was not shown to do, and it is not a reserve's to
 fix.** It was validated up to a 2 GiB limit **on a 24-core host**, where
 `available_parallelism` clamps the count the allowance would otherwise afford:
 the same limit on a 64-core host resolves twenty-eight readers and is predicted
 to breach the margin at 13.3%, so the count has to answer to the criterion and
-not only to the core count. And it does not cover the **block pool's floor**:
-`BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while
-`XzSource::block_reader_bytes` bills `2 × unit` a reader, so below four readers
-the pool holds `(POOL_DEPTH − jobs) × unit` nobody paid for — 14 MiB residual
+not only to the core count.
+
+**The block pool's floor is the charge's second term, not the reserve's.**
+`BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` while the
+per-reader term bills `2 × unit`, so below four readers the pool holds
+`(POOL_DEPTH − jobs) × unit` that no per-reader term carries — 14 MiB residual
 across five cells of the same readings, and **unbounded in the block size**
 (96 MiB at 24 MiB blocks, 384 at 128, 2 GiB at 512), which is why no constant
-absorbs it. It is also not what 384 pays for: on the 24 MiB file that term is
-48/24/0 MiB and the legs that forced the constant up are all at eleven readers
-and above, where it is zero.
+absorbs it and why it is billed rather than reserved for. It is also not what
+384 pays for: on the 24 MiB file that term is 48/24/0 MiB and the legs that
+forced the constant up are all at eleven readers and above, where it is zero.
+`WorkerMemory` carries both terms, which is what lets a budget be solved
+against the charge rather than divided by it; the shape is described above,
+beside `partition_bytes`.
 
 **What the reserve does cover is flat, and that is an account rather than a
 fit.** Over the block-path regime the worst-resident slope is 57.28 MiB a reader
-against the 58.03 `block_reader_bytes` bills — 0.987, so glibc's arena retention
+against the 58.03 `BlockCache::reader_bytes` bills — 0.987, so glibc's arena retention
 is already inside the per-reader charge — and what sits above the charge,
 `worst − 58.03 × jobs`, is 135.7 MiB at two readers and 145.4 at twenty-four,
 wandering 83.6–214.6 with no trend. A reserve computed from an arena count
@@ -463,7 +540,7 @@ reader** of *program* memory — the counting allocator's own high-water, linear
 over the four to twenty-four readers those allocations resolve, and predicting
 its own smallest cell to within a megabyte. Add `liblzma`'s 8 MiB dictionary,
 which is a C allocation the counter cannot see, and a reader costs **57.0 MiB**
-against the **58.0 MiB** `XzSource::block_reader_bytes` bills it: **the charge
+against the **58.0 MiB** `BlockCache::reader_bytes` bills it: **the charge
 is right to 2%**, and it is not what puts a flagless scan against its ceiling.
 What does is **glibc arena retention** — `mallinfo`'s `fordblks`, freed by the
 program and kept by the allocator, 102–413 MiB across those limits, covering
@@ -616,8 +693,10 @@ open question, which is the honest state.
 **Raising the reserve is also what declines the block path, because
 `BlockCache::affordable` reads off the budget.** The two are one knob and not
 two: a reserve `R` admits block decode only where `limit − R` covers one
-reader's `reader_bytes`, so at 384 MiB a 24 MiB-block file still takes the block
-path in a 512 MiB allocation and a 128 MiB-block one does not. The
+reader's charge **and that reader's pool floor** (`WorkerMemory::at(1)`), so at
+384 MiB neither a 24 MiB-block file nor a 128 MiB-block one takes the block
+path in a 512 MiB allocation — 128 MiB is left, against the 130 the first of
+them wants. The
 floor is therefore left implicit — *rejected: a named `BLOCK_PATH_MIN_LIMIT`
 constant checked separately*, which is a second number deriving the same
 boundary and free to drift out of step with the first, exactly the divergence
@@ -695,21 +774,22 @@ was typed or read.
 
 **The composition is not a `min`, and the difference is one `Option`.** A
 source recommends a budget as it recommends a worker count —
-`ByteRangeSource::default_memory_per_worker`, `None` for `LocalFileSource` and
-`what one reader holds` for a block-decoding `XzSource` — and
-`Parallelism::discover_for(jobs, per_worker)` composes the two:
+`ByteRangeSource::default_worker_memory`, `None` for `LocalFileSource` and
+`what its readers hold` for a block-decoding `XzSource` — and
+`Parallelism::discover_for(jobs, memory)` composes the two:
 
-- a **discovered** limit is a cap: `jobs × per_worker`, or
+- a **discovered** limit is a cap: `memory.at(jobs)`, or
   `DEFAULT_MEMORY_BUDGET` where the source recommends nothing, taken no higher
   than `limit − MEMORY_RESERVE`;
 - **no limit found** has no cap from the environment at all, only half of
   `/proc/meminfo`'s `MemAvailable` (`RT8`).
 
-**The recommendation is stated per worker, and the answer is a pair.** A total
-would have to be a total *for some count*, and the only count a source knows is
-its own — so recovering the per-worker cost from it means dividing by a number
-the caller may have replaced with `--jobs`. Stated per worker it is independent
-of every count, and the composition owns the multiplication: where the cap
+**The recommendation is stated as a cost shape, not as a total, and the answer
+is a pair.** A total would have to be a total *for some count*, and the only
+count a source knows is its own — so recovering the per-worker cost from it
+means dividing by a number the caller may have replaced with `--jobs`. A
+`WorkerMemory` is independent of every count, and the composition owns the
+evaluation: where the cap
 affords fewer workers than were asked for, `discover_for` returns the smaller
 count **and** the budget that many readers spend, never the cap itself. Handing
 back the cap is the over-ask this pairing removes — "never allocate more memory
@@ -719,13 +799,13 @@ permits").
 
 **The recommendation is the charge, not a number a tenth above it, and what
 that buys is a *reader* rather than tighter bytes.**
-`XzSource::default_memory_per_worker` is asked before the file is open for
+`XzSource::default_worker_memory` is asked before the file is open for
 reading, so the chunk term in it comes from `XzSource::charged_chunk_bytes` —
 `DEFAULT_CHUNK_SIZE`, the length a read loop is about to announce — and not from
 the unannounced pool's `POOL_MAX_BYTES` ceiling. The two differ by 7 MiB a
 reader at any block size, the gap being the chunk term and not a per-file one,
 and an over-ask there is harmless as bytes and **wrong as a divisor**:
-`Parallelism::fit` divides the allowance by that same number, so 8 MiB a reader
+`Parallelism::fit` solves the allowance against that same number, so 8 MiB a reader
 resolved `268,435,456 / 68,192,032` = **three** readers in a 512 MiB allocation
 where `/ 60,852,000` fits four, and every allocation lost one. The argument for
 the over-ask and why it does not survive being divided by is beside the charge
@@ -844,7 +924,7 @@ process, so N components each calling it in one process resolve N times the same
 allowance: three of them would budget 150% of the machine and ask for three
 times its CPUs. Nothing here oversubscribes today, because the library's own
 default is `Serial` and discovery is opt-in — a caller reaches this only by
-asking. `discover_for(jobs, per_worker)` is the seam for a caller that is one of
+asking. `discover_for(jobs, memory)` is the seam for a caller that is one of
 several: it takes the recommendations rather than reading them, so whatever
 knows how many tenants there are decides the split and this rule composes them.
 That is a **property with a remedy in hand**, not a deficiency.

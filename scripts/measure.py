@@ -2295,15 +2295,16 @@ def reader_bytes(unit: int) -> int:
     blocks holds: two block slots, the chunk buffer a straddling read is
     assembled into, and the decoder's own retention.
 
-    `XzSource::block_reader_bytes`, mirrored — the number
-    `BlockCache::affordable` compares a budget against and the number
-    `XzSource::partition_advice` charges a sub-stream.
+    `BlockCache::reader_bytes`, mirrored — the per-worker term of the charge
+    `BlockCache::affordable` compares a budget against, and what
+    `XzSource::partition_advice` charges a sub-stream. It is not the whole
+    charge: `charge_bytes` adds the pool floor below `POOL_DEPTH` readers.
 
     **It is one number and not two, at the default chunk every leg here runs
     at.** `BlockCache::reader_bytes` takes its chunk term from
     `XzSource::charged_chunk_bytes`, which answers `DEFAULT_CHUNK_SIZE` whenever
     no read loop has announced a length — so the charge
-    `XzSource::default_memory_per_worker` recommends against *before* the file is
+    `XzSource::default_worker_memory` recommends against *before* the file is
     open for reading and the charge `BlockCache::affordable` then compares a
     budget to are the same charge. Charging the unannounced pool's
     `POOL_MAX_BYTES` ceiling instead ran the recommendation 7 MiB a reader high
@@ -2311,7 +2312,9 @@ def reader_bytes(unit: int) -> int:
     `charged_chunk_bytes`). So a flagless run's resolved budget **is** this
     number times its count — 1,460,448,000 at 24 readers of 24 MiB blocks — and
     a budget read off a run's own report and divided by its count is this number
-    back. It splits again only for a caller that states a `--chunk-size` other
+    back — **at or above `POOL_DEPTH` readers**, where the floor is zero;
+    below it the reported budget carries `pool_floor_bytes` besides, which is
+    what `charge_bytes` states. It splits again only for a caller that states a `--chunk-size` other
     than the default, which no leg of this figure does.
 
     **Hand-computed, on `QUERY_SUBSTREAM_CAP`'s argument.** A Python
@@ -2328,13 +2331,13 @@ def reader_bytes(unit: int) -> int:
 #: clamps a pool's slot count to, whatever worker count was announced to it.
 #:
 #: It lives with the charge rather than with the other library mirrors because
-#: it is the one library number the per-reader charge does **not** carry: the
-#: block pool is sized `POOL_DEPTH.max(jobs)` while
-#: `XzSource::block_reader_bytes` bills `2 x unit` a reader, so below four
-#: readers the pool holds `(POOL_DEPTH - jobs) x unit` nobody paid for. That is
-#: `pool_floor_bytes`, and naming it is what keeps it out of the residual
-#: (`roadmap-P19.16-reserve-constant-notes.md`, "The charge under-bills the pool
-#: floor").
+#: it is the second term of that charge: the block pool is sized
+#: `POOL_DEPTH.max(jobs)` while the per-reader term bills `2 x unit` a reader,
+#: so below four readers the pool holds `(POOL_DEPTH - jobs) x unit` that no
+#: per-reader term carries. That is `pool_floor_bytes`, which `19.22` made the
+#: library bill (`io.rs`, `WorkerMemory`); naming it as a column of its own is
+#: what keeps it out of the residual, where it would read as a flat term on the
+#: two block sizes registered here and as a breach on a third.
 LIBRARY_POOL_DEPTH = 4
 
 #: `pgdump_query::io::MEMORY_RESERVE`, mirrored: what `Parallelism::discover`
@@ -2350,38 +2353,52 @@ LIBRARY_MEMORY_RESERVE = 384 << 20
 
 
 def pool_floor_bytes(unit: int, jobs: int) -> int:
-    """What the block pool holds at `jobs` readers that `reader_bytes` does not
-    bill: `(POOL_DEPTH - jobs) x unit`, and zero at four readers or more.
+    """What the block pool holds at `jobs` readers on top of the per-reader
+    term: `(POOL_DEPTH - jobs) x unit`, and zero at four readers or more.
 
-    Named as a term rather than left inside the residual because it is
-    **unbounded in the block size** where the residual is not — 96 MiB at
-    koji's 24 MiB blocks, 384 at 128, 2 GiB at 512 — so a reserve cannot absorb
-    it and a model that folded it into a flat remainder would read as a constant
-    on the two block sizes this harness registers and as a breach on a third.
-    Repairing the charge is `19.22`; naming it here is what lets the check
-    report an under-bill rather than a large number.
+    `WorkerMemory`'s floor, mirrored — the second term of the library's charge
+    since `19.22`, where it was unbilled before. Kept as a column of its own
+    rather than folded into `charge_bytes` because it is **unbounded in the
+    block size** where every other term is not: 96 MiB at koji's 24 MiB blocks,
+    384 at 128, 2 GiB at 512. A model that hid it inside a flat remainder would
+    read as a constant on the two block sizes this harness registers and as a
+    breach on a third.
     """
     return max(0, LIBRARY_POOL_DEPTH - jobs) * unit
+
+
+def charge_bytes(unit: int, jobs: int) -> int:
+    """What the budget rule charges `jobs` concurrent block-decoding readers of
+    a file with `unit`-sized blocks, in bytes: the per-reader term times the
+    count, plus the pool floor those readers leave unfilled.
+
+    `WorkerMemory::at`, mirrored — what `Parallelism::fit` solves a cap against
+    and what `stream::worker_count` solves a budget against, so under discovery
+    it is also the budget a run reports for itself.
+    """
+    return jobs * reader_bytes(unit) + pool_floor_bytes(unit, jobs)
 
 
 def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
     """One leg's resident set, split into the two terms the model names and the
     one it does not: `(billed, floor, unnamed)`, all in bytes.
 
-    - **billed** is what the budget rule charged — `jobs x reader_bytes(unit)`,
+    - **billed** is what the budget rule charged — `charge_bytes(unit, jobs)`,
       which under discovery is also the budget the run reports for itself.
-    - **floor** is `pool_floor_bytes`: held, and not billed.
-    - **unnamed** is `held - billed - floor`, which is glibc's arena retention
-      as far as any reading here goes (`roadmap-P19.18-compressed-account-notes.md`).
+    - **floor** is `pool_floor_bytes`, the part of that bill the block pool's
+      floor accounts for — inside `billed`, reported beside it because it is
+      the one term unbounded in the block size.
+    - **unnamed** is `held - billed`, which is glibc's arena retention as far
+      as any reading here goes (`roadmap-P19.18-compressed-account-notes.md`).
 
     **This is an account and not a fit** — every term is arithmetic from the
     source, evaluated at the cell, which is what `19.16` did by hand over
     `readings.json` after 400 runs had been spent searching for a constant
     (`.claude/skills/evidence/SKILL.md`, rule 1).
     """
-    billed = jobs * reader_bytes(unit)
+    billed = charge_bytes(unit, jobs)
     floor = pool_floor_bytes(unit, jobs)
-    return billed, floor, held - billed - floor
+    return billed, floor, held - billed
 
 
 def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
@@ -2407,7 +2424,7 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
         return (
             f"**over-billed by {_fmt_budget_bytes(-unnamed)}** — {jobs} reader(s) were charged "
             f"{_fmt_budget_bytes(billed)}"
-            + (f" beside {_fmt_budget_bytes(floor)} of unbilled pool floor" if floor else "")
+            + (f", of which {_fmt_budget_bytes(floor)} is the pool floor" if floor else "")
             + f", and the whole process held {_fmt_budget_bytes(held)}. The rule admitted "
             "fewer readers than the allocation affords."
         )
@@ -2416,7 +2433,7 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
             f"**{_fmt_budget_bytes(unnamed)} unnamed**, above the "
             f"{_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)} `MEMORY_RESERVE` that is meant to "
             f"cover it — {jobs} reader(s) billed {_fmt_budget_bytes(billed)}"
-            + (f" plus {_fmt_budget_bytes(floor)} of unbilled pool floor" if floor else "")
+            + (f", of which {_fmt_budget_bytes(floor)} is the pool floor," if floor else "")
             + f" against {_fmt_budget_bytes(held)} held."
         )
     return None
@@ -6056,7 +6073,7 @@ def run_reserve(session: Session) -> str:
             # A declined leg ran the streaming fallback, which holds none of
             # these terms. Excluded by what the leg *did*, read off its own
             # reported budget, rather than by which token it carries.
-            if budget < reader_bytes(unit):
+            if budget < charge_bytes(unit, 1):
                 continue
             held = max(readings) * 1024
             billed, floor, unnamed = charge_model(unit, jobs, held)
@@ -6079,7 +6096,7 @@ def run_reserve(session: Session) -> str:
             "Leg",
             "Readers",
             "Billed",
-            "Pool floor, unbilled",
+            "of which pool floor",
             "Worst rep held",
             "Unnamed",
             "Criterion",
@@ -6266,7 +6283,7 @@ def run_reserve(session: Session) -> str:
             f" Against the charge: {live_fit[1]:,.1f} MiB of Rust plus the "
             f"{_fmt_budget_bytes(XZ_DICT_BYTES)} dictionary is "
             f"**{_fmt_budget_bytes(measured_reader)}** a reader, where "
-            f"`XzSource::block_reader_bytes` bills {_fmt_budget_bytes(billed)} — "
+            f"`BlockCache::reader_bytes` bills {_fmt_budget_bytes(billed)} a reader — "
             f"{measured_reader / billed * 100:.0f}% of it."
         )
     else:
@@ -6414,12 +6431,12 @@ def run_reserve(session: Session) -> str:
         "reader the allocation would have afforded — and it must be **no larger than "
         f"`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
         "construction what covers everything the charge does not bill. The middle column is the "
-        "one term the charge misses and the model names: `BufferPool::slots` clamps the block "
-        f"pool at `POOL_DEPTH.max(jobs)` with `POOL_DEPTH` = {LIBRARY_POOL_DEPTH}, while "
-        "`XzSource::block_reader_bytes` bills `2 × unit` a reader, so below four readers the "
-        "pool holds `(POOL_DEPTH − jobs) × unit` nobody paid for — named here rather than left "
-        "inside the remainder, because it is unbounded in the block size where the remainder is "
-        "not. What is left is glibc's arena retention, named by the instrument legs below rather "
+        "second term of that bill, reported apart because it is the one unbounded in the block "
+        "size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with "
+        f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH}, so below four readers the pool holds "
+        "`(POOL_DEPTH − jobs) × unit` that the per-reader term does not carry, and `19.22` "
+        "bills it (`io.rs`, `WorkerMemory`). What is left is glibc's arena retention, named by "
+        "the instrument legs below rather "
         "than inferred here. A leg that declined the block path is absent, holding none of these "
         "terms; a censored one is absent too, its reading being a bound:\n\n"
         + model_table

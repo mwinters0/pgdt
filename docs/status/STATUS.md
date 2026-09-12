@@ -341,7 +341,7 @@ Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-effi
 **The numbers after the evidence slices are allocation order, not schedule** —
 the five orderings that bind are in the spec, not here. The sweep runs last; the
 list below is numeric, so its first unticked box is not the next piece of work.
-What remains runs **`19.22`, `19.23`, `19.25`, then `19.11`** — the
+What remains runs **`19.23`, `19.25`, then `19.11`** — the
 four new rows were admitted on 2026-09-12 and take the next free numbers
 rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
 entry closes on 384, and the grilling found the charge wrong below four
@@ -350,17 +350,19 @@ readers"; "A `parse` reports what was asked for and never what ran").
 **All three defaults are shipped, so what remains is the charge and the
 sweep.** `19.18`'s sitting says the program holds
 `4 MiB + 49.0 MiB a reader` and that a reader costs 98% of what
-`XzSource::block_reader_bytes` bills it — the charge is right — while the
+`BlockCache::reader_bytes` bills it — the charge is right — while the
 resident excess above the budget is **glibc arena retention**, and `19.16`'s
 arithmetic puts that retention *inside* the per-reader charge, leaving a flat
 83.6–214.6 MiB above it for the reserve to cover. `19.16` read the constant off
 five builds and picked **384 MiB**, the smallest meeting the 20% margin, and
-`19.13` ships it. What the constant does **not** cover is the next two rows:
-the block pool's floor below four readers (`19.22`) and a host with more cores
-than this one (`19.23`). **The harness now checks that account rather than
-searching for it** — `19.24` prints the charge against what was held at every
-flagless cell, with the pool floor as its own named column and a criterion
-registered before the sitting.
+`19.13` ships it. The block pool's floor below four readers is **no longer the
+reserve's to cover**: `19.22` made a source's cost a shape rather than a scalar
+(`io::WorkerMemory`) and every budget is now solved against it. What the
+constant still does not cover is a host with more cores than this one
+(`19.23`). **The harness checks that account rather than searching for it** —
+`19.24` prints the charge against what was held at every flagless cell, with
+the pool floor as its own named column and a criterion registered before the
+sitting.
 
 - [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
       `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
@@ -448,10 +450,11 @@ registered before the sitting.
       third off-by-default feature, whose build `measure.binary_allocator`
       refuses — so "never timed" is mechanical. Notes:
       [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md)
-- [ ] **19.22** The charge bills the pool floor: `block_reader_bytes` assumes
-      `slots == jobs`, so below four readers the block pool holds units nobody
-      paid for, unbounded in the block size. `Parallelism::fit` solves for the
-      largest affordable count instead of dividing by a per-worker scalar.
+- [x] **19.22** The charge bills the pool floor: a source's cost is an
+      `io::WorkerMemory` — a per-worker term and a shared floor — and
+      `Parallelism::fit` and `stream::worker_count` both solve against it
+      instead of dividing. The decline widens, which is the finding. Notes:
+      [`../design/roadmap-P19.22-pool-floor-notes.md`](../design/roadmap-P19.22-pool-floor-notes.md)
 - [ ] **19.23** The count answers to the criterion, not to the core count — a
       64-core host resolves 28 readers and is predicted to breach. Runs after
       `19.22`, which is what gives it a model to predict from.
@@ -473,8 +476,8 @@ registered before the sitting.
 - **P19 is open and all three defaults it is named for are now set** — the
   worker default comes from the source, and the memory-limit discovery and the
   budget rule are in the tree carrying the 384 MiB reserve `19.16` read. What
-  remains is the charge repair the constant cannot stand in for (`19.22`,
-  `19.23`) — which the harness's own model check now prints at every cell —
+  remains is the half of the charge repair the constant cannot stand in for
+  (`19.23`) — the harness's own model check prints the account at every cell —
   the report that makes a `parse` say what ran (`19.25`), and the closing
   sweep. Its checklist is above and its spec is
   [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
@@ -508,8 +511,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD20 -->
-**`KD1`–`KD20` are allocated, and nothing at or below `KD20` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD21 -->
+**`KD1`–`KD21` are allocated, and nothing at or below `KD21` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -636,6 +639,14 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Execution model and
   API surface".
 
+- **KD21** — the block pool's slot ceiling follows the worker count a caller
+  *announced* rather than the one delivered, so a `--jobs` well above what
+  `--parallel-memory` affords holds more than the stated budget — 1,280 MiB
+  against 1,024 at `--jobs 24 --parallel-memory 1g` on a 128 MiB-block file.
+  **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
+  Detail: [`../design/architecture.md`](../design/architecture.md), "Execution
+  model and API surface".
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
@@ -653,4 +664,21 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-_Nothing open._
+- **The 64 MiB library default now declines the block path on every real `.xz`
+  dump, and `DEFAULT_MEMORY_BUDGET` was left where it is.** `19.22` made
+  `BlockCache::affordable` bill one reader's pool floor with it, so the line is
+  `POOL_DEPTH` units rather than two — about 130 MiB on koji's 24 MiB blocks,
+  where the per-reader term alone was 58 and fitted inside the 64 MiB constant.
+  The CLI is unaffected, since it discovers a limit and takes the budget the
+  source asks for; what changes is the **library** default. An embedder that
+  states no `Parallelism` gets `Parallelism::default()` and therefore reads
+  every compressed dump through the streaming decoder, where an ordinary one
+  used to take the block path. The call was to leave the constant alone: it is
+  the *serial path's* budget, chosen as `POOL_DEPTH` slots of the largest chunk
+  size the read-chunk sweep measured, and moving it so that a block-path gate
+  clears would make one number answer two unrelated questions. If reconsidered,
+  the two shapes are a larger `DEFAULT_MEMORY_BUDGET` — which also grows the
+  plain path's pool, for no measured reason — or a compressed-source budget
+  default inside the library, which is the CLI's `ParallelArgs::resolve`
+  arithmetic moved down a layer and needs the source open before it can be
+  asked.

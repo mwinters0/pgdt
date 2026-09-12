@@ -2184,10 +2184,14 @@ class CompressedAccount(unittest.TestCase):
                 billed, floor, unnamed = measure.charge_model(
                     self.SEED_UNIT, jobs, worst * measure.MIB
                 )
-                # The billed term *is* the budget a flagless run resolves for
-                # itself, which is what makes the model checkable against a
-                # column the run prints.
-                self.assertAlmostEqual(billed / measure.MIB, budget, places=1)
+                # The seed's budget column is what the *pre-`19.22`* rule
+                # resolved: the per-reader term times the count, with the pool
+                # floor unbilled. `19.22` bills that floor, so the model's
+                # `billed` is that column plus the floor — and the residual,
+                # which is what the account actually claims, is unmoved. Holding
+                # both shapes to the same five cells is the whole point of
+                # seeding it.
+                self.assertAlmostEqual((billed - floor) / measure.MIB, budget, places=1)
                 self.assertEqual(floor, measure.pool_floor_bytes(self.SEED_UNIT, jobs))
                 self.assertAlmostEqual(unnamed / measure.MIB, residual, places=1)
                 self.assertIsNone(
@@ -2195,10 +2199,11 @@ class CompressedAccount(unittest.TestCase):
                 )
 
     def test_the_pool_floor_is_named_rather_than_left_in_the_remainder(self):
-        # The finding the check exists to surface: at two readers of a 128 MiB
-        # block file the pool holds 256 MiB nobody billed, which is 95% of what
-        # the charge misses. Folded into the remainder it would read as a flat
-        # term on this grid and as a breach on a 512 MiB-block one.
+        # The finding the check exists to surface, and what `19.22` bills: at
+        # two readers of a 128 MiB block file the pool holds 256 MiB no
+        # per-reader term carries, which is 95% of what such a term misses.
+        # Folded into the remainder it would read as a flat term on this grid
+        # and as a breach on a 512 MiB-block one.
         jobs, worst, _, _ = self.SEED_CELLS[0]
         billed, floor, unnamed = measure.charge_model(
             self.SEED_UNIT, jobs, worst * measure.MIB
@@ -2213,14 +2218,14 @@ class CompressedAccount(unittest.TestCase):
     def test_an_over_bill_is_a_fault_and_says_which_way_it_went(self):
         # The half a grid search over reserve constants cannot report: a charge
         # that is too large shows up there as headroom.
-        billed = 4 * measure.reader_bytes(self.SEED_UNIT)
+        billed = measure.charge_bytes(self.SEED_UNIT, 4)
         fault = measure.charge_model_problem(self.SEED_UNIT, 4, billed - 32 * measure.MIB)
         assert fault is not None
         self.assertIn("over-billed", fault)
         self.assertIn("fewer readers than the allocation affords", fault)
 
     def test_a_remainder_above_the_reserve_is_a_fault_and_names_the_constant(self):
-        billed = 4 * measure.reader_bytes(self.SEED_UNIT)
+        billed = measure.charge_bytes(self.SEED_UNIT, 4)
         held = billed + measure.LIBRARY_MEMORY_RESERVE + measure.MIB
         fault = measure.charge_model_problem(self.SEED_UNIT, 4, held)
         assert fault is not None
@@ -2232,7 +2237,7 @@ class CompressedAccount(unittest.TestCase):
             measure.charge_model_problem(
                 self.SEED_UNIT,
                 4,
-                4 * measure.reader_bytes(self.SEED_UNIT) + measure.LIBRARY_MEMORY_RESERVE,
+                measure.charge_bytes(self.SEED_UNIT, 4) + measure.LIBRARY_MEMORY_RESERVE,
             )
         )
 
@@ -2250,16 +2255,33 @@ class CompressedAccount(unittest.TestCase):
 
     def test_the_recommendation_and_the_affordability_charge_are_one_number(self):
         # What `reader_bytes`' docstring asserts, and what the model rests on:
-        # the charge the rule divides an allowance by is the charge the gate
+        # the charge the rule solves an allowance against is the charge the gate
         # then compares a budget to. They were two numbers 7 MiB apart until
         # `19.19`, and the mirror would be a model of neither if they split
-        # again.
+        # again. Since `19.22` both come off one composition site, which is what
+        # is pinned here.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
-            "fn default_memory_per_worker(&self) -> Option<u64> {\n"
-            "        self.block_reader_bytes()",
+            "fn default_worker_memory(&self) -> Option<WorkerMemory> {\n"
+            "        self.block_worker_memory()",
             src,
         )
+        self.assertIn(
+            "fn affordable(&self, chunk_bytes: u64, decode_bytes: u64, budget: u64) -> bool {\n"
+            "        self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget",
+            src,
+        )
+
+    def test_the_library_bills_the_pool_floor_the_model_names(self):
+        # `charge_bytes` is `WorkerMemory::at` mirrored, so the floor's shape
+        # has to be the library's: a pool that clamped somewhere else would make
+        # every cell of the check arithmetic about a rule nothing implements.
+        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        self.assertIn(
+            "(self.floor_below.saturating_sub(workers) as u64).saturating_mul(self.floor_unit)",
+            src,
+        )
+        self.assertIn(f".flooring(self.unit as u64, POOL_DEPTH)", src)
 
     # -- the resolution, read back off the run -----------------------------
 
@@ -5616,7 +5638,7 @@ class ChargeModelSection(unittest.TestCase):
             raw["rss"][key] = [worst * 1024 - 20, worst * 1024 - 10, worst * 1024]
             raw["reported"][key] = {
                 "resolved_jobs": str(jobs),
-                "resolved_budget": str(jobs * measure.reader_bytes(units[spec.input])),
+                "resolved_budget": str(measure.charge_bytes(units[spec.input], jobs)),
             }
         with tempfile.TemporaryDirectory() as tmp:
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
@@ -5677,11 +5699,11 @@ class ChargeModelSection(unittest.TestCase):
             units = {n: u for n, _, u in measure.RESERVE_FLAGLESS_INPUTS}
             raw["reported"][key] = {
                 "resolved_jobs": str(jobs),
-                "resolved_budget": str(jobs * measure.reader_bytes(units[other.input])),
+                "resolved_budget": str(measure.charge_bytes(units[other.input], jobs)),
             }
         raw["reported"][spec.key(self.FIGURE)] = {
             "resolved_jobs": "1",
-            "resolved_budget": str(measure.reader_bytes(128 << 20) - 1),
+            "resolved_budget": str(measure.charge_bytes(128 << 20, 1) - 1),
         }
         with tempfile.TemporaryDirectory() as tmp:
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)

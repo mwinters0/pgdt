@@ -318,7 +318,7 @@ pub(crate) async fn scan_region(
 ) -> Result<RegionScan> {
     let advice = source.partitions(data_offset..size);
     let partition_bytes = advice.partition_bytes();
-    let workers = worker_count(options.parallelism, partition_bytes);
+    let workers = worker_count(options.parallelism, advice.worker_memory());
     if workers <= 1
         || partition_bytes == 0
         || advice.max_partitions() == Some(1)

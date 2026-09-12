@@ -212,16 +212,14 @@ impl ParallelArgs {
             // to a discovered one. What the rule is scoped to is the absence
             // of `--jobs`, which is absent on this arm too.
             Some(stated) => match recommended_jobs {
-                Some(asked) => Parallelism::recommended_within(
-                    asked,
-                    source.default_memory_per_worker(),
-                    stated,
-                ),
+                Some(asked) => {
+                    Parallelism::recommended_within(asked, source.default_worker_memory(), stated)
+                }
                 None => Parallelism::workers(jobs, stated),
             },
             None => {
                 let discovered =
-                    Parallelism::discover_in(root, jobs, source.default_memory_per_worker());
+                    Parallelism::discover_in(root, jobs, source.default_worker_memory());
                 match (self.jobs, discovered.memory_bytes()) {
                     // A stated count is not lowered by the environment: the
                     // flag states what is asked for, and what the budget
@@ -2520,20 +2518,31 @@ mod tests {
     /// never touches a byte.
     struct Recommends {
         jobs: usize,
-        per_worker: Option<u64>,
+        memory: Option<pgdump_query::WorkerMemory>,
     }
 
     impl Recommends {
-        /// A source that recommends a worker count and no per-worker cost —
-        /// the plain file's shape, which asks for no budget of its own.
+        /// A source that recommends a worker count and no cost of its own —
+        /// the plain file's shape, which asks for no budget.
         fn jobs(jobs: usize) -> Self {
-            Self { jobs, per_worker: None }
+            Self { jobs, memory: None }
         }
 
         /// A source that recommends both, which is what a compressed one does:
         /// a count, and what **one** of those workers holds.
         fn reader(jobs: usize, per_worker: u64) -> Self {
-            Self { jobs, per_worker: Some(per_worker) }
+            Self { jobs, memory: Some(pgdump_query::WorkerMemory::per_worker(per_worker)) }
+        }
+
+        /// A block-decoding source's shape: a per-worker charge, and the pool
+        /// floor the first `below` workers leave unfilled.
+        fn block_reader(jobs: usize, per_worker: u64, unit: u64, below: usize) -> Self {
+            Self {
+                jobs,
+                memory: Some(
+                    pgdump_query::WorkerMemory::per_worker(per_worker).flooring(unit, below),
+                ),
+            }
         }
     }
 
@@ -2569,8 +2578,8 @@ mod tests {
         fn default_workers(&self) -> usize {
             self.jobs
         }
-        fn default_memory_per_worker(&self) -> Option<u64> {
-            self.per_worker
+        fn default_worker_memory(&self) -> Option<pgdump_query::WorkerMemory> {
+            self.memory
         }
     }
 
@@ -2627,6 +2636,35 @@ mod tests {
     }
 
     /// **No limit found leaves the source's recommendation standing**, capped
+    /// **A shared floor lowers the recommended count, and only where it
+    /// binds.** A block-decoding source holds `POOL_DEPTH` block units however
+    /// few readers there are, so below four of them the allowance buys fewer
+    /// than a division by the per-reader charge would say — and at or above
+    /// four the floor is filled and the two agree exactly. Pinned on both
+    /// sides, because a charge that bound everywhere would be an over-bill and
+    /// one that bound nowhere would be the defect `19.22` closed.
+    #[test]
+    fn a_shared_floor_lowers_a_recommended_count_only_where_it_binds() {
+        let flagless = ParallelArgs { jobs: None, parallel_memory: None };
+        const UNIT: u64 = 24 << 20;
+        let source = || Recommends::block_reader(24, READER, UNIT, 4);
+
+        // v1, a 512 MiB limit: 128 MiB after the reserve. Two readers of
+        // 58 MiB fit that on their own, and with the two units of floor they
+        // leave standing they do not — so one reader is the honest answer, and
+        // the budget is the whole allowance rather than what one reader bills.
+        let tight = flagless.resolve_in(&runtime_root("v1-limit"), &source());
+        assert_eq!(tight.parallelism().jobs(), 1);
+        assert_eq!(tight.parallelism().memory_bytes(), Some(128 << 20));
+
+        // v2, a 1 GiB limit: 640 MiB after the reserve, which is eleven
+        // readers — above the pool's depth, where the floor is zero and the
+        // count is the same one a division gives.
+        let roomy = flagless.resolve_in(&runtime_root("v2-limit"), &source());
+        assert_eq!(roomy.parallelism().jobs(), 11);
+        assert_eq!(roomy.parallelism().memory_bytes(), Some(11 * READER));
+    }
+
     /// only by half of `MemAvailable` (`RT8`) — which is the branch a `min`
     /// against the fallback constant would have broken, making a flagless
     /// compressed scan serial on the machine most likely to run it.

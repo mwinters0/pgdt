@@ -877,14 +877,17 @@ which is what makes the difference worth minding at the moment one is found.
   surface"). A floor that followed the count instead would charge far less at
   one and two readers. It is not taken in P19: that phase reports the decline,
   and reworking a pool's sizing rule needs evidence P19's account does not
-  produce. **P19 does not charge the floor honestly, which is a separate
-  defect and is `19.22`'s** — `block_reader_bytes` bills `2 × unit` a reader,
-  so below `POOL_DEPTH` readers the pool holds `(POOL_DEPTH − jobs) × unit`
-  nobody paid for, confirmed to 1.4 MiB over five cells
+  produce. **P19 charges the floor honestly, which was a separate defect and
+  was `19.22`'s** — the per-reader term bills `2 × unit` a reader, so below
+  `POOL_DEPTH` readers the pool holds `(POOL_DEPTH − jobs) × unit` that no
+  per-reader term carries, confirmed to 1.4 MiB over five cells
   ([2026-09-12](../status/history/2026-09-12.md), "The reserve entry closes on
-  384, and the grilling found the charge wrong below four readers"). Charging
-  it honestly is not this item: the item is whether the floor should follow the
-  count at all. The cheap half of it — whether the
+  384, and the grilling found the charge wrong below four readers"), and
+  `io::WorkerMemory` is the shape that bills it
+  ([`architecture.md`](architecture.md), "Execution model and API surface").
+  That charge is not this item: the item is whether the floor should follow the
+  count at all — and billing it is what makes the question answerable, the
+  decline it widens now being the honest one. The cheap half of it — whether the
   floor buys anything at all below `POOL_DEPTH` readers — is a reading, not a
   design. **That reading is now taken, and it says the floor buys nothing there.**
   At a 512 MiB limit on koji's block size, a `runs/` probe swept the reader

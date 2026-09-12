@@ -122,10 +122,16 @@ pub trait ByteRangeSource: Send + Sync {
         Partitioning::single(0)
     }
 
-    /// What one concurrent reader would hold if this source read its container
-    /// a block at a time, in bytes — the number a memory budget has to clear
-    /// for that path to be taken at all, whether or not it was
+    /// What reading this source's container a block at a time would cost at
+    /// **one** reader, in bytes — the number a memory budget has to clear for
+    /// that path to be taken at all, whether or not it was
     /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// **One reader's charge *plus the pool floor it leaves*, because that is
+    /// the line the gate actually draws** ([`BlockCache::affordable`]): a pool
+    /// serving one reader still holds [`POOL_DEPTH`] slots, so the recourse a
+    /// declined source names would be short of the budget that buys the path
+    /// back if it named the per-reader term alone.
     ///
     /// `None` for a source with no such path to take, which is every source
     /// but a compressed one.
@@ -170,9 +176,9 @@ pub trait ByteRangeSource: Send + Sync {
         1
     }
 
-    /// How many bytes **one** worker of this source holds, where the caller
-    /// has stated no budget of its own — a **recommendation**, never a bound,
-    /// and the budget sibling of [`ByteRangeSource::default_workers`]
+    /// What the workers of this source hold, where the caller has stated no
+    /// budget of its own — a **recommendation**, never a bound, and the budget
+    /// sibling of [`ByteRangeSource::default_workers`]
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
     /// **It is per worker rather than a total, and that is what makes the two
@@ -203,7 +209,15 @@ pub trait ByteRangeSource: Send + Sync {
     /// **Nothing in the library reads it**, exactly as with the worker count:
     /// a caller that states a budget gets that budget, and this exists for the
     /// layer above, which has a person's flags to fill in.
-    fn default_memory_per_worker(&self) -> Option<u64> {
+    ///
+    /// **It is a [`WorkerMemory`] rather than a scalar, because one source's
+    /// cost is not linear in the count.** A block-decoding source holds a pool
+    /// floor below [`POOL_DEPTH`] readers that no per-worker term can express,
+    /// so the recommendation is a shape a budget is *solved* against
+    /// ([`Parallelism::fit`]) rather than a number it is divided by. Every
+    /// other source states its per-worker term and no floor, which is the same
+    /// division it always was.
+    fn default_worker_memory(&self) -> Option<WorkerMemory> {
         None
     }
     /// How much concurrency this caller allows, and how many bytes the source
@@ -446,13 +460,121 @@ pub enum PartitionRead {
 /// measurement priced.
 const BOUNDARIED_PARTITION_UNITS: usize = 1;
 
+/// What a source holds resident while some number of concurrent workers read
+/// it — **a shape rather than a scalar**, because the cost is not linear in
+/// the count (`docs/design/architecture.md`, "Execution model and API
+/// surface").
+///
+/// Two terms:
+///
+/// - **per worker**, paid once for each concurrent reader, which is what
+///   [`Partitioning::partition_bytes`] states; and
+/// - a **shared floor**, `floor_unit` bytes for every worker *below*
+///   `floor_below` — buffers a pool holds whatever the count, and so the term
+///   that is largest when the count is smallest.
+///
+/// **The floor is the block pool's, and it is a real quantity rather than a
+/// safety margin.** [`BufferPool::slots`] clamps a pool at
+/// `POOL_DEPTH.max(jobs)`, so below [`POOL_DEPTH`] readers the block pool
+/// holds `(POOL_DEPTH − jobs)` units that a per-reader charge of two units
+/// each never billed: the pool's free list and its retention together take
+/// `slots` of them and each reader is decoding into one besides, which is
+/// `slots + jobs` against a bill of `2 × jobs`. It is **unbounded in the block
+/// size** — 96 MiB at koji's 24 MiB blocks, 384 MiB at 128 and 2 GiB at 512 —
+/// which is why [`MEMORY_RESERVE`] cannot absorb it and why it is billed here
+/// instead.
+///
+/// **A budget is solved against this, never divided by it**
+/// ([`WorkerMemory::affords`]). `cap / per_worker` is the arithmetic this type
+/// replaces, and it errs in the one direction that matters: it admits readers
+/// whose share of the floor the allowance never granted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkerMemory {
+    per_worker: u64,
+    floor_unit: u64,
+    floor_below: usize,
+}
+
+impl WorkerMemory {
+    /// A cost that is `per_worker` bytes a worker and nothing else — every
+    /// source's shape but the block-decoding one's.
+    pub const fn per_worker(per_worker: u64) -> Self {
+        Self { per_worker, floor_unit: 0, floor_below: 0 }
+    }
+
+    /// State that a pool holds `unit` bytes for each worker short of `below`,
+    /// on top of the per-worker term.
+    pub const fn flooring(mut self, unit: u64, below: usize) -> Self {
+        self.floor_unit = unit;
+        self.floor_below = below;
+        self
+    }
+
+    /// The per-worker term alone — what one more concurrent reader adds once
+    /// the floor is filled, and what a *cut* is sized by
+    /// ([`Partitioning::window_end`]).
+    pub const fn bytes_per_worker(self) -> u64 {
+        self.per_worker
+    }
+
+    /// The shared floor at `workers` readers: zero at or above `floor_below`.
+    pub fn floor_bytes(self, workers: usize) -> u64 {
+        (self.floor_below.saturating_sub(workers) as u64).saturating_mul(self.floor_unit)
+    }
+
+    /// What `workers` concurrent readers cost, in bytes.
+    pub fn at(self, workers: usize) -> u64 {
+        self.per_worker.saturating_mul(workers as u64).saturating_add(self.floor_bytes(workers))
+    }
+
+    /// Whether this source states no cost at all, which is the declining
+    /// default and every source before a cost was stated: such a source is
+    /// bounded by the caller's own count and by nothing here.
+    pub const fn is_zero(self) -> bool {
+        self.per_worker == 0 && self.floor_unit == 0
+    }
+
+    /// The same shape with `extra` bytes added to the per-worker term — what a
+    /// caller pinning a batch of its own on top of the source's charge pays
+    /// (`crate::stream::plan_partitions`).
+    pub const fn plus_per_worker(mut self, extra: u64) -> Self {
+        self.per_worker = self.per_worker.saturating_add(extra);
+        self
+    }
+
+    /// The largest count in `1..=most` that `cap` affords, **never zero**: a
+    /// cap too small for even one worker is a real arrangement, and one worker
+    /// is what the floors inside the mechanism deliver there.
+    ///
+    /// **Two regimes, because the cost need not be monotone.** At or above
+    /// `floor_below` the floor is gone and the cost is one multiplication, so
+    /// the largest affordable count there is a single division. Below it the
+    /// floor decays as the count rises, so a larger count can cost *less*;
+    /// those candidates are enumerated rather than divided for, and there are
+    /// at most [`POOL_DEPTH`] of them.
+    pub fn affords(self, cap: u64, most: usize) -> usize {
+        let most = most.max(1);
+        let above = match self.per_worker {
+            0 => most,
+            per_worker => usize::try_from(cap / per_worker).unwrap_or(usize::MAX).min(most),
+        };
+        if above >= self.floor_below {
+            return above.max(1);
+        }
+        (1..=most.min(self.floor_below)).rev().find(|workers| self.at(*workers) <= cap).unwrap_or(1)
+    }
+}
+
 /// A source's answer to [`ByteRangeSource::partitions`]: where to split, what
 /// one partition holds resident while it reads, and what a batch held across
 /// reads pins.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Partitioning {
     boundaries: PartitionBoundaries,
-    partition_bytes: u64,
+    /// What concurrent readers of this source cost — the per-worker term every
+    /// constructor takes, plus whatever shared floor
+    /// [`Partitioning::flooring`] has stated ([`WorkerMemory`]).
+    memory: WorkerMemory,
     retained: RetainedUnit,
     read: PartitionRead,
 }
@@ -462,7 +584,7 @@ impl Partitioning {
     pub fn anywhere(partition_bytes: u64) -> Self {
         Self {
             boundaries: PartitionBoundaries::Anywhere,
-            partition_bytes,
+            memory: WorkerMemory::per_worker(partition_bytes),
             retained: RetainedUnit::default(),
             read: PartitionRead::default(),
         }
@@ -476,7 +598,7 @@ impl Partitioning {
         offsets.dedup();
         Self {
             boundaries: PartitionBoundaries::At(offsets),
-            partition_bytes,
+            memory: WorkerMemory::per_worker(partition_bytes),
             retained: RetainedUnit::default(),
             read: PartitionRead::default(),
         }
@@ -499,6 +621,21 @@ impl Partitioning {
     pub fn reading(mut self, read: PartitionRead) -> Self {
         self.read = read;
         self
+    }
+
+    /// State that this source holds `unit` bytes for every worker short of
+    /// `below`, on top of the per-worker charge — the block pool's floor, and
+    /// nothing every other source has ([`WorkerMemory`]).
+    pub fn flooring(mut self, unit: u64, below: usize) -> Self {
+        self.memory = self.memory.flooring(unit, below);
+        self
+    }
+
+    /// What concurrent readers of this source cost, as a shape a budget is
+    /// solved against — [`Partitioning::partition_bytes`] is its per-worker
+    /// term, and `crate::stream::worker_count` is what reads it.
+    pub fn worker_memory(&self) -> WorkerMemory {
+        self.memory
     }
 
     /// Where this source is willing to be split. Any offsets are ascending
@@ -537,7 +674,7 @@ impl Partitioning {
     /// term a budget's reserve covers; the block path builds a decoder per
     /// concurrent decode, which is what makes the same number per-reader there.
     pub fn partition_bytes(&self) -> u64 {
-        self.partition_bytes
+        self.memory.bytes_per_worker()
     }
 
     /// What a batch this caller holds across reads pins on this source, which
@@ -600,9 +737,9 @@ impl Partitioning {
     pub fn window_end(&self, start: u64, want: usize, limit: u64) -> u64 {
         let want = want.max(1);
         match &self.boundaries {
-            PartitionBoundaries::Anywhere => {
-                start.saturating_add((want as u64).saturating_mul(self.partition_bytes)).min(limit)
-            }
+            PartitionBoundaries::Anywhere => start
+                .saturating_add((want as u64).saturating_mul(self.partition_bytes()))
+                .min(limit),
             PartitionBoundaries::At(offsets) => offsets
                 .iter()
                 .copied()
@@ -767,7 +904,7 @@ impl Parallelism {
     /// [`Parallelism::discover`]'s rule against recommendations a caller has
     /// already obtained — a source's own worker count
     /// ([`ByteRangeSource::default_workers`]) and what one of those workers
-    /// holds ([`ByteRangeSource::default_memory_per_worker`]).
+    /// holds ([`ByteRangeSource::default_worker_memory`]).
     ///
     /// **It answers with both numbers, because they are a pair.** What the
     /// caller asks is "I would like `jobs` workers, each holding
@@ -805,8 +942,8 @@ impl Parallelism {
     /// is [`Parallelism::default`] at a serial count and
     /// [`DEFAULT_MEMORY_BUDGET`] above one — the distinction
     /// [`Parallelism::Workers`] has nowhere to record.
-    pub fn discover_for(jobs: usize, per_worker: Option<u64>) -> Self {
-        Self::discover_in(Path::new("/"), jobs, per_worker)
+    pub fn discover_for(jobs: usize, memory: Option<WorkerMemory>) -> Self {
+        Self::discover_in(Path::new("/"), jobs, memory)
     }
 
     /// [`Parallelism::discover_for`] against an arbitrary filesystem root, for
@@ -814,19 +951,19 @@ impl Parallelism {
     /// same reason it is: a caller's own resolution is pinned against
     /// environments this machine cannot be put into
     /// (`pgdump_query-cli/tests/data/runtime/`).
-    pub fn discover_in(root: &Path, jobs: usize, per_worker: Option<u64>) -> Self {
+    pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
         let cap = match discover_memory_limit_in(root) {
             Some(limit) => Some(limit.bytes.saturating_sub(MEMORY_RESERVE)),
             // Nothing discovered and nothing recommended: no cap to state, and
             // no recommendation to cap. That is today's default, unchanged.
-            None if per_worker.is_none() => None,
+            None if memory.is_none() => None,
             // `MemAvailable` unreadable is the one shape with a recommendation
             // and no ceiling to hold it under.
             None => Some(available_memory_in(root).map_or(u64::MAX, |available| available / 2)),
         };
         match cap {
             Some(cap) => {
-                let (jobs, budget) = Self::fit(jobs, per_worker, cap);
+                let (jobs, budget) = Self::fit(jobs, memory, cap);
                 Self::workers(jobs, budget)
             }
             None if jobs > 1 => Self::workers(jobs, DEFAULT_MEMORY_BUDGET),
@@ -851,8 +988,12 @@ impl Parallelism {
     /// name one the allowance never granted — the budget here is the caller's
     /// own, and lowering it would be overruling a stated flag
     /// (`docs/design/architecture.md`, "Status output").
-    pub fn recommended_within(jobs: usize, per_worker: Option<u64>, memory_bytes: u64) -> Self {
-        Self::workers(Self::fit(jobs, per_worker, memory_bytes).0, memory_bytes)
+    pub fn recommended_within(
+        jobs: usize,
+        memory: Option<WorkerMemory>,
+        memory_bytes: u64,
+    ) -> Self {
+        Self::workers(Self::fit(jobs, memory, memory_bytes).0, memory_bytes)
     }
 
     /// The largest pair `(count, budget)` that fits inside `cap`: as many of
@@ -869,14 +1010,21 @@ impl Parallelism {
     /// granted.
     ///
     /// A caller recommending nothing is capped at [`DEFAULT_MEMORY_BUDGET`]
-    /// and keeps its count, there being no per-worker cost to divide by.
-    fn fit(jobs: usize, per_worker: Option<u64>, cap: u64) -> (usize, u64) {
+    /// and keeps its count, there being no cost to solve against.
+    ///
+    /// **It solves rather than divides** ([`WorkerMemory::affords`]), because
+    /// one source's cost is not linear in the count: a block-decoding source
+    /// holds a pool floor below [`POOL_DEPTH`] readers, so `cap / per_worker`
+    /// hands back a count whose floor the allowance never granted. The budget
+    /// it names is what that many workers actually spend, floor included,
+    /// which is what keeps the number the run reports for itself true.
+    fn fit(jobs: usize, memory: Option<WorkerMemory>, cap: u64) -> (usize, u64) {
         let jobs = jobs.max(1);
-        let Some(per_worker) = per_worker.filter(|per_worker| *per_worker > 0) else {
+        let Some(memory) = memory.filter(|memory| !memory.is_zero()) else {
             return (jobs, DEFAULT_MEMORY_BUDGET.min(cap));
         };
-        let affords = usize::try_from(cap / per_worker).unwrap_or(usize::MAX).clamp(1, jobs);
-        (affords, cap.min(per_worker.saturating_mul(affords as u64)))
+        let affords = memory.affords(cap, jobs);
+        (affords, cap.min(memory.at(affords)))
     }
 }
 
@@ -938,7 +1086,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// against it** — 256, 320, 384, 448 and 512 MiB, each a build of its own, over
 /// two block sizes and four container limits with nothing stated
 /// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`). What one reader
-/// holds is billed to within 1.3% by `XzSource::block_reader_bytes`, so what
+/// holds is billed to within 1.3% by [`BlockCache::reader_bytes`], so what
 /// this covers is the flat excess above that charge — 83.6–214.6 MiB with no
 /// trend across two to twenty-four readers — and not a per-reader term.
 /// **Raising this constant is also what declines the block path**, since
@@ -946,15 +1094,17 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// knob, and the floor below which a compressed scan is serial is implicit in
 /// it rather than stated separately.
 ///
-/// **Two things it was not shown to do.** It was validated to a 2 GiB limit
+/// **One thing it was not shown to do.** It was validated to a 2 GiB limit
 /// *on a 24-core host*, where `std::thread::available_parallelism` clamps the
 /// count the allowance would otherwise afford; a host with more cores resolves
-/// more readers at the same limit and is predicted to breach the margin. And
-/// it does not cover the block pool's floor: [`BufferPool::slots`] clamps that
-/// pool at `POOL_DEPTH.max(jobs)` while `XzSource::block_reader_bytes` bills
-/// `2 × unit` a reader, so below four readers the pool holds
-/// `(POOL_DEPTH − jobs) × unit` nobody paid for — unbounded in the block size,
-/// which is why it is a charge to repair rather than a reserve to raise
+/// more readers at the same limit and is predicted to breach the margin.
+///
+/// **What it does not cover, and never had to, is the block pool's floor.**
+/// [`BufferPool::slots`] clamps that pool at `POOL_DEPTH.max(jobs)` while the
+/// per-reader term bills `2 × unit`, so below four readers the pool holds
+/// `(POOL_DEPTH − jobs) × unit` that no per-reader term carries — unbounded in
+/// the block size, which is why it is billed by [`WorkerMemory`] rather than
+/// reserved for here
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 ///
 /// **One constant, taken from the compressed leg, over-reserving the plain
@@ -979,7 +1129,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// deployment setting, not a mechanism this binary ships"). The deeper reason
 /// the arithmetic would not help: retention is **already inside the per-reader
 /// charge** — the measured worst-resident slope is 0.987 of what
-/// `XzSource::block_reader_bytes` bills — so a reserve computed from an arena
+/// [`BlockCache::reader_bytes`] bills — so a reserve computed from an arena
 /// count would be reserving for a term that is billed twice
 /// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`, "Arena retention is
 /// inside the charge, not above it").
@@ -2039,9 +2189,39 @@ impl BlockCache {
             .saturating_add(decode_bytes)
     }
 
+    /// What **the block path costs at `workers` concurrent readers**: the
+    /// per-reader charge above, plus the pool floor those readers leave
+    /// unfilled ([`WorkerMemory`]).
+    ///
+    /// **The floor is `(POOL_DEPTH − workers) × unit`, and it is arithmetic
+    /// from this pool rather than a measured term.** [`BufferPool::slots`]
+    /// clamps the block pool at `POOL_DEPTH.max(jobs)`; the free list and the
+    /// retention list share those slots ([`BufferPool::reserve`]) and each
+    /// reader is decoding into a buffer besides, so the pool holds
+    /// `slots + workers` units against a bill of `2 × workers`. Above
+    /// [`POOL_DEPTH`] readers the two agree exactly and the floor is zero;
+    /// below it the difference is what nobody paid for. It is confirmed
+    /// against five cells of `19.16`'s readings to 1.4 MiB
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    fn worker_memory(&self, chunk_bytes: u64, decode_bytes: u64) -> WorkerMemory {
+        WorkerMemory::per_worker(self.reader_bytes(chunk_bytes, decode_bytes))
+            .flooring(self.unit as u64, POOL_DEPTH)
+    }
+
     /// Whether `budget` admits one such reader — the line that decides between
     /// block decode and the streaming reader
     /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// **It is asked of *one* reader and charges that reader's pool floor with
+    /// it**, which is what makes the stated budget true rather than nearly
+    /// true: a pool serving a single reader still holds [`POOL_DEPTH`] slots,
+    /// so admitting the path on the per-reader charge alone allows
+    /// `(POOL_DEPTH − 1)` units the caller never granted. The decline it
+    /// widens is accepted rather than worked around — at 128 MiB blocks the
+    /// line moves from 266 MiB to 650 — because it is the first arrangement in
+    /// which a large-block file's stated number holds, the decline is reported
+    /// (`crate::stream::compressed_block_path_declined`), and a caller who
+    /// wants the path back states a budget.
     ///
     /// **The chunk and the decoder come off the top, and what is left must
     /// hold two blocks.** Both are paid on the streaming path too — that
@@ -2069,7 +2249,7 @@ impl BlockCache {
     /// `--parallel-memory` or `Parallelism::Workers`, rather than a constant's
     /// to permit.
     fn affordable(&self, chunk_bytes: u64, decode_bytes: u64, budget: u64) -> bool {
-        self.reader_bytes(chunk_bytes, decode_bytes) <= budget
+        self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget
     }
 
     /// The retained block at `index`, promoted to most-recently-used.
@@ -2306,6 +2486,14 @@ impl XzSource {
             // the pool's own depth: a block pool of one drains before every
             // decode, so it stops pooling exactly when a caller is holding a
             // block.
+            //
+            // **`jobs` here is the count the caller *announced*, not the count
+            // `crate::stream::worker_count` then delivers.** They agree under
+            // discovery and diverge where a stated `--jobs` outruns a stated
+            // budget, which is `KD21`
+            // (`docs/design/architecture.md`, "Execution model and API
+            // surface").
+            // deficiency: KD21
             blocks
                 .pool
                 .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(jobs));
@@ -2340,14 +2528,21 @@ impl XzSource {
         }
     }
 
-    /// What one concurrent block-decoding reader of this file would hold,
-    /// whether or not the budget admits one — [`BlockCache::reader_bytes`]
-    /// over this source's own chunk size ([`XzSource::charged_chunk_bytes`])
-    /// and decoder charge, and what [`ByteRangeSource::block_decode_bytes`]
-    /// answers.
-    fn block_reader_bytes(&self) -> Option<u64> {
+    /// What concurrent block-decoding readers of this file would cost, whether
+    /// or not the budget admits one: [`BlockCache::worker_memory`] over this
+    /// source's own chunk size ([`XzSource::charged_chunk_bytes`]) and decoder
+    /// charge — the per-reader charge and the pool floor below it, as one
+    /// shape.
+    ///
+    /// **It is the one composition site**, which is what keeps the
+    /// recommendation ([`ByteRangeSource::default_worker_memory`]), the gate
+    /// ([`BlockCache::affordable`]) and the advice
+    /// ([`Partitioning::worker_memory`]) from being three statements of one
+    /// cost that can part company. They were two 7 MiB apart once already
+    /// ([`XzSource::charged_chunk_bytes`]).
+    fn block_worker_memory(&self) -> Option<WorkerMemory> {
         let cache = self.blocks.as_ref()?;
-        Some(cache.reader_bytes(self.charged_chunk_bytes(), self.decode_bytes))
+        Some(cache.worker_memory(self.charged_chunk_bytes(), self.decode_bytes))
     }
 
     /// The block-decode path, or `None` where this read goes through the
@@ -2548,7 +2743,14 @@ impl XzSource {
         // keeps the default for the same reason it keeps the retained unit:
         // there a read is assembled into a chunk buffer, and nothing is gained
         // by asking for a longer one.
+        // **And the block pool's floor is stated beside the per-reader
+        // charge.** `BufferPool::slots` clamps that pool at
+        // `POOL_DEPTH.max(jobs)`, so below four readers it holds units the
+        // per-reader charge never billed; stating it here is what lets
+        // `crate::stream::worker_count` solve for a count rather than divide
+        // by one ([`BlockCache::worker_memory`]).
         Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
+            .flooring(cache.unit as u64, POOL_DEPTH)
             .retaining(RetainedUnit::Partition)
             .reading(PartitionRead::Whole { unit: cache.unit as u64 })
     }
@@ -2694,7 +2896,7 @@ impl ByteRangeSource for XzSource {
     }
 
     fn block_decode_bytes(&self) -> Option<u64> {
-        self.block_reader_bytes()
+        Some(self.block_worker_memory()?.at(1))
     }
 
     /// **The cores this process was given** — `available_parallelism()`, which
@@ -2717,7 +2919,7 @@ impl ByteRangeSource for XzSource {
     /// four-block file can run four readers however many cores this process
     /// was given. It is capped *here*, where the count is recommended, rather
     /// than left to bind downstream — the recommendation is multiplied into a
-    /// budget request ([`ByteRangeSource::default_memory_per_worker`]) and
+    /// budget request ([`ByteRangeSource::default_worker_memory`]) and
     /// printed beside it, so a count the file cannot supply work for becomes
     /// an over-ask and a self-contradicting status line
     /// ([`Parallelism::discover_for`]).
@@ -2730,26 +2932,27 @@ impl ByteRangeSource for XzSource {
         cores.min(self.table.block_count().max(1))
     }
 
-    /// **What one reader of this file holds**:
-    /// [`XzSource::block_reader_bytes`], which is the number
-    /// `crate::stream::worker_count` divides a budget by to hand back a count.
-    /// `None` where there is no block path to buy — a file with no blocks, or
-    /// one whose largest block is not a length on this target — since the
-    /// streaming reader has no second worker to give at any budget.
+    /// **What readers of this file hold**: [`XzSource::block_worker_memory`] —
+    /// the per-reader charge plus the block pool's floor, which is the shape
+    /// `crate::stream::worker_count` and [`Parallelism::fit`] both solve
+    /// against to hand back a count. `None` where there is no block path to
+    /// buy — a file with no blocks, or one whose largest block is not a length
+    /// on this target — since the streaming reader has no second worker to
+    /// give at any budget.
     ///
     /// **It is charged at the chunk a scan settles at**
     /// ([`XzSource::charged_chunk_bytes`]), which is what
     /// [`BlockCache::affordable`] compares a budget against once the file is
-    /// open — so the number handed to [`Parallelism::fit`] before it is open
+    /// open — so the shape handed to [`Parallelism::fit`] before it is open
     /// and the number the resulting count then meets are the same. Charging
     /// the unannounced pool's [`POOL_MAX_BYTES`] ceiling instead ran the
     /// recommendation a tenth high, which was inert as bytes and not as a
     /// count: the allowance was divided by it, so a 512 MiB cgroup resolved
-    /// three readers where four fit. It is the same number
-    /// [`ByteRangeSource::block_decode_bytes`] answers, deliberately: one
-    /// statement of what a reader holds.
-    fn default_memory_per_worker(&self) -> Option<u64> {
-        self.block_reader_bytes()
+    /// three readers where four fit. [`ByteRangeSource::block_decode_bytes`]
+    /// is this same shape evaluated at one reader, deliberately: one statement
+    /// of what the block path costs.
+    fn default_worker_memory(&self) -> Option<WorkerMemory> {
+        self.block_worker_memory()
     }
 }
 
@@ -3406,7 +3609,19 @@ mod tests {
             whole.partition_bytes(),
             2 * unit + crate::DEFAULT_CHUNK_SIZE as u64 + source.decode_bytes
         );
-        assert_eq!(Some(whole.partition_bytes()), source.block_decode_bytes());
+        assert_eq!(whole.worker_memory().bytes_per_worker(), whole.partition_bytes());
+
+        // **And the gate is that same charge at one reader**, which is the
+        // per-reader term plus the pool floor a single reader leaves unfilled
+        // — `(POOL_DEPTH - 1)` units nobody else is there to take
+        // ([`WorkerMemory`]). That is what a budget has to clear for the block
+        // path to be taken at all, so it is what a declined source names as
+        // the recourse.
+        assert_eq!(
+            source.block_decode_bytes(),
+            Some(whole.partition_bytes() + (POOL_DEPTH as u64 - 1) * unit)
+        );
+        assert_eq!(source.block_decode_bytes(), Some(whole.worker_memory().at(1)));
 
         // And what a retained batch pins is that same block, which the line
         // above has already charged for — so a caller must not add its span
@@ -3583,33 +3798,43 @@ mod tests {
         assert_eq!(advice.window_end(0, 3, 17), 17, "the limit binds");
     }
 
-    /// **Whole-block decode is declined unless the budget affords two blocks.**
-    /// A pool of one slot retains nothing — `BlockCache::slot` drains to
-    /// `slots() - 1` before every decode — so it stops pooling exactly when a
-    /// caller is holding a block, and the streaming reader is the honest answer
-    /// there. What moves for a reader is the threshold: half the budget, where
-    /// it used to be the whole of it.
+    /// **Whole-block decode is declined unless the budget affords the two
+    /// blocks a reader holds *and* the pool floor beside them.** A pool of one
+    /// slot retains nothing — `BlockCache::slot` drains to `slots() - 1`
+    /// before every decode — so it stops pooling exactly when a caller is
+    /// holding a block, which is why a reader is charged two units; and
+    /// `BufferPool::slots` clamps this pool at `POOL_DEPTH.max(jobs)`, so a
+    /// single reader leaves `(POOL_DEPTH - 1)` units standing that nothing
+    /// else is there to fill. [`POOL_DEPTH`] units is therefore the line, not
+    /// two.
     #[test]
-    fn the_block_path_wants_room_for_two_blocks() {
+    fn the_block_path_wants_room_for_two_blocks_and_the_pool_floor() {
         let table = four_block_table();
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
         // The two terms a decline does not save, held at zero so that this
         // test is about the block slots alone; the test above is where they
         // bind.
         let unit = cache.unit as u64;
+        let floor = POOL_DEPTH as u64 - 1;
 
-        assert!(cache.affordable(0, 0, unit * 2), "exactly two units is the coupled count of two");
+        assert!(
+            cache.affordable(0, 0, unit * (2 + floor)),
+            "two units for the reader, and the floor the pool holds beside it"
+        );
         cache.pool.set_limits(cache.unit * 2, POOL_DEPTH);
         assert_eq!(cache.pool.slots(), 2);
 
         assert!(
-            !cache.affordable(0, 0, unit * 2 - 1),
-            "one unit is the un-poolable shape, so it is declined"
+            !cache.affordable(0, 0, unit * (2 + floor) - 1),
+            "a byte short of the floor is the un-poolable shape, so it is declined"
         );
+        // Two units alone were the whole of the old line, and the floor is
+        // what it left unbilled.
+        assert!(!cache.affordable(0, 0, unit * 2));
         // And the reader's other two terms are inside the same number: the
-        // same budget that afforded two units declines them once a chunk
+        // same budget that afforded the blocks declines them once a chunk
         // buffer and a decoder are charged beside it.
-        assert!(!cache.affordable(1, 1, unit * 2));
+        assert!(!cache.affordable(1, 1, unit * (2 + floor)));
     }
 
     /// **One slot count covers the retained blocks and the free ones
@@ -3952,19 +4177,30 @@ mod tests {
             let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
             cache.affordable(crate::DEFAULT_CHUNK_SIZE as u64, DECODE, budget)
         };
-        assert!(affordable(24 << 20, DEFAULT_MEMORY_BUDGET));
+        // **`POOL_DEPTH` units, not two.** A single reader is charged the two
+        // blocks it holds *and* the pool floor beside them
+        // ([`BlockCache::worker_memory`]), so koji's 24 MiB blocks want
+        // 5 x 24 MiB plus the chunk and the decoder — 131 MiB — where the
+        // per-reader term alone was 58 and fitted the default. The default
+        // budget therefore declines an ordinary compressed dump, which is the
+        // first arrangement in which that stated number is true: the pool held
+        // four units under it either way (`docs/design/architecture.md`,
+        // "Execution model and API surface").
+        assert!(!affordable(24 << 20, DEFAULT_MEMORY_BUDGET));
+        assert!(affordable(24 << 20, 131 << 20));
         // 128 and 192 MiB blocks — `xz --block-size=128MiB`, and `xz -9 -T0`,
         // whose block is three times its 64 MiB dictionary — are declined at
         // the default and taken once the caller allows the room.
         assert!(!affordable(128 << 20, DEFAULT_MEMORY_BUDGET));
         assert!(!affordable(192 << 20, DEFAULT_MEMORY_BUDGET));
-        assert!(affordable(192 << 20, 512 << 20));
-        // **The unavoidable terms come off the top.** Two 24 MiB blocks fit a
-        // 50 MiB budget on their own and the file is declined all the same,
+        assert!(!affordable(192 << 20, 512 << 20), "five units of 192 MiB is 960");
+        assert!(affordable(192 << 20, 971 << 20));
+        // **The unavoidable terms come off the top.** Five 24 MiB blocks fit a
+        // 120 MiB budget on their own and the file is declined all the same,
         // because a reader of it also holds the chunk buffer and the decoder —
         // both of which the streaming fallback holds too, which is why they
         // bound the decision rather than being saved by it.
-        assert!(!affordable(24 << 20, 50 << 20));
+        assert!(!affordable(24 << 20, 120 << 20));
         // A file with no blocks at all — `xz -c /dev/null` writes one — has no
         // unit to size a slot with, so there is no cache to ask.
         let empty = xz_seek::SeekTable {
@@ -4509,19 +4745,22 @@ mod tests {
         // Eight readers of 512 MiB each is 4 GiB against a cap of 640 MiB, so
         // the count comes down with the budget rather than being printed
         // beside one it cannot spend: one reader is what fits.
-        let squeezed = Parallelism::discover_in(root.path(), 8, Some(512 << 20));
+        let squeezed =
+            Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(512 << 20)));
         assert_eq!(squeezed.memory_bytes(), Some(512 << 20));
         assert_eq!(squeezed.jobs(), 1);
 
         // Eight readers of 16 MiB fit whole, so both numbers stand.
-        let roomy = Parallelism::discover_in(root.path(), 8, Some(16 << 20));
+        let roomy =
+            Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(16 << 20)));
         assert_eq!(roomy.memory_bytes(), Some(128 << 20));
         assert_eq!(roomy.jobs(), 8);
 
         // And in between, the count is what the cap affords and the budget is
         // exactly what that many readers spend — never the cap itself, which
         // is the over-ask this pairing exists to remove.
-        let fitted = Parallelism::discover_in(root.path(), 8, Some(100 << 20));
+        let fitted =
+            Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(100 << 20)));
         assert_eq!(fitted.jobs(), 6);
         assert_eq!(fitted.memory_bytes(), Some(600 << 20));
         assert!(fitted.memory_bytes() < Some(cap), "the cap itself would be the over-ask");
@@ -4536,7 +4775,8 @@ mod tests {
     fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {
         let root = FakeRoot::new();
         root.v2("/leaf").v2_limits("/leaf", Some(&MEMORY_RESERVE.to_string()), None);
-        let starved = Parallelism::discover_in(root.path(), 4, Some(1 << 30));
+        let starved =
+            Parallelism::discover_in(root.path(), 4, Some(WorkerMemory::per_worker(1 << 30)));
         assert_eq!(starved.memory_bytes(), Some(0));
         // One worker at whatever the cap is, not one worker's worth of bytes:
         // the floor is on the count, and a budget the allowance never granted
@@ -4576,7 +4816,8 @@ mod tests {
         // Twenty-four readers of an ordinary 24 MiB-block dump: ~1.4 GiB in
         // total, well under half of a 19 GiB `MemAvailable`.
         let per_worker = 58 << 20;
-        let roomy = Parallelism::discover_in(root.path(), 24, Some(per_worker));
+        let roomy =
+            Parallelism::discover_in(root.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
         assert_eq!(roomy.memory_bytes(), Some(per_worker * 24));
         assert_eq!(roomy.jobs(), 24);
 
@@ -4586,7 +4827,8 @@ mod tests {
         // reduced to what half of it buys rather than left standing.
         let small = FakeRoot::new();
         small.v2("/leaf").write("proc/meminfo", "MemAvailable:     262144 kB\n");
-        let squeezed = Parallelism::discover_in(small.path(), 24, Some(per_worker));
+        let squeezed =
+            Parallelism::discover_in(small.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
         assert_eq!(squeezed.jobs(), 2);
         assert_eq!(squeezed.memory_bytes(), Some(per_worker * 2));
 
@@ -4595,7 +4837,8 @@ mod tests {
         let blind = FakeRoot::new();
         blind.v2("/leaf");
         assert_eq!(
-            Parallelism::discover_in(blind.path(), 24, Some(per_worker)).memory_bytes(),
+            Parallelism::discover_in(blind.path(), 24, Some(WorkerMemory::per_worker(per_worker)))
+                .memory_bytes(),
             Some(per_worker * 24)
         );
     }
@@ -4610,18 +4853,30 @@ mod tests {
         let per_worker = 58 << 20;
 
         // Six readers fit inside 400 MiB; the seventh does not.
-        let cut = Parallelism::recommended_within(24, Some(per_worker), 400 << 20);
+        let cut = Parallelism::recommended_within(
+            24,
+            Some(WorkerMemory::per_worker(per_worker)),
+            400 << 20,
+        );
         assert_eq!(cut.jobs(), 6);
         assert_eq!(cut.memory_bytes(), Some(400 << 20), "the stated bytes, not 6 × per_worker");
 
         // Room for the whole recommendation leaves it standing.
-        let roomy = Parallelism::recommended_within(24, Some(per_worker), 64 << 30);
+        let roomy = Parallelism::recommended_within(
+            24,
+            Some(WorkerMemory::per_worker(per_worker)),
+            64 << 30,
+        );
         assert_eq!(roomy.jobs(), 24);
         assert_eq!(roomy.memory_bytes(), Some(64 << 30));
 
         // The floor is one worker at whatever was stated, which is
         // `Parallelism::workers`' serial arrangement carrying the budget.
-        let tight = Parallelism::recommended_within(24, Some(per_worker), 32 << 20);
+        let tight = Parallelism::recommended_within(
+            24,
+            Some(WorkerMemory::per_worker(per_worker)),
+            32 << 20,
+        );
         assert_eq!(tight, Parallelism::Serial { memory_bytes: Some(32 << 20) });
 
         // Nothing to divide by leaves the count where it is.
@@ -4644,34 +4899,44 @@ mod tests {
         );
     }
 
-    /// **A source recommends what *one* of its workers holds**, so that "no
-    /// limit found" cannot mean "serial": one reader of an ordinary compressed
-    /// dump costs more than the 64 MiB fallback, and a count nothing can afford
-    /// is not a recommendation. The plain source inherits the silence it
-    /// inherits for the worker count.
+    /// **A source recommends what its workers hold**, so that "no limit found"
+    /// cannot mean "serial": one reader of an ordinary compressed dump costs
+    /// more than the 64 MiB fallback, and a count nothing can afford is not a
+    /// recommendation. The plain source inherits the silence it inherits for
+    /// the worker count.
     ///
-    /// **Per worker rather than a total**, which is what makes it independent
-    /// of any count — including a `--jobs` the source never sees. It is the
-    /// same number `block_decode_bytes` answers, one statement of what a
-    /// reader holds.
+    /// **A shape rather than a scalar**, because the block pool's floor is not
+    /// per worker: `block_decode_bytes` is that same shape evaluated at one
+    /// reader — the gate's own number — and is strictly above the per-worker
+    /// term, while at [`POOL_DEPTH`] readers the floor is gone and the cost is
+    /// the per-worker term times the count.
     #[test]
-    fn a_compressed_source_recommends_what_one_of_its_workers_holds() {
-        assert_eq!(BareSource.default_memory_per_worker(), None);
+    fn a_compressed_source_recommends_what_its_workers_hold() {
+        assert_eq!(BareSource.default_worker_memory(), None);
         let (_file, plain) = source_of(b"0123456789abcdef");
-        assert_eq!(plain.default_memory_per_worker(), None);
+        assert_eq!(plain.default_worker_memory(), None);
 
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
-        let per_reader = source.block_decode_bytes().expect("a block path to price");
-        assert_eq!(source.default_memory_per_worker(), Some(per_reader));
+        let memory = source.default_worker_memory().expect("a block path to price");
+        assert_eq!(source.block_decode_bytes(), Some(memory.at(1)));
+        assert!(
+            memory.at(1) > memory.bytes_per_worker(),
+            "one reader leaves a pool floor nobody else fills"
+        );
+        assert_eq!(
+            memory.at(POOL_DEPTH),
+            memory.bytes_per_worker() * POOL_DEPTH as u64,
+            "at the pool's own depth the floor is filled and the cost is linear"
+        );
     }
 
-    /// **The number an allowance is divided by before the file is open is the
-    /// number the resulting count then meets.** `Parallelism::fit` divides a
-    /// cap by `default_memory_per_worker` with nothing announced;
-    /// `crate::stream::worker_count` divides the budget that produced by
-    /// `partitions().partition_bytes()` once the scan has announced its chunk.
+    /// **The charge an allowance is solved against before the file is open is
+    /// the charge the resulting count then meets.** `Parallelism::fit` solves
+    /// a cap against `default_worker_memory` with nothing announced;
+    /// `crate::stream::worker_count` solves the budget that produced against
+    /// `partitions().worker_memory()` once the scan has announced its chunk.
     /// Those were two different numbers — the second consumer of a value
     /// changed for the first — and the gap was `POOL_MAX_BYTES -
     /// DEFAULT_CHUNK_SIZE` a reader, so a 512 MiB allocation resolved three
@@ -4681,23 +4946,27 @@ mod tests {
     /// what has to agree is the *resolution* and the *scan*, and only the
     /// round trip through `Parallelism` can say so.
     #[test]
-    fn the_recommendation_an_allowance_is_divided_by_is_the_scans_own_divisor() {
+    fn the_recommendation_an_allowance_is_solved_against_is_the_scans_own_charge() {
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
-        let per_reader = source.default_memory_per_worker().expect("a block path to price");
+        let memory = source.default_worker_memory().expect("a block path to price");
 
         // Four readers' worth of allowance, as `Parallelism::fit` would spend
-        // it, then the scan's own announcement and its divisor.
-        let (jobs, budget) = Parallelism::fit(24, Some(per_reader), 4 * per_reader);
+        // it, then the scan's own announcement and its charge.
+        let (jobs, budget) = Parallelism::fit(24, Some(memory), memory.at(4));
         assert_eq!(jobs, 4);
         let parallelism = Parallelism::workers(jobs, budget);
         source.hint_read_size(crate::DEFAULT_CHUNK_SIZE);
         source.hint_parallelism(parallelism);
-        let divisor = source.partitions(0..payload.len() as u64).partition_bytes();
-        assert_eq!(divisor, per_reader, "the recommendation and the charge are one number");
+        let advice = source.partitions(0..payload.len() as u64);
         assert_eq!(
-            crate::stream::worker_count(parallelism, divisor),
+            advice.worker_memory(),
+            memory,
+            "the recommendation and the charge are one shape"
+        );
+        assert_eq!(
+            crate::stream::worker_count(parallelism, advice.worker_memory()),
             jobs,
             "the count the allowance bought is the count the scan runs"
         );

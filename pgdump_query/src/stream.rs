@@ -77,7 +77,7 @@ use crate::index::{
 };
 use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
-    RetainedUnit, WaitPolicy,
+    RetainedUnit, WaitPolicy, WorkerMemory,
 };
 use crate::leader::{self, RegionScan};
 use crate::map::{Builder, Span, SpanBody, attach_text};
@@ -1749,16 +1749,21 @@ async fn map_for_query(
 /// no footprint (the declining default, and every source before this method
 /// existed) is bounded by `jobs` alone.
 ///
+/// **The budget is *solved* against the source's cost, not divided by it**
+/// ([`crate::io::WorkerMemory::affords`]). A block-decoding source holds a
+/// pool floor below `POOL_DEPTH` readers that no per-worker term carries, so a
+/// division admits readers whose share of that floor the allowance never
+/// granted — the same repair [`Parallelism::fit`] takes on the *recommended*
+/// count, applied to the delivered one.
+///
 /// **Shared with the leader**, which asks the same question of an open `COPY`
 /// block's interior (`crate::leader::scan_region`): how many readers may run
 /// at once is one rule, and the cold path and the cached one differ in what
 /// they cut rather than in how many pieces they may afford.
-pub(crate) fn worker_count(parallelism: Parallelism, partition_bytes: u64) -> usize {
+pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> usize {
     let jobs = parallelism.jobs();
     match parallelism.memory_bytes() {
-        Some(budget) if partition_bytes > 0 => {
-            jobs.min(usize::try_from(budget / partition_bytes).unwrap_or(usize::MAX).max(1))
-        }
+        Some(budget) if !memory.is_zero() => memory.affords(budget, jobs),
         _ => jobs,
     }
 }
@@ -2113,11 +2118,19 @@ fn plan_partitions(
     let retains_partitions =
         !advice.is_empty() && advice.iter().all(|a| a.retained_unit() == RetainedUnit::Partition);
     let charged_span = if retains_partitions { None } else { max_source_span };
-    let divisor = match charged_span {
-        Some(span) => footprint.saturating_add(span as u64),
-        None => footprint,
+    // The charge the count is solved against: the largest per-worker footprint
+    // above, carrying that source's own pool floor, plus whatever span this
+    // caller pins on top of it.
+    let charge = advice
+        .iter()
+        .map(Partitioning::worker_memory)
+        .max_by_key(|memory| memory.bytes_per_worker())
+        .unwrap_or_default();
+    let charge = match charged_span {
+        Some(span) => charge.plus_per_worker(span as u64),
+        None => charge,
     };
-    let workers = worker_count(parallelism, divisor).max(1);
+    let workers = worker_count(parallelism, charge).max(1);
     let requested = parallelism.jobs();
     // The decline comes first because it is the wider fact: it is about how
     // every read of this file is served, where the count below is about how
@@ -2875,17 +2888,39 @@ mod tests {
     #[test]
     fn a_stated_budget_caps_the_worker_count_below_the_stated_jobs() {
         let eight = Parallelism::workers(8, 64 << 20);
-        assert_eq!(worker_count(eight, 32 << 20), 2);
-        assert_eq!(worker_count(eight, 4 << 20), 8);
+        let per = WorkerMemory::per_worker;
+        assert_eq!(worker_count(eight, per(32 << 20)), 2);
+        assert_eq!(worker_count(eight, per(4 << 20)), 8);
         // A footprint larger than the whole budget still leaves one worker:
         // the serial path is what a caller with no room for two gets.
-        assert_eq!(worker_count(eight, 128 << 20), 1);
+        assert_eq!(worker_count(eight, per(128 << 20)), 1);
         // A source that states no footprint is bounded by `jobs` alone.
-        assert_eq!(worker_count(eight, 0), 8);
+        assert_eq!(worker_count(eight, per(0)), 8);
         // The serial state is one worker, not a pool of one — and a budget it
         // carries changes nothing, the count being what caps the count.
-        assert_eq!(worker_count(Parallelism::default(), 32 << 20), 1);
-        assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), 32 << 20), 1);
+        assert_eq!(worker_count(Parallelism::default(), per(32 << 20)), 1);
+        assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), per(32 << 20)), 1);
+    }
+
+    /// **A shared floor is billed, so the budget is solved rather than
+    /// divided.** The block pool holds `POOL_DEPTH` units whatever the count,
+    /// which a per-worker charge does not carry: at 16 MiB a worker with a
+    /// 16 MiB floor under four readers, a 64 MiB budget affords three where a
+    /// division would have said four.
+    #[test]
+    fn a_shared_floor_is_billed_before_the_count_is_handed_back() {
+        let eight = Parallelism::workers(8, 64 << 20);
+        let charge = WorkerMemory::per_worker(16 << 20).flooring(16 << 20, 4);
+        // Four readers cost 64 MiB flat, three cost 48 + 16 = 64, two cost
+        // 32 + 32 = 64 — so this budget affords four and the division agrees.
+        assert_eq!(worker_count(eight, charge), 4);
+        // One byte short of it, and the floor is what the count answers to:
+        // every count from one to four costs the same 64 MiB here, so nothing
+        // fits and the serial floor is what is left.
+        assert_eq!(worker_count(Parallelism::workers(8, (64 << 20) - 1), charge), 1);
+        // Above the pool's depth the floor is gone and the cost is linear
+        // again: six readers of 16 MiB in 96 MiB is six.
+        assert_eq!(worker_count(Parallelism::workers(8, 96 << 20), charge), 6);
     }
 
     /// Grouping keeps the pieces in file order and contiguous, which is what
