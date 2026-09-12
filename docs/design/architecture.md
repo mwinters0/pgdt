@@ -2144,11 +2144,17 @@ stand in for a quantity that is one per *source*, and adding a third reaches
 `at`, `affords`, `is_zero`, `plus_per_worker` and every consumer of them. The
 term stays unbilled and named, as `KD24`'s does.
 
-**Removing the duplicate would make billing free, and it is not available
-here.** `vendor/xz-seek/` is read-only and `xz_seek::Reader` takes its
-`SeekTable` by value in both constructors, so sharing one `Arc` between reader
-and source is an upstream API change arriving by re-sync ("The compressed
-source"). The alternative — dropping `XzSource::table` and reading the reader's
+**Removing the duplicate is upstream's, and it is scheduled.** `vendor/xz-seek/`
+is read-only and `xz_seek::Reader` took its `SeekTable` by value in both
+constructors, so sharing one `Arc` between reader and source was an upstream API
+change arriving by re-sync ("The compressed source"). That crate is adding
+`Reader::index_shared() -> Arc<SeekTable>`, which aliases rather than clones,
+and widening `Builder::open_with_table` to `impl Into<Arc<SeekTable>>` so the
+cached path moves its table in without a copy; `SeekTable`, `StreamEntry` and
+`BlockEntry` are unchanged in fields, serde shape and size, so the cache
+envelope does not move and `FORMAT_VERSION` stays at 17. `M102` is the re-sync,
+and it closes this entry's duplication half; the billing half above stands
+unchanged, resting on the ordering rather than on the size. The alternative — dropping `XzSource::table` and reading the reader's
 copy under its mutex — reverses this mechanism's recorded arrangement, *the seek
 table the source holds beside the reader — no I/O and no lock*, and puts that
 lock on `size`, `partitions`, `default_workers` and the `blocks_in` span
