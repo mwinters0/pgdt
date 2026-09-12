@@ -2379,6 +2379,33 @@ def charge_bytes(unit: int, jobs: int) -> int:
     return jobs * reader_bytes(unit) + pool_floor_bytes(unit, jobs)
 
 
+def block_path_afforded(unit: int, budget: int) -> bool:
+    """Whether `budget` admits **one** block-decoding reader of a file with
+    `unit`-sized blocks — so whether a leg ran the block path or the streaming
+    fallback.
+
+    `BlockCache::affordable`, mirrored: `worker_memory(..).at(1) <= budget`,
+    which is `charge_bytes(unit, 1)` — the per-reader charge **plus that one
+    reader's pool floor**. `19.22` is what put the floor inside it, and the line
+    moved a long way: at 24 MiB blocks from 58.03 MiB to 130.0, and at 128 MiB
+    blocks from 266 to 650. So `reader_bytes <= budget` is not this comparison
+    and has not been since (`io.rs`, `BlockCache::affordable`).
+
+    **One function because the renderer asks the question at four places** — the
+    flagless cell's own label, the fit's window, the model check's exclusion and
+    the path step's two budgets — and three of them were still asking it the
+    pre-`19.22` way while the fourth was not, which is a table whose cells
+    silently changed mechanism while reading as one series (`M88`).
+
+    **Asked of a reported budget, never of a container limit.** A flagless run
+    resolves `limit − MEMORY_RESERVE` and says so on its own `scan started`
+    line, so the budget is a reading and the path follows from it by the
+    library's own arithmetic; deriving it from the `-m` token instead would
+    re-implement the reserve rule under test.
+    """
+    return budget >= charge_bytes(unit, 1)
+
+
 def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
     """One leg's resident set, split into the two terms the model names and the
     one it does not: `(billed, floor, unnamed)`, all in bytes.
@@ -2450,9 +2477,10 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> str | None:
 #: deliberately").
 #:
 #: The block size is declared here rather than read off the file because it is
-#: what `reader_bytes` is a function of, and the renderer needs it to say which
-#: legs took the block path at all — `parse` emits no decline note, that being
-#: a `PlanNote` on a query's `TableStream`.
+#: what `reader_bytes` and `pool_floor_bytes` are functions of, and the renderer
+#: needs it to say which legs took the block path at all — `parse` emits no
+#: decline note, that being a `PlanNote` on a query's `TableStream`, so
+#: `block_path_afforded` over the run's own reported budget is what answers it.
 RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
     ("control_xz", "24 MiB blocks", 24 << 20),
     ("control_xz128", "128 MiB blocks", 128 << 20),
@@ -2467,14 +2495,19 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: number decides both terms of the arrangement — which is why these legs carry
 #: a **per-spec** container limit where every other figure takes its own.
 #:
-#: **512 MiB is the thin point rather than the bottom of a range.** It is the
-#: smallest allocation that reaches the block path at all on the 24 MiB leg,
-#: which is where `19.15` measured 474 MiB median against 503.7 worst and the
-#: margin the gate asks for failed; 1 GiB and 1.5 GiB are where that sitting
-#: read 23.7% and 35.2% of headroom, so the fit has the whole shape of the
-#: curve in it rather than its worst end; and 2 GiB is where the 24 MiB leg's
-#: count saturates at the source's own recommendation, which is what separates
-#: "the allowance ran out" from "the recommendation did".
+#: **512 MiB is the bottom of the range, and since `19.22` it is below the block
+#: path rather than at it.** It is where `19.15` measured 474 MiB median against
+#: 503.7 worst and the margin the gate asks for failed, taken when the path was
+#: afforded at the per-reader term alone; the floor now charged with that one
+#: reader puts the 24 MiB leg's line at 130.0 MiB against the 128 MiB a
+#: `512m` allocation grants, so this row reads the streaming fallback on both
+#: inputs and says so per cell (`block_path_afforded`, and `M88`). It is kept as
+#: the bottom of the axis because the rule's own worst headroom is there and a
+#: fallback leg is still a leg the allocation has to hold. 1 GiB and 1.5 GiB are
+#: where that sitting read 23.7% and 35.2% of headroom, so the fit has the whole
+#: shape of the curve in it rather than its worst end; and 2 GiB is where the
+#: 24 MiB leg's count saturates at the source's own recommendation, which is
+#: what separates "the allowance ran out" from "the recommendation did".
 #:
 #: **A leg may be OOM-killed, and that is a reading rather than an apparatus
 #: failure** — see `KILL_TOLERANT`, which is where that licence is granted and
@@ -2529,9 +2562,12 @@ def kill_tolerant(command: str) -> bool:
 #: **One limit and one block size, deliberately.** This figure is gated
 #: `warm-parallel` and crossing the mechanism leg with the limits and the
 #: block sizes buys a second cross of the expensive axis for no question
-#: anybody asked. The limit is the smallest one reaching the block path, which
-#: is where the fixed term is the largest share of resident and therefore where
-#: a leg that moves it is visible at all.
+#: anybody asked. The limit is the smallest on the axis, which is where the
+#: fixed term is the largest share of resident and therefore where a leg that
+#: moves it is visible at all. **Its flagless legs run the streaming fallback
+#: since `19.22`** (`RESERVE_LIMITS`), which is what the arena cap is measured
+#: against here; the path step beside it is the one pair that states a budget,
+#: precisely so that the block path can be reached inside this allocation.
 RESERVE_MECHANISM_LIMIT = "512m"
 RESERVE_MECHANISM_INPUT = "control_xz"
 
@@ -2568,21 +2604,25 @@ RESERVE_MECHANISM_UNIT = next(
 )
 
 #: The path step's two stated budgets: exactly what one block-decoding reader of
-#: that file holds, and **one byte less**.
+#: that file costs the budget rule, and **one byte less**.
 #:
-#: `BlockCache::affordable` is `reader_bytes <= budget`, so the pair straddles
-#: that comparison and nothing else differs between the two runs — which is what
-#: makes the difference between them the whole block path against the streaming
-#: fallback rather than a budget change with a path change inside it. It is the
-#: 15.1 MiB against 474 MiB step `19.15` read across two *limits*, priced here
-#: at one byte.
+#: `block_path_afforded` is the comparison, so the pair straddles it and nothing
+#: else differs between the two runs — which is what makes the difference
+#: between them the whole block path against the streaming fallback rather than
+#: a budget change with a path change inside it. It is the 15.1 MiB against
+#: 474 MiB step `19.15` read across two *limits*, priced here at one byte.
+#:
+#: **It is `charge_bytes(unit, 1)` and not `reader_bytes(unit)`**: `19.22` put
+#: that one reader's pool floor inside `BlockCache::affordable`, so a pair
+#: straddling the per-reader term alone would have run the streaming decoder on
+#: *both* legs and published their difference as the cost of a path neither took.
 #:
 #: It earns its place whatever the attribution finds: it is what an operator
 #: needs in order to decide whether `--parallel-memory` is worth setting, and no
 #: figure states it.
 RESERVE_STEP_BUDGETS: tuple[int, ...] = (
-    reader_bytes(RESERVE_MECHANISM_UNIT),
-    reader_bytes(RESERVE_MECHANISM_UNIT) - 1,
+    charge_bytes(RESERVE_MECHANISM_UNIT, 1),
+    charge_bytes(RESERVE_MECHANISM_UNIT, 1) - 1,
 )
 
 
@@ -5680,7 +5720,11 @@ def _reserve_step_specs() -> list[RunSpec]:
             f"{RESERVE_STEP_FAMILY}{budget}",
             "warm-parallel",
             f"{budget} stated, block decode "
-            + ("afforded" if budget >= reader_bytes(RESERVE_MECHANISM_UNIT) else "declined"),
+            + (
+                "afforded"
+                if block_path_afforded(RESERVE_MECHANISM_UNIT, budget)
+                else "declined"
+            ),
             memory=RESERVE_MECHANISM_LIMIT,
         )
         for budget in RESERVE_STEP_BUDGETS
@@ -5948,15 +5992,22 @@ def run_reserve(session: Session) -> str:
             jobs, budget = resolved(spec)
             worst = max(readings) * 1024
             head = (limit - worst) / limit * 100
-            # Whether this leg took the block path at all is the budget against
-            # what one reader of *this file* holds, which is
-            # `BlockCache::affordable` exactly. A declined leg is not on the
-            # line the fit is over, and the fit leaves it out by name.
-            block_path = budget >= reader_bytes(unit)
+            # Whether this leg took the block path at all is the budget
+            # against what one reader of *this file* costs, which is
+            # `block_path_afforded` — `BlockCache::affordable` exactly. A
+            # declined leg is not on the line the fit is over, and the fit
+            # leaves it out by name.
+            #
+            # **Every cell names its path, not only the declined ones.** The two
+            # arrangements hold different things — the streaming fallback keeps
+            # no block slots at all — so a column mixing them is two series
+            # printed as one, and an unmarked cell cannot be told from a cell
+            # nobody checked (`M88`).
+            block_path = block_path_afforded(unit, budget)
             cells.append(
                 f"{fmt_mib_median_spread(readings)} · {jobs}r, {_fmt_budget_bytes(budget)} · "
                 f"head {head:.1f}%"
-                + ("" if block_path else " · *streaming*")
+                + (" · *block path*" if block_path else " · *streaming*")
                 # A partly-censored leg's surviving reps are the ones that did
                 # not reach the ceiling, so its median understates and its worst
                 # is not the worst. Said in the cell, and kept out of the fit.
@@ -5985,7 +6036,7 @@ def run_reserve(session: Session) -> str:
                 )
                 continue
             jobs, budget = resolved(spec)
-            if budget < reader_bytes(unit):
+            if not block_path_afforded(unit, budget):
                 declined.append(token)
                 continue
             points.append((token, jobs, readings))
@@ -6073,7 +6124,7 @@ def run_reserve(session: Session) -> str:
             # A declined leg ran the streaming fallback, which holds none of
             # these terms. Excluded by what the leg *did*, read off its own
             # reported budget, rather than by which token it carries.
-            if budget < charge_bytes(unit, 1):
+            if not block_path_afforded(unit, budget):
                 continue
             held = max(readings) * 1024
             billed, floor, unnamed = charge_model(unit, jobs, held)
@@ -6372,7 +6423,7 @@ def run_reserve(session: Session) -> str:
                 f"`--parallel-memory {budget}`"
                 + (
                     " — one reader afforded"
-                    if budget >= reader_bytes(RESERVE_MECHANISM_UNIT)
+                    if block_path_afforded(RESERVE_MECHANISM_UNIT, budget)
                     else " — **one byte short**, block decode declined"
                 ),
                 fmt_mib_median_spread(readings),
@@ -6408,7 +6459,16 @@ def run_reserve(session: Session) -> str:
         "set, the worker count and budget the run itself reported, and what the *worst* rep left "
         "of the allocation — which is the number a cgroup's killer reads, where the median is "
         "context. Nothing is stated on these legs: the container's limit is the whole input, "
-        "which is why it is the axis.\n\n"
+        "which is why it is the axis.\n\n**Each cell also names the path it ran**, because the "
+        "two hold different things and a column mixing them is two series printed as one: a leg "
+        "takes the block path only where the budget it resolved affords one block-decoding "
+        "reader of that file — `BlockCache::affordable`, which since `19.22` charges that "
+        "reader's pool floor with it, so the line is "
+        f"{_fmt_budget_bytes(charge_bytes(RESERVE_FLAGLESS_INPUTS[0][2], 1))} at "
+        f"{RESERVE_FLAGLESS_INPUTS[0][1]} and "
+        f"{_fmt_budget_bytes(charge_bytes(RESERVE_FLAGLESS_INPUTS[-1][2], 1))} at "
+        f"{RESERVE_FLAGLESS_INPUTS[-1][1]}. A *streaming* cell is a reading of the fallback "
+        "decoder and belongs to no fit and no charge below.\n\n"
         + flagless_table
         + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
         "block path, the band being the same fit over the per-rep extremes. Each line names the "
@@ -6490,10 +6550,12 @@ def run_reserve(session: Session) -> str:
         + "\n\n**What the block path costs against the streaming fallback**, one byte of budget "
         f"apart in the same {RESERVE_MECHANISM_LIMIT} allocation at `--jobs {RESERVE_JOBS}`: "
         f"{fmt_rss_delta(step_medians[0] - step_medians[-1])} between the two, "
-        f"{step_medians[0] / max(step_medians[-1], 1):.1f}×. `BlockCache::affordable` is "
-        f"`reader_bytes <= budget`, so the pair straddles that comparison and differs in nothing "
-        "else. It is what an operator deciding whether to set `--parallel-memory` needs, and no "
-        "other figure states it:\n\n"
+        f"{step_medians[0] / max(step_medians[-1], 1):.1f}×. `BlockCache::affordable` compares "
+        "the budget against what **one** reader costs — the per-reader term plus that one "
+        "reader's pool floor, which `19.22` put inside it — so the pair straddles that "
+        f"comparison at {_fmt_budget_bytes(charge_bytes(RESERVE_MECHANISM_UNIT, 1))} and differs "
+        "in nothing else. It is what an operator deciding whether to set `--parallel-memory` "
+        "needs, and no other figure states it:\n\n"
         + step_table
         + f"\n\n**The stated-budget axis, which is what makes the pair decomposable.** Each cell "
         f"is peak resident set, then that reading **minus the budget the run stated** — the "

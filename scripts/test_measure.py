@@ -1979,9 +1979,8 @@ class CompressedAccount(unittest.TestCase):
                 self.assertIsNone(spec.memory)
 
     def test_the_limits_span_the_curve_rather_than_its_worst_end(self):
-        # 512 MiB is the smallest allocation reaching the block path at all and
-        # is where the gate failed; a set clustered there would fit a line
-        # through the thin point alone.
+        # 512 MiB is the bottom of the range and is where the gate failed; a set
+        # clustered there would fit a line through the worst end alone.
         self.assertEqual(measure.RESERVE_LIMITS[0], ("512m", 512 << 20))
         byte_values = [n for _, n in measure.RESERVE_LIMITS]
         self.assertEqual(sorted(byte_values), byte_values)
@@ -2099,13 +2098,18 @@ class CompressedAccount(unittest.TestCase):
 
     # -- the path step -----------------------------------------------------
 
-    def test_the_step_is_one_byte_either_side_of_what_a_reader_holds(self):
-        # `BlockCache::affordable` is `reader_bytes <= budget`, so the pair
-        # straddles that comparison and differs in nothing else. A wider gap
-        # would be a budget change with a path change inside it.
+    def test_the_step_is_one_byte_either_side_of_what_a_reader_costs(self):
+        # `block_path_afforded` is the comparison, so the pair straddles it and
+        # differs in nothing else. A wider gap would be a budget change with a
+        # path change inside it — and a pair straddling `reader_bytes` instead
+        # would run the streaming decoder on *both* legs, `19.22` having put one
+        # reader's pool floor inside `BlockCache::affordable` (`M88`).
         afforded, declined = measure.RESERVE_STEP_BUDGETS
-        self.assertEqual(afforded, measure.reader_bytes(measure.RESERVE_MECHANISM_UNIT))
+        self.assertEqual(afforded, measure.charge_bytes(measure.RESERVE_MECHANISM_UNIT, 1))
         self.assertEqual(declined, afforded - 1)
+        self.assertTrue(measure.block_path_afforded(measure.RESERVE_MECHANISM_UNIT, afforded))
+        self.assertFalse(measure.block_path_afforded(measure.RESERVE_MECHANISM_UNIT, declined))
+        self.assertGreater(afforded, measure.reader_bytes(measure.RESERVE_MECHANISM_UNIT))
         for spec in measure._reserve_step_specs():
             with self.subTest(leg=spec.label):
                 self.assertEqual(spec.input, measure.RESERVE_MECHANISM_INPUT)
@@ -2157,6 +2161,64 @@ class CompressedAccount(unittest.TestCase):
                 if name == measure.RESERVE_MECHANISM_INPUT
             ),
         )
+
+    # -- the block-path line, mirrored -------------------------------------
+
+    def test_the_path_line_is_the_charge_at_one_reader_not_the_reader_term(self):
+        # `BlockCache::affordable` compares the budget against what one reader
+        # *costs the rule* — the per-reader term plus that one reader's pool
+        # floor, which `19.22` put inside it. The pre-`19.22` line is
+        # `reader_bytes` alone, and at both registered block sizes the two are
+        # far apart, so a stale mirror labels whole cells with the wrong
+        # mechanism rather than getting an edge case wrong (`M88`).
+        for unit in (24 << 20, 128 << 20):
+            with self.subTest(unit=unit):
+                line = measure.charge_bytes(unit, 1)
+                self.assertEqual(line, measure.reader_bytes(unit) + 3 * unit)
+                self.assertTrue(measure.block_path_afforded(unit, line))
+                self.assertFalse(measure.block_path_afforded(unit, line - 1))
+                # The number the old mirror compared against is now well inside
+                # the declined side.
+                self.assertFalse(measure.block_path_afforded(unit, measure.reader_bytes(unit)))
+
+    def test_the_path_line_is_the_comparison_the_library_makes(self):
+        # Mirrored by hand on `QUERY_SUBSTREAM_CAP`'s argument, so the source is
+        # read here rather than the arithmetic trusted: `affordable` asks
+        # `worker_memory(..).at(1) <= budget`, and `worker_memory` is the
+        # per-reader term `flooring`ed at `POOL_DEPTH`.
+        src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
+        self.assertIn(
+            "self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget",
+            src,
+        )
+        self.assertIn(".flooring(self.unit as u64, POOL_DEPTH)", src)
+        self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
+
+    def test_the_renderer_asks_the_path_question_in_one_way_only(self):
+        # Three of four sites were still comparing against `reader_bytes` while
+        # the fourth was not, which is a table whose cells silently changed
+        # mechanism while reading as one series. A comparison of a budget
+        # against `reader_bytes` anywhere in the renderer is that failure
+        # returning.
+        source = inspect.getsource(measure.run_reserve)
+        self.assertNotIn("budget >= reader_bytes", source)
+        self.assertNotIn("budget < reader_bytes", source)
+        self.assertNotIn("budget >= charge_bytes", source)
+        self.assertNotIn("budget < charge_bytes", source)
+        self.assertEqual(source.count("block_path_afforded("), 4)
+
+    def test_the_smallest_allocation_declines_the_block_path_on_both_inputs(self):
+        # What `M88` records: the CLI grants `limit - MEMORY_RESERVE`, so a
+        # `512m` container affords 128 MiB and the line is 130.0 at 24 MiB
+        # blocks. Both flagless cells of that row read the fallback decoder, and
+        # the table has to say so rather than print them beside block-path cells
+        # as one series.
+        token, limit = measure.RESERVE_LIMITS[0]
+        self.assertEqual(token, "512m")
+        granted = limit - measure.LIBRARY_MEMORY_RESERVE
+        for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
+            with self.subTest(leg=label):
+                self.assertFalse(measure.block_path_afforded(unit, granted))
 
     # -- the charge model, and the cells it was seeded from ----------------
 
@@ -5302,7 +5364,12 @@ class CensoredCells(unittest.TestCase):
             rss[key] = [100000.0 + 1000 * i + 10 * r for r in range(total_reps)]
             reported[key] = {
                 "resolved_jobs": str(2 + i % 5),
-                "resolved_budget": str(600 << 20),
+                # Above `charge_bytes(128 MiB, 1)` — 650.1 MiB — so every
+                # flagless leg of this fixture takes the block path and the fit
+                # below it has legs to cover. `19.22` put one reader's pool
+                # floor inside that line, which is what moved it past the
+                # 600 MiB this fixture used to state (`block_path_afforded`).
+                "resolved_budget": str(measure.charge_bytes(128 << 20, 1) + (1 << 20)),
             }
             if spec.instrument:
                 instrument[key] = [self._report(i)] * total_reps
@@ -5743,6 +5810,63 @@ class ChargeModelSection(unittest.TestCase):
         body, _ = self._render()
         rows = self._model_rows(body)
         self.assertFalse([r for r in rows if f"`-m {self.KILLED[1]}`" in r and "128 MiB" in r])
+
+    # -- which path each cell ran ------------------------------------------
+
+    def _flagless_rows(self, body):
+        section = body.split("What a flagless scan resolves")[1].split(
+            "The pair the constant is read off"
+        )[0]
+        return [ln for ln in section.splitlines() if ln.startswith("| `-m ")]
+
+    def test_every_flagless_cell_names_the_path_it_ran(self):
+        # `M88`: the block path and the streaming fallback hold different
+        # things, so a column mixing them is two series printed as one — and an
+        # unmarked cell cannot be told from a cell nobody checked. Every cell
+        # says which, including the ones that took the block path.
+        body = self._seeded_body()
+        rows = self._flagless_rows(body)
+        self.assertEqual(len(rows), len(measure.RESERVE_LIMITS))
+        for row in rows:
+            with self.subTest(row=row):
+                for cell in row.split("|")[2:-1]:
+                    self.assertTrue(
+                        "*block path*" in cell or "*streaming*" in cell,
+                        f"cell names no path: {cell}",
+                    )
+
+    def test_a_declined_cell_says_streaming_where_a_block_cell_does_not(self):
+        # The seeded fixture's budgets are what each leg's own reported
+        # arrangement carries, so every cell takes the block path; dropping one
+        # leg's budget a byte below the line is the only difference.
+        raw = self._raw()
+        raw["killed"] = {}
+        units = {n: u for n, _, u in measure.RESERVE_FLAGLESS_INPUTS}
+        target = ("control_xz128", "512m")
+        for spec in measure._reserve_flagless_specs():
+            jobs, worst = self.SEEDED[(spec.input, spec.memory)]
+            key = spec.key(self.FIGURE)
+            raw["rss"][key] = [worst * 1024]
+            budget = (
+                measure.charge_bytes(units[spec.input], 1) - 1
+                if (spec.input, spec.memory) == target
+                else measure.charge_bytes(units[spec.input], jobs)
+            )
+            raw["reported"][key] = {"resolved_jobs": str(jobs), "resolved_budget": str(budget)}
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            with unittest.mock.patch.object(
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+            ):
+                body = measure.run_reserve(session)
+        row = next(r for r in self._flagless_rows(body) if r.startswith(f"| `-m {target[1]}`"))
+        cells = row.split("|")[2:-1]
+        # `RESERVE_FLAGLESS_INPUTS` order is the column order, and the declined
+        # leg is the second of them.
+        self.assertIn("*block path*", cells[0])
+        self.assertIn("*streaming*", cells[1])
+        self.assertNotIn("*block path*", cells[1])
 
 
 class CensoredSittingsBarPublication(unittest.TestCase):
