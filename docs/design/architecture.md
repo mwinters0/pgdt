@@ -311,6 +311,51 @@ readings confirm to 1.4 MiB. It is **unbounded in the block size** — 96 MiB at
 koji's 24 MiB blocks, 384 at 128, 2 GiB at 512 — so no reserve can absorb it,
 which is why it is billed rather than reserved for.
 
+**The premise is wrong by one unit, at every count, and that is what bars the
+closing sweep.** What the pool holds is `slots − 1 + workers`, not
+`slots + workers`: `BlockCache::slot` evicts the retention list to
+`pool.slots() − 1` *before* it obtains a buffer, and `BlockCache::retain` then
+pushes that same buffer's block, so a reader's in-flight block **becomes** one
+of the retained ones rather than sitting beside them. The `+ workers` term is
+nonetheless real, because the block pool is never granted a wait — it is left
+at `WaitPolicy::NeverWait` deliberately, a retained block being normally the
+block some reader holds a view into, so a drain frees no slot for a caller
+waiting on one — and `obtain` therefore allocates rather than blocking, one
+block per reader.
+
+So the charge is `(workers + max(workers, POOL_DEPTH)) × unit` where the
+arrangement holds one unit less, and the excess is **uniform in the count**
+rather than a property of the low-count regime. It is visible only at one
+reader: above that, glibc arena retention (+127 to +153 MiB across the
+2026-09-12 sitting's block-path legs) is larger than a unit and the cell reads
+as met. The five confirming cells at two readers and more therefore do not
+confirm the premise — they cannot see a term this size.
+
+Both one-reader cells of that sitting read the excess directly: `affordable`
+wants 130.0 MiB at 24 MiB blocks where the arrangement held 111.1, and 650.0 at
+128 where it held 526.9, the two differing by 104.3 MiB for a 104 MiB
+difference in unit. The account closes at both — four units plus the ~15.1 MiB
+base the `-m 512m` streaming legs read directly — and the instrument legs
+confirm it independently, Rust's live high-water at `544m` being 98.1 MiB,
+which is four 24 MiB units with `liblzma`'s ~9.5 MiB invisible to that counter
+by construction.
+
+*Rejected:* that the repair is blocked because `slots` is a function of the
+budget being solved. `slots` is `(budget / unit).clamp(1, POOL_DEPTH.max(jobs))`,
+so the budget enters only as the branch that **lowers** it, and the charge is a
+bound rather than an exact count — charging the depth argument is therefore
+budget-independent, and wherever the budget's branch wins the pool holds less
+than charged. There is no fixed point to restate. The repair states the block
+term as what the mechanism holds: one unit per reader for the block in flight,
+and `(POOL_DEPTH.max(workers) − 1) × unit` shared for the retention list. It
+moves the decline line below — 130.0 MiB → 106 at 24 MiB blocks, 650.0 → 522 at
+128 — and it leaves the **cut** width alone, `Partitioning::partition_bytes`
+being consulted only on the `PartitionBoundaries::Anywhere` arm while a
+compressed source cuts on `At` at `BOUNDARIED_PARTITION_UNITS` boundaries
+([`out-of-band.md`](out-of-band.md), `M93`;
+[2026-09-12](../status/history/2026-09-12.md), "The charge over-bills the pool
+floor at every count").
+
 **Billing it widens the decline, and that is the finding rather than the
 cost.** `BlockCache::affordable` asks the budget for *one* reader's charge and
 that reader's floor with it — `POOL_DEPTH` units plus the chunk and the
@@ -626,7 +671,9 @@ per-reader term bills `2 × unit`, so below four readers the pool holds
 `(POOL_DEPTH − jobs) × unit` that no per-reader term carries — 14 MiB residual
 across five cells of the same readings, and **unbounded in the block size**
 (96 MiB at 24 MiB blocks, 384 at 128, 2 GiB at 512), which is why no constant
-absorbs it and why it is billed rather than reserved for. It is also not what
+absorbs it and why it is billed rather than reserved for — and why it
+**over-bills by one unit at every count**, which is the account beside
+`partition_bytes` above. It is also not what
 384 pays for: on the 24 MiB file that term is 48/24/0 MiB and the legs that
 forced the constant up are all at eleven readers and above, where it is zero.
 `WorkerMemory` carries both terms, which is what lets a budget be solved

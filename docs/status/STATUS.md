@@ -431,7 +431,22 @@ sitting.
       verdict into bands, and `M92` says which of them the gate releases —
       **`bound` alone**, so a cell between `MEMORY_UNPOOLED_BOUND` and
       `MEMORY_RESERVE` publishes with its finding while an over-bill bars, and a
-      band nobody has argued out bars by default.
+      band nobody has argued out bars by default. **`M93` blocks it, and the gate
+      sitting is what found it.** That sitting ran on 2026-09-12
+      (`runs/measure-20260912T170937/tables.md`, NOT PUBLISHABLE): no leg was
+      killed — the whole axis survived its own allocation, which is the half of
+      the gate `19.18` failed — but the charge over-bills by one block unit at
+      every count, 130.0 MiB billed against 111.1 held at 24 MiB blocks and 650.0
+      against 526.9 at 128, which is the `over-bill` band and not the `bound` one.
+      `M93` restates the block term as what the pool holds; one unit off every
+      cell's bill lands the whole criterion met with the worst remainder at
+      153.4 MiB against a 256 MiB bound, so no constant moves
+      ([`../design/out-of-band.md`](../design/out-of-band.md);
+      [2026-09-12](history/2026-09-12.md), "The charge over-bills the pool floor
+      at every count"). What this slice still owes is unchanged: the sweep itself,
+      `reserve`'s `Shared` edge onto `peak-rss` with the `Session.borrow` change
+      that lets an RSS reading cross a share, `rss-attribution` published and
+      `M74` closed, and both `parallel-*` figures re-taken.
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:
