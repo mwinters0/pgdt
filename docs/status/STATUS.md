@@ -506,9 +506,14 @@ before the sitting.
       153.4. The binary check it stands on is satisfied: the resolved counts
       moved to 1/2/10/11/17/24 and 1/1/1/1/4/5, matching the instrument legs the
       harness builds for itself, where the stale sitting's were byte-identical
-      to `880d09e`'s. **What is left of this box is the sweep**, and `M101`
-      lands before it — a diagnostic sitting's own budgets say which binary ran,
-      where most of the twenty-one published tables carry no such fingerprint.
+      to `880d09e`'s. **`M101` has landed, so nothing is in the way**: the harness
+      builds `target/release/pgdq` in the first second of every sitting rather
+      than timing whatever the last build left there, which is what let that
+      gate run three commits stale — a diagnostic sitting's own budgets say
+      which binary ran, where most of the twenty-one published tables carry no
+      such fingerprint ([`../design/out-of-band.md`](../design/out-of-band.md);
+      [`../design/measurements.md`](../design/measurements.md), "The apparatus").
+      **What is left of this box is the sweep.**
 - [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
       (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
       sitting found is a divisor under-charging a sub-stream. Notes:

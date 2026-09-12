@@ -819,6 +819,102 @@ class CensusBinary(unittest.TestCase):
         self.assertIn(f"git rev-parse HEAD > runs/{name}", doc)
 
 
+class ShippedBinary(unittest.TestCase):
+    """The binary every non-census figure is timed against, built rather than
+    found.
+
+    The failure each of these holds shut is the same one and it is silent: a
+    sitting emits a full table, a session stamp naming `git rev-parse HEAD`,
+    and a verdict about a library that was never executed. Only one figure in
+    the register — the reserve instrument, whose resolved budgets fingerprint
+    the charge model — could have noticed from its own numbers.
+    """
+
+    def setUp(self):
+        # Module state, so one test's build would otherwise satisfy the next.
+        measure._PGDQ_BUILT = False
+
+    def _cfg(self, **kw):
+        return measure.Config(bin_pgdq=measure.CARGO_RELEASE_BIN, **kw)
+
+    def test_the_default_binary_is_the_one_cargo_writes(self):
+        # `ensure_pgdq_binary` compares the two to decide whether it may claim
+        # to have built what it is about to time, so a `Config` default that
+        # drifted from cargo's output path would turn the build into a no-op
+        # and put the old check back with no sign of it.
+        self.assertEqual(measure.Config().bin_pgdq, measure.CARGO_RELEASE_BIN)
+
+    def test_the_shipped_binary_is_built_once_per_process(self):
+        calls = []
+
+        def fake_run(argv, cwd=None, capture=False, quiet=False):
+            calls.append((list(argv), cwd))
+            return ""
+
+        with unittest.mock.patch.object(measure, "run", fake_run):
+            out = measure.ensure_pgdq_binary(self._cfg(), lambda _: None)
+            measure.ensure_pgdq_binary(self._cfg(), lambda _: None)
+        self.assertEqual(out, measure.CARGO_RELEASE_BIN)
+        self.assertEqual(len(calls), 1)
+        argv, cwd = calls[0]
+        self.assertEqual(
+            argv, ["cargo", "build", "--release", "-p", "pgdump_query-cli"]
+        )
+        self.assertEqual(cwd, measure.REPO)
+        # No `--target-dir` and no `--features`: this is the shipped build, and
+        # either one would make it a different binary from the one the recipes
+        # in measurements.md and CONTRIBUTING.md describe.
+        self.assertNotIn("--target-dir", argv)
+        self.assertNotIn("--features", argv)
+
+    def test_an_existing_binary_is_rebuilt_anyway(self):
+        # The whole point, and it is asserted as an absence: nothing on the
+        # path to the build consults the file. `target/release/pgdq` survives
+        # between sessions, so short-circuiting on its existence is what timed
+        # a charge model three commits stale against the harness's repaired
+        # mirror of it and reported the difference as an over-bill.
+        calls = []
+
+        def fake_run(argv, cwd=None, capture=False, quiet=False):
+            calls.append(list(argv))
+            return ""
+
+        def never(self):
+            raise AssertionError("the build short-circuited on the file's existence")
+
+        with unittest.mock.patch.object(measure, "run", fake_run), \
+             unittest.mock.patch.object(Path, "exists", never):
+            measure.ensure_pgdq_binary(self._cfg(), lambda _: None)
+        self.assertEqual(len(calls), 1)
+
+    def test_a_dry_run_announces_and_builds_nothing(self):
+        # It measures nothing and must run where no binary exists.
+        said = []
+
+        def fake_run(argv, cwd=None, capture=False, quiet=False):
+            raise AssertionError("a dry run built the binary")
+
+        with unittest.mock.patch.object(measure, "run", fake_run):
+            measure.ensure_pgdq_binary(self._cfg(dry_run=True), said.append)
+        self.assertEqual(len(said), 1)
+        self.assertIn("dry-run", said[0])
+
+    def test_an_overridden_binary_is_never_built(self):
+        # `cargo build --release` writes exactly one path, so a harness that
+        # ran it and then timed some other file would be asserting a
+        # provenance it does not have. There the binary is the caller's.
+        def fake_run(argv, cwd=None, capture=False, quiet=False):
+            raise AssertionError("the harness built a binary it does not own")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            elsewhere = Path(tmp) / "pgdq"
+            with unittest.mock.patch.object(measure, "run", fake_run):
+                out = measure.ensure_pgdq_binary(
+                    measure.Config(bin_pgdq=elsewhere), lambda _: None
+                )
+            self.assertEqual(out, elsewhere)
+
+
 class PredicateShapes(unittest.TestCase):
     """Six predicates over one file, which is the whole instrument.
 

@@ -441,6 +441,28 @@ on the machine while a sweep does — a `cargo` job across 24 cores moves the
 numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
 
+**That binary is built by the harness, in the first second, and not looked up.**
+`target/release/pgdq` survives between sessions, so a preflight that asks only
+whether the file exists times whatever the last build left there while the
+session stamp names `git rev-parse HEAD` regardless — and the resulting sitting
+does not look lost: it emits a full table, a stamp naming a commit it did not
+execute, and a verdict. So `measure.py` runs `cargo build --release -p
+pgdump_query-cli` once per process before anything else, which costs about a
+second on a tree that has not moved. **Building it and refusing the census-off
+binary are the same rule, not opposite ones**: what the census section refuses
+is a harness patching its *own subject*, which an unpatched build of the current
+tree is not, and the pre-throttle binary is already built by the harness for
+that reason stated in the affirmative. `PGDQ_MEASURE_BIN` pointed anywhere else
+builds nothing — that is the one path the build writes — and the binary is then
+the caller's. The failure this closes was caught by the one figure whose numbers
+can see it: a `reserve` sitting's resolved budgets fingerprint the charge model
+compiled into the binary, and on 2026-09-12 all eight of them named a model
+three commits old
+([`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The gate
+sitting timed a binary three commits stale, and its verdict is about a library
+nobody ran"). A throughput table encodes no such fingerprint and would have
+published in silence.
+
 **The worker count is in that line because it is stated rather than inherited**
 — `measure.SWEEP_JOBS`, carried by every shape `_script` builds, by the profile
 recipe's argv, and by the three untimed invocations that publish numbers all the
@@ -1877,7 +1899,10 @@ that already carried the register's largest correction; a stamp cannot catch a
 re-stamp without a rebuild, but *age* is the failure that happens, and it is the
 one nothing else can see. The pre-throttle binary needs none of this: it is a
 build of a fixed historical commit — deliberately not this one — and the harness
-builds it itself.
+builds it itself. Nor does `target/release/pgdq`, the binary these tables are
+differenced *against*: the same argument reached it, so the harness builds that
+one too, in the first second of every sitting (see "The apparatus"), and there
+is no provenance left for a stamp to record.
 
 **The threshold is the hazard, not commit equality: the stamp must be an
 ancestor of the commit being measured, with no path the census figures *being

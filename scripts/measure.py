@@ -141,6 +141,12 @@ MIB = 1024**2
 # section in measurements.md.
 BEFORE_COMMIT = "b726f6b"
 
+#: The only path `cargo build --release -p pgdump_query-cli` writes. It is a
+#: constant rather than a literal inside `Config` because `ensure_pgdq_binary`
+#: reads it back: the harness may claim to have built `cfg.bin_pgdq` only when
+#: the two are the same file.
+CARGO_RELEASE_BIN = REPO / "target/release/pgdq"
+
 
 # --------------------------------------------------------------------------
 # Configuration. Defaults describe this machine; every one is overridable so
@@ -189,7 +195,7 @@ class Config:
     memory: str = _env("PGDQ_MEASURE_MEMORY", "512m")
     sudo: str = _env("PGDQ_MEASURE_SUDO", "sudo")
 
-    bin_pgdq: Path = Path(_env("PGDQ_MEASURE_BIN", str(REPO / "target/release/pgdq")))
+    bin_pgdq: Path = Path(_env("PGDQ_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
     bin_nocensus: Path = Path(
         _env("PGDQ_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdq-nocensus"))
     )
@@ -4011,6 +4017,11 @@ def census_binary_problem(
     measures nothing and must run where none exists, so the refusal it would
     give lands seconds later instead, at the first second of the sitting that
     would have published the figure.
+
+    The *other* side of every census subtraction, `bin_pgdq`, is out of scope
+    here for `bin_before`'s reason rather than for a weaker one: the harness
+    builds it too (`ensure_pgdq_binary`), so it knows that provenance and has
+    nothing to ask a stamp.
     """
     # Defaulted here rather than in the signature: both are git helpers defined
     # further down the file, where the rest of them live.
@@ -4071,6 +4082,62 @@ def census_binary_problem(
             "census figure would charge that change to the census. " + rebuild
         )
     return None
+
+
+#: Whether this process has already built the shipped binary. Per process for
+#: `_ALLOC_BUILT`'s reason, one level up: this is the binary every figure that
+#: is not a census subtraction is timed against, and a stale one is what a
+#: sitting cannot see.
+_PGDQ_BUILT = False
+
+
+def ensure_pgdq_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """The shipped binary, built before the first reading rather than found.
+
+    **What this closes is a sitting that does not look lost.** The harness
+    timed whatever `target/release/pgdq` happened to be and asked only that the
+    file exist, while the session stamp named `git rev-parse HEAD` regardless —
+    so a run on a tree-old binary emits a full table, a stamp naming a commit
+    it did not execute, and a verdict. The worked instance is the 2026-09-12
+    gate sitting, which timed a charge model three commits stale against
+    `charge_model`'s repaired mirror of it and reported the difference as an
+    over-bill of the whole bill.
+
+    **Built, not stamped, and the harness's own record is what settles which.**
+    `census_binary_problem` refuses to build its subject because "a harness that
+    patches its own subject can produce any figure it likes" — a reason that
+    reaches a source patch and not an unpatched build of the current tree; that
+    same docstring exempts `bin_before` because the harness "builds for itself
+    and therefore knows the provenance of" it, which is the principle in the
+    affirmative; and `ensure_allocator_binary` rebuilds every leg once per
+    process precisely because "short-circuiting on the file's existence would
+    have silently timed the previous session's binary against this one's
+    reference". That last is this failure, already written down as a rejected
+    alternative — for the legs of a comparison whose reference side did it.
+
+    Once per **process**, for that reason. `cargo` is incremental, so a tree
+    that has not moved costs about a second; a build between two timed reps
+    would move the second one.
+
+    **`PGDQ_MEASURE_BIN` pointed anywhere else builds nothing.** The only path
+    that build writes is `CARGO_RELEASE_BIN`, so a harness that ran it and then
+    timed a different file would be asserting a provenance it does not have.
+    There the binary is the caller's, and its absence is `main`'s error rather
+    than a build.
+    """
+    global _PGDQ_BUILT
+    if _PGDQ_BUILT or cfg.bin_pgdq != CARGO_RELEASE_BIN:
+        return cfg.bin_pgdq
+    if cfg.dry_run:
+        # A dry run measures nothing and must work where no binary exists, so
+        # it announces instead — the same arm `ensure_allocator_binary` has,
+        # for the same reason.
+        log(f"[dry-run] would build {cfg.bin_pgdq}")
+        return cfg.bin_pgdq
+    log(f"building {cfg.bin_pgdq}")
+    run(["cargo", "build", "--release", "-p", "pgdump_query-cli"], cwd=REPO)
+    _PGDQ_BUILT = True
+    return cfg.bin_pgdq
 
 
 def ensure_before_binary(cfg: Config, log: Callable[[str], None]) -> Path:
@@ -10745,8 +10812,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 + ". Take the whole doc (`--all`), which re-stamps it, or `--alone` for a "
                 "diagnostic sitting, whose tables come back marked NOT PUBLISHABLE."
             )
+    # Beside the census refusal and for its reason, pointed at the other
+    # binary: in the first second, before the run directory exists, and about
+    # provenance rather than existence. `print` rather than the sitting's log,
+    # which `emit` has not opened yet — a build that fails here must not leave
+    # an empty run directory behind it.
+    ensure_pgdq_binary(cfg, lambda msg: print(msg, flush=True))
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
-        parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")
+        parser.error(
+            f"{cfg.bin_pgdq} is missing, and PGDQ_MEASURE_BIN names a binary this harness does "
+            f"not build. Point it at one that exists, or unset it and let the harness build "
+            f"{CARGO_RELEASE_BIN}."
+        )
     census = [f for f in figures if f.id.startswith("census")]
     if not cfg.dry_run and census:
         # Existence and age in one refusal, in the first second and before the
