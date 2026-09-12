@@ -90,9 +90,11 @@ arrangement nobody measured, while every cell here is a real reading and what a
 refutation falsifies is the library's claim about those readings. Barring
 publication would leave `measurements.md` able to carry only tables agreeing
 with the library. The gate is `19.11`'s acceptance instead, which is two-sided:
-the sweep publishes, **and** this verdict carries no cell above
-`MEMORY_RESERVE` — the outer of the criterion's lines, and the only one the
-acceptance reads (`M91`).
+the sweep publishes, **and** every evaluated cell of this verdict is in the
+`bound` band or better. That is an enumeration rather than a threshold: the
+`bound` band is released because the remainder is still inside `MEMORY_RESERVE`
+*and* the sitting re-derives the constant it overran, and every other band bars,
+an unlisted one included (`M91`, `M92`).
 
 **A declined or censored leg is absent rather than evaluated.** The streaming
 fallback holds none of the model's terms, and a censored leg's reading is a

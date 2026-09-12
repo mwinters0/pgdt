@@ -2515,14 +2515,66 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
     return billed, floor, held - billed
 
 
-#: The three bands `charge_model_problem` reports, and the one that bars the
-#: box. Only `BAND_RULE` is a remainder above `MEMORY_RESERVE`, which is what
-#: `19.11`'s acceptance reads — "no evaluated cell above `MEMORY_RESERVE`",
-#: not "no faulting cell", because the other two leave the allocation intact
-#: (`roadmap-P19-efficient-defaults.md`, `19.11`'s row, amended a third time).
+#: The three bands `charge_model_problem` reports. Every one of the module's
+#: `BAND_*` names carries a stance in `BAND_STANCE` below, which is what
+#: `charge_band_problems` holds it to.
 BAND_RULE = "rule"
 BAND_BOUND = "bound"
 BAND_OVER_BILL = "over-bill"
+
+#: `19.11`'s acceptance, as the enumeration it is: which bands bar the sweep's
+#: box. **`bound` alone is released**, and the clause is written as a list
+#: rather than as a threshold because a threshold silently released the band
+#: nobody had argued about — the third amendment's "no evaluated cell above
+#: `MEMORY_RESERVE`" was counting the check's *upper* lines and let the
+#: non-negativity side out with them
+#: (`roadmap-P19-efficient-defaults.md`, `19.11`'s row, amended a fourth time).
+#:
+#: **Released means the allocation is intact *and* the sitting discharges the
+#: finding**, which is the test any further band answers. A bound fault meets
+#: both: the remainder is still under `MEMORY_RESERVE`, and the sitting
+#: re-derives `MEMORY_UNPOOLED_BOUND` from its own cells
+#: (`rederived_unpooled_bound`). An over-bill meets neither — it has to exceed
+#: the whole of the rest of the process's footprint before the arithmetic can
+#: report it at all, so it is never apparatus scatter the way a 214.6 MiB
+#: remainder against a 256 MiB bound is, and it leaves nothing for the sitting
+#: to repair.
+#:
+#: A band is released by mapping to `None`; every other band bars, and its
+#: value is *why* — the verdict prints that clause beside the cells, so a band
+#: cannot be given a barring stance without the reason being written down in
+#: the same place. A band absent from the mapping bars too, so a fourth fault
+#: line added later blocks the box until somebody argues it out rather than
+#: defaulting into the released half; `charge_band_problems` is what makes that
+#: argument visible instead of silent.
+BAND_STANCE: dict[str, str | None] = {
+    BAND_OVER_BILL: (
+        "an over-bill is bytes the rule charged that nothing holds, so it admitted fewer "
+        "readers than the allocation afforded"
+    ),
+    BAND_BOUND: None,
+    BAND_RULE: (
+        "a remainder above `MEMORY_RESERVE` is an arrangement the discovery could not keep "
+        "inside its allocation"
+    ),
+}
+
+#: What an unlisted band bars for. It is a reason and not an error because the
+#: verdict must still render: `--check` is where an unargued band is reported
+#: (`charge_band_problems`), and a sitting that runs before that is read should
+#: say plainly why it barred rather than raise.
+UNARGUED_BAND_BARS = "no stance is recorded for it, so it bars until somebody argues it out"
+
+
+def band_bars(band: str) -> str | None:
+    """Why this band bars `19.11`'s box, or `None` where the clause releases it.
+
+    The default is to bar, which is the whole shape of the fourth amendment: a
+    fault line added later does not inherit the released half by being
+    unmentioned (`M92`).
+    """
+    return BAND_STANCE.get(band, UNARGUED_BAND_BARS)
+
 
 #: The grid `19.26` read `MEMORY_UNPOOLED_BOUND` off: the candidate constants
 #: were 64 MiB apart, so the bound is the worst observed remainder rounded up to
@@ -2541,7 +2593,7 @@ class ChargeFault:
     fault into one refusal, so a cell the inner line calls *a finding about the
     bound, the allocation intact* barred the sweep exactly as a breach of the
     rule did. A fault carries its band so that the verdict can say which, and so
-    that the acceptance clause can read one of them (`M91`).
+    that the acceptance clause can read the bands by name (`M91`, `M92`).
     """
 
     band: str
@@ -2551,12 +2603,13 @@ class ChargeFault:
     def bars_acceptance(self) -> bool:
         """Whether `19.11`'s gate fails on this cell.
 
-        `MEMORY_RESERVE` alone: an over-bill charged more than the process held
-        and a bound fault is a remainder still inside the reserve, so in both
-        the discovery kept the arrangement inside its allocation and what is
-        wrong is a number, not the rule.
+        Read off `BAND_STANCE`, which is the acceptance clause written as an
+        enumeration: `bound` is released, because the remainder is still inside
+        `MEMORY_RESERVE` *and* the sitting re-derives the constant it overran.
+        Every other band bars, an unlisted one included — a band with no stance
+        recorded is one nobody has argued out, not one the gate lets through.
         """
-        return self.band == BAND_RULE
+        return band_bars(self.band) is not None
 
 
 def rederived_unpooled_bound(worst_unnamed: float) -> int:
@@ -3238,6 +3291,43 @@ def pinned_count_problems() -> list[str]:
         stated = set(_WORKER_COUNT.findall(_script(command)))
         if stated != {f"--jobs {SWEEP_JOBS}"}:
             bad.append(f"{command} states {', '.join(sorted(stated)) or 'nothing'}")
+    return bad
+
+
+def charge_band_problems() -> list[str]:
+    """Fault bands the code defines that `19.11`'s acceptance clause says
+    nothing about.
+
+    **A gate written as a threshold released a band nobody argued about.** The
+    third amendment read `charge_model_problem`'s *upper* lines and wrote
+    acceptance as "no evaluated cell above `MEMORY_RESERVE`", which is a true
+    sentence about two of the three lines and silently lets the third — the
+    over-bill side `19.24` registered before the sitting — through. The clause
+    is an enumeration now (`BAND_STANCE`), and this is what holds the
+    enumeration to the bands that exist: a fourth line added later is barring
+    by default and reported here until its stance is recorded, rather than
+    inheriting whichever half its author had in mind.
+
+    **Asked of the constants rather than of a sitting**, so it fails at
+    `--check` time. It is the same shape as the stale `reader_bytes` mirror
+    `M88` found and the collapsed verdict `M91` found: two things that must
+    agree, with nothing reading both.
+
+    The definition site it reads is the naming: every `BAND_*` string constant
+    in this module is one of `charge_model_problem`'s bands, which is why the
+    unlisted band's reason is spelled `UNARGUED_BAND_BARS` rather than with the
+    prefix.
+    """
+    bad = []
+    for name, value in sorted(globals().items()):
+        if not name.startswith("BAND_") or not isinstance(value, str):
+            continue
+        if value not in BAND_STANCE:
+            bad.append(
+                f"{name} ({value!r}) has no stance in `BAND_STANCE`, so it bars `19.11`'s box "
+                "by default — record it as released or barring, and amend the row's "
+                "acceptance clause to match"
+            )
     return bad
 
 
@@ -6509,12 +6599,19 @@ def run_reserve(session: Session) -> str:
         inside = [line for fault, line in model_faults if not fault.bars_acceptance]
         bands = []
         if barring:
+            # One clause per band actually hit, rather than one sentence over
+            # the whole stanza: the bands bar for different reasons, and the
+            # single sentence this replaced asserted the `rule` band's reason
+            # over every cell in it — which stopped being true the moment the
+            # over-bill band joined the barring half (`M92`).
+            hit = sorted({fault.band for fault, _ in model_faults if fault.bars_acceptance})
             bands.append(
-                "**The rule is refuted, and by these cells:**\n\n"
+                "**The model is refuted, and by these cells:**\n\n"
                 + "\n".join(barring)
-                + "\n\nEach is a remainder above "
-                f"`MEMORY_RESERVE` ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is the "
-                "line `19.11` accepts on, so the sweep's box does not tick on this sitting."
+                + f"\n\n`19.11` releases the `{BAND_BOUND}` band alone, and each cell above is "
+                "in a band it does not: "
+                + "; ".join(f"`{band}`, where {band_bars(band)}" for band in hit)
+                + ". So the sweep's box does not tick on this sitting."
             )
         if inside:
             # The re-derivation runs over every evaluated cell rather than over
@@ -6552,16 +6649,16 @@ def run_reserve(session: Session) -> str:
                         "not a re-take."
                     )
             bands.append(
-                "**Inside the rule, and so not a bar on the box** — `19.11` accepts on "
-                "`MEMORY_RESERVE` alone, and every cell here is under it:\n\n"
+                "**Inside the rule, and so not a bar on the box** — `19.11` releases the "
+                f"`{BAND_BOUND}` band, and every cell here is in it:\n\n"
                 + "\n".join(inside)
                 + tail
             )
         model_verdict = "\n\n".join(bands)
     elif model_rows:
         model_verdict = (
-            "**The model holds at every cell above.** `19.11` accepts on the outer line — no "
-            "evaluated cell above `MEMORY_RESERVE` — and nothing here reaches either of them."
+            f"**The model holds at every cell above.** `19.11` releases the `{BAND_BOUND}` band "
+            "alone, and nothing here crosses any of the model's three lines."
         )
     else:
         # Not the same claim as the one above, and the difference is the whole
@@ -6934,9 +7031,12 @@ def run_reserve(session: Session) -> str:
         f"**`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
         "construction what covers everything the charge does not bill, the **rule** is. The "
         "`Criterion` column names the band rather than saying only that a cell faulted, because "
-        "the two are read differently: a cell above the reserve is an arrangement the discovery "
-        "cannot keep inside its allocation, and one below it is published with its finding and "
-        "re-derives the bound from these same remainders. The "
+        f"the three are read differently and `19.11` accepts on the `{BAND_BOUND}` band alone: a "
+        "cell in it is published with its finding and re-derives the bound from these same "
+        "remainders, while a cell above the reserve is an arrangement the discovery cannot keep "
+        "inside its allocation and an over-bill is a charge nothing holds — neither of those "
+        "two is apparatus scatter, and neither leaves the sitting anything to repair, so both "
+        "bar the box. The "
         "middle column is the "
         "second term of that bill, reported apart because it is the one unbounded in the block "
         "size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with "
@@ -9796,6 +9896,7 @@ def cmd_check(doc: Path) -> int:
     unpinned = worker_count_problems()
     misspinned = pinned_count_problems()
     unbilled_floor = reserve_floor_problems()
+    unargued_band = charge_band_problems()
     scaffolding = scaffolding_in(text)
 
     print(
@@ -9854,6 +9955,15 @@ def cmd_check(doc: Path) -> int:
             "reader counts a two-term fit needs:"
         )
         for line in unbilled_floor:
+            print(f"  {line}")
+        print()
+    if unargued_band:
+        print(
+            "Fault bands `19.11`'s acceptance does not name — the clause is an enumeration so\n"
+            "that a line added later bars the box until somebody argues it out, which is only\n"
+            "true while every band the code defines carries a stance:"
+        )
+        for line in unargued_band:
             print(f"  {line}")
         print()
     outside_dates = outside_sittings(text)
@@ -10010,6 +10120,7 @@ def cmd_check(doc: Path) -> int:
             or unpinned
             or misspinned
             or unbilled_floor
+            or unargued_band
             or undeclared
             or unknown_outside
             or both

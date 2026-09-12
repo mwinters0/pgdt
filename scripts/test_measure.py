@@ -2400,9 +2400,9 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(fault.band, measure.BAND_OVER_BILL)
         self.assertIn("over-billed", fault.text)
         self.assertIn("fewer readers than the allocation affords", fault.text)
-        # It charged more than the process held, so the allocation held by
-        # construction: `19.11` accepts on the reserve and this is not above it.
-        self.assertFalse(fault.bars_acceptance)
+        # And it bars: `19.11` releases the `bound` band alone, an over-bill
+        # carrying no remedy the sitting discharges (`M92`).
+        self.assertTrue(fault.bars_acceptance)
 
     def test_a_remainder_above_the_reserve_is_a_fault_and_names_the_constant(self):
         billed = measure.charge_bytes(self.SEED_UNIT, 4)
@@ -2423,11 +2423,12 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn("MEMORY_UNPOOLED_BOUND", at_reserve.text)
         self.assertNotIn("rule does not hold", at_reserve.text)
 
-    def test_only_the_outer_line_bars_the_acceptance(self):
-        # `M91`: the gate `19.11` applies is `MEMORY_RESERVE` alone. The two
-        # inner faults are findings about a number with the allocation intact,
-        # and a verdict that cannot tell them from a breach bars the sweep on a
-        # reading the library itself calls survivable.
+    def test_the_bound_band_alone_is_released_from_the_acceptance(self):
+        # `M91` gave the fault its band so the gate could read one of them;
+        # `M92` says which. A bound fault is released — the remainder is inside
+        # `MEMORY_RESERVE` and the sitting re-derives the constant it overran —
+        # and every other band bars, the over-bill included: it cannot be
+        # apparatus scatter and it leaves the sitting nothing to repair.
         billed = measure.charge_bytes(self.SEED_UNIT, 4)
         bars = {
             measure.BAND_OVER_BILL: billed - measure.MIB,
@@ -2439,7 +2440,35 @@ class CompressedAccount(unittest.TestCase):
                 fault = measure.charge_model_problem(self.SEED_UNIT, 4, held)
                 assert fault is not None
                 self.assertEqual(fault.band, band)
-                self.assertEqual(fault.bars_acceptance, band == measure.BAND_RULE)
+                self.assertEqual(fault.bars_acceptance, band != measure.BAND_BOUND)
+
+    def test_a_band_with_no_stance_recorded_bars_and_is_reported(self):
+        # The shape of the fourth amendment: acceptance is an enumeration, so a
+        # fault line added later does not inherit the released half by being
+        # unmentioned. `bars_acceptance` defaults to barring, and `--check`
+        # names the band until somebody records a stance for it (`M92`).
+        self.assertIsNotNone(measure.band_bars("a-line-nobody-has-argued"))
+        self.assertTrue(measure.ChargeFault("a-line-nobody-has-argued", "…").bars_acceptance)
+        self.assertEqual(measure.charge_band_problems(), [])
+        with unittest.mock.patch.object(measure, "BAND_INVENTED", "invented", create=True):
+            reported = measure.charge_band_problems()
+        self.assertEqual(len(reported), 1, reported)
+        self.assertIn("BAND_INVENTED", reported[0])
+        self.assertIn("BAND_STANCE", reported[0])
+
+    def test_every_barring_band_says_why_it_bars(self):
+        # The verdict prints the band's clause beside the cells, so a stance
+        # cannot be recorded without the reason being written in the same place
+        # — which is what the single sentence over the whole barring stanza,
+        # asserting the `rule` band's reason over every cell in it, got wrong.
+        for band, why in measure.BAND_STANCE.items():
+            with self.subTest(band=band):
+                if why is None:
+                    self.assertIsNone(measure.band_bars(band))
+                else:
+                    self.assertTrue(why.strip())
+                    self.assertEqual(measure.band_bars(band), why)
+        self.assertIsNone(measure.BAND_STANCE[measure.BAND_BOUND])
 
     def test_the_bound_is_re_derived_on_the_grid_it_was_read_off(self):
         # `19.26` read 256 MiB off `19.16`'s grid as the next 64 MiB step above
@@ -6079,15 +6108,20 @@ class ChargeModelSection(unittest.TestCase):
                 self.assertTrue(floored, f"{label} bills no pool floor at any cell")
                 self.assertIn("| 1r |", floored[0])
 
-    def test_a_cell_outside_the_band_is_named_in_those_words(self):
+    def test_an_over_bill_is_named_in_those_words_and_bars(self):
         # The default fixture holds ~100 MiB against a charge of several
-        # hundred, which is the over-bill side of the criterion. It charged more
-        # than anything held, so the allocation held: the verdict reports it
-        # under the band that does not bar the box.
+        # hundred, which is the over-bill side of the criterion. `M92`: it bars
+        # — it is never apparatus scatter, having to exceed the whole of the
+        # rest of the process's footprint before the arithmetic reports it at
+        # all, and the sitting discharges nothing by printing it.
         body, _ = self._render()
         self.assertIn("over-billed", body)
-        self.assertIn("not a bar on the box", body)
-        self.assertNotIn("The rule is refuted", body)
+        self.assertIn("The model is refuted, and by these cells:", body)
+        self.assertIn("the sweep's box does not tick", body)
+        # And the verdict says why *this* band bars rather than asserting the
+        # rule band's reason over every cell in the stanza.
+        self.assertIn(measure.band_bars(measure.BAND_OVER_BILL), body)
+        self.assertNotIn("not a bar on the box", body)
 
     def test_a_cell_above_the_bound_alone_publishes_with_its_finding(self):
         # `M91`: between the two lines the allocation holds and the number the
@@ -6096,7 +6130,7 @@ class ChargeModelSection(unittest.TestCase):
         # owing a re-take.
         bump = (measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB) / measure.MIB
         body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
-        self.assertNotIn("The rule is refuted", body)
+        self.assertNotIn("The model is refuted", body)
         self.assertIn("not a bar on the box", body)
         self.assertIn("MEMORY_UNPOOLED_BOUND", body)
         # 13.8 MiB of remainder plus the bump, on the 64 MiB grid `19.26` read
@@ -6116,8 +6150,9 @@ class ChargeModelSection(unittest.TestCase):
         # inside its allocation.
         bump = (measure.LIBRARY_MEMORY_RESERVE + measure.MIB) / measure.MIB
         body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
-        self.assertIn("The rule is refuted, and by these cells:", body)
+        self.assertIn("The model is refuted, and by these cells:", body)
         self.assertIn("the sweep's box does not tick", body)
+        self.assertIn(measure.band_bars(measure.BAND_RULE), body)
         self.assertIn("| **rule** |", body)
 
     def test_the_two_bands_are_reported_apart_in_one_sitting(self):
@@ -6134,9 +6169,9 @@ class ChargeModelSection(unittest.TestCase):
                 ) / measure.MIB,
             }
         )
-        self.assertIn("The rule is refuted, and by these cells:", body)
+        self.assertIn("The model is refuted, and by these cells:", body)
         self.assertIn("not a bar on the box", body)
-        barring = body.split("The rule is refuted")[1].split("Inside the rule")[0]
+        barring = body.split("The model is refuted")[1].split("Inside the rule")[0]
         self.assertIn("128 MiB blocks** at `-m 1g`", barring)
         self.assertNotIn("24 MiB blocks** at `-m 2g`", barring)
         # And no bound is re-derived here: a sitting carrying a cell above the
