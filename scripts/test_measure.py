@@ -1245,7 +1245,7 @@ class RssAttribution(unittest.TestCase):
     def test_the_manual_s_per_table_claim_is_this_figure_s_consumer(self):
         # `peak-rss` cannot license it: `blocks4000` gives every table exactly
         # one `COPY` block, so per-table and per-block coincide in its inputs.
-        self.assertIn("docs/manual/dump-inspection.md", self._fig().quoted_by)
+        self.assertIn("docs/manual/dump-inspection.md", self._fig().also_quoted_by)
 
     def test_a_taken_attribution_declares_its_borrow(self):
         """A taken attribution borrows its reference row from `peak-rss`.
@@ -3444,6 +3444,103 @@ class Staleness(unittest.TestCase):
         self.assertEqual(touched, ["nested-decode-micro"])
 
 
+class CommentOnlyCommits(unittest.TestCase):
+    """The one oracle the harness decides for itself.
+
+    It replaced three consecutive commits on `main` whose whole content was
+    telling `--stale` that the commit before them had moved nothing, so what
+    these tests hold is the direction it fails in: anything the scanner cannot
+    place is *not* comment-only, because an oracle that has to be trusted is
+    worth less than the red it clears.
+    """
+
+    def test_a_rust_doc_comment_is_a_comment(self):
+        got = measure._rust_comment_lines("/// doc\n//! inner\n// plain\nfn f() {}\n")
+        self.assertEqual(got, {1, 2, 3})
+
+    def test_a_blank_line_carries_nothing(self):
+        self.assertEqual(measure._rust_comment_lines("fn f() {}\n\n"), {2})
+
+    def test_a_whole_line_block_comment_is_read(self):
+        got = measure._rust_comment_lines("/*\n * prose\n */\nfn f() {}\n")
+        self.assertEqual(got, {1, 2, 3})
+
+    def test_a_block_delimiter_beside_code_defeats_the_scanner(self):
+        # Where the comment starts is a lexing question -- a `/*` inside a
+        # string literal reads the same -- so the file is not read at all.
+        self.assertIsNone(measure._rust_comment_lines('let s = "/*";\n'))
+
+    def test_an_unclosed_block_defeats_the_scanner(self):
+        self.assertIsNone(measure._rust_comment_lines("/*\n prose\n"))
+
+    def test_a_python_hash_and_docstring_are_comments(self):
+        src = '# lead\ndef f():\n    """Doc.\n\n    More.\n    """\n    return 1\n'
+        self.assertEqual(measure._python_comment_lines(src), {1, 3, 4, 5, 6})
+
+    def test_an_assigned_triple_quote_is_a_value(self):
+        # `x = """..."""` is data the program reads, not prose, so the scanner
+        # refuses the file rather than excusing an edit to it.
+        self.assertIsNone(measure._python_comment_lines('x = """body"""\n'))
+
+    def test_markdown_is_comment_all_the_way_down(self):
+        self.assertEqual(measure.comment_lines("docs/x.md", "a\nb\n"), {1, 2})
+
+    def test_a_suffix_the_oracle_does_not_read_is_unanalyzable(self):
+        self.assertIsNone(measure.comment_lines("Cargo.toml", "[package]\n"))
+
+    def test_hunk_headers_give_both_sides_ranges(self):
+        diff = "@@ -3,2 +3,0 @@\n@@ -10 +8,3 @@\n"
+        self.assertEqual(measure.hunk_ranges(diff), ([3, 4, 10], [8, 9, 10]))
+
+    def test_an_unresolvable_commit_is_not_comment_only(self):
+        self.assertFalse(measure.comment_only_commit("no-such-rev", "pgdump_query/src/io.rs"))
+
+    def test_a_path_the_commit_did_not_touch_is_not_comment_only(self):
+        # Silence is not an excuse: saying "comment-only" about a path with no
+        # hunks in it would be answering a question nobody asked.
+        self.assertFalse(measure.comment_only_commit("HEAD", "docs/design/measurements.md.missing"))
+
+
+class CommentOnlyStaleness(unittest.TestCase):
+    """What the oracle does to `--stale`'s two path predicates."""
+
+    ACKS = ()
+
+    def test_a_comment_only_commit_settles_a_path_with_no_entry(self):
+        got = measure.excused_paths(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa"]},
+            set(),
+            self.ACKS,
+            comment_only=lambda c, p: True,
+        )
+        self.assertEqual(got, ["scripts/generate_perf_data.py"])
+
+    def test_a_comment_only_commit_is_not_what_holds_a_path_red(self):
+        # An inert entry names the commits actually blocking it, and a commit
+        # the oracle settled is not one of them.
+        acks = (measure.Acknowledged(commit="aaa", figures=("census-arrays",), why="additive"),)
+        got = measure.inert_excuses(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa", "bbb", "ccc"]},
+            acks,
+            comment_only=lambda c, p: c == "bbb",
+        )
+        self.assertEqual(got, [("scripts/generate_perf_data.py", ["aaa"], ["ccc"])])
+
+    def test_the_oracle_is_on_by_default(self):
+        # The weaker answer must not be reachable by forgetting an argument:
+        # a caller that passes no oracle gets the real one.
+        import inspect
+
+        for fn in (measure.excused_paths, measure.inert_excuses):
+            with self.subTest(fn=fn.__name__):
+                default = inspect.signature(fn).parameters["comment_only"].default
+                self.assertIs(default, measure.comment_only_commit)
+
+
 class Acknowledgements(unittest.TestCase):
     """A commit that touched a declared path and moved no reading.
 
@@ -3874,19 +3971,20 @@ class Eviction(unittest.TestCase):
 
 
 class Consumers(unittest.TestCase):
-    """`depends` is the edge into a figure; `quoted_by` is the edge out. A
-    figure whose numbers are repeated somewhere and does not say where is how
-    `decisions.md` came to quote a save count `measurements.md` no longer
-    holds."""
+    """`depends` is the edge into a figure; `consumers()` is the edge out, and
+    it is computed from who names the figure rather than declared beside it. A
+    declared list is corrected only by a session that happens to notice, which
+    is how a retarget left every tuple pointing at a document that had been
+    replaced."""
 
-    def test_every_figure_names_its_consumers(self):
+    def test_every_figure_has_a_consumer(self):
         for fig in measure.ALL_FIGURES:
             with self.subTest(figure=fig.id):
-                self.assertTrue(fig.quoted_by)
+                self.assertTrue(measure.consumers(fig))
 
     def test_every_consumer_exists(self):
         for fig in measure.ALL_FIGURES:
-            for path in fig.quoted_by:
+            for path in measure.consumers(fig):
                 with self.subTest(figure=fig.id, path=path):
                     self.assertTrue((measure.REPO / path).exists(), path)
 
@@ -3895,7 +3993,53 @@ class Consumers(unittest.TestCase):
         # it; listing it would make every fold-in look like a cross-doc edit.
         for fig in measure.ALL_FIGURES:
             with self.subTest(figure=fig.id):
-                self.assertNotIn("docs/design/measurements.md", fig.quoted_by)
+                self.assertNotIn("docs/design/measurements.md", measure.consumers(fig))
+
+    def test_a_document_naming_the_id_is_a_consumer(self):
+        # `decisions.md` cites every figure it argues from by id, which is what
+        # makes the computed edge possible at all.
+        self.assertIn(
+            "docs/design/decisions.md", measure.consumers(measure.FIGURES_BY_ID["allocator"])
+        )
+
+    def test_a_glob_reaches_the_family_it_spells(self):
+        # `scan-throughput-*` is how one sentence cites three tables, and a
+        # scan that only matched the exact id would read it as citing none.
+        for fid in ("scan-throughput-cold", "scan-throughput-warm", "scan-throughput-nvme"):
+            with self.subTest(figure=fid):
+                self.assertIn(
+                    "docs/design/decisions.md", measure.consumers(measure.FIGURES_BY_ID[fid])
+                )
+
+    def test_a_dated_history_entry_is_not_a_consumer(self):
+        # An entry states what was true on its day and is never revised, so a
+        # fold-in that re-read one could only make it untrue. Every figure is
+        # named in some entry, so this would otherwise be the whole output.
+        for fig in measure.ALL_FIGURES:
+            for path in measure.consumers(fig):
+                with self.subTest(figure=fig.id, path=path):
+                    self.assertFalse(path.startswith("docs/status/history/"), path)
+
+    def test_the_register_and_its_tests_are_not_consumers(self):
+        # They name every figure because they *are* the declaration.
+        for fig in measure.ALL_FIGURES:
+            got = measure.consumers(fig)
+            for path in ("scripts/measure.py", "scripts/test_measure.py"):
+                with self.subTest(figure=fig.id, path=path):
+                    self.assertNotIn(path, got)
+
+    def test_the_declared_residue_is_carried_through(self):
+        # The manual states `peak-rss`'s claim to a reader who will never see a
+        # figure id, so no scan can find it and the tuple still holds it.
+        got = measure.consumers(measure.FIGURES_BY_ID["peak-rss"])
+        self.assertIn("docs/manual/dump-inspection.md", got)
+        self.assertIn("README.md", got)
+
+    def test_a_declared_consumer_is_not_repeated_by_the_scan(self):
+        for fig in measure.ALL_FIGURES:
+            got = measure.consumers(fig)
+            with self.subTest(figure=fig.id):
+                self.assertEqual(len(got), len(set(got)))
 
 
 class Markers(unittest.TestCase):

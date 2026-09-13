@@ -212,7 +212,7 @@ Eighteen standing rules for reading anything below:
   difference taken **inside** one sweep, not more reps. These three numbers are
   read off "What a session's own drift costs" below and off "The cross-file
   subtraction bottoms out"; a re-derivation of either re-reads this rule, which
-  is a cross-reference rather than a `quoted_by` edge because a figure never
+  is a cross-reference rather than a consumer edge because a figure never
   declares the doc it lives in.
 - **Two builds of one source can differ by layout, so a stamp-to-stamp move is
   not necessarily a code change.** The `INSERT`-run row moved ~10% in both
@@ -534,7 +534,8 @@ rule.
 *Rejected:* recording, per figure, the count it was actually taken at. That is
 the stronger guarantee — it survives the constant being changed between two
 sittings, where one line for the document does not — but it is figure-register
-surgery: a fourth per-figure datum beside `depends`, `quoted_by` and `shares`,
+surgery: a fourth per-figure datum beside `depends`, `shares` and the
+consumer scan,
 read back out of the doc the way a sitting commit is, with its own reconciliation.
 The register is the place a change like that gets grilled, and the defect being
 closed here is a default nothing named at all.
@@ -602,9 +603,20 @@ pre-change bytes forever.
 marker — not the heading — is how the harness addresses it. Headings here are
 free to quote a number, and a heading whose number the next sweep moves is
 rewritten with it. `uv run measure.py --check` reconciles the markers against
-the harness's register and names, for each figure, the other documents that
-repeat its numbers; `--stale` names the figures a diff has invalidated, and the
-sections outside the register it has invalidated too.
+the harness's register and names, for each figure, its consumers; `--stale`
+names the figures a diff has invalidated, and the sections outside the register
+it has invalidated too.
+
+**A figure's consumers are computed from who names it, not declared beside
+it.** Anything under `docs/`, either crate or `scripts/` that spells the id —
+`` `peak-rss` ``, the family glob `` `scan-throughput-*` ``, or the
+`figure: peak-rss` marker — is what a fold-in must re-read. A declared list is
+corrected only by whoever happens to notice, which is how retargeting one
+document left every tuple in the register pointing at its predecessor. Dated
+history entries are out: an entry states what was true on its day and is never
+revised. `Figure.also_quoted_by` is the residue the scan cannot find — the
+manual and the README, which state a figure's claim to a reader who will never
+see a figure id.
 
 **A figure taken outside the sweep declares its sitting inside that same
 marker.** The condition is the standing rule above; what the marker adds is
@@ -656,8 +668,8 @@ slice.
 
 **Registering an instrument and publishing its table are two moments, and the
 attribution is why that is written down.** The standalone script was folded
-into the harness, so the figure has an id, a `depends` set and a `quoted_by`
-set; what it did not have, for the whole window between those two moments, was a
+into the harness, so the figure has an id, a `depends` set and a computed
+consumer set; what it did not have, for the whole window between those two moments, was a
 reading this harness took. It waited in `measure.UNTAKEN` for exactly that,
 because a figure marker asserts the stamp's first clause — *taken by
 `scripts/measure.py`* — and the numbers printed there were not. It could not be
@@ -760,7 +772,7 @@ the other side.
 So `measure.ACKNOWLEDGED` — the register in `scripts/acknowledged.py`, which no
 figure declares, so that adding an entry does not mark stale the figure it
 excuses — records commits that touched a declared path without
-moving a reading: the commit, the figures it excuses, why, and the command that
+moving a reading and that no oracle below settles by itself: the commit, the figures it excuses, why, and the command that
 re-checks it. `--stale` then prints the excuse rather than the figure, so the
 acknowledgement is *visible* — an invisible excuse would be the same defect one
 level down.
@@ -807,15 +819,23 @@ shapes and, where a shape reaches part of the change, says which part and how
 often. The worked case is the `--filter` term grammar: it lives in `main.rs`,
 which five figures declare, and no command shape passes `--filter` at all.
 
-**Comment-only is the third, and it is a syntactic property rather than a
-judgement.** A diff whose every hunk falls inside a `///`, `//!`, `#` or `"""`
-changes nothing the compiler emits, so it moves no reading of any kind — and an
-entry claiming it records the `git diff` that shows it, which is what separates
-the claim from someone's impression of a diff. It is the widest of the three in
-practice and the least interesting: every entry in the register is of this
-class, since a wrap, a keystone, a fold-in
-and a decision closure all retarget citations and quoted numbers across the
-files the register declares.
+**Comment-only is the third, and the harness decides it rather than being
+told.** A diff whose every hunk falls inside a `//`, `///`, `//!`, `#`, a
+docstring or a whole Markdown file changes nothing a build emits, which is a
+syntactic property — so `measure.comment_only_commit` reads it per commit and
+per path, and `--stale` prints the commit under *comment-only, skipped* instead
+of reddening the figure. It is by far the widest of the three in practice: a
+wrap, a keystone, a fold-in and a decision closure all retarget citations and
+quoted numbers across the files the register declares, and three consecutive
+commits on `main` once existed only to say so by hand.
+
+**The scanner refuses anything it cannot place**, because an oracle that has to
+be trusted is worth less than the red it clears. A merge, a file added, deleted
+or renamed, a suffix it does not read, a block delimiter sharing a line with
+code, an assigned `"""` literal: each of those is *not* comment-only, and the
+figure stays red. What is left for `measure.ACKNOWLEDGED` is the two oracles a
+diff cannot settle on its own — reachability and `--verify-additive` — so the
+register is empty whenever nobody has had to make one of those claims.
 
 *Rejected:* letting an acknowledgement cover library or harness changes on a
 reading of the diff. None of the three oracles above is a diff read: one
@@ -835,13 +855,14 @@ about what kind of reading sits on the other side of it. Which oracle is
 apply: `--verify-additive` regenerates a figure's inputs, and koji's input is a
 784 GB sample nothing generates. Reachability is close to vacuous: koji's
 declared paths are the scanner, and its command shape is a full scan of the
-whole file. What is left is comment-only, and it is not hypothetical — the
-keystone commit `6b90905` lands on `pgdump_query/src/index.rs` and
-`pgdump_query-cli/src/alloc.rs`, both inside koji's edge and both inside its
-range. The rule is uniform across declared sections rather than split by what
-they publish, because once a sweep publishes `rss-attribution` koji is the only
-section carrying an edge at all, and a rule with one member on each side is a
-rule written for a mechanism that does not exist.
+whole file. What is left is comment-only, and that one the harness now applies to a
+declared section exactly as it does to a figure — `--stale` walks both in one
+loop, so a keystone that lands on `index.rs` and `alloc.rs` inside koji's edge
+is skipped there without an entry. The rule is uniform across declared sections
+rather than split by what they publish, because once a sweep publishes
+`rss-attribution` koji is the only section carrying an edge at all, and a rule
+with one member on each side is a rule written for a mechanism that does not
+exist.
 
 **A declared section is reached only by being named, and that is what the empty
 tuple means.** `Acknowledged.figures` left empty covers **every figure and no
@@ -858,15 +879,11 @@ bases alone, though `--check` still passes the union so that an entry naming a
 section is spent against that section's own marker.
 
 *Rejected:* refusing an outside id in `Acknowledged.figures`, so that only a
-run clears a declared section's red. It reads as the conservative choice and is
-not: the only class of change it actually refuses is the comment-only one, so a
-docstring edit in `scan.rs` would be dischargeable by nothing but an hour on the
-HDD, and the realistic outcome is koji permanently red — the always-on light
-this register exists against, arriving by the same route one level down. What
-the refusal was reaching for is already structural: every commit touching a path
-must be excused, so one real scanner change holds that path red however many
-entries sit beside it. koji is red on ten paths today, and naming it in
-`6b90905` would clear exactly one of them. The claim that genuinely may not be
+run clears a declared section's red. What the refusal was reaching for is
+already structural: every commit touching a path must be excused, so one real
+scanner change holds that path red however many entries sit beside it, and koji
+is red on ten paths today. Refusing the register on top of that buys nothing and
+costs the case where a section's red is genuinely dischargeable in writing. The claim that genuinely may not be
 written is a scanner change excused as "this cannot have moved the block
 offsets", which is the claim a byte-identity check exists to test — that is said
 where it binds, in the koji section itself, rather than enforced by refusing the
@@ -3082,7 +3099,7 @@ HDD; run it detached per `CLAUDE.md`.
 below.** The marker above says so where a reader meets the section rather than
 eleven paragraphs down, and `--check` holds it: koji carries no
 `<!-- figure: … -->` marker, `--check` reconciles it as a declared section
-instead, and no figure's `quoted_by` reaches it — the harness owns koji's
+instead, and no figure's consumers reach it — the harness owns koji's
 *invocation* and never runs it, which is the standing it also gives the two
 instrument recipes, the profile's and heaptrack's.
 

@@ -94,6 +94,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import dataclasses
+import functools
 import hashlib
 import json
 import os
@@ -4489,13 +4490,14 @@ class Figure:
     #: `postgres:16` container", and a figure holding N decoded 24 MiB blocks
     #: at once cannot be one of them at 24 workers.
     memory: str | None = None
-    #: Documents that repeat this figure's numbers, or the claim it licenses.
-    #: `depends` is the edge into a figure -- what invalidates it; this is the
-    #: edge out -- what a moved figure invalidates. Both exist for the same
-    #: reason: "someone will notice" is not a mechanism, and the doc set has
-    #: already drifted this way (`decisions.md` quotes 4003 -> 195 saves and
-    #: a 19.7 s map where `measurements.md`'s table says 103 and 18.62).
-    quoted_by: tuple[str, ...] = ()
+    #: Consumers that repeat this figure's numbers **without naming it** — the
+    #: residue the scan cannot find. `depends` is the edge into a figure; the
+    #: edge out is `consumers()`, computed from who spells the figure's id, and
+    #: declaring it beside each figure is what left every tuple pointing at a
+    #: document a retarget had already replaced. What stays here is the manual
+    #: and the README: they state the claim to a reader who will never see a
+    #: figure id, so nothing in their text can be matched against one.
+    also_quoted_by: tuple[str, ...] = ()
     run: Callable[[Session], str] = field(default=lambda s: "")
 
     @property
@@ -7310,10 +7312,6 @@ def _per_rep(figure: str, session: Session, specs: Sequence[RunSpec]) -> str:
 FIGURES: list[Figure] = [
     Figure(
         id="census-brace-free",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
         section="The census on brace-free rows costs 8% of a warm scan",
         stage="cold+warm",
         depends=(*MAP, *SCAN, *READ, *GEN_PERF),
@@ -7323,10 +7321,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="census-arrays",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
         section="The census on array-bearing rows more than triples a warm scan",
         stage="cold+warm",
         depends=(*MAP, *SCAN, *READ, *GEN_PERF),
@@ -7336,10 +7330,9 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="scan-throughput-cold",
-        quoted_by=(
+        also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
-            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
@@ -7358,10 +7351,9 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="scan-throughput-warm",
-        quoted_by=(
+        also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
-            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
@@ -7386,9 +7378,8 @@ FIGURES: list[Figure] = [
     # rather than a republished one.
     Figure(
         id="scan-throughput-nvme",
-        quoted_by=(
+        also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
-            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
@@ -7406,10 +7397,7 @@ FIGURES: list[Figure] = [
     # number would look interchangeable with theirs.
     Figure(
         id="chunk-size",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
+        also_quoted_by=("docs/status/STATUS.md",),
         section="What the read chunk size is worth",
         stage="warm+cold+cold-nvme",
         depends=(*SCAN, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7420,9 +7408,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="nested-end-to-end",
-        quoted_by=(
-            "docs/status/STATUS.md",
-        ),
         section="A typed query over nested columns costs 13.2 µs a row more than a string one",
         stage="warm",
         depends=(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7431,9 +7416,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="census-attribution",
-        quoted_by=(
-            "docs/status/STATUS.md",
-        ),
         section="The untyped baseline is not file-independent (census attribution)",
         stage="warm",
         depends=(*MAP, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7442,10 +7424,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="cross-file-floor",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
         stage="warm",
         depends=(*NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7462,10 +7440,7 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="per-block-quadratic",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
+        also_quoted_by=("docs/status/STATUS.md",),
         section="Per-block cache saving is quadratic in block count, and so is the map",
         stage="warm",
         depends=(*MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS, *GEN_PERF),
@@ -7480,11 +7455,14 @@ FIGURES: list[Figure] = [
     # a per-block cost would accumulate in.
     Figure(
         id="peak-rss",
-        #: Four consumers, and two of them are not design documents. `io.rs`'s
-        #: own doc comment quotes the reading, and the manual and the README
-        #: state the *claim* it licenses to a reader who cannot check it
-        #: against the code — which is the one place `docs/process.md` makes a
-        #: falsified sentence binding on the change that falsifies it.
+        also_quoted_by=(
+            "docs/manual/dump-inspection.md",
+            "README.md",
+        ),
+        #: The manual and the README state the *claim* this figure licenses to
+        #: a reader who cannot check it against the code, and neither names the
+        #: figure — which is what keeps them declared while `io.rs`, which
+        #: quotes the reading and says `peak-rss` doing it, is computed.
         #:
         #: **Only half of the manual's sentence is this figure's.** "Does not
         #: grow with the size of the dump" is these rows; "grows with the
@@ -7493,12 +7471,6 @@ FIGURES: list[Figure] = [
         #: exactly one `COPY` block and the per-table and per-block axes
         #: coincide in it. That half is `rss-attribution`'s, which separates
         #: them by stopping a leg at the preamble.
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/manual/dump-inspection.md",
-            "README.md",
-            "pgdump_query/src/io.rs",
-        ),
         section="What a scan holds resident, per byte and per block",
         stage="warm",
         # `MAP` rather than `MAP_BUILD`: what the latter adds is `stream.rs`,
@@ -7510,10 +7482,7 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="map-only",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
+        also_quoted_by=("docs/status/STATUS.md",),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
         stage="warm",
         depends=(*MAP_BUILD, *READ, *QUERY_CLI, *GEN_BLOCKS),
@@ -7522,9 +7491,7 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="preamble-prepass",
-        quoted_by=(
-            "docs/status/STATUS.md",
-        ),
+        also_quoted_by=("docs/status/STATUS.md",),
         section="The preamble prepass is bounded by the schema, not by the dump",
         stage="warm",
         #: Its second row is `per-block-quadratic`'s 4000-block `parse` reading,
@@ -7542,14 +7509,8 @@ FIGURES: list[Figure] = [
         ),
         run=run_preamble_prepass,
     ),
-    # `quoted_by` carries `decisions.md` because the rejected viewing-builder
-    # paragraph reads this table's view control as the floor its bound is
-    # arithmetic on — a consumer nothing declared until 7.14 moved the control.
     Figure(
         id="nested-decode-micro",
-        quoted_by=(
-            "docs/design/decisions.md",
-        ),
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
         depends=("pgdump_query/src/nested.rs", "pgdump_query/benches/decoders.rs"),
@@ -7561,10 +7522,7 @@ FIGURES: list[Figure] = [
     # rather than cancelling out of a difference.
     Figure(
         id="projection-widths",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
+        also_quoted_by=("docs/status/STATUS.md",),
         section="What a column costs: five projection widths over one file",
         stage="warm",
         depends=(*SCAN, *NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7579,10 +7537,7 @@ FIGURES: list[Figure] = [
     # no row survives any of these predicates, so `push_row` never runs.
     Figure(
         id="predicate-terms",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
+        also_quoted_by=("docs/status/STATUS.md",),
         section="What a filter term costs, and how much of it is the walk to its field",
         stage="warm",
         depends=(*PREDICATE, *SCAN, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7597,10 +7552,6 @@ FIGURES: list[Figure] = [
     # what this figure is a figure of.
     Figure(
         id="allocator",
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-        ),
         section="Which allocator a figure was taken under",
         stage="warm",
         depends=(
@@ -7623,6 +7574,7 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="xz-decode-scaling",
+        also_quoted_by=("docs/status/STATUS.md",),
         section="What a second decode worker buys, and what the twenty-fourth does not",
         stage="warm-parallel",
         # Not the library's read path: no `pgdq` runs here at all. What can move
@@ -7634,10 +7586,6 @@ FIGURES: list[Figure] = [
             "pgdump_query/examples/xz_decode.rs",
             "scripts/generate_xz_input.py",
             *GEN_PERF,
-        ),
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
         ),
         warm_inputs=("control_xz", "koji_xz"),
         memory=DECODE_MEMORY,
@@ -7665,11 +7613,6 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # `decisions.md`'s "D25"
-        # reads all four of this figure's legs against the rule the design
-        # argues from, two of which do not behave as the arithmetic projected,
-        # so a move here is a move of what that section concludes.
-        quoted_by=("docs/design/decisions.md",),
         warm_inputs=("control", "control_xz"),
         memory=PARALLEL_MEMORY,
         run=run_parallel_scan_throughput,
@@ -7692,18 +7635,12 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # STATUS.md cites this figure's `--jobs` axis. Where the coarse leg
-        # levels off, it is the block pool's slot ceiling that stopped growing,
-        # and that ceiling follows the announced `--jobs` rather than the count
-        # the budget affords (`KD21`).
-        #
         # **The query path's sub-stream sizing does not reach this figure.** It
         # is in `stream::plan_partitions`, and every leg here is
         # `pgdq parse`, which reaches `worker_count` through
         # `leader::scan_region` instead — so this figure is excused by
         # reachability where its sibling is not, though both declare the same
         # read path.
-        quoted_by=("docs/status/STATUS.md",),
         warm_inputs=("control_xz", "control_xz128"),
         memory=PARALLEL_MEMORY,
         run=run_parallel_peak_rss,
@@ -7721,6 +7658,13 @@ FIGURES: list[Figure] = [
     # "A figure may be published outside the sweep").
     Figure(
         id="rss-attribution",
+        #: The manual's per-*table* claim is declared here rather than on
+        #: `peak-rss`, which cannot tell per-table from per-block on its own
+        #: inputs: `blocks4000` gives every table exactly one `COPY` block, so
+        #: the two coincide in it and only these legs separate them. The
+        #: manual's sentence carries a second claim — that nothing accumulates
+        #: per byte — which is `peak-rss`'s, so both figures declare that file.
+        also_quoted_by=("docs/manual/dump-inspection.md",),
         section="What the per-block resident growth is made of",
         stage="warm",
         # What `peak-rss` declares, plus the two mechanisms only this figure's
@@ -7738,17 +7682,6 @@ FIGURES: list[Figure] = [
             *QUERY_CLI,
             "pgdump_query-cli/Cargo.toml",
             *GEN_BLOCKS,
-        ),
-        #: The manual's per-*table* claim is here rather than on `peak-rss`,
-        #: which cannot tell per-table from per-block on its own inputs:
-        #: `blocks4000` gives every table exactly one `COPY` block, so the two
-        #: coincide in it and only these legs separate them. The manual's
-        #: sentence carries a second claim — that nothing accumulates per byte
-        #: — which is `peak-rss`'s, so both figures name that file.
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/status/STATUS.md",
-            "docs/manual/dump-inspection.md",
         ),
         #: Read off `_attribution_specs` rather than respelling the two
         #: `RunSpec`s: a leg is identified by its binary and shape, and a second
@@ -7781,6 +7714,10 @@ FIGURES: list[Figure] = [
     # rather than an edge any one of them declares.
     Figure(
         id="reserve",
+        # The manual's `--parallel-memory` guidance and its claim that a
+        # flagless scan stays inside its allocation are read off this table
+        # without naming it, so they are declared rather than computed.
+        also_quoted_by=("docs/manual/dump-inspection.md",),
         section="What a scan holds above the budget it was given",
         # Two regimes: every axis here occupies every hardware thread and is
         # gated as `warm-parallel`, while the serial-default row is the shape
@@ -7823,14 +7760,6 @@ FIGURES: list[Figure] = [
                 (_RESERVE_BASELINE,),
             ),
         ),
-        # The budget rule's constants, the `--parallel-memory` guidance and the
-        # claim that a flagless scan stays inside its allocation are all read
-        # off this table.
-        quoted_by=(
-            "docs/design/decisions.md",
-            "docs/manual/dump-inspection.md",
-            "docs/status/STATUS.md",
-        ),
         memory=PARALLEL_MEMORY,
         run=run_reserve,
     ),
@@ -7842,11 +7771,10 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #:
 #: A sweep does not run these and the doc carries no table *of this harness's*
 #: for them, which is why they sit outside `ALL_FIGURES`: the marker
-#: reconciliation would otherwise demand a section with no numbers under it,
-#: and `quoted_by` would have to name consumers of a figure that does not exist
-#: yet. `--figure <id>` still selects one, which is how the reading gets taken —
-#: and taking it moves the entry into `FIGURES`, where the doc-side checks
-#: start applying.
+#: reconciliation would otherwise demand a section with no numbers under it.
+#: `--figure <id>` still selects one, which is how the reading gets taken — and
+#: taking it moves the entry into `FIGURES`, where the doc-side checks start
+#: applying.
 #:
 #: The distinction is worth a list rather than a comment because *built* and
 #: *taken* fail differently. An instrument nobody built is work; an instrument
@@ -7877,9 +7805,6 @@ DERIVED: list[Figure] = [
         # apparatus, not the code. What can move it is the harness's own timing
         # path.
         depends=("scripts/measure.py",),
-        quoted_by=(
-            "docs/status/STATUS.md",
-        ),
     )
 ]
 
@@ -7894,6 +7819,94 @@ SELECTABLE_BY_ID = {f.id: f for f in SELECTABLE}
 #: Every figure the register knows, whether or not a sweep takes it.
 EVERY_FIGURE = FIGURES + UNTAKEN + DERIVED
 EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
+
+
+# --------------------------------------------------------------------------
+# Consumers: who repeats a figure, computed from who names it.
+# --------------------------------------------------------------------------
+
+#: Where a consumer can live. Documents, the two crates and the scripts that
+#: are not this harness -- a figure's numbers are quoted in prose and its
+#: claims are asserted in doc comments, and both of those are in here.
+CONSUMER_ROOTS: tuple[tuple[str, str], ...] = (
+    ("docs", "**/*.md"),
+    ("pgdump_query", "**/*.rs"),
+    ("pgdump_query-cli", "**/*.rs"),
+    ("scripts", "*.py"),
+)
+#: Top-level documents, named rather than globbed: the working tree also holds
+#: `CLAUDE.local.md`, which is nobody's checkout but this one's.
+CONSUMER_FILES: tuple[str, ...] = ("README.md", "CONTRIBUTING.md", "CLAUDE.md")
+#: Not consumers, however often they name a figure.
+#:
+#: `measurements.md` is where the table *is*, so listing it would make every
+#: fold-in look like a cross-document edit. The register and its tests are the
+#: declaration itself. And `docs/status/history/` is dated: an entry states
+#: what was true on its day and is never revised, which is the same exemption
+#: `scripts/citations.py` grants a closed day — a fold-in that re-read one
+#: could only make it untrue.
+CONSUMER_SKIP: tuple[str, ...] = (
+    "docs/design/measurements.md",
+    "docs/status/history/",
+    "scripts/measure.py",
+    "scripts/test_measure.py",
+    "scripts/acknowledged.py",
+)
+
+#: How a document addresses a figure: the id in backticks, a trailing `*`
+#: standing for a family of them (`scan-throughput-*`), or the marker spelling
+#: the doc itself uses.
+_FIGURE_MENTION = re.compile(r"`([a-z0-9][a-z0-9-]*\*?)`|figure: ([a-z0-9-]+)")
+
+
+def consumer_files() -> list[str]:
+    """Every repo-relative path the consumer scan reads, sorted."""
+    found: set[str] = set()
+    for root, pattern in CONSUMER_ROOTS:
+        for path in (REPO / root).glob(pattern):
+            found.add(str(path.relative_to(REPO)))
+    for name in CONSUMER_FILES:
+        if (REPO / name).exists():
+            found.add(name)
+    return sorted(p for p in found if not p.startswith(CONSUMER_SKIP))
+
+
+@functools.lru_cache(maxsize=1)
+def _mentions_by_file() -> tuple[tuple[str, frozenset[str]], ...]:
+    """Each scanned file, and the figure names it spells."""
+    out = []
+    for path in consumer_files():
+        try:
+            text = (REPO / path).read_text(errors="replace")
+        except OSError:
+            continue
+        names = {a or b for a, b in _FIGURE_MENTION.findall(text)}
+        if names:
+            out.append((path, frozenset(names)))
+    return tuple(out)
+
+
+def consumers(fig: Figure) -> tuple[str, ...]:
+    """What a moved figure obliges a fold-in to re-read.
+
+    **Computed from who names the figure, not declared beside it.** `depends`
+    is the edge into a figure; this is the edge out, and it used to be a tuple
+    per `Figure` that only a session noticing a stale citation ever corrected
+    — so retargeting a document left every tuple naming the old one. A
+    consumer that cites `` `peak-rss` `` or `<!-- figure: peak-rss -->` says so
+    in its own text, and a glob (`` `scan-throughput-*` ``) reaches the family
+    it spells.
+
+    `also_quoted_by` is the residue: a consumer that repeats the *numbers*
+    without naming the figure, which is what the manual and the README do —
+    they state the claim to a reader who will never see a figure id, and no
+    scan can find them."""
+    named = sorted(
+        path
+        for path, names in _mentions_by_file()
+        if any(n == fig.id or (n.endswith("*") and fig.id.startswith(n[:-1])) for n in names)
+    )
+    return tuple(dict.fromkeys((*named, *fig.also_quoted_by)))
 
 
 def registered_regimes() -> tuple[str, ...]:
@@ -8079,6 +8092,194 @@ def derivation_gaps(figures: Sequence[Figure]) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# Comment-only commits: the one oracle the harness computes for itself.
+# --------------------------------------------------------------------------
+
+
+#: Suffixes the comment oracle can read. Anything else -- a manifest, a SQL
+#: fixture, a snapshot -- is unanalyzable, and unanalyzable is a synonym for
+#: "not comment-only": the oracle's whole value is that it never has to be
+#: trusted, so every uncertainty resolves against the skip.
+_COMMENTABLE = (".rs", ".py", ".md")
+
+
+def _rust_comment_lines(text: str) -> set[int] | None:
+    """The 1-based lines of a Rust source that are comment or blank.
+
+    `None` means the file defeated the scanner, which is the conservative
+    answer everywhere: a block comment opened after code on the same line, or
+    a `/*` inside a string literal, would need a real lexer to place, and a
+    wrong answer here excuses a change that moved a number. Line comments --
+    `//`, `///`, `//!` -- are the case this project actually writes, and a
+    whole-line `/* ... */` block is read as well."""
+    out: set[int] = set()
+    depth = 0
+    for n, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if depth:
+            out.add(n)
+            depth += line.count("/*") - line.count("*/")
+            if depth < 0:
+                return None
+            continue
+        if not line or line.startswith("//"):
+            out.add(n)
+            continue
+        if line.startswith("/*"):
+            out.add(n)
+            depth += line.count("/*") - line.count("*/")
+            if depth < 0:
+                return None
+            continue
+        if "/*" in line or "*/" in line:
+            # Code and a block delimiter on one line: where the comment starts
+            # and ends is a lexing question, so the file is not read at all.
+            return None
+    return out if depth == 0 else None
+
+
+#: A triple-quoted region counts as a comment only where it *opens* like a
+#: docstring -- the line is nothing but the quote, or the quote plus prose.
+#: `x = """..."""` is a value, and a value is code.
+_PY_DOCSTRING_OPEN = re.compile(r"""^(?:[rRbBuUfF]{0,2})("{3}|'{3})""")
+
+
+def _python_comment_lines(text: str) -> set[int] | None:
+    """The 1-based lines of a Python source that are comment, docstring or blank."""
+    out: set[int] = set()
+    closer: str | None = None
+    for n, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if closer is not None:
+            out.add(n)
+            if closer in line:
+                if line.count(closer) > 1:
+                    return None
+                closer = None
+            continue
+        if not line or line.startswith("#"):
+            out.add(n)
+            continue
+        m = _PY_DOCSTRING_OPEN.match(line)
+        if not m:
+            if '"""' in line or "'''" in line:
+                # A triple quote arriving after code: an assigned literal, a
+                # nested quote, or the end of something this scanner never saw
+                # open. All three are beyond it.
+                return None
+            continue
+        quote = m.group(1)
+        out.add(n)
+        rest = line[m.end():]
+        if quote not in rest:
+            closer = quote
+        elif rest.count(quote) > 1:
+            return None
+    return out if closer is None else None
+
+
+def comment_lines(path: str, text: str) -> set[int] | None:
+    """Which of a blob's lines carry nothing a build can see.
+
+    Markdown is *entirely* comment: it compiles to nothing and runs in no
+    figure's command shape, so every line of it qualifies and the scanner is
+    an arithmetic one."""
+    if path.endswith(".md"):
+        return set(range(1, len(text.splitlines()) + 1))
+    if path.endswith(".rs"):
+        return _rust_comment_lines(text)
+    if path.endswith(".py"):
+        return _python_comment_lines(text)
+    return None
+
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def hunk_ranges(diff: str) -> tuple[list[int], list[int]]:
+    """The pre-image and post-image line numbers a `-U0` diff touches.
+
+    Read off the hunk headers rather than by counting `+`/`-` lines: with no
+    context there is nothing else in a hunk, and a header states both sides'
+    ranges outright."""
+    removed: list[int] = []
+    added: list[int] = []
+    for line in diff.splitlines():
+        m = _HUNK_RE.match(line)
+        if not m:
+            continue
+        astart, alen, bstart, blen = m.groups()
+        alen = 1 if alen is None else int(alen)
+        blen = 1 if blen is None else int(blen)
+        removed += list(range(int(astart), int(astart) + alen))
+        added += list(range(int(bstart), int(bstart) + blen))
+    return removed, added
+
+
+def _git(args: list[str]) -> str | None:
+    """`git`, with a failure reported as `None` rather than raised.
+
+    Every caller here is asking a question whose unanswerable case is already
+    "not comment-only", so a missing blob, an unresolvable sha or a path that
+    did not exist yet all take the same route as a file the scanner cannot
+    read."""
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=REPO, capture_output=True, text=True, check=True
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+@functools.lru_cache(maxsize=None)
+def comment_only_commit(commit: str, path: str) -> bool:
+    """Does this commit change nothing but comments, inside this one path?
+
+    **The third oracle, computed rather than written down.** It used to be a
+    claim an acknowledgement entry made -- and three of seven consecutive
+    commits on `main` existed only to make it, each one a commit whose own
+    diff was comments retargeting citations. The property is syntactic, so the
+    harness decides it: every line the commit adds falls inside a comment of
+    the post-image, every line it removes fell inside a comment of the
+    pre-image, and a file the scanner cannot place is not comment-only.
+
+    Refused before the scanner runs: a merge, which has no single pre-image; a
+    file added, deleted or renamed, where "the lines it changed" is the whole
+    of it; and a suffix the oracle does not read."""
+    if not path.endswith(_COMMENTABLE):
+        return False
+    sha = _git(["rev-parse", f"{commit}^{{commit}}"])
+    if sha is None:
+        return False
+    sha = sha.strip()
+    parents = _git(["rev-list", "--parents", "-n", "1", sha])
+    if parents is None or len(parents.split()) != 2:
+        return False
+    status = _git(["show", "--format=", "--name-status", "-M", sha, "--", path])
+    if status is None:
+        return False
+    kinds = {line.split("\t")[0][:1] for line in status.splitlines() if line.strip()}
+    if kinds and kinds != {"M"}:
+        return False
+    diff = _git(["show", "--format=", "--unified=0", sha, "--", path])
+    if not diff:
+        # No hunks under this path at all: nothing to excuse, and saying
+        # "comment-only" about a path the commit did not touch would be a
+        # claim nobody asked for.
+        return False
+    removed, added = hunk_ranges(diff)
+    before = _git(["show", f"{sha}^:{path}"])
+    after = _git(["show", f"{sha}:{path}"])
+    if before is None or after is None:
+        return False
+    was = comment_lines(path, before)
+    now = comment_lines(path, after)
+    if was is None or now is None:
+        return False
+    return all(n in was for n in removed) and all(n in now for n in added)
+
+
+# --------------------------------------------------------------------------
 # Acknowledged commits: a declared path changed, and no reading moved.
 # --------------------------------------------------------------------------
 
@@ -8130,8 +8331,15 @@ def excused_paths(
     commits_by_path: dict[str, Sequence[str]],
     dirty: set[str],
     acks: Sequence[Acknowledged],
+    comment_only: Callable[[str, str], bool] = comment_only_commit,
 ) -> list[str]:
-    """Which of a figure's touched paths an acknowledgement accounts for.
+    """Which of a figure's touched paths are settled — by an acknowledgement,
+    or by the commit changing nothing but comments inside that path.
+
+    The two settlements are not interchangeable and only one of them is
+    written by hand. `comment_only` is passed in so a test can hold the
+    register's half on its own, and its default is the real oracle so that a
+    caller cannot get the weaker answer by forgetting it.
 
     Two refusals, and both are the conservative direction:
 
@@ -8147,7 +8355,9 @@ def excused_paths(
         if path in dirty:
             continue
         commits = commits_by_path.get(path) or ()
-        if commits and all(excuses(acks, c, figure_id) for c in commits):
+        if commits and all(
+            excuses(acks, c, figure_id) or comment_only(c, path) for c in commits
+        ):
             out.append(path)
     return out
 
@@ -8157,6 +8367,7 @@ def inert_excuses(
     hits: Sequence[str],
     commits_by_path: dict[str, Sequence[str]],
     acks: Sequence[Acknowledged],
+    comment_only: Callable[[str, str], bool] = comment_only_commit,
 ) -> list[tuple[str, list[str], list[str]]]:
     """Per still-red path: the entries that excuse it, and the commits that do not.
 
@@ -8169,13 +8380,18 @@ def inert_excuses(
 
     Returns `(path, excused shas, blocking shas)`, only for paths where the
     first list is non-empty; a path nothing excuses is red for the ordinary
-    reason and needs no commentary.
+    reason and needs no commentary. A comment-only commit is in neither list:
+    it is settled without an entry, so naming it as what holds the path red
+    would send the reader to a diff that changes nothing.
     """
     out = []
     for path in hits:
         excused, blocking = [], []
         for commit in commits_by_path.get(path) or ():
-            (excused if excuses(acks, commit, figure_id) else blocking).append(commit)
+            if excuses(acks, commit, figure_id):
+                excused.append(commit)
+            elif not comment_only(commit, path):
+                blocking.append(commit)
         if excused:
             out.append((path, excused, blocking))
     return out
@@ -9049,12 +9265,13 @@ def render(cfg: Config, run_dir: Path) -> int:
             session.figure_id = fig.id
             body = fig.run(session)
             apparatus = apparatus_note([r for r in session.records if r.get("figure") == fig.id])
-            consumers = (
+            quoting = consumers(fig)
+            note = (
                 "\n**The fold-in must also re-read**, because these repeat this figure's "
                 "numbers or the claim it licenses: "
-                + ", ".join(f"`{q}`" for q in fig.quoted_by)
+                + ", ".join(f"`{q}`" for q in quoting)
                 + ".\n"
-                if fig.quoted_by
+                if quoting
                 else ""
             )
             heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
@@ -9063,7 +9280,7 @@ def render(cfg: Config, run_dir: Path) -> int:
             marker = figure_marker(fig.id, None if whole_sweep else head)
             kills = session.figure_kills(fig.id)
             bar = censored_note(kills) if kills else ""
-            parts.append(f"{heading}{marker}\n\n{label}{bar}{body}\n{apparatus}{consumers}")
+            parts.append(f"{heading}{marker}\n\n{label}{bar}{body}\n{apparatus}{note}")
 
     out = run_dir / "tables.md"
     out.write_text("\n".join(raw["header"]) + "\n" + "\n".join(parts))
@@ -9227,10 +9444,11 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         if apparatus:
             log("    " + apparatus.strip())
         log(f"--- {fig.id} done in {took:.0f} s")
-        consumers = (
+        quoting = consumers(fig)
+        note = (
             "\n**The fold-in must also re-read**, because these repeat this figure's numbers "
-            "or the claim it licenses: " + ", ".join(f"`{q}`" for q in fig.quoted_by) + ".\n"
-            if fig.quoted_by
+            "or the claim it licenses: " + ", ".join(f"`{q}`" for q in quoting) + ".\n"
+            if quoting
             else ""
         )
         heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
@@ -9240,7 +9458,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         # The marker is filled in below, not here: whether this run re-stamps
         # the document is a fact about the *whole* sitting, and a figure taken
         # third cannot know that the nineteenth will fail.
-        rendered.append((fig.id, heading, f"{label}{bar}{body}\n{apparatus}{consumers}"))
+        rendered.append((fig.id, heading, f"{label}{bar}{body}\n{apparatus}{note}"))
 
     # What the sitting actually took. A selection short of the sweep never
     # stamped; a selection of the whole sweep that lost a figure must not
@@ -9390,7 +9608,7 @@ def cmd_list() -> None:
         if closure:
             print(f"  {'':<24}  re-take it with: {', '.join(closure)}")
         print(f"  {'':<24}  invalidated by: {', '.join(fig.depends)}")
-        print(f"  {'':<24}  quoted by: {', '.join(fig.quoted_by) or '(nothing else)'}")
+        print(f"  {'':<24}  quoted by: {', '.join(consumers(fig)) or '(nothing else)'}")
         reproduce = (
             "--drift <sweep> <sweep>" if fig.stage == "derived" else f"--figure {fig.id}"
         )
@@ -10307,7 +10525,7 @@ def cmd_check(doc: Path) -> int:
     print("What else a moved figure invalidates:")
     for fig in ALL_FIGURES:
         print(f"  {fig.id}")
-        for q in fig.quoted_by:
+        for q in consumers(fig):
             print(f"      {q}")
     return (
         1
@@ -10595,6 +10813,11 @@ def cmd_stale(since: str | None) -> int:
     stale: list[tuple[Figure, list[str]]] = []
     outside_stale: list[tuple[Outside, list[str]]] = []
     excused_by: dict[str, list[str]] = {}
+    # Keyed by commit and path rather than by commit: the oracle is answered
+    # per path, and a commit that is comments in `io.rs` and code in
+    # `measure.py` is exactly the shape three of the register's own entries
+    # had.
+    comment_by: dict[tuple[str, str], list[str]] = {}
     # One loop over both, because an acknowledgement excuses a *commit* and
     # says nothing about what kind of reading is on the other side of it: a
     # declared section is discharged by the same entry, in the same register,
@@ -10608,7 +10831,20 @@ def cmd_stale(since: str | None) -> int:
             (outside_stale if isinstance(who, Outside) else stale).append((who, left))
         for path in ok:
             for commit in by_path[path]:
-                excused_by.setdefault(commit, []).append(who.id)
+                if excuses(acks, commit, who.id):
+                    excused_by.setdefault(commit, []).append(who.id)
+                else:
+                    comment_by.setdefault((commit, path), []).append(who.id)
+
+    if comment_by:
+        print(
+            "Comment-only, skipped — every hunk these commits make inside the path falls\n"
+            "within a comment, so nothing there can move a reading and no entry is owed:\n"
+        )
+        for (commit, path), ids in comment_by.items():
+            print(f"  {commit[:7]}  {path}")
+            print(f"           skipped for: {', '.join(sorted(set(ids)))}")
+        print()
 
     if excused_by:
         print("Acknowledged — the commit is recorded as moving no reading:\n")
