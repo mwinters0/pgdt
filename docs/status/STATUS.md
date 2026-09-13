@@ -25,8 +25,9 @@ inside. `peak-rss` could not have stayed out in any case: `rss-attribution` and
 `reserve` each borrow a run from it, and a figure standing in a `shares` edge
 may not be published alone. The fresh stamp spent all three of the previous
 acknowledgements — P7's wrap and keystone and `a30cc43` — which were deleted
-rather than kept as sediment, so `measure.ACKNOWLEDGED` is empty, the state a
-fresh stamp leaves behind.
+rather than kept as sediment. `measure.ACKNOWLEDGED` carries one entry against
+the new stamp: `2bc72f4`, the fold-in that landed the sitting, excusing the
+twenty figures that declare `io.rs` on comment-only hunks.
 
 **Two figures are published for the first time.** `rss-attribution` leaves
 `measure.NOT_OURS` and the doc's `outside-register` declaration with it, closing
@@ -70,21 +71,26 @@ instrument can separate from its own scatter across four sittings now:
 5.88 / 5.64 / 9.53 / 43.59, then 5.90 / 5.85 / 9.73 / 43.78, now
 6.20 / 6.13 / 9.77 / 44.19 MiB.
 
-**One figure is stale on its own evidence, and every other is stale on a
-comment.** `session-drift` is red on `scripts/measure.py`, which the sitting
-itself carried uncommitted changes to — the stamp says so — and which is the
-apparatus that figure measures; re-taking it means a second sweep run back to
-back with a first, not a `--figure`. Every other figure reads red on
-`pgdump_query/src/io.rs`, which the fold-in itself touched: the corrections it
-made are the numbers those doc comments quote — `5.82×` → `5.60×`, `~5.9 MiB` →
-`~6.2 MiB`, the two `window_end` traps and three retargeted citations — and
-every hunk is inside a `///`. **That red owes an acknowledgement rather than a
-sweep**, and it cannot be written until the change is committed, an entry
-naming a sha. Until then the reason is here, which is the standing requirement
+**One figure is stale on its own evidence, and the rest were stale on a
+comment.** The twenty figures that declare `pgdump_query/src/io.rs` read red on
+`2bc72f4`'s fold-in, which corrected the numbers those doc comments quote —
+`5.82×` → `5.60×`, `~5.9 MiB` → `~6.2 MiB`, the two `window_end` traps and three
+retargeted citations. All thirty-one changed lines in that file are inside a
+`///`, so this is the comment-only oracle, and `measure.ACKNOWLEDGED` carries
+one entry naming that sha; `--stale` prints the excuse in their place
+([`../design/measurements.md`](../design/measurements.md), "A commit can be
+acknowledged"). **`session-drift` is not excused and stays red**, on
+`scripts/measure.py`: the same commit rewrites the harness's own timing and
+stamping code — `M103`'s retired column and `M104`'s stamp fix, 245 changed
+lines outside any comment — and the harness *is* the apparatus that figure
+measures, which is the one class of change none of the three oracles settles.
+Re-taking it means a second sweep run back to back with a first, not a
+`--figure`. Outside the register, the koji section is red on ten scanner paths
+since `f5768e7`, which no acknowledgement of this commit can reach and only a
+run on the HDD would clear. Red with the reason written down is the standing
+requirement, not red cleared
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
-not oblige a sweep"). Outside the register, the koji section is red on ten
-scanner paths since `f5768e7`, which no acknowledgement can excuse and only a
-run on the HDD would clear.
+not oblige a sweep").
 
 | Capability | State |
 |---|---|
@@ -181,11 +187,12 @@ next koji run rather than by an acknowledgement, and `benches` declares no edge
 because it publishes no number. `session-drift` is derived across the `af15eac`
 sweep and a second begun the minute it finished on the same commit, which is
 the pair `--drift` reads, and it is therefore the one table the stamp does not
-replace. `measure.ACKNOWLEDGED` is **empty**: the three entries it carried —
-P7's wrap and keystone, both comment-only against a declared path, and
-`a30cc43`, reachability rather than comment-only — were all spent by this
-stamp, and `--check` named them so they were deleted rather than kept as
-sediment.
+replace. `measure.ACKNOWLEDGED` carries **one** entry: the three it had — P7's
+wrap and keystone, both comment-only against a declared path, and `a30cc43`,
+reachability rather than comment-only — were all spent by this stamp, and
+`--check` named them so they were deleted rather than kept as sediment; in
+their place stands `2bc72f4`, comment-only against `io.rs`, which is the fold-in
+that published this stamp.
 
 **Both `parallel-*` figures are back inside a stamped sweep**, having been
 built as apparatus and taken alone at `e29939c` and `20fd77c`, which is what a

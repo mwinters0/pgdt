@@ -92,4 +92,55 @@ class Acknowledged:
 #: The excused commits, live for the current session stamp only. Empty is the
 #: state a fresh stamp leaves behind: every entry a sweep re-stamps past is
 #: spent, and `--check` names it so it is deleted rather than kept as sediment.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="2bc72f4",
+        # The twenty figures that declare `pgdump_query/src/io.rs`, which is
+        # every figure but `nested-decode-micro`, `xz-decode-scaling` — neither
+        # declares the file — and `session-drift`, which is red on
+        # `scripts/measure.py` and stays red: that commit rewrites the harness's
+        # own timing and stamping code, which is the one class of change no
+        # oracle here settles.
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+        ),
+        why=(
+            "`19.11`'s fold-in and P19's wrap. Comment-only in io.rs: the "
+            "closing sweep moved the numbers those doc comments quote — `5.82x` "
+            "-> `5.60x` on the compressed `parse` speedup, `~5.9 MiB` -> "
+            "`~6.2 MiB` on what a serial scan holds, the `1.83x` pool miss "
+            "restated as a historical reading — plus two `window_end` traps "
+            "written down and three citations retargeted out of the slice notes "
+            "the same commit deletes. All 31 changed lines are inside a `///`. "
+            "Every other file the commit touches is a document, a deleted notes "
+            "doc, or `scripts/`, and no figure declares any of them except "
+            "`session-drift`, which is not excused here."
+        ),
+        verified=(
+            "git show 2bc72f4 --unified=0 -- pgdump_query/src/io.rs | grep -E "
+            "'^[+-]' | grep -vE '^(\\+\\+\\+|---)' | grep -vE "
+            "'^[+-]\\s*///' prints nothing, against 31 changed lines in that "
+            "file; git show 2bc72f4 --stat shows the only other path any figure "
+            "declares is scripts/measure.py."
+        ),
+    ),
+)
