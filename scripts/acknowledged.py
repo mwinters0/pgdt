@@ -132,4 +132,40 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
         ),
     ),
+    Acknowledged(
+        commit="8acc9c2",
+        figures=(),
+        why=(
+            "the layering check's fixes: three inline `crate::` paths in `io.rs`, "
+            "`scan.rs` and `stream.rs` became `use` imports of the same items, "
+            "which names the same functions and constant through a different "
+            "path and changes no codegen; `preamble.rs`'s one hunk is a `//!` "
+            "line, which that file defeats the syntactic oracle on (above). "
+            "Blanket because no shape can see an import path"
+        ),
+        verified=(
+            "git show --format= -U0 8acc9c2 -- pgdump_query/src/io.rs "
+            "pgdump_query/src/scan.rs pgdump_query/src/stream.rs "
+            "pgdump_query/src/preamble.rs | grep -E '^[+-]' | "
+            "grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//)' | "
+            "grep -vE '^[+-](use |    RetainedUnit)|memory_budget_display|DEFAULT_CHUNK_SIZE'"
+            "  # empty: every code line is a `use` or one of the three sites it renames"
+        ),
+    ),
+    Acknowledged(
+        commit="e55bbd7",
+        figures=("preamble-prepass", "rss-attribution"),
+        why=(
+            "the comment sweep that followed the register move; every hunk it "
+            "makes in `preamble.rs` is a doc comment, and that file defeats the "
+            "syntactic oracle for the reason above. Without it the three entries "
+            "above are inert on this path"
+        ),
+        verified=(
+            "git show --format= -U0 e55bbd7 -- pgdump_query/src/preamble.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
+        ),
+    ),
 )
