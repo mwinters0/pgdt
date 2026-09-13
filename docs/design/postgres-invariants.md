@@ -61,20 +61,12 @@ preamble legitimately follows an earlier one's data. Hence re-arming the
 preamble search at each `\connect`.
 
 **Verified against:** v13.0, v16.0, v18.6 — identical.
-**Relied on by:** `decisions.md` ("D30"), and —
-through the scope limit above — two mechanisms that turn on where a metadata
-computation may legally stand:
-
-- The mapping pass restating `DumpMetadata` at **each** `\connect`ed
-  database's first `COPY` block (`decisions.md`, "D63"). The scope limit is what licenses it: the invariant is per
-  database, so each database's first `COPY` header closes out that database's
-  preamble exactly as the file's first one closes out the first database's.
-  Without the scope limit the recurring boundary would not exist and only EOF
-  would be legal.
-- `ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"). Given the above, no mapping scan produces the
-  condition any more: a database's DDL is stated before any of its blocks can
-  be banked, so a block in the map always has its database covered. The variant
-  answers for metadata built by some other scan.
+**Relied on by:** `decisions.md` ("D30"); the mapping pass restating
+`DumpMetadata` at **each** `\connect`ed database's first `COPY` block
+(`decisions.md`, "D63"), which the per-database scope limit licenses — each
+database's first `COPY` header closes that database's preamble;
+`ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"), which answers
+for metadata built by some scan other than the mapping pass.
 **Re-verify:** `grep -n 'addBoundaryDependencies' -A40 src/bin/pg_dump/pg_dump.c`
 and confirm `DO_EXTENSION`/`DO_TYPE`/`DO_SHELL_TYPE` are still in the pre-data
 arm, plus the `PRIO_*` ordering in `pg_dump_sort.c`.
@@ -91,12 +83,11 @@ every one of them writes a header naming the **root** table. It is not
 opt-in — `pg_dump` forces the mode on its own for a table hash-partitioned on
 an enum column.
 
-What *is* still one-per-table is the archive entry: `makeTableDataInfo()`
+What *is* one-per-table is the archive entry: `makeTableDataInfo()`
 returns immediately if `tbinfo->dataObj != NULL`, so at most one `TABLE DATA`
 entry exists per table, and it skips views, partitioned parents (`/* Skip
 partitioned tables (data in partitions) */`), unselected foreign tables,
-excluded unlogged tables, and `tabledata_exclude_oids`. The name in the entry
-and the name in the header are simply not the same name.
+excluded unlogged tables, and `tabledata_exclude_oids`.
 
 **Proof.** `dumpTableData()` in `pg_dump.c` builds the header from `copyFrom`,
 which is `fmtQualifiedDumpable(getRootTableInfo(tbinfo))` — not `tbinfo` —
@@ -120,26 +111,21 @@ COPY public.feelings (id, m) FROM stdin;
 COPY public.feelings (id, m) FROM stdin;
 ```
 
-Two consequences beyond the count, both load-bearing:
+The TOC entry's `Name:` is the partition; the `COPY` header's name is the
+root. Plain-format output carries a `-- load via partition root <root>` marker
+line between the TOC comment and the header (from the entry's `defn` comment),
+so the shape is detectable in the file itself; the pre-data section lists every
+`ALTER TABLE ... ATTACH PARTITION`, so the set of leaf partitions is knowable
+before any data is reached (I1). The marker survives `--no-comments`,
+`--data-only`, both together, and `--inserts` (observed, 16.15): it is the
+entry's `defn`, not a `COMMENT ON` statement.
 
-- **The TOC entry's `Name:` is the partition; the `COPY` header's name is the
-  root.** Any code that assumes the two agree is wrong for this shape.
-- **Plain-format output carries a `-- load via partition root <root>` marker
-  line** between the TOC comment and the header (from the entry's `defn`
-  comment), so the shape is detectable in the file itself — and the pre-data
-  section lists every `ALTER TABLE ... ATTACH PARTITION`, so the set of leaf
-  partitions is knowable before any data is reached (I1). The marker survives
-  `--no-comments`, `--data-only`, both together, and `--inserts` (observed,
-  16.15): it is the entry's `defn`, not a `COMMENT ON` statement, so
-  `--no-comments` does not touch it.
-
-**The blocks are not contiguous, and must not be assumed to be.**
-`DOTypeNameCompare()` in `pg_dump_sort.c` orders entries by (type priority,
-namespace name, **object name**), and a `TABLE DATA` entry's object name is
-the *partition's* own name — not the root's. Any unrelated table whose name
-sorts between two partition names is emitted between their blocks. Observed,
-flagless, 16.15, with partitions `feel_a`/`feel_z` of root `feel` and an
-unrelated table `feel_m`:
+The blocks are not contiguous. `DOTypeNameCompare()` in `pg_dump_sort.c`
+orders entries by (type priority, namespace name, **object name**), and a
+`TABLE DATA` entry's object name is the *partition's* own name — not the
+root's. Any unrelated table whose name sorts between two partition names is
+emitted between their blocks. Observed, flagless, 16.15, with partitions
+`feel_a`/`feel_z` of root `feel` and an unrelated table `feel_m`:
 
 ```
 -- Data for Name: feel_a; ...   COPY public.feel (id, m) FROM stdin;
@@ -290,11 +276,10 @@ reads the `AS ENUM ()` body silently yields an empty enum.
 output on 13.23/16.15/18.6 (`fixtures/<version>/types/binary-upgrade.sql`) —
 empty `AS ENUM ()` body, one `binary_upgrade_set_next_pg_enum_oid` +
 `ALTER TYPE ... ADD VALUE` pair per label, all still ahead of the first
-`COPY` block. The same dump also shows this OID-preservation noise
-interspersed before *every* object's real statement (tables included, not
-just types) — worth knowing for the 2.2 preamble parser, since the "TOC
-comment segments, then a strict grammar parses the statement" design needs
-to tolerate that noise between the two under `--binary-upgrade`.
+`COPY` block. The same dump carries this OID-preservation noise before
+*every* object's real statement (tables included, not just types), so under
+`--binary-upgrade` it stands between a TOC comment and the statement it
+announces.
 **Relied on by:** `decisions.md` ("Type resolution and decoders", enums).
 **Re-verify:** `awk '/^dumpEnumType\(Archive/,/^}$/' src/bin/pg_dump/pg_dump.c`.
 
@@ -317,13 +302,11 @@ terminator.
 starts inside a `COPY` block resyncs to a *line start* and never hands the
 scanner a mid-row byte, because this claim is about a line start and a row's
 own tail can be the two bytes `\.` (a value ending in an escaped backslash, cut
-between them). Also `decisions.md`, "D52", which is the same
-resync read from the cold side: a piece of an open block's interior finds its
-first row at a line start, and the earliest piece reporting a `\.` line holds
-the real terminator precisely because no line inside the block can be mistaken
-for one. Otherwise nothing built: the scanner enumerates lines, and the
-needle search this would also make safe is deferred rather than refused
-(`decisions.md`, "D29").
+between them). Also `decisions.md`, "D52": a piece of an open block's interior
+finds its first row at a line start, and the earliest piece reporting a `\.`
+line holds the real terminator, since no line inside the block can be mistaken
+for one. The scanner enumerates lines; the needle search this would make safe
+is deferred (`decisions.md`, "D29").
 **Re-verify:** the `public.escapes` fixture test already asserts the escaping
 rule this rests on; a new major that changed it would fail that test.
 
@@ -347,17 +330,16 @@ their standard SQL spellings.
 **Observed.** koji declares `RETURNS public.pgstattuple_type` (qualified,
 user-defined) alongside `RETURNS integer` and
 `RETURNS timestamp with time zone` (bare, built-in) — all `format_type` output
-through the same path. No koji *column* uses a user-defined type, so
-`fixture_schema_types.sql` needs to cover that case.
+through the same path. No koji *column* uses a user-defined type; the case is
+covered by `fixture_schema_types.sql`.
 
-**What makes a built-in bare is visibility, not standardness.** `pg_catalog` is
+What makes a built-in bare is visibility, not standardness: `pg_catalog` is
 on the search path implicitly whatever `search_path` is set to, so
 `format_type` qualifies nothing in it — including a type with no standard SQL
 spelling at all, which falls back to its bare `typname`.
 `fixtures/<13–18>/types/default.sql` writes `t_int2vector`'s column as `v_vec
-int2vector` at all six majors, which is the committed evidence for that half:
-a declared name with no `.` in it is a `pg_catalog` name, whether or not the
-SQL standard has a word for the type.
+int2vector` at all six majors. A declared name with no `.` in it is a
+`pg_catalog` name, whether or not the SQL standard has a word for the type.
 
 **Verified against:** v18.6 source; koji and all three fixture versions emit
 the empty-`search_path` line.
@@ -396,58 +378,40 @@ source alone.
 **Consequence for `crate::preamble`.** The version headers describe the
 whole `pg_dump` invocation, not the database whose segment happens to
 contain them positionally. A `--create` dump's pre-`\connect` segment is
-otherwise pure `CREATE DATABASE` noise (see `PreambleBuilder`'s docs) and
-gets discarded — but discarding it naively would silently drop the version
-headers for every single-database `--create` dump, including koji. They are
-carried forward onto the database the first `\connect` switches into
-instead.
+otherwise pure `CREATE DATABASE` noise (see `PreambleBuilder`'s docs) and is
+discarded, so the headers are carried forward onto the database the first
+`\connect` switches into. Every `\connect` gets that carry-over, not just the
+first.
 
-**A later `\connect` needs the same carry-over, not none.** This invariant
-originally claimed a later `\connect`-ed database's own pair needs no such
-handling, "held within that database's own segment" — reasoning about
-`pg_dumpall`'s child-process structure without a concatenated fixture to
-check it against. The fixture tree has one (two `--create` fixtures
-concatenated — `docs/design/decisions.md`, "D69") and found the
-opposite: a later child's version-header pair prints ahead of
-*its own* `\connect`, exactly like the first child's does ahead of its
-`\connect` — which puts those lines in `PreambleBuilder::feed_line` while
-`current` is still the *previous* database's finished (`preamble_complete`)
-segment, not the new one they describe, so they were silently dropped for
-every database after the first. Fixed by staging a later segment's headers
-separately (`PreambleBuilder::pending_headers`) and consuming them on that
-segment's own `\connect`, the same carry-over the first segment already got,
-just triggered on every `\connect` instead of only the first.
+`pg_dumpall` emits two segment shapes, and the header order differs between
+them. `dumpDatabases()` passes `--create` to its `pg_dump` child for ordinary
+databases — those segments print their version headers *ahead of* their own
+`\connect`, which puts the lines in `PreambleBuilder::feed_line` while
+`current` is still the previous database's finished (`preamble_complete`)
+segment, so they are staged in `PreambleBuilder::pending_headers` and consumed
+on that segment's own `\connect`. For `postgres` and `template1` it passes
+**no** `--create` and writes `\connect <db>` itself, under the comment "Since
+pg_dump won't emit a `\connect` command, we must"; those segments print
+`\connect` *first*, so their headers arrive into a segment that is already
+`current` and not yet `preamble_complete` — `feed_line`'s ordinary path, not
+the staging one. Both databases are always dumped, so every real `pg_dumpall`
+file contains both shapes; a hand-built concatenation of `--create` outputs
+produces only the first.
 
-**`pg_dumpall` emits two segment shapes, and the header order flips between
-them.** `dumpDatabases()` passes `--create` to its `pg_dump` child for
-ordinary databases — those segments print their version headers *ahead of*
-their own `\connect`, the `pending_headers` case above. But for `postgres`
-and `template1` it passes **no** `--create` and writes `\connect <db>`
-itself, under the comment "Since pg_dump won't emit a `\connect` command, we
-must". Those segments print `\connect` *first*, so their headers arrive
-afterwards, into a segment that is already `current` and not yet
-`preamble_complete` — `feed_line`'s ordinary path, not the staging one.
-Both databases are always dumped, so **every** real `pg_dumpall` file
-contains both shapes. A hand-built concatenation of `--create` outputs
-produces only the first, which is why a genuine `pg_dumpall` fixture is
-added later.
-
-**Both segment shapes are confirmed against a real `pg_dumpall`
-run**, not just the hand-concatenated stand-in: `fixtures/{13,18}/edge_cases/dumpall.sql`
+Both segment shapes hold against a real `pg_dumpall` run:
+`fixtures/{13,18}/edge_cases/dumpall.sql`
 (`pg_dumpall --no-role-passwords` against the fixture cluster) show, on both
 the oldest and newest routine versions, `template1`/`postgres` printing
 `\connect` *then* their version-header pair, and `pgdq_fixture` printing the
-pair *then* its own `\connect` — exactly the flip this invariant predicted
-from source reading alone.
+pair *then* its own `\connect`.
 
 **Verified against:** v18.6 source (`RestoreArchive()`,
 `pg_dumpall.c`'s `dumpDatabases()` per-database invocation and its
 `postgres`/`template1` special case); koji
 (`pg_dump 16.14`); two concatenated `--create` fixtures
 (`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18);
-`fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run (2.3.2).
-**Relied on by:** `decisions.md` ("D36",
-"D36", "D69").
+`fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run.
+**Relied on by:** `decisions.md` ("D36", "D69").
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 `RestoreArchive()` and still unconditional-per-call; `grep -n
@@ -472,14 +436,14 @@ Secondarily: the `AS RANGE` parameter list is always emitted **multi-line**,
 one parameter per line, `subtype` first, and the subtype may be a multi-word
 type name (`subtype = double precision`).
 
-Thirdly: **a range type's `canonical` function is written into that same body**,
+Thirdly: a range type's `canonical` function is written into that same body,
 as `canonical = <function>`, whenever `pg_range.rngcanonical` is set. The
 parameter is emitted after `multirange_type_name`, `subtype_opclass` and
 `collation` and before `subtype_diff`, so it is never the first parameter and
-never the last. It is the file's only evidence that such a function exists —
-which matters because PostgreSQL rewrites every value of that range through it
-before storing or comparing one (I46), and the function is arbitrary
-server-side code no reader of the dump can apply.
+never the last. It is the file's only evidence that such a function exists,
+and PostgreSQL rewrites every value of that range through it before storing or
+comparing one (I46) — arbitrary server-side code no reader of the dump can
+apply.
 
 **Proof.** `selectDumpableType()` (`pg_dump.c`) reclassifies any type with
 `typtype = TYPTYPE_MULTIRANGE` as `DO_DUMMY_TYPE` under the comment "skip
@@ -510,35 +474,31 @@ public.myrange AS RANGE (\n    subtype = double precision,\n
 multirange_type_name = public.mymultirange\n);` — note `float8` came back
 canonicalised to the two-word `double precision`. A table with a
 `public.mymultirange` column dumps that column with no accompanying type
-definition anywhere in the file. The `canonical` parameter was confirmed
-against a 16.15 dump of a range type declaring one; the fixture family carries
-no such type, because a canonical function must be declared against the shell
-type and a SQL function cannot take one (I11's `LANGUAGE internal` recipe is
-what it takes), so the observation is a probe rather than a committed file.
+definition anywhere in the file. The `canonical` parameter is observed against
+a 16.15 dump of a range type declaring one; the fixture family carries no such
+type, since a canonical function must be declared against the shell type and a
+SQL function cannot take one (I11's `LANGUAGE internal` recipe is what it
+takes).
 
 **Consequence for `crate::pgtype`.** `TypeKind::Range` carries the companion
 name so a column declared with it resolves to `DeferredKind::Range` instead
-of `Unknown`; discarding the parameter would make that unrecoverable without
-re-scanning the file. The six built-in multirange names are recognized in the
+of `Unknown`. The six built-in multirange names are recognized in the
 built-in table alongside the six built-in range names, since like them they
 appear bare and never reach the user-defined lookup (I8). The range grammar
-must tolerate a multi-line body and a multi-word subtype value.
+tolerates a multi-line body and a multi-word subtype value.
 
 **Verified against:** v18.6 source (`selectDumpableType()`,
 `dumpRangeType()`), v13.23 source (`dumpRangeType()`, no multirange, and the
 same `canonical = %s` append); probed `pg_dump` 16.15;
 `fixtures/{13..18}/types/default.sql`'s
-`public.myrange`/`public.myrange_multi` (2.3.2) — all six routine versions,
-not just one probed container, and confirms the PG13/PG14+ split in the
-`multirange_type_name` parameter's presence exactly. No fixture carries a
-`canonical` parameter, so that third claim rests on the source at both ends of
-the supported range plus the 16.15 probe.
-**Relied on by:** `decisions.md` ("Type resolution and decoders" — the mapping table and
-"Ranges and multiranges", and "D58" for the
-`canonical` parameter)
-— `pgtype.rs`'s companion lookup and `TypeKind::Range`'s
-`multirange_type_name` and `canonical` fields are built directly on this
-invariant, not just tested against it.
+`public.myrange`/`public.myrange_multi` — all six routine versions, carrying
+the PG13/PG14+ split in the `multirange_type_name` parameter's presence. No
+fixture carries a `canonical` parameter, so that third claim rests on the
+source at both ends of the supported range plus the 16.15 probe.
+**Relied on by:** `decisions.md` ("Type resolution and decoders" — the mapping
+table and "Ranges and multiranges", and "D58" for the `canonical` parameter);
+`pgtype.rs`'s companion lookup and `TypeKind::Range`'s
+`multirange_type_name` and `canonical` fields.
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
 src/bin/pg_dump/pg_dump.c` — confirm multiranges are still `DO_DUMMY_TYPE`;
 `grep -n 'AS RANGE' -A 40 src/bin/pg_dump/pg_dump.c` — confirm the parameter
@@ -594,29 +554,22 @@ CREATE TYPE public.mybase (INPUT = public.mybase_in,
 `pg_dump` then emits `mybase` twice (SHELL TYPE, then TYPE), `shellonly` once,
 and `myrange` with its multirange parameter (I10).
 
-**This was promoted from a one-off probe to permanent fixture
-coverage**: the same three statements are now in
-`scripts/fixture_schema_types.sql`, generated across all six routine
-versions (`fixtures/<version>/types/default.sql`), backed by tables
-(`t_base_type`, `t_user_range`) so the types round-trip through a real
-`COPY` block rather than appearing only as bare `CREATE TYPE` statements.
-The completed `mybase` body's parameter order differs slightly from the
-hand-written recipe above — `pg_dump` emits `INTERNALLENGTH` first, then
-`INPUT`/`OUTPUT`/`ALIGNMENT`/`STORAGE` — which is cosmetic, not a grammar
-concern.
+The same three statements are in `scripts/fixture_schema_types.sql`, generated
+across all six routine versions (`fixtures/<version>/types/default.sql`) and
+backed by tables (`t_base_type`, `t_user_range`) so the types round-trip
+through a real `COPY` block. `pg_dump` writes the completed `mybase` body's
+parameters in its own order — `INTERNALLENGTH` first, then
+`INPUT`/`OUTPUT`/`ALIGNMENT`/`STORAGE`.
 
 **Consequence for `crate::preamble` / `crate::pgtype`.** One name can own two
 `TypeDef` entries, so `resolve_user_type`'s first-match lookup returns the
-`Shell` entry for a completed base type. Harmless as long as `Base` and
-`Shell` share the `OpaqueBaseType` outcome — but it is a first-match lookup
-over a list that is *not* known to be unique by name, which is worth
-remembering if those outcomes ever diverge. Also removes the standing excuse
-that these shapes cannot be fixture-generated.
+`Shell` entry for a completed base type — harmless while `Base` and `Shell`
+share the `OpaqueBaseType` outcome, and a first-match lookup over a list that
+is not unique by name.
 
 **Verified against:** v18.6 source (`dumpShellType()`, `dumpUndefinedType()`,
 `DefineType()`); probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`
-(2.3.2) — the same recipe as permanent fixture coverage across all six
-routine versions, not a single probed container.
+— the same recipe across all six routine versions.
 **Relied on by:** `decisions.md` ("D69", "Type resolution and decoders").
 **Re-verify:** `grep -n '"SHELL TYPE"' -B 12 src/bin/pg_dump/pg_dump.c` —
 confirm `dumpShellType()` still emits a bare `CREATE TYPE x;` ahead of the
@@ -630,12 +583,12 @@ real definition; re-run the recipe above against the newest major.
 `COPY` block and before post-data DDL, and its contents are ordinary
 single-line SQL statements — `SELECT pg_catalog.lo_open('<oid>', 131072);`, a
 run of `SELECT pg_catalog.lowrite(0, '\x…');`, `SELECT
-pg_catalog.lo_close(0);` — each `BEGIN;`/`COMMIT;`-wrapped. **No line inside
-it can be mistaken for a `COPY` header or a `\.` terminator**, because the
+pg_catalog.lo_close(0);` — each `BEGIN;`/`COMMIT;`-wrapped. No line inside
+it can be mistaken for a `COPY` header or a `\.` terminator, because the
 payload is a bytea hex literal and hex cannot contain a line break.
 
-**How many archive entries this is split across changed at v17, and the
-routine version matrix (13-18) spans both shapes** — confirmed by
+How many archive entries the data is split across differs by major, and the
+routine version matrix (13-18) spans both shapes — confirmed by
 `scripts/fixture_schema_objects.sql`'s two hand-built large objects, real
 `pg_dump` output, all 6 versions (`fixtures/<version>/objects/default.sql`):
 
@@ -643,7 +596,7 @@ routine version matrix (13-18) spans both shapes** — confirmed by
 |---|---|---|
 | Definition entry (ownership/comment/ACL) | one `BLOB` entry per object | one `BLOB METADATA` entry per object |
 | Data entry | **one `BLOBS` entry for every large object in the dump**, one shared `BEGIN;`/`COMMIT;` wrapping every object's `lo_open`/`lowrite*`/`lo_close` run back to back | **one `BLOBS` entry per object**, each with its own `BEGIN;`/`COMMIT;` |
-| `lo_create` call | inside the `BLOB` definition entry | inside the `BLOB METADATA` definition entry (unchanged in *position*, only the entry's name) |
+| `lo_create` call | inside the `BLOB` definition entry | inside the `BLOB METADATA` definition entry, in the same position |
 
 Large-object *definitions* (ownership, ACL, comments) are separate entries
 that sort ahead of the pre-data boundary on both shapes.
@@ -652,14 +605,14 @@ that sort ahead of the pre-data boundary on both shapes.
 `PRIO_LARGE_OBJECT_DATA` between `PRIO_TABLE_DATA` and
 `PRIO_POST_DATA_BOUNDARY`, and `PRIO_LARGE_OBJECT` (the definition entries)
 before `PRIO_PRE_DATA_BOUNDARY` — so the data region sits in a fixed position
-either way, never interleaved with table data. Through v16, `pg_dump.c`
+either way, never interleaved with table data. On v13-16, `pg_dump.c`
 creates exactly one archive entry named `BLOBS` (`.description = "BLOBS"`)
-covering every large object in the database; v17 (`pg_dump.c`, "Create a
-BLOBS data item for the group, too") splits large objects into groups and
-gives each group its own `BLOBS` entry — a fixture with only two large
-objects never exercises more than one group, so this evidence doesn't pin
-down the grouping threshold, only that v17+ is no longer "always exactly
-one." `StartRestoreLOs()`/`EndRestoreLOs()` (`pg_backup_archiver.c`) emit the
+covering every large object in the database; on v17+ (`pg_dump.c`, "Create a
+BLOBS data item for the group, too") large objects are split into groups, each
+group with its own `BLOBS` entry — a fixture with two large objects exercises
+only one group, so this evidence does not pin down the grouping threshold,
+only that v17+ is not always exactly one.
+`StartRestoreLOs()`/`EndRestoreLOs()` (`pg_backup_archiver.c`) emit the
 `BEGIN;`/`COMMIT;` wrapper (one per data entry, whatever it covers) when not
 restoring to a live connection; `_StartLO()` emits the `lo_open(...)` line,
 and `dump_lo_buf()`'s no-connection branch emits each chunk through
@@ -668,45 +621,35 @@ and `dump_lo_buf()`'s no-connection branch emits each chunk through
 **Size.** Chunks are `LOBBUFSIZE`-bounded but the region is not: hex encoding
 roughly doubles the on-disk size of the objects, so a dump of a
 large-object-heavy database can carry hundreds of gigabytes here. This is the
-one inter-`COPY` gap that is **not** bounded by schema size.
+one inter-`COPY` gap not bounded by schema size.
 
-**Consequence.** Two, in opposite directions. The scanner itself needs no
-*correctness* defence: a bytea hex literal cannot contain a line break, so no
-`COPY` header or `\.` terminator can hide inside the region. But a bare
-`BEGIN;`/`COMMIT;` pair is line-anchored recognizable on its own — through
-`StartRestoreLOs()`/`EndRestoreLOs()` are the *only* emitter of one
-anywhere in plain `pg_dump` output, confirmed across the fixture set used to
-verify this entry — so `crate::scan::CopyScanner` recognizes
-`BEGIN;` as a large-object region opener at the scanner level (a new
-`State::InLargeObjectRegion`, the same tier `State::InCopy` sits at) and skips
-every line up to `COMMIT;` unread, rather than emitting `Event::Line` for each
-one and paying the DDL keyword-dispatch grammar over what can be hundreds of
-gigabytes.
+**Consequence.** `StartRestoreLOs()`/`EndRestoreLOs()` are the *only* emitter
+of a bare `BEGIN;`/`COMMIT;` pair anywhere in plain `pg_dump` output
+(confirmed across the fixture set used to verify this entry), so
+`crate::scan::CopyScanner` recognizes `BEGIN;` as a large-object region opener
+(`State::InLargeObjectRegion`, the tier `State::InCopy` sits at) and skips
+every line up to `COMMIT;` unread instead of emitting `Event::Line` for each
+one (`decisions.md`, "D33").
 
-On v17+, `crate::map::Builder` merges what the scanner reports as several
-separate `BEGIN;`/`COMMIT;` regions back into **one** `Data(LargeObjects)`
-span — not by re-reading each entry's TOC `Type:` field, but by the general
-rule "any span push closes the pending region" plus the priority-band fact
-above: since `BLOB METADATA`/`ACL`/`COMMENT` definition entries sort entirely
+On v17+, `crate::map::Builder` merges the several `BEGIN;`/`COMMIT;` regions
+the scanner reports into one `Data(LargeObjects)` span, on the priority-band
+fact above: `BLOB METADATA`/`ACL`/`COMMENT` definition entries sort entirely
 *before* the pre-data boundary and every `BLOBS` data entry sorts together in
-its own contiguous band, nothing else can legitimately arrive between two of
-a v17+ file's `BLOBS` entries, so a second `BEGIN;` arriving before anything
-else has been pushed is unambiguously "the same region, continuing." A
-malformed or non-`pg_dump` input that violates this ordering degrades to
-several smaller spans instead of one (still correctly tiled) rather than
-silently merging across unrelated content. The per-object OID is recoverable
-from the TOC header alone on v17+ (`-- Data for Name: <oid>; Type: BLOBS`) but
-only from the `lo_open('<oid>', ...)` line on v13-16, where every object's
-data shares one entry; per-object spans are deferred either way, since the
-phase's design treats the whole region as one span regardless of how cheaply
-an OID could be recovered.
+its own contiguous band, so nothing else can legitimately arrive between two
+of a v17+ file's `BLOBS` entries and a second `BEGIN;` arriving before any
+span push is the same region continuing. An input violating this ordering
+degrades to several smaller spans, still correctly tiled. The per-object OID
+is recoverable from the TOC header alone on v17+
+(`-- Data for Name: <oid>; Type: BLOBS`) and only from the
+`lo_open('<oid>', ...)` line on v13-16, where every object's data shares one
+entry; per-object spans are not built either way.
 
 **Verified against:** v13.23 through v18.6 source (`pg_dump_sort.c`
 priorities; `dumpLOs`/`BLOBS`/`BLOB METADATA` entries; `StartRestoreLOs`,
 `_StartLO`, `dump_lo_buf` in `pg_backup_archiver.c`) and
 real fixture output on all 6 routine versions
-(`fixtures/<version>/objects/default.sql`) — koji still has no large objects,
-so this remains fixture-only, no koji coverage.
+(`fixtures/<version>/objects/default.sql`) — koji has no large objects, so
+this is fixture-only.
 **Relied on by:** `decisions.md` ("D33"); `pg-dump-compatibility.md`.
 **Re-verify:** `grep -n 'PRIO_LARGE_OBJECT_DATA' src/bin/pg_dump/pg_dump_sort.c`
 — confirm it still sits between `PRIO_TABLE_DATA` and
@@ -748,18 +691,13 @@ foreign tables and partition-root loads), again with no options clause.
 independently assumes the same shape, validating that a stored `copyStmt`
 ends in the literal `" FROM stdin;\n"`.
 
-**Consequence.** Two. The scanner's `parse_copy_header` deliberately rejects
-any `COPY` line carrying a trailing `WITH (...)` and treats it as ordinary
-SQL rather than guessing — safe precisely because `pg_dump` never emits one,
-so the only way to encounter it is in text that is not `pg_dump` output (or
-inside a dollar-quoted body, where it must be ignored anyway). And
-CSV-format `COPY` blocks are not a compatibility gap but a non-shape: see
-`pg-dump-compatibility.md` and P8 Track A in `roadmap.md`.
-
-Note the asymmetry with `--inserts`: that one *is* a real output shape and a
-real gap, scheduled in P8 Track A. The two were bundled together in
-`docs/design/historical/initial.md`'s future-options list; only one of them
-exists.
+**Consequence.** The scanner's `parse_copy_header` rejects any `COPY` line
+carrying a trailing `WITH (...)` and treats it as ordinary SQL rather than
+guessing — safe because `pg_dump` never emits one, so such a line is either
+not `pg_dump` output or inside a dollar-quoted body, where it must be ignored
+anyway. CSV-format `COPY` blocks are a non-shape, not a compatibility gap:
+see `pg-dump-compatibility.md` and P8 Track A in `roadmap.md`. `--inserts`
+*is* a real output shape and a real gap, scheduled in P8 Track A.
 
 **Verified against:** v13.23, v16.15 and v18.6 source (`dumpTableData()`,
 `dumpTableData_copy()`, `pg_backup_tar.c`'s `copyStmt` check) — the `COPY`
@@ -817,10 +755,9 @@ crossing 15 is. Confirmed against a running `postgres:16-alpine`
 (`extra_float_digits = 3`) as well as the source above.
 
 **Relied on by:** `pgdump_query/src/decode.rs`'s `render_f32`/`render_f64`
-(`docs/design/decisions.md`, "D44"), whose own fixed/scientific
-decision uses `FLT_DIG`/`DBL_DIG` (6/15) as the threshold for exactly this
-reason — matching digit-for-digit is necessary but not sufficient for the
-round-trip test under `decisions.md`'s "D73" to pass.
+(`docs/design/decisions.md`, "D44"), whose fixed/scientific decision uses
+`FLT_DIG`/`DBL_DIG` (6/15) as the threshold, and the round-trip test under
+`decisions.md`'s "D73".
 **Re-verify:** `grep -n 'exp >= -4' src/common/f2s.c src/common/d2s.c` —
 confirm the literal thresholds are still `6` and `15`.
 
@@ -848,14 +785,12 @@ row per `chr(n)` codepoint) round-tripping through
 `pgdump_query::copy::encode_field`/`decode_field` byte-for-byte —
 `copy_text_escaping_round_trips_through_postgres`, `tests/scan.rs`.
 
-**Relied on by:** `pgdump_query/src/copy.rs`'s `encode_field`, which only
-implements these seven escapes and is therefore *not* a general COPY-text
-encoder — it is exactly `decode_field`'s inverse for text `pg_dump` could
-have produced, no more. Also `decisions.md`, "D52": `\n` is
-one of the seven, so a literal LF byte inside a data region is always a row
-boundary and never part of a value — which is what makes an LF-split of an open
-`COPY` block's interior a split into whole rows, and what lets a cut know
-nothing about rows at all.
+**Relied on by:** `pgdump_query/src/copy.rs`'s `encode_field`, which
+implements these seven escapes only — `decode_field`'s inverse for text
+`pg_dump` could have produced, not a general COPY-text encoder. Also
+`decisions.md`, "D52": `\n` is one of the seven, so a literal LF byte inside a
+data region is always a row boundary and never part of a value, which makes an
+LF-split of an open `COPY` block's interior a split into whole rows.
 
 **Re-verify:** `grep -n "case '\\\\b'" src/backend/commands/copyto.c` in a new
 major's source — confirm the mnemonic set and the "no octal/hex on output"
@@ -995,13 +930,10 @@ Tablespace: fixture_ts`), created via `generate_fixtures.py`'s
 `CREATE TABLESPACE fixture_ts LOCATION ...` in
 `scripts/fixture_schema_objects.sql`). `TOC_PREFIX_STATS` is exercised by
 `fixtures/18/objects/stats.sql` (`-- Statistics for Name: stats_table;
-Type: STATISTICS DATA; Schema: public; Owner: -` — note the empty-owner
-shape, distinct from `Owner: -`; not yet explained by I18's own
-`Owner:`/`Schema:` grammar above, since `dumpRelationStats` doesn't set an
-owner at all). **The flag that produces it is `--statistics`, not
-`--with-statistics`** — the name this entry originally used, before slice
-3.1.1's fixture generation went looking for the literal flag in `pg_dump.c`
-and found no such option; `--with-statistics` does not exist in any version.
+Type: STATISTICS DATA; Schema: public; Owner: -` — the empty-owner shape,
+distinct from `Owner: -`, and not covered by the `Owner:`/`Schema:` grammar
+above, since `dumpRelationStats` sets no owner at all). The flag that produces
+it is `--statistics`; `--with-statistics` exists in no version.
 `map::parse_toc_header_line` recognizes all three prefixes; the boundary
 signal `looks_like_toc_name_line` recognizes `TOC_PREFIX_STATS` but not
 `TOC_PREFIX_DATA`, since only the former heads a statement rather than a
@@ -1058,10 +990,10 @@ needs the statement text itself.
 `"%sREVOKE %s ON %s "`/`"TO "`/`"FROM "`/`"PUBLIC;\n"`) and
 `buildDefaultACLCommands()` (`"ALTER DEFAULT PRIVILEGES FOR ROLE %s "`);
 `pg_backup_archiver.c`'s `_selectTablespace()` (`"SET default_tablespace = %s"`
-/ the `want == ""` branch's literal `''`). Confirmed byte-identical across
-v13.23 through v18.6 (the `ALTER ... OWNER TO` emission point moved from
-`pg_backup_archiver.c` between v13 and v18 — a helper-buffer refactor — but
-the text it produces is unchanged; see I16). Observed in
+/ the `want == ""` branch's literal `''`). Byte-identical across
+v13.23 through v18.6 (the `ALTER ... OWNER TO` emission point sits elsewhere
+in v13 than in v18 — a helper-buffer refactor — while the text it produces is
+identical; see I16). Observed in
 `fixtures/16/objects/default.sql`: `GRANT SELECT ON TABLE objects.events TO
 fixture_reader;`, `GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`, `ALTER
 DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES
@@ -1077,8 +1009,8 @@ confirmed across all 6 routine versions. (Revoking a privilege from an
 remaining implicit privileges — still both of I19's shapes, but not a solo
 `REVOKE`.) A non-empty `SET default_tablespace` value is exercised by
 `objects.tablespaced_table` (`SET default_tablespace = fixture_ts;` ahead of
-its definition, `SET default_tablespace = '';` after) — same fixture I18's
-`Tablespace:` entry now cites.
+its definition, `SET default_tablespace = '';` after) — the same fixture I18's
+`Tablespace:` claim cites.
 
 **Verified against:** v13.23 through v18.6 source; `fixtures/16/objects/default.sql`
 for the `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES`/`SET default_tablespace`
@@ -1245,8 +1177,8 @@ be parsed.
 **Scope limit.** Composites are unaffected: `record_out`
 (`src/backend/utils/adt/rowtypes.c`) writes `appendStringInfoChar(&buf, ',')`
 unconditionally, with no reference to any field type's `typdelim`. Ranges and
-multiranges likewise separate with a literal `,`. **Arrays are the entire
-exposure.**
+multiranges likewise separate with a literal `,`; arrays are the entire
+exposure.
 
 **Verified against:** v13.23, v18.6 and master (`pg_type.dat`); v18.6
 (`typecmds.c`, `rowtypes.c`).
@@ -1348,8 +1280,8 @@ covers every route this project's resolution walks: `TYPTYPE_DOMAIN` recurses
 on `getBaseType`, `TYPTYPE_COMPOSITE` on each attribute, `TYPTYPE_RANGE` on
 `get_range_subtype`, `TYPTYPE_MULTIRANGE` on `get_multirange_range`, and a
 final `get_element_type` arm recurses into an array's element type "in case
-they are composite". Domains have their own separate guarantee, already relied
-on: a domain's base type must exist before the domain does.
+they are composite". Domains carry a separate guarantee: a domain's base type
+must exist before the domain does.
 
 **Scope limit.** This is a property of what PostgreSQL will *create*, so it
 holds for every real dump and says nothing about a hand-edited file. It is
@@ -1361,9 +1293,8 @@ output.
 plus both rejections observed live on the local PostgreSQL 16 instance.
 
 **Relied on by:** `decisions.md`, "Type resolution and decoders" — it is why
-`resolve_declared_type` recurses through composites, ranges and array elements
-with no cycle guard and no depth limit, exactly as it already did through
-domains.
+`resolve_declared_type` recurses through domains, composites, ranges and array
+elements with no cycle guard and no depth limit.
 
 **Re-verify:**
 
@@ -1492,12 +1423,11 @@ with real `pg_dump` output — `fixtures/*/types/default.sql`'s
 `public.t_nested_array.v_nested_array`, byte-identical on all six. The
 `array_out` half is I25, verified v13.23–v18.6 from source.
 
-**Relied on by:** `decisions.md`, "Type resolution and decoders" — this entry is the
-whole reason the shape cannot be typed as nested `List`s: the literal's depth
-and the column's resolved depth are independent, so one `NestedPlan::Array`
-chain would have to mean two different things. The column therefore resolves
-to `Utf8View` with `ColumnResolution::NestedArrayElement`, which in turn is
-what lets `resolve::retype_from_census` assume every plan it sees is
+**Relied on by:** `decisions.md`, "Type resolution and decoders" — the shape
+cannot be typed as nested `List`s, since one `NestedPlan::Array` chain would
+have to mean two different depths; the column resolves to `Utf8View` with
+`ColumnResolution::NestedArrayElement`, which lets
+`resolve::retype_from_census` assume every plan it sees is
 `Array(non-array)`.
 
 **Re-verify:**
@@ -1544,9 +1474,8 @@ which is the pair that makes the ambiguity visible.
 
 **Relied on by:** `decisions.md` ("Type resolution and decoders", enums) — an enum whose
 label set is empty resolves to `ColumnResolution::EmptyEnum` rather than a
-`Dictionary`, and that conclusion is only sound because the label folding I6
-describes runs first. Reading the body alone would report every
-`--binary-upgrade` enum as empty.
+`Dictionary`, which is sound only because the label folding I6 describes runs
+first.
 
 **Re-verify:**
 
@@ -1569,10 +1498,10 @@ bounds survive into the type; `attndims` records what was written and is
 discarded by `format_type`, so `pg_dump` writes all six back as `integer[]`
 (I21).
 
-The consequence a reader must not miss: **the spelling constrains nothing about
-the values.** A column declared `integer[3]` may hold a four-element array, and
-one declared `integer[]` may hold `{{1,2},{3,4}}`. Only the census over actual
-values says what a column's shape is.
+The spelling constrains nothing about the values: a column declared
+`integer[3]` may hold a four-element array, and one declared `integer[]` may
+hold `{{1,2},{3,4}}`. Only the census over actual values says what a column's
+shape is.
 
 **Proof.** `src/backend/parser/gram.y`, the `Typename` production:
 
@@ -1610,12 +1539,12 @@ Observed live on PostgreSQL 16.15:
  f       | integer[]   |        1     -- int ARRAY[4]
 ```
 
-Two details a normalizer needs. **The bracket run is unbounded in the DDL even
-though `MAXDIM` is 6**: `int[][][][][][][][][]` is accepted and yields
+Two details a normalizer needs. The bracket run is unbounded in the DDL even
+though `MAXDIM` is 6: `int[][][][][][][][][]` is accepted and yields
 `integer[]` with `attndims` 9, so a declaration's bracket count needs no cap
-and carries no meaning. And **`ARRAY` is a keyword, so it is case-insensitive**
-— `INTEGER ARRAY` and `Integer Array[4]` are the same declaration. Both
-observed on 16.15 alongside the table above.
+and carries no meaning. And `ARRAY` is a keyword, so it is case-insensitive —
+`INTEGER ARRAY` and `Integer Array[4]` are the same declaration. Both observed
+on 16.15 alongside the table above.
 
 **Scope limit.** This is about the *input* grammar, so it bears only on SQL
 `pg_dump` did not write — a hand-written or hand-edited file, or another
@@ -1652,9 +1581,8 @@ select attname, format_type(atttypid, atttypmod), attndims from pg_attribute
 SQL
 ```
 
-All six rows must print `integer[]`, with `attndims` varying — that difference
-is the record of the declaration, and the point is that nothing downstream
-reads it.
+All six rows must print `integer[]`, with `attndims` varying — the record of
+the declaration, which nothing downstream reads.
 
 The rejections, each of which must be a syntax error (`integerARRAY` an
 unknown type):
@@ -1679,8 +1607,8 @@ it on the way out (`fmtId()`), in the `CREATE TYPE`/`CREATE DOMAIN` statement
 and in every column declaration that uses it. An array *of* such a type is the
 quoted name followed by an unquoted `[]`.
 
-The consequence a reader must not miss: **the quotes are what keep the
-array-bounds production unambiguous.** `s."x ARRAY"` is a scalar column of a
+The quotes are what keep the array-bounds production unambiguous:
+`s."x ARRAY"` is a scalar column of a
 domain, and `s."x ARRAY"[]` is an array of it; the two are told apart only by
 whether the trailing `ARRAY`/`[]` falls inside the quotes. A normalizer that
 strips a trailing bound or keyword without checking for a closing quote first
@@ -1717,8 +1645,7 @@ majors: `fmtId()` and the quoting rule are not version-varying, and the
 `Typename` grammar this interacts with is identical across v13-v18 (I28).
 
 **Relied on by:** `pgtype.rs`'s `array_element` — its bound- and
-keyword-stripping helpers bail on a trailing `"`, which is what makes the
-quoted spellings safe rather than merely untested. Deficiency `KD4` rests on
+keyword-stripping helpers bail on a trailing `"`. Deficiency `KD4` rests on
 the second half of the claim: because
 `pg_dump` quotes the name in the *declaration* while `parse_ident` dequotes it
 in `TypeDef.name`, the two never compare equal and the column degrades to
@@ -1785,7 +1712,7 @@ grep -n "datname <> 'template1'" -B 6 src/bin/pg_dump/pg_dumpall.c
 DISABLE TRIGGER ALL;` **after** each `TABLE DATA` entry's `-- Data for Name:`
 comment block and **before** the `COPY` header or first `INSERT INTO` line,
 plus a `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first such entry. The
-comment block is therefore no longer adjacent to the data it heads — the one
+comment block is therefore not adjacent to the data it heads — the one
 adjacency `map::Builder::on_copy_start` and `Mode::Comment`'s `INSERT`-run arm
 both depend on.
 
@@ -1807,9 +1734,9 @@ is known to interpose a statement at this position.
 v18.6 and master (identical call order); output observed against 16.15, both
 `--data-only --disable-triggers` and `--section=data --disable-triggers`, in
 `COPY` and `--inserts` form.
-**Relied on by:** `decisions.md` ("D31") — it is why
-`looks_like_toc_name_line` keeps refusing `"Data for "`, and it is the whole of
-deficiency `KD1`.
+**Relied on by:** `decisions.md` ("D31") — why
+`looks_like_toc_name_line` refuses `"Data for "`; and the whole of deficiency
+`KD1`.
 **Re-verify:**
 ```sh
 grep -n "_printTocEntry(AH, te, true)" -A 25 src/bin/pg_dump/pg_backup_archiver.c
@@ -1864,22 +1791,21 @@ the answer differs from a bytewise comparison (`'a' < 'B'` is true in
 `en_US.UTF-8`, false bytewise). pgdq therefore compares bytewise and
 **registers the divergence** rather than claiming agreement — see
 [`decisions.md`](decisions.md)'s "Predicates", which holds the ordering
-register. Both halves of that are in the tree rather than argued: the
-comparison oracle asks each text pair under `COLLATE "C"` and under the
-database's own collation, so `fixtures/<version>/oracle/comparisons.tsv` shows
-bytewise agreeing under the first and diverging under the second.
+register. The comparison oracle asks each text pair under `COLLATE "C"` and
+under the database's own collation, so `fixtures/<version>/oracle/comparisons.tsv`
+shows bytewise agreeing under the first and diverging under the second.
 
 Where the file *does* state the collation, the register says so instead: an
 explicit `COLLATE "C"`/`"POSIX"`, and a bare `name` column, agree with the
 server exactly and on every server. What is unknown is only the database
 default, and only for columns whose type defers to it.
 
-Nor would recording the database default be sufficient on its own.
-PostgreSQL applies whatever the platform's libc provides for a locale name and
-promises no more: `en_US.utf8` is `strcmp` on musl and glibc's collation on
-glibc, so `'A' < 'a'` answers `t` on the one and `f` on the other. The server
-tracks that itself in `pg_collation.collversion` — `2.41` for a libc-provider
-collation, the libc version verbatim — and no dump carries it.
+The database default alone would not settle the order either. PostgreSQL
+applies whatever the platform's libc provides for a locale name and promises no
+more: `en_US.utf8` is `strcmp` on musl and glibc's collation on glibc, so
+`'A' < 'a'` answers `t` on the one and `f` on the other. The server tracks that
+in `pg_collation.collversion` — `2.41` for a libc-provider collation, the libc
+version verbatim — and no dump carries it.
 
 **Relied on by.** The comparison register's `UnknownCollation` verdict — the
 one it reaches for a `default`-collation column with no clause. The clause's own
@@ -1957,8 +1883,8 @@ about the nested types, whose comparison stays a string comparison.
 master — all seven carry the `float8_gt` and `uuid_internal_cmp` bodies quoted
 above verbatim, and in all seven `cmp_numerics`' non-special branch is the one
 `cmp_var_common` call quoted above and `numeric_out` ends in
-`get_str_from_var`. v13's `numeric_out` handles `NaN` alone, which is I34's
-"`numeric` gained `±Infinity` in v14" seen from the output side.
+`get_str_from_var`. v13's `numeric_out` handles `NaN` alone; v14+ handle the
+infinities as well (I34).
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`decisions.md`](decisions.md), "D55";
@@ -1987,7 +1913,7 @@ awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
   written in exactly those two spellings, lower case and unsigned-positive.
   Each type's own `<`/`>` places `-infinity` below and `infinity` above every
   finite value of that type, and each equals itself.
-- **`interval` gained the same two in v17**, in the same two spellings and with
+- **`interval` has the same two on v17+**, in the same two spellings and with
   the same order. It is the one of the four whose ordering is not an integer
   comparison over a reserved range: `interval_cmp_value` collapses an
   `Interval` to a 128-bit span (I40), and an infinite one has every field at
@@ -1999,11 +1925,10 @@ awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
   does not apply to a `NaN`; an infinity is rejected by *any* typmod
   restriction. Since a `numeric` without a typmod is the only other kind, no
   column that resolves to a `Decimal128`/`Decimal256` can hold an infinity.
-- **`numeric` gained `±Infinity` in v14.** v13 has neither the values nor the
-  rejection, so the previous property is vacuous there rather than different.
-  `interval`'s two arrived at v17 the same way — v13–v16 reject the literal
-  outright, which the oracle records as `E22007` and the cross-major differ
-  reads as additive (I35).
+- **`numeric` has `±Infinity` on v14+.** v13 has neither the values nor the
+  rejection, so the previous property is vacuous there. `interval`'s two exist
+  on v17+; v13–v16 reject the literal outright, which the oracle records as
+  `E22007` and the cross-major differ reads as additive (I35).
 
 **Proof.** The spellings are `src/include/utils/datetime.h`:
 
@@ -2054,8 +1979,7 @@ master. `apply_typmod_special` exists in v14 onward only, and
 `INTERVAL_NOBEGIN`/`INTERVAL_NOEND` in v17 onward only.
 `fixtures/<13–18>/oracle/comparisons.tsv` is the behavioural record for
 `interval`: every cell naming an infinity is `E22007` at 13–16 and an ordinary
-answer at 17–18. Confirmed live
-against the koji replica (PostgreSQL 16.15) on 2026-08-30: every one of
+answer at 17–18. Live against the koji replica (PostgreSQL 16.15): every one of
 `'infinity'::date > '2020-01-01'`, `'2020-01-01'::date > '-infinity'`,
 `'infinity'::timestamp > '2020-01-01'`, `'NaN'::numeric > 5`,
 `'NaN'::numeric = 'NaN'`, `'NaN'::numeric > 'Infinity'::numeric` and
@@ -2090,11 +2014,9 @@ six operators answer the same way, and an accepted literal canonicalizes to the
 same `*_out` text. Every difference between two adjacent majors is **additive**
 — the older one rejected an input the newer one accepts.
 
-This is what licenses implementing version-varying semantics as the *newest*
-semantics unconditionally, with no branch on the version the dump header
-records. An older server cannot have produced a value it does not accept, so a
-reader that understands v17's `interval` infinities is never wrong about a v13
-file.
+So version-varying semantics are implemented as the *newest* semantics
+unconditionally, with no branch on the version the dump header records: an
+older server cannot have produced a value it does not accept.
 
 **Scope limit.** It is a property of the **cases the oracle asks**, not of
 PostgreSQL in general: a type or operator no case constructs is not covered,
@@ -2105,15 +2027,15 @@ fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
 ([`decisions.md`](decisions.md), "D70").
 
-**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 2020
-comparisons and 317 literals per major as the server itself answered them, and
-`fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
-majors — 533 of them, all additive. The three transitions that exist are the
-ones the release notes would have named: `numeric`'s infinities and the two
-multirange types in v14, and `interval`'s infinities in v17.
+**Proof.** Observed: `fixtures/<13…18>/oracle/` holds 2020 comparisons and 317
+literals per major as the server itself answered them, and
+`fixtures/oracle-differences.tsv` holds every cell that differs between
+adjacent majors — 533 of them, all additive. The three transitions are
+`numeric`'s infinities and the two multirange types at v14, and `interval`'s
+infinities at v17.
 
 **Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 — the versions
-`meta.tsv` records per major, on 2026-09-01.
+`meta.tsv` records per major.
 
 **Relied on by.** [`decisions.md`](decisions.md), "D70", and every comparison there that implements one semantics for all
 majors — "D55" for `interval`'s and `numeric`'s
@@ -2188,19 +2110,18 @@ is always `fmtQualifiedDumpable`'s output: schema-qualified and quoted where
 quoting is needed, so `pg_catalog."C"`, `pg_catalog."en_US.utf8"`,
 `public.mycoll` — never a bare `C`.
 
-Four consequences a reader depends on:
+Four consequences:
 
 - **The clause is not adjacent to the type.** In a `CREATE TABLE` column it is
   appended *after* `DEFAULT`/`GENERATED` and after `NOT NULL`, so a parser that
   looks at the token following the type words finds nothing. In a `CREATE
   DOMAIN` and a composite attribute it does directly follow the type.
-- **What can sit between the type and the clause is version-dependent, and
-  v18 widened it.** Through v17 the column emission is
+- **What can sit between the type and the clause is version-dependent.** On
+  v13–v17 the column emission is
   `[GENERATED ALWAYS AS (expr) STORED | DEFAULT expr]` then `[NOT NULL]`. v18
-  adds three shapes to that window: a *named* not-null constraint,
+  emits three further shapes in that window: a *named* not-null constraint,
   `CONSTRAINT <name> NOT NULL`; a following `NO INHERIT`; and a **virtual**
-  generated column, `GENERATED ALWAYS AS (expr)` with no `STORED`. A parser
-  built from the v13-v17 shapes alone meets a v18 dump it does not describe.
+  generated column, `GENERATED ALWAYS AS (expr)` with no `STORED`.
   Two of the three have no fixture — see the scope limit below.
 - **Its absence is a fact about the type, not about the column.** The four
   collatable built-ins split two ways: `text`, `varchar` and `bpchar` have
@@ -2271,13 +2192,13 @@ the domain's own clause, which the `CREATE DOMAIN` carries instead. And the
 composite's attribute clause sits directly after its type, as the domain's
 does.
 
-**The displacement is in those bytes too, at all six majors.** Each of the
-three clauses above was written in canonical input position, directly after
-the type; `pg_dump` moved the two with a constraint behind them to the end of
-the fragment. `v_text_def` shows one displacer and `v_gen_nn` shows the whole
-v13-v17 stack — `GENERATED ALWAYS AS (expr) STORED`, then `NOT NULL`, then the
-clause, with a nested call and a quoted literal inside the expression. Both
-lines are byte-identical across 13.23 through 18.6.
+The displacement is in those bytes too, at all six majors. The fixture SQL
+writes each clause directly after the type; `pg_dump` writes the two with a
+constraint behind them at the end of the fragment. `v_text_def` shows one
+displacer and `v_gen_nn` the whole v13-v17 stack — `GENERATED ALWAYS AS (expr)
+STORED`, then `NOT NULL`, then the clause, with a nested call and a quoted
+literal inside the expression. Both lines are byte-identical across 13.23
+through 18.6.
 
 **Scope limit.** There is a **fourth** `COLLATE %s` emission,
 `createDummyViewAsClause`'s `NULL::<type> COLLATE <coll> AS <name>`, written
@@ -2286,12 +2207,11 @@ is inside a `CREATE VIEW`, which is not one of the five statement shapes the
 preamble grammar triggers on, so it never reaches a column definition — but a
 count of `COLLATE %s` in `pg_dump.c` finds four, not three.
 
-**Two of the three v18-only shapes have no fixture**, and that is a coverage
-statement rather than a defect: `CONSTRAINT <name> NOT NULL`/`NO INHERIT` and
-a virtual `GENERATED` rest on the source reading above alone. Neither can be
-fixtured until the generator can run version-conditional schema SQL — it
-conditions dump *flag sets* on version, but one schema `.sql` runs against
-every major, so an 18-only DDL shape fails on 13-17. The row is in
+Two of the three v18-only shapes have no fixture: `CONSTRAINT <name> NOT
+NULL`/`NO INHERIT` and a virtual `GENERATED` rest on the source reading above
+alone. Neither can be fixtured until the generator can run version-conditional
+schema SQL — it conditions dump *flag sets* on version, but one schema `.sql`
+runs against every major, so an 18-only DDL shape fails on 13-17. The row is in
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md).
 
 Beyond that, the entry says nothing about which collations *exist* on a server,
@@ -2327,10 +2247,9 @@ grep -n -A13 'CREATE TABLE public.t_collate' fixtures/*/types/default.sql
 ```
 
 The last of those re-verifies the placement from committed bytes at the six
-majors we generate. **For a seventh — a newly released major, before any
-fixture for it exists, which is when this ritual actually fires — the probe
-below answers the same question in about twenty seconds** and needs nothing but
-the image:
+majors we generate. For a newly released major, before any fixture for it
+exists, the probe below answers the same question and needs nothing but the
+image:
 
 ```sh
 sudo docker run -d --name i37 --memory 512m -e POSTGRES_HOST_AUTH_METHOD=trust \
@@ -2410,9 +2329,9 @@ is called by every `bpchar` comparison in all six.
 which is `CompareKind::PaddedText` — trailing `0x20` off both sides, then the
 same collation question `text` asks, in that order because the corollary above
 says the other order is unsound — see [`decisions.md`](decisions.md),
-"D55". The corollary itself is checked across all
-six majors rather than at 16.15 alone: `fixtures/<13-18>/oracle/comparisons.tsv`
-asks `character(10)` against a tab-bearing value under both collations.
+"D55". The corollary is checked across all six majors:
+`fixtures/<13-18>/oracle/comparisons.tsv` asks `character(10)` against a
+tab-bearing value under both collations.
 
 **Re-verify.**
 
@@ -2468,7 +2387,7 @@ The input wrap is `oidin_subr`'s
 ```
 
 which is in `oid.c` at v13–v15 and moved verbatim into `numutils.c`'s
-`uint32in_subr` at v16, where `oidin` now delegates. It is also in master.
+`uint32in_subr` at v16, where `oidin` delegates. It is also in master.
 The oracle records the behaviour rather than the source:
 `fixtures/<13…18>/oracle/literals.tsv` carries `oid  -1  ok  4294967295` at all
 six majors.
@@ -2483,10 +2402,10 @@ carry the `oidout` and `oidgt` bodies quoted above verbatim, and all six carry
 the minus-sign branch (in `oid.c` up to v15, `numutils.c` from v16).
 
 **Relied on by.** `oid`'s `UInt32` mapping and its `CompareKind::UnsignedInt`
-comparison in `pgtype.rs` — [`decisions.md`](decisions.md), "Type resolution and decoders" and "D55". The third property is why
-a signed filter literal is refused there rather than compared: this build does
-not implement the wrap, and a refusal the user can see beats a comparison that
-silently means something else.
+comparison in `pgtype.rs` — [`decisions.md`](decisions.md), "Type resolution
+and decoders" and "D55". The third property is why a signed filter literal is
+refused there rather than compared (`decisions.md`, "D55"): this build does
+not implement the wrap.
 
 **Re-verify.**
 
@@ -2518,7 +2437,7 @@ dump can hold, and the order PostgreSQL puts two such values in.
   is not exactly `1`, so `-1 days` is what a minus-one-day interval is written
   as; and a part that is positive and *follows* a negative one carries a `+`.
   The hour field is at least two digits and unbounded above; minutes and
-  seconds are exactly two. **Unbounded above is literal**: nothing normalizes
+  seconds are exactly two. Unbounded above is literal: nothing normalizes
   hours into days, so the tail of `interval '100000000 hours'` is written
   `100000000:00:00`, and the field's true ceiling is the `Interval` struct's
   own — `time` is `int64` *microseconds*, giving `2562047:47:16.854775807`. The order is `interval_cmp_value`: months collapse
@@ -2567,7 +2486,7 @@ that two timetz's are equal if both the time and zone parts are equal"*.
 `network.c` carries `network_cmp_internal`, `bitncmp` and `network_out`;
 `mac.c`/`mac8.c` carry the two `*_cmp_internal`.
 
-The behavioural half is committed rather than argued:
+The behavioural half is committed:
 `fixtures/<13–18>/oracle/comparisons.tsv` holds the server's own answer for
 every pair of each family's case list — 492 ordered pairs across the six
 majors — and `fixtures/<13–18>/oracle/literals.tsv` holds each value's output
@@ -2663,11 +2582,10 @@ that is not a fact about the documents.
   *and then lets the element count overwrite what it concluded*. So a scalar
   sorts below a one-element or longer array and **above an empty one**:
   `'1'::jsonb > '[]'::jsonb` is true, and so is `'null'::jsonb > '[]'::jsonb`.
-  v18 added a comment saying so — *"There should be an "else" here, to prevent
-  us from overriding the above, but we can't change the sort order now, so
-  there is a mild anomaly that an empty top level array sorts less than null."*
-  — which is upstream declaring the behaviour frozen rather than a bug about to
-  be fixed.
+  v18's source carries a comment on it — *"There should be an "else" here, to
+  prevent us from overriding the above, but we can't change the sort order now,
+  so there is a mild anomaly that an empty top level array sorts less than
+  null."* — so upstream holds the behaviour frozen.
 
 **Proof.** `src/backend/utils/adt/jsonb_util.c` carries
 `compareJsonbContainers`, `compareJsonbScalarValue`,
@@ -2703,7 +2621,7 @@ prints `{"z": 1, "aa": 2}`, `'{"a":1,"a":2}'` prints `{"a": 2}`, `'1e2'` prints
 `NaN`, `1 2`, `"\x41"`, `"\ud83d"`, `"\u0000"` and a string holding a raw
 newline are each refused.
 
-**The behavioural half is committed, and it reaches every branch of the order.**
+The behavioural half is committed and reaches every branch of the order.
 `fixtures/<13–18>/oracle/comparisons.tsv` holds the server's own answer for all
 225 ordered pairs of the `jsonb` case list — 8,316 cells across the six majors
 — over both booleans, a string, a number, JSON `null`, both empty containers,
@@ -2715,8 +2633,7 @@ storage order differing from alphabetical, and the raw-scalar anomaly
 `{"z": 1, "aa": 2}` is its own `output`, unsorted; `{"a":1,"a":2}` prints
 `{"a": 2}`; `1e2` prints `100` and `-0.0` prints `0.0`; `{` and `01` are
 refused. The four ordering operators of every one of those cells are asserted
-against this build's comparison ([`decisions.md`](decisions.md), "D71"), so the **Observed** paragraph above is
-now a probe of these facts rather than their only evidence.
+against this build's comparison ([`decisions.md`](decisions.md), "D71").
 
 **Scope limit.** The *output* form and the input grammar, not the wider
 question of what a `json` value looks like: `json` stores its input verbatim
@@ -2757,9 +2674,8 @@ sed -n '/typedef enum jbvType/,/} jbvType;/p' src/include/utils/jsonb.h
 ```
 
 and the behaviour, against a throwaway container of the major in question —
-twenty seconds, and the only way to reach the raw-scalar anomaly, which no
-`fixtures/` case constructs. The SQL arrives on stdin rather than inside the
-`sh -c` string, which is what keeps its quoting readable:
+the only way to reach the raw-scalar anomaly, which no `fixtures/` case
+constructs. The SQL arrives on stdin rather than inside the `sh -c` string:
 
 ```sh
 sudo nerdctl run --rm -i -m 512m -e POSTGRES_HOST_AUTH_METHOD=trust \
@@ -2852,8 +2768,8 @@ Both lines are byte-identical at every major, option order included — provider
 determinism, locale, which is `dumpCollation`'s own append order. The first has
 no determinism clause, which is the unconditional emission's other side: the
 absence is the catalog's `true`. The second is the emission itself, and it is
-`provider = icu` because the server refused `deterministic = false` under any
-other provider when the fixture was written. `tests/preamble.rs`'s
+`provider = icu` because the server refuses `deterministic = false` under any
+other provider. `tests/preamble.rs`'s
 `the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`
 reads both back.
 
@@ -2861,32 +2777,30 @@ reads both back.
 line above carries one, in `default.sql` or in `data-only.sql`; the same
 `nd_collation` in `fixtures/<13-18>/types/binary-upgrade.sql` reads `…, locale
 = 'und', version = '153.128');`. That is the only ICU release number in the
-tree and it moves when the base images move — which is the drift that keeps ICU
-out of the comparison columns and out of the oracle, and is accepted here
-because a determinism clause is a statement rather than an answer. Both halves
-of this paragraph are **asserted** rather than read once, by
-`tests/preamble.rs`'s
+tree and it moves when the base images move, which is the drift that keeps ICU
+out of the comparison columns and out of the oracle. Both halves of this
+paragraph are asserted by `tests/preamble.rs`'s
 `the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors`:
 the flag-set claim exactly as written, and the version itself by six-way
 agreement without naming the value, so an image bump is a regeneration and a
 *split* between majors is a fault ([`decisions.md`](decisions.md),
-"D69").
+"D69" and "D70").
 
-**Consequence.** Equality's divergence is **knowable per column** wherever the
+**Consequence.** Equality's divergence is knowable per column wherever the
 collation is user-defined and the dump says `deterministic = false`, and
 unknowable only where the column carries no clause and the database default is
-absent (I32). Ordering's is the mirror: the clause names the collation, so the
-divergence is knowable, and the *order* is not, so a comparison per named
-collation would agree with a server rather than with the server — which is
-what keeps `KD7`'s fix conditional on a provider version rather than absolute.
+absent (I32). For ordering, the clause names the collation but not the order,
+so a comparison per named collation would agree with *a* server rather than
+with the server — which keeps `KD7`'s fix conditional on a provider version
+rather than absolute.
 
 **Relied on by.** The comparison register's `NonDeterministicCollation` verdict
 and `DatabaseMetadata::collations`, the `CREATE COLLATION` parse that feeds it
-([`decisions.md`](decisions.md), "D36" and "D55") — the determinism half
-is what that verdict *is*, and the version half is why the verdict is a
-divergence rather than a comparison. Also `KD7`'s claim about what its fix can
-close, and `oracle_register.py`'s exemption for the arm, whose whole argument
-is that a non-deterministic collation is ICU-only.
+([`decisions.md`](decisions.md), "D36" and "D55") — the determinism half is
+the verdict itself, the version half why it is a divergence rather than a
+comparison. Also `KD7`'s claim about what its fix can close, and
+`oracle_register.py`'s exemption for the arm, which rests on a
+non-deterministic collation being ICU-only.
 
 **Re-verify.**
 
@@ -2922,9 +2836,8 @@ server's libc version, ICU version, platform and major**:
 - **The builtin provider, unconditionally** (PG 17+). `C`, `C.UTF-8` and
   `PG_UNICODE_FAST` (PG 18) differ from each other only in *ctype*; all three
   order by code point.
-- **`pg_catalog."ucs_basic"`**, in every supported major — though by two
-  different routes, which is exactly the kind of drift this register exists to
-  catch.
+- **`pg_catalog."ucs_basic"`**, in every supported major — by two different
+  routes across the range, per the table below.
 
 This is the **forward** direction only: these order bytewise. It makes no claim
 that nothing else does — glibc's `C.UTF-8` happens to sort by code point too,
@@ -2994,8 +2907,7 @@ version, no platform. That is what the comparison register's *Agrees, on every
 server* verdict means and the only thing that earns it; every other collation's
 order is a function of the source server's provider version, which no plain
 dump carries (I32, I42). The register reaches the verdict from the collation's
-**name** rather than from this invariant, and so under-claims it — deliberately,
-and the reasoning is beside the mechanism
+**name** rather than from this invariant, and so under-claims it
 ([`decisions.md`](decisions.md), "D55").
 
 **Relied on by.** The comparison register's *Agrees* verdict for `COLLATE "C"`,
@@ -3035,7 +2947,7 @@ spelled, and on whether arity is checked at all:
 | `range_in` | **kept, byte for byte** inside a bound; skipped outside the brackets | the same as `record_in` | not applicable — a bound is never NULL, and nothing at all is *unbounded* | fixed at two bounds |
 | `multirange_in` | dropped between members; a member is a substring, so its own blanks survive | delegated — the member text goes to `range_in` unchanged | not applicable | any number of members |
 
-Four consequences worth stating on their own:
+Four consequences:
 
 - **`( 1 , a )` and `{ 1 , a }` do not mean the same thing.** The composite
   keeps both fields' blanks and force-quotes them back on output as
@@ -3056,11 +2968,11 @@ Four consequences worth stating on their own:
   accepted as a `multirange_in` member — where it is silently dropped, though
   `multirange_out` never writes one.
 
-**The one place two supported majors disagree is `array_in`, and it is
-additive.** v17 replaced `ArrayCount` + `ReadArrayStr` with a single-pass
-`ReadArrayStr` + `ReadArrayToken`, and the rewrite accepts a right brace
-terminating an **empty sub-array**: `{{},{}}` is `22P02` on 13–16 and the empty
-array `{}` on 17–18. Every other difference found is presentational (which
+The one place two supported majors disagree is `array_in`, additively: 13–16
+parse with `ArrayCount` + `ReadArrayStr` and reject a right brace terminating
+an **empty sub-array**, while 17–18's single-pass `ReadArrayStr` +
+`ReadArrayToken` accepts it — `{{},{}}` is `22P02` on 13–16 and the empty array
+`{}` on 17–18. Every other difference is presentational (which
 `errdetail` is produced). `record_in`, `range_parse`/`range_parse_bound` and
 `multirange_in` are character-for-character unchanged across the range, apart
 from the soft-error (`escontext`) plumbing.
@@ -3084,9 +2996,9 @@ in the same file from v17; `record_in` in `rowtypes.c`; `range_parse` and
 `scanner_isspace` in `src/backend/parser/scansup.c`, and the C-locale `isspace`
 the other three call.
 
-**Observed.** Every row above was put to a live server before it was written
-down, on `postgres:16.15-trixie` and `postgres:18.6-trixie`, through the probe
-below. The committed evidence is the acceptance walk in
+**Observed.** Every row above answers as stated on `postgres:16.15-trixie` and
+`postgres:18.6-trixie`, through the probe below. The committed evidence is the
+acceptance walk in
 `pgdump_query/tests/nested.rs` (`oracle::the_input_grammars_accept_exactly_what_the_server_accepted`),
 which asserts every nested row of `fixtures/<13-18>/oracle/literals.tsv`
 against the parsers — 397 literals over six majors.
@@ -3164,8 +3076,8 @@ Confirm `{{},{}}` is the only cell that moves between 16 and 18, and that
   order `record_out` writes them in (I23), so a positional walk over the
   literal is the server's comparison and no field name is consulted.
 
-**A container inherits comparability from its parts, and a missing part is an
-error rather than a fallback.** Both functions look up the element or field
+A container inherits comparability from its parts, and a missing part is an
+error rather than a fallback: both functions look up the element or field
 type's `cmp_proc_finfo` and `ereport(ERROR, ERRCODE_UNDEFINED_FUNCTION)` when
 there is none — so a `json[]` column, and a composite with a `json` field, have
 no `<` and no `=` on the server either.
@@ -3357,9 +3269,8 @@ committed answers — `int4range '[1,10]'` is written `[1,11)`, `'(0,10)'` is
 while `'[2020-01-01,infinity]'` is unchanged, `numrange '[1,10]'` is
 unchanged, and `'[10,1)'` is `E22000` — and `comparisons.tsv` carries the
 order, `empty` below every other `int4range` value at all six majors. The
-probe below was run against `postgres:16.15-trixie` and
-`postgres:18.6-trixie` before the comparator was written; both answer
-identically.
+probe below answers identically on `postgres:16.15-trixie` and
+`postgres:18.6-trixie`.
 
 **Scope limit.** Ranges and multiranges. Arrays and composites are I45. The
 *collation* a `text`-bounded range's comparison runs under is not covered here:
@@ -3510,9 +3421,8 @@ including the empty field beside a `\N`.
 properties** — same shape, same `anyarray` resolution, `oidvectorout` writing
 space-separated `Oid`s — and is not covered here because nothing maps it: the
 ADBC floor answers `arrow.opaque` for it, so it sits in the opaque tail
-(`decisions.md`, "D38"). An
-entry naming both would claim evidence for a type no committed fixture or
-oracle case exercises.
+(`decisions.md`, "D38"), and no committed fixture or oracle case exercises
+it.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed in the committed oracle and the `types` fixture at all six, and the

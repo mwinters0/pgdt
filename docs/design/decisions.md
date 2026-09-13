@@ -83,10 +83,10 @@ and errors as `SIGBUS`. Buffers are pooled and the `Bytes` sliced, since
 exceeding read time. Evidence: `scan-throughput-*`, `chunk-size`, `allocator`.
 
 ### D11 Limit discovery is a public primitive taking a root
-`discover_memory_limit_in` reports what the environment states; no limit means
-half of `MemAvailable`, untuned. The arms worth pinning are ones no machine is
-more than one of, so tests need the seam. Rejected: an env var overriding the
-root. Evidence: `RT1`–`RT8`.
+`discover_memory_limit_in` reads the least of `memory.max` and `memory.high`
+(RT3), walking ancestors to the mount point (RT5); no limit means half of
+`MemAvailable`, untuned (RT8). The arms worth pinning are ones no machine is
+more than one of, so tests need the seam. Rejected: an env var overriding the root.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync`; the CLI runs `current_thread`, so

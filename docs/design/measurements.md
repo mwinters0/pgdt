@@ -37,10 +37,7 @@ hand, and `--check` fails a document carrying any other.
 **Not everything printed below is a figure, and the ones that are not say so.**
 A section outside the register carries an `<!-- outside-register: <id> -->`
 marker under its heading — koji and the `cargo bench` tripwires are the two —
-and the stamp above makes no claim about its readings. The RSS attribution was
-a third until this stamp: its instrument was registered while the readings the
-section carried were a standalone script's, and the sweep that took them is
-what let the declaration go. `uv run measure.py
+and the stamp above makes no claim about its readings. `uv run measure.py
 --check` reconciles those declarations against the harness's own list of what it
 does not own, both ways, and fails if a declared section also carries a figure
 marker; `--list` prints each one with why it is outside. **A declaration still
@@ -57,8 +54,7 @@ Eighteen standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
-  the disk delivers to `cat`, which is exactly how the large-object figure was
-  once misread. Always take the `cat`-to-`/dev/null` floor for the same file on
+  the disk delivers to `cat`. Always take the `cat`-to-`/dev/null` floor for the same file on
   the same disk in the same session, and compare against that.
 - **Say which regime, and stay in it for the whole figure.** "In one session"
   is not enough: a run sequence that starts cold and warms up puts each run in
@@ -78,9 +74,7 @@ Eighteen standing rules for reading anything below:
   between runs by anything else the machine does. This does not apply to a
   figure whose *subject* is the device ("Scan throughput by input shape"
   below), which is taken cold on purpose. **Every warm figure below is on
-  tmpfs**, and they were moved onto that footing together in one session rather
-  than drifting onto it one at a time — see "The apparatus" below, which every
-  figure here shares.
+  tmpfs** — see "The apparatus" below, which every figure here shares.
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
   multi-file comparison a file at a time. Session-to-session level shifts of up
@@ -98,16 +92,14 @@ Eighteen standing rules for reading anything below:
   not carry the harness that produced it. `sudo nerdctl run` costs **0.74–0.76
   s** before the binary starts — three runs of a trivial command, opening the
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
-  brace-free control is **0.457 s** timed by the container's own shell. The
-  wrapper is *larger than the figure*, and more than twice the smallest row of
-  the quadratic table. So the timed command is `bash -c 'time /pgdq …'`, whose
+  brace-free control is **0.457 s** timed by the container's own shell. So the
+  timed command is `bash -c 'time /pgdq …'`, whose
   timer resolves to 1 ms. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
   a difference of binaries is not measurable across two different ones.
 - **A performance figure is taken with the default `glibc` build, in a glibc
-  image.** The allocator is part of what is being measured, the two libcs do
-  not agree, and the gap is far larger than the first reading of it suggested.
-  On the block-serialization workload it is ~25%: the same
+  image.** The allocator is part of what is being measured and the two libcs
+  do not agree. On the block-serialization workload it is ~25%: the same
   500-block `parse` runs **0.29 s** glibc against **0.41 s** static musl. On
   the two workloads that move real bytes it is a factor: the same 3.00 GiB
   warm `parse` is **0.57 s** glibc against **1.35 s** musl, and the same
@@ -115,8 +107,7 @@ Eighteen standing rules for reading anything below:
   the figures here are `cargo build --release` (no `--target`) run under
   `postgres:16` (Debian bookworm), whose **glibc 2.36 malloc is part of the
   apparatus** and should be named when a figure moves. **musl is not measured
-  and is no longer in any recipe** — the comparison above is why glibc is
-  named, not an invitation to take a second leg. Debian's `/bin/sh` is
+  and is in no recipe.** Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
   Which allocator the shipped binary links against, and what the two
   replacements are worth, is "Which allocator a figure was taken under" below;
@@ -130,37 +121,30 @@ Eighteen standing rules for reading anything below:
   3 GB cgroup, read the uncapped leg above a `MALLOC_ARENA_MAX=2` leg in every
   one of its paired reps, by roughly 50–60 MiB
   ([`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "`M76`:
-  the arena cap is not the runtime's"). Pinning it is refused because **capping
-  arenas buys resident bytes by paying allocator contention**, and the figures
+  the arena cap is not the runtime's"). Pinning it is refused because capping
+  arenas buys resident bytes by paying allocator contention, and the figures
   with enough threads for that term to exist are the parallel ones, which sweep
   to 24 workers — so a pin motivated by a resident reading would measure this
-  library's parallel scaling under a deliberately contended allocator. The
-  magnitude of that cost is unmeasured; its sign is not in question, contention
-  being what the setting trades against. It follows that **any pin worth having
-  would have to be scoped to the resident figures**, the way the resolution
-  floors above are scoped per regime, rather than set once for the document.
-  The refusal does not rest on what a pin would do to the one-worker tables,
-  which state `--jobs 1`: no reading times a one-worker process under the cap,
-  and the one resident reading of a one-reader process under it — the `reserve`
-  figure's mechanism leg, a flagless `.xz` `parse` that resolved one reader at
-  `512m` and already runs 2 arenas uncapped — moves −112 KiB. This is the
-  apparatus's environment and not the binary's: whether `pgdq` should set a cap
-  of its own is [`decisions.md`](decisions.md), "I/O, memory and parallelism". The difference an operator wants is read **inside** a sitting
-  instead, which is what this doc's own rule prescribes for resolving something
-  fine: the reserve figure carries an uncapped leg and a `MALLOC_ARENA_MAX=2`
-  leg and publishes both, the uncapped one being the operator who set nothing
-  and so the case that kills the process. One consequence to know before re-opening this:
-  the harness pins no CPU count, so the arena ceiling standing behind every
-  figure is `8 x ncores` of the host named in `CLAUDE.local.md`, and it is the
-  blanket hardware sentence at the top of this section that covers it rather
-  than any rule of its own.
+  library's parallel scaling under a deliberately contended allocator. Any pin
+  worth having would therefore have to be scoped to the resident figures, the
+  way the resolution floors above are scoped per regime. It does not rest on
+  what a pin would do to the one-worker tables, which state `--jobs 1`: no
+  reading times a one-worker process under the cap, and the one resident
+  reading of a one-reader process under it — the `reserve` figure's mechanism
+  leg, a flagless `.xz` `parse` that resolved one reader at `512m` and already
+  runs 2 arenas uncapped — moves −112 KiB. Whether `pgdq` should set a cap of
+  its own is [`decisions.md`](decisions.md), "I/O, memory and parallelism"; the
+  difference an operator wants is read **inside** a sitting instead, so the
+  reserve figure carries an uncapped leg and a `MALLOC_ARENA_MAX=2` leg and
+  publishes both. The harness pins no CPU count, so the arena ceiling standing
+  behind every figure is `8 x ncores` of the host named in `CLAUDE.local.md`,
+  which the blanket hardware sentence at the top of this section covers.
 - **A worker count is apparatus too, so every invocation states one.** A command
   that says nothing measures whatever `pgdq --jobs` defaults to that day rather
-  than an arrangement anybody chose — and that default has moved underneath
-  the figures in this document more than once, and now depends on the source,
-  without one command shape changing and without `--stale`
-  having anything to say, staleness meaning *re-take* and never *the apparatus
-  moved underneath you*. So nothing `scripts/measure.py` builds inherits it:
+  than an arrangement anybody chose, and a moved default changes no command
+  shape and gives `--stale` nothing to say, staleness meaning *re-take* and
+  never *the apparatus moved underneath you*. So nothing
+  `scripts/measure.py` builds inherits it:
   every figure's shape states `--jobs 1`, so does the profile recipe — where the cost
   of getting it wrong is sharper, a sampling profile's buckets being per thread
   — and `uv run measure.py --check` fails a shape that pins no count. Three
@@ -186,10 +170,9 @@ Eighteen standing rules for reading anything below:
   the composite column's per-row share, five interleaved reps on each of two
   builds of the same source: **+0.61 µs/row (t = +4.34) on glibc and
   −1.16 (t = −4.81) on musl** — both "significant", 1.77 µs/row apart, opposite
-  signs. That comparison is the *demonstration*, not a practice to repeat —
-  **every figure here is glibc**, and the musl leg exists only as the evidence
-  for this rule. What follows for a real figure is a corollary rather than a
-  second run: a cross-file per-row difference under **~0.5 µs/row** is
+  signs. Every figure here is glibc; the musl leg is the evidence for this
+  rule and not a leg to repeat. What follows for a real figure: a cross-file
+  per-row difference under **~0.5 µs/row** is
   apparatus, that floor is measured rather than assumed (the seed-43 control,
   "The cross-file subtraction bottoms out"), and no number of reps moves it.
   Reasoning:
@@ -204,16 +187,12 @@ Eighteen standing rules for reading anything below:
   reading — the floors themselves move further, which is why each warm table
   co-measures its own, and why a **floor** is judged against a number of its
   own ("The floor is read directionally") rather than against this one. A move
-  inside its regime's floor is apparatus. Write it up as *reproduces*, never as a change —
-  in this doc, in a history entry, or in an argument about which of two sweeps
-  to publish; narrating one manufactures a finding that the next sweep silently
-  reverses. Two consequences: a warm table's third decimal carries no
+  inside its regime's floor is apparatus. Write it up as *reproduces*, never
+  as a change. Two consequences: a warm table's third decimal carries no
   information across sweeps, and the way to resolve something finer is a
-  difference taken **inside** one sweep, not more reps. These three numbers are
+  difference taken **inside** one sweep, not more reps. The three numbers are
   read off "What a session's own drift costs" below and off "The cross-file
-  subtraction bottoms out"; a re-derivation of either re-reads this rule, which
-  is a cross-reference rather than a consumer edge because a figure never
-  declares the doc it lives in.
+  subtraction bottoms out"; a re-derivation of either re-reads this rule.
 - **Two builds of one source can differ by layout, so a stamp-to-stamp move is
   not necessarily a code change.** The `INSERT`-run row moved ~10% in both
   regimes between two stamps against byte-identical input, and the attribution
@@ -230,7 +209,7 @@ Eighteen standing rules for reading anything below:
   binary and explains nothing, and the same flag moved the control's `parse`,
   `strings` and `typed` shapes not at all — so this is not a lever, it is the
   instrument's own floor for a *code* comparison across two builds. Two
-  consequences the phase pays: the honest way to compare two commits is
+  consequences: the honest way to compare two commits is
   `instructions:u` alongside the wall time, since that number holds still when
   layout moves; and a profile taken with `--profile-recipe`'s frame-pointer
   build reverses the sign of this particular difference, so **a profile is
@@ -250,8 +229,7 @@ Eighteen standing rules for reading anything below:
   touched**. Re-taken by checking the old file into the same tree, the same
   three rows read −27.5%, −25.4% and −18.6%, which is what the whole-query
   instruction count independently says. The control moving is the tell, so a
-  bench group is worth having one; what makes the trap sharp is that the
-  contaminated reading was *conservative* and looked like an honest refusal.
+  bench group is worth having one.
 - **A mode difference and a per-column delta are CLI numbers, so neither sizes
   a library change.** Every `query` figure here is a `pgdq query` figure, which
   means `pgdq::print_batch` — the CLI turning each batch back into TSV — is
@@ -270,32 +248,22 @@ Eighteen standing rules for reading anything below:
   and therefore what a library lever can remove, comes from a profile's shares
   or from a criterion bench (`benches/decoders.rs`, whose `decode` and `render`
   columns are separate for exactly this reason) — **never** from a difference
-  taken across two CLI runs. Three proposed optimizations were sized the wrong
-  way before this was written down — two of them at once, and a third still
-  wrong after those two were corrected — which is why the rule is here rather
-  than in each figure's own prose.
+  taken across two CLI runs.
 - **The deterministic instrument is `perf stat -e instructions:u`, and
   `callgrind` is not it.** Retired user instructions hold still when layout
-  moves and when the machine is busy, which is why they carry most of the
-  before-and-after readings this document's arguments rest on, and why a
-  scan-path change is argued on them rather than on a wall figure the harness
-  would need a quiet hour for. *Rejected: `callgrind` / `iai-callgrind` as the
-  standing instrument.* It gives per-function counts immune to machine state,
-  which is exactly what a shared machine wants — and it cannot see the changes
-  that move memory behaviour rather than instruction count. The allocator,
-  zero-copy views and chunk sizing are all of that kind, so an instrument built
-  on counting would report them as free. Reach for it when a specific lever
-  turns out to be instruction-bound, which is the role `instructions:u` already
-  fills more cheaply.
+  moves and when the machine is busy, so a scan-path change is argued on them
+  rather than on a wall figure the harness would need a quiet hour for.
+  *Rejected: `callgrind` / `iai-callgrind` as the standing instrument* — its
+  per-function counts are immune to machine state but blind to changes that
+  move memory behaviour rather than instruction count, which the allocator,
+  zero-copy views and chunk sizing all are.
 - **A landed lever invalidates the tables that time its path, so a campaign's
   sweep goes last.** This binds by construction rather than by taste: a phase
   that admits levers from its own profiles is profiling the shape its figures
   time, so *any* row admitted after the plan was written lands ahead of the
   sweep. Taking the sweep first publishes freshly-measured tables describing a
-  binary that is no longer shipped, with no sweep left to repair them — which is
-  strictly worse than a stale table, because a stale one at least reads stale.
-  The same argument is what fixes an allocator decision ahead of a sweep rather
-  than after it.
+  binary that is no longer shipped, with no sweep left to repair them. The same
+  argument fixes an allocator decision ahead of a sweep rather than after it.
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -328,44 +296,29 @@ Eighteen standing rules for reading anything below:
   refuses such a sitting before the measurement is spent; and the stamp's
   accounting sentence is generated from the markers.
 
-  **The consequence for whoever builds an instrument is that the work lands in
-  two commits**, and it is a property of the rule rather than an accident of
-  any one figure: a sitting run from a tree carrying its own uncommitted
-  apparatus has no commit to name — the parent it could name is a tree where
-  the instrument does not exist, so its marker would report the figure stale
-  against the very change that lands it. Commit the apparatus, then take the
-  readings from that commit. Four figures have been published this way and all
-  four are now back inside a stamp. A figure that declares
-  nothing came from the sweep, which is why the datum is present only where it
-  differs — the alternative puts the stamp's commit in the document once per
-  figure, in as many places it can disagree with the stamp.
+  **Building an instrument therefore lands in two commits**: a sitting run
+  from a tree carrying its own uncommitted apparatus has no commit to name —
+  the parent it could name is a tree where the instrument does not exist, so
+  its marker would report the figure stale against the very change that lands
+  it. Commit the apparatus, then take the readings from that commit. A figure
+  that declares nothing came from the sweep, so the datum is present only where
+  it differs.
 
   *Rejected: a fourth case, admitting a partial sitting whose figures form a
-  **closed** sharing closure.* The rule as written refuses a sitting marker on
-  any figure standing in a `shares` edge, which is stricter than its own
-  justification: a closure published *together* in one sitting preserves
-  exactly the differencing the rule protects, and two figures that are each
-  other's whole closure are such a set. It was proposed when
-  `per-block-quadratic` and `preamble-prepass` were stranded at an old stamp by
-  a sweep that lost the first of them, and refused because the cheap fix and
-  the expensive one buy different things: relaxing the rule saves a sweep of a
-  quiet machine *once*, and costs a branch in `sitting_problems` for as long as
-  the register exists — a branch whose correctness depends on the closure being
-  computed transitively and on nothing outside it deriving from the pair, both
-  true that day and neither guaranteed the next. The whole sweep was re-run
-  instead, which put all twenty-two figures under one stamp and left no figure
-  standing outside at all, so the case the branch would have served no longer
-  has an instance. Re-raise it if a sweep is ever lost to something that cannot
-  be repaired before the machine is quiet again; the argument against is the
-  branch's cost, not the closure's soundness.
+  **closed** sharing closure* — relaxing the rule saves a sweep of a quiet
+  machine once and costs a branch in `sitting_problems` for as long as the
+  register exists, whose correctness depends on the closure being computed
+  transitively and on nothing outside it deriving from the pair. Re-raise it if
+  a sweep is ever lost to something that cannot be repaired before the machine
+  is quiet again; the argument against is the branch's cost, not the closure's
+  soundness.
 
 ## The apparatus
 
 **Every figure below is taken by `scripts/measure.py`, and the session stamp
 above records the sweep that took the doc as a whole** — every figure, which is
 every section carrying a `<!-- figure: … -->` marker and no other. Figures that
-share a
-reading share it rather than measuring it twice: each throughput table's `COPY`
+share a reading share it rather than measuring it twice: each throughput table's `COPY`
 row *is* the census table's census-on column for that regime, the preamble
 table's full-`parse` row *is* the quadratic table's 4000-block `parse` cell,
 and the allocator table's reference column *is* the census and nested tables'
@@ -374,9 +327,8 @@ readings of the same three shapes.
 **A figure may be re-taken on its own, and its apparatus line is what says so.**
 Selection is per figure, so a table can be replaced between sweeps; what a
 reader then cannot do is set one sitting's **absolute** beside another's, which
-costs the ~8% a warm absolute resolves to across sessions. Three rules keep
-that legible, and the third is the one a single-figure re-take is most likely
-to skip:
+costs the ~8% a warm absolute resolves to across sessions. The rules that keep
+that legible:
 
 - **An apparatus line names the figures its table was taken with**, so a reader
   can tell at a glance which absolutes may be read together. A table taken
@@ -385,7 +337,7 @@ to skip:
   emits it precisely when a borrow could not be satisfied, naming which borrow
   went unsatisfied and the whole set to re-take. A borrow goes unsatisfied only
   outside a sweep, and a figure that shares a reading may not be published
-  outside one at all — so the note now marks a sitting whose tables have no way
+  outside one at all — so the note marks a sitting whose tables have no way
   into the document, which the run's `NOT PUBLISHABLE` banner says outright, and
   what it is read for is diagnosis: whether a change moved this figure, answered
   without the hour its borrowed sources cost.
@@ -406,39 +358,32 @@ to skip:
   over `nested-end-to-end`'s reps, which is a derived quantity and not that
   table's number a second time, so the two are free to come from different
   sittings. What re-taking the source alone costs is that the derived row is
-  then a difference over reps the doc no longer holds anywhere, so the harness
-  says so where it can be acted on: `--figure` names the consumer before the
-  first reading and again in the emitted header, and `--check` reports the
-  relationship beside the partial sittings. It reports rather than fails, for
-  the same reason a blessed partial sitting does — nothing here is wrong, and a
-  permanently red check stops being read.
+  then a difference over reps the doc no longer holds anywhere, so `--figure`
+  names the consumer before the first reading and again in the emitted header,
+  and `--check` reports the relationship beside the partial sittings. It reports
+  rather than fails: nothing here is wrong, and a permanently red check stops
+  being read.
 
-**`--alone` cannot change any figure that may publish outside a sweep, and that
-is a property of the register rather than of the flag.** Its only job is to skip
-the borrow closure, `Figure.requires` is derived from `shares`, and every figure
-standing in no borrow edge declares no `shares` — so for all eleven of them
-`--figure <id>` and `--figure <id> --alone` resolve to the same selection and run
-the same sitting. The flag's whole behavioural footprint is on the entangled
-figures, which are exactly the ones a sitting of their own may not publish. Four
-of those — `census-brace-free`, `nested-end-to-end`, `per-block-quadratic`,
-`peak-rss` — are entangled while borrowing nothing, so there the flag does not
-even change what
-runs: all it decides is whether the sitting is refused outright or taken and
-marked. That is what makes it a diagnostic switch and not a mode.
+**`--alone` cannot change any figure that may publish outside a sweep.** Its
+only job is to skip the borrow closure, `Figure.requires` is derived from
+`shares`, and every figure standing in no borrow edge declares no `shares` — so
+for all eleven of them `--figure <id>` and `--figure <id> --alone` resolve to
+the same selection and run the same sitting. The flag's whole behavioural
+footprint is on the entangled figures, which are exactly the ones a sitting of
+their own may not publish; four of those — `census-brace-free`,
+`nested-end-to-end`, `per-block-quadratic`, `peak-rss` — are entangled while
+borrowing nothing, so there it decides only whether the sitting is refused
+outright or taken and marked. It is a diagnostic switch and not a mode.
 
 **So `--alone` marks its run unpublishable**, joining `--reps` and the
-input-size override rather than sitting beside them as an exemption. The
-publication refusal is already guarded on publishability, so it stops firing for
-such a sitting **by construction** and nothing anywhere names the flag; the
-tables come back under the `NOT PUBLISHABLE` banner, which is what the flag's
-remaining use wants in any case — take one figure without the hour its borrowed
-sources cost, and read whether a change moved it. The two alternatives are what
-this replaces: exempting the flag from the refusal is an override token, the
-shape refused for the cache's size-mismatch guard
-([`decisions.md`](decisions.md), "The compressed source and the cache"); refusing the flag outright
-would leave something that changes nothing for any figure that could publish,
-because a figure standing in no borrow edge declares no `shares`. A figure taken
-on its own *for the document* is `--figure <id>` with no flag.
+input-size override: the publication refusal is guarded on publishability, so
+it stops firing for such a sitting by construction and nothing anywhere names
+the flag, and the tables come back under the `NOT PUBLISHABLE` banner. A figure
+taken on its own *for the document* is `--figure <id>` with no flag. *Rejected:*
+exempting the flag from the refusal, an override token of the shape refused for
+the cache's size-mismatch guard ([`decisions.md`](decisions.md), "The compressed
+source and the cache"); and refusing the flag outright, which would change
+nothing for any figure that could publish.
 
 **What keeps a partial sitting out of the document is a marker and a banner,
 both of which are conventions a person can decline to carry.** `--check` fails
@@ -446,13 +391,10 @@ an entangled figure that declares a sitting of its own, and a run that overrode
 the apparatus or borrowed nothing emits its tables under a `NOT PUBLISHABLE`
 header — but a table pasted in with its sitting marker stripped is
 indistinguishable from one the stamped sweep took, and nothing detects it. The
-check that would close this
-is `--check` recomputing each table against the sitting's own `raw.json`, which
-means the document holding a resolvable link back to run artifacts that `runs/`
-does not keep; it is a much larger mechanism than the markers it would police,
-and no marker has ever been stripped. So this boundary is discipline, recorded
-here rather than left to be re-derived — and the honest statement of the
-protection is the marker and the banner together, not the check alone.
+check that would close this is `--check` recomputing each table against the
+sitting's own `raw.json`, which means the document holding a resolvable link
+back to run artifacts that `runs/` does not keep — a much larger mechanism than
+the markers it would police. So this boundary is discipline, recorded here.
 
 **One line, in three regimes: 3.00 GiB inputs read at `--jobs 1` by a `glibc`
 binary in a 512 MB `postgres:16` container, timed by that container's own
@@ -472,10 +414,9 @@ does not look lost: it emits a full table, a stamp naming a commit it did not
 execute, and a verdict. So `measure.py` runs `cargo build --release -p
 pgdump_query-cli` once per process before anything else, which costs about a
 second on a tree that has not moved. **Building it and refusing the census-off
-binary are the same rule, not opposite ones**: what the census section refuses
-is a harness patching its *own subject*, which an unpatched build of the current
-tree is not — a reason that says nothing about a build the harness performs
-itself and therefore knows the provenance of. `PGDQ_MEASURE_BIN` pointed anywhere else
+binary are the same rule**: what the census section refuses is a harness
+patching its *own subject*, which an unpatched build of the current tree is not.
+`PGDQ_MEASURE_BIN` pointed anywhere else
 builds nothing — that is the one path the build writes — and the binary is then
 the caller's. Only one figure's numbers can see a stale binary at all: a
 `reserve` sitting's resolved budgets fingerprint the charge model compiled into
@@ -487,11 +428,11 @@ in silence.
 
 **The worker count is in that line because it is stated rather than inherited**
 — `measure.SWEEP_JOBS`, carried by every shape `_script` builds outside the
-exemptions below, by the profile recipe's argv, and by the two untimed invocations that publish numbers all the
-same: the host `parse` the per-row divisors come from and the `strace`d save
-count the quadratic table quotes. `--check` reconciles the shapes. A test holds the number in that sentence against
-the harness's, so raising one without the other fails rather than publishing a
-line that describes the previous arrangement.
+exemptions below, by the profile recipe's argv, and by the two untimed
+invocations that publish numbers all the same: the host `parse` the per-row
+divisors come from and the `strace`d save count the quadratic table quotes.
+`--check` reconciles the shapes, and a test holds the number in that sentence
+against the harness's, so raising one without the other fails.
 
 **A figure whose *axis* is the worker count is the first of three exemptions,
 and it is declared rather than inferred.** Such a figure's rows are the counts,
@@ -499,12 +440,10 @@ so it cannot state one for all of them; its command shapes are named in
 `measure.JOBS_AXIS` and take theirs from `measure.PARALLEL_JOBS`, and the decode
 instrument's take their `--workers` from `measure.DECODE_WORKERS` and are
 exempted by their own prefix; each such figure's own table states what it
-varied. That is an exemption from the
-*constant*, never from stating a count: `worker_count_problems` still refuses a
-shape that pins nothing, and `pinned_count_problems` refuses one that pins some
-third number without declaring itself an axis — so the failure this whole
-reconciliation exists against, a shape whose count moved because a default did,
-is closed on both sides.
+varied. That is an exemption from the *constant*, never from stating a count:
+`worker_count_problems` still refuses a shape that pins nothing, and
+`pinned_count_problems` refuses one that pins some third number without
+declaring itself an axis.
 
 **The second is a figure that holds the count fixed and varies something else:
 the `reserve` figure's stated-budget axis and its path step**
@@ -522,23 +461,19 @@ pinned one would measure an arrangement the shipped default never produces — a
 the count each leg ran at is read back off that run's own `scan started` line
 rather than assumed. It is declared at both ends like the first:
 `flagless_flag_problems` fails a shape in that family that states `--jobs` or
-`--parallel-memory` after all, so the exemption cannot quietly become a pin. What
-it is not is the figure this document's register refuses elsewhere — a
-*throughput* table off unpinned shapes, which would buy a number
-`parallel-scan-throughput` already carries at a stated count; this is a resident
-reading of an arrangement no stated shape can express. It is the same shape of departure a figure that
-declares its own container memory makes, and it is licensed on the same terms:
-stated in the table, reconciled by `--check`, and the exception rather than the
-rule.
+`--parallel-memory` after all, so the exemption cannot quietly become a pin.
+What it is not is a *throughput* table off unpinned shapes, which the register
+refuses elsewhere because it would buy a number `parallel-scan-throughput`
+already carries at a stated count; this is a resident reading of an arrangement
+no stated shape can express, licensed on the same terms as a figure that
+declares its own container memory: stated in the table and reconciled by
+`--check`.
 
-*Rejected:* recording, per figure, the count it was actually taken at. That is
-the stronger guarantee — it survives the constant being changed between two
-sittings, where one line for the document does not — but it is figure-register
-surgery: a fourth per-figure datum beside `depends`, `shares` and the
-consumer scan,
-read back out of the doc the way a sitting commit is, with its own reconciliation.
-The register is the place a change like that gets grilled, and the defect being
-closed here is a default nothing named at all.
+*Rejected:* recording, per figure, the count it was actually taken at — the
+stronger guarantee, since it survives the constant being changed between two
+sittings, but a fourth per-figure datum beside `depends`, `shares` and the
+consumer scan, read back out of the doc the way a sitting commit is, with its
+own reconciliation.
 
 **A run the kernel killed is a reading in one family and an apparatus failure
 everywhere else, and the harness tells the two apart.** Neither obvious signal
@@ -556,9 +491,7 @@ in two halves:
   the sitting continues, and the cell prints the fact rather than a number —
   a killed run's peak is a bound on one the process never reached, so it enters
   neither a fit nor a headroom column, and a leg *partly* killed leaves the fit
-  too. That exclusion is kept as the one mechanical thing between a censored
-  sitting and a fitted number, not for the survivorship it looks like: the
-  constants are not read off a censored table in any case.
+  too.
 - **A killed leg bars the figure from publication**, in the run's header and in
   a note above the table itself, since a section is what gets pasted. The
   sitting exits non-zero: "the sitting finished" and "the figure may be
@@ -566,16 +499,13 @@ in two halves:
   caller needs.
 
 The licence is **per family and never harness-wide**: everywhere else a kill is
-the apparatus failing, and being loud about it is what caught the one that
-mattered — `parallel-peak-rss` once measured 3067 MiB inside a 3072 MiB
-container. Outside the tolerant families a kill ends the figure and says in
-those words that the kernel did it.
+the apparatus failing — `parallel-peak-rss` once measured 3067 MiB inside a
+3072 MiB container — and a kill outside the tolerant families ends the figure
+and says in those words that the kernel did it.
 
-*Rejected:* fail-fast, which is what this replaced. It cost an hour-long
-`--alone` sitting that died on its fifth leg of eighteen and published no
-account at all — the mechanism legs, the path step and the whole stated-budget
-axis behind it were paid for and thrown away — and it contradicted the family's
-own registration, which called a kill there a reading.
+*Rejected:* fail-fast, which throws away every leg a long sitting had already
+paid for and contradicts the tolerant family's own registration, which calls a
+kill there a reading.
 
 **A regime names a device, and a figure that reads the wrong one still emits a
 plausible table.** That is why the three staging areas are three directories
@@ -611,36 +541,28 @@ it has invalidated too.
 it.** Anything under `docs/`, either crate or `scripts/` that spells the id —
 `` `peak-rss` ``, the family glob `` `scan-throughput-*` ``, or the
 `figure: peak-rss` marker — is what a fold-in must re-read. A declared list is
-corrected only by whoever happens to notice, which is how retargeting one
-document left every tuple in the register pointing at its predecessor. Dated
-history entries are out: an entry states what was true on its day and is never
-revised. `Figure.also_quoted_by` is the residue the scan cannot find — the
+corrected only by whoever happens to notice. Dated history entries are out: an
+entry states what was true on its day and is never revised. `Figure.also_quoted_by` is the residue the scan cannot find — the
 manual and the README, which state a figure's claim to a reader who will never
 see a figure id.
 
 **A figure taken outside the sweep declares its sitting inside that same
 marker.** The condition is the standing rule above; what the marker adds is
-that the fact is *data* rather than English. "Taken at `7ee5db5`" lived in three
-prose sentences — the stamp's count, the sentence naming the exception, and the
-table's own paragraph — and `--stale` could read none of them, so it ranged that
-figure from the stamp and reported it stale against three commits it postdates.
-Four reds nothing could clear: not a re-take, which spends a measurement to
-conceal that the *range* was the defect, and not an acknowledgement, which
-asserts "this commit moved no reading" about a commit that ran before the
-reading was taken. That distinction is the one the acknowledgement register
-cannot express, and clearing a missing mechanism with a false entry in the
-mechanism beside it is worse than the red.
+that the fact is *data* rather than English, which `--stale` can read and range
+the figure from. A sitting in prose alone leaves the figure ranged from the
+stamp and reported stale against commits it postdates — reds nothing can clear,
+since a re-take spends a measurement to conceal that the *range* was the defect
+and an acknowledgement asserts "this commit moved no reading" about a commit
+that ran before the reading was taken.
 
-*Rejected:* a **sibling** marker of its own. It can go missing on its own and
-its absence is silent — the figure then reads as stamp-sitting, which is the one
-error this exists to make impossible. *Rejected:* recording it in
-`scripts/measure.py`. `session-drift` declares that path, so a commit recording
-where a figure was taken would mark stale the figure whose provenance it was
-recording, and no such record can name its own sha; nothing declares this
-document, and the stamp is already read back out of it. *Rejected:* carrying it
-on **every** figure. That puts the stamp's commit in the document once per
-figure, in as many places it can disagree with the stamp, where the convention
-`outside-register` already set is that declaring nothing is the ordinary case.
+*Rejected:* a **sibling** marker of its own, which can go missing on its own
+and silently leave the figure reading as stamp-sitting. *Rejected:* recording it
+in `scripts/measure.py`, which `session-drift` declares, so the record would
+mark stale the figure whose provenance it records, and no such record can name
+its own sha; nothing declares this document, and the stamp is already read back
+out of it. *Rejected:* carrying it on **every** figure, which puts the stamp's
+commit in the document once per figure, in as many places it can disagree with
+the stamp.
 
 **What decides which side a section falls on is whether the harness could own
 the run**, not what kind of reading it is. A section belongs in the register
@@ -652,35 +574,26 @@ what `benches` is. Neither the *kind* of reading nor the *use* made of it enters
 into it.
 
 *Rejected:* "a proportion needs no apparatus control, and a resident set is not
-a timing anyway", which was the argument for keeping the RSS attribution below
-outside. Both halves fail against the register as it stands. `peak-rss` is a
-registered figure whose reading is a resident set and whose section carries an
-apparatus line over every run, so the apparatus is doing something for an RSS
-figure today; and the `allocator` figure already builds and times the jemalloc
-and mimalloc legs the attribution called exotic — the attribution borrows those
-binaries rather than building them, *because* building them is that figure's
-apparatus rule. What is left of the argument is that a ranking survives drift an
+a timing anyway", the argument for keeping the RSS attribution below outside.
+`peak-rss` is a registered figure whose reading is a resident set and whose
+section carries an apparatus line over every run, and the `allocator` figure
+already builds and times the jemalloc and mimalloc legs the attribution called
+exotic. What is left of the argument is that a ranking survives drift an
 absolute would not, which says how often a figure needs re-taking, not whether
-anything should be told when it goes stale. The precedent settles that: `peak-rss`
-is in the register because the same claim sat in the koji section outside it,
-where no `depends` edge could go red, and it stayed a megabyte wrong for a whole
-slice.
+anything should be told when it goes stale — and `peak-rss` is in the register
+because the same claim sat in the koji section outside it, where no `depends`
+edge could go red, and stayed a megabyte wrong for a whole slice.
 
-**Registering an instrument and publishing its table are two moments, and the
-attribution is why that is written down.** The standalone script was folded
-into the harness, so the figure has an id, a `depends` set and a computed
-consumer set; what it did not have, for the whole window between those two moments, was a
-reading this harness took. It waited in `measure.UNTAKEN` for exactly that,
-because a figure marker asserts the stamp's first clause — *taken by
-`scripts/measure.py`* — and the numbers printed there were not. It could not be
-caught up by a sitting of its own either: its `parse` reference row is
-`peak-rss`'s two block-count runs, so the two share a reading and the rule above
-admits it only from a stamped sweep. That is why the `Shared` edge recording it
-was declared in the change that launched the sweep rather than earlier —
-declaring it against an untaken figure refuses `peak-rss`'s own standalone
-sitting, a table this document carries, with no sweep in between to cure it, and
-between the declaration and the paste `--check` exits 1 on exactly that.
-`scripts/test_measure.py` holds the two halves together, so an
+**Registering an instrument and publishing its table are two moments.** A
+figure can have an id, a `depends` set and a computed consumer set before any
+reading this harness took, and it waits in `measure.UNTAKEN` until there is
+one, because a figure marker asserts the stamp's first clause — *taken by
+`scripts/measure.py`*. An untaken figure that shares a reading cannot be caught
+up by a sitting of its own either, the rule above admitting such a figure only
+from a stamped sweep, so the `Shared` edge is declared in the change that
+launches the sweep: declared earlier it refuses the sharing figure's own
+standalone sitting, a table this document carries, with no sweep in between to
+cure it. `scripts/test_measure.py` holds the two halves together, so an
 `rss-attribution` in `FIGURES` without the borrow fails.
 
 **The register's boundary is declared, not inferred.** A section this harness
@@ -689,34 +602,28 @@ does not own carries an `<!-- outside-register: <id> -->` marker of its own —
 `measure.NOT_OURS` in both directions, so a declaration naming nothing and a
 disowned section declaring nothing both fail. A declared section carrying a
 figure marker fails too: a section is one or the other, and the figure's
-apparatus line would contradict the declaration. What that buys is what the
-symmetry says — a figure announces itself with a marker and an apparatus line,
-so a section that is *not* one announces itself as well, instead of relying on a
-sentence some paragraphs from the numbers while the stamp above claims the whole
-document.
+apparatus line would contradict the declaration. A figure announces itself with
+a marker and an apparatus line, so a section that is *not* one announces itself
+as well, rather than in a sentence some paragraphs from the numbers.
 
-**A declaration carries an invalidation edge, which is what makes staying
-outside safe rather than merely silent.** Being outside says the harness cannot
-*re-take* the readings; it was also saying, by omission, that nothing would be
-told when they went wrong — `--stale` walked the register, so a declared section
-could not go red however far its inputs moved, which is the same blind spot the
-koji RSS row sat a megabyte wrong in for a whole slice. So `measure.Outside`
-declares `depends` exactly as a figure does, one predicate (`declared_hits`)
-answers for both, and `--stale` prints the declared sections in a stanza of
-their own — apart, because the two ask different things of the reader: a stale
-figure names a sweep, and a stale section names a run nobody here can make.
+**A declaration carries an invalidation edge**, so that being outside says the
+harness cannot *re-take* the readings and not that nothing is told when they go
+wrong. `measure.Outside` declares `depends` exactly as a figure does, one
+predicate (`declared_hits`) answers for both, and `--stale` prints the declared
+sections in a stanza of their own — apart, because the two ask different things
+of the reader: a stale figure names a sweep, and a stale section names a run
+nobody here can make.
 `benches` declares nothing, and the empty tuple is the claim rather than an
 omission: it publishes no number, so there is nothing a diff could falsify,
 which is the same sentence that puts it outside.
 
 **The commit that edge is measured from goes in the section's own marker**, in
 a `taken at` clause naming the sha, for the reasons the figure sittings above
-settled. In
-the marker rather than beside it, so it cannot go missing on its own; and in
-this document rather than in `scripts/measure.py`, because `session-drift`
-declares that path and a koji run's provenance recorded there would mark a
-figure stale for recording where another reading came from — every time koji is
-re-run. `--check` holds the pair together in both directions: a section
+settled: in the marker rather than beside it, so it cannot go missing on its
+own; and in this document rather than in `scripts/measure.py`, because
+`session-drift` declares that path and a koji run's provenance recorded there
+would mark a figure stale every time koji is re-run. `--check` holds the pair
+together in both directions: a section
 declaring paths and no commit is an edge `--stale` has no range to intersect,
 and a section declaring a commit and no paths is a provenance nothing reads.
 
@@ -726,24 +633,22 @@ date koji's readings to a sweep that did not take them — the same defect the
 figure sittings fixed one level up, where a figure taken elsewhere was reported
 stale against commits it postdates.
 
-*Rejected:* leaving the exclusion in prose, which is what it was. The koji
-section had a paragraph saying nothing in it was a figure, and that paragraph
-was eleven paragraphs from the readings it disqualified and contradicted by the
-stamp at the head of the file; nothing broke when either moved. *Rejected too:*
-a doc-only check, asserting no more than that a declared section holds no figure
-marker. It would pass a doc that quietly deleted the declaration, which is the
-state this whole mechanism exists to make visible — hence the two-way
-reconciliation against the harness's list.
+*Rejected:* leaving the exclusion in prose, which puts the disqualifying
+sentence paragraphs away from the readings it disqualifies with nothing to
+break when either moves. *Rejected too:* a doc-only check, asserting no more
+than that a declared section holds no figure marker — it would pass a doc that
+quietly deleted the declaration, hence the two-way reconciliation against the
+harness's list.
 
 *Rejected:* sharpening `depends` until it attributes staleness figure by
 figure. **Any stale figure forces a whole re-sweep** — selection is per figure,
 but a sweep is what the session stamp records — so the actionable output is
 binary, re-take the doc or don't, and one true positive settles it. `map.rs`
-alone is declared by seventeen of the twenty-two figures a sweep takes, which means
-most changes mark most of the doc stale and the tool still answers correctly.
-Per-figure detail would be explanatory colour, and buying it by narrowing the
-declarations trades against the only failure that matters: an under-declared
-path costs a false negative when *no* figure declares the changed file. The
+alone is declared by seventeen of the twenty-two figures a sweep takes, so most
+changes mark most of the doc stale and the tool still answers correctly. Buying
+per-figure detail by narrowing the declarations trades against the only failure
+that matters: an under-declared path costs a false negative when *no* figure
+declares the changed file. The
 same predicate decides whether a sweep was taken against a dirty tree
 (`git_head` in `scripts/measure.py`), so the two answers are consistent by
 construction rather than by anyone keeping them in step. Evidence:
@@ -759,23 +664,18 @@ staleness edge nobody declared — and the crate has three modules, `main.rs`,
 it widens the declaration to the directory in the same change, because the
 alternative is a `--stale` that is silent about the file the change is in.
 
-**A commit can be acknowledged, and then it stops marking a figure stale.**
-Coarse `depends` costs something in both directions. The paragraph above weighs
-the false negative; the false positive is the one that decays the mechanism. A
+**A commit can be acknowledged, and then it stops marking a figure stale.** A
 change *inside* a declared path that provably moves nothing leaves `--stale`
 red until a sweep re-stamps the doc — and a sweep is about two hours on a
-machine that has to be quiet, so the realistic outcome is that no sweep runs and `--stale`
-becomes a light that is always on. A signal that is always on is the same thing
-as no signal, which is the decay the register was built against, arriving from
-the other side.
+machine that has to be quiet, so the realistic outcome is that no sweep runs
+and `--stale` becomes a light that is always on, which is as good as no signal.
 
 So `measure.ACKNOWLEDGED` — the register in `scripts/acknowledged.py`, which no
 figure declares, so that adding an entry does not mark stale the figure it
-excuses — records commits that touched a declared path without
-moving a reading and that no oracle below settles by itself: the commit, the figures it excuses, why, and the command that
-re-checks it. `--stale` then prints the excuse rather than the figure, so the
-acknowledgement is *visible* — an invisible excuse would be the same defect one
-level down.
+excuses — records commits that touched a declared path without moving a reading
+and that no oracle below settles by itself: the commit, the figures it excuses,
+why, and the command that re-checks it. `--stale` then prints the excuse rather
+than the figure, so the acknowledgement is visible.
 
 Four properties keep it from becoming a way to wave staleness away:
 
@@ -826,8 +726,7 @@ syntactic property — so `measure.comment_only_commit` reads it per commit and
 per path, and `--stale` prints the commit under *comment-only, skipped* instead
 of reddening the figure. It is by far the widest of the three in practice: a
 wrap, a keystone, a fold-in and a decision closure all retarget citations and
-quoted numbers across the files the register declares, and three consecutive
-commits on `main` once existed only to say so by hand.
+quoted numbers across the files the register declares.
 
 **The scanner refuses anything it cannot place**, because an oracle that has to
 be trusted is worth less than the red it clears. A merge, a file added, deleted
@@ -838,65 +737,55 @@ diff cannot settle on its own — reachability and `--verify-additive` — so th
 register is empty whenever nobody has had to make one of those claims.
 
 *Rejected:* letting an acknowledgement cover library or harness changes on a
-reading of the diff. None of the three oracles above is a diff read: one
-regenerates bytes and compares them, the second resolves what a fixed set of
-commands can reach, and the third asks where the hunks fall rather than what
-they say. Where none applies — a change to `map.rs`, or to the harness's own
-timing path, that a published command *does* execute — the only way to know
-whether a number moved is to take it, so the figure stays stale and `--stale`
-keeps saying so. The worked case is `session-drift`, which declares
-`scripts/measure.py` because the harness *is* the apparatus it measures.
+reading of the diff. None of the three oracles above is a diff read, and where
+none applies — a change to `map.rs`, or to the harness's own timing path, that
+a published command *does* execute — the only way to know whether a number
+moved is to take it, so the figure stays stale. The worked case is
+`session-drift`, which declares `scripts/measure.py` because the harness *is*
+the apparatus it measures.
 
 **A declared section's red is discharged the same way a figure's is, and the
 same three oracles govern it** — `--stale` walks figures and declared sections
 in one loop, because an acknowledgement excuses a *commit* and says nothing
 about what kind of reading sits on the other side of it. Which oracle is
-*available* differs, though, and for koji only one is. Byte-identity cannot
-apply: `--verify-additive` regenerates a figure's inputs, and koji's input is a
-784 GB sample nothing generates. Reachability is close to vacuous: koji's
-declared paths are the scanner, and its command shape is a full scan of the
-whole file. What is left is comment-only, and that one the harness now applies to a
-declared section exactly as it does to a figure — `--stale` walks both in one
-loop, so a keystone that lands on `index.rs` and `alloc.rs` inside koji's edge
-is skipped there without an entry. The rule is uniform across declared sections
-rather than split by what they publish, because once a sweep publishes
-`rss-attribution` koji is the only section carrying an edge at all, and a rule
-with one member on each side is a rule written for a mechanism that does not
-exist.
+*available* differs, and for koji only one is: byte-identity cannot apply,
+`--verify-additive` regenerating a figure's inputs where koji's input is a
+784 GB sample nothing generates; reachability is close to vacuous, koji's
+declared paths being the scanner and its command shape a full scan of the whole
+file. What is left is comment-only, which the harness applies to a declared
+section exactly as it does to a figure, so a keystone that lands on `index.rs`
+and `alloc.rs` inside koji's edge is skipped there without an entry.
 
 **A declared section is reached only by being named, and that is what the empty
 tuple means.** `Acknowledged.figures` left empty covers **every figure and no
-declared section**. The blanket claim is that no figure's subject can see the
-change, and what a figure publishes is a duration a sweep takes; a section's
-readings are something else, and koji's are a byte-for-byte comparison of what a
-scan concludes — block offsets, row and byte totals, and the `info --detail`
-report they are compared as text against. Excusing those is a claim about that
-comparison, so it is made by writing `koji` into the tuple rather than inherited
-from an entry someone wrote about timings. Both halves of the machinery hold it:
-`excuses` matches an empty tuple against a figure only, and
-`spent_acknowledgements` computes a blanket entry's coverage over the figure
-bases alone, though `--check` still passes the union so that an entry naming a
-section is spent against that section's own marker.
+declared section**: the blanket claim is that no figure's subject can see the
+change, and what a figure publishes is a duration a sweep takes, where koji's
+readings are a byte-for-byte comparison of what a scan concludes — block
+offsets, row and byte totals, and the `info --detail` report they are compared
+as text against. Excusing those is made by writing `koji` into the tuple rather
+than inherited from an entry someone wrote about timings. `excuses` matches an
+empty tuple against a figure only, and `spent_acknowledgements` computes a
+blanket entry's coverage over the figure bases alone, though `--check` still
+passes the union so that an entry naming a section is spent against that
+section's own marker.
 
 *Rejected:* refusing an outside id in `Acknowledged.figures`, so that only a
-run clears a declared section's red. What the refusal was reaching for is
-already structural: every commit touching a path must be excused, so one real
-scanner change holds that path red however many entries sit beside it, and koji
-is red on ten paths today. Refusing the register on top of that buys nothing and
-costs the case where a section's red is genuinely dischargeable in writing. The claim that genuinely may not be
-written is a scanner change excused as "this cannot have moved the block
-offsets", which is the claim a byte-identity check exists to test — that is said
-where it binds, in the koji section itself, rather than enforced by refusing the
-whole register to a section that has legitimate use for it.
+run clears a declared section's red. What the refusal reaches for is already
+structural: every commit touching a path must be excused, so one real scanner
+change holds that path red however many entries sit beside it, and koji is red
+on ten paths today. The claim that genuinely may not be written is a scanner
+change excused as "this cannot have moved the block offsets", which is the
+claim a byte-identity check exists to test; that is said where it binds, in the
+koji section itself.
 
 **A stale figure does not oblige a sweep, and neither does a phase boundary.**
 Red is the honest state for a figure whose evidence nobody has taken, and the
 requirement is that the reason is *written down* — in `STATUS.md`, naming the
 figure and what would settle it — not that the red is cleared. A full sweep is
-about two hours of a machine that has to be quiet, and taking one at each wrap spends
-it on a stamp the next phase invalidates before anyone reads it for a decision.
-Sweeps belong to the phase that is *about* performance, which is also the phase
-that will re-take every table under its own apparatus. What protects a reader
+about two hours of a machine that has to be quiet, and taking one at each wrap
+spends it on a stamp the next phase invalidates. Sweeps belong to the phase
+that is *about* performance, which is also the phase that will re-take every
+table under its own apparatus. What protects a reader
 in the meantime is not freshness but the standing rules below: quote a
 magnitude rather than three significant figures, and read a move against the
 resolution floor for its regime. Reasoning:
@@ -910,9 +799,7 @@ machine did *during that rep*. Frequency and CPU temperature have no such
 counter under `amd-pstate-epp`, so those alone are sampled at 5 Hz and
 labelled with how many samples landed inside the window. Each table's
 `Apparatus over every run in this table:` line reports the **worst** run, not
-the average: a median survives one bad rep, but a reader deciding whether to
-trust the number wants the worst the apparatus got. `raw.json` keeps the
-per-reading detail.
+the average. `raw.json` keeps the per-reading detail.
 
 **Counters, because a warm reading is half a second.** PSI's `avg10` and any
 affordable sampling rate both describe a window many times longer than the
@@ -923,9 +810,8 @@ construction.
 "contention factor" needs a model of how contention maps to *this* workload's
 slowdown, and that model cannot be a scalar: between the 2026-08-28 sweeps
 `dd` (memory-bandwidth-bound) moved +20.1% while the CPU-bound `INSERT` scan
-moved +0.4%, so any divisor correcting one over-corrects the other by 20×. A
-mis-calibrated divisor emits a *confidently wrong* table, which is the failure
-this harness exists to prevent. Contention is therefore grounds to **discard a
+moved +0.4%, so any divisor correcting one over-corrects the other by 20× and
+emits a confidently wrong table. Contention is therefore grounds to **discard a
 reading and take it again** — the discipline `drop_caches` already applies to a
 dirty page cache. Control the apparatus; never model it.
 
@@ -942,7 +828,7 @@ saturating memory bandwidth appears as neither steal nor PSI: the CPU is
 scheduled, nothing stalls on a runqueue, the instructions are simply slower.
 The only witness is a co-measured one, which is what the `dd` floor already is.
 
-That is measured, not predicted. A sweep taken on this machine while unrelated
+A sweep taken on this machine while unrelated
 processes read the HDD and ran duckdb queries **passed every gate** — machine
 ≤13% busy against the limit's 15, no steal, CPU stall ≤0.99% — while its warm
 readings ran 5–45% slow against a quiet sweep of the same binaries and inputs.
@@ -953,25 +839,21 @@ and the line-skipping large-object path at +0.2% — with the busiest core
 counters witness CPU contention, the floor witnesses bandwidth, and a sweep is
 judged on both. Evidence:
 [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md), "A gate
-that passes cannot mean a machine that was quiet".
-
-Neither is a normaliser.
+that passes cannot mean a machine that was quiet". Neither is a normaliser.
 
 **The floor is read directionally, against a threshold of its own, and it
-takes two conditions.** Contention makes a floor *slower* — that is the entire
-mechanism it witnesses. So the disqualifying observation is a co-measured warm
-floor **above** the standing one; one **below** it disqualifies nothing.
-Without that half the check fires on drift it cannot tell from contention: an
-earlier stamped pair read its `control` warm floor **15.9% apart**
-in the *fast* direction, with no contention available to produce it, and a
-symmetric check would have rejected whichever of the two it happened to see
-second.
+takes two conditions.** Contention makes a floor *slower*, so the disqualifying
+observation is a co-measured warm floor **above** the standing one; one
+**below** it disqualifies nothing. Without that half the check fires on drift it
+cannot tell from contention: an earlier stamped pair read its `control` warm
+floor **15.9% apart** in the *fast* direction, with no contention available to
+produce it, and a symmetric check would have rejected whichever of the two it
+happened to see second.
 
 **The threshold is ~15%, and it is measured on floors rather than on figures.**
 The warm resolution floor (~8%) does not serve here: it is read off warm
-*figures*, and floors move further than the figures riding on them, so it sits
-inside the band drift alone demonstrably produces. The two populations this
-threshold has to separate are both measured here, and **they overlap**:
+*figures*, and floors move further than the figures riding on them. The two
+populations this threshold has to separate **overlap**:
 pure drift has moved a warm floor by **15.9%** within a single pair and put one
 sweep's `control` floor **22.4% above** the stamp before it ("What a
 session's own drift costs"), against the one witnessed contention episode's
@@ -980,26 +862,22 @@ mean a machine that was quiet"). ~15% was the gap between them when only the
 13.6% reading existed; it no longer separates them on its own, so it is kept as
 a backstop and the conjunct below is what discriminates.
 
-**And the slow move must be shared across the sweep's warm floors.** That is
-the measured signature of the thing being witnessed: contention is
-machine-wide, so it moved *every* warm floor together, while drift is per-file
-on tmpfs. **The `session-drift` pair is the cleanest illustration, because the
-two files moved in opposite directions**: inside that pair the `control` floor
-moved −2.5% to −5.3% across its three takes while the `arrays` floor moved
-**+3.4%**. One file's floor moving slow on its own is staging luck; every file's
-moving slow together is the machine. The number is the backstop, the shared move
+**And the slow move must be shared across the sweep's warm floors.** Contention
+is machine-wide, so it moves *every* warm floor together, while drift is
+per-file on tmpfs: inside the `session-drift` pair the `control` floor moved
+−2.5% to −5.3% across its three takes while the `arrays` floor moved **+3.4%**.
+One file's floor moving slow on its own is staging luck; every file's moving
+slow together is the machine. The number is the backstop, the shared move
 is the discriminator, and a sweep is disqualified only when both hold. **The
 stamped sweep clears on the conjunct and not on the number**: its `control`
 floor sits 22.4% above the previous stamp's, over the threshold, while its
 `arrays` floor sits below.
 
-Two costs come with that, and neither is hidden. A contention episode **milder
-than ~15%** now passes the gate — what catches it downstream is that a warm
-figure is a ratio against its own co-measured floor, not an absolute. And with
-two or three warm files in a sweep, "shared" is a weak test on its own, which
-is why it is a conjunct with the number rather than a replacement for it — a
-weak test now carrying the separation the number used to, which is the standing
-cost of the overlap above.
+Two costs come with that. A contention episode **milder than ~15%** passes the
+gate — what catches it downstream is that a warm figure is a ratio against its
+own co-measured floor, not an absolute. And with two or three warm files in a
+sweep, "shared" is a weak test on its own, which is why it is a conjunct with
+the number rather than a replacement for it.
 
 **Nothing may be committed between the legs of a pair.** `emit()` reads
 `git_head()` once, at its top, so each leg stamps whatever `HEAD` is when *that
@@ -1007,30 +885,26 @@ leg* starts — and `session-drift` is defined as the drift between two sittings
 of the same binaries on the same commit. A commit landing between them gives
 the two legs different commits, and the drift table silently stops measuring
 drift and starts measuring whatever was committed. It is invisible from the
-orchestration script, which is why it is written here rather than left in a
-handoff. Uncommitted files are fine and always were: `git_head()`'s dirty flag
-counts only changes under a figure's declared paths, which no document is —
-which is also why the acknowledgement register lives in
-`scripts/acknowledged.py`, so that a fold-in deleting spent entries touches no
-declared path and does not re-stale the stamp it was just given.
+orchestration script, which is why it is written here. Uncommitted files are
+fine: `git_head()`'s dirty flag counts only changes under a figure's declared
+paths, which no document is — which is also why the acknowledgement register
+lives in `scripts/acknowledged.py`, so that a fold-in deleting spent entries
+touches no declared path and does not re-stale the stamp it was just given.
 
 **Which sweep is published is fixed before either runs**, so this check gates
 the published sweep rather than selecting it. The first of the pair is the
 publishable one and the second exists so `session-drift` has a second reading;
-choosing between them on how they read is exactly the choice the session stamp
-exists to remove. Under this stamp that costs something visible and is paid
-anyway: the published sweep is the slower-floored of the pair on `control`
-(+22.4% against the previous stamp's floor, where its partner sits at +2.9%)
-and the faster-floored on `arrays`.
+choosing between them on how they read is the choice the session stamp exists
+to remove. Under this stamp that is paid visibly: the published sweep is the
+slower-floored of the pair on `control` (+22.4% against the previous stamp's
+floor, where its partner sits at +2.9%) and the faster-floored on `arrays`.
 
 *Rejected:* a **symmetric** tolerance, disqualifying a floor move beyond the
 envelope in either direction. A faster floor does mean something about staging
-changed, and in the `session-drift` pair each file's warm readings moved with its own floor —
-`control` down, `arrays` up. But that is
-exactly what a warm figure being a *ratio against its own co-measured floor*
-already handles, and it is reported where it belongs, in the drift figure's own
-section. Rejecting a sweep for it would discard twelve good tables over a
-property the tables themselves express.
+changed — in the `session-drift` pair each file's warm readings moved with its
+own floor, `control` down, `arrays` up — but that is what a warm figure being a
+*ratio against its own co-measured floor* already handles, reported in the
+drift figure's own section.
 
 *Rejected:* **pinning the CPU governor as part of the apparatus.** The
 hypothesis was that an 8× scaling range (0.56–4.67 GHz) under `powersave` was
@@ -1048,16 +922,16 @@ written for.
 
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the
-generator invocations a reader may want on their own. koji's was a third until
-the harness took it — `uv run measure.py --koji-recipe` prints it now.
+generator invocations a reader may want on their own. koji's the harness owns —
+`uv run measure.py --koji-recipe` prints it.
 
 ## What an instrument can see, and what only a sitting can
 
 Everything above governs a **figure**: a timed or resident reading of the
-shipped binary, taken in the container, published. A figure answers *how much*.
-It cannot answer *what of* — and when the question is what a number is made of,
-reaching for another figure is the expensive wrong move the roadmap's
-"Attribution is introspective; only the gate is blind" now refuses.
+shipped binary, taken in the container, published. A figure answers *how much*
+and not *what of*; when the question is what a number is made of, reaching for
+another figure is the expensive wrong move the roadmap's "Attribution is
+introspective; only the gate is blind" refuses.
 
 This section is the other half: what a process can be asked about itself, what
 each answer covers, and what it costs. None of it is a figure on its own
@@ -1114,11 +988,11 @@ and `heaptrack_print`'s own `--help` says that peak is not correct; and
 Rust demangling is post-1.5.0. The merged peak is not a hypothetical: it is
 what turned eight live decoders into one unexplained "67.11 MB over two calls".
 
-**Two of those need no sampling, which is the part that is not obvious.** A
-snapshot at exit reports the end state, not the peak, so the instinct is to
-poll — and polling is what koji's recipe does, because there the process runs
-for an hour. It is unnecessary for the two quantities this project keeps asking
-for: a counting allocator maintains its own high-water for free, and
+**Two of those need no sampling.** A snapshot at exit reports the end state,
+not the peak, so the instinct is to poll — and polling is what koji's recipe
+does, because there the process runs for an hour. It is unnecessary for the two
+quantities this project keeps asking for: a counting allocator maintains its
+own high-water for free, and
 `malloc_info` already prints each arena's. Neither needs a sampler thread, and
 a sampler that missed the peak is the failure mode `rss_wrapper`'s own docstring
 describes for `/proc` polling.
@@ -1183,9 +1057,8 @@ The reference column is the shipped binary itself — never a fourth build of th
 same source, since two builds of one source can differ by ~10% from code layout
 alone ("Two builds of one source can differ by layout"), which is larger than
 the effect measured here. Its three readings are shared with the figures that
-already take them where the sitting emits those too, exactly as the census
-table's census-on column is shared with the warm throughput table; where it does
-not, they are measured here and the table says so.
+already take them where the sitting emits those too; where it does not, they
+are measured here and the table says so.
 
 <!-- figure: allocator — reproduce with `cd scripts && uv run measure.py --figure allocator` -->
 
@@ -1220,22 +1093,21 @@ Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤10.81%,
 **`jemalloc` loses on both `query` shapes and is inside the noise on
 `parse`; `mimalloc` is marginally ahead on all three, and every one of its
 cells is inside the noise.** The `parse` column is the one the instrument does
-not hold still — four sittings have given four answers for it, which is itself
-the finding:
+not hold still — four sittings have given four answers for it:
 
 - **`jemalloc`'s `parse` has read 1.87×, 1.02×, 1.02× and 0.99×.** The 1.87×
-  is the obvious reading of jemalloc as slow on this shape, and it fails: that
-  sitting's excess was all system time — 0.27 s against 0.80 s on the host,
-  with user time slightly *lower* and 8% fewer user instructions — and
-  `strace -c` put it on 3,161 `madvise` calls against glibc's 50 and
-  mimalloc's 62, over a 3.00 GiB file read in 3,072 chunks: a per-chunk
-  `vec![0u8; 1 MiB]` in `LocalFileSource::read_range` returned to the kernel and
-  re-faulted once per chunk. The read buffer is pooled, and no sitting on the
-  pooled read reproduces it. What is left on this shape is
-  a cell whose spread — 0.425–0.540 — swallows the reference's 0.432–0.479
-  whole, so the 0.99× is a draw and not a win. Its `strings` and `typed` cells
-  are 1.12× and 1.09×, the clearest losses in the table and the two that have
-  read the same way at every stamp.
+  was not jemalloc being slow on this shape: that sitting's excess was all
+  system time — 0.27 s against 0.80 s on the host, with user time slightly
+  *lower* and 8% fewer user instructions — and `strace -c` put it on 3,161
+  `madvise` calls against glibc's 50 and mimalloc's 62, over a 3.00 GiB file
+  read in 3,072 chunks: a per-chunk `vec![0u8; 1 MiB]` in
+  `LocalFileSource::read_range` returned to the kernel and re-faulted once per
+  chunk. The read buffer is pooled, and no sitting on the pooled read
+  reproduces it. What is left on this shape is a cell whose spread —
+  0.425–0.540 — swallows the reference's 0.432–0.479 whole, so the 0.99× is a
+  draw and not a win. Its `strings` and `typed` cells are 1.12× and 1.09×, the
+  clearest losses in the table and the two that have read the same way at every
+  stamp.
 - **`mimalloc` reads 0.97×, 0.97× and 0.97×**, having read 0.97×, 0.97× and
   0.99× at the previous stamp, 1.00×, 0.99× and 1.01× at the one before and
   0.98×, 0.96× and 0.96× at the one before that. **Every cell's spread overlaps
@@ -1246,24 +1118,22 @@ the finding:
   excuse applied to it automatically, which is why this is flagged rather than
   dismissed.
 
-**The decision this figure exists to make: the platform allocator stays.** It
-rests on the stake being small, and a 1–3% reading whose spreads all overlap
-does not overturn it — but three sittings of four put `mimalloc` ahead on every
-shape, so what the figure supports is "nothing beats it by more than the
-instrument's own noise", not "nothing beats it". The features stay in the
-manifest so a re-take costs five minutes. The reasoning that would have applied had a leg won is
-beside the mechanism ([`decisions.md`](decisions.md), "D13").
+**The decision this figure exists to make: the platform allocator stays**
+([`decisions.md`](decisions.md), "D13"). A 1–3% reading whose spreads all
+overlap does not overturn it — but three sittings of four put `mimalloc` ahead
+on every shape, so what the figure supports is "nothing beats it by more than
+the instrument's own noise", not "nothing beats it". The features stay in the
+manifest so a re-take costs five minutes.
 
 **Every leg is built by the sitting that times it.** `ensure_allocator_binary`
 memoizes per **process** rather than per machine, and builds every leg before
 the first reading rather than lazily at the rep that wants it. *Rejected:*
 short-circuiting on `runs/pgdq-alloc-<leg>` existing — that file outlives a
-session, so a re-take would time an earlier session's jemalloc and mimalloc
-builds against this session's `pgdq`, two different sources reported as two
-allocators, and a stale leg still answers `--version` with its own allocator
-name, so nothing would notice. The tell
-in a run log: `building the <leg> allocator leg into …` must appear once per
-non-reference leg before `rep1`.
+session, so a re-take would time an earlier session's legs against this
+session's `pgdq` and a stale leg still answers `--version` with its own
+allocator name, so nothing would notice. The tell in a run log: `building the
+<leg> allocator leg into …` must appear once per non-reference leg before
+`rep1`.
 
 ## Scan throughput by input shape
 
@@ -1273,12 +1143,12 @@ including before the floor, because that is the only regime in which a device
 floor means anything: this file fits page cache twice over, so a second read of
 it measures RAM. **Warm** is the same files on tmpfs, which is where the CPU
 the device hides becomes visible. **Cold on the NVMe** is the same discipline
-as the first on a device roughly 4.5× as fast, and it is here for one reason:
-it is the only device class we own on which reading the bytes and parsing them
-are within a small factor of each other, so it is the only place a readahead,
+as the first on a device roughly 4.5× as fast, and it is here because it is
+the only device class we own on which reading the bytes and parsing them are
+within a small factor of each other, so it is the only place a readahead,
 `fadvise` or chunk-size default can show anything at all.
 
-**The HDD is not a fourth regime, and it is deliberately not one.** *Rejected:
+**The HDD is not a fourth regime.** *Rejected:
 an HDD throughput figure in the sweep.* A synthetic 3 GiB file on a rotational
 disk measures one file's layout, and the koji scan below already answers the
 only HDD question this design has — the scan is device-bound there by a factor
@@ -1292,11 +1162,9 @@ rate approaching the device's floor — computed from readings already held, not
 measured to find out.** That is the test the HDD paragraph above applies, stated
 generally, and it is what decides whether a device is a regime or a repetition:
 a leg whose demand sits an order of magnitude under the floor reads the same
-warm and cold, and a leg already at the floor reads the device.
-Both publish the apparatus rather than the mechanism. The arithmetic is a
-division over published tables, so the question is answerable before a sitting
-is spent rather than after — which is the whole point, a sitting being an hour
-of a quiet machine.
+warm and cold, and a leg already at the floor reads the device. Both publish
+the apparatus rather than the mechanism. The arithmetic is a division over
+published tables, so the question is answerable before a sitting is spent.
 
 **A regime the harness does not declare is refused, not defaulted.** Admitting
 one means a `measure.REGIMES` row naming the staging area it reads from and
@@ -1304,11 +1172,10 @@ whether the page cache is dropped, and a `CONTENTION_LIMITS` row saying what
 disqualifies one of its readings; `scripts/test_measure.py` reconciles both
 against the regimes the registered figures' own `stage` declarations name, in
 both directions, so a regime cannot land in one of the three and not the other.
-What that is against is a plausible table rather than a crash: the dispatch
-once matched two names and fell through to the *warm* path, while the cache
-drop fired on any name beginning `cold` — so the cheap `cold-parallel` the
-paragraph below rejects would have dropped the page cache and then read from
-tmpfs, publishing warm readings under a cold heading with nothing to say so.
+What that is against is a plausible table rather than a crash: a dispatch that
+falls through to the *warm* path while the cache drop fires on any name
+beginning `cold` publishes warm readings under a cold heading with nothing to
+say so.
 
 **Neither cold device is a parallel regime.** *Rejected: `cold-parallel` and
 `cold-nvme-parallel` legs of the two `parallel-*` figures, which are registered
@@ -1419,10 +1286,8 @@ there, and at 558 MB/s the disk covers all of it.
 holding for one of the three.** At 2647 MB/s the `COPY` and large-object paths
 are still inside the device — **1.06×** and **1.20×** its time — and the
 `INSERT` path is not: **2.63×**, which is 1.97 s of a 3.19 s scan spent
-somewhere the disk is idle. **All three tables now come from one sweep**, so
-their absolutes may be set beside each other as well as their ratios — which
-was not true under the previous stamp, where the NVMe table had been taken
-alone a day later on a commit four library changes ahead of the other two.
+somewhere the disk is idle. **All three tables come from one sweep**, so
+their absolutes may be set beside each other as well as their ratios.
 
 **The one number the I/O-defaults levers are sized against is 1.06×.** Whatever
 readahead, `posix_fadvise` or a different chunk size could do, none of them can
@@ -1436,12 +1301,10 @@ on the SATA SSD the same subtraction is under 1% and on the HDD the scan is
 device-bound by a factor of several.
 
 **That ceiling has fallen since it was set, and it only ever bounded levers
-that were already refused.** It first read 0.125 s and 8.9% on a slower
-`COPY` path; the read-path work — the buffer pool and the read-loop carry — took
-the parse below the
-device by more than it took the device, so the gap the levers could compete for
-narrowed. Every lever priced against 8.9% was declined at that number and
-is declined harder at 5.6%.
+that were already refused.** It first read 0.125 s and 8.9% on a slower `COPY`
+path; the read-path work — the buffer pool and the read-loop carry — took the
+parse below the device by more than it took the device. Every lever priced
+against 8.9% was declined at that number and is declined harder at 5.6%.
 
 **The `INSERT` path is still a different algorithm, and the warm table is the
 only place that shows it.** Warm, an `INSERT` run costs **2.20 s against the
@@ -1460,14 +1323,12 @@ path moved it.** Under the `ba2fc12` stamp it was 4.3×; it reached 4.9× when
 the `COPY` path fell 0.532 s → 0.457 s while the `INSERT` path barely moved,
 2.27 s → 2.25 s, and it reads 4.9× again here with both legs a little lower
 still, 0.447 s and 2.20 s. The read-path work is per byte of file and both
-shapes read the same 3.00 GiB, so what changed is the denominator. `KD9`'s residual is
-therefore a larger share of a faster scan than when the entry was last
-rewritten, which is a reason to keep the entry rather than to re-price it.
+shapes read the same 3.00 GiB, so what changed is the denominator: `KD9`'s
+residual is a larger share of a faster scan.
 
 **Quote it as a small multiple, not to three figures.** The ratio is the
 durable half of this table and neither of its legs is: across sweeps the legs
-move several percent while the ratio does not, and the same caution that
-applied at mid-teens applies here.
+move several percent while the ratio does not.
 
 **This table is what `KD9` is read off, and the warm row is what keeps the
 entry live.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm against
@@ -1490,15 +1351,13 @@ corrected wherever it is repeated —
 `--check` names as this table's consumers.
 
 **Both legs of the earlier ratio drifted between stamps and the ratio did
-not**, which is the reading that says to quote the multiple rather than the
-seconds. The `COPY` leg went 0.500 → 0.558 s across two stamps and the
+not.** The `COPY` leg went 0.500 → 0.558 s across two stamps and the
 `INSERT` leg 8.37 → 9.19, for 16.7× against 16.5×; ~10% of the `INSERT` move
-was attributed to code layout rather than to code, and the rule that came out
-of it is "Two builds of one source can differ by layout" below. The row's
-earliest reading is the same story one stamp further back: it read 15.13–15.42 s
-cold when first taken on 2026-08-25, and `2eb51f4` changed how an `--inserts`
-dump's runs are scanned in between, absorbing the `Data for` comment into the
-run.
+was attributed to code layout rather than to code ("Two builds of one source
+can differ by layout" above). One stamp further back the row read
+15.13–15.42 s cold when first taken on 2026-08-25, `2eb51f4` having changed how
+an `--inserts` dump's runs are scanned in between, absorbing the `Data for`
+comment into the run.
 
 Regenerate the three inputs, for a reader who wants them without the harness:
 
@@ -1561,17 +1420,15 @@ Per-rep readings:
 Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤9.51%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.81 GHz, ≤60°C.
 
 Four inputs, each a warm `pgdq parse`, reporting peak resident set instead of
-wall clock — the only table here whose reading is not a time, so the rules about
-device floors and ratios do not reach it: there is no `dd` floor for a resident
-set, and page-cache state is what those rules exist to hold off a *timing*.
-Everything else applies unchanged, the rule against reading a move smaller than
-the spread most of all. It is a registered figure rather than a row of the
-koji section below because that section is **outside** the register, where no
-`depends` edge goes red when the read path moves, and koji's run captures no
-resident figure a correction could come from.
+wall clock — the only table here whose reading is not a time, so the rules
+about device floors and ratios do not reach it: there is no `dd` floor for a
+resident set, and page-cache state is what those rules exist to hold off a
+*timing*. Everything else applies unchanged, the rule against reading a move
+smaller than the spread most of all. It is a registered figure rather than a
+row of the koji section below because that section is **outside** the register,
+where no `depends` edge goes red when the read path moves.
 
-**The instrument, because every wrong answer here looks plausible.**
-`/usr/bin/time -f %M` around `nerdctl run` reports the *client's* peak — 40–45
+**The instrument.** `/usr/bin/time -f %M` around `nerdctl run` reports the *client's* peak — 40–45
 MB whatever the input — and `postgres:16` carries no `/usr/bin/time` at all, so
 the timed command is wrapped in a four-line `perl` that forks, `exec`s pgdq,
 waits, and reads `ru_maxrss` out of `getrusage(RUSAGE_CHILDREN)`. **`exec`
@@ -1598,18 +1455,17 @@ scan sits at 44.2 MiB where a 1-block one sits at 6.2 MiB. So a resident set
 is flat per byte and not per block, and a block-poor input like koji can show
 only the first of those.
 
-**What that growth is made of is the next section**, which is the register's
-`rss-attribution` — registered, and taken by the same sweep that takes this
-table, which it borrows this figure's two block-count runs from: this one
-measures the whole, and attributing it needs
-legs this one does not run — another allocator, a scan that stops at the
-preamble, an index merely loaded. The finding is that most of it is *live
-structure per table* rather than any of the three churn mechanisms `KD14` was
-written against, and that a `parse` at 4,000 blocks holds about 4.5 KB a block
-more than an `info` over the same finished index does. **The per-*table* half
-of that is not this figure's to license**: `blocks4000` gives every table
-exactly one `COPY` block, so per-table and per-block coincide in these inputs
-and only the preamble leg next door separates them.
+**What that growth is made of is the next section**, the register's
+`rss-attribution`, taken by the same sweep and borrowing this figure's two
+block-count runs: this one measures the whole, and attributing it needs legs
+this one does not run — another allocator, a scan that stops at the preamble, an
+index merely loaded. The finding is that most of it is *live structure per
+table* rather than any of the three churn mechanisms `KD14` was written
+against, and that a `parse` at 4,000 blocks holds about 4.5 KB a block more
+than an `info` over the same finished index does. **The per-*table* half of
+that is not this figure's to license**: `blocks4000` gives every table exactly
+one `COPY` block, so per-table and per-block coincide in these inputs and only
+the preamble leg next door separates them.
 
 **This figure stands in a share.** `rss-attribution` and `reserve` each borrow
 a run from it — the two block-count `parse` legs and the shipped serial
@@ -1668,8 +1524,7 @@ Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤10.93%,
 **The first row is `peak-rss`'s own, not a second reading of it.** That borrow
 is why this figure is published only from a sitting that takes both: two
 instruments taking one command shape would put two disagreeing readings of it
-in the document, and no amount of prose reconciles that. It is one run
-reported twice.
+in the document. It is one run reported twice.
 
 **Most of it is live structure per *table*, and no `COPY` block has to be
 scanned to pay it.** `parse --preamble-only` stops at the end of the schema
@@ -1677,9 +1532,8 @@ section, before a single data block is read, and it is already carrying
 **+6,101 B** of the `parse` row's +10,311 — three fifths. `info` over the
 finished cache agrees to within 5%: **+5,826 B** to hold an index that was
 deserialized rather than built, with no scanner, no census and no splice
-anywhere in the process. Two entirely different routes to the same structures
-cost the same, which is what says the number is the structures and not the
-route.
+anywhere in the process. Two different routes to the same structures cost the
+same, so the number is the structures and not the route.
 
 The two legs cannot be told apart by this input, because `blocks4000` gives
 every table exactly one `COPY` block — but they are told apart by *when*: the
@@ -1689,14 +1543,14 @@ already says it that way ([`../manual/dump-inspection.md`](../manual/dump-inspec
 "`--chunk-size`"): roughly 10 KB per table, and a few thousand tables is tens of
 megabytes before any chunk size is chosen.
 
-**The allocator is not the culprit in the shape that ships.** Under the throttle
-— the shipped `parse` — glibc has the *lowest* slope of the three: +10,311 B
-against mimalloc's +11,421 and jemalloc's +12,603, and glibc's baseline is
-9.77 MiB where jemalloc's is 18.84 and mimalloc's 28.90. So "glibc returns
-little of what a churn of clones frees" cannot be what the growth is: an
-allocator that returns more does not make it smaller. It is also the reason the
-`allocator` figure above says nothing about memory: it is a timing table, and
-these three binaries differ resident by a factor of three at rest.
+**The allocator is not the culprit in the shape that ships.** Under the
+throttle — the shipped `parse` — glibc has the *lowest* slope of the three:
++10,311 B against mimalloc's +11,421 and jemalloc's +12,603, and glibc's
+baseline is 9.77 MiB where jemalloc's is 18.84 and mimalloc's 28.90. So "glibc
+returns little of what a churn of clones frees" cannot be what the growth is.
+It is also the reason the `allocator` figure above says nothing about memory:
+it is a timing table, and these three binaries differ resident by a factor of
+three at rest.
 
 **Only the slopes are read here, never the fixed terms, and one fixed term is
 unattributed.** An earlier sitting at `41c96bb` read jemalloc's legs at
@@ -1733,9 +1587,8 @@ sudo nerdctl run --rm -m 512m --memory-swap 512m \
 ```
 
 where `<binary>` is `target/release/pgdq` or one of the `allocator` figure's
-legs — borrowed by name through `ensure_allocator_binary`, since which binary a
-leg is is that figure's own apparatus rule — and the wrapper is `rss_wrapper`,
-the same one `peak-rss` is taken through. The `info` leg builds its cache inside
+legs — borrowed by name through `ensure_allocator_binary` — and the wrapper is
+`rss_wrapper`, the same one `peak-rss` is taken through. The `info` leg builds its cache inside
 its own container, untimed and unwrapped.
 
 ## What the read chunk size is worth
@@ -1751,8 +1604,7 @@ to bound the other two ([`decisions.md`](decisions.md), "I/O, memory and paralle
 **Nine reps, not the throughput tables' three or five.** The cold-NVMe `COPY`
 row above spreads about a seventh of its median over five reps, against a total
 envelope for all three I/O levers of 5.6%. An instrument that cannot resolve a
-lever cannot report that the lever is worth nothing — it can only report that it
-saw nothing, which is a different sentence.
+lever can only report that it saw nothing.
 
 | Chunk | Warm, tmpfs | Cold, SATA SSD | Cold, NVMe |
 |---|---|---|---|
@@ -1790,11 +1642,10 @@ the fastest median in the table. Its two neighbours are not distinguishable
 from it — 256 KiB at 1.02× and 4 MiB at 1.03×, both inside the reps' own spread
 — and everything further out is clearly slower: 1.17× at 64 KiB, 1.12× at
 8 MiB, 1.23× at 16 MiB, each with a spread that does not reach the default's.
-So the chunk-size lever is not worth "at most 5.6%" — it is worth **nothing**,
-because no value measured beats the one already shipped and the ones that could
-have are ties. The constant stays at 1 MiB and
-`--chunk-size` is a tuning escape hatch for a device unlike these three, not a
-knob with a win behind it.
+So the chunk-size lever is not worth "at most 5.6%" — it is worth **nothing**:
+no value measured beats the one already shipped and the ones that could have
+are ties. The constant stays at 1 MiB and `--chunk-size` is a tuning escape
+hatch for a device unlike these three.
 
 **The warm column ranks differently, and it is not a device.** Warm, 8 MiB
 reads 0.95× and 4 MiB 0.97×, both below the default with spreads that clear it
@@ -1809,8 +1660,8 @@ for a filesystem nobody parses a dump from.
 **The SATA SSD reads 1.00× at every size, which is the point of having it in
 the table.** Nothing can be won there — the device is the whole cost — but
 something could have been *lost*, and this is what says a default chosen on the
-NVMe does not cost the other classes anything. Every size, 16 MiB included,
-now ties.
+NVMe does not cost the other classes anything. Every size ties, 16 MiB
+included.
 
 **A deeper read is not a faster one, and that is what settles `fadvise`.** Every
 row below the default is a synchronous read issued while the parser is idle —
@@ -1818,16 +1669,16 @@ a deeper prefetch than `POSIX_FADV_SEQUENTIAL`'s doubled window, and one the
 kernel is told about rather than has to infer. Cold on the NVMe, nothing above
 1 MiB beats it: 4 MiB reads 1.03×, 8 MiB 1.12×, 16 MiB 1.23×.
 
-**All three rows above the default now carry that argument, where two used to.**
-The 16 MiB row was excluded from it while `io::BufferPool` kept nothing over
-8 MiB: every chunk at that size was a fresh `vec![0u8; len]` — the `calloc` the
-pool exists to remove, back once per chunk — so its penalty was a pool miss
-rather than a request depth. The pool now keeps a buffer of whatever length a
-read loop announces ([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and this sitting is the first to read the row with that fixed:
-warm it fell 0.866 s → 0.546 s (1.93× → 1.24×) and cold on the NVMe
+**All three rows above the default carry that argument.** The 16 MiB row was
+excluded from it while `io::BufferPool` kept nothing over 8 MiB: every chunk at
+that size was a fresh `vec![0u8; len]` — the `calloc` the pool exists to
+remove, back once per chunk — so its penalty was a pool miss rather than a
+request depth. The pool keeps a buffer of whatever length a read loop announces
+([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and with that
+fixed the row fell warm 0.866 s → 0.546 s (1.93× → 1.24×) and cold on the NVMe
 1.829 s → 1.578 s (1.42× → 1.23×). It is still the slowest row in both
-regimes, so what the pool miss was hiding is a real depth penalty and the
-conclusion is unchanged — cold time does not *fall* with request depth on any
+regimes, so what the pool miss was hiding is a real depth penalty — cold time
+does not *fall* with request depth on any
 device here, so the kernel's own readahead has already taken what there was to
 take and a hint asking for more has nothing to win
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism", where
@@ -1893,8 +1744,7 @@ what is left is the loop, not the bytes.
 **Cold, the census is invisible, and this stamp reads it negative**: −0.009 s
 on a 5.77 s scan, with the two legs' spreads all but identical (5.76–5.83
 against 5.76–5.83). Earlier stamps read the same row at +0.011 s, +0.004 s,
-+0.003 s, +0.002 s and −0.008 s, and a census that costs *less* than no census
-is the plainest possible statement that the effect is smaller than the noise it
++0.003 s, +0.002 s and −0.008 s, so the effect is smaller than the noise it
 sits in. That row is not a separate finding — it is the same CPU cost, hidden
 behind a device delivering 558 MB/s. Which one a user sees is decided by
 whether the bytes are already resident.
@@ -1912,35 +1762,31 @@ sweep read. This stamp's reading is **+11%**, mid-band, with both legs a little
 lower than the previous stamp's — census-off 0.400 s → 0.402 s and census-on
 0.457 s → 0.447 s, neither move outside the other reading's spread.
 
-**It was not always.** The scalar `raw.iter().any(…)` loop that preceded
-`memchr2` ran at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded and
-**+63% reconstructed**, once the 0.77 s container wrapper that sat in both legs
-is taken out ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
-That figure is what argued for the swap, and it is why the deferred question
-of a *skippable* census is now closed rather than open: tens of nanoseconds per
-row is not a cost worth a knob.
+**The scalar loop it replaced cost a thousand times more.** `raw.iter().any(…)`
+before `memchr2` ran at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded
+and **+63% reconstructed**, once the 0.77 s container wrapper that sat in both
+legs is taken out
+([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)). A
+*skippable* census is closed on the same reading: tens of nanoseconds per row
+is not a cost worth a knob.
 
-**The census's cost is now two tiers, and it used to be one.** It is paid by
-the rows that pass the pre-filter (next section), and the pre-filter is
-**20% of what such a row costs** — 55 ns against 282 ns. Under the `ba2fc12`
-stamp the same ratio was 60 ns against 1.49 µs, or 4%, which is what licensed
-calling the pre-filter a rounding error on the inspected path. Putting the
-splitter on `memchr` took the
+**The census's cost is two tiers.** It is paid by the rows that pass the
+pre-filter (next section), and the pre-filter is **20% of what such a row
+costs** — 55 ns against 282 ns. Under the `ba2fc12` stamp the same ratio was
+60 ns against 1.49 µs, or 4%, which is what licensed calling the pre-filter a
+rounding error on the inspected path. Putting the splitter on `memchr` took the
 field split off a per-byte closure and the inspected row got five times cheaper
-while the pre-filter did not, so the two tiers are now within a factor of four
-of each other and the subtraction below has to be read with that in mind. The
-census is unconditional either way
-([`decisions.md`](decisions.md), "D35") — the
+while the pre-filter did not, so the two tiers are within a factor of four of
+each other and the subtraction below has to be read with that in mind. The
+census is unconditional either way ([`decisions.md`](decisions.md), "D35") — the
 alternative is a query that cannot retype its array columns without a second
 pass.
 
-**The two warm spreads separate again**, which the stamps before the previous
-one could not say: census-off spans 0.376–0.414 against census-on's
-0.432–0.479, with no overlap at all. That is a stronger statement than the
-figure has usually rested on, and it does not replace the pairing — six reps
-each, run in both orders, and eight sweeps reading the Δ positive — because a
-single sitting's separation is what the drift table exists to discount. The earlier reading that
-said zero came from taking the pair while the page cache was still filling.
+**The two warm spreads separate**: census-off spans 0.376–0.414 against
+census-on's 0.432–0.479, with no overlap at all. That does not replace the
+pairing — six reps each, run in both orders, and eight sweeps reading the Δ
+positive — because a single sitting's separation is what the drift table exists
+to discount.
 
 **The control's brace-freeness is a contract, not an accident.** The same
 generator writes array columns behind `--arrays` and a composite behind
@@ -1951,9 +1797,9 @@ that puts a `{` or `[` into the default rows invalidates both.
 **The census-off binary is a source patch, which no harness performs.** Build
 it once, by hand: put a bare `return;` as the first statement of `pub(crate) fn
 census_row` in `map.rs` — the pre-filter and everything after it, and nothing
-else. That is the fold itself rather than `Builder::on_row`, which now
-delegates to it, so the patch isolates the census for **every** caller, the
-interior workers included ([`decisions.md`](decisions.md), "D52"). Then
+else. That is the fold itself rather than `Builder::on_row`, which delegates
+to it, so the patch isolates the census for **every** caller, the interior
+workers included ([`decisions.md`](decisions.md), "D52"). Then
 
 ```sh
 cargo build --release -p pgdump_query-cli          # default target: glibc
@@ -1976,26 +1822,22 @@ input carries a `.stamp` naming its generator. So the census-off binary carries
 one too, and the refusal comes in the first second rather than an hour into a
 sweep. **Not building it and not trusting it are separate rules**: the patch
 stays a hand build, because a harness that patches its own subject can produce
-any figure it likes. The binary was found 40 commits stale on 2026-09-05 with
-nothing having noticed
+any figure it likes. A stamp cannot catch a re-stamp without a rebuild, but
+*age* is the failure that happens and the one nothing else can see — the binary
+was found 40 commits stale on 2026-09-05 with nothing having noticed
 ([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "The
-census-off binary is apparatus, and nothing was checking its age"), in the table
-that already carried the register's largest correction; a stamp cannot catch a
-re-stamp without a rebuild, but *age* is the failure that happens, and it is the
-one nothing else can see. `target/release/pgdq`, the binary these tables are
-differenced *against*, needs none of it: the same argument reached it, so the
-harness builds that one too, in the first second of every sitting (see "The
-apparatus"), and there is no provenance left for a stamp to record.
+census-off binary is apparatus, and nothing was checking its age").
+`target/release/pgdq`, the binary these tables are differenced *against*, needs
+none of it: the harness builds that one in the first second of every sitting
+(see "The apparatus"), so there is no provenance left for a stamp to record.
 
 **This is the register's only pinned historical build, and it is pinned with an
 expiry.** A subtraction against a fixed commit measures everything that differs
 between the two trees, and that set grows every time the tree moves and the
-pinned side does not — so the honesty of the difference is a condition, and a
-condition nothing checks is one that has already quietly failed. A figure that
-subtracts one build from another is registered here only with something that
-refuses it when the condition stops holding; where the thing being priced is a
-settled historical fact, the number is recorded beside its mechanism instead of
-re-measured every sitting.
+pinned side does not, so a figure that subtracts one build from another is
+registered here only with something that refuses it when the condition stops
+holding. Where the thing being priced is a settled historical fact, the number
+is recorded beside its mechanism instead of re-measured every sitting.
 
 **The threshold is the hazard, not commit equality: the stamp must be an
 ancestor of the commit being measured, with no path the census figures *being
@@ -2006,17 +1848,15 @@ rebuild (patch `map.rs`, build, copy, revert, re-stamp), and that friction lands
 on a ritual whose failure mode is reaching for the old binary instead of
 rebuilding, which is the failure the check exists to stop
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "`M59`:
-the census stamp is an ancestor, not an equal"). Three properties of the rule as
-stated. A stamp that is **not** an ancestor stays refused: a divergent or ahead
-commit has no run of commits in between to inspect, so "no declared path
-changed" would be computed over a diff that does not mean what it says, and the
-tree the binary came from is outside this one's history. The check is **per
-sitting**, reading the selected figures' own `depends` — `census-attribution`
-declares no scanner path where the other two do — which is what lets the refusal
-name the declared path that actually moved. And it argues from the same prefix
-predicate `--stale` argues staleness from, rather than a second authority over
-what can move a reading. A dirty tree stays out of scope, the session stamp
-already declaring uncommitted changes under a measured path.
+the census stamp is an ancestor, not an equal"). Three properties of the rule
+as stated. A stamp that is **not** an ancestor stays refused: a divergent or
+ahead commit has no run of commits in between to inspect, and the tree the
+binary came from is outside this one's history. The check is **per sitting**,
+reading the selected figures' own `depends` — `census-attribution` declares no
+scanner path where the other two do — which lets the refusal name the declared
+path that actually moved. And it argues from the same prefix predicate
+`--stale` argues staleness from. A dirty tree stays out of scope, the session
+stamp already declaring uncommitted changes under a measured path.
 
 **Never redirect stderr inside a timed command.** Some shells route `time`'s
 own report through the timed command's redirection, so a `2>/dev/null` meant
@@ -2063,28 +1903,25 @@ on a scan reading from memory. Cold it is **+0%**, hidden behind the device
 exactly as the brace-free case is. Both rows are the same CPU; which one a user
 sees is decided by whether the bytes are already resident.
 
-**This cell was wrong by a factor of five until this stamp, and the fault was
-staleness rather than method.** The `ba2fc12` reading was 1.045 s and 1.49 µs a
-row, taken before the census's field split went behind `memchr`; the split
-was the byte loop, not the census
+**The cell was wrong by a factor of five under the `ba2fc12` stamp, through
+staleness rather than method.** That reading was 1.045 s and 1.49 µs a row,
+taken before the census's field split went behind `memchr`; the split was the
+byte loop, not the census
 ([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The
-census's field split was the byte loop, not the census"). Nothing about the
-register missed it — the figure was red on `pgdump_query/src/copy.rs` throughout
-— but a red figure states only that a number may have moved, never how far, and
-this is the largest single correction the register has ever carried.
+census's field split was the byte loop, not the census"). The figure was red on
+`pgdump_query/src/copy.rs` throughout — a red figure states only that a number
+may have moved, never how far.
 
 **The pre-filter is 55 ns of that 282 ns**, read off the previous section, the
 same census-off binary running the pre-filter on every row of both files, which
-is what licenses the subtraction. It is a **within-sitting** subtraction — both
-tables come from the same sweep — so it does not need the argument that the
-conclusion survives either value. Splitting the row into fields and running
+is what licenses the subtraction, and it is a **within-sitting** one, both
+tables coming from the same sweep. Splitting the row into fields and running
 `observe` over all 19 of them, the work the pre-filter exists to avoid, is
 **80% of the census's whole cost**, down from 96–98% before the split went
 behind `memchr`. The pre-filter is what keeps the brace-free case off that
-path, and it is now a fifth of the price rather than a rounding error. The census is
-unconditional either way (`decisions.md`, "D35") — the
-alternative is a query that cannot retype its array columns without a second
-pass.
+path, at a fifth of the price rather than a rounding error. The census is
+unconditional either way (`decisions.md`, "D35") — the alternative is a query
+that cannot retype its array columns without a second pass.
 
 The same census-off binary the previous section builds, on the same apparatus:
 
@@ -2100,13 +1937,11 @@ cd scripts && uv run generate_perf_data.py --arrays --composite \
 ```
 
 *Rejected:* a `no-census` cargo feature, so this reproduces as a flag instead
-of a source edit. Neither crate declares a `[features]` section today, and the
-first one a project adds sets the precedent for what features are for — here,
-a build in which `decisions.md`'s "the census is unconditional" is untrue,
-serving a comparison taken about once a phase. The escape if the patch-and-
-revert ever bites is to drop the comparison, not to gate it: the absolute
-figures (55 ns/row rejected, 282 ns/row inspected) are what the census's own
-section actually consumes ([`decisions.md`](decisions.md), "D35"), and the census-off column exists to establish them once.
+of a source edit — it would ship a build in which `decisions.md`'s "the census
+is unconditional" is untrue, serving a comparison taken about once a phase. The
+escape if the patch-and-revert ever bites is to drop the comparison, not to
+gate it: the absolute figures (55 ns/row rejected, 282 ns/row inspected) are
+what the census's own section consumes ([`decisions.md`](decisions.md), "D35").
 
 ## Nested decode costs what it copies, and an element is now a borrowed slice
 
@@ -2157,7 +1992,7 @@ ratio at 122×, 226×, 94.8×, 67.6×, 67.1× and 70.5× while `decode` moved fo
 reasons of its own. Read the `decode` and `render` columns, which are what the design consumes;
 treat `÷ copy` as the order of magnitude it establishes.
 
-**What this says.** Cost is still per *element* rather than per byte — the two
+**What this says.** Cost is per *element* rather than per byte — the two
 array lengths differ only in element count — and the slope is **39 ns per
 element** decoding, against the 48 ns a linear force-quote set cost and the
 77 ns an allocation per element cost before that, and **15 ns per element**
@@ -2173,20 +2008,19 @@ array does.
 
 **Which direction is more expensive depends on the shape.** For the composite,
 `render` is the larger at 159 ns against 96 — the decode side stopped
-allocating in one slice and its per-byte predicate got cheaper in the next,
-while the record's render path holds a `String` per field. For the
-four-element array `decode` is ahead again this stamp, 191 ns against 153,
-having read the other way round at the previous one; the two are within a
-criterion sitting's scatter of each other on that row and the crossing is not
-a finding. At fifty elements decode is clear, 1.97 µs against 858 ns, because
+allocating and its per-byte predicate got cheaper, while the record's render
+path holds a `String` per field. For the four-element array `decode` is ahead,
+191 ns against 153, having read the other way round at the previous stamp; the
+two are within a criterion sitting's scatter of each other on that row and the
+crossing is not a finding. At fifty elements decode is clear, 1.97 µs against
+858 ns, because
 the force-quote set is the whole of `push_token`'s per-byte work and only part
 of `scan_token`'s — so which side dominates depends on element count as well as
 on shape. `render` is the CLI's write-back and no embedder pays it
 ("A mode difference and a per-column delta are CLI numbers").
 
 Comparing a composite against an array of the same *byte* count is therefore
-meaningless; comparing them per element is the only reading these three rows
-support.
+meaningless; per element is the only reading these three rows support.
 
 ```sh
 cd scripts && uv run measure.py --figure nested-decode-micro
@@ -2207,17 +2041,14 @@ differs from it by decode plus Arrow build plus typed render and nothing else.
 **That third term is the CLI's**, so a difference in this table sizes what a CLI
 user pays and not what a library lever can remove; see "A mode difference and a
 per-column delta are CLI numbers" above. It was the largest of the three at 79%
-of the control's gap when a profile last attributed it; four render-path slices
-have since taken it to roughly a third of a typed run, and the current split is
-[`decisions.md`](decisions.md), "D29" rather than a
-number repeated here.
+of the control's gap when a profile last attributed it, and render-path work
+has taken it to roughly a third of a typed run; the current split is
+[`decisions.md`](decisions.md), "D29" rather than a number repeated here.
 
-**This table no longer attributes cost to a particular column.** That was the
-job of the further 3.00 GiB dumps holding fewer of the nested columns, and
-"What a column costs: five projection widths over one file" below does it
-instead, over identical rows of one file. What the three files are still for is
-the finding underneath them: the untyped baseline is not file-independent, and
-the census is why.
+**This table attributes no cost to a particular column.** "What a column
+costs: five projection widths over one file" below does that, over identical
+rows of one file. What the three files are for is the finding underneath them:
+the untyped baseline is not file-independent, and the census is why.
 
 Three inputs on tmpfs, output to `/dev/null`. **One interleaved sweep**: five
 reps, each rep running both modes on all three files in turn, so the slow
@@ -2270,13 +2101,13 @@ worth on a given file — and the three files hold different row counts at the
 same byte count — it cancels out of that file's own difference, and would not
 cancel out of a cross-file ratio.
 
-**The untyped baseline is file-dependent, and the census is the cause — but
-under this stamp the effect has shrunk to about the size of the instrument.**
-All three `strings` legs now read within 2% of each other (3.44 / 3.39 /
-3.45 s) where the `--arrays --composite` file once read 21% above the other
-two. Its rows are still the only ones carrying a `{`, so they are still the only
-ones the mapping pass's array-shape census splits into fields. Running the same
-query with the **census-off** binary is what separates the two:
+**The untyped baseline is file-dependent, and the census is the cause — but the
+effect is now about the size of the instrument.** All three `strings` legs read
+within 2% of each other (3.44 / 3.39 / 3.45 s) where the `--arrays --composite`
+file once read 21% above the other two. Its rows are the only ones carrying a
+`{`, so they are the only ones the mapping pass's array-shape census splits
+into fields. Running the same query with the **census-off** binary is what
+separates the two:
 
 <!-- figure: census-attribution — reproduce with `cd scripts && uv run measure.py --figure census-attribution` -->
 
@@ -2305,15 +2136,13 @@ numbers were 1.031 s and 0.030 s, and it was the first of them that made the
 baseline gap large enough to see without the census-off binary.
 
 **So the finding survives and its headline number does not.** A `strings` leg
-is still a scan plus a census whose price depends on the data's shape rather
-than a flat per-byte floor; but the census's field split came off a per-byte
-closure, and the shape-dependent term fell with it from about a fifth of the
-run to about a twentieth. A reader who wants to know whether the untyped
-baseline is file-independent still needs this table — the +0.033 s census-on gap
-is inside the drift figure below and would be read as nothing at all — which is
-the reverse of the situation the table was built for, where the gap was obvious
-and the attribution was the question. Both rows come from the same query loop
-below, run with each binary in turn:
+is a scan plus a census whose price depends on the data's shape rather than a
+flat per-byte floor; but the census's field split came off a per-byte closure,
+and the shape-dependent term fell with it from about a fifth of the run to
+about a twentieth. A reader who wants to know whether the untyped baseline is
+file-independent still needs this table — the +0.033 s census-on gap is inside
+the drift figure below and would be read as nothing at all. Both rows come from
+the same query loop below, run with each binary in turn:
 
 ```sh
 cd scripts && uv run measure.py --figure census-attribution
@@ -2325,18 +2154,15 @@ composite (255 ns), which are exactly this file's three nested columns. The
 remaining ~3.2 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is about half of nested decoding**, which is the fact behind the
-refusal to stop copying nested values ([`decisions.md`](decisions.md),
-"D29") — and the two halves have stayed close to
-even as both fell.
+refusal to stop copying nested values ([`decisions.md`](decisions.md), "D29").
 
 ### The cross-file subtraction bottoms out at about half a microsecond a row
 
-**This figure is the instrument's own calibration, and that is all it is now.**
-It once carried the composite column's cost; "What a column costs" below reads
-that within one file, so what is left here is the number the standing rules are
-read off — what a *cross-file* per-row difference can resolve at all. Two
-readings from the same sweep, the quantity and the control on the instrument
-that measures it:
+**This figure is the instrument's own calibration.** "What a column costs"
+below reads the composite column's cost within one file, so what this one is
+for is the number the standing rules are read off — what a *cross-file* per-row
+difference can resolve at all. Two readings from the same sweep, the quantity
+and the control on the instrument that measures it:
 
 <!-- figure: cross-file-floor — reproduce with `cd scripts && uv run measure.py --figure cross-file-floor` -->
 
@@ -2361,11 +2187,10 @@ standard error forbids quoting an interval here — an earlier draft put these a
 **The within-file reading is what settles the quantity, and it lands inside
 this bound.** Projecting the composite column in and out of one file puts it at
 **+0.75 µs/row** ("What a column costs" below), against nine cross-file takes
-spanning +0.31 to +0.99 — near the middle of that range this time, where the
-previous stamp put it at the upper edge. So the cross-file apparatus was not *wrong* about the
-composite column — it was imprecise by exactly the amount its own floor row
-says, which is the strongest statement available that the floor row measures
-the instrument rather than the data.
+spanning +0.31 to +0.99 — near the middle of that range. So the cross-file
+apparatus was not *wrong* about the composite column: it was imprecise by
+exactly the amount its own floor row says, which is the strongest statement
+available that the floor row measures the instrument rather than the data.
 
 *Retracted:* the reading that this subtraction is *biased* rather than merely
 imprecise. A musl-built leg of the same sweep put the composite file
@@ -2377,19 +2202,15 @@ being measured was the allocator, not the instrument. The floor stands at
 roughly ±0.5 µs/row; the confound does not. This pair is also the
 demonstration behind the standing rule against quoting a standard error.
 
-*Superseded, and now by a reading rather than a plan:* `composite-isolated`,
-an instrument built to resolve the composite column by declaring one column two
-ways over byte-identical rows. It was held out of every sweep because column
-projection was going to do the same isolation with no second file at all, and
-that is what "What a column costs" now does — the same rows, the same bytes,
-five widths of one file. It was deleted from the register unpublished, and its
-apparatus went with it: `generate_perf_data.py --weak-composite`, the
-`composite_text` input and the `perf_generator_fidelity.rs` case holding the
-pair byte-identical. Keeping the generator support after deleting the register
-entry is the one outcome that is wrong either way — `measure.UNTAKEN` exists so
-that a built-and-unrun instrument is *named* rather than latent, so an
-instrument with generator support and no entry is exactly the thing that list
-was written against.
+*Superseded:* `composite-isolated`, an instrument built to resolve the
+composite column by declaring one column two ways over byte-identical rows.
+"What a column costs" does the same isolation with no second file at all — the
+same rows, the same bytes, five widths of one file — so it was deleted from the
+register unpublished and its apparatus went with it: `generate_perf_data.py
+--weak-composite`, the `composite_text` input and the
+`perf_generator_fidelity.rs` case holding the pair byte-identical. Keeping
+generator support after deleting the register entry is what `measure.UNTAKEN`
+exists against: a built-and-unrun instrument is *named* rather than latent.
 
 **`typed` and `strings` agree byte for byte on all three inputs**, as they do
 on what `pg_dump` writes (`decisions.md`, "The CLI") — so `cmp` on the
@@ -2432,8 +2253,7 @@ own column order and a superset of the row above it, so the difference between
 two adjacent rows is the cost of exactly the columns they differ by — over
 identical rows of an identical file, in one interleaved sweep of six reps.
 Neither the cross-file subtraction floor above nor the census's file-dependent
-untyped baseline enters, which is what makes this the *replacement* for the
-cross-file apparatus rather than one more figure beside it.
+untyped baseline enters.
 
 | Projection | Median | Per row | Δ per row against the row above | What that buys |
 |---|---|---|---|---|
@@ -2454,13 +2274,12 @@ Per-rep readings (s):
 
 Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤6.00%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤68°C.
 
-**The zero-column row is why the table is worth publishing rather than
-arithmetic.** A zero-column projection is `COUNT(*)`: the block is still read,
+**The zero-column row is the floor the rest is read against.** A zero-column
+projection is `COUNT(*)`: the block is still read,
 every row still walked and field-counted, the predicate still evaluated, and
 nothing is decoded, built or rendered. That is **1.68 µs of every row** —
 1.175 s against this file's own warm `dd` floor of 0.309 s, so 3.8× the cost of
-handing the bytes over — and it is the floor every row above is read against.
-The same file in `--schema-mode strings`, which builds all 19 columns as
+handing the bytes over. The same file in `--schema-mode strings`, which builds all 19 columns as
 zero-copy views, costs 3.54 s; typed and complete it costs 9.14 s.
 
 **A scalar column is cheap and an array column is not, by an order of magnitude
@@ -2483,18 +2302,17 @@ end-to-end figure reports.
 **Every row of this table roughly halved at the stamp before last, and the
 shape did not.** The floor went 3.18 → 1.61 µs, the fifteen scalars
 11.03 → 4.46, the composite 0.98 → 0.75 and the two arrays 13.21 → 6.03; four
-render-path changes and the scalar decoders are what moved them, and they moved
-the expensive rows hardest. This sitting reads 1.68 / 4.53 / 0.78 / 5.98, every
-one within a few percent of those — an array column is still eight times a
-scalar's average and the ordering of the five rows is unchanged.
+render-path changes and the scalar decoders moved them, hardest on the
+expensive rows. This sitting reads 1.68 / 4.53 / 0.78 / 5.98, every one within
+a few percent of those — an array column is eight times a scalar's average and
+the ordering of the five rows is unchanged.
 
 The projections are spelled on the CLI, which is what makes this an end-to-end
 figure — `render_field` included — rather than a library-internal one:
 `--no-columns` for the zero-column row and a repeated `--column <name>` for the
 rest ([`decisions.md`](decisions.md), "D28"). **So a per-column
 delta here does not size a library change**; see "A mode difference and a
-per-column delta are CLI numbers" above, which is the rule this paragraph is
-the reason for.
+per-column delta are CLI numbers" above.
 
 ```sh
 cd scripts && uv run measure.py --figure projection-widths
@@ -2570,10 +2388,10 @@ falls to between a quarter and a third of what it was — 0.07 µs at the previo
 stamp and 0.04 µs here, both inside this instrument's own scatter of each
 other.
 
-**The term-count axis has gone flat, which is the sharper half of the result.**
+**The term-count axis is flat, which is the sharper half of the result.**
 Going from one term to five at the same depth costs **+0.05 µs a row in total**
 (+0.01, +0.03, +0.01 across the three steps), against +0.37 µs under the
-`ba2fc12` stamp. Five terms against one column now cost almost exactly what one
+`ba2fc12` stamp. Five terms against one column cost almost exactly what one
 does, because four of them are reading boundaries the first already found. What
 the sharing measured on the deterministic instrument, over five more shapes than
 this table has — including the two it costs — is
@@ -2582,33 +2400,15 @@ this table has — including the two it costs — is
 **Every row of this table is a rejected row, which is deliberate: it is where
 the lever it sized looks worst.** `RowBatcher::push_row` walks the whole row
 whatever the projection is, so on a row that survives the filter the whole-row
-walk already happens and sharing it costs less. Selectivity is therefore the
-axis the sharing turns on, and a figure on which nothing survives sits at its
-pessimal end — which is what made the losses read off this table **upper
-bounds**, and the shape gives up an absolute a reader recognises to get a
-conservative one.
+walk already happens and sharing it costs less. Selectivity is the axis the
+sharing turns on, and a figure on which nothing survives sits at its pessimal
+end, which makes the losses read off this table **upper bounds**.
 
-*Rejected: a filter every row satisfies.* It would have given that absolute,
-and the **depth** axis is what defeats it rather than the term count. An
-all-true conjunction does not short-circuit, and every shape here puts its N
-terms on one column, so the 2% of rows dropped as `Unknown` is flat across the
-term axis. The depth axis needs two columns of equal NULL-ness at different
-offsets and this file has none: `id` is its only NOT NULL column and it sits at
-depth 1, so the depth pair would differ by 2% of the rows *emitted* — and where
-a filter keeps everything the emit dominates, so that 2% would swamp a walk
-difference worth 18% of a zero-emit query. It is an obstruction in the input,
-not in the predicate language; a NULL-free deep column would answer it.
-
-**This sitting was clean, as the one before it was and the `ba2fc12` one was
-not.** That reading was taken with another session resident, held to the gate's
-15%-busy limit rather than excluded, and it carried a caveat forbidding anyone
-to quote it at its stated precision; this one ran at ≤6% busy with per-rep
-spreads inside 4% of their medians, so that caveat stays discharged rather than
-restated. The
-deterministic corroboration remains `runs/measure-7.7.tsv` — retired user
-instructions on the host, immune to what else the machine was doing — which put
-the walk at 49% of a five-term query's instructions under the unshared
-mechanism this table no longer measures.
+**This sitting ran at ≤6% busy** with per-rep spreads inside 4% of their
+medians. The deterministic corroboration is `runs/measure-7.7.tsv` — retired
+user instructions on the host, immune to what else the machine was doing —
+which put the walk at 49% of a five-term query's instructions under the
+unshared mechanism this table no longer measures.
 
 ```sh
 cd scripts && uv run measure.py --figure predicate-terms
@@ -2629,8 +2429,12 @@ here: every column of this file but `id` carries 2% NULLs, so an N-term
 conjunction is `Unknown` on 1 − 0.98^N of the rows and drops them, which moves
 the emit cost the whole subtraction depends on holding constant. Confining the
 terms to `id` fixes that and leaves one depth, which is the axis the table
-exists for. The all-false disjunction has neither problem: `Or` evaluates every
-child and keeps nothing, at either depth.
+exists for — `id` is the file's only NOT NULL column and sits at depth 1, so a
+depth pair would differ by 2% of the rows *emitted*, swamping a walk difference
+worth 18% of a zero-emit query. It is an obstruction in the input, not in the
+predicate language; a NULL-free deep column would answer it. The all-false
+disjunction has neither problem: `Or` evaluates every child and keeps nothing,
+at either depth.
 
 *Rejected: `--schema-mode typed`.* The typed `=` decodes the literal against the
 column's own type once per block, so `zzz1` on an `integer` column is
@@ -2686,21 +2490,19 @@ Three of them move, and each says something different:
 - **The `control` file's warm `dd` floor moved −2.5% to −5.3% across its three
   takes, and its warm readings moved with it** (−5.6% on the `COPY` scan),
   while the `arrays` file's floor moved **+3.4%** and its census-off leg +2.5%.
-  The two files moving in *opposite* directions is what says the effect is
-  per-file on tmpfs rather than machine-wide, and it is the clearest statement
-  available that a warm figure is a ratio against its own co-measured floor
-  rather than an absolute. It is also this pair's licence to publish: the
-  disqualifying signature is a slow move *shared* across every file's warm
-  floor, and this is its opposite. The three takes of the control floor inside
-  one sweep disagree with each other by up to 2.8 points, which is the same
-  reading, measured three times, differing by more than many figures move.
-- **The smallest readings in the doc moved most, in relative terms and least in
+  The two files moving in *opposite* directions says the effect is per-file on
+  tmpfs rather than machine-wide, and a warm figure is therefore a ratio
+  against its own co-measured floor rather than an absolute. It is also this
+  pair's licence to publish: the disqualifying signature is a slow move
+  *shared* across every file's warm floor, and this is its opposite. The three
+  takes of the control floor inside one sweep disagree with each other by up to
+  2.8 points.
+- **The smallest readings in the doc moved most in relative terms and least in
   absolute.** Both extremes fell on the quadratic table's one-block control,
   −14.3% and +9.7% — under a millisecond and three milliseconds. A reading of a
-  few milliseconds through a container is
-  near the resolution of the whole apparatus; the row exists to hold the byte
-  count fixed against the block count, and it is read as "milliseconds", never
-  to three figures.
+  few milliseconds through a container is near the resolution of the whole
+  apparatus; the row exists to hold the byte count fixed against the block
+  count, and it is read as "milliseconds", never to three figures.
 
 What is left after those is the part a counter cannot see — memory layout,
 cache and TLB luck — which is why the remedy is to re-take a comparison whole
@@ -2710,10 +2512,10 @@ rather than to correct a reading. `map-only`, the third mover two pairs ago at
 table in both sweeps at ≤18% machine-busy.
 
 So a *difference* between two warm legs of the same sweep is worth more than
-either leg's absolute value across sweeps, which is what the standing rule
-"re-take a comparison table whole" already required and this is the measurement
-behind it. It is also the calibration for the standing rule against quoting a
-standard error: a cross-file per-row difference under ~0.5 µs/row is apparatus,
+either leg's absolute value across sweeps — the measurement behind the standing
+rule "re-take a comparison table whole". It is also the calibration for the
+standing rule against quoting a standard error: a cross-file per-row difference
+under ~0.5 µs/row is apparatus,
 and nine sweeps agree on that floor (−0.17, −0.11, −0.05, −0.04, −0.03, +0.01,
 +0.07, +0.07 and +0.08 µs/row) far better than any of them agrees on the leg it
 came from.
@@ -3096,12 +2898,11 @@ The 784GB real sample (`CLAUDE.local.md` has the path). Roughly an hour on the
 HDD; run it detached per `CLAUDE.md`.
 
 **Nothing in this section is a figure, and that is what licenses the readings
-below.** The marker above says so where a reader meets the section rather than
-eleven paragraphs down, and `--check` holds it: koji carries no
+below.** The marker above says so, and `--check` holds it: koji carries no
 `<!-- figure: … -->` marker, `--check` reconciles it as a declared section
 instead, and no figure's consumers reach it — the harness owns koji's
-*invocation* and never runs it, which is the standing it also gives the two
-instrument recipes, the profile's and heaptrack's.
+*invocation* and never runs it, the standing it also gives the two instrument
+recipes, the profile's and heaptrack's.
 
 **What it does carry is an invalidation edge, and it reads red today.** The
 marker names `f5768e7`, the commit the counts below were confirmed at, and
@@ -3114,20 +2915,16 @@ paths, so the counts stand on an older build and the next koji run is what
 discharges that; there is no acknowledgement to write, because the changes are
 exactly the kind a byte-identity check exists to test. Being outside the
 register says the harness cannot *re-take* this — not that nothing is told when
-it goes wrong. The throughput rows further down are disk
-throughputs with no `cat`-to-`/dev/null` floor, so the first standing rule above
-already puts them outside the register on their own terms. This section is
-documented context for a run nobody can repeat cheaply, not a table of figures,
-and the rule at the head of this document — that a figure losing its
-regeneration command should be deleted — is about a figure.
+it goes wrong. The throughput rows further down are disk throughputs with no
+`cat`-to-`/dev/null` floor, so the first standing rule above puts them outside
+the register on their own terms: this section is documented context for a run
+nobody can repeat cheaply, not a table of figures.
 
-*Rejected:* keeping a disqualified reading out of the section entirely. A koji
-run's rate is the only calibration the next run's reader has, and withholding it
-does not leave them with nothing — it leaves them with the rows below and no
-reason to distrust them, which is how a contended run gets read as a regression.
-The cost is a number someone may quote without the sentence attached, and it is
-paid down by stating the disqualification *at* the number rather than once in a
-preamble.
+*Rejected:* keeping a disqualified reading out of the section entirely — a koji
+run's rate is the only calibration the next run's reader has, and withholding
+it leaves them with the rows below and no reason to distrust them. The cost is
+a number someone may quote without the sentence attached, paid down by stating
+the disqualification *at* the number rather than once in a preamble.
 
 | | |
 |---|---|
@@ -3164,15 +2961,14 @@ motivated line-anchored detection.
 
 **The counts above are confirmed on the glibc build; the throughput rows below
 are musl's.** The 2026-09-05 run recorded next is a koji scan on the default
-glibc build in a glibc image, which is what the allocator rule above requires,
-and it reproduced every count in the table. The throughput readings further down
-were taken under a static-binary container recipe that no longer exists; the scan is device-bound
-at ~33% of one core, so the allocator is unlikely to move them, but until an
-uncontended glibc run takes them they are not comparable to the figures above.
-koji is deliberately **outside** the sweep: a different medium, ~54 minutes, and
-a regression check rather than a throughput figure. The harness owns the
-*invocation* — `uv run measure.py --koji-recipe` — so the next run conforms
-without re-deriving the recipe.
+glibc build in a glibc image, which the allocator rule above requires, and it
+reproduced every count in the table. The throughput readings further down were
+taken under a static-binary container recipe that no longer exists; the scan is
+device-bound at ~33% of one core, so the allocator is unlikely to move them,
+but until an uncontended glibc run takes them they are not comparable to the
+figures above. koji is **outside** the sweep: a different medium, ~54 minutes,
+and a regression check rather than a throughput figure. The harness owns the
+*invocation* — `uv run measure.py --koji-recipe`.
 
 **The identity check has been taken on the glibc build, at `f5768e7`.** The
 2026-09-05 run (container `pgdq-koji`, `runs/pgdq-koji-scan.log`, `exit=0`,
@@ -3203,13 +2999,12 @@ report gained since August, `public.pgstattuple_type`'s composite fields.
 **This section carries no resident-set row; what a scan holds is a figure.**
 koji is the worst input in the tree for it: the claim has two halves — whether
 anything accumulates per byte, and whether anything accumulates per block — and
-this document's own standing rules say koji cannot test the second, 74 blocks
-over 784 GB being block-poor enough that a cost scaling with block count "cannot
-express itself in it at all". Both halves are cheap on inputs the harness
-already stages, so they are "What a scan holds resident, per byte and per block"
-above, which reads nothing measurable per byte and ~10.0 KB a block — 44.19 MiB at 4,000
-blocks. As a registered figure the claim carries a `depends` edge that goes red
-when the read path moves.
+koji cannot test the second, 74 blocks over 784 GB being block-poor. Both
+halves are cheap on inputs the harness already stages, so they are "What a scan
+holds resident, per byte and per block" above, which reads nothing measurable
+per byte and ~10.0 KB a block — 44.19 MiB at 4,000 blocks. As a registered
+figure the claim carries a `depends` edge that goes red when the read path
+moves.
 
 **koji's own record still gets one, from `--koji-recipe`.** `VmHWM` in
 `/proc/<pid>/status`, read from the host while the scan is still running:
@@ -3231,9 +3026,9 @@ The rate is written down so the next run's is not read against nothing. But
 **the ~238–241 MB/s below is not a like-for-like reference**, and differencing
 the two crosses three boundaries at once: those rows are musl's, taken in a
 `postgres:16-alpine` image; they predate the eleven changes above, which moved
-what a scan costs per byte; and they were taken uncontended where this one was not. So
-~208 against ~241 is not a 13% regression, and neither number is evidence about
-the other until an uncontended glibc run supplies the missing half.
+what a scan costs per byte; and they were taken uncontended where this one was
+not. So ~208 against ~241 is not a 13% regression until an uncontended glibc
+run supplies the missing half.
 
 **Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
 (container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
@@ -3253,8 +3048,7 @@ untouched.** `pgdq parse` serializes the whole cache at a `CopyEnd` watermark,
 so a koji scan writes it 74 times where the build before it wrote it once. The
 self-tuning throttle below never fires on this shape — koji's blocks are ~45 s
 apart and its saves cost well under a second, so the "20x the last save's own
-cost" bar is cleared every time — which is the regime it was designed not to
-change. Container
+cost" bar is cleared every time. Container
 `pgdq-koji-9.1`, launched 2026-08-26T04:21:17Z, `runs/koji-9.1-scan.log`,
 `exit=0`:
 
@@ -3282,12 +3076,11 @@ check, which needs `--verbose`; that check runs on its own.
 cd scripts && uv run measure.py --koji-recipe
 ```
 
-**That recipe supersedes the one this run used**, which wrapped `parse` in a
-compound `sh -c` to echo its own exit status and elapsed seconds. A compound
-command cannot be `exec`'d, so `sh` stays as PID 1 and swallows the stop
-signal — the run above could not have been interrupted cleanly. The harness
-emits the `exec` form and takes both numbers from `nerdctl inspect`, which
-reports them whether a run finished or was signalled.
+**The recipe must not wrap `parse` in a compound `sh -c`.** A compound command
+cannot be `exec`'d, so `sh` stays as PID 1 and swallows the stop signal, and
+the run cannot be interrupted cleanly. The harness emits the `exec` form and
+takes the exit status and elapsed seconds from `nerdctl inspect`, which reports
+them whether a run finished or was signalled.
 
 The comparison's other half is the throughput row above: the same recipe on a
 build predating the per-block save, so reproducing the *delta* means checking
@@ -3318,8 +3111,8 @@ resumed leg, uncontended over the same file, is what says so.
 
 **The byte-identical cache is the run's real product**, and it is a property,
 not a figure: a scan stopped inside a hundred-gigabyte block and resumed
-produces the same structural record — span for span — as an uninterrupted one.
-`decisions.md`, "The CLI", states it. The fixture-scale version is
+produces the same structural record — span for span — as an uninterrupted one
+(`decisions.md`, "The CLI"). The fixture-scale version is
 `pgdump_query/tests/map_file.rs`'s
 `a_cancelled_map_file_reports_it_and_banks_what_it_scanned`, which asserts the
 resumed *index* equals an eager scan's; koji is where the same property is
@@ -3327,9 +3120,9 @@ checked on the serialized cache, at a scale no fixture reaches.
 
 The run was driven by `runs/koji-wrap.sh`, which is **gitignored** — it
 hardcodes one machine's dump path and nothing in the repo consumes its output
-(`CLAUDE.md`, "Long-running processes"). The sequence itself is not lost with
-it: the harness prints it, machine paths filled in, and a test holds the two
-legs to the identical command that resuming depends on:
+(`CLAUDE.md`, "Long-running processes"). The harness prints the sequence,
+machine paths filled in, and a test holds the two legs to the identical command
+that resuming depends on:
 
 ```sh
 cd scripts && uv run measure.py --koji-recipe --wrap
@@ -3343,9 +3136,8 @@ same guard; the `SIGTERM` one is reached directly with `nerdctl kill -s
 SIGTERM`, and at fixture scale by the CLI's own tests.
 
 **Neither the exit codes nor the identity check are asserted by the script** —
-it logs the expected value beside the observed one and a reader compares. That
-is deliberate for a run whose whole point is to be read by a later session, but
-it means "the log says done" is not the same as "the checks passed".
+it logs the expected value beside the observed one and a reader compares, so
+"the log says done" is not the same as "the checks passed".
 
 **The `.xz` copy scans to the same answer serially and four ways.** The
 2026-09-08 run (`runs/koji-xz-parallel-verify.sh`,
@@ -3353,8 +3145,7 @@ it means "the log says done" is not the same as "the checks passed".
 both legs `exit=0`) took a `--jobs 1` and a `--jobs 4 --parallel-memory
 268435456` parse of `koji-2026-07-23.dump.multistream.xz` — the upstream
 download's 31,150 one-block streams — in one run, on a `pgdq` built at
-`e29939c`. It is the two-legged shape the paragraph above describes, and it
-answers both halves:
+`e29939c`. It is the two-legged shape the paragraph above describes:
 
 | | |
 |---|---|
@@ -3365,8 +3156,7 @@ answers both halves:
 
 The last row is free: the day's first attempt lost its parallel leg to the OOM
 killer but finished its serial one on the same binary, and its artifacts were
-archived rather than deleted, so serial-versus-serial across two runs came with
-the comparison this one was taken for.
+archived rather than deleted.
 
 **This is the `--jobs` determinism claim at a scale no fixture reaches** — a
 block spanning dozens of read windows, cuts landing inside multi-gigabyte
@@ -3399,23 +3189,18 @@ they were taken back to back with no quiet-machine gate and no repetition:
   what to read.
 
 *Rejected:* running the legs untuned, in a cgroup raised far enough to hold an
-uncapped arena set. It is the reading of the apparatus rule that says a 512 MB
-cap at `--jobs 4` is a configuration pgdq must fit with nothing set — a
-requirement no spec states — and it buys nothing here on two counts. What this
-run checks is **determinism**, and the arena count cannot change a cache byte,
-so both knobs are orthogonal to its result: `MALLOC_ARENA_MAX` bounds what
-glibc retains, and `--cpus 4` fixes the thread count for the whole scan, which
-a byte-identical-cache claim is indifferent to. And the untuned resident set has
-probe readings already, at a 2 GiB limit so that nothing was killed — 536 MiB
-with 24 arenas, 476 with 8, and 328 with the arenas capped at 1 — taken on a
-build whose runtime differs from the shipped one, and no more a figure than a
-koji-scale re-take would be
-([`decisions.md`](decisions.md), "I/O, memory and parallelism"). A koji-scale re-take would *still* be disqualified at the number, a
-one-rep resident-set reading off an unquieted machine being no more a figure
-with the cgroup raised than with it tuned.
+uncapped arena set. What this run checks is **determinism**, and neither knob
+can change a cache byte: `MALLOC_ARENA_MAX` bounds what glibc retains, and
+`--cpus 4` fixes the thread count for the whole scan. The untuned resident set
+has probe readings already, at a 2 GiB limit so that nothing was killed —
+536 MiB with 24 arenas, 476 with 8, and 328 with the arenas capped at 1 — taken
+on a build whose runtime differs from the shipped one, and no more a figure
+than a koji-scale re-take would be ([`decisions.md`](decisions.md), "I/O,
+memory and parallelism"): a one-rep resident-set reading off an unquieted
+machine is no more a figure with the cgroup raised than with it tuned.
 
-The orchestrator does compare the two caches itself — `cmp`, with the verdict
-in the log — which is the one place this run is stricter than the wrap script
+The orchestrator compares the two caches itself — `cmp`, with the verdict in
+the log — which is the one place this run is stricter than the wrap script
 above. It still only prints the expected counts beside each leg's tail, and it
 does not read the byte total back at all; that is `pgdq info --dqcache <cache>
 --detail` afterwards on the host.
@@ -3496,14 +3281,11 @@ below. The cache is written to the tmpfs directory too, mounted into the
 container, so no run writes to the container's own layer.
 
 **One build, not two.** What the save throttle and its gate bought is a settled
-historical fact and is recorded as one beside the mechanism
-([`decisions.md`](decisions.md), "D63");
-a column re-measured against a pinned commit every sitting prices everything
-that has landed since instead, and the gap only widens. What isolates a
-mechanism is the census-off method above — one line, one rebuild, and an expiry
-that refuses the figure when the two trees have drifted — and what the
-parallel-scan phase consumes is the map's own quadratic below, which needs no
-historical build at all.
+historical fact, recorded beside the mechanism
+([`decisions.md`](decisions.md), "D63"); a column re-measured against a pinned
+commit every sitting prices everything that has landed since instead. What
+isolates a mechanism is the census-off method above — one line, one rebuild,
+and an expiry that refuses the figure when the two trees have drifted.
 
 | blocks | dump | final cache | parse | saves |
 |---|---|---|---|---|
@@ -3540,12 +3322,12 @@ figure, which is the check that catches one sitting unread.
 is the shape a scan of a file twice as long should have. Two mechanisms
 produced that between them and they are not separable here, because the second
 changed the input to the first: the save throttle skips a save unless 20× the
-last save's own duration has elapsed, and the gate it opens is now also what
-decides when `stream::splice` rebuilds the map
-([`decisions.md`](decisions.md), "D63"). Removing the per-block rebuild shortened the scan, and a shorter scan
-earns fewer saves under a rule that is a ratio against elapsed time — so the
-save count is **6** at every size rather than tracking the block count at
-`1/K` of it. What is left of the original quadratic is the rebuild *itself*,
+last save's own duration has elapsed, and the gate it opens also decides when
+`stream::splice` rebuilds the map ([`decisions.md`](decisions.md), "D63").
+Removing the per-block rebuild shortened the scan, and a shorter scan earns
+fewer saves under a rule that is a ratio against elapsed time — so the save
+count is **6** at every size rather than tracking the block count at `1/K` of
+it. What is left of the original quadratic is the rebuild *itself*,
 which is O(blocks) each time it runs and still runs per block wherever the gate
 does not close — and the gate cannot close on a cache that costs nothing, so
 with the cache **disabled entirely** the map is O(blocks²) exactly as it was:
@@ -3573,13 +3355,13 @@ re-taken alongside it rather than assumed. Four stamps have read it:
 1.012 / 4.56 / 19.03, 1.004 / 3.98 / 19.07, 0.984 / 3.86 / 18.37 and
 1.053 / 4.65 / 19.28 s. `--dqcache none` makes
 `cache::CacheMode::save` a no-op, so the throttle has no cost to amortize, its
-gate never closes, and the map is rebuilt at every `CopyEnd` exactly as before.
-The 1000- and 4000-block rows have held inside 7% and 5% across all four; the
-**2000-block row is the one that moves**, spanning 3.86–4.65 s, and its
-per-rep spread within this sitting (4.41–4.67) covers a fifth of that. The
-sizes, which are what this figure is for, have never been in question — every
-stamp reads the doubling and then the quadrupling. **The read-path work did not
-touch it**, because a 2 MB file's cost is the map's rebuild and not its bytes.
+gate never closes, and the map is rebuilt at every `CopyEnd`. The 1000- and
+4000-block rows have held inside 7% and 5% across all four; the **2000-block
+row is the one that moves**, spanning 3.86–4.65 s, and its per-rep spread
+within this sitting (4.41–4.67) covers a fifth of that. The sizes, which are
+what this figure is for, have never been in question — every stamp reads the
+doubling and then the quadrupling. **The read-path work did not touch it**,
+because a 2 MB file's cost is the map's rebuild and not its bytes.
 
 So the two tables bracket the same mechanism from either side. **With a cache,
 the map's rebuild is gone**: 0.109 s at 4000 blocks against the 20.75 s the
@@ -3588,11 +3370,11 @@ cross-sitting difference, and the only kind this document permits, since 190×
 is two orders of magnitude past the 14% a session's own drift reaches.
 **Without a cache it is the whole cost**: 19.3 s for the same file. The
 *unthrottled* `b726f6b` build put the same 4000-block `parse` at 47.7 s with
-4003 saves ([`decisions.md`](decisions.md), "D63"), which splits roughly as 28 s of saving on top of the ~19 s of
-mapping this table reads — a historical reading rather than a column, since
-that build is retired. What is left is `KD5`
-([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies") — the
-rebuild is still a whole-list clone, so it is only ever as cheap as the gate is
+4003 saves ([`decisions.md`](decisions.md), "D63"), which splits roughly as
+28 s of saving on top of the ~19 s of mapping this table reads — a historical
+reading rather than a column, that build being retired. What is left is `KD5`
+([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies"): the
+rebuild is a whole-list clone, so it is only ever as cheap as the gate is
 closed.
 
 Save counts come from `strace -f -e trace=open,openat` filtered to the cache

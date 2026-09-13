@@ -97,13 +97,13 @@ from `cgroup_hierarchy_idr` starting at 0, which is why the v2 line reads `0::`.
 `Documentation/admin-guide/cgroup-v2.rst` states it flatly: *"The entry for
 cgroup v2 is always in the format `0::$PATH`."*
 
-**Scope limit.** Three, and each is a parse hazard rather than a nicety:
+**Scope limit.** Three parse hazards:
 
 - **The path is namespace-relative.** `proc_cgroup_show()` renders it through
   `cgroup_path_ns_locked(…, current->nsproxy->cgroup_ns)`, so a process inside
-  a cgroup namespace sees its cgroupns root as `/`. That is *correct* for our
-  use — the runtime mounts that same cgroup at `/sys/fs/cgroup` — but it means
-  the string is not a host path and must never be reported as one. Observed:
+  a cgroup namespace sees its cgroupns root as `/`. The runtime mounts that
+  same cgroup at `/sys/fs/cgroup`, so the join is correct, but the string is not
+  a host path and must never be reported as one. Observed:
   `docker run --memory 512m` gives `0::/`, while the same container with
   `--cgroupns=host` gives
   `0::/system.slice/nerdctl-<id>.scope`.
@@ -205,11 +205,10 @@ cgroup's usage goes over the high boundary, the processes of the cgroup are
 throttled and put under heavy reclaim pressure. Going over the high limit never
 invokes the OOM killer."*
 
-**Scope limit.** `memory.high` throttles, so a process that ignores it still
-finishes — it finishes slowly. That is what makes it a limit *this* project must
-read rather than one it may skip: sustained reclaim ends a scan's throughput as
-surely as an OOM ends the run. Nothing orders the two files; take the minimum
-(`RT5`).
+**Scope limit.** `memory.high` throttles rather than kills, so a process that
+ignores it finishes, slowly: sustained reclaim ends a scan's throughput as
+surely as an OOM ends the run (D11). Nothing orders the two files; take the
+minimum (`RT5`).
 
 **Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1, nerdctl 2.3.5 /
 containerd v2.3.3 (observed: `--memory 512m --cgroup-conf
@@ -254,20 +253,13 @@ it as a **threshold** — a value at or above what the machine could possibly ha
 is "no limit" — which is correct at every page size and on both word widths.
 
 **Verified against:** kernel v7.1 (source) only. **Not observed here**: this
-machine runs a pure v2 unified hierarchy, so producing a v1 memory controller
-would mean rebooting with `systemd.unified_cgroup_hierarchy=0` — the memory
-controller lives in exactly one hierarchy at a time (`RT6`), so it cannot be
-mounted v1 alongside. The proof is therefore source, one rung below the observed
-evidence every other entry here carries, and the `Re-verify` below is the run
-that would close that gap on a host that has one.
-
-**The half that can be checked here is our reader, not the kernel**, and
-`io.rs`'s unit tests check it: a fixture tree shaped as this entry claims, driven through
-`discover_memory_limit`'s filesystem-root seam. That neither observes a kernel
-nor upgrades `Verified against` — it establishes that the code reads the shape
-`RT4` describes, which is where a bug of ours would live. `RT4` is not a
-deficiency: the unobservable half is a property of this machine, and the
-observable half is a scheduled test.
+machine runs a pure v2 unified hierarchy, and the memory controller lives in
+exactly one hierarchy at a time (`RT6`), so it cannot be mounted v1 alongside;
+observing this entry needs a host booted with
+`systemd.unified_cgroup_hierarchy=0`, which is what the `Re-verify` below runs.
+`io.rs`'s unit tests cover our reader instead: a fixture tree shaped as this
+entry claims, driven through `discover_memory_limit`'s filesystem-root seam
+(D11). That observes no kernel and does not upgrade `Verified against`.
 
 **Relied on by:**
 [`decisions.md`](decisions.md), "I/O, memory and parallelism" — the v1 arm of
@@ -324,9 +316,8 @@ max                      # its own memory.max
 - **A cgroup namespace truncates the walk**, and correctly so: inside one, the
   namespace root is what is mounted at `/sys/fs/cgroup`, so walking up from the
   `0::` path never leaves it. Limits set on cgroups *outside* the namespace
-  still bind and are simply not readable — which is a property of the
-  environment, not a defect to work around, and it is why the walk is bounded by
-  the mount point rather than by counting `/`s.
+  still bind and are simply not readable, so the walk is bounded by the mount
+  point rather than by counting `/`s.
 - **`memory.high` and `memory.max` are minimised together**, across levels and
   across the two files: nothing orders them, and a `memory.high` two levels up
   may be the smallest number in the walk.
@@ -364,10 +355,10 @@ sudo rmdir /sys/fs/cgroup/pgdq-probe/child /sys/fs/cgroup/pgdq-probe
 
 The process reports `0::/pgdq-probe/child` and its own limit as `max`, while
 256 MiB binds one level up. **Remove the scratch cgroups**; the `rmdir` is part
-of the check, not cleanup after it. The `+memory` line is load-bearing and is
-the first scope limit made concrete: without the controller enabled in the
-parent's `cgroup.subtree_control` the child has no `memory.max` file at all,
-which is the "file absent, limit still binding" case rather than an error.
+of the check, not cleanup after it. The `+memory` line is load-bearing: without
+the controller enabled in the parent's `cgroup.subtree_control` the child has no
+`memory.max` file at all — the first scope limit's "file absent, limit still
+binding" case rather than an error.
 
 ---
 
@@ -401,13 +392,12 @@ controller at all. Observed here, alongside the live v2 line:
 ```
 
 This is also the rule `std` follows for the CPU quota (`RT7`), splitting on `,`
-and comparing each element — the two readers agree by construction rather than
-by coincidence.
+and comparing each element.
 
 A second limit, from the same paragraph: moving a controller between hierarchies
-is possible at runtime and *"strongly discouraged for production use"*. A
-long-running process may therefore, in principle, outlive the arrangement it
-read. Discovery happens once at startup and this is not defended against.
+is possible at runtime and *"strongly discouraged for production use"*, so a
+process may outlive the arrangement it read. Discovery happens once at startup
+and this is not defended against.
 
 **Verified against:** kernel v7.1 (source); Linux 7.1.4-arch1-1 (observed: a
 named v1 hierarchy mounted in a private mount namespace produces the two-line
@@ -474,13 +464,6 @@ the quota unbounded because `"max".parse::<usize>()` simply fails, and the
 result is a **quota**, not a share — `cpu.weight` and `cpuset.cpus.partition`
 are not read, though `cpuset.cpus` is, through the affinity mask.
 
-**This entry exists against an earlier filing**, which argued the
-behaviour is `std`'s and therefore not ours. The register's trigger is a
-decision depending on external behaviour *we do not control*, and someone else's
-code is more external, not less: this project's whole CPU default rests on it,
-the proof is cheap, and without an entry a future toolchain moves that default
-silently.
-
 **Verified against:** Rust 1.98.0 (source and observed); Linux 7.1.4-arch1-1,
 nerdctl 2.3.5 / containerd v2.3.3.
 
@@ -521,9 +504,8 @@ only be consulted once `RT1`–`RT6` have established that *no* limit binds.
 
 Of the three lines, only `MemAvailable` is usable. `MemFree` excludes
 reclaimable page cache, so on any machine that has read a large file it
-under-reports drastically and would make pgdq time itself down for memory the
-kernel would hand back on demand. `MemAvailable` is the kernel's own estimate
-of what is obtainable without swapping.
+under-reports drastically. `MemAvailable` is the kernel's own estimate of what
+is obtainable without swapping.
 
 **Proof.** Observed on this host, a 32 GiB machine, comparing the host with a
 container given a 512 MiB limit:
@@ -535,9 +517,8 @@ container given a 512 MiB limit:
 
 The container's own limit is reported correctly by `/sys/fs/cgroup/memory.max`
 and is invisible in `/proc/meminfo`; the two `MemFree` readings differ only by
-ordinary drift between the two samples. Note also the 7.4× gap between
-`MemFree` and `MemAvailable` on an otherwise idle host, which is what rules
-`MemFree` out.
+ordinary drift between the two samples. The 7.4× gap between `MemFree` and
+`MemAvailable` on an otherwise idle host is what rules `MemFree` out.
 
 `lxcfs` and similar FUSE shims *can* overlay a cgroup-aware `/proc/meminfo`,
 which is why the claim is about what the kernel provides rather than about what
@@ -575,7 +556,7 @@ reaped in that cgroup. It is readable **from inside** the container by the
 container's own processes, so it can be read after a command and before the
 container is torn down.
 
-It is the only signal available. A process reaped by the OOM killer dies by
+A process reaped by the OOM killer dies by
 `SIGKILL` and is indistinguishable, from its own exit status, from any other
 signal death; where the harness runs the command under a wrapper that reports
 its child's peak resident set, the wrapper exits with a *collapsed* status and
@@ -589,7 +570,7 @@ one whose command merely exits non-zero reads `oom 0` / `oom_kill 0`, and both
 containers exit **1** through the resident-set wrapper. An unlimited container
 has the file and reads all zeros.
 
-**Scope limit.** Four, and the first is the one a caller must not lose.
+**Scope limit.** Four:
 
 - **A missing file is not "nothing was killed".** On a v1 hierarchy, or where
   `/sys/fs/cgroup` is not the container's own, there is no counter and the
@@ -602,17 +583,15 @@ has the file and reads all zeros.
   Nothing here has descendants — a container's command tree is one cgroup — but
   a caller that acquired them would need `memory.events.local`.
 - **It says the arrangement did not fit; it does not say `peak > limit` for any
-  one process.** What licenses the first step is that clean page cache is
-  *reclaimed* rather than killed for: a 3 GB file read through a 64 MiB cgroup
-  hits the ceiling **13,798 times** (`memory.events`, `max`) and is never
-  reaped, so a cgroup that does get a kill had a charge reclaim could not free.
-  What blocks the second is that the charge is the **cgroup's**, and the cgroup
-  holds the wrapper, the shell and ~350 KB of slab alongside the one process a
-  `ru_maxrss` fit measures. Sub-MiB against the limits used here, and still not
-  the same quantity. **Reading the cgroup's own high-water instead does not
-  escape this**: `memory.peak` reads exactly the limit in both cases — killed
-  and survived — because any cgroup that touches its ceiling once reads
-  `peak == limit` from then on.
+  one process.** Clean page cache is *reclaimed* rather than killed for: a 3 GB
+  file read through a 64 MiB cgroup hits the ceiling **13,798 times**
+  (`memory.events`, `max`) and is never reaped, so a cgroup that does get a kill
+  had a charge reclaim could not free. But the charge is the **cgroup's**, and
+  the cgroup holds the wrapper, the shell and ~350 KB of slab alongside the one
+  process a `ru_maxrss` fit measures — sub-MiB against the limits used here, and
+  still not the same quantity. `memory.peak` is no escape: it reads exactly the
+  limit in both cases, killed and survived, because any cgroup that touches its
+  ceiling once reads `peak == limit` from then on.
 
 **Verified against:** Linux 7.1.4-arch1-1; nerdctl 2.3.5 / containerd v2.3.3;
 `alpine:3` and `postgres:16`.
