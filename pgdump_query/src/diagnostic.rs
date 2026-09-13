@@ -1,5 +1,5 @@
 //! The file-level diagnostic channel
-//! (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
+//! (`docs/design/decisions.md`, "The file map and the preamble").
 //!
 //! Two things have no good home in a `Result`. A tiling failure means *our*
 //! parser dropped a region — evidence of a bug, never a reason to refuse the
@@ -23,7 +23,7 @@
 //! `DumpIndex` is **L1**, and `crate::resolve::ColumnResolution` is an **L2**
 //! conclusion about PostgreSQL type semantics, so a [`DiagnosticKind`]
 //! variant carrying one would make L1 name an L2 type: rule 1 in
-//! `docs/design/layering.md`, and against L1's whole "parses a declared type
+//! `docs/design/decisions.md`, and against L1's whole "parses a declared type
 //! as an opaque string and never interprets it" premise.
 //!
 //! So L1 owns this file-level channel, and `crate::resolve::ColumnNote` is
@@ -32,7 +32,7 @@
 //! reading both filters uniformly. Unifying at the *drain* point stays open:
 //! a future caller-supplied sink (`docs/design/roadmap.md`, P6) can take
 //! both
-//! (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
+//! (`docs/design/decisions.md`, "The file map and the preamble").
 
 use serde::Serialize;
 
@@ -59,12 +59,12 @@ pub enum DiagnosticKind {
     /// The map does not tile its file: a gap, an overlap, an empty span, or
     /// a span list that doesn't reach the scanned end. Always a bug in
     /// `crate::map`, never a property of the input
-    /// (`docs/design/architecture.md`, "Testing philosophy").
+    /// (`docs/design/decisions.md`, "D73").
     TilingBroken { issues: Vec<TilingIssue> },
     /// A loaded cache recorded a different mtime than the source now has.
     /// Deliberately not an invalidation: mtime granularity and preservation
     /// vary too much across filesystems, copies and restores to be
-    /// conclusive (`docs/design/architecture.md`, "The cache"). A *size* mismatch is an
+    /// conclusive (`docs/design/decisions.md`, "The compressed source and the cache"). A *size* mismatch is an
     /// invalidation instead, and never reaches this channel because the
     /// cache is discarded outright.
     CacheMtimeChanged,
@@ -72,12 +72,12 @@ pub enum DiagnosticKind {
     /// out of `spans` total — a follow-on statement that inherited its
     /// governing entry's header (`crate::map::Span::toc_owned` is `false`)
     /// counts the same as one whose own comment carried it
-    /// (`docs/design/architecture.md`, "TOC enrichment"). Always `Info` — zero is a normal, reported state (the map
+    /// (`docs/design/decisions.md`, "D31"). Always `Info` — zero is a normal, reported state (the map
     /// running in header-less degraded mode), not an error.
     TocCoverage { attributed: usize, spans: usize },
     /// The index was loaded from a retained `.dqcache` with no live dump file
-    /// to check it against (`docs/design/architecture.md`,
-    /// "The cache") — unverified and historical as of whenever
+    /// to check it against (`docs/design/decisions.md`,
+    /// "The compressed source and the cache") — unverified and historical as of whenever
     /// the cache was last saved, since there is nothing to compare its
     /// recorded size/mtime to. Pushed unconditionally by
     /// [`crate::cache::CacheMode::load_offline`] on every successful
@@ -85,7 +85,7 @@ pub enum DiagnosticKind {
     CacheOffline,
     /// A `.xz` source has no usable seek structure — one stream, one block —
     /// so every read (forward included) decodes from byte zero
-    /// (`docs/design/architecture.md`, "The compressed source"). Never a reason
+    /// (`docs/design/decisions.md`, "The compressed source and the cache"). Never a reason
     /// to refuse the file: `pgdq parse` is unaffected since it never reads
     /// backwards, and `pgdq query` still answers, just by paying the decode
     /// each time. `block_count` is `SeekTable::block_count()` — 0 or 1 for a

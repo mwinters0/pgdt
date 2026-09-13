@@ -121,7 +121,7 @@ cgroup v2 is always in the format `0::$PATH`."*
 containerd v2.3.3, cgroup driver systemd, cgroup version 2 (observed).
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface" — `discover_memory_limit`
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" — `discover_memory_limit`
 begins here.
 
 **Re-verify.**
@@ -175,7 +175,7 @@ containerd v2.3.3 (observed: `--memory 512m` → `536870912`, exactly 512 MiB;
 all).
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface".
+[`decisions.md`](decisions.md), "I/O, memory and parallelism".
 
 **Re-verify.**
 
@@ -216,7 +216,7 @@ containerd v2.3.3 (observed: `--memory 512m --cgroup-conf
 memory.high=268435456` → `memory.max` `536870912`, `memory.high` `268435456`).
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface" — the discovered limit
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" — the discovered limit
 being the minimum over every limit that binds.
 
 **Re-verify.**
@@ -270,7 +270,7 @@ deficiency: the unobservable half is a property of this machine, and the
 observable half is a scheduled test.
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface" — the v1 arm of
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" — the v1 arm of
 `discover_memory_limit`.
 
 **Re-verify.** On a host booted with `systemd.unified_cgroup_hierarchy=0`:
@@ -335,7 +335,7 @@ max                      # its own memory.max
 the scratch hierarchy in the `Re-verify` below).
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface" — every ancestor cgroup
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" — every ancestor cgroup
 read rather than the nearest.
 
 **Re-verify.** The container form shows the walk; the scratch-hierarchy form
@@ -414,7 +414,7 @@ named v1 hierarchy mounted in a private mount namespace produces the two-line
 file above, with the v2 line **second**).
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface" — which of the two file shapes
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" — which of the two file shapes
 `discover_memory_limit` reads.
 
 **Re-verify.** The hybrid shape, produced without touching the host:
@@ -485,7 +485,7 @@ silently.
 nerdctl 2.3.5 / containerd v2.3.3.
 
 **Relied on by:**
-[`architecture.md`](architecture.md), "Execution model and API surface" — the source's own worker default, `.xz` taking
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" — the source's own worker default, `.xz` taking
 `available_parallelism()` clamped by the budget.
 
 **Re-verify.** Build the one-line probe and run it under a quota:
@@ -553,7 +553,7 @@ fill.
 **Verified against:** Linux 7.1.4-arch1-1; nerdctl 2.3.5 / containerd v2.3.3;
 `postgres:16`.
 
-**Relied on by:** [`architecture.md`](architecture.md), "Execution model and API surface" — the no-limit branch of
+**Relied on by:** [`decisions.md`](decisions.md), "I/O, memory and parallelism" — the no-limit branch of
 the budget default, which caps at half of `MemAvailable`.
 
 **Re-verify:**

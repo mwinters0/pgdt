@@ -1,14 +1,12 @@
 //! Row/batch assembly: turns rows inside a `COPY` block into typed Arrow
 //! `RecordBatch`es, one column builder per [`crate::resolve::ResolvedSchema`]
-//! field (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
-//! path").
+//! field (`docs/design/decisions.md`, "D46").
 //!
 //! A `Utf8View` field
 //! that needs no unescaping is appended as a zero-copy view into the Arrow
 //! `Buffer` backing the read chunk it came from, rather than copied into the
 //! builder's own storage — retrofitting that would have been expensive, so it
-//! was built in from the start (`docs/design/architecture.md`, "Arrow assembly
-//! and the zero-copy path"). Every other mapped type always copies: its decoded value has
+//! was built in from the start (`docs/design/decisions.md`, "D46"). Every other mapped type always copies: its decoded value has
 //! its own representation (an `i32`, a `[u8; 16]`, …), not a byte range of
 //! the original field.
 //!
@@ -17,7 +15,7 @@
 //! has got, and this module decides when a chunk becomes an Arrow `Buffer`,
 //! how long it is kept, and when a cached builder block index stops being
 //! valid. All three are properties of the assembly, not of the read
-//! (`docs/design/layering.md`, "The layers").
+//! (`docs/design/decisions.md`, "D68").
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -53,7 +51,7 @@ use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs in
 // `stream.rs`. Named here rather than reached for inline so the layering
-// check (`layering.md`, "Checks") sees the deviation it already records.
+// check (`decisions.md`, "D68") sees the deviation it already records.
 use crate::stream::{ResumeToken, table_stream};
 use crate::{Error, Result};
 
@@ -63,7 +61,7 @@ use crate::{Error, Result};
 /// beside the batching knobs — rather than the query half arriving as
 /// positional arguments: they are the same kind of thing, and a caller should not have
 /// to learn which of them is a field and which is an argument
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 #[derive(Debug, Clone)]
 pub struct QueryOptions {
     /// Which columns to materialize, by name, in the order given. `None`
@@ -73,9 +71,9 @@ pub struct QueryOptions {
     /// exactly as [`crate::predicate::Predicate::column`] is, so a name the
     /// block does not carry is `Error::UnknownProjectionColumn` and a
     /// repeated name is `Error::DuplicateProjectionColumn`
-    /// (`docs/design/architecture.md`, "Projection").
+    /// (`docs/design/decisions.md`, "D28").
     pub projection: Option<Vec<String>>,
-    /// Post-parse row filter (`docs/design/architecture.md`, "Predicates"),
+    /// Post-parse row filter (`docs/design/decisions.md`, "Predicates"),
     /// as a boolean **expression** over single-column terms: a row is kept
     /// only if the root evaluates `Truth::True`. The default is the empty
     /// conjunction, which yields every row, so "no filter" needs no separate
@@ -99,8 +97,7 @@ pub struct QueryOptions {
     /// held until the batch flushes, whereas `max_rows` counts *selected*
     /// rows and `max_bytes` counts *selected* field bytes — both of which a
     /// hard filter makes arbitrarily sparse in the file
-    /// (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
-    /// path"). Defaults to 64 MiB, which no ordinary query reaches; `None`
+    /// (`docs/design/decisions.md`, "D46"). Defaults to 64 MiB, which no ordinary query reaches; `None`
     /// leaves a batch's span unbounded.
     ///
     /// **What it bounds is the span rounded out to the retained unit, and on
@@ -111,11 +108,10 @@ pub struct QueryOptions {
     /// one worker's range inside one block pins exactly that block whatever
     /// the cap says. There this stays a batch-size knob, and the bound is to
     /// be the pool's slot budget once a slot acquisition waits — which it does
-    /// not yet (`docs/design/architecture.md`, "Three flush triggers, and only
-    /// one of them bounds memory").
+    /// not yet (`docs/design/decisions.md`, "D47").
     pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL — see
-    /// `docs/design/architecture.md`, "Arrow assembly and the zero-copy path". Every
+    /// `docs/design/decisions.md`, "D46". Every
     /// `RecordBatch` this build produces carries the same schema as its
     /// query's [`crate::resolve::ResolvedSchema`] — a column this build has
     /// no mapping for stays `Utf8View`, same as `SchemaMode::Strings` maps
@@ -123,7 +119,7 @@ pub struct QueryOptions {
     pub schema_mode: SchemaMode,
     /// Selects which database's table to query when the name alone is
     /// ambiguous — matched against `DatabaseMetadata::name`
-    /// (`docs/design/architecture.md`, "One target per query"). `None` is the common case: a single-database dump, or a
+    /// (`docs/design/decisions.md`, "D49"). `None` is the common case: a single-database dump, or a
     /// cross-schema ambiguity a qualified name already resolves on its own.
     pub database: Option<String>,
     /// How far a query's mapping scan walks before it starts returning rows
@@ -133,7 +129,7 @@ pub struct QueryOptions {
     /// does — [`Parallelism::Serial`] by default, and stated here as well as
     /// on [`ScanOptions`] because a query runs two passes with different
     /// shapes: a mapping scan, and a replay this phase splits into partitions
-    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     ///
     /// **The replay's buffer budget reads it, and so does the split.** The
     /// replay loop announces it to the source
@@ -165,7 +161,7 @@ impl Default for QueryOptions {
 }
 
 /// How far [`crate::stream::table_stream`]'s mapping scan walks
-/// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes"). Rows are always replayed from blocks the map
+/// (`docs/design/decisions.md`, "D48"). Rows are always replayed from blocks the map
 /// already holds, so this controls how much of the file a query pays to map
 /// before any row comes back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -183,7 +179,7 @@ pub enum ScanExtent {
     /// name is the case with no early signal at all.
     ///
     /// Deficiency register: `deficiency: KD6` — the detail is
-    /// `docs/design/architecture.md`'s "One target per query".
+    /// `docs/design/decisions.md`'s "D49".
     #[default]
     UntilTargetSettled,
     /// Map the whole file before returning anything. Costs a full scan and
@@ -234,7 +230,7 @@ impl SourceChunk {
 /// buffer is what a view is taken against, when a cached block index stops
 /// being valid — is Arrow assembly's business and is why this type lives
 /// beside the builders rather than beside the read loop
-/// (`docs/design/layering.md`, "The layers").
+/// (`docs/design/decisions.md`, "D68").
 pub(crate) struct RetainedChunks {
     chunks: VecDeque<SourceChunk>,
 }
@@ -250,8 +246,8 @@ impl RetainedChunks {
     /// **This is the one place a read chunk becomes an `arrow::Buffer`.** The
     /// `Bytes` is cloned rather than consumed because the caller still scans
     /// it; both refer to the same allocation, which the buffer pool reclaims
-    /// only when the last reference dies (`docs/design/architecture.md`,
-    /// "Execution model and API surface").
+    /// only when the last reference dies (`docs/design/decisions.md`,
+    /// "I/O, memory and parallelism").
     pub(crate) fn retain(&mut self, start: u64, bytes: &Bytes) {
         self.chunks.push_back(SourceChunk {
             start,
@@ -550,7 +546,7 @@ fn append_null(builder: &mut ColumnBuilder) {
 /// copies, deliberately: widening the zero-copy view path into a recursive
 /// builder means honouring its chunk-retention and block-invalidation edges at
 /// every level, and the swap was measured at under 5 ns an element and refused
-/// (`docs/design/architecture.md`, "The library's own per-row budget").
+/// (`docs/design/decisions.md`, "D29").
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so a failure deep inside a nested literal is
@@ -825,8 +821,7 @@ pub(crate) struct RowBatcher {
     /// Whether any field of this block feeds a projected column. When
     /// nothing does — `COUNT(*)`, `pgdq query --no-columns` — no field is
     /// decoded, so the read loop is spared the bulk UTF-8 validation as well
-    /// (`docs/design/architecture.md`, "A row's bytes are validated once, in
-    /// bulk").
+    /// (`docs/design/decisions.md`, "D27").
     decodes_fields: bool,
     options: QueryOptions,
 }
@@ -880,7 +875,7 @@ impl RowBatcher {
     /// than a second one kept beside it. Read **before** [`Self::flush`],
     /// which clears the span; what it is for is the key a caller merging
     /// several partitions of one replay back into file order sorts on
-    /// (`docs/design/architecture.md`, "Partitioned replay").
+    /// (`docs/design/decisions.md`, "D51").
     pub(crate) fn batch_start(&self) -> Option<u64> {
         self.span.map(|(start, _)| start)
     }
@@ -933,7 +928,7 @@ impl RowBatcher {
     /// walk is `memchr` and is cheap, and it is the system's only field-count
     /// check: this is the sole site that raises `Error::ColumnCountMismatch`,
     /// and the mapping pass never errors on a count
-    /// (`docs/design/architecture.md`, "Projection").
+    /// (`docs/design/decisions.md`, "D28").
     ///
     /// **The walk is `split`'s**, which the caller has already offered to the
     /// filter, so a boundary a term crossed is not crossed again here and one
@@ -942,7 +937,7 @@ impl RowBatcher {
     /// `push_field` call site in this module costs the unfiltered path 2.4% of
     /// a query's user instructions by itself, which is far more than the
     /// bookkeeping it would save
-    /// (`docs/design/architecture.md`, "Predicates").
+    /// (`docs/design/decisions.md`, "Predicates").
     pub(crate) fn push_row(
         &mut self,
         header_offset: u64,
@@ -1089,7 +1084,7 @@ fn push_utf8view_field(
 
 /// Render one row of `column` back to the same PostgreSQL text form
 /// `crate::copy::decode_field` would have produced for it — `pgdq query`'s
-/// job (`docs/design/architecture.md`, "CLI surface": output must be
+/// job (`docs/design/decisions.md`, "The CLI": output must be
 /// byte-identical whether typing is on or off) and the round-trip tests'
 /// oracle. `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
 /// [`crate::resolve::resolve_columns`] can ever produce.
@@ -1138,7 +1133,7 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
 /// where before it collected a `String` per field and joined them. A scalar
 /// column of an integer, a boolean, a text or a date/time type is written
 /// straight into that buffer and allocates nothing at all
-/// (`docs/design/architecture.md`, "Decoders and render-back").
+/// (`docs/design/decisions.md`, "D44").
 ///
 /// **An error may leave a partial value behind.** A caller that reuses its
 /// buffer across rows clears it per row, and an error aborts the row, so the
@@ -1404,7 +1399,7 @@ fn render_list_level(
 /// of every `COPY` block whose table matches `table` (qualified or bare — see
 /// [`CopyHeader::matches`]). A table with zero rows produces no batches.
 ///
-/// Push-mode entry point (`docs/design/architecture.md`, "Execution model and API surface"):
+/// Push-mode entry point (`docs/design/decisions.md`, "I/O, memory and parallelism"):
 /// internally drains the pull-mode [`crate::stream::table_stream`], so the two
 /// share one scan loop. The callback may return [`ControlFlow::Break`] to stop
 /// early, in which case the returned token resumes from just past the last
@@ -1414,7 +1409,7 @@ fn render_list_level(
 /// `cache` controls structure-cache consulting — see `table_stream`'s docs.
 /// Rejects `CacheMode::Offline` up front: `source` is mandatory here, and a
 /// cache-only mode paired with a live source in hand is a caller contract
-/// violation (`docs/design/architecture.md`, "The cache" — `Span::text` is `None` for every `Data` span regardless, so
+/// violation (`docs/design/decisions.md`, "The compressed source and the cache" — `Span::text` is `None` for every `Data` span regardless, so
 /// `query` could never answer from a cache alone even if this were allowed).
 pub async fn read_table<F>(
     source: &dyn ByteRangeSource,

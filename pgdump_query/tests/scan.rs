@@ -322,7 +322,7 @@ async fn line_length_limit_is_enforced() {
 /// "contents are never parsed" treatment `Event::Row` gets inside a `COPY`
 /// block, but with nothing surfaced at all rather than one event per line,
 /// since nothing downstream wants those lines
-/// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads").
+/// (`docs/design/decisions.md`, "D33").
 #[tokio::test]
 async fn large_object_region_is_skipped_without_surfacing_lines() {
     let dir = tempfile::tempdir().unwrap();
@@ -407,7 +407,7 @@ fn fixture18_objects(name: &str) -> PathBuf {
 /// and nothing else: the lines of the region — including the one that closes
 /// it, which carries the statement's own `;` — stay unsurfaced, so L1's event
 /// contract still says nothing about DDL text
-/// (`docs/design/architecture.md`, "Span text").
+/// (`docs/design/decisions.md`, "D30").
 #[tokio::test]
 async fn dollar_quote_end_reports_a_position_and_surfaces_no_lines() {
     let dir = tempfile::tempdir().unwrap();

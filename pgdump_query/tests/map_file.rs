@@ -1,5 +1,5 @@
 //! `stream::map_file` — `pgdq parse`'s scan
-//! (`docs/design/architecture.md`, "CLI surface").
+//! (`docs/design/decisions.md`, "The CLI").
 //!
 //! **The claim these tests exist for**: a scan that stopped partway leaves a
 //! cache that a later `map_file` finishes, and the finished index is
@@ -75,8 +75,7 @@ async fn a_cold_map_file_matches_build_index() {
 /// mapping pass offers every open `COPY` region to the leader's scheduler, so a
 /// block large enough to cut is scanned by workers that split its interior —
 /// and the index that comes out is still, span for span and census for census,
-/// what one serial eager pass gives (`docs/design/architecture.md`, "The
-/// interior split").
+/// what one serial eager pass gives (`docs/design/decisions.md`, "D52").
 ///
 /// **A fixture is kilobytes, so the chunk size is announced small.** The local
 /// source's partition is a fixed multiple of the read chunk, so at the shipped
@@ -583,7 +582,7 @@ impl ByteRangeSource for FailsOutOfOrder<'_> {
 }
 
 /// **The lowest-offset error is the one a split region raises**
-/// (`docs/design/architecture.md`, "The interior split"). Four workers each fail on their own piece of one `COPY` block's
+/// (`docs/design/decisions.md`, "D52"). Four workers each fail on their own piece of one `COPY` block's
 /// interior, and the *earliest* piece is deliberately the last to answer — so a
 /// scheduler that raised whichever failure arrived first would report the
 /// second worker's offset, and a user re-running to confirm the failure would

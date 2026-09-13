@@ -176,7 +176,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "io.rs: the warm re-take falsified the justification those two doc "
             "comments state — `default_workers` and the test above "
             "`a_source_that_does_not_advise_recommends_the_serial_path` — which "
-            "`2bc72f4` corrected in the manual and in `architecture.md`'s "
+            "`2bc72f4` corrected in the manual and in `decisions.md`'s "
             "parallelism section and nowhere else. All 24 changed lines are "
             "inside a `///`. The other four files the commit touches are "
             "documents and `scripts/test_measure.py`, and no figure declares "

@@ -676,7 +676,7 @@ async fn resume_token_from_break_continues_correctly() {
 /// emits, not just the hand-written edge cases.
 ///
 /// Runs in both `SchemaMode`s — the one pair of existing tests that does
-/// (`docs/design/architecture.md`, "Testing philosophy"): `codepoint` is `integer` (Int32 in `Typed`, Utf8View
+/// (`docs/design/decisions.md`, "D73"): `codepoint` is `integer` (Int32 in `Typed`, Utf8View
 /// in `Strings`) but `value` (`text`) is `Utf8View` either way, so both modes
 /// must agree once rendered back through `rows_of`.
 #[tokio::test]
@@ -710,7 +710,7 @@ async fn escapes_table_round_trips_through_postgres_batched() {
 
 /// `query` requires a live source and can never answer from a cache alone —
 /// `Span::text` is `None` for every `Data` span regardless of this decision
-/// (`docs/design/architecture.md`, "The cache") — so `read_table` rejects `CacheMode::Offline` up front
+/// (`docs/design/decisions.md`, "The compressed source and the cache") — so `read_table` rejects `CacheMode::Offline` up front
 /// rather than silently doing the wrong thing.
 #[tokio::test]
 async fn read_table_rejects_offline_cache_mode() {

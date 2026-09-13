@@ -3,7 +3,7 @@
 resolved against the section it names.
 
 The project cites a document's *section*, not the whole document -- a habit that
-is most of what makes a 4,000-line `architecture.md` navigable, and that nothing
+is most of what makes a 4,000-line `decisions.md` navigable, and that nothing
 verified until this. A citation is a pointer, and `docs/process.md`, "The test
 each artifact must pass" is blunt about what a broken one costs: a session
 spends a tool call following it and finds nothing, which is worse than having no
@@ -21,7 +21,7 @@ Three resolutions, and they are deliberately not one rule:
 
 * **A `section:` id resolves strictly**, by set membership against the ids
   declared in the tree. It is matched whether the citation names its document
-  (`` (`docs/design/architecture.md`, "parse-profile") ``) or quotes the id bare,
+  (`` (`docs/design/decisions.md`, "D29") ``) or quotes the id bare,
   which is the idiom a notes doc uses when the document is named once and
   several of its sections are then quoted in a list. Bare resolution is by
   membership rather than by scoping the document name to the sentence: a second
@@ -63,7 +63,7 @@ of these was a real miss in a prototype rather than a hypothetical:
   "Phase identity is `P<k>`" spans two lines and holds a code span. Both sides
   are normalised -- markup stripped, whitespace collapsed, trailing punctuation
   dropped -- before they are compared.
-* **One citation may name several sections**, `"Predicates" and "CLI surface"`.
+* **One citation may name several sections**, `"Predicates" and "The CLI"`.
   Each is resolved; taking only the first would let the second rot unwatched.
 * A **blockquote's leader** does the same thing a doc comment's does, and is
   stripped the same way.
@@ -181,7 +181,7 @@ LINKED_CITATION_RE = re.compile(
     r"\[[^\]\x00]{0,200}?\]\(\s*([A-Za-z0-9_.\-/]+\.md)\s*\)\s*,\s*" + _TARGET
 )
 
-#: `"Predicates" and "CLI surface"` -- a second section on the same citation.
+#: `"Predicates" and "The CLI"` -- a second section on the same citation.
 MORE_RE = re.compile(r"\s*(?:,\s*)?and\s+[\"“]([^\"”\x00]{1,200}?)[\"”]")
 
 #: Any quoted phrase, for the bare-id form. Resolution is set membership, so a
@@ -242,7 +242,7 @@ def normalize(text: str) -> str:
     decide whether the citation resolves.
 
     **Quotation marks go too**, and that one is not cosmetic: a heading may hold
-    a quoted phrase -- `architecture.md`'s *The bar: "the dump alone determines
+    a quoted phrase -- `decisions.md`'s *The bar: "the dump alone determines
     the value"* -- and a citation is itself a quoted string, so there is no way
     to write the inner pair. Keeping them would fail a citation whose author had
     no correct form available.
@@ -463,7 +463,7 @@ def resolve_doc(named: str, frm: str, docs: dict[str, list[Section]]) -> str | N
     """The document a citation's `<doc>.md` names, repo-relative.
 
     A citation names it by whatever reads well at the site: the link-relative
-    `../design/architecture.md` in a status doc, the repo-relative path in a
+    `../design/decisions.md` in a status doc, the repo-relative path in a
     `.rs` doc comment, the bare basename in a notes doc beside it. So three
     resolutions are tried in that order, and an ambiguous basename resolves to
     nothing and is reported rather than guessed.

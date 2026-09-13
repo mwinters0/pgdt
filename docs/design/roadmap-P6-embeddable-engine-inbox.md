@@ -32,8 +32,8 @@ of the two channels re-opens a question that was already settled the other
 way.
 
 **Origin.** 2026-08-24. See
-[`architecture.md`](architecture.md),
-"Diagnostics: one severity scale, two types", and
+[`decisions.md`](decisions.md),
+"The file map and the preamble", and
 [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md), "The
 diagnostic vocabulary is a scale, not a type".
 
@@ -70,7 +70,7 @@ entry above, which is why both are filed here.
 
 **Origin.** 2026-08-24 (the decision), carried through
 P3's end-of-phase grilling as an accepted deficiency. It is `KD6`, whose detail
-paragraph is [`architecture.md`](architecture.md)'s "One target per query";
+paragraph is [`decisions.md`](decisions.md)'s "D49";
 this phase is the destination that entry names.
 
 **Contingent on.** Early stopping surviving as the default, and on no cheaper
@@ -171,8 +171,8 @@ censused" entry above: that one asks what a schema says about array shape when
 the map is partial; this one asks what it says when a whole database's DDL is
 missing, and the tree already contains both answers rather than none.
 
-**Origin.** 2026-08-26. See [`architecture.md`](architecture.md),
-"Joining a header against the metadata".
+**Origin.** 2026-08-26. See [`decisions.md`](decisions.md),
+"D43".
 
 **Narrowed by 9.5.1, 2026-08-27.** The mapping pass now states a database's
 DDL at that database's first `COPY` block (I1's recurring boundary), so no
@@ -226,8 +226,8 @@ whether `ScanCancelled` becomes a DataFusion error or is folded into the
 embedder set it — is also the one that puts an error variant into an engine
 that would rather see a stream end.
 
-**Origin.** 2026-08-27. See [`architecture.md`](architecture.md),
-"`parse` resumes, and saves as it goes".
+**Origin.** 2026-08-27. See [`decisions.md`](decisions.md),
+"D63".
 
 ---
 
@@ -262,8 +262,7 @@ query-conditional note leaves this one as a method an embedder must poll.
 Deciding that deliberately is fine; discovering it after the sink ships is not.
 
 **Origin.** P5 grilling, 2026-08-29; landed and widened by `P5.6`, 2026-08-30.
-Register: [`architecture.md`](architecture.md), "Ordering operators compare
-typed"; evidence:
+Register: [`decisions.md`](decisions.md), "D55"; evidence:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md) and
 register entries I32 and I33.
 
@@ -295,7 +294,7 @@ mapping looks obvious enough to be written without checking, and its failure
 mode is a wrong row set with no error.
 
 **Origin.** P11 grilling, 2026-08-31, from the v55 source. The register itself
-is [`architecture.md`](architecture.md), "Ordering operators compare typed".
+is [`decisions.md`](decisions.md), "D55".
 
 Two further facts about the mapping, from the v55 source:
 
@@ -336,8 +335,7 @@ to re-take the sweep when the pin moves; and `money` is deliberately below it
 exception" rather than an unqualified claim.
 
 **Origin.** P12, 2026-09-03. The mechanism is
-[`architecture.md`](architecture.md), "The floor: the ADBC driver's answer
-bounds ours"; contingent on the pin, since a driver release that answers a type
+[`decisions.md`](decisions.md), "D38"; contingent on the pin, since a driver release that answers a type
 differently changes what the promise would say.
 
 ---
@@ -360,7 +358,7 @@ The same figures also
 all run `--dqcache none`, so each one contains a full mapping pass and reads the
 file exactly twice (2.0000× its bytes, counted with `strace`); an embedder with
 a cache reads it once. Both are in
-[`architecture.md`](architecture.md), "Where a scan's time goes".
+[`decisions.md`](decisions.md), "D29".
 
 **Why P6 cares.** P6 is the first surface with an audience that consumes
 batches rather than text, so it is the first place anyone will ask "how fast is
@@ -375,7 +373,7 @@ published bench through push mode — whose only caller is tests, and whose fate
 is the entry above — or a measurement-only flag in the shipped binary, against
 a doc whose standing position is that a figure here is a CLI figure. So the
 library's cost is kept as *proportions* instead:
-[`architecture.md`](architecture.md), "The library's own per-row budget", splits
+[`decisions.md`](decisions.md), "D29", splits
 a control row four ways in each mode, and a change to a timed path re-reads it
 in the same change that re-takes a figure. **That is what P6 has to read a claim
 off**, and it is a table of profile shares rather than medians — so a claim
@@ -448,8 +446,8 @@ parallel read promises in bytes — which is one fewer moving part rather than a
 reason to bring this phase forward.
 
 **Origin.** The parallel-scan work's grilling, 2026-09-06; the shipped
-mechanisms are [`architecture.md`](architecture.md), "Partitioned replay" and
-"Execution model and API surface".
+mechanisms are [`decisions.md`](decisions.md), "D51" and
+"I/O, memory and parallelism".
 
 ---
 
@@ -479,8 +477,7 @@ between the two passes rather than a blanket "the library does not order
 errors".
 
 **Origin.** The parallel-scan work's error-ordering slice, 2026-09-07
-([`architecture.md`](architecture.md), "`pgdq query` merges the sub-streams back
-into file order").
+([`decisions.md`](decisions.md), "D65").
 
 ---
 
@@ -493,7 +490,7 @@ a silent replay of every matching row from that offset onward. A token carries
 a file offset and nothing about the range its stream was confined to, and the
 ranges are decided per call from the caller's `Parallelism` and the source's
 own advice, so nothing about a partitioned run is reconstructible from a token
-alone ([`architecture.md`](architecture.md), "Partitioned replay").
+alone ([`decisions.md`](decisions.md), "D51").
 
 **Why this phase cares.** Resume is part of what the embedded API promises,
 and it is currently a whole-stream promise. An engine that pulls partitions
@@ -505,7 +502,7 @@ about the replay. It is worth deciding before the surface is frozen, because
 what a token means after an embedder holds one is not.
 
 **Origin.** The parallel-scan work's partitioned-replay slice, 2026-09-07
-([`architecture.md`](architecture.md), "Partitioned replay").
+([`decisions.md`](decisions.md), "D51").
 
 ---
 
@@ -608,7 +605,7 @@ default is `Serial` and `discover()` is opt-in, so nothing oversubscribes unless
 embedder asks it to. The gap is that nothing says `discover()` assumes it is the
 only tenant. That is written beside the mechanism as a **property with a remedy
 in hand** rather than a deficiency
-([`architecture.md`](architecture.md), "Execution model and API surface").
+([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
 **Origin.** 2026-09-10, grilling the status line's provenance entry under `STATUS.md`'s
 "Decisions worth another look" — the maintainer asked what a three-file join would
@@ -636,5 +633,4 @@ the case a public trait is for. Decide it when the embeddable surface is
 specified, alongside whatever else the crate re-exports.
 
 **Origin.** The source's own worker default, 2026-09-09. The trait's
-current shape is [`architecture.md`](architecture.md), "Execution model and API
-surface".
+current shape is [`decisions.md`](decisions.md), "I/O, memory and parallelism".

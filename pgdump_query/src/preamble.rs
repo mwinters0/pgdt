@@ -1,7 +1,7 @@
 //! Dump-level preamble parsing: `CREATE TABLE`/`TYPE`/`DOMAIN`/`EXTENSION`
 //! DDL and the two version header lines, recovered from the pre-data region
-//! of a `pg_dump` plain-format file (`docs/design/architecture.md`,
-//! "The preamble grammar and `DumpMetadata`").
+//! of a `pg_dump` plain-format file (`docs/design/decisions.md`,
+//! "D36").
 //!
 //! **This module owns the DDL grammar, not a second pass over the file.**
 //! [`classify_statement`] and friends (`parse_create_table`, `parse_create_type`,
@@ -10,7 +10,7 @@
 //! map in its one pass over [`crate::scan::scan`]'s events. [`DumpMetadata`]
 //! is then [`dump_metadata_from_spans`] — a derived view over the resulting
 //! spans, computed once, never a second line-by-line scan
-//! (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
+//! (`docs/design/decisions.md`, "D34").
 //! A second line-by-line state machine running in parallel with the span
 //! builder is the shape this deliberately replaced — it held the same fact
 //! twice and the two could diverge.
@@ -18,7 +18,7 @@
 //! **Store what the dump said, never what we concluded.** Declared types are
 //! kept as strings exactly as written (`character varying(16)`, not a parsed
 //! `(base, typmod)` pair) — the cache is L1 and cannot hold an L2 conclusion
-//! (`docs/design/layering.md`, rule 5). Resolving those strings into Arrow
+//! (`docs/design/decisions.md`, rule 5). Resolving those strings into Arrow
 //! types is [`crate::pgtype`]'s job.
 //!
 //! [`extract_statement_cross_refs`] is a second, independent kind
@@ -37,7 +37,7 @@ use crate::copy::Cursor;
 use crate::map::{Span, SpanBody};
 
 /// Everything the preamble pass recovered, per database. See "Multi-database
-/// dumps" in `docs/design/architecture.md`.
+/// dumps" in `docs/design/decisions.md`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpMetadata {
     pub databases: Vec<DatabaseMetadata>,
@@ -58,8 +58,7 @@ pub struct DatabaseMetadata {
     /// finish a database's segment, never leave one half-read. What it
     /// composes with is `DumpIndex::scanned_through`: the *first* database's
     /// metadata is guaranteed present after any scan that persists a cache
-    /// (the preamble prepass — see `docs/design/architecture.md`, "The
-    /// preamble grammar and `DumpMetadata`"), and every later `\connect`ed
+    /// (the preamble prepass — see `docs/design/decisions.md`, "D36"), and every later `\connect`ed
     /// database's is stated when the mapping pass reaches that database's
     /// first `COPY` block. So the list covers exactly the databases whose
     /// data the scan reached — a caller walking `DumpIndex::metadata` still
@@ -737,7 +736,7 @@ fn ident_after(haystack: &str, marker: &str) -> Option<String> {
 
 /// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
 /// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty
-/// (`docs/design/architecture.md`, "TOC enrichment":
+/// (`docs/design/decisions.md`, "D31":
 /// "`PUBLIC` is a pseudo-role and is never reported as one."). Case-insensitive
 /// because [`ident_after`]'s [`Cursor::parse_ident`] lowercases every
 /// *unquoted* identifier it parses (matching how Postgres itself folds one),
@@ -764,7 +763,7 @@ pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: 
 
 /// Extract every role/tablespace a complete statement (see
 /// [`statement_complete`]) references, per
-/// `docs/design/architecture.md`'s "TOC enrichment" —
+/// `docs/design/decisions.md`'s "D31" —
 /// the two sources [`crate::map::Span::toc`] alone can't cover, since none of
 /// these three statement shapes is its own TOC entry:
 ///
@@ -866,7 +865,7 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 
 /// `\connect <name>` — a bare prefix check on a line the scanner already
 /// holds. Exposed to `crate::stream`'s live scan too
-/// (`docs/design/architecture.md`, "One target per query"):
+/// (`docs/design/decisions.md`, "D49"):
 /// tracking which database a `CopyBlock` belongs to needs only the name a
 /// `\connect` yields, never a column type, so it isn't "reading preamble as
 /// it goes" in the sense that section rules out.
@@ -886,8 +885,7 @@ pub(crate) fn parse_connect(line: &str) -> Option<String> {
 /// gives the same answer over raw bytes as over a validated `str` and needs
 /// no validation pass in front of it. That is what lets [`crate::map`]'s
 /// `INSERT` runs be classified without a `String` per line
-/// (`docs/design/architecture.md`, "Bulk regions: one span kind, three
-/// payloads").
+/// (`docs/design/decisions.md`, "D33").
 ///
 /// **It is incremental, and a caller may split the statement's bytes
 /// anywhere.** A `''`, `""` or `--` pair straddling two [`feed`](Self::feed)
@@ -1087,8 +1085,8 @@ impl StatementScan {
             // weight. It is not a licence to drop `depth`: `statement_complete`
             // and `in_open_quote` are wrappers over this type, so the count
             // is what keeps the incremental scan and the buffer-shaped one
-            // answering the same question. Detail in `architecture.md`,
-            // "Bulk regions: one span kind, three payloads".
+            // answering the same question. Detail in `decisions.md`,
+            // "D33".
             let rest = &bytes[i..];
             let stop = memchr::memchr3(b'\'', b'"', b'-', rest).unwrap_or(rest.len());
             let plain = &rest[..stop];
@@ -1206,11 +1204,11 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 
 /// Build a [`DumpMetadata`] by walking already-classified [`crate::map::Span`]s
 /// instead of raw lines — the derived view
-/// `docs/design/architecture.md`'s "`DumpIndex`: one owner per fact" calls for: multi-database segmenting on
+/// `docs/design/decisions.md`'s "D34" calls for: multi-database segmenting on
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
 /// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] — see
-/// `docs/design/architecture.md` for why those three
+/// `docs/design/decisions.md` for why those three
 /// span kinds needed to exist before this could be written.
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:

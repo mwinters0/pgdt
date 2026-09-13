@@ -4,8 +4,7 @@
 //! `OR`; the three keywords are case-insensitive and recognised **only
 //! outside quotes**. Everything that is not a paren or a keyword is a
 //! **leaf**, handed to `parse_filter` — the same term grammar
-//! `--filter` uses, unchanged (`docs/design/architecture.md`, "A filter term
-//! is parsed for two audiences").
+//! `--filter` uses, unchanged (`docs/design/decisions.md`, "D60").
 //!
 //! The delegation keeps one term grammar rather than two, and
 //! [`refuse_where_structure`] keeps the two flags meaning one thing: a

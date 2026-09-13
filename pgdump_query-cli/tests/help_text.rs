@@ -1,7 +1,7 @@
 //! What `pgdq --help` and `pgdq <command> -h` actually render.
 //!
-//! A flag's help *is* its doc comment here (`docs/design/architecture.md`,
-//! "A flag's help is its doc comment, citations included"), so the help pages
+//! A flag's help *is* its doc comment here (`docs/design/decisions.md`,
+//! "D67"), so the help pages
 //! are paragraphs of prose rather than one-line captions — and the rendering of
 //! a paragraph is invisible from the source. Nothing rendered a help page until
 //! this file existed, which is how `clap`'s `wrap_help` feature stayed off
@@ -92,8 +92,7 @@ fn no_help_page_exceeds_the_wrap_width() {
 }
 
 /// No flag renders with nothing beside it. A flag's help is its doc comment
-/// (`docs/design/architecture.md`, "A flag's help is its doc comment, citations
-/// included"), so a flag added without one prints as a bare spec in the option
+/// (`docs/design/decisions.md`, "D67"), so a flag added without one prints as a bare spec in the option
 /// list — which is invisible from the source, and is exactly what these pages
 /// caught on `info --detail`. Snapshots alone would not: a blank is as
 /// plausible a snapshot as a paragraph.

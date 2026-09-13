@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The comparison oracle: what PostgreSQL itself answers, per major.
 
-`docs/design/architecture.md`, "The comparison oracle", is the description;
+`docs/design/decisions.md`, "D70", is the description;
 this module is the case table and the SQL that runs it. It has no container
 plumbing of its own -- `generate_fixtures.py` owns that and calls in here,
 because the oracle runs against the `types` fixture schema's own database and

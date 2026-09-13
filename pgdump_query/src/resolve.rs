@@ -1,6 +1,5 @@
 //! `ResolvedSchema`: the join of a `COPY` header's column list against
-//! `DumpMetadata` (`docs/design/architecture.md`, "Joining a header against
-//! the metadata").
+//! `DumpMetadata` (`docs/design/decisions.md`, "D43").
 //!
 //! This is what a query's `RecordBatch`es actually carry, not a preview:
 //! `crate::batch::RowBatcher` builds one column builder per field of the
@@ -70,7 +69,7 @@ pub enum ColumnResolution {
     /// stream hands back rows and a wrongly-typed one is a wrong answer. A
     /// *reported* schema cannot refuse: one unresolvable block must not sink
     /// the whole listing, so it reports the reason instead
-    /// (`docs/design/architecture.md`, "CLI surface").
+    /// (`docs/design/decisions.md`, "The CLI").
     MetadataNotScanned,
     /// An array whose element type is opaque by construction — `box`, a
     /// C-level base type or a shell type, through any chain of domains. Held
@@ -90,7 +89,7 @@ pub enum ColumnResolution {
     /// (I21), so only the array-shape census can report them — and it reports
     /// them before the schema commits, which is what makes this a resolution
     /// outcome rather than a decode failure at row 40 million
-    /// (`docs/design/architecture.md`, "The array shape census").
+    /// (`docs/design/decisions.md`, "D35").
     VaryingArrayShape,
     /// A C-level base type or a shell/undefined type.
     OpaqueBaseType,
@@ -109,7 +108,7 @@ pub enum ColumnResolution {
 /// stay separate types: `DumpIndex` is L1 while [`ColumnResolution`] is an L2
 /// conclusion about PostgreSQL type semantics, so one enum spanning both
 /// would have L1 name an L2 type
-/// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types"). What they share is the
+/// (`docs/design/decisions.md`, "The file map and the preamble"). What they share is the
 /// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnNote {
@@ -204,8 +203,8 @@ impl ResolvedSchema {
 ///
 /// This used to be "the first database whose DDL mentions `qualified_table`"
 /// — a guess, since nothing tracked which database a `CopyBlock` actually
-/// belonged to. Per-block attribution (`docs/design/architecture.md`,
-/// "One target per query") turns it into a fact: the caller already knows,
+/// belonged to. Per-block attribution (`docs/design/decisions.md`,
+/// "D49") turns it into a fact: the caller already knows,
 /// from the block it matched, which database's DDL applies.
 fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
@@ -253,8 +252,7 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 }
 
 /// Retype one column's `(DataType, NestedPlan)` pair from its census —
-/// **the pair, never a half** (`docs/design/architecture.md`, "Nested
-/// columns: `NestedPlan` travels beside the `DataType`"). This is the only
+/// **the pair, never a half** (`docs/design/decisions.md`, "D39"). This is the only
 /// place after `resolve_declared_type` where either changes.
 ///
 /// Only a column the DDL resolved to an array is touched. The census is keyed
@@ -303,7 +301,7 @@ fn retype_from_census(
 /// dump's single unnamed database).
 ///
 /// `census` is the array-shape evidence this schema may commit to, positional
-/// like `columns` (`docs/design/architecture.md`, "The array shape census").
+/// like `columns` (`docs/design/decisions.md`, "D35").
 /// A caller with no evidence — or none it may believe, which for a *reported*
 /// schema means `crate::index::DumpIndex::is_complete` is false — passes
 /// `&[]`, and every column keeps the optimistic type the DDL alone gives it.
@@ -658,7 +656,7 @@ mod tests {
     }
 
     /// Uniform depth retypes the pair — both halves, in step
-    /// (`docs/design/architecture.md`, "The array shape census").
+    /// (`docs/design/decisions.md`, "D35").
     #[test]
     fn a_uniformly_deep_array_column_gains_a_list_level_per_dimension() {
         use arrow::datatypes::DataType::Int32;
@@ -973,10 +971,10 @@ mod tests {
     /// for the same qualified table name, so the outcome differs observably
     /// depending on which name is passed. This is what the one-target-per-query
     /// rule
-    /// (`docs/design/architecture.md`, "One target per query") turned the old first-match guess into: the caller already
+    /// (`docs/design/decisions.md`, "D49") turned the old first-match guess into: the caller already
     /// knows, from the matched `CopyBlock`'s own attribution, which database
-    /// applies — see `docs/design/architecture.md`,
-    /// "One target per query", for the guess this test used to pin down.
+    /// applies — see `docs/design/decisions.md`,
+    /// "D49", for the guess this test used to pin down.
     #[test]
     fn database_selects_by_attributed_name_not_by_first_match() {
         let mut a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);

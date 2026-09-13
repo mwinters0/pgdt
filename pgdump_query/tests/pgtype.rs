@@ -1,5 +1,5 @@
 //! Type resolution against real `pg_dump` output — `fixtures/*/types/default.sql`
-//! (`docs/design/architecture.md`, "Type resolution"). Unlike
+//! (`docs/design/decisions.md`, "Type resolution and decoders"). Unlike
 //! `pgdump_query/src/pgtype.rs`'s and `resolve.rs`'s unit tests (hand-written
 //! `TypeDef`s), this exercises the whole "declared type string, as `pg_dump`
 //! actually wrote it, resolved against that same dump's `CREATE TYPE` list"
@@ -31,7 +31,7 @@ fn resolve_table(meta: &DumpMetadata, qualified: &str) -> pgdump_query::Resolved
         db.tables.get(qualified).unwrap().iter().map(|c| c.name.clone()).collect();
     // No census: this file pins what the *DDL alone* resolves to, which is
     // the optimistic type every array column starts from
-    // (`docs/design/architecture.md`, "The array shape census" — consuming
+    // (`docs/design/decisions.md`, "D35" — consuming
     // one is `tests/census.rs`'s subject).
     resolve_columns(qualified, &cols, Some(meta), db.name.as_deref(), SchemaMode::Typed, &[])
 }
@@ -372,7 +372,7 @@ async fn an_oid_column_resolves_unsigned() {
 }
 
 /// The two canonical extension names, on the fields of real columns
-/// (`docs/design/architecture.md`, "Type resolution"). What a consumer reads
+/// (`docs/design/decisions.md`, "Type resolution and decoders"). What a consumer reads
 /// is the metadata, so that is what is asserted — and `arrow.json`'s empty
 /// metadata value is part of the spelling, not an accident.
 ///

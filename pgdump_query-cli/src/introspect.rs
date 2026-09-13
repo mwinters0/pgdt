@@ -21,7 +21,7 @@
 //! What each instrument sees, what it is blind to and what it costs is
 //! `docs/design/measurements.md`, "What an instrument can see"; this
 //! mechanism's own section, with what each line means and what it refused, is
-//! `docs/design/architecture.md`, "What the binary can report about itself".
+//! `docs/design/decisions.md`, "D13".
 //!
 //! # What it reports, and why none of it needs a sampler
 //!
@@ -132,7 +132,7 @@ impl Drop for AtExit {
 ///
 /// A write that fails says so on stderr. That is an error, not the report:
 /// the reader's own account of a missing file is what
-/// `docs/design/architecture.md`, "What the binary can report about itself",
+/// `docs/design/decisions.md`, "D13",
 /// describes, and a silent failure is the one outcome it cannot tell from a
 /// build without the feature.
 pub fn report() {
@@ -253,8 +253,7 @@ mod enabled {
     /// whole process, C allocations included. Their difference is decoder
     /// working set plus bookkeeping plus retention, and reading it as
     /// retention alone is the mistake [`SCOPE_NOTE`] exists to stop — see
-    /// `docs/design/architecture.md`, "What the binary can report about
-    /// itself".
+    /// `docs/design/decisions.md`, "D13".
     ///
     /// The note's lines carry no `=`, so `measure.parse_reported` ignores
     /// them exactly as it ignores the XML below.
@@ -271,7 +270,7 @@ mod enabled {
 
     /// What the two scopes mean, in the report itself rather than only in the
     /// document that explains it. The number is `XZ_DECODE_FOOTPRINT`
-    /// (`docs/design/architecture.md`, "The compressed source").
+    /// (`docs/design/decisions.md`, "The compressed source and the cache").
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
         "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",

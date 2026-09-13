@@ -1,5 +1,5 @@
 //! Column projection: what a query materializes, and what it therefore
-//! never decodes (`docs/design/architecture.md`, "Projection").
+//! never decodes (`docs/design/decisions.md`, "D28").
 //!
 //! The library-level tests only: everything here drives `table_stream`
 //! directly. The flags are pinned separately, in

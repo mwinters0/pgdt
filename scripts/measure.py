@@ -1327,8 +1327,7 @@ INPUTS["control_xz128"] = InputSpec(
 #: single offset stands for the file; 20 GB yields 15.70x, a little denser than
 #: the middle. What that costs is confined to the absolute rates -- the scaling
 #: curve is a within-leg ratio and barely moves -- and it is why the ratio is
-#: gated rather than assumed (`docs/design/architecture.md`, "The compressed
-#: source").
+#: gated rather than assumed (`docs/design/decisions.md`, "The compressed source and the cache").
 KOJI_XZ = _env(
     "PGDQ_KOJI_XZ", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump.multistream.xz"
 )
@@ -1901,7 +1900,7 @@ def predicate_expr(shape: str) -> str:
     """The `--where` expression one shape asks for.
 
     Distinct literals rather than one repeated, so the tree really is N terms:
-    nothing folds two terms (`architecture.md`, "Predicates"), but a table
+    nothing folds two terms (`decisions.md`, "Predicates"), but a table
     whose rows differ only in how often one term is repeated invites the
     reader to wonder."""
     if shape not in PREDICATE_SHAPES:
@@ -1951,8 +1950,8 @@ DECODE_BASELINE = 1
 #: `POOL_DEPTH` clamps `BufferPool::slots()` to four and the interior split
 #: grants `MayWait`, so a fifth fused worker on a plain file waits; the rows
 #: above four keep that arrangement in the table. What the wait costs them is
-#: not separated from anything else they pay (`docs/design/architecture.md`,
-#: "What parallelism buys, and where it stops").
+#: not separated from anything else they pay (`docs/design/decisions.md`,
+#: "D25").
 PARALLEL_JOBS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 
 #: The row every other parallel row is a ratio against: `--jobs 1`, which the
@@ -2147,7 +2146,7 @@ LIBRARY_DEFAULT_BUDGET = 64 << 20
 #: `DEFAULT_MEMORY_BUDGET`**, because the quantity this axis publishes is a
 #: *difference* from the number stated and one reading of it cannot say whether
 #: the difference is a constant or a fraction
-#: (`docs/design/architecture.md`, "Execution model and API surface").
+#: (`docs/design/decisions.md`, "I/O, memory and parallelism").
 #:
 #: **What the axis shows needs all four.** A plain source reads flat across
 #: them, the budget binding almost nothing there; a block-decoding `.xz` rises
@@ -2361,8 +2360,7 @@ LIBRARY_MEMORY_RESERVE = 384 << 20
 #: 24 MiB blocks and 142.0 MiB at 128, and this is the worst rounded up to a
 #: 64 MiB step (`rederived_unpooled_bound`), about 17 MiB above it. The
 #: published `reserve` sitting reads 4.7–179.5 MiB, which the same arithmetic
-#: rounds to 192 MiB (`docs/design/architecture.md`, "Execution model and API
-#: surface").
+#: rounds to 192 MiB (`docs/design/decisions.md`, "I/O, memory and parallelism").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
 
@@ -2621,8 +2619,8 @@ def rederived_unpooled_bound(worst_unnamed: float) -> int:
     over the reserve constant's five-build grid, the next step up being 256 —
     re-done over whatever sitting is in hand, which is why a cell above the
     bound is a finding rather than a refutation: the re-derivation is arithmetic
-    over readings already taken, not a re-take (`docs/design/architecture.md`,
-    "Execution model and API surface").
+    over readings already taken, not a re-take (`docs/design/decisions.md`,
+    "I/O, memory and parallelism").
     """
     steps = (max(0, int(worst_unnamed)) + UNPOOLED_BOUND_STEP - 1) // UNPOOLED_BOUND_STEP
     return max(1, steps) * UNPOOLED_BOUND_STEP
@@ -3015,8 +3013,7 @@ def _script(command: str) -> str:
         # `integer` column is `Error::PredicateValueDecode` before the first
         # row; and the zero-copy path is the one this lever is read against,
         # since `strings` is where the field split and the walk are most of
-        # what the library does (`architecture.md`, "The library's own per-row
-        # budget", whose split-and-walk and decode rows do not move with the
+        # what the library does (`decisions.md`, "D29", whose split-and-walk and decode rows do not move with the
         # mode).
         expr = predicate_expr(command.removeprefix("query-where-"))
         return (
@@ -4496,7 +4493,7 @@ class Figure:
     #: `depends` is the edge into a figure -- what invalidates it; this is the
     #: edge out -- what a moved figure invalidates. Both exist for the same
     #: reason: "someone will notice" is not a mechanism, and the doc set has
-    #: already drifted this way (`architecture.md` quotes 4003 -> 195 saves and
+    #: already drifted this way (`decisions.md` quotes 4003 -> 195 saves and
     #: a 19.7 s map where `measurements.md`'s table says 103 and 18.62).
     quoted_by: tuple[str, ...] = ()
     run: Callable[[Session], str] = field(default=lambda s: "")
@@ -5066,8 +5063,7 @@ def run_per_block_quadratic(session: Session) -> str:
     commits, so it charged 453 commits of unrelated work to the throttle while
     the section conceded only that it was "a whole-commit comparison". What the
     throttle and its gate bought is a settled historical fact and is recorded as
-    one beside the mechanism (`architecture.md`, "`parse` resumes, and saves as
-    it goes"), which costs a sentence rather than a build with no expiry
+    one beside the mechanism (`decisions.md`, "D63"), which costs a sentence rather than a build with no expiry
     condition on it."""
     figure = "per-block-quadratic"
     specs = [
@@ -5705,7 +5701,7 @@ def run_xz_decode_scaling(session: Session) -> str:
 #: Plain against `.xz` is whether there is a decoder in front of the scan;
 #: `parse` against a typed `query` is discovery against extraction. The rule
 #: the design argues from is one line over those two — *parallelize what is CPU-bound*
-#: (`docs/design/architecture.md`, "What parallelism buys, and where it stops").
+#: (`docs/design/decisions.md`, "D25").
 #: A table missing a column cannot check that rule; it would confirm whichever
 #: half it kept.
 PARALLEL_LEGS: tuple[tuple[str, str, str], ...] = (
@@ -5811,12 +5807,12 @@ def run_parallel_scan_throughput(session: Session) -> str:
         "`POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a "
         "worker wait for one, so a fifth fused worker on a plain source waits. What that "
         "wait costs the rows above four is not separated from anything else they pay "
-        '(`docs/design/architecture.md`, "What parallelism buys, and where it stops").\n\n'
+        '(`docs/design/decisions.md`, "D25").\n\n'
         + _substream_note()
         + f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no row is budget-"
         "clamped.** A compressed reader is charged its block, the chunk buffer and the "
         "decoder's own retention, and the readers together the block pool's retention list "
-        '(`docs/design/architecture.md`, "Execution model and API surface"), so a smaller '
+        '(`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller '
         "budget would hold the widest `.xz` rows below the twenty-four they are labelled.\n"
     )
     return table + notes + "\n" + _per_rep(figure, session, specs)
@@ -5835,7 +5831,7 @@ def _substream_note() -> str:
         "table states per cell rather than footnotes once.** `plan_partitions` caps a "
         "query's sub-stream count at `--parallel-memory` divided by what one sub-stream "
         "costs to read plus what its held batch pins "
-        '(`docs/design/architecture.md`, "Execution model and API surface") — a budget '
+        '(`docs/design/decisions.md`, "I/O, memory and parallelism") — a budget '
         "the *harness* chose, not a ceiling the library ships. "
     )
     if not QUERY_SUBSTREAM_CAP:
@@ -7315,7 +7311,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="census-brace-free",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="The census on brace-free rows costs 8% of a warm scan",
@@ -7328,7 +7324,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="census-arrays",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="The census on array-bearing rows more than triples a warm scan",
@@ -7343,7 +7339,7 @@ FIGURES: list[Figure] = [
         quoted_by=(
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
@@ -7365,7 +7361,7 @@ FIGURES: list[Figure] = [
         quoted_by=(
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
@@ -7392,7 +7388,7 @@ FIGURES: list[Figure] = [
         id="scan-throughput-nvme",
         quoted_by=(
             "docs/design/pg-dump-compatibility.md",
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
@@ -7411,7 +7407,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="chunk-size",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="What the read chunk size is worth",
@@ -7447,7 +7443,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="cross-file-floor",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
@@ -7467,7 +7463,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="per-block-quadratic",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
@@ -7498,7 +7494,7 @@ FIGURES: list[Figure] = [
         #: coincide in it. That half is `rss-attribution`'s, which separates
         #: them by stopping a leg at the preamble.
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/manual/dump-inspection.md",
             "README.md",
             "pgdump_query/src/io.rs",
@@ -7515,7 +7511,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="map-only",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
@@ -7546,13 +7542,13 @@ FIGURES: list[Figure] = [
         ),
         run=run_preamble_prepass,
     ),
-    # `quoted_by` carries `architecture.md` because the rejected viewing-builder
+    # `quoted_by` carries `decisions.md` because the rejected viewing-builder
     # paragraph reads this table's view control as the floor its bound is
     # arithmetic on — a consumer nothing declared until 7.14 moved the control.
     Figure(
         id="nested-decode-micro",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
         ),
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
@@ -7566,7 +7562,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="projection-widths",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="What a column costs: five projection widths over one file",
@@ -7584,7 +7580,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="predicate-terms",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="What a filter term costs, and how much of it is the walk to its field",
@@ -7602,7 +7598,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="allocator",
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         section="Which allocator a figure was taken under",
@@ -7640,7 +7636,7 @@ FIGURES: list[Figure] = [
             *GEN_PERF,
         ),
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
         ),
         warm_inputs=("control_xz", "koji_xz"),
@@ -7669,11 +7665,11 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # `architecture.md`'s "What parallelism buys, and where it stops"
+        # `decisions.md`'s "D25"
         # reads all four of this figure's legs against the rule the design
         # argues from, two of which do not behave as the arithmetic projected,
         # so a move here is a move of what that section concludes.
-        quoted_by=("docs/design/architecture.md",),
+        quoted_by=("docs/design/decisions.md",),
         warm_inputs=("control", "control_xz"),
         memory=PARALLEL_MEMORY,
         run=run_parallel_scan_throughput,
@@ -7750,7 +7746,7 @@ FIGURES: list[Figure] = [
         #: sentence carries a second claim — that nothing accumulates per byte
         #: — which is `peak-rss`'s, so both figures name that file.
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/status/STATUS.md",
             "docs/manual/dump-inspection.md",
         ),
@@ -7831,7 +7827,7 @@ FIGURES: list[Figure] = [
         # claim that a flagless scan stays inside its allocation are all read
         # off this table.
         quoted_by=(
-            "docs/design/architecture.md",
+            "docs/design/decisions.md",
             "docs/manual/dump-inspection.md",
             "docs/status/STATUS.md",
         ),
@@ -9836,7 +9832,7 @@ def cmd_profile() -> int:
 # **libc-level** half of the instrument pair. `introspect.rs`'s counting
 # `#[global_allocator]` intercepts Rust's `GlobalAlloc` and nothing else, so
 # every byte `liblzma` asks for is invisible to it and fully present in RSS
-# (`architecture.md`, "What the binary can report about itself"). heaptrack
+# (`decisions.md`, "D13"). heaptrack
 # hooks `malloc`, which sees C and Rust alike and is the layer that stays
 # correct as more C is vendored.
 #

@@ -3,7 +3,7 @@
 //! functions write them inside a single `COPY` field, and as its `*_in`
 //! functions read what a user typed.
 //!
-//! Pure, synchronous, no I/O and no Arrow — see `docs/design/layering.md`, L2.
+//! Pure, synchronous, no I/O and no Arrow — see `docs/design/decisions.md`, L2.
 //! Like `crate::decode`, every function here works on the *already
 //! COPY-unescaped* text `crate::copy::decode_field` returns, and every
 //! `render_*` is the exact inverse of its `decode_*`: feeding it a value
@@ -60,7 +60,7 @@
 //!
 //! The separator is hardcoded to `,`. An array whose element type sets a
 //! different `typdelim` (`box`, or any C-level base type) is not decoded as an
-//! array at all — see `docs/design/architecture.md`, "Type resolution".
+//! array at all — see `docs/design/decisions.md`, "Type resolution and decoders".
 
 use std::borrow::Cow;
 

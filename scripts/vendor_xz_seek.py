@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Sync the frozen, read-only copy of `xz-seek` at vendor/xz-seek/.
 
-This repo depends on `xz-seek` (docs/design/architecture.md, "The compressed
-source") before that crate is published: this repo is its first
+This repo depends on `xz-seek` (docs/design/decisions.md, "The compressed source and the cache") before that crate is published: this repo is its first
 real-world consumer, and the interface is vetted by being used rather than
 frozen into a version and discovered. A path dependency onto the sibling
 working tree was rejected there -- it breaks `cargo check` on any checkout
@@ -171,7 +170,7 @@ and arrives at the next sync, never patched in this copy directly. Re-sync
 with `cd scripts && uv run vendor_xz_seek.py`.
 
 `pgdump_query` names this copy as a path dependency (see
-docs/design/architecture.md, "The compressed source"), and re-takes it as
+docs/design/decisions.md, "The compressed source and the cache"), and re-takes it as
 upstream moves rather than waiting for a consumer that needs the newer work.
 So a sync can bring in code nothing in this tree exercises: it is finished by
 `cargo check --workspace` and `cargo test --workspace`, not by this script.

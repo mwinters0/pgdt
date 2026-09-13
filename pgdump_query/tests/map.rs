@@ -41,7 +41,7 @@ async fn every_fixture_tiles_exactly() {
 /// `build_map` drives, fed from the same scan pass as `build_index`'s own
 /// `CopyBlock`/metadata extraction — no second pass over the file, and
 /// `DumpIndex::blocks()` is a filter over the result rather than a second
-/// stored structure (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact"). This pins the two
+/// stored structure (`docs/design/decisions.md`, "D34"). This pins the two
 /// producers from drifting apart across every fixture shape, including the
 /// hand-written `edge_cases.sql` this file's other tests single out for its
 /// TOC-comment-less dollar-quoted functions.
@@ -60,7 +60,7 @@ async fn build_index_spans_match_build_map_exactly() {
 /// version-header staging across that boundary, and `--binary-upgrade` enum
 /// label folding included. This is the equivalence this slice's cutover
 /// (removing the separate `PreambleBuilder` pass from `build_index`) rests
-/// on; see `docs/design/architecture.md`.
+/// on; see `docs/design/decisions.md`.
 #[tokio::test]
 async fn metadata_from_spans_matches_preamble_builder_exactly() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
@@ -76,7 +76,7 @@ async fn metadata_from_spans_matches_preamble_builder_exactly() {
 /// fixture — so it's exactly the "statement-grammar fallback, no TOC
 /// header" path, and its two dollar-quoted `CREATE FUNCTION`s (including
 /// one whose adversarial body contains lines that look exactly like `COPY`
-/// headers, `docs/design/architecture.md`'s dollar-quote-tracking
+/// headers, `docs/design/decisions.md`'s dollar-quote-tracking
 /// motivation) still have to tile.
 #[tokio::test]
 async fn edge_cases_dump_tiles_exactly() {
@@ -295,7 +295,7 @@ async fn create_table_span_carries_name_and_columns() {
 
 /// A trailing `ALTER TABLE ... OWNER TO` (no TOC comment of its own) tiles
 /// as its own `Unparsed` span, immediately adjacent to its table's span —
-/// no grouping (`docs/design/architecture.md`, "TOC enrichment") — but it
+/// no grouping (`docs/design/decisions.md`, "D31") — but it
 /// **inherits** `objects.widgets`' own TOC header rather than carrying
 /// `None`: the two spans are attributed to the same entry, and only the
 /// first carries the header text itself.
@@ -404,7 +404,7 @@ async fn tiling_issue_reports_a_short_final_span() {
 }
 
 /// An `Unscanned` tail is a legitimate, tiling shape — a prefix-covering
-/// partial scan (`docs/design/architecture.md`, "The file map") is not exempt from the invariant.
+/// partial scan (`docs/design/decisions.md`, "D30") is not exempt from the invariant.
 #[tokio::test]
 async fn an_unscanned_tail_tiles_cleanly() {
     use pgdump_query::{Span, SpanBody as Body};
@@ -439,7 +439,7 @@ async fn empty_span_list_against_a_zero_length_scan_tiles_cleanly() {
 /// Span text is **sliced from the file by offset**, so it survives the one
 /// thing an accumulator cannot: a dollar-quoted function body, for which
 /// `crate::scan` emits no `Event::Line` at all
-/// (`docs/design/architecture.md`, "Span text"). If text were accumulated from events,
+/// (`docs/design/decisions.md`, "D30"). If text were accumulated from events,
 /// every function body in the file would be missing from it.
 #[tokio::test]
 async fn span_text_includes_dollar_quoted_bodies_events_never_surface() {
@@ -570,7 +570,7 @@ async fn a_header_less_dump_degrades_to_one_span_per_object() {
 /// `-- Name: widgets; Type: TABLE; Schema: objects; Owner: postgres`) fills
 /// its span's `toc` — the TOC's own (unqualified) name alongside
 /// `SpanBody::Table`'s schema-qualified one
-/// (`docs/design/architecture.md`, "TOC enrichment").
+/// (`docs/design/decisions.md`, "D31").
 #[tokio::test]
 async fn a_real_toc_header_fills_owner_kind_and_schema() {
     let path = objects_fixture(18, "default");
@@ -600,7 +600,7 @@ async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
 }
 
 /// `build_index` reports the TOC-coverage figure as a file-level `Info`
-/// diagnostic (`docs/design/architecture.md`, "TOC enrichment"): every span
+/// diagnostic (`docs/design/decisions.md`, "D31"): every span
 /// accounted for in `spans`, and a strictly higher `attributed` count than
 /// the number
 /// of spans that carry their *own* header, because every follow-on statement
@@ -649,8 +649,8 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
     assert_eq!(coverage.0, 0, "tests/data/edge_cases.sql has no TOC comments at all");
 }
 
-/// The cross-reference set (`docs/design/architecture.md`,
-/// "TOC enrichment") over a real fixture: `postgres` (every object's
+/// The cross-reference set (`docs/design/decisions.md`,
+/// "D31") over a real fixture: `postgres` (every object's
 /// owner, via both `Span::toc.owner` and the file's many `ALTER ... OWNER
 /// TO`) and `fixture_reader` (the `GRANT`/`ALTER DEFAULT PRIVILEGES`
 /// grantee) are both present; `PUBLIC` — also a real grantee in this fixture

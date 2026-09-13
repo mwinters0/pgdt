@@ -911,7 +911,7 @@ docs/
     roadmap-P2.3-resolution-notes.md               deleted at P2's wrap
     roadmap-P2-typed-columns-notes.md              consolidated at wrap
     roadmap-P7-scan-performance-inbox.md           filed early, drained at P7's grilling
-    layering.md                                    standing constraint
+    decisions.md                                    standing constraint
     postgres-invariants.md                         assumptions register
     pg-dump-compatibility.md                       coverage matrix
   status/
@@ -1030,7 +1030,7 @@ an absent notes doc cannot be told from a skipped wrap, and "slice notes
 surviving past the phase wrap" is a smell someone will look for.
 
 **After a keystone**, the `roadmap-P<N>-*` files for completed phases are
-gone and `architecture.md` stands in their place; `roadmap.md` carries only
+gone and `decisions.md` stands in their place; `roadmap.md` carries only
 goals, standing policies and the phases still ahead. The standing-constraint,
 assumptions-register, compatibility and manual files are unaffected — they were
 already filed by subject, which is why they survive a transition that removes
@@ -1158,7 +1158,7 @@ reference, the standing rules, and — most importantly — **pointers to the do
 with a trigger attached to each**. Not a bibliography: a pointer says *when* to
 read the thing.
 
-> `docs/design/layering.md` assigns every module to one of four layers. **Read
+> `docs/design/decisions.md` assigns every module to one of four layers. **Read
 > it before adding a module, moving code between modules, or wiring a concern
 > across existing ones** — it is a standing constraint, not a phase.
 

@@ -45,8 +45,7 @@ pub struct RowGroupStats {}
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
 /// list, user-defined type definitions. Populated by [`build_index`] via
-/// `crate::preamble` (`docs/design/architecture.md`, "The preamble grammar
-/// and `DumpMetadata`").
+/// `crate::preamble` (`docs/design/decisions.md`, "D36").
 pub use crate::preamble::DumpMetadata;
 
 /// The most dimensions PostgreSQL can give an array — `MAXDIM`, 6 in every
@@ -57,7 +56,7 @@ pub use crate::preamble::DumpMetadata;
 pub const MAX_ARRAY_DIMS: u8 = 6;
 
 /// What one column's array values look like within one `COPY` block — the
-/// shape census (`docs/design/architecture.md`, "The array shape census").
+/// shape census (`docs/design/decisions.md`, "D35").
 ///
 /// Recorded per column because an array's dimensionality belongs to the
 /// *value* (I21), so a column's Arrow type cannot be settled from the DDL
@@ -141,7 +140,7 @@ impl ArrayShape {
 /// The census of several blocks read as one — what a table spanning more than
 /// one `COPY` block (I2) resolves against, and what a query's schema commits
 /// to over exactly the blocks it will replay
-/// (`docs/design/architecture.md`, "The array shape census").
+/// (`docs/design/decisions.md`, "D35").
 ///
 /// The result is as long as the longest census in `blocks`; a column absent
 /// from a shorter one contributes nothing, which is what a default
@@ -170,7 +169,7 @@ pub struct CopyBlock {
     /// into `metadata.databases`: an incremental scan's metadata can hold
     /// just one entry no matter how many databases the file contains, so an
     /// index would be unresolvable in exactly the case this field exists for
-    /// (`docs/design/architecture.md`, "One target per query").
+    /// (`docs/design/decisions.md`, "D49").
     pub database: Option<String>,
     /// Absolute file offset of the `C` in `COPY`.
     pub header_offset: u64,
@@ -186,13 +185,13 @@ pub struct CopyBlock {
     /// root rather than the partition whose rows follow, and **other blocks
     /// in this same dump carry the same header name**. Stored rather than
     /// concluded from: it is a line the dump wrote, which is what
-    /// `layering.md` rule 5 asks L1 to keep.
+    /// `decisions.md` rule 5 asks L1 to keep.
     ///
     /// `crate::stream::table_stream` reads it to decide whether a cold query
     /// may stop once the queried table's block closes, or must run to EOF
     /// because more blocks can share the name — the blocks are *not*
     /// adjacent, so nothing cheaper than EOF enumerates them
-    /// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes").
+    /// (`docs/design/decisions.md`, "D48").
     pub partition_root: Option<String>,
     /// Reserved — see [`SparseRowIndex`]. Always `None`.
     pub sparse_index: Option<SparseRowIndex>,
@@ -215,7 +214,7 @@ pub struct CopyBlock {
 }
 
 /// The full file map discovered in a dump, in file order
-/// (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact"). [`DumpIndex::blocks`] is a derived
+/// (`docs/design/decisions.md`, "D34"). [`DumpIndex::blocks`] is a derived
 /// filter over it, not a second stored structure.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpIndex {
@@ -229,12 +228,12 @@ pub struct DumpIndex {
     /// populates it. A derived view over `spans`
     /// (`crate::preamble::dump_metadata_from_spans`), computed once when the
     /// scan that produced `spans` finishes rather than stored twice — see
-    /// `docs/design/architecture.md`, "`DumpIndex`: one owner per fact".
+    /// `docs/design/decisions.md`, "D34".
     pub metadata: Option<DumpMetadata>,
     /// Roles referenced anywhere the scan has reached — the TOC `Owner:`
     /// field, `ALTER ... OWNER TO`, and `GRANT`/`REVOKE`/`ALTER DEFAULT
-    /// PRIVILEGES FOR ROLE` (`docs/design/architecture.md`,
-    /// "TOC enrichment"). `PUBLIC` is never included. Flat and per-file
+    /// PRIVILEGES FOR ROLE` (`docs/design/decisions.md`,
+    /// "D31"). `PUBLIC` is never included. Flat and per-file
     /// — a per-database view is a filter over `Span::database`, not a second
     /// stored structure. Persisted: unlike `metadata`/`diagnostics`, there's
     /// no cheaper way to answer "which roles does this dump need" than
@@ -261,7 +260,7 @@ pub struct DumpIndex {
 impl DumpIndex {
     /// The `COPY` blocks among `spans`, in file order — a filtered view, not
     /// a stored field, so a block's byte offsets have exactly one owner
-    /// (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
+    /// (`docs/design/decisions.md`, "D34").
     pub fn blocks(&self) -> impl Iterator<Item = &CopyBlock> {
         self.spans.iter().filter_map(|s| match &s.body {
             SpanBody::Data(DataBlock::Copy(block)) => Some(block),
@@ -292,7 +291,7 @@ impl DumpIndex {
     /// speak for the census of a block past its frontier. It does *not*
     /// qualify a **streamed** schema: that commits over exactly the blocks
     /// it will replay, every one of which is in the map and so censused
-    /// (`docs/design/architecture.md`, "The array shape census").
+    /// (`docs/design/decisions.md`, "D35").
     ///
     /// The caller always has `size` already — `crate::stream` stats the
     /// source before mapping, and the CLI before listing.
@@ -305,7 +304,7 @@ impl DumpIndex {
 /// is fed the same [`Event`] stream as `CopyBlock` discovery, so this is one
 /// pass, not two. `DumpIndex::metadata` is then [`crate::preamble::dump_metadata_from_spans`]
 /// over the result, and [`DumpIndex::blocks`] a filter over it — neither is a
-/// second scan (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
+/// second scan (`docs/design/decisions.md`, "D34").
 pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
     let mut spans = Builder::new();
 
@@ -336,7 +335,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
 }
 
 /// Run the tiling check over a finished map and turn any failure into a
-/// diagnostic (`docs/design/architecture.md`, "Testing philosophy").
+/// diagnostic (`docs/design/decisions.md`, "D73").
 ///
 /// A hole means *we* have a bug, not that the dump is bad, so the map is
 /// still returned: refusing to answer "which roles does this file need" over
@@ -354,7 +353,7 @@ pub(crate) fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagn
 /// statement that inherited its governing entry's header counts the same as
 /// one whose own comment carried it, per "Span boundaries: statement-anchored,
 /// object-attributed, greedy") against how many spans exist at all
-/// (`docs/design/architecture.md`, "TOC enrichment"). Always produced, never conditionally — a
+/// (`docs/design/decisions.md`, "D31"). Always produced, never conditionally — a
 /// `pg_dump`-compatible file with zero TOC comments is a normal, reported
 /// state (the map running in header-less degraded mode), not an error, so
 /// `attributed == 0` is a legitimate value here rather than something this
@@ -371,7 +370,7 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// `crate::cache::status_from_file`, which reads it off a table just loaded
 /// from a persisted cache — one function so "does this table warrant the
 /// warning" is answered the same way regardless of which of those handed it
-/// the table (`docs/design/architecture.md`, "The compressed source").
+/// the table (`docs/design/decisions.md`, "The compressed source and the cache").
 pub(crate) fn non_seekable_compression_diagnostic(
     table: Option<&xz_seek::SeekTable>,
 ) -> Option<Diagnostic> {
@@ -391,15 +390,13 @@ pub(crate) fn non_seekable_compression_diagnostic(
 /// either — so this one offset always closes out the *first* database's
 /// preamble, incidentally finishing any earlier, table-less database's too.
 ///
-/// This bounded prepass (`docs/design/architecture.md`, "Bounded
-/// preamble-only reads") exists so a scan that may stop anywhere still states
+/// This bounded prepass (`docs/design/decisions.md`, "D30") exists so a scan that may stop anywhere still states
 /// this metadata. `crate::stream::table_stream` needs it because the query's
 /// own target table may start later in the file, or never appear at all;
 /// `crate::stream::map_file` needs it because an interrupted `parse` would
 /// otherwise bank blocks with no DDL behind them, and every column of them
 /// would report `not declared` — the final answer — where the truth is
-/// "finish the parse". See also `docs/design/architecture.md`, "The preamble
-/// grammar and `DumpMetadata`".
+/// "finish the parse". See also `docs/design/decisions.md`, "D36".
 ///
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (per
 /// `crate::map::Builder` — no `Data` span among them, since the scan stops at
@@ -422,7 +419,7 @@ pub(crate) async fn scan_preamble(
             // header, `finish` below must not swallow it either — since
             // `map::Builder` absorbs such a comment straight into
             // the `Data` span a later, unfed-truncated scan produces
-            // (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads"), so retreating to the comment's own start
+            // (`docs/design/decisions.md`, "D33"), so retreating to the comment's own start
             // leaves it for that scan rather than guessing it here as its
             // own `Framing`/`Unparsed` span.
             end = spans.pending_comment_start().unwrap_or(start.header_offset);
@@ -464,8 +461,8 @@ pub(crate) async fn scan_preamble(
     Ok((metadata, spans, end, roles, tablespaces))
 }
 
-/// Answer from the preamble alone (`docs/design/architecture.md`,
-/// "CLI surface", `--preamble-only`): reuse a cache's already-known metadata when
+/// Answer from the preamble alone (`docs/design/decisions.md`,
+/// "The CLI", `--preamble-only`): reuse a cache's already-known metadata when
 /// present, falling back to a fresh [`scan_preamble`] otherwise and
 /// persisting the result when the cache is enabled (a no-op when it isn't —
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
@@ -477,13 +474,13 @@ pub(crate) async fn scan_preamble(
 /// is a genuinely partial scan (unlike `build_index`, which always reaches
 /// EOF), so it's the one place today that produces that variant for real
 /// rather than only in `crate::map`'s own unit tests
-/// (`docs/design/architecture.md`, "The file map").
+/// (`docs/design/decisions.md`, "D30").
 ///
 /// Also returns whatever [`CacheMode::load`] reported on the loaded index
 /// (e.g. a `CacheMtimeChanged` warning) — the one library entry point that
 /// answers with `DumpMetadata` alone rather than a whole `DumpIndex`, so its
 /// diagnostics have nowhere else to travel back to the caller
-/// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
+/// (`docs/design/decisions.md`, "The file map and the preamble").
 pub async fn preamble_only(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
@@ -495,7 +492,7 @@ pub async fn preamble_only(
         // so the preamble is scanned from scratch, and nothing at that path
         // is worth keeping. Spelled out rather than wildcarded so a reason
         // added later has to be answered here rather than falling through
-        // (`docs/design/architecture.md`, "The cache").
+        // (`docs/design/decisions.md`, "The compressed source and the cache").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable

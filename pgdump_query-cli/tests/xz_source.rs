@@ -1,6 +1,6 @@
 //! `pgdq parse` / `query` / `info` against `.xz` input, end to end, and
 //! differential parity against the same content read plain
-//! (`docs/design/architecture.md`, "Testing philosophy").
+//! (`docs/design/decisions.md`, "D73").
 //!
 //! `pgdump_query/tests/cache.rs` covers the same ground at the library level,
 //! through `open_local`/`build_index` directly. This file is the only one that
@@ -211,7 +211,7 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
 
     // And the warning itself is D2's, in its rendered text form — the
     // human-readable side of the same diagnostic, naming the cause and the
-    // remedy (`docs/design/architecture.md`, "The compressed source").
+    // remedy (`docs/design/decisions.md`, "The compressed source and the cache").
     let text = stdout_of(&run(&["info", "--source", xz_path.to_str().unwrap(), "--detail"]));
     assert!(text.contains("no seek structure"), "{text}");
     assert!(text.contains("xz -T0"), "{text}");
@@ -240,7 +240,7 @@ fn query_widgets(source: &Path, extra: &[&str]) -> std::process::Output {
 /// It also exercises the mapping pass's own backward read for the
 /// non-seekable fixture: `table_stream`'s replay re-reads the target block
 /// after the mapping pass has already walked past it
-/// (`docs/design/architecture.md`, "The compressed source" — one of the
+/// (`docs/design/decisions.md`, "The compressed source and the cache" — one of the
 /// library's two backward-reading call sites), which for a single-block `.xz`
 /// file is the decode-from-zero path. A wrong answer here
 /// would mean that path decodes the wrong bytes, not just that it is slow.
@@ -318,13 +318,13 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
 /// A cache whose compression claim the file contradicts is refused by all
 /// three commands, and refused **having read nothing**: no stream-footer walk
 /// is spent reaching an error that was always coming
-/// (`docs/design/architecture.md`, "The compressed source").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// `parse` used to take the other branch, deleting the cache and rescanning,
 /// because it was about to overwrite that path anyway. It refuses with the
 /// other two now: the deletion and the overwrite are the same act one step
 /// apart, and the library replaces neither on its own
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// The sentence is this condition's own. It borrowed `Unreadable`'s —
 /// "… is not a pgdq cache — check the path, or run `pgdq parse`" — until the
@@ -362,7 +362,7 @@ fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
 /// The way out is the user's, not the tool's: remove the cache that does not
 /// describe this file and `parse` scans it as a cold file would. There is no
 /// override flag, which is what keeps the refusal from being set once in a
-/// script and never reconsidered (`docs/design/architecture.md`, "The cache").
+/// script and never reconsidered (`docs/design/decisions.md`, "The compressed source and the cache").
 #[test]
 fn parse_scans_once_the_refused_cache_is_removed() {
     let (_dir, path) = seekable_xz();
@@ -388,7 +388,7 @@ fn parse_scans_once_the_refused_cache_is_removed() {
 /// another stored size is settled by the cache path and a `stat`, so all three
 /// commands report it without opening the source — and an `.xz` source is what
 /// makes that worth doing, its open being a walk of every stream footer in the
-/// file (`docs/design/architecture.md`, "The compressed source").
+/// file (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// **Proven by a file the walk itself would fail on.** Truncating the fixture
 /// does both things at once: it changes the stored size the cache records, and
@@ -399,8 +399,7 @@ fn parse_scans_once_the_refused_cache_is_removed() {
 ///
 /// Each command keeps the sentence it had: the library's own error for the two
 /// that scan, and for `info` the one that names the two ways out ahead of
-/// `pgdq parse` (`docs/design/architecture.md`, "The CLI's two refusals are
-/// worded as one").
+/// `pgdq parse` (`docs/design/decisions.md`, "D20").
 #[test]
 fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
     let (_dir, path) = seekable_xz();

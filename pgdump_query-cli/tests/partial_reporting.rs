@@ -1,5 +1,5 @@
 //! `pgdq parse` / `pgdq info` end to end — the split this phase drew: **`info`
-//! reads, `parse` scans** (`docs/design/architecture.md`, "CLI surface").
+//! reads, `parse` scans** (`docs/design/decisions.md`, "The CLI").
 //!
 //! These drive the real binary (`CARGO_BIN_EXE_pgdq`) rather than the library,
 //! because what they pin is the *command's* contract: which invocations fail,
@@ -139,7 +139,7 @@ async fn info_against_a_changed_file_says_the_file_changed() {
 /// to load it, get a mismatch, scan, and overwrite the file within its first
 /// throttled save — so aiming `--dqcache` at another file's cache destroyed
 /// an index that was valid for its own input, with nothing said
-/// (`docs/design/architecture.md`, "The cache"). The byte comparison is the
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). The byte comparison is the
 /// half that would fail silently.
 #[tokio::test]
 async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone() {
@@ -170,7 +170,7 @@ async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone()
 /// prints for the size mismatch and all three print for a contradicted
 /// compression claim — and there is no third way out, no `--force` and no
 /// `CacheMode` variant meaning "replace regardless"
-/// (`docs/design/architecture.md`, "The cache"). A refusal that named only one
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). A refusal that named only one
 /// of them would read as a tool with no recourse; one that named a way out the
 /// others do not is the drift this test exists to catch, the wording living in
 /// two crates.

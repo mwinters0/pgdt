@@ -34,7 +34,7 @@ struct Cli {
 }
 
 /// CLI spelling of [`SchemaMode`] — see "Output model" in
-/// `docs/design/architecture.md`.
+/// `docs/design/decisions.md`.
 #[derive(Clone, Copy, Default, clap::ValueEnum)]
 enum CliSchemaMode {
     #[default]
@@ -52,8 +52,7 @@ impl From<CliSchemaMode> for SchemaMode {
 }
 
 /// The two numbers a caller states its parallelism in, shared by the two
-/// scanning commands (`docs/design/architecture.md`, "Execution model and API
-/// surface").
+/// scanning commands (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// **An omitted `--jobs` is the source's own recommendation**, not a constant
 /// here: [`ByteRangeSource::default_workers`] answers the serial path for a
@@ -115,7 +114,7 @@ struct ParallelArgs {
     ///
     /// **On `query` it divides by two terms rather than one**: what a worker
     /// costs to read, plus the 64 MiB a sub-stream's held batch may pin
-    /// (`docs/design/architecture.md`, "Execution model and API surface") —
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism") —
     /// charged on a plain file, where a batch pins read buffers the first term
     /// never counted, and not on a block-decoding `.xz`, whose first term
     /// already counts a decoded block. At 64 MiB — which is what a plain file
@@ -160,7 +159,7 @@ impl ParallelArgs {
     /// this side is already true before the file is touched, so a run says it
     /// first and a mistyped flag is confirmed against the walk it did not
     /// affect rather than after it
-    /// (`docs/design/architecture.md`, "Status output").
+    /// (`docs/design/decisions.md`, "D64").
     fn discover(&self) -> Discovered<'_> {
         self.discover_in(Path::new("/"))
     }
@@ -215,7 +214,7 @@ impl Discovered<'_> {
     ///
     /// **The flags are named as flags here, and nowhere else.** Every other
     /// status line names the arrangement in the library's own vocabulary
-    /// (`docs/design/architecture.md`, "Status output"); this one reports what
+    /// (`docs/design/decisions.md`, "D64"); this one reports what
     /// was *typed*, so the CLI's own spelling is the only one that answers the
     /// question it is printed for.
     fn announce(&self) {
@@ -249,8 +248,7 @@ impl Discovered<'_> {
     /// **The source is asked for both numbers, and the environment caps the
     /// second.** A source's answer can be either because both are downstream
     /// of recognition, which the caller has already paid for by the time it
-    /// has a source to hand here (`docs/design/architecture.md`, "Execution
-    /// model and API surface"); what the *environment* allows is
+    /// has a source to hand here (`docs/design/decisions.md`, "I/O, memory and parallelism"); what the *environment* allows is
     /// `Parallelism::discover_for`'s question, and it is asked only where
     /// `--parallel-memory` is absent. What the resulting budget affords still
     /// binds afterwards, `stream::worker_count` solving every count against it
@@ -286,7 +284,7 @@ impl Discovered<'_> {
     /// serial state carrying one of its own — so `--parallel-memory` is worth
     /// stating beside a serial `--jobs`, which is what buys back a compressed
     /// file's block path without also asking for a second worker
-    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     ///
     /// **Only a resolved-serial arrangement can state no budget**, which is
     /// what lets the status line say `(default)` truthfully there: the CLI's
@@ -342,7 +340,7 @@ impl Discovered<'_> {
 /// What a run resolved its two parallelism numbers to, and where each came
 /// from — the arrangement itself plus the provenance
 /// [`Parallelism`] has nowhere to carry
-/// (`docs/design/architecture.md`, "Status output").
+/// (`docs/design/decisions.md`, "D64").
 ///
 /// **Provenance is the CLI's fact, not the library's.** Whether a number was
 /// typed is knowable only here, and whether a limit was read is knowable only
@@ -434,7 +432,7 @@ impl Resolved {
     /// number to change from a status line that says only what was resolved, so
     /// the CLI appends the provenance — the same [`Resolved::budget_display`]
     /// the mode report prints, so the two cannot part company
-    /// (`docs/design/architecture.md`, "Status output").
+    /// (`docs/design/decisions.md`, "D64").
     ///
     /// **Empty where `--parallel-memory` was stated**, because the note already
     /// names the number that person typed and the recourse is to raise it.
@@ -515,8 +513,7 @@ enum Command {
         /// Scan only the dump's preamble — the dump-level header alone, no
         /// per-block listing or row counts — instead of the whole file. Cost
         /// is independent of dump size regardless of how much `COPY` data
-        /// follows (`docs/design/architecture.md`, "Bounded preamble-only
-        /// reads"). The cache this leaves is a partial one that `pgdq info`
+        /// follows (`docs/design/decisions.md`, "D30"). The cache this leaves is a partial one that `pgdq info`
         /// reads like any other.
         #[arg(long)]
         preamble_only: bool,
@@ -537,7 +534,7 @@ enum Command {
     /// Report what a dump's cache holds. **`info` never scans** — it reads the
     /// cache `pgdq parse` wrote and errors if there is not one, rather than
     /// starting an hours-long scan on your behalf
-    /// (`docs/design/architecture.md`, "CLI surface"). A cache from an
+    /// (`docs/design/decisions.md`, "The CLI"). A cache from an
     /// unfinished scan is reported for as far as it got, with the coverage
     /// stated at the top.
     Info {
@@ -559,8 +556,8 @@ enum Command {
         /// adds the container's shape.
         #[arg(long)]
         detail: bool,
-        /// List every span the map holds (`docs/design/architecture.md`,
-        /// "`DumpIndex`: one owner per fact") — DDL objects
+        /// List every span the map holds (`docs/design/decisions.md`,
+        /// "D34") — DDL objects
         /// and framing included, not just `COPY` blocks — instead of the
         /// per-table listing.
         #[arg(long)]
@@ -570,7 +567,7 @@ enum Command {
         /// the per-`COPY`-block type resolution `--detail` renders as text.
         /// No schema stability is promised — this is a raw dump of our
         /// internal representation, not a supported interchange format
-        /// (`docs/design/architecture.md`, "CLI surface"). Incompatible with
+        /// (`docs/design/decisions.md`, "The CLI"). Incompatible with
         /// `--detail`/`--map`, which format detail this already carries in
         /// full.
         #[arg(long)]
@@ -598,7 +595,7 @@ enum Command {
         /// `column IS NOT NULL`. Repeatable — every term must match, so the
         /// terms are ANDed. `OR`, negation and grouping are `--where`, which
         /// takes an expression over these same terms; giving both flags ANDs
-        /// them (`docs/design/architecture.md`, "Predicates").
+        /// them (`docs/design/decisions.md`, "Predicates").
         ///
         /// Every operator but the two NULL tests compares **typed**: the
         /// filter's value is read with the column's own decoder, so a value
@@ -644,7 +641,7 @@ enum Command {
         /// columns in the order the flags give them, which need not be the
         /// file's. A name the table does not carry is an error, and so is a
         /// repeated one. Omit it entirely for every column
-        /// (`docs/design/architecture.md`, "Projection").
+        /// (`docs/design/decisions.md`, "D28").
         ///
         /// A column that is not projected is never decoded, so projecting a
         /// column away is also the way past a value that fails to decode
@@ -665,8 +662,8 @@ enum Command {
         #[arg(long, conflicts_with = "column")]
         no_columns: bool,
         /// Select which database to query when `table` is ambiguous across
-        /// a multi-`\connect` dump (`docs/design/architecture.md`,
-        /// "One target per query").
+        /// a multi-`\connect` dump (`docs/design/decisions.md`,
+        /// "D49").
         #[arg(long)]
         database: Option<String>,
         /// `typed` (default) resolves column types against the dump's DDL;
@@ -717,7 +714,7 @@ fn scan_options(chunk_size: Option<usize>, parallel: &Resolved) -> ScanOptions {
 /// states are distinct and none of them is spelled the same way:
 /// `--no-columns` is the empty projection (`COUNT(*)`), one or more
 /// `--column` is that list in that order, and neither flag is `None` — every
-/// column (`docs/design/architecture.md`, "Projection").
+/// column (`docs/design/decisions.md`, "D28").
 ///
 /// The two flags cannot both be given: clap's `conflicts_with` refuses that
 /// before this is reached, so `--no-columns` wins here only in a case that
@@ -951,8 +948,7 @@ fn parse_filter_flag(spec: &str) -> Result<Predicate> {
 /// `column<op>value` for any of the six comparison spellings,
 /// `column IS [NOT] DISTINCT FROM value`, or `column IS NULL` /
 /// `column IS NOT NULL` (the worded forms matched case-insensitively — see
-/// `docs/design/architecture.md`, "A filter term is parsed for two
-/// audiences").
+/// `docs/design/decisions.md`, "D60").
 ///
 /// **The `IS` forms are the fallback, not the first test.** An operator
 /// outside quotes is looked for first, and the suffix is only stripped from a
@@ -996,8 +992,7 @@ fn parse_filter(spec: &str) -> Result<Predicate> {
 /// so quotes carry boundary information there, while the shell has already
 /// delimited a `--column` argument. Stripping them here would instead make a
 /// column genuinely named with quote marks unaskable
-/// (`docs/design/architecture.md`, "A filter term is parsed for two
-/// audiences").
+/// (`docs/design/decisions.md`, "D60").
 fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
     let quote = name.chars().next()?;
     if quote != '\'' && quote != '"' {
@@ -1024,7 +1019,7 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
 
 /// Say, once per query and on stderr, which of this query's comparisons do
 /// not answer what PostgreSQL's own operator would
-/// (`docs/design/architecture.md`, "Predicates", the comparison register).
+/// (`docs/design/decisions.md`, "Predicates", the comparison register).
 ///
 /// It is per *term*, not per column: most divergences are divergences of
 /// order alone, so a `text` column filtered with both `<` and `=` warns about
@@ -1038,7 +1033,7 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
 /// handed is filed in `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
 /// One sub-stream's place in `pgdq query`'s k-way merge: at most one batch,
 /// held with the two things a `RecordBatch` does not carry and the printer
-/// needs (`docs/design/architecture.md`, "Partitioned replay").
+/// needs (`docs/design/decisions.md`, "D51").
 ///
 /// **One batch per partition is the whole bound.** Each sub-stream yields in
 /// file order and the sub-streams themselves are in file order, so emitting
@@ -1111,7 +1106,7 @@ fn resume_notice(resumed_from: u64, size: u64) -> Option<String> {
 
 /// Catch `SIGINT` and `SIGTERM` for the duration of a scan, so an interrupted
 /// `pgdq parse` saves what it has instead of throwing it away
-/// (`docs/design/architecture.md`, "`parse` resumes, and saves as it goes").
+/// (`docs/design/decisions.md`, "D63").
 ///
 /// The guard is **cooperative**: the signal sets a flag the mapping loop reads
 /// once per chunk, and the loop persists the index it owns before returning.
@@ -1153,8 +1148,8 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field_into`], so output is byte-identical whether `--schema-mode`
-/// is `typed` or `strings` (`docs/design/architecture.md`,
-/// "CLI surface").
+/// is `typed` or `strings` (`docs/design/decisions.md`,
+/// "The CLI").
 ///
 /// **One buffer for the whole batch.** The line is assembled in a `String`
 /// that is cleared per row and keeps its capacity across the batch, so a
@@ -1193,8 +1188,8 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
 }
 
 /// Wire the library's `tracing` facade to stderr — on by default, uniformly,
-/// for `parse`, `info` and `query` alike (`docs/design/architecture.md`,
-/// "Status output"). A
+/// for `parse`, `info` and `query` alike (`docs/design/decisions.md`,
+/// "D64"). A
 /// per-command default would be a rule the manual has to explain, and gating
 /// on whether stderr is a terminal makes the output depend on invocation
 /// context — which is exactly the case that left the koji verification's
@@ -1220,8 +1215,7 @@ fn init_status_output() {
 /// **A `current_thread` runtime, not a multi-threaded one.** Every unit of work
 /// this binary dispatches is a `spawn_blocking` task — the positioned reads,
 /// the fused decode-and-parse workers, and the sub-streams of a partitioned
-/// replay alike (`docs/design/architecture.md`, "Execution model and API
-/// surface") — so the reactor never runs any of it, and a pool of reactor
+/// replay alike (`docs/design/decisions.md`, "I/O, memory and parallelism") — so the reactor never runs any of it, and a pool of reactor
 /// threads sized from the host's CPU count is threads the work never touches.
 /// The blocking pool tokio creates on demand is what actually carries the
 /// scan, so the process's thread count follows the concurrency dispatched
@@ -1259,8 +1253,8 @@ async fn main() -> Result<()> {
             chunk_size,
             parallel,
         } => {
-            // `parse` is the only scanner (`docs/design/architecture.md`,
-            // "CLI surface"). Reject `--dqcache none` up front, before paying
+            // `parse` is the only scanner (`docs/design/decisions.md`,
+            // "The CLI"). Reject `--dqcache none` up front, before paying
             // for a scan we won't be allowed to persist.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
@@ -1271,7 +1265,7 @@ async fn main() -> Result<()> {
             // cache for some other file, and `parse` refuses it exactly as
             // `info` and `query` do: it would otherwise scan and overwrite
             // it, which is the one thing this library does not do on its own
-            // (`docs/design/architecture.md`, "The cache"). Refused having
+            // (`docs/design/decisions.md`, "The compressed source and the cache"). Refused having
             // read nothing, so no footer walk is spent reaching it — and the
             // same is true of the stored-size mismatch, which `open_for_scan`
             // answers with the library's own error before opening anything.
@@ -1280,7 +1274,7 @@ async fn main() -> Result<()> {
             // neither waits on the file: opening a fresh `.xz` walks its
             // stream footers first, which is 85 s on the koji download, and a
             // mistyped `--parallel-memory` should not go unconfirmed through it
-            // (`docs/design/architecture.md`, "Status output").
+            // (`docs/design/decisions.md`, "D64").
             let stated = parallel.discover();
             stated.announce();
             let source = open_for_scan(&file, &mode)?;
@@ -1348,8 +1342,8 @@ async fn main() -> Result<()> {
                 );
             }
             let Some(file) = file else {
-                // Cache-only mode (`docs/design/architecture.md`,
-                // "The cache"): no live dump file at all, so
+                // Cache-only mode (`docs/design/decisions.md`,
+                // "The compressed source and the cache"): no live dump file at all, so
                 // clap already required `--dqcache` for us.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
                 return info_offline(&path, detail, map, json).await;
@@ -1469,16 +1463,14 @@ async fn main() -> Result<()> {
             // Pull mode, not `read_table`: rendering a nested column back to
             // its literal needs the stream's `NestedPlan`s, and push mode
             // only hands the resolved schema back once the whole stream has
-            // been drained (`docs/design/architecture.md`, "Arrow assembly
-            // and the zero-copy path"). The scan itself is the same one —
+            // been drained (`docs/design/decisions.md`, "D46"). The scan itself is the same one —
             // `read_table` drains this stream internally.
             //
             // Partitioned, not serial: the split is where `--jobs` becomes
             // something other than a bound on what the source retains, and
             // `Parallelism::Serial` — `--jobs 1` — is one sub-stream, so the
             // serial path is reached through the same call rather than
-            // branched to (`docs/design/architecture.md`, "Partitioned
-            // replay"). What `table_stream` reports as its stream's first
+            // branched to (`docs/design/decisions.md`, "D51"). What `table_stream` reports as its stream's first
             // item, this reports from the `await`; both are the same errors
             // with the same wording.
             let mut streams = pgdump_query::table_stream_partitions(
@@ -1505,8 +1497,7 @@ async fn main() -> Result<()> {
             // earlier in the file however much later it arrives, and raising
             // whichever failed first in time would name a different row on each
             // run over an unchanged file
-            // (`docs/design/architecture.md`, "`pgdq query` merges the
-            // sub-streams back into file order").
+            // (`docs/design/decisions.md`, "D65").
             let mut failed: Option<(usize, pgdump_query::Error)> = None;
             loop {
                 // Everything at or after a failing sub-stream is dead, and
@@ -1607,7 +1598,7 @@ async fn main() -> Result<()> {
                 // A zero-column projection prints no header. The header would
                 // be an empty line, and the row count `--no-columns | wc -l`
                 // is asked for would come back one too many
-                // (`docs/design/architecture.md`, "Projection").
+                // (`docs/design/decisions.md`, "D28").
                 if !header_printed && batch.num_columns() > 0 {
                     let names: Vec<String> =
                         batch.schema().fields().iter().map(|f| f.name().clone()).collect();
@@ -1654,8 +1645,7 @@ async fn main() -> Result<()> {
 /// not — `parse` and `query` surface the library's own
 /// `Error::CacheSourceMismatch` and `info` prints the sentence that names the
 /// two ways out before `pgdq parse`
-/// (`docs/design/architecture.md`, "The CLI's two refusals are worded as
-/// one"). Handing the condition back is what keeps those three wordings where
+/// (`docs/design/decisions.md`, "D20"). Handing the condition back is what keeps those three wordings where
 /// they already are while the walk is spared.
 enum Opened {
     /// The source, ready to read.
@@ -1670,7 +1660,7 @@ enum Opened {
 /// Open `file`, handing recognition whatever the cache at `cache` says about
 /// its compression layer, so an `.xz` source is built from the seek table a
 /// previous walk already produced instead of re-walking the file's stream
-/// footers (`docs/design/architecture.md`, "The compressed source").
+/// footers (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// `--dqcache none` claims nothing, which is what makes an opted-out cache
 /// cost exactly the walk it always did; cache-only mode never reaches here at
@@ -1679,15 +1669,14 @@ enum Opened {
 /// **A contradicted claim is refused here rather than at each of the three
 /// call sites.** All three commands answer it identically — the cache at that
 /// path was written from another file, so it is not this one's to overwrite
-/// (`docs/design/architecture.md`, "The cache") — and the mode holding the
+/// (`docs/design/decisions.md`, "The compressed source and the cache") — and the mode holding the
 /// claim is the mode holding the path the message names, so the refusal has
 /// everything it needs without a caller passing it back down.
 ///
 /// **A cache recorded against a file of another stored size stops here too**,
 /// as an [`Opened`] variant rather than as a bail: the file is never opened,
 /// so an `.xz` source never walks its stream footers to reach a refusal the
-/// cache path alone already settles (`docs/design/architecture.md`, "The
-/// cache"). The comparison itself stays in `cache::claim`, so this is the same
+/// cache path alone already settles (`docs/design/decisions.md`, "The compressed source and the cache"). The comparison itself stays in `cache::claim`, so this is the same
 /// verdict the library reaches a moment later rather than a second reading of
 /// the same rule.
 fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
@@ -1719,7 +1708,7 @@ fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
 /// another file, so both raise it here — from `CacheMode::source_mismatch`,
 /// the same constructor the three scan entry points use, which is what makes
 /// the earlier refusal word-for-word the one it pre-empts
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// The library still refuses on its own: this spares the walk, it does not
 /// replace the guarantee, which is the library's to keep for an embedder that
@@ -1741,7 +1730,7 @@ fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query:
 /// and it is deliberately not one of [`unusable_cache_message`]'s: that
 /// function matches on [`CacheStatus`], and this condition is not one —
 /// recognition catches it before a source exists, so `load` never sees it
-/// (`docs/design/architecture.md`, "The compressed source"). It borrowed
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). It borrowed
 /// `Unreadable`'s sentence until the refusal made the two answers differ:
 /// "check the path, or run `pgdq parse`" is advice `parse` cannot take, being
 /// the command that just refused, and the bytes at that path *are* a pgdq
@@ -1763,7 +1752,7 @@ fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
 /// words both refusals use. There is no third way — no `--force`, no
 /// `CacheMode` variant meaning "replace regardless" — because a flag like that
 /// is set once in a script and never reconsidered
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for
 /// the size-mismatch condition, which reaches `parse` and `query` from the
@@ -1781,7 +1770,7 @@ const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
 /// scans over `Missing`, `Unreadable` and `UnsupportedVersion` — there is
 /// nothing at that path worth keeping — and refuses `SourceChanged`, so that
 /// arm names [`TWO_WAYS_OUT`] before it names the command
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// **One match, two renderings**, the same discipline [`resolution_words`]
 /// applies. `source` is `None` in cache-only mode, which has no dump file to
@@ -1822,7 +1811,7 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
             // refuses this very condition rather than scanning over it, so
             // sending a reader straight there would send them to a second
             // refusal; the two ways out come first, and `parse` then works
-            // (`docs/design/architecture.md`, "The cache").
+            // (`docs/design/decisions.md`, "The compressed source and the cache").
             format!(
                 "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
                  the cache at {} was written), so every offset in the cache could be \
@@ -1839,7 +1828,7 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
 }
 
 /// `pgdq info` with no `--source`: answer strictly from the cache at `path`
-/// (`docs/design/architecture.md`, "The cache"). An `Incomplete` cache is
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). An `Incomplete` cache is
 /// reported like any other, with its coverage stated — cache-only mode has no
 /// scan to extend it with, but "as far as the scan got" is still an answer,
 /// and refusing it was what this phase removed.
@@ -1858,7 +1847,7 @@ async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Resul
 
 /// One column's resolution outcome, in both spellings: a stable token for
 /// `--json` and the sentence `info --detail` prints
-/// (`docs/design/architecture.md`, "CLI surface").
+/// (`docs/design/decisions.md`, "The CLI").
 ///
 /// **One match, two renderings.** Splitting them into two functions is how the
 /// machine-readable export and the text listing drift into describing
@@ -1903,7 +1892,7 @@ fn resolution_label(r: &ColumnResolution) -> &'static str {
 }
 
 /// What one column became in Arrow — the other half of `info --detail`'s
-/// per-column line (`docs/design/architecture.md`, "CLI surface").
+/// per-column line (`docs/design/decisions.md`, "The CLI").
 ///
 /// Arrow's own `Display` is terse and reversible (`List(Utf8View)`,
 /// `Struct("x": Int32, "y": Utf8View)`), and a composite's field names are the
@@ -1961,8 +1950,8 @@ fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
 
 /// An enum column's declared labels, in declaration order, or `None` for
 /// every other column — read off the column's own [`ComparisonPlan`], which is
-/// where resolution already put them (`docs/design/architecture.md`,
-/// "CLI surface").
+/// where resolution already put them (`docs/design/decisions.md`,
+/// "The CLI").
 ///
 /// A domain over an enum answers here too, because
 /// `pgtype::comparison_user_type` recurses through the domain chain; that is
@@ -2015,7 +2004,7 @@ fn database_label(database: &Option<String>) -> &str {
 /// whole grouping rule: nothing has to be sorted or bucketed first. This is
 /// also what makes an `AmbiguousTable` error's candidate names actionable —
 /// they are names this listing already showed
-/// (`docs/design/architecture.md`, "One target per query").
+/// (`docs/design/decisions.md`, "D49").
 struct DatabaseHeadings<'a> {
     multi: bool,
     current: Option<&'a Option<String>>,
@@ -2038,8 +2027,8 @@ impl<'a> DatabaseHeadings<'a> {
 }
 
 /// Dump-level metadata header: server/`pg_dump` versions, extension and
-/// user-defined-type counts (`docs/design/architecture.md`,
-/// "CLI surface"). The `database: <name>` line is only shown when it's informative —
+/// user-defined-type counts (`docs/design/decisions.md`,
+/// "The CLI"). The `database: <name>` line is only shown when it's informative —
 /// a single unnamed database (a plain, non-`--create` dump: the overwhelming
 /// common case) is printed with no header line, since one would just be
 /// noise.
@@ -2085,7 +2074,7 @@ fn print_metadata(metadata: &DumpMetadata, detail: bool) {
 /// One user-defined type's kind, rendered with whatever payload that kind
 /// carries — the enum's labels, the domain's base type and `COLLATE` clause,
 /// the composite's fields, the range's subtype
-/// (`docs/design/architecture.md`, "CLI surface").
+/// (`docs/design/decisions.md`, "The CLI").
 ///
 /// **Every arm renders**, not the enum alone: a listing headed `user-defined
 /// types` that showed only enums would be a lie about what the dump holds.
@@ -2140,7 +2129,7 @@ fn type_kind_summary(kind: &TypeKind) -> String {
 
 /// One `COPY` block's resolved schema, paired back with the block it came
 /// from — the single resolution pass `--detail`'s text and `--json`'s export
-/// both render (`docs/design/architecture.md`, "CLI surface"). Two passes is
+/// both render (`docs/design/decisions.md`, "The CLI"). Two passes is
 /// the failure mode here: the export would quietly become a second
 /// implementation of what the listing says.
 ///
@@ -2151,7 +2140,7 @@ fn type_kind_summary(kind: &TypeKind) -> String {
 /// and one table's data can occupy several blocks (I2) — so a map that
 /// stopped short cannot speak for a block past its frontier, and every column
 /// resolves optimistically until it can
-/// (`docs/design/architecture.md`, "The array shape census").
+/// (`docs/design/decisions.md`, "D35").
 ///
 /// A header-less block resolves to an empty schema: its column names come from
 /// its first data row, which no index records. It is still listed, so the
@@ -2180,7 +2169,7 @@ fn block_resolutions(
 /// `--json`'s shape: the whole [`DumpIndex`] flattened to one object, plus the
 /// three things it does not itself carry — how much of the file it covers, the
 /// diagnostics `#[serde(skip)]` drops for the cache's own reasons
-/// (`docs/design/architecture.md`, "The cache"), and the per-block type
+/// (`docs/design/decisions.md`, "The compressed source and the cache"), and the per-block type
 /// resolution, which is an L2 conclusion an L1 index has no field for. No
 /// schema stability is promised for any of this — see the `--json` flag's help
 /// text.
@@ -2206,7 +2195,7 @@ struct IndexJson<'a> {
 /// table. A table can span blocks (I2) and a header-less block names its
 /// columns from its first row, so a per-table rollup needs a merge rule that
 /// does not exist yet; leaving the grouping to the consumer is where it
-/// honestly sits (`docs/design/architecture.md`, "CLI surface").
+/// honestly sits (`docs/design/decisions.md`, "The CLI").
 #[derive(serde::Serialize)]
 struct BlockResolutionJson<'a> {
     database: Option<&'a str>,
@@ -2263,7 +2252,7 @@ fn print_index_json(
 }
 
 /// How much of the file the index covers, stated **once, at the top**, with
-/// nothing below it qualified (`docs/design/architecture.md`, "CLI surface").
+/// nothing below it qualified (`docs/design/decisions.md`, "The CLI").
 ///
 /// A partial index lacks *records*, not confidence: a block enters the map
 /// only at a `CopyEnd` watermark and every mapping pass censuses, so every
@@ -2310,7 +2299,7 @@ fn report(
 /// decompressor's own working memory — so
 /// the flag that says *raise it* is most of the way answered here, and a query
 /// that declines the block path names the whole of it
-/// (`docs/design/architecture.md`, "The compressed source").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 fn compression_line(shape: &CompressionShape) -> String {
     format!(
         "compression: {} — {} block(s) in {} stream(s), largest block {} bytes uncompressed",
@@ -2445,7 +2434,7 @@ fn print_index(
 
 /// `DumpIndex::diagnostics` (or, for `--preamble-only`, the diagnostics
 /// `preamble_only` reports separately), printed unconditionally — this is
-/// (`docs/design/architecture.md`, "The cache"). Cache-only mode's
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). Cache-only mode's
 /// "unverified, historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
 /// Returns whether anything was printed, matching `print_cross_references`'s
 /// and `print_object_kinds`' convention.
@@ -2488,7 +2477,7 @@ fn diagnostic_message(kind: &DiagnosticKind) -> String {
 }
 
 /// Referenced-role and referenced-tablespace summary
-/// (`docs/design/architecture.md`, "TOC enrichment")
+/// (`docs/design/decisions.md`, "D31")
 /// — an empty set prints nothing, so a dump referencing neither leaves no
 /// trace here. Returns whether anything was printed, so the caller knows
 /// whether to add a separating blank line.
@@ -2510,7 +2499,7 @@ fn print_cross_references(index: &DumpIndex) -> bool {
 
 /// Per-`Type:` object-kind counts — one per archive entry, the same closed
 /// ~63-value vocabulary the TOC-coverage diagnostic counts against
-/// (`docs/design/architecture.md`, "TOC enrichment"). Counts `toc_owned`
+/// (`docs/design/decisions.md`, "D31"). Counts `toc_owned`
 /// spans, not every attributed one: this is an object *census*, and a
 /// follow-on statement
 /// (`ALTER ... OWNER TO`, etc.) inherits its governing entry's `toc` rather
@@ -2540,8 +2529,8 @@ fn print_object_kinds(index: &DumpIndex) -> bool {
 
 /// `--map`: every span the full file map found, in file order — the raw
 /// structure `DumpIndex::spans` keeps, not the per-table view `blocks()`
-/// filters it down to (`docs/design/architecture.md`,
-/// "`DumpIndex`: one owner per fact"). Grouped by [`DatabaseHeadings`], the
+/// filters it down to (`docs/design/decisions.md`,
+/// "D34"). Grouped by [`DatabaseHeadings`], the
 /// same convention the ordinary block listing uses.
 fn print_map(index: &DumpIndex) {
     let mut headings = DatabaseHeadings::new(index.spans.iter().map(|s| &s.database));
@@ -2973,7 +2962,7 @@ mod tests {
     /// **The budget's provenance has four spellings and each names a different
     /// way of arriving at a number** — the flag, a limit that was read, a
     /// source's own answer under no limit, and the library's constant
-    /// (`docs/design/architecture.md`, "Status output").
+    /// (`docs/design/decisions.md`, "D64").
     #[test]
     fn the_budget_line_names_where_its_number_came_from() {
         let reader = Recommends::reader(24, READER);
@@ -3006,8 +2995,8 @@ mod tests {
     /// names where that budget came from.** The widest of the three notes is a
     /// compressed source declining the block path, which is a throughput cliff
     /// — and under discovery the number to change is the *allocation*, which
-    /// the note itself cannot know about (`docs/design/architecture.md`,
-    /// "Execution model and API surface").
+    /// the note itself cannot know about (`docs/design/decisions.md`,
+    /// "I/O, memory and parallelism").
     ///
     /// A stated budget gets no clause: the note already names what was typed.
     #[test]
@@ -3104,7 +3093,7 @@ mod tests {
     /// `--parallel-memory` alone is the whole recourse for a compressed file
     /// whose blocks the 64 MiB default cannot hold, with no second worker
     /// needing to be asked for
-    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     #[test]
     fn a_stated_budget_reaches_the_library_at_a_serial_job_count() {
         let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };

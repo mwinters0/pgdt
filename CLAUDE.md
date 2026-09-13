@@ -43,12 +43,12 @@ Never edit a `runs/` orchestration script while it is running.
 
 ## Where things are, and when to read them
 
-- `docs/design/architecture.md` — the decisions the code cannot explain:
+- `docs/design/decisions.md` — the decisions the code cannot explain:
   anticipatory shapes, chosen defaults, and measured refusals of the obvious
   alternative. **Read the entry for a mechanism before changing that
   mechanism or proposing an optimization to it**; most obvious optimizations
   carry a refusal already. Cite an entry, never restate it.
-- `docs/design/layering.md` — four layers, dependencies point down. **Read
+- `docs/design/decisions.md` — four layers, dependencies point down. **Read
   before adding a module or moving code between modules.**
 - `docs/design/roadmap.md` — goals, "Standing rules", and the phase index.
   **Read "Standing rules" before a design decision a later phase inherits.**
@@ -92,7 +92,7 @@ Run it after rewriting a heading.
 - **Pre-1.0**: no backwards-compatibility or API-stability guarantee. No
   shims, no migration caveats.
 - **The library never replaces cache data automatically** — see
-  `architecture.md`'s cache entry before touching a cache path.
+  `decisions.md`'s cache entry before touching a cache path.
 - **A build carrying `introspect` is never timed.**
 - **Document what _is_, not what _was_**, inside `docs/status/history/` too. A
   fact is stated once, in one place, and cited everywhere else; a number is

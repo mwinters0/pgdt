@@ -1,7 +1,7 @@
 //! `pgdq`'s status output — the `tracing` lines `parse`, `info` and `query`
 //! write to stderr for the two phases worth watching a long run for: an
 //! `.xz` file's seek-table walk, and the scan itself starting and finishing
-//! (`docs/design/architecture.md`, "Status output"). What only the binary can say is that
+//! (`docs/design/decisions.md`, "D64"). What only the binary can say is that
 //! the subscriber is actually wired up and that these lines reach real
 //! stderr — the library's own tests exercise the `tracing::info!` call sites
 //! directly, with no subscriber installed, and see nothing.
@@ -320,7 +320,7 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
 /// scan.** The mode is a fact about the *environment* and nothing downstream
 /// can recover it: `Parallelism` carries the number and not where it came
 /// from, so a discovered budget and a stated one reach the library identical
-/// (`docs/design/architecture.md`, "Status output"). What only the binary can
+/// (`docs/design/decisions.md`, "D64"). What only the binary can
 /// say is that the lines are emitted at all, on both scanning commands, and
 /// that they agree with what this machine actually reports.
 ///
@@ -410,7 +410,7 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
 /// stream footer before it can advise anything — 85 s on the koji download
 /// (`CLAUDE.local.md`) — so a mistyped `--parallel-memory` would otherwise go
 /// unconfirmed until after a wait it had no bearing on
-/// (`docs/design/architecture.md`, "Status output").
+/// (`docs/design/decisions.md`, "D64").
 ///
 /// Asserted on a fixture whose walk is instant, since what is being pinned is
 /// the **order** of two lines and not the duration between them.
@@ -478,7 +478,7 @@ fn the_mode_report_marks_a_stated_flag_as_stated() {
 /// that was asked for, bare, which is what
 /// makes the flag's own recourse ("raise the memory budget") readable from the
 /// log without a second worker being stated beside it
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 #[test]
 fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
     let dir = tempfile::tempdir().unwrap();
@@ -558,7 +558,7 @@ fn a_fully_cached_reparse_announces_no_scan() {
 
 /// `info` never scans, so it never announces either pass — its output is
 /// read entirely from the cache
-/// (`docs/design/architecture.md`, "CLI surface").
+/// (`docs/design/decisions.md`, "The CLI").
 #[test]
 fn info_announces_no_scan() {
     let dir = tempfile::tempdir().unwrap();
@@ -589,8 +589,8 @@ fn info_announces_no_scan() {
 /// A fresh `.xz` open walks the footers and says so; a second `parse` against
 /// the cache that walk left behind opens from the persisted table instead
 /// (`XzSource::with_table`) and earns no line — the walk this phase names is
-/// the one a cached table exists to skip (`docs/design/architecture.md`,
-/// "The compressed source").
+/// the one a cached table exists to skip (`docs/design/decisions.md`,
+/// "The compressed source and the cache").
 #[test]
 fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
     let (_dir, xz_path) = seekable_xz();
@@ -627,7 +627,7 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
 /// (above); the same command over an `.xz` file says the cores this process was
 /// given, capped at the blocks the file offers to cut at, because decode is the
 /// one shape that scales and a seam past the last block does not exist
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// Asserted against `available_parallelism()` and the file's own table rather
 /// than a literal — the count is the machine's and the cap is the fixture's,
@@ -678,7 +678,7 @@ fn arrangement_lines(stderr: &str) -> Vec<&str> {
 /// no plan notes to carry. The correction is on the status channel both
 /// commands already have, once per scan, naming the delivered count beside
 /// the announced one and the budget that would buy the path back
-/// (`docs/design/architecture.md`, "Status output").
+/// (`docs/design/decisions.md`, "D64").
 ///
 /// What only the binary can say is that the line reaches real stderr and that
 /// the two numbers on it actually disagree with `scan started`'s.

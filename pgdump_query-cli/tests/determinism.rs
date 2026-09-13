@@ -2,7 +2,7 @@
 //! `--jobs` decides how a dump is read and never what the scan records, so a
 //! partitioned `pgdq parse` and a serial one write the same `.dqcache` — byte
 //! for byte, over every fixture in the tree
-//! (`docs/design/architecture.md`, "The interior split").
+//! (`docs/design/decisions.md`, "D52").
 //!
 //! **Bytes, not a decoded index.** `pgdump_query/tests/map_file.rs` already
 //! compares the in-memory `DumpIndex` a parallel mapping pass builds against an
@@ -22,7 +22,7 @@
 //!
 //! **A cache path per run.** The library refuses to overwrite a cache recorded
 //! against a different file (`Error::CacheSourceMismatch`,
-//! `docs/design/architecture.md`, "The cache"), so one reused path would fail
+//! `docs/design/decisions.md`, "The compressed source and the cache"), so one reused path would fail
 //! the second fixture rather than assert anything about the first.
 //!
 //! **Why the small-chunk legs state a chunk size.** `LocalFileSource`'s

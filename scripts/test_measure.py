@@ -2461,8 +2461,8 @@ class CompressedAccount(unittest.TestCase):
     # -- the charge model, and the cells it was seeded from ----------------
 
     #: Readings from the reserve constant's five-build grid, off
-    #: `control_xz128` at a 384 MiB reserve (`docs/design/architecture.md`,
-    #: "Execution model and API surface"): reader count, worst rep in MiB, the
+    #: `control_xz128` at a 384 MiB reserve (`docs/design/decisions.md`,
+    #: "I/O, memory and parallelism"): reader count, worst rep in MiB, the
     #: budget the run reported under the charge that build carried, and the
     #: residual computed by hand against that charge.
     #:
@@ -3876,7 +3876,7 @@ class Eviction(unittest.TestCase):
 class Consumers(unittest.TestCase):
     """`depends` is the edge into a figure; `quoted_by` is the edge out. A
     figure whose numbers are repeated somewhere and does not say where is how
-    `architecture.md` came to quote a save count `measurements.md` no longer
+    `decisions.md` came to quote a save count `measurements.md` no longer
     holds."""
 
     def test_every_figure_names_its_consumers(self):

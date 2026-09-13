@@ -1,5 +1,5 @@
 //! `pgdq query --column` / `--no-columns` — projection's CLI surface
-//! (`docs/design/architecture.md`, "Projection" and "CLI surface").
+//! (`docs/design/decisions.md`, "D28" and "The CLI").
 //!
 //! `pgdump_query/tests/projection.rs` already holds what a projection *means*
 //! against `table_stream`. What only the binary can say is the part these

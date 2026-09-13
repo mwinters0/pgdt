@@ -20,7 +20,7 @@ The trait is also **dyn-compatible** (`Pin<Box<dyn Future>>` returns,
 `Arc<dyn ByteRangeSource>` where a source is constructed rather than borrowed),
 specifically so that local, remote and decompressing-over-either do not become a
 combinatorial branch at every caller. Both are built
-([`architecture.md`](architecture.md), "Execution model and API surface").
+([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
 **Why P14 cares.** Both are properties of the trait this phase implements a new
 backend for, and the second was decided *for* this phase's benefit. An
@@ -41,7 +41,7 @@ arm, rather than the type being redesigned around a source with no mtime.
 scanned over: the three scan entry points raise
 `Error::CacheSourceMismatch { path, cached_stored_size, live_stored_size }`
 before a byte of the dump is read, and there is no override
-([`architecture.md`](architecture.md), "The cache"). Both the `CacheLoad`
+([`decisions.md`](decisions.md), "The compressed source and the cache"). Both the `CacheLoad`
 variant behind it and the error itself name **two `u64` sizes**, because that is
 what `SourceIdentity::LocalFile` compares.
 
@@ -71,8 +71,7 @@ koji upstream download is **31,150 concatenated streams**. Locally that walk is
 85 s of HDD seeks; over ranged GETs it is 31,150 round trips. The **warm** half
 is built and no longer this phase's to do: a cache's persisted table is read
 back before any source exists and handed to recognition, which builds the source
-from it and walks nothing ([`architecture.md`](architecture.md), "The compressed
-source"). What remains is the **cold** case — the first command against a remote
+from it and walks nothing ([`decisions.md`](decisions.md), "The compressed source and the cache"). What remains is the **cold** case — the first command against a remote
 `.xz`, where there is no cache to read a table out of and the walk is 31,150
 round trips before a byte is served.
 
@@ -140,7 +139,7 @@ worth **1.83× a warm scan** at 16 MiB, back when a chunk was one. And
 double-buffered readahead was refused on the arithmetic that a cold scan cannot
 go below the device's own delivery time, which on the fastest local disk we own
 leaves a 5.8% envelope for the whole overlap idea
-([`architecture.md`](architecture.md), "Execution model and API surface").
+([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
 **Why P14 cares.** Both premises fail over a network. A ranged GET has latency
 a local `pread` does not, so overlapping the next request with the current
@@ -216,8 +215,7 @@ because every byte it reads already crosses a `spawn_blocking` boundary
 (`io::LocalFileSource::read_range` *is* a blocking `read_exact_at` on a blocking
 thread) and the library depends on `tokio` with `rt` + `sync` only. **Nothing
 in the tree adds `rt-multi-thread`** — the CLI runs a `current_thread` runtime
-for the same reason ([`architecture.md`](architecture.md), "Execution model and
-API surface") — so "the runtime it already has", below, is a single-threaded
+for the same reason ([`decisions.md`](decisions.md), "I/O, memory and parallelism") — so "the runtime it already has", below, is a single-threaded
 one: concurrent ranged GETs compose on it, a thread parked on a future does
 not.
 
@@ -263,7 +261,7 @@ from this project's chair, and got these answers:
   as fixed state rather than threading it positionally through each `Window`
   construction in a loop — that discipline, not a type change in `xz-seek`,
   is what actually removes the swap risk. Precedent: `stored_size()`/`size()`
-  ([`architecture.md`](architecture.md), "The cache") is the same shape of adjacent-`u64`
+  ([`decisions.md`](decisions.md), "The compressed source and the cache") is the same shape of adjacent-`u64`
   risk, and this project's answer there was legibility (both surface at the
   accessor and in error text) over a type-level guard.
 - **Composing a tail window with an offset-0 window for a remote footer walk
@@ -297,7 +295,7 @@ resident.
 `LocalFileSource` answers "anywhere, eight read chunks each"; `XzSource`
 answers "at these block boundaries, 32 MiB each". The scheduler above asks the source and
 never learns what is underneath, which is what keeps the fused decode-and-parse
-worker inside [`layering.md`](layering.md)'s rules rather than putting decode
+worker inside [`decisions.md`](decisions.md)'s rules rather than putting decode
 scheduling in L4.
 
 **Why this phase cares.** A remote source's natural partitioning is a
@@ -311,8 +309,7 @@ a ranged GET per partition, so the two answers multiply rather than one
 overriding the other.
 
 **Origin.** The parallel-scan work's grilling, 2026-09-06; the shipped
-mechanism is [`architecture.md`](architecture.md), "Execution model and API
-surface".
+mechanism is [`decisions.md`](decisions.md), "I/O, memory and parallelism".
 
 ---
 
@@ -328,8 +325,7 @@ sub-stream divisor **only** for the first. A source that says nothing gets
 decoded block pins the block `partition_bytes` already charged for. That holds
 inside the leader's window and not across a query partition, which is cut over
 a whole `CopyBlock` and can pin several decoded blocks where one is billed
-(`KD23`, [`architecture.md`](architecture.md), "Billed against held: one row per
-buffer the process keeps").
+(`KD23`, [`decisions.md`](decisions.md), "D4").
 
 **Why this phase cares.** P14 writes the second `partitions` implementation,
 and the term is defaulted — so a remote source that never mentions it is
@@ -342,7 +338,7 @@ per read the way a chunk buffer is. Answer it deliberately when the source is
 specified.
 
 **Origin.** The partition advice, 2026-09-09; the shipped mechanism is
-[`architecture.md`](architecture.md), "Execution model and API surface".
+[`decisions.md`](decisions.md), "I/O, memory and parallelism".
 
 ---
 
@@ -358,7 +354,7 @@ file_size, bytes)` builds a source over bytes somebody else fetched; and
 `BlockDecode::fill` asks for `total_size() - header_size`, the *block's* tail
 rather than the file's, so a window cut to the extent satisfies it in one go and
 no input chunk is ever allocated. It is stated as a guarantee in that crate's
-`architecture.md` rather than left as a property of its tests, and
+`decisions.md` rather than left as a property of its tests, and
 `Reader::decoder_bytes()` is the matching charge — the dictionary and the
 backend's state without the input-chunk term that `decode_footprint()` carries.
 
@@ -392,7 +388,7 @@ phase hands it. If this phase does take it, `decoder_bytes()` is the divisor and
 **Origin.** 2026-09-10, negotiating the re-vendor with `xz-seek` —
 [`../status/history/2026-09-10.md`](../status/history/2026-09-10.md), "`M77`:
 the re-vendor, and the window route priced and refused". Contingent on that
-crate keeping the guarantee; it is stated in its `architecture.md`, so re-check
+crate keeping the guarantee; it is stated in its `decisions.md`, so re-check
 there rather than trusting this entry.
 
 ## Two more members a remote source must answer, and one constant predicts its resident
@@ -417,5 +413,5 @@ set by a network buffer nobody here has measured.
 
 **Origin.** The budget rule's pool term, the chunked plain read and the unpooled
 bound, 2026-09-11 and 2026-09-12. The mechanisms are
-[`architecture.md`](architecture.md), "Execution model and API surface" and
-"The compressed source".
+[`decisions.md`](decisions.md), "I/O, memory and parallelism" and
+"The compressed source and the cache".

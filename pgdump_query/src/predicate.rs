@@ -1,4 +1,4 @@
-//! Post-parse row filtering (`docs/design/architecture.md`, "Predicates").
+//! Post-parse row filtering (`docs/design/decisions.md`, "Predicates").
 
 use std::cmp::Ordering;
 
@@ -106,7 +106,7 @@ impl PredicateOp {
 /// `IsNull`/`IsNotNull` ask about the NULL directly
 /// (`docs/status/history/2026-08-22.md`), and
 /// `IsDistinctFrom`/`IsNotDistinctFrom` count it as a value
-/// (`docs/design/architecture.md`, "Predicates").
+/// (`docs/design/decisions.md`, "Predicates").
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
@@ -152,7 +152,7 @@ impl Truth {
 
 /// A row filter as a boolean expression tree over single-column
 /// [`Predicate`] terms — what `QueryOptions::filter` carries
-/// (`docs/design/architecture.md`, "Predicates").
+/// (`docs/design/decisions.md`, "Predicates").
 ///
 /// `And` and `Or` are **n-ary**, because the shape a repeated `--filter`
 /// builds is n-ary by construction and binary nesting would make the
@@ -165,8 +165,7 @@ impl Truth {
 /// **Nothing here is parsed.** `Expr` is a struct an embedder fills in field
 /// by field, exactly as [`Predicate`] is; the `--where` grammar that builds
 /// one from text lives in the CLI
-/// (`docs/design/architecture.md`, "A filter term is parsed for two
-/// audiences").
+/// (`docs/design/decisions.md`, "D60").
 #[derive(Debug, Clone)]
 pub enum Expr {
     Term(Predicate),
@@ -206,7 +205,7 @@ impl Default for Expr {
 /// deliberately: `DumpIndex.diagnostics` is the L1 file-level channel and
 /// `ResolvedSchema.notes` is the L2 per-column one, while this is per-column
 /// *and* conditional on a predicate — L4. Writing it into either would
-/// invert the layering (`docs/design/layering.md`).
+/// invert the layering (`docs/design/decisions.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonNote {
     pub column: String,
@@ -1278,8 +1277,7 @@ impl RangeKey {
 ///
 /// **The leaf grammar does not widen with it.** A leaf is read by
 /// [`order_key`], which implements that type's `*_out` form and no more
-/// (`docs/design/architecture.md`, "A literal is read in the type's own output
-/// form and no wider"), so `--filter 'p=( 1 , a )'` is refused where
+/// (`docs/design/decisions.md`, "D55"), so `--filter 'p=( 1 , a )'` is refused where
 /// `record_in` would have handed `" 1 "` to `int4in` and had the blanks
 /// thrown away there. One rule at every depth, and it is the rule a scalar
 /// column already has.
@@ -1760,8 +1758,8 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 ///
 /// `None` when the literal is not a value of the column's type at all, which
 /// is `Error::PredicateValueDecode` — the same refusal an ordering operator
-/// makes, on the same output-form-only grammar (`docs/design/architecture.md`,
-/// "Ordering operators compare typed").
+/// makes, on the same output-form-only grammar (`docs/design/decisions.md`,
+/// "D55").
 fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
     use CompareKind as K;
     let rendered = match kind {
@@ -1817,8 +1815,7 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
 /// **That second half is advice, not the boundary of what is accepted** — the
 /// leaf is read by [`order_key`], whose integer arms are `str::parse` and so
 /// take a leading `+` and leading zeros that no `*_out` writes
-/// (`docs/design/architecture.md`, "A literal is read in the type's own output
-/// form and no wider", whose exception this is). Stating the dump's form is
+/// (`docs/design/decisions.md`, "D55", whose exception this is). Stating the dump's form is
 /// still the useful sentence, because what the container's leniency about
 /// whitespace and quoting does *not* extend to is the element, and that is
 /// what refuses most literals. There is no per-leaf clause list here — the
@@ -1871,8 +1868,7 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// **What it buys is a sentence about this build's grammar rather than about
 /// the type.** Without it the refusal reads as a claim that `true` is not a
 /// `boolean`, which is false; the grammar these two functions implement is
-/// each type's `*_out` form and no wider (`docs/design/architecture.md`, "A
-/// literal is read in the type's own output form and no wider"), so the one
+/// each type's `*_out` form and no wider (`docs/design/decisions.md`, "D55"), so the one
 /// thing the user is missing is what that form looks like. `jsonb` is the
 /// exception there and so needs the least here — its grammar is the whole of
 /// `jsonb_in`, so "a JSON document" is the complete answer.
@@ -1965,7 +1961,7 @@ fn accepted_form(kind: &CompareKind) -> String {
 /// **The overflow clause has somewhere to send the reader**: `pgdq info
 /// --detail` prints every label of an enum column *and* lists every
 /// user-defined type with its labels, both uncapped
-/// (`docs/design/architecture.md`, "CLI surface"). A terse rendering is
+/// (`docs/design/decisions.md`, "The CLI"). A terse rendering is
 /// licensed by a complete one existing where the user can reach it.
 const ENUM_LABELS_SHOWN: usize = 12;
 
@@ -2484,7 +2480,7 @@ impl ResolvedExpr {
     /// Whether `raw_row` survives this filter: its root evaluates
     /// [`Truth::True`]. `Unknown` and `False` both drop the row, which is
     /// what makes the collapse at the root sound even though it is not sound
-    /// under a `Not` (`docs/design/architecture.md`, "Predicates").
+    /// under a `Not` (`docs/design/decisions.md`, "Predicates").
     pub(crate) fn matches(
         &self,
         raw_row: RawRow<'_>,
@@ -2565,8 +2561,7 @@ impl ResolvedExpr {
     /// conjunction — the `Expr::And(vec![])` a query with no filter carries —
     /// reads nothing, and a stream whose projection is also empty therefore
     /// decodes nothing and skips the bulk UTF-8 validation
-    /// (`docs/design/architecture.md`, "A row's bytes are validated once, in
-    /// bulk").
+    /// (`docs/design/decisions.md`, "D27").
     pub(crate) fn reads_fields(&self) -> bool {
         match self {
             Self::Term(_) => true,
@@ -4529,7 +4524,7 @@ mod tests {
     /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
     /// the same `resolve_term`/`matches` path a `--filter` takes, and
     /// compared with what the server itself said
-    /// (`docs/design/architecture.md`, "The comparison oracle").
+    /// (`docs/design/decisions.md`, "D70").
     ///
     /// **This is the check the oracle exists for.** `oracle_register.py`
     /// reconciles register arms against oracle *cases* and

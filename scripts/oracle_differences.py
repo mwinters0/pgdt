@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The cross-major differ: where two adjacent PostgreSQL majors disagree.
 
-`docs/design/architecture.md`, "The comparison oracle", is the description.
+`docs/design/decisions.md`, "D70", is the description.
 This module is the classification and the committed file.
 
 **What it exists to check.** Version-varying semantics are implemented as the

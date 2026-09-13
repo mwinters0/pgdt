@@ -1,5 +1,5 @@
 //! `pgdq query --filter`, repeated — the conjunction's CLI surface
-//! (`docs/design/architecture.md`, "Predicates" and "CLI surface").
+//! (`docs/design/decisions.md`, "Predicates" and "The CLI").
 //!
 //! What a conjunction *means* is pinned against the library in
 //! `pgdump_query/tests/batch.rs`. What only the binary can say is that the

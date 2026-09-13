@@ -1,7 +1,7 @@
 //! Declared PostgreSQL type string -> Arrow `DataType`
-//! (`docs/design/architecture.md`, "Type resolution").
+//! (`docs/design/decisions.md`, "Type resolution and decoders").
 //!
-//! Pure, synchronous, no I/O — see `docs/design/layering.md`, L2. A declared
+//! Pure, synchronous, no I/O — see `docs/design/decisions.md`, L2. A declared
 //! type is resolved against a single database's [`TypeDef`] list (already
 //! selected by the caller — [`crate::resolve`] is the one that picks which
 //! database), never against files or offsets.
@@ -85,9 +85,9 @@ pub enum TypeOutcome {
 /// included), which is where every branch bottoms out.
 /// `Serialize` so `pgdq info --json` can export a resolved schema's plans
 /// structurally rather than inventing a second spelling for them
-/// (`docs/design/architecture.md`, "CLI surface"). **Not `Deserialize`, and
+/// (`docs/design/decisions.md`, "The CLI"). **Not `Deserialize`, and
 /// never persisted**: the cache holds what the dump said, never what we
-/// concluded (`docs/design/layering.md`, rule 5).
+/// concluded (`docs/design/decisions.md`, rule 5).
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub enum NestedPlan {
     /// Filled by `crate::decode`'s per-type decoders, or held as text.
@@ -275,8 +275,7 @@ pub enum ComparisonDivergence {
     /// Deficiency register: `deficiency: KD7` — this and
     /// [`Self::NonDeterministicCollation`] are the two register rows whose
     /// divergence the file gives enough information to close and this build
-    /// does not, and the detail is `docs/design/architecture.md`'s "Ordering
-    /// operators compare typed". The two collation variants either side of
+    /// does not, and the detail is `docs/design/decisions.md`'s "D55". The two collation variants either side of
     /// them are *not* that: [`Self::UnknownCollation`] names a fact no plain
     /// dump carries (I32), and a stated collation that is bytewise in fact but
     /// not named `C`/`POSIX` lands here with correct rows and a spurious note.
@@ -568,8 +567,7 @@ impl NestedCompare {
 
 /// **The comparison register's answer for one declared type**: how a column
 /// of it compares, and whether that is the order PostgreSQL itself defines.
-/// Rendered as a table in `docs/design/architecture.md`, "Ordering operators
-/// compare typed".
+/// Rendered as a table in `docs/design/decisions.md`, "D55".
 ///
 /// **One fact, not two.** "This type has no order here" and "there is no way
 /// to decode a value of it" are the same statement, so they are one variant
@@ -698,8 +696,7 @@ fn collation_is_bytewise(reference: &str) -> bool {
 /// **`kind` is the comparison in every case; only the verdict moves.** That
 /// is the whole of what reading the clause buys: `text COLLATE "C"` and a
 /// bare `name` are told they agree, where before every text column was told
-/// it diverged (`docs/design/architecture.md`, "Ordering operators compare
-/// typed").
+/// it diverged (`docs/design/decisions.md`, "D55").
 ///
 /// `kind` exists because `character(n)` joins this rule with a comparison of
 /// its own: `bpcharcmp` trims both operands' trailing blanks and *then*
@@ -824,8 +821,8 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
 /// register's exhaustiveness check — a type added here without a comparison
 /// does not compile — and it replaces the exhaustive `match` over `DataType`
 /// the register used to be, which could only ever have been keyed on a type
-/// four unrelated declared types share (`docs/design/architecture.md`,
-/// "Ordering operators compare typed").
+/// four unrelated declared types share (`docs/design/decisions.md`,
+/// "D55").
 ///
 /// `collation` is the column's own `COLLATE` clause, verbatim, and
 /// `collations` is what the dump's own `CREATE COLLATION` statements said
@@ -947,7 +944,7 @@ fn builtin_scalar(
 
 /// A canonical Arrow extension type one of our columns claims — the *name*
 /// half of the mapping, which the Arrow type alone cannot carry
-/// (`docs/design/architecture.md`, "Type resolution").
+/// (`docs/design/decisions.md`, "Type resolution and decoders").
 ///
 /// Two of them exist for us, because the Arrow spec defines two whose storage
 /// type is already what we emit: `arrow.uuid` over `FixedSizeBinary(16)`, and
@@ -1321,7 +1318,7 @@ fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
 /// misses and the column resolves `Unknown`.
 ///
 /// Deficiency register: `deficiency: KD4` — the detail is
-/// `docs/design/architecture.md`'s "Type resolution", and the fix is
+/// `docs/design/decisions.md`'s "Type resolution and decoders", and the fix is
 /// `roadmap.md`'s "A real type-name tokenizer", not this function's.
 fn array_element(declared: &str) -> Option<&str> {
     let declared = declared.trim();
@@ -2378,8 +2375,7 @@ mod tests {
 
     /// The register, row for row: every declared type this build maps to a
     /// scalar, and how a column of it compares. This is the authority the
-    /// Markdown table in `docs/design/architecture.md`, "Ordering operators
-    /// compare typed", renders for humans.
+    /// Markdown table in `docs/design/decisions.md`, "D55", renders for humans.
     ///
     /// **Every arm of [`builtin_scalar`] appears here**, which is what makes
     /// the list a register rather than a sample: a type added to that table

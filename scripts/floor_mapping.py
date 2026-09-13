@@ -3,9 +3,8 @@
 Arrow type to is answered by our own mapping, and every arm of that mapping is
 answered by the floor.
 
-`docs/design/architecture.md`, "The bar", states the rule and carries the
-stance every row outside it declares; `docs/design/architecture.md`, "The ADBC
-floor oracle", describes the evidence. This module is the join.
+`docs/design/decisions.md`, "D37", states the rule and carries the
+stance every row outside it declares; `docs/design/decisions.md`, "D72", describes the evidence. This module is the join.
 
 **The rule, restated only far enough to compute it.** Wherever
 `adbc_driver_postgresql` yields a *non-opaque* Arrow type for a declared type,

@@ -2,7 +2,7 @@
 
 Setting a machine up to work on `pgdump_query`. What each command *does* is
 [`CLAUDE.md`](CLAUDE.md)'s command reference, which this file does not repeat;
-what the system *is* is [`docs/design/architecture.md`](docs/design/architecture.md).
+what the system *is* is [`docs/design/decisions.md`](docs/design/decisions.md).
 
 ## Building and testing
 

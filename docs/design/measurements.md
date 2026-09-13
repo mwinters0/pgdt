@@ -145,8 +145,7 @@ Eighteen standing rules for reading anything below:
   figure's mechanism leg, a flagless `.xz` `parse` that resolved one reader at
   `512m` and already runs 2 arenas uncapped — moves −112 KiB. This is the
   apparatus's environment and not the binary's: whether `pgdq` should set a cap
-  of its own is [`architecture.md`](architecture.md), "Execution model and API
-  surface". The difference an operator wants is read **inside** a sitting
+  of its own is [`decisions.md`](decisions.md), "I/O, memory and parallelism". The difference an operator wants is read **inside** a sitting
   instead, which is what this doc's own rule prescribes for resolving something
   fine: the reserve figure carries an uncapped leg and a `MALLOC_ARENA_MAX=2`
   leg and publishes both, the uncapped one being the operator who set nothing
@@ -237,8 +236,7 @@ Eighteen standing rules for reading anything below:
   build reverses the sign of this particular difference, so **a profile is
   read for proportions and never for a wall-time comparison between two
   builds**. The working is beside the mechanism in
-  [`architecture.md`](architecture.md), "Bulk regions: one span kind, three
-  payloads"; the evidence is
+  [`decisions.md`](decisions.md), "D33"; the evidence is
   [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md).
 - **A criterion baseline is taken from the same working directory, never from a
   worktree.** `--save-baseline` at the old revision and `--baseline` on the new
@@ -263,8 +261,7 @@ Eighteen standing rules for reading anything below:
   `strings` query's 25.75%. Those two shares are the fourth reading of the
   first: 70.61% before the hex pair table halved what a `bytea` and a `uuid`
   cost to write back out, 52.74% after it, 36.42% once a row was rendered into
-  one buffer ([`architecture.md`](architecture.md), "Where a scan's time
-  goes"). So the
+  one buffer ([`decisions.md`](decisions.md), "D29"). So the
   two sharpest instruments in this document price decode **plus** the Arrow
   build **plus** the render-back: "A typed query over nested columns…"'s
   per-row differences, and "What a column costs…"'s per-column deltas, whose
@@ -438,7 +435,7 @@ remaining use wants in any case — take one figure without the hour its borrowe
 sources cost, and read whether a change moved it. The two alternatives are what
 this replaces: exempting the flag from the refusal is an override token, the
 shape refused for the cache's size-mismatch guard
-([`architecture.md`](architecture.md), "The cache"); refusing the flag outright
+([`decisions.md`](decisions.md), "The compressed source and the cache"); refusing the flag outright
 would leave something that changes nothing for any figure that could publish,
 because a figure standing in no borrow edge declares no `shares`. A figure taken
 on its own *for the document* is `--figure <id>` with no flag.
@@ -1071,8 +1068,7 @@ report labels which each is: the counter sees Rust's `GlobalAlloc` and glibc
 sees the whole process, C included, so their difference is decoder working set
 plus bookkeeping plus retention rather than retention. How to build it, what
 each line means and why `--version` refuses to let it be timed is
-[`architecture.md`](architecture.md), "What the binary can report about
-itself".
+[`decisions.md`](decisions.md), "D13".
 
 **The third is a tool rather than a build, and `cd scripts && uv run
 measure.py --heaptrack-recipe` prints its sequence and runs none of it** — the
@@ -1161,7 +1157,7 @@ figure, and the instrumented build is still never the timed binary.
 `pgdump_query-cli`'s and never the library's, so every figure in this document
 is a **CLI** figure taken under whatever `pgdq` links against, and an embedder
 inherits whatever their own binary chose
-([`architecture.md`](architecture.md), "The allocator is the binary's choice").
+([`decisions.md`](decisions.md), "D13").
 The harness reads the allocator out of the binary — `pgdq --version` names it —
 so the session stamp above cannot go on saying `glibc` after the day the
 default changes.
@@ -1239,8 +1235,7 @@ does not overturn it — but three sittings of four put `mimalloc` ahead on ever
 shape, so what the figure supports is "nothing beats it by more than the
 instrument's own noise", not "nothing beats it". The features stay in the
 manifest so a re-take costs five minutes. The reasoning that would have applied had a leg won is
-beside the mechanism ([`architecture.md`](architecture.md), "The allocator is
-the binary's choice").
+beside the mechanism ([`decisions.md`](decisions.md), "D13").
 
 **Every leg is built by the sitting that times it.** `ensure_allocator_binary`
 memoizes per **process** rather than per machine, and builds every leg before
@@ -1437,7 +1432,7 @@ only place that shows it.** Warm, an `INSERT` run costs **2.20 s against the
 **7.14× the `dd` floor** where the `COPY` path is 1.5×. A `COPY` block's data is
 walked and skipped; an `INSERT` run's bytes have to be read quote-aware to
 find where each statement ends, because that is the only thing that says where
-one row stops ([`architecture.md`](architecture.md), "Bulk regions"). Cold on
+one row stops ([`decisions.md`](decisions.md), "D33"). Cold on
 the SSD the difference is gone entirely — 1.02× against 1.00× — which is
 exactly why these tables are here together rather than one being differenced
 against another's regime. **Cold on the NVMe it is back**: 2.63× against 1.06×,
@@ -1463,7 +1458,7 @@ entry live.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm aga
 `INSERT` run's statement scan on raw bytes is what moved it: no `String` per line, no
 statement buffer to re-walk, and a `memchr` pass across the string values that
 are most of what an `INSERT` statement is
-([`architecture.md`](architecture.md), "Bulk regions"). What is left is partly
+([`decisions.md`](decisions.md), "D33"). What is left is partly
 a property of the two algorithms — an `INSERT` run's end can only be found by
 crossing every byte — and partly two named, untaken cuts, which is why `KD9`
 is rewritten to the residual rather than struck. **The cold-SSD row was never
@@ -1474,7 +1469,7 @@ pays nothing for the residual and a user on NVMe pays most of the scan for it,
 which is the reading that settles what the entry is about. The claim is
 corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
-[`roadmap.md`](roadmap.md) and [`architecture.md`](architecture.md), which
+[`roadmap.md`](roadmap.md) and [`decisions.md`](decisions.md), which
 `--check` names as this table's consumers.
 
 **Both legs of the earlier ratio drifted between stamps and the ratio did
@@ -1516,7 +1511,7 @@ cd scripts && uv run measure.py --figure scan-throughput-cold --figure scan-thro
 ```
 
 `parse` is the only command that reads the dump
-([`architecture.md`](architecture.md), "CLI surface"), and the cache it must
+([`decisions.md`](decisions.md), "The CLI"), and the cache it must
 write goes to the container's ephemeral layer — a few hundred KB against 3 GiB
 read.
 
@@ -1734,8 +1729,7 @@ One `pgdq parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
 three regimes, differing in nothing but the number `--chunk-size` carries.
 `scan::DEFAULT_CHUNK_SIZE` is the shipped constant and the ratio column is
 against its row. The figure exists to decide one of the three I/O defaults and
-to bound the other two ([`architecture.md`](architecture.md), "Execution model
-and API surface").
+to bound the other two ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
 **Nine reps, not the throughput tables' three or five.** The cold-NVMe `COPY`
 row above spreads about a seventh of its median over five reps, against a total
@@ -1812,15 +1806,14 @@ The 16 MiB row was excluded from it while `io::BufferPool` kept nothing over
 8 MiB: every chunk at that size was a fresh `vec![0u8; len]` — the `calloc` the
 pool exists to remove, back once per chunk — so its penalty was a pool miss
 rather than a request depth. The pool now keeps a buffer of whatever length a
-read loop announces ([`architecture.md`](architecture.md), "Execution model and
-API surface"), and this sitting is the first to read the row with that fixed:
+read loop announces ([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and this sitting is the first to read the row with that fixed:
 warm it fell 0.866 s → 0.546 s (1.93× → 1.24×) and cold on the NVMe
 1.829 s → 1.578 s (1.42× → 1.23×). It is still the slowest row in both
 regimes, so what the pool miss was hiding is a real depth penalty and the
 conclusion is unchanged — cold time does not *fall* with request depth on any
 device here, so the kernel's own readahead has already taken what there was to
 take and a hint asking for more has nothing to win
-([`architecture.md`](architecture.md), "Execution model and API surface", where
+([`decisions.md`](decisions.md), "I/O, memory and parallelism", where
 both schemes are refused).
 
 **What is left of the 16 MiB warm penalty is not the pool.** 0.546 s against the
@@ -1841,7 +1834,7 @@ the slower device hides entirely and the faster one does not.
 
 The census walks every data row of every block any mapping pass maps — a cold
 query's included, since a mapped block always carries one
-([`architecture.md`](architecture.md), "The array shape census"), so it is a
+([`decisions.md`](decisions.md), "D35"), so it is a
 change to the scan hot path. The 3.00 GiB `COPY` control the generator writes
 by default — 814,362 rows of 16 columns, 3,956 bytes each on `--seed 42`: no
 `{` or `[` in any data row, so every row is rejected by the census's own pre-filter
@@ -1920,7 +1913,7 @@ field split off a per-byte closure and the inspected row got five times cheaper
 while the pre-filter did not, so the two tiers are now within a factor of four
 of each other and the subtraction below has to be read with that in mind. The
 census is unconditional either way
-([`architecture.md`](architecture.md), "The array shape census") — the
+([`decisions.md`](decisions.md), "D35") — the
 alternative is a query that cannot retype its array columns without a second
 pass.
 
@@ -1943,8 +1936,7 @@ it once, by hand: put a bare `return;` as the first statement of `pub(crate) fn
 census_row` in `map.rs` — the pre-filter and everything after it, and nothing
 else. That is the fold itself rather than `Builder::on_row`, which now
 delegates to it, so the patch isolates the census for **every** caller, the
-interior workers included ([`architecture.md`](architecture.md), "The interior
-split"). Then
+interior workers included ([`decisions.md`](decisions.md), "D52"). Then
 
 ```sh
 cargo build --release -p pgdump_query-cli          # default target: glibc
@@ -2073,7 +2065,7 @@ conclusion survives either value. Splitting the row into fields and running
 **80% of the census's whole cost**, down from 96–98% before the split went
 behind `memchr`. The pre-filter is what keeps the brace-free case off that
 path, and it is now a fifth of the price rather than a rounding error. The census is
-unconditional either way (`architecture.md`, "The array shape census") — the
+unconditional either way (`decisions.md`, "D35") — the
 alternative is a query that cannot retype its array columns without a second
 pass.
 
@@ -2093,12 +2085,11 @@ cd scripts && uv run generate_perf_data.py --arrays --composite \
 *Rejected:* a `no-census` cargo feature, so this reproduces as a flag instead
 of a source edit. Neither crate declares a `[features]` section today, and the
 first one a project adds sets the precedent for what features are for — here,
-a build in which `architecture.md`'s "the census is unconditional" is untrue,
+a build in which `decisions.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
 figures (55 ns/row rejected, 282 ns/row inspected) are what the census's own
-section actually consumes ([`architecture.md`](architecture.md), "The array
-shape census"), and the census-off column exists to establish them once.
+section actually consumes ([`decisions.md`](decisions.md), "D35"), and the census-off column exists to establish them once.
 
 ## Nested decode costs what it copies, and an element is now a borrowed slice
 
@@ -2155,7 +2146,7 @@ element** decoding, against the 48 ns a linear force-quote set cost and the
 77 ns an allocation per element cost before that, and **15 ns per element**
 rendering, against 27 ns. An element of an array literal is a borrowed slice of
 the field unless it actually carried an escape
-([`architecture.md`](architecture.md), "The nested literal codec"), and the
+([`decisions.md`](decisions.md), "D45"), and the
 per-byte predicate that decides whether it *would* have been quoted is one
 indexed bit rather than a search of a byte slice. What is left in the decode
 slope is the two walks themselves: `scan_token` walks each token once for its
@@ -2201,7 +2192,7 @@ user pays and not what a library lever can remove; see "A mode difference and a
 per-column delta are CLI numbers" above. It was the largest of the three at 79%
 of the control's gap when a profile last attributed it; four render-path slices
 have since taken it to roughly a third of a typed run, and the current split is
-[`architecture.md`](architecture.md), "Where a scan's time goes" rather than a
+[`decisions.md`](decisions.md), "D29" rather than a
 number repeated here.
 
 **This table no longer attributes cost to a particular column.** That was the
@@ -2317,8 +2308,8 @@ composite (255 ns), which are exactly this file's three nested columns. The
 remaining ~3.2 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is about half of nested decoding**, which is the fact behind the
-refusal to stop copying nested values ([`architecture.md`](architecture.md),
-"The library's own per-row budget") — and the two halves have stayed close to
+refusal to stop copying nested values ([`decisions.md`](decisions.md),
+"D29") — and the two halves have stayed close to
 even as both fell.
 
 ### The cross-file subtraction bottoms out at about half a microsecond a row
@@ -2384,7 +2375,7 @@ instrument with generator support and no entry is exactly the thing that list
 was written against.
 
 **`typed` and `strings` agree byte for byte on all three inputs**, as they do
-on what `pg_dump` writes (`architecture.md`, "CLI surface") — so `cmp` on the
+on what `pg_dump` writes (`decisions.md`, "The CLI") — so `cmp` on the
 two outputs is a valid smoke test here, and
 `pgdump_query-cli/tests/perf_generator_fidelity.rs` asserts it on small
 generated files: the control, `--composite` alone and `--arrays --composite`,
@@ -2483,7 +2474,7 @@ scalar's average and the ordering of the five rows is unchanged.
 The projections are spelled on the CLI, which is what makes this an end-to-end
 figure — `render_field` included — rather than a library-internal one:
 `--no-columns` for the zero-column row and a repeated `--column <name>` for the
-rest ([`architecture.md`](architecture.md), "Projection"). **So a per-column
+rest ([`decisions.md`](decisions.md), "D28"). **So a per-column
 delta here does not size a library change**; see "A mode difference and a
 per-column delta are CLI numbers" above, which is the rule this paragraph is
 the reason for.
@@ -2557,7 +2548,7 @@ one it replaced.** There each term walked from the front of the row on its own,
 so five deep terms crossed sixty-five boundaries and the same depth difference
 read **0.27 µs, 18%** of the deep query. A row's boundaries are now found once
 by `copy::RowSplit` and read by every term and by `push_row` alike
-([`architecture.md`](architecture.md), "Predicates"), and the depth penalty
+([`decisions.md`](decisions.md), "Predicates"), and the depth penalty
 falls to between a quarter and a third of what it was — 0.07 µs at the previous
 stamp and 0.04 µs here, both inside this instrument's own scatter of each
 other.
@@ -2569,7 +2560,7 @@ Going from one term to five at the same depth costs **+0.05 µs a row in total**
 does, because four of them are reading boundaries the first already found. What
 the sharing measured on the deterministic instrument, over five more shapes than
 this table has — including the two it costs — is
-[`architecture.md`](architecture.md), "Predicates".
+[`decisions.md`](decisions.md), "Predicates".
 
 **Every row of this table is a rejected row, which is deliberate: it is where
 the lever it sized looks worst.** `RowBatcher::push_row` walks the whole row
@@ -2789,11 +2780,11 @@ Each cell is wall clock, the plaintext rate it implies, and the speedup over tha
 
 Every row states `--parallel-memory 2147483648` (2.00 GiB) in a 4g container — **not** the register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The one-job row states the same budget: `--jobs 1` is `Parallelism::Serial` carrying it, so an `.xz` leg's one-job row is one block-decoding reader rather than the streaming fallback, and that serial path is what a speedup is a speedup over.
 
-**A plain leg's `--jobs` is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/architecture.md`, "What parallelism buys, and where it stops").
+**A plain leg's `--jobs` is what is asked for, not what is delivered.** `POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a worker wait for one, so a fifth fused worker on a plain source waits. What that wait costs the rows above four is not separated from anything else they pay (`docs/design/decisions.md`, "D25").
 
-**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` caps a query's sub-stream count at `--parallel-memory` divided by what one sub-stream costs to read plus what its held batch pins (`docs/design/architecture.md`, "Execution model and API surface") — a budget the *harness* chose, not a ceiling the library ships. **At this budget neither typed-`query` leg reaches it**, so no cell carries the annotation: the plain leg is charged `8 MiB + 64 MiB` a sub-stream and affords twenty-eight, and the `.xz` leg — which retains by the partition, so the span is not charged — is charged `34.03 MiB` a sub-stream plus a 24 MiB unit of the shared retention list for each past four, and affords thirty-five, both past the top of the axis.
+**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the table states per cell rather than footnotes once.** `plan_partitions` caps a query's sub-stream count at `--parallel-memory` divided by what one sub-stream costs to read plus what its held batch pins (`docs/design/decisions.md`, "I/O, memory and parallelism") — a budget the *harness* chose, not a ceiling the library ships. **At this budget neither typed-`query` leg reaches it**, so no cell carries the annotation: the plain leg is charged `8 MiB + 64 MiB` a sub-stream and affords twenty-eight, and the `.xz` leg — which retains by the partition, so the span is not charged — is charged `34.03 MiB` a sub-stream plus a 24 MiB unit of the shared retention list for each past four, and affords thirty-five, both past the top of the axis.
 
-**`PARALLEL_BUDGET` is 2.00 GiB so that no row is budget-clamped.** A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/architecture.md`, "Execution model and API surface"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
+**`PARALLEL_BUDGET` is 2.00 GiB so that no row is budget-clamped.** A compressed reader is charged its block, the chunk buffer and the decoder's own retention, and the readers together the block pool's retention list (`docs/design/decisions.md`, "I/O, memory and parallelism"), so a smaller budget would hold the widest `.xz` rows below the twenty-four they are labelled.
 
 Per-rep readings (s):
 - Plain, `parse`, 1j: 0.462, 0.443, 0.454, 0.428, 0.433
@@ -2870,7 +2861,7 @@ Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤2.20%, 
 
 A flagless `pgdq` scan discovers its own memory limit, keeps
 `io::MEMORY_RESERVE` back from it and solves the remainder for a worker count
-([`architecture.md`](architecture.md), "Execution model and API surface"). This
+([`decisions.md`](decisions.md), "I/O, memory and parallelism"). This
 figure is what says that arithmetic survives contact with a real cgroup: it
 runs the shipped binary flagless at six allocations and two block sizes, and
 checks the count and budget each run *reports* against the resident set it then
@@ -2881,7 +2872,7 @@ constant.** The two constants are already shipped — `MEMORY_RESERVE` is
 **384 MiB**, read off five builds and 400 runs, and `io::MEMORY_UNPOOLED_BOUND`
 is **256 MiB**, derived by arithmetic over those same runs under the shipped
 charge — a reading taken once, transcribed in
-[`architecture.md`](architecture.md), "Execution model and API surface", and
+[`decisions.md`](decisions.md), "I/O, memory and parallelism", and
 not a table in this document — so what a sitting can do is fault, and the criterion says in advance which
 band a fault lands in. Only the **`bound`** band is a finding the sitting
 discharges, re-deriving the bound from its own remainders; an over-bill is a
@@ -3074,7 +3065,7 @@ and a budget outright, so the discovery path — the thing the reserve is
 subtracted inside — never runs; the +396.22 MiB is what a `--jobs 24` scan
 holds above a budget somebody handed it. `MEMORY_RESERVE` was read off the *flagless*
 legs of a five-build reading — taken once and transcribed in
-[`architecture.md`](architecture.md), "Execution model and API surface", not a
+[`decisions.md`](decisions.md), "I/O, memory and parallelism", not a
 figure here — against the fraction of the limit left at the worst rep; on this
 sitting's flagless legs the worst remainder is 179.5 MiB. The two numbers are
 answers to different questions and neither bounds the other; the axis is here
@@ -3129,7 +3120,7 @@ preamble.
 | `UnterminatedCopyBlock` | none |
 
 **The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
-those are free and frequent pre-1.0 (`architecture.md`, "The cache"). Treat the
+those are free and frequent pre-1.0 (`decisions.md`, "The compressed source and the cache"). Treat the
 koji cache as a byproduct of a scan run for another reason, never as an asset:
 the cache left by the 2026-08-25 run was unreadable within days. Nothing plans around keeping one alive — inspecting koji at all
 (`pgdq info`, with or without `--source`) is available only between a scan and
@@ -3139,7 +3130,7 @@ the next bump, and regaining it costs the full ~54-minute scan.
 itself.** Neither half of the reference it would otherwise want survives: a
 cache from an earlier run dies at the next bump, per the paragraph above, and a
 compressed source's cache is not byte-comparable to a plain one's in any case
-(`architecture.md`, "The cache"). A verification therefore scans the *same file*
+(`decisions.md`, "The compressed source and the cache"). A verification therefore scans the *same file*
 twice in one run, once per arrangement, and compares those two caches to each
 other. What carries across formats instead is the counts in the table above —
 which is what an `.xz` leg is checked against, block for block, row for row and
@@ -3311,7 +3302,7 @@ resumed leg, uncontended over the same file, is what says so.
 **The byte-identical cache is the run's real product**, and it is a property,
 not a figure: a scan stopped inside a hundred-gigabyte block and resumed
 produces the same structural record — span for span — as an uninterrupted one.
-`architecture.md`, "CLI surface", states it. The fixture-scale version is
+`decisions.md`, "The CLI", states it. The fixture-scale version is
 `pgdump_query/tests/map_file.rs`'s
 `a_cancelled_map_file_reports_it_and_banks_what_it_scanned`, which asserts the
 resumed *index* equals an eager scan's; koji is where the same property is
@@ -3382,7 +3373,7 @@ they were taken back to back with no quiet-machine gate and no repetition:
   leaving ~108 MiB of the cgroup unused. Without `MALLOC_ARENA_MAX` the same
   leg had been killed at 509 MiB, one reading on an earlier build; what capping
   arenas is worth on the current one is
-  [`architecture.md`](architecture.md), "Execution model and API surface".
+  [`decisions.md`](decisions.md), "I/O, memory and parallelism".
   `peak-rss` and `parallel-peak-rss` are the registered figures for what a scan
   holds.
 - **`memory.current` reads 503–512 MiB on *both* legs** and describes neither:
@@ -3402,7 +3393,7 @@ probe readings already, at a 2 GiB limit so that nothing was killed — 536 MiB
 with 24 arenas, 476 with 8, and 328 with the arenas capped at 1 — taken on a
 build whose runtime differs from the shipped one, and no more a figure than a
 koji-scale re-take would be
-([`architecture.md`](architecture.md), "Execution model and API surface"). A koji-scale re-take would *still* be disqualified at the number, a
+([`decisions.md`](decisions.md), "I/O, memory and parallelism"). A koji-scale re-take would *still* be disqualified at the number, a
 one-rep resident-set reading off an unquieted machine being no more a figure
 with the cgroup raised than with it tuned.
 
@@ -3418,8 +3409,7 @@ does not read the byte total back at all; that is `pgdq info --dqcache <cache>
 
 `pgdq parse` and every cold query open with `index::scan_preamble`, which reads
 from byte 0 to the first `COPY` header. It is the one region that ignores
-`ScanOptions::cancel` (see `architecture.md`, "`parse` resumes, and saves as it
-goes"), so "bounded by its own length" is the claim that has to hold.
+`ScanOptions::cancel` (see `decisions.md`, "D63"), so "bounded by its own length" is the claim that has to hold.
 
 **koji: 63,333 bytes of 784,019,857,152** — 0.00000008 of the file. The whole
 uncancellable region is one read.
@@ -3490,7 +3480,7 @@ container, so no run writes to the container's own layer.
 
 **One build, not two.** What the save throttle and its gate bought is a settled
 historical fact and is recorded as one beside the mechanism
-([`architecture.md`](architecture.md), "`parse` resumes, and saves as it goes");
+([`decisions.md`](decisions.md), "D63");
 a column re-measured against a pinned commit every sitting prices everything
 that has landed since instead, and the gap only widens. What isolates a
 mechanism is the census-off method above — one line, one rebuild, and an expiry
@@ -3535,8 +3525,7 @@ produced that between them and they are not separable here, because the second
 changed the input to the first: the save throttle skips a save unless 20× the
 last save's own duration has elapsed, and the gate it opens is now also what
 decides when `stream::splice` rebuilds the map
-([`architecture.md`](architecture.md), "`parse` resumes, and saves as it
-goes"). Removing the per-block rebuild shortened the scan, and a shorter scan
+([`decisions.md`](decisions.md), "D63"). Removing the per-block rebuild shortened the scan, and a shorter scan
 earns fewer saves under a rule that is a ratio against elapsed time — so the
 save count is **6** at every size rather than tracking the block count at
 `1/K` of it. What is left of the original quadratic is the rebuild *itself*,
@@ -3582,8 +3571,7 @@ cross-sitting difference, and the only kind this document permits, since 190×
 is two orders of magnitude past the 14% a session's own drift reaches.
 **Without a cache it is the whole cost**: 19.3 s for the same file. The
 *unthrottled* `b726f6b` build put the same 4000-block `parse` at 47.7 s with
-4003 saves ([`architecture.md`](architecture.md), "`parse` resumes, and saves
-as it goes"), which splits roughly as 28 s of saving on top of the ~19 s of
+4003 saves ([`decisions.md`](decisions.md), "D63"), which splits roughly as 28 s of saving on top of the ~19 s of
 mapping this table reads — a historical reading rather than a column, since
 that build is retired. What is left is `KD5`
 ([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies") — the

@@ -1,5 +1,5 @@
 //! End-to-end round-trip over real `pg_dump` output
-//! (`docs/design/architecture.md`, "Testing philosophy"):
+//! (`docs/design/decisions.md`, "D73"):
 //! every mapped, always-decodable column family must render back to exactly
 //! what `SchemaMode::Strings` (the untyped, byte-for-byte path)
 //! already decoded for that same field — that's what "the original bytes"
@@ -170,7 +170,7 @@ async fn nested_columns_round_trip_against_strings_mode() {
 /// mapping pass actually saw, so the uniform column becomes
 /// `List(List(Int32))` and the two that no Arrow list type is honest about
 /// come back as text — decided before the first batch, not at row 40 million
-/// (`docs/design/architecture.md`, "The array shape census").
+/// (`docs/design/decisions.md`, "D35").
 ///
 /// It round-trips against `Strings` mode like every other table, which is
 /// what says the retyped column is still exact: `{{1,2},{3,4}}` in, the same

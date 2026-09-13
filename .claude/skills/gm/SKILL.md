@@ -21,7 +21,7 @@ your report; something else decides what happens next.
 The reason a maintainer usually ends up agreeing with a `/dwal` round is that
 the recommendation is **derivable from the project's own written record** — a
 standing rule in `roadmap.md`, a rejected-alternative paragraph in
-`architecture.md`, an entry in `postgres-invariants.md`, `process.md`, or a
+`decisions.md`, an entry in `postgres-invariants.md`, `process.md`, or a
 precedent set by an earlier slice. That is a checkable property, not taste, and
 checking it is your entire job.
 
@@ -67,8 +67,8 @@ and a call that meets the criterion escalates whether or not it is named here.
   `postgres-invariants.md`.** Later phases inherit both, and a keystone strikes
   the trail that would show where the change came from.
 - **A rule in a standing-constraint doc, in `CLAUDE.md`, or in
-  `.claude/skills/`.** `process.md`, `layering.md`, `measurements.md`'s
-  standing rules and `architecture.md`'s two hard-constraint sections bind
+  `.claude/skills/`.** `process.md`, `decisions.md`, `measurements.md`'s
+  standing rules and `decisions.md`'s two hard-constraint sections bind
   every phase after this one, `CLAUDE.md` is how every session in the repo
   behaves, and the skills are the process itself — a stand-in amending
   `gm/SKILL.md` is editing its own review. `process.md`'s "Where does this fact
@@ -237,7 +237,7 @@ rather than by attention.
 
 **Retire yourself and the griller together, at a round boundary, on the first
 of: 12 questions answered, or 5 rounds.** Rotate earlier when a segment has
-taken heavy reading — several `architecture.md` sections, a spec, source files
+taken heavy reading — several `decisions.md` sections, a spec, source files
 — because the count is a proxy for context consumed and reading is what
 actually consumes it.
 

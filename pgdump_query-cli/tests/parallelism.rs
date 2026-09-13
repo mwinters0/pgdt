@@ -1,6 +1,6 @@
 //! `pgdq parse|query --jobs / --parallel-memory` — the CLI surface a caller
 //! states its concurrency and its memory budget in
-//! (`docs/design/architecture.md`, "Execution model and API surface").
+//! (`docs/design/decisions.md`, "I/O, memory and parallelism").
 //!
 //! The library holds what the two numbers *mean*: `io.rs`'s pool tests drive
 //! the budget's split between a source's two read units, its floor, and the
@@ -160,7 +160,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 /// worker count is filled in from the source and the stated bytes ride through
 /// whatever it comes back as — so the same decline and the same silence follow
 /// from `--parallel-memory` alone, with no `--jobs 2` typed
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// Driven through the CLI rather than through the value, because what this
 /// pins is that the flag reaches `ScanOptions`/`QueryOptions` and then the
@@ -189,7 +189,7 @@ fn a_stated_budget_decides_the_read_path_with_no_jobs_flag() {
 
 /// **The merge prints file order, not arrival order.** `pgdq query` holds one
 /// batch per sub-stream and emits the one that begins earliest in the file
-/// (`docs/design/architecture.md`, "Partitioned replay"), so the `id` column
+/// (`docs/design/decisions.md`, "D51"), so the `id` column
 /// of a table written 1..5 reads 1..5 at every job count — where a printer
 /// that emitted whatever finished first would interleave them.
 ///
@@ -237,8 +237,7 @@ fn dump_with_two_bad_rows(dir: &Path, rows: u32, early: u32, late: u32) -> PathB
 }
 
 /// **The lowest-offset error is the one raised, at every job count**
-/// (`docs/design/architecture.md`, "`pgdq query` merges the sub-streams back
-/// into file order"). Two rows fail to decode; the later one is in a sub-stream that
+/// (`docs/design/decisions.md`, "D65"). Two rows fail to decode; the later one is in a sub-stream that
 /// reaches it in its very first batch, while the earlier one is three batches
 /// into the sub-stream before it. A merge that raised whichever failure arrived
 /// first would name `zzzLATE` at `--jobs 2` and `zzzEARLY` serially, so a user

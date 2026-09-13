@@ -26,7 +26,7 @@ pub enum Error {
     Arrow(#[from] arrow::error::ArrowError),
     /// From `xz_seek`: a walk, a seek, or a block decode failed against an
     /// `.xz`-compressed [`crate::XzSource`]
-    /// (`docs/design/architecture.md`, "The compressed source"). The crate's own
+    /// (`docs/design/decisions.md`, "The compressed source and the cache"). The crate's own
     /// `Error::compressed_offset`/`uncompressed_range` carry the position;
     /// this variant only wraps and displays it.
     #[error("xz error: {0}")]
@@ -39,7 +39,7 @@ pub enum Error {
     CacheModeMismatch(&'static str),
     /// A scan was asked to build forward from a cache that does not describe
     /// the source it was handed, so it refuses rather than scanning and
-    /// overwriting it (`docs/design/architecture.md`, "The cache"). Raised by
+    /// overwriting it (`docs/design/decisions.md`, "The compressed source and the cache"). Raised by
     /// the three scan entry points — `crate::map_file`,
     /// `crate::table_stream`, `crate::index::preamble_only` — before any byte
     /// of the dump is read, from

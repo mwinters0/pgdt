@@ -5,7 +5,7 @@
 //!
 //! [`decode_field`]/[`encode_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
-//! text — see `docs/design/layering.md`, L1. [`crate::decode`] (L2) never
+//! text — see `docs/design/decisions.md`, L1. [`crate::decode`] (L2) never
 //! sees escaped bytes at all: it takes `decode_field`'s already-unescaped
 //! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
 
@@ -149,7 +149,7 @@ fn find_dollar_delimiter(line: &[u8], from: usize) -> Option<std::ops::Range<usi
 /// PostgreSQL dollar-quoting (`$tag$ ... $tag$`, tag optional) is how
 /// `pg_dump` emits function/procedure bodies verbatim, and a line inside one
 /// can coincidentally match the `COPY` header grammar — see
-/// `docs/design/architecture.md`, "Three things close a statement". The
+/// `docs/design/decisions.md`, "D32". The
 /// scanner must never structurally
 /// interpret a line while inside a dollar-quoted string.
 ///
@@ -249,7 +249,7 @@ impl Iterator for FieldRanges<'_> {
 /// something needs the end of the row, which on a row the filter rejects is
 /// never. That is what makes the sharing pay on a deep or many-term filter
 /// and cost almost nothing on a shallow one — see
-/// `docs/design/architecture.md`, "Predicates".
+/// `docs/design/decisions.md`, "Predicates".
 #[derive(Debug, Default)]
 pub struct RowSplit {
     /// The end offset of every field found so far, in order. Field `i` runs
@@ -381,8 +381,7 @@ impl RowSplit {
 /// of one `std::str::from_utf8` per field, sound because a COPY TEXT row's
 /// delimiters (`0x09`) and terminator (`0x0A`) are ASCII and an ASCII byte
 /// never occurs inside a multi-byte UTF-8 sequence, so every field of a
-/// validated row is itself validated. See `docs/design/architecture.md`, "A
-/// row's bytes are validated once, in bulk".
+/// validated row is itself validated. See `docs/design/decisions.md`, "D27".
 ///
 /// Cutting at the last newline is what makes the call safe to make on a
 /// *chunk*: the bytes after it are a partial line whose continuation is in the

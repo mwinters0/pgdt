@@ -203,7 +203,7 @@ async fn strings_mode_never_resolves_types() {
 }
 
 /// `--cache-path none` (`CacheMode::Disabled`) disables persistence, not
-/// typing (`docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`") — the preamble is still scanned fresh, so typing works identically
+/// typing (`docs/design/decisions.md`, "D36") — the preamble is still scanned fresh, so typing works identically
 /// to `CacheMode::Enabled`, just without leaving a cache file behind.
 #[tokio::test]
 async fn disabled_cache_still_resolves_types() {
@@ -225,7 +225,7 @@ async fn disabled_cache_still_resolves_types() {
 
 /// The blocking `Iterator` wrapper drives the same stream to the same result
 /// with no ambient `tokio` runtime — the sync-caller path
-/// `docs/design/architecture.md` calls for.
+/// `docs/design/decisions.md` calls for.
 #[test]
 fn blocking_iterator_matches_async_stream() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -268,7 +268,7 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
 /// `table_stream` used to match `COPY` blocks by qualified table name alone,
 /// with no notion of which `\connect` segment a block belongs to, and
 /// silently unioned both databases' rows for a name genuinely defined
-/// twice. The one-target-per-query rule (`docs/design/architecture.md`)
+/// twice. The one-target-per-query rule (`docs/design/decisions.md`)
 /// closed that: the query now errors, naming both
 /// candidates, instead of returning a union of two unrelated tables.
 #[tokio::test]
@@ -413,7 +413,7 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
 /// partition's own name. A query must return every partition's rows, which
 /// means the `-- load via partition root` marker has to stop the scan from
 /// finishing early at the first match
-/// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes").
+/// (`docs/design/decisions.md`, "D48").
 #[tokio::test]
 async fn a_partition_root_name_yields_every_partitions_rows() {
     for version in [13, 16, 18] {
@@ -569,8 +569,7 @@ async fn notes_rows(
 /// arrives on the carry instead — so the same file read one byte at a time
 /// and read whole must give the same values, multi-byte sequences split
 /// across the boundary included
-/// (`docs/design/architecture.md`, "A row's bytes are validated once, in
-/// bulk").
+/// (`docs/design/decisions.md`, "D27").
 #[tokio::test]
 async fn a_query_answers_the_same_at_every_chunk_size() {
     let dir = tempfile::tempdir().unwrap();

@@ -2,7 +2,7 @@
 """The register-to-oracle reconciliation: every comparison arm has evidence,
 and every piece of evidence is about an arm.
 
-`docs/design/architecture.md`, "The register-to-oracle reconciliation", is the
+`docs/design/decisions.md`, "D71", is the
 description. This module is the join.
 
 **What it exists to check.** The comparison register in

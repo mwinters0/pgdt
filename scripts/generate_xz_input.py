@@ -24,7 +24,7 @@ worker count — over the two kinds of bytes that answer it differently:
 Why a prefix rather than the whole file: the download is 40,397,009,888 bytes
 of 31,150 concatenated streams, and building its seek table means walking
 31,150 footers — 85 s on the HDD, before any decode
-(`docs/design/architecture.md`, "The compressed source"). A figure whose every
+(`docs/design/decisions.md`, "The compressed source and the cache"). A figure whose every
 reading paid that would be a figure about the walk. The prefix is also small
 enough to stage on tmpfs, which is what puts both legs in the same regime: the
 HDD is deliberately not one (`docs/design/measurements.md`, "Scan throughput by
@@ -275,7 +275,7 @@ def koji_slice(source: Path, out: Path, streams: int, offset: int) -> tuple[int,
     No offset is representative either — koji sampled at twelve depths runs
     from 5.02× to 33.05× — so the slice is one draw from a wide distribution
     and the rate it produces is quoted with its density rather than as the
-    file's (`docs/design/architecture.md`, "The compressed source").
+    file's (`docs/design/decisions.md`, "The compressed source and the cache").
 
     Returns the slice's `(start, end)` offsets in the source.
     """

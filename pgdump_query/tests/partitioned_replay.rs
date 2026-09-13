@@ -1,5 +1,5 @@
 //! Partitioned replay: one map, N sub-streams
-//! (`docs/design/architecture.md`, "Partitioned replay").
+//! (`docs/design/decisions.md`, "D51").
 //!
 //! **The whole file is one differential test in several shapes.** A
 //! partitioned replay has no output of its own to assert against — its
@@ -46,7 +46,7 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
 
 /// What one concurrent reader costs `source` resident at the chunk size these
 /// queries read with — the first term of the sub-stream divisor
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// **Asked of the source rather than restated as a chunk count.** A plain
 /// file's partition is several read chunks and the multiple is the library's
@@ -65,7 +65,7 @@ fn partition_unit(source: &LocalFileSource) -> u64 {
 ///
 /// Draining them sequentially is deliberate: it is the arrangement the design
 /// says must be indistinguishable from the serial path
-/// (`docs/design/architecture.md`, "Partitioned replay"), and running them concurrently would test
+/// (`docs/design/decisions.md`, "D51"), and running them concurrently would test
 /// the executor rather than the split.
 async fn partitioned_rows(
     source: &dyn ByteRangeSource,
@@ -156,7 +156,7 @@ async fn sub_streams_polled_interleaved_keep_their_own_rows() {
 
 /// `Parallelism::Serial` is one sub-stream and one only — the serial replay,
 /// reached as a property of the value rather than by a branch
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 #[tokio::test]
 async fn serial_parallelism_is_exactly_one_sub_stream() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -221,8 +221,7 @@ async fn a_budget_bound_worker_count_announces_why() {
 /// reserve, and a serial count means `ParallelismBudgetLimited` cannot fire —
 /// `requested` is one and one is what runs — so without
 /// [`PlanNoteKind::AllocationBelowFloor`] a user in a tight allocation is told
-/// nothing at all (`docs/design/architecture.md`, "Execution model and API
-/// surface").
+/// nothing at all (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// **The rows are the assertion beside it.** Three floors turn a budget of
 /// zero into one reader on the streaming path, and a later change to any of
@@ -373,7 +372,7 @@ async fn a_small_batch_size_flushes_at_a_piece_boundary_without_losing_a_row() {
 /// **The key a caller merges the sub-streams back on.** A `RecordBatch`
 /// carries no position, so `TableStream::batch_source_offset` is what
 /// `pgdq query` sorts one-batch-per-partition on
-/// (`docs/design/architecture.md`, "Partitioned replay").
+/// (`docs/design/decisions.md`, "D51").
 ///
 /// The sub-streams are drained **round-robin**, which is the arrival order a
 /// caller polling them concurrently sees — and it is asserted here to be
@@ -482,7 +481,7 @@ async fn a_table_that_is_not_in_the_dump_is_one_empty_sub_stream() {
 /// A sub-stream's resume token is refused by [`table_stream`] rather than
 /// silently resuming as a whole stream would — which would hand back every
 /// row from that offset on, not the ones that partition had left
-/// (`docs/design/architecture.md`, "Partitioned replay").
+/// (`docs/design/decisions.md`, "D51").
 #[tokio::test]
 async fn a_sub_streams_resume_token_is_refused_by_the_whole_stream() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
@@ -578,7 +577,7 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
 /// `.xz` retains by the *partition*: a batch holding views into a decoded
 /// block pins that block, which `partition_bytes` has already charged for, so
 /// adding `max_source_span` on top would count the same bytes twice
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// One budget, one span and one job count, put to both source shapes:
 ///
@@ -663,8 +662,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
 
 /// A source that declines to be split is not split, whatever `--jobs` says —
 /// the single-block `.xz`, whose streaming fallback would make two readers
-/// each force the other's restart (`docs/design/architecture.md`, "The
-/// compressed source"). One sub-stream, and the same rows.
+/// each force the other's restart (`docs/design/decisions.md`, "The compressed source and the cache"). One sub-stream, and the same rows.
 #[tokio::test]
 async fn a_single_block_xz_declines_to_be_split() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
@@ -805,7 +803,7 @@ async fn a_block_path_that_was_taken_is_silent() {
 
 /// A stated byte budget caps the sub-stream count below the stated `--jobs`,
 /// which is the arithmetic a memory-bounded caller states both numbers for
-/// (`docs/design/architecture.md`, "Execution model and API surface"). The
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). The
 /// rows are unaffected.
 ///
 /// **The divisor is two terms, not one**: what a concurrent reader costs the

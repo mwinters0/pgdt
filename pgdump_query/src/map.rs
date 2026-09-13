@@ -1,6 +1,5 @@
 //! The full file map: an ordered, tiling set of [`Span`]s covering every byte
-//! of a `pg_dump` plain-format file (`docs/design/architecture.md`, "The file
-//! map").
+//! of a `pg_dump` plain-format file (`docs/design/decisions.md`, "D30").
 //!
 //! [`build_map`] classifies DDL statements directly. A TOC comment block is
 //! recognized both as a **boundary** — see below — and as an **enrichment
@@ -85,8 +84,7 @@
 //!   scanner state, driving a [`StatementScan`] over the raw line bytes —
 //!   which costs about 4× a `COPY` scan per byte warm and nothing at all cold
 //!   (`docs/design/measurements.md`, "Scan throughput by input shape"; the
-//!   fast path and what it declines are `docs/design/architecture.md`'s "Bulk
-//!   regions"). Neither carries the inner offsets [`DataBlock::Copy`] does,
+//!   fast path and what it declines are `docs/design/decisions.md`'s "D33"). Neither carries the inner offsets [`DataBlock::Copy`] does,
 //!   because nothing reads their rows yet.
 //!
 //! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
@@ -171,7 +169,7 @@ pub struct Span {
     pub database: Option<String>,
     /// The span's own bytes, sliced from the file by offset and stored in the
     /// cache so `pgdq info` answers without re-reading the dump
-    /// (`docs/design/architecture.md`, "Span text"). `None` until [`attach_text`] has
+    /// (`docs/design/decisions.md`, "D30"). `None` until [`attach_text`] has
     /// run, and permanently `None` for [`SpanBody::Data`] and
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded and carry
     /// nothing a reader wants.
@@ -181,20 +179,20 @@ pub struct Span {
     /// comment of its own (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH
     /// CONFIGURATION ... ADD MAPPING FOR`, ...) **inherits** the governing
     /// entry's header rather than carrying `None`
-    /// (`docs/design/architecture.md`, "Three things close a statement") — [`toc_owned`](Self::toc_owned)
+    /// (`docs/design/decisions.md`, "D32") — [`toc_owned`](Self::toc_owned)
     /// is what distinguishes the two. `None` for a span with no governing
     /// entry at all: the header-less-input fallback, or one of the kinds
     /// inheritance never crosses (`Framing`, `Connect`, `VersionHeader`).
     /// Independent of, and not a substitute for, [`SpanBody`]'s own per-kind
     /// fields: the TOC comment and the statement grammar are two
     /// separately-sourced observations of the same object
-    /// (`docs/design/architecture.md`, "The file map").
+    /// (`docs/design/decisions.md`, "D30").
     pub toc: Option<TocHeader>,
     /// Whether *this span's own* preceding comment carried the TOC header
     /// text (`true`), as opposed to `toc` being inherited from an earlier
     /// entry's span (`false`) — always `false` when `toc` is `None`. This is
     /// the "separate record of whether it carried the header text itself"
-    /// `docs/design/architecture.md`'s "Three things close a statement" section calls
+    /// `docs/design/decisions.md`'s "D32" section calls
     /// for: an object census (`pgdq info`'s `object kinds:`) counts
     /// `toc_owned` spans, one per archive entry, while TOC-coverage counts
     /// every attributed span (`toc.is_some()`), inherited ones included —
@@ -306,7 +304,7 @@ pub struct SpanText {
     pub truncated: bool,
 }
 
-/// Per-span cap on stored text (`docs/design/architecture.md`, "The cache"). A whole schema's DDL
+/// Per-span cap on stored text (`docs/design/decisions.md`, "The compressed source and the cache"). A whole schema's DDL
 /// is small — koji's entire surface is 154KB — so this only ever bites on a
 /// single enormous statement.
 pub const TEXT_CAP: usize = 64 * 1024;
@@ -383,7 +381,7 @@ pub enum DataBlock {
 /// A run of `pg_dump --inserts`/`--column-inserts` output for one table —
 /// `INSERT INTO <table> ...;` statements, one per row, merged into a single
 /// `Data` span instead of one `Unparsed` span per statement
-/// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads": "a koji-scale
+/// (`docs/design/decisions.md`, "D33": "a koji-scale
 /// `--inserts` dump is ~1TB of `INSERT INTO` lines"). No inner offsets: unlike
 /// a `CopyBlock`, nothing reads rows out of this yet — `docs/design/roadmap.md`,
 /// P8 Track A adds
@@ -411,7 +409,7 @@ pub struct InsertRun {
 /// No identity at all: "the only identity the region carries is the OID in
 /// each `lo_create('<oid>')` opener, and recovering it costs a walk of the
 /// whole region, which is exactly what one span avoids paying"
-/// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads").
+/// (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LargeObjectRegion {
     /// Same convention as [`CopyBlock::database`].
@@ -444,8 +442,8 @@ pub enum SpanBody {
         collation: CollationDef,
     },
     /// A bulk region — a `COPY` block, an `INSERT` run, or the large-object
-    /// data region; see `docs/design/architecture.md`,
-    /// "Bulk regions: one span kind, three payloads". One span kind for all three, per that section's
+    /// data region; see `docs/design/decisions.md`,
+    /// "D33". One span kind for all three, per that section's
     /// "Treating all three as one kind" — [`DataBlock`] is where they stop
     /// sharing a shape: only [`DataBlock::Copy`] carries the inner offsets a
     /// row reader seeks by, since it is the only one of the three a reader
@@ -489,7 +487,7 @@ pub enum SpanBody {
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span, since
     /// `build_map` always scans to its target's end
-    /// (`docs/design/architecture.md`, "The file map"). Not produced by [`build_map`] today
+    /// (`docs/design/decisions.md`, "D30"). Not produced by [`build_map`] today
     /// (which always scans to EOF); the incremental scan
     /// that emits one.
     Unscanned,
@@ -514,7 +512,7 @@ pub enum TilingIssue {
 
 /// Verify that `spans` tiles `[0, expected_end)` exactly: sorted, contiguous,
 /// no gaps or overlaps, starting at 0 and ending at `expected_end`
-/// (`docs/design/architecture.md`, "Testing philosophy"). Returns every issue found, not
+/// (`docs/design/decisions.md`, "D73"). Returns every issue found, not
 /// just the first — a caller still gets a usable (if incomplete) map either
 /// way; per the design, a tiling failure is evidence of a bug in this
 /// module, never a reason to refuse the file.
@@ -578,14 +576,14 @@ enum Mode {
     /// Absorbing a statement's lines via [`statement_complete`]. Started
     /// either directly (no TOC comment — `toc`/`toc_owned` seeded from
     /// [`Builder::governing_toc`], see "Span boundaries: statement-anchored,
-    /// object-attributed, greedy" in `docs/design/architecture.md`) or
+    /// object-attributed, greedy" in `docs/design/decisions.md`) or
     /// right after a TOC comment block closes with `saw_name` true (`toc` is
     /// that comment's own header, `toc_owned` true) — either way `start` is
     /// the *span's* start, which for the TOC case is the comment block's
     /// start, not this statement's own first line.
     Statement { start: u64, buf: String, toc: Option<TocHeader>, toc_owned: bool },
     /// Accumulating a run of `INSERT INTO <table> ...;` statements for one
-    /// table (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads") — entered
+    /// table (`docs/design/decisions.md`, "D33") — entered
     /// from `Mode::Statement`'s first line instead of staying there, so the
     /// whole run becomes one `Data` span rather than one `Unparsed` span per
     /// statement. `start`/`toc`/`toc_owned` are the span's own, same
@@ -602,8 +600,8 @@ enum Mode {
     /// (`push_insert_run` goes straight to `push_span`, and
     /// `extract_statement_cross_refs` is deliberately not run over an
     /// `INSERT` body). So the accumulation is a [`StatementScan`] over raw
-    /// bytes rather than a `String` per line — `docs/design/architecture.md`,
-    /// "Bulk regions: one span kind, three payloads". `prefix` is the
+    /// bytes rather than a `String` per line — `docs/design/decisions.md`,
+    /// "D33". `prefix` is the
     /// `INSERT INTO <table>` byte prefix the run's first line spelled, kept
     /// so [`Builder::insert_run_line`] can recognize a continuing statement
     /// without re-parsing the identifier.
@@ -624,7 +622,7 @@ enum Mode {
 /// [`crate::index::build_index`]/[`crate::index::scan_preamble`], which drive
 /// it directly so that producing spans costs no second pass over bytes
 /// [`crate::scan::scan`] already walked
-/// (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
+/// (`docs/design/decisions.md`, "D34").
 pub(crate) struct Builder {
     mode: Mode,
     database: Option<String>,
@@ -656,14 +654,14 @@ pub(crate) struct Builder {
     pending_large_objects: Option<(u64, u64, Option<TocHeader>)>,
     /// Roles/tablespaces referenced anywhere fed to this builder so far —
     /// accumulated as spans close, per
-    /// `docs/design/architecture.md`'s "TOC enrichment" ("a modelled cross-reference set, accumulated during the
+    /// `docs/design/decisions.md`'s "D31" ("a modelled cross-reference set, accumulated during the
     /// scan"). See [`Builder::push_span`] (TOC `Owner:`/`Tablespace:`) and
     /// [`Builder::push_statement_span`] (`OWNER TO`/`GRANT`/`REVOKE`/`ALTER
     /// DEFAULT PRIVILEGES FOR ROLE`/`SET default_tablespace`).
     roles: BTreeSet<String>,
     tablespaces: BTreeSet<String>,
     /// The TOC entry a follow-on statement with no comment of its own would
-    /// inherit — `docs/design/architecture.md`'s "Three things close a statement". Updated by every
+    /// inherit — `docs/design/decisions.md`'s "D32". Updated by every
     /// [`push_span`](Self::push_span) call: set to that span's own `toc` for
     /// a plain statement or `Data` span (whether freshly parsed or itself
     /// inherited — either way it's what the *next* follow-on should carry),
@@ -873,7 +871,7 @@ impl Builder {
     /// cross-reference sets. One of every span's two cross-reference sources
     /// regardless of its kind, since `_printTocEntry()` writes those fields
     /// ahead of *every* entry, not just the ones this module classifies
-    /// (`docs/design/architecture.md`, "TOC enrichment") — the other being
+    /// (`docs/design/decisions.md`, "D31") — the other being
     /// the statement text, which `extract_statement_cross_refs` reads.
     fn harvest_toc_cross_refs(&mut self, toc: &Option<TocHeader>) {
         let Some(t) = toc else { return };
@@ -918,7 +916,7 @@ impl Builder {
         self.flush_large_objects();
         self.harvest_toc_cross_refs(&toc);
         // `Framing`/`Connect`/`VersionHeader` are the three kinds inheritance
-        // never crosses (`docs/design/architecture.md`, "Three things close a statement"); everything else becomes the entry a following
+        // never crosses (`docs/design/decisions.md`, "D32"); everything else becomes the entry a following
         // comment-less statement would inherit, whether this span's own
         // `toc` was freshly parsed or itself inherited.
         self.governing_toc = match &body {
@@ -1061,8 +1059,7 @@ impl Builder {
     /// quarters of an `INSERT` scan was `feed_line`'s per-line
     /// validate-and-allocate plus `statement_complete` re-walking an
     /// accumulated `String`, against 0.6% in the scanner
-    /// (`docs/design/architecture.md`, "Bulk regions: one span kind, three
-    /// payloads").
+    /// (`docs/design/decisions.md`, "D33").
     ///
     /// **What it declines is what keeps it honest.** Anything the ordinary
     /// path might classify differently is handed back: a line whose first
@@ -1142,7 +1139,7 @@ impl Builder {
                 }
                 // No comment precedes this statement: it inherits whatever
                 // entry is currently governing (`None` if none is), per
-                // `docs/design/architecture.md`'s "Three things close a statement" —
+                // `docs/design/decisions.md`'s "D32" —
                 // `push_statement_span` still vetoes this if the statement
                 // turns out to classify as `Framing`.
                 self.mode = Mode::Statement {
@@ -1251,8 +1248,8 @@ impl Builder {
                     return true;
                 }
                 // The run's first line, recognized before it ever becomes a
-                // one-statement `Unparsed` span — `docs/design/architecture.md`,
-                // "Bulk regions: one span kind, three payloads": grouping the whole run into one `Data` span
+                // one-statement `Unparsed` span — `docs/design/decisions.md`,
+                // "D33": grouping the whole run into one `Data` span
                 // is what keeps a koji-scale `--inserts` dump from allocating
                 // (and, pre-3.6, text-storing) one span per row.
                 if buf.is_empty()
@@ -1378,7 +1375,7 @@ impl Builder {
             // A TOC comment (`-- Data for Name: ...; Type: TABLE DATA`, or,
             // rarely, none at all) directly precedes the header: absorb it
             // into the `Data` span's outer boundary per
-            // `docs/design/architecture.md`'s "Bulk regions: one span kind, three payloads" — `span.start <= header_offset`.
+            // `docs/design/decisions.md`'s "D33" — `span.start <= header_offset`.
             Mode::Comment { start, toc, .. } => (start, toc),
             // Never observed in a well-formed dump (a statement never
             // precedes a `COPY` header with no separating blank line/TOC
@@ -1414,7 +1411,7 @@ impl Builder {
     ///
     /// **It takes `&[ArrayShape]` rather than the leader's `Interior`** because
     /// this module is L1 and the leader is L4; the shape vector is the L1 value
-    /// they share (`docs/design/layering.md`).
+    /// they share (`docs/design/decisions.md`).
     ///
     /// Length-tolerant for the same reason [`crate::index::union_census`] is: a
     /// header-less block states no width, so the rows are what grow the vector
@@ -1641,7 +1638,7 @@ impl Builder {
 
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
-/// proper (`docs/design/architecture.md`, "TOC enrichment") and
+/// proper (`docs/design/decisions.md`, "D31") and
 /// `_selectTablespace()` writes ahead of a definition — read for
 /// its tablespace reference by `push_statement_span`'s
 /// `extract_statement_cross_refs` call regardless of how
@@ -1828,7 +1825,7 @@ mod tests {
     /// which is not what this test is about.
     ///
     /// Deficiency register: `deficiency: KD1` — the detail is
-    /// `docs/design/architecture.md`'s "TOC enrichment".
+    /// `docs/design/decisions.md`'s "D31".
     #[test]
     fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {
         let mut builder = Builder::new();
@@ -2080,8 +2077,8 @@ mod tests {
     /// TOC inheritance: a follow-on statement with no TOC comment
     /// of its own (`ALTER SCHEMA ... OWNER TO ...;`, mirroring
     /// `fixtures/*/objects/default.sql`) inherits the governing entry's
-    /// header instead of carrying `None` — `docs/design/architecture.md`,
-    /// "Three things close a statement". The
+    /// header instead of carrying `None` — `docs/design/decisions.md`,
+    /// "D32". The
     /// two spans carry the *same* `toc` value, but only the first has
     /// `toc_owned: true`.
     #[test]

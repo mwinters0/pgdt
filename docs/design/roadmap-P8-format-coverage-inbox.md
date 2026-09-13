@@ -99,8 +99,8 @@ later entry survives (`public.empty_table` in `edge_cases/inserts.sql`).
 **Origin.** M7, 2026-08-27; the second shape found grilling M7 the same day.
 See [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "M7
 attributes an `--inserts` dump's rows" and "Grilling M7", I31 in
-[`postgres-invariants.md`](postgres-invariants.md), and `architecture.md`'s
-"Bulk regions: one span kind, three payloads".
+[`postgres-invariants.md`](postgres-invariants.md), and `decisions.md`'s
+"D33".
 
 **Contingent on.** The `--disable-triggers` deficiency `KD1` staying open
 (`../status/STATUS.md`, "Known deficiencies"). If the unscheduled fix for it
@@ -142,7 +142,7 @@ second `memchr2` pass per plain run, which no `INSERT` statement's end needs.
 The second is why the reader's requirements have to come first: skipping it is
 a mode flag, and whether the depth count is dead weight is a question only a
 caller splitting a `VALUES` tuple can answer. Neither is measured — a profile
-sizes both, and `architecture.md`'s "Bulk regions" carries the reading that
+sizes both, and `decisions.md`'s "D33" carries the reading that
 made them worth keeping.
 
 **Also worth knowing at spec time.** The trailing-`;` test uses ASCII
@@ -152,5 +152,4 @@ documented on the type and both are load-bearing for a caller that reuses it.
 
 **Origin.** The `INSERT` fast path, 2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)). The
-mechanism is [`architecture.md`](architecture.md), "Bulk regions: one span
-kind, three payloads".
+mechanism is [`decisions.md`](decisions.md), "D33".

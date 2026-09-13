@@ -6,8 +6,8 @@
 //! events zero-copy and lets the same state machine serve both the async
 //! driver here ([`scan`]) and any future pull-mode stream.
 //!
-//! Robustness rules this implements (see `docs/design/architecture.md`,
-//! "Parser robustness requirements (hardcoded)"):
+//! Robustness rules this implements (see `docs/design/decisions.md`,
+//! "D24"):
 //!
 //! * `COPY` detection is line-anchored. Row data may contain a literal
 //!   `COPY ... TO stdout;` mid-line, and a non-anchored search would misfire.
@@ -113,7 +113,7 @@ pub struct LargeObjectEnd {
 /// (`docs/status/history/2026-08-23.md`, measured). Surfacing the *lines*
 /// stays rejected: it would leak a mapping concern into L1's event contract,
 /// and span text is sliced from the file by offset anyway
-/// (`docs/design/architecture.md`, "Three things close a statement").
+/// (`docs/design/decisions.md`, "D32").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DollarQuoteEnd {
     /// Absolute file offset just past the line the region closed on — the
@@ -141,7 +141,7 @@ enum State {
         header_offset: u64,
     },
     /// Between a `BEGIN;` and its `COMMIT;` — the large-object data region
-    /// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads").
+    /// (`docs/design/decisions.md`, "D33").
     /// Every line in between is skipped unread, the same way [`State::InCopy`]
     /// skips row bytes: I12 guarantees a bytea hex literal can never contain a
     /// line break, so nothing in here can be mistaken for structure.
@@ -366,7 +366,7 @@ pub enum ChunkPass {
 /// `drain`ed of the consumed prefix. It copies every byte of the file twice —
 /// once in, once when the remainder shifts down — and was **38.0% of a warm
 /// `parse`'s user time**, the largest single term left in it
-/// (`docs/design/architecture.md`, "parse-profile").
+/// (`docs/design/decisions.md`, "D29").
 ///
 /// **Handing the scanner two buffers within one chunk costs it nothing**:
 /// [`CopyScanner::base`] is an absolute file offset, and each pass is
@@ -481,7 +481,7 @@ impl ChunkCarry {
 /// budget's worth ([`crate::Parallelism`], defaulting to
 /// [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count falls
 /// out of that budget, so the cost levels off rather than scaling with the size
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 
 /// Tuning knobs for a full-file scan.
@@ -498,8 +498,7 @@ pub struct ScanOptions {
     /// Cooperative cancellation: set this flag from another task and the
     /// mapping loop stops at the next chunk boundary, persists what it holds
     /// and reports that it was interrupted
-    /// (`docs/design/architecture.md`, "`parse` resumes, and saves as it
-    /// goes"). `None` — the default — is a scan nobody can stop.
+    /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
     ///
     /// **Chunk granularity is the point**, not `CopyEnd` granularity: a
     /// single `COPY` block can be hundreds of gigabytes, and a Ctrl-C that
@@ -515,7 +514,7 @@ pub struct ScanOptions {
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code
     /// path this build has rather than a pool of one
-    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     ///
     /// **The read path's buffer budget reads it, and so does the leader's
     /// scheduler.** Every read loop announces it to the source
@@ -571,7 +570,7 @@ where
     // scan first, then the real one from wherever the preamble left off. Two
     // passes sharing one name would make that ordinary sequence unreadable as
     // anything but an interrupted-and-resumed run
-    // (`docs/design/architecture.md`, "Status output").
+    // (`docs/design/decisions.md`, "D64").
     tracing::info!(
         bytes = size,
         chunk_size = options.chunk_size,
@@ -592,7 +591,7 @@ where
     // the wait's own test driving a bare pool, and the two failure directions
     // are not comparable. The leader's fused worker is the holder that needs
     // the bound and is where it is granted (`crate::leader::scan_region`, and
-    // `docs/design/architecture.md`, "Execution model and API surface").
+    // `docs/design/decisions.md`, "I/O, memory and parallelism").
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();

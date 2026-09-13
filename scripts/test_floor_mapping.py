@@ -72,7 +72,7 @@ STATUS_MD = """# Status
 <!-- deficiency-watermark: KD13 -->
 
 - **KD13** — `money` is below the floor. **(a) deliberate tradeoff**. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "The floor".
+  [`../design/decisions.md`](../design/decisions.md), "D38".
 """
 
 

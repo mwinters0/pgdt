@@ -4,7 +4,7 @@
 //! It exists so that decode scaling is a figure and not a **probe** — "one
 //! core decodes ~446 MB/s of plaintext, four concurrent decodes reach
 //! ~1.48 GB/s" was taken by hand, with no harness, no `drop_caches` discipline
-//! and no repetition (`docs/design/architecture.md`, "The compressed source"). A
+//! and no repetition (`docs/design/decisions.md`, "The compressed source and the cache"). A
 //! number that decides how many workers a scan is worth has to be a figure,
 //! and a figure needs a command a later session can run again.
 //!

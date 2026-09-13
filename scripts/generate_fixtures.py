@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate pg_dump fixture files across PostgreSQL versions and flag combos.
 
-Backs docs/design/architecture.md ("Fixtures"), the
+Backs docs/design/decisions.md ("D69"), the
 tested/untested matrix in docs/design/pg-dump-compatibility.md, and
 same doc's fixture-tree rules. Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
@@ -11,8 +11,7 @@ writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql.
 
 It also generates the **comparison oracle** -- what the server itself answers
 for a table of typed comparisons, written under
-fixtures/<major-version>/oracle/ (docs/design/architecture.md, "The comparison
-oracle"). That pass lives here rather than in its own script because it runs
+fixtures/<major-version>/oracle/ (docs/design/decisions.md, "D70"). That pass lives here rather than in its own script because it runs
 against the `types` schema's own database, so it must see the same DDL, in the
 same container, as fixtures/<major-version>/types/*.sql. The case table and the
 SQL are scripts/comparison_oracle.py.
@@ -27,8 +26,7 @@ generated, rather than as a column of `E42704` nobody reads.
 
 A third pass takes the **ADBC floor oracle** -- what the Arrow ADBC PostgreSQL
 driver returns for every declarable `pg_catalog` type, written under
-fixtures/<major-version>/adbc/ (docs/design/architecture.md, "The ADBC floor
-oracle"). Its sweep and file format are scripts/adbc_floor.py, and the pass
+fixtures/<major-version>/adbc/ (docs/design/decisions.md, "D72"). Its sweep and file format are scripts/adbc_floor.py, and the pass
 ends by running the floor-to-mapping reconciliation (scripts/floor_mapping.py)
 for the same reason an oracle pass runs the other two: a driver release that
 answers a type differently has to be met with a stance or a mapping at the
@@ -72,7 +70,7 @@ HOST_PORT = 55432
 
 # Routine version set: the latest minor release of every PostgreSQL major
 # from 13 onward (13 being the oldest still-supported major) -- see
-# docs/design/architecture.md ("Fixtures") for the policy.
+# docs/design/decisions.md ("D69") for the policy.
 #
 # Pinned to exact minors (not floating "16-trixie"-style tags) so a
 # regeneration is reproducible instead of silently drifting to whatever
@@ -104,21 +102,21 @@ DB_USER = "postgres"
 # A second database, loaded for the `edge_cases` schema only, so that its
 # `dumpall` flag set produces a file in which *two* `\connect` segments carry
 # `COPY` blocks -- the only shape that exercises I1's recurring
-# metadata boundary (architecture.md, "Fixtures"). By I30 this name sorts
+# metadata boundary (decisions.md, "D69"). By I30 this name sorts
 # between DB_NAME and `postgres`, so the segment order is fixed by naming
 # rather than observed. See scripts/fixture_schema_edge_cases_tenant.sql for
 # why its tables look the way they do.
 TENANT_DB_NAME = "pgdq_tenant"
 TENANT_SCHEMA = "edge_cases"
 
-# fixture_schema_objects.sql's non-default tablespace (architecture.md,
-# "Fixtures") needs a directory that exists and is
+# fixture_schema_objects.sql's non-default tablespace (decisions.md,
+# "D69") needs a directory that exists and is
 # owned by the container's postgres OS user *before* its `CREATE TABLESPACE`
 # statement runs -- see prepare_tablespace_dir.
 TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 
 # Each schema exercises a different concern and so wants a different flag
-# list -- see docs/design/architecture.md ("Fixtures") for
+# list -- see docs/design/decisions.md ("D69") for
 # why the split exists and why each gets exactly this set.
 #
 # `None` is a sentinel meaning "run pg_dumpall instead of pg_dump" -- see
@@ -128,7 +126,7 @@ TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 # A flag-set value is normally a plain flags list (or None, above). It can
 # also be a `(min_version, flags)` pair restricting the run to versions >=
 # min_version -- introduced for objects/stats: `--statistics` (TOC_PREFIX_STATS,
-# architecture.md, "Fixtures") is PG18+ only, and the
+# decisions.md, "D69") is PG18+ only, and the
 # routine matrix runs versions 13-18.
 FlagSet = list[str] | None
 SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
@@ -150,7 +148,7 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "data-only": ["--data-only"],
         "binary-upgrade": ["--binary-upgrade"],
     },
-    # architecture.md, "Fixtures": `--verbose` is the one
+    # decisions.md, "D69": `--verbose` is the one
     # documented way to widen the TOC comment block past three lines (the
     # `-- TOC entry ... (class OID)` / `-- Dependencies: ...` lines), so it's
     # this schema's whole reason for a flag set beyond the default.
@@ -159,8 +157,7 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "verbose": ["--verbose"],
         "stats": ("18", ["--statistics"]),
     },
-    # architecture.md's "Query: mapping and streaming are
-    # separate passes": the one shape where a single `COPY <name>` header
+    # decisions.md's "D48": the one shape where a single `COPY <name>` header
     # owns several blocks (I2). `default` already produces it -- pg_dump
     # forces load-via-partition-root for hash-on-enum partitioning with no
     # flag -- and the explicit flag extends it to the LIST-partitioned
@@ -432,7 +429,7 @@ def generate_for_version(
 
 
 # How long a full regeneration takes is recorded in
-# docs/design/architecture.md ("Fixtures"), and this is the threshold past
+# docs/design/decisions.md ("D69"), and this is the threshold past
 # which that figure has stopped being true. Thirty minutes is where a job
 # stops fitting inside one session and has to be handed off (CLAUDE.md,
 # "Long-running processes"), so a run that crosses it changes what a later
@@ -449,7 +446,7 @@ def report_elapsed(seconds: float) -> None:
     if seconds > STALE_AFTER_SECONDS:
         print(
             f"this run took longer than {STALE_AFTER_SECONDS // 60} minutes: the "
-            'figure in docs/design/architecture.md ("Fixtures") is stale and must '
+            'figure in docs/design/decisions.md ("D69") is stale and must '
             "be updated, and a regeneration now has to be handed off to a later "
             "session rather than run inline.",
             file=sys.stderr,

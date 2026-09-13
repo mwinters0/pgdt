@@ -1,15 +1,15 @@
-//! Pull-mode streaming API (`docs/design/architecture.md`, "Execution model and API surface").
+//! Pull-mode streaming API (`docs/design/decisions.md`, "I/O, memory and parallelism").
 //!
 //! [`table_stream`] is the primitive: an async `Stream<Item =
 //! Result<RecordBatch>>` built directly on [`CopyScanner`]/[`RowBatcher`], the
 //! same machinery [`crate::batch::read_table`] (push mode) now drives
 //! internally rather than duplicating. [`ResumeToken`] lets a caller stop
 //! consuming partway through and pick back up later in the same process — it
-//! holds no public fields (`docs/design/architecture.md` is explicit that it must
+//! holds no public fields (`docs/design/decisions.md` is explicit that it must
 //! stay opaque), so its representation is free to change without an API break.
 //!
 //! **Mapping and streaming are separate passes**
-//! (`docs/design/architecture.md`, the section of that
+//! (`docs/design/decisions.md`, the section of that
 //! name). A query runs in two phases, never interleaved:
 //!
 //! 1. [`map_forward`] extends the [`DumpIndex`]'s map from its own
@@ -34,14 +34,13 @@
 //! [`CacheMode::Disabled`] runs the same way with `save` a no-op, mapping in
 //! memory only.
 //!
-//! **Preamble capture** (`docs/design/architecture.md`, "Bounded
-//! preamble-only reads"): before
+//! **Preamble capture** (`docs/design/decisions.md`, "D30"): before
 //! any of that, [`table_stream`] runs [`crate::index::scan_preamble`] once
 //! (skipped once a cache already has it), regardless of which table was
 //! queried, whether it ever appears, or how far the live scan gets before a
 //! caller stops polling. This runs even under [`CacheMode::Disabled`]:
 //! `--dqcache none` disables *persistence*, not type resolution
-//! (`docs/design/architecture.md`, "Bounded preamble-only reads") — but
+//! (`docs/design/decisions.md`, "D30") — but
 //! `cache.save` is a no-op there, so nothing is written to disk. The prepass
 //! covers the *first* database; every later `\connect`ed one is stated by
 //! [`map_forward`] when it reaches that database's first `COPY` block, which
@@ -91,7 +90,7 @@ use crate::{Error, Result};
 /// accumulating its rows, `QueryOptions::filter` resolved against this
 /// block's own schema (schemas can differ block-to-block, e.g. a headerless
 /// block's placeholder names), and the database this block is attributed to
-/// (`docs/design/architecture.md`, "One target per query").
+/// (`docs/design/decisions.md`, "D49").
 ///
 /// The [`ResolvedExpr`] mirrors the caller's [`Expr`] and each of its leaves
 /// carries the field index it reads — into the block's **unprojected**
@@ -188,7 +187,7 @@ fn resolve_expr(
 /// `RecordBatch::try_new` checks the built arrays against `schema` exactly,
 /// so a stream advertising the full table while emitting narrow batches
 /// would put those two out of agreement
-/// (`docs/design/architecture.md`, "Projection").
+/// (`docs/design/decisions.md`, "D28").
 ///
 /// Returns the projected schema and `field_targets` — one entry per field of
 /// the block, `Some(i)` when that field feeds projected column `i`. `None`
@@ -231,7 +230,7 @@ fn project(
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
 /// projection, the filter terms, the schema mode and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
-/// (`docs/design/architecture.md`, "Resume").
+/// (`docs/design/decisions.md`, "D50").
 ///
 /// Every field is hashed through an explicit `match` rather than a derived
 /// `Hash`, so adding an operator or an option is a compile error here rather
@@ -246,7 +245,7 @@ fn project(
 /// partition had left, silently. Stamping the partition makes that
 /// `Error::ResumeQueryMismatch` instead, which is the whole of the support a
 /// partitioned replay offers for resume
-/// (`docs/design/architecture.md`, "Partitioned replay").
+/// (`docs/design/decisions.md`, "D51").
 fn query_fingerprint(
     table: &str,
     options: &QueryOptions,
@@ -345,7 +344,7 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 /// `built` (a complete tiling of `[seg_start, watermark)` from
 /// [`crate::map::Builder`]), plus the trailing [`SpanBody::Unscanned`] span
 /// that makes the result tile the whole file even though the scan stopped
-/// early (`docs/design/architecture.md`, "The file map").
+/// early (`docs/design/decisions.md`, "D30").
 ///
 /// Whole-region replacement rather than an incremental merge because
 /// `Builder`'s output is already a complete tiling of everything the segment
@@ -355,7 +354,7 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 /// the next one starts**.
 ///
 /// That is what keeps interstitial blank lines attributed to the span before
-/// them (`docs/design/architecture.md`, "Three things close a statement") even across a stopping point. A previous scan
+/// them (`docs/design/decisions.md`, "D32") even across a stopping point. A previous scan
 /// that stopped on a block's `end_offset` left that block's span ending
 /// exactly there; the blank line that follows belongs to it, not to whatever
 /// the next segment happens to recognize first.
@@ -406,7 +405,7 @@ fn splice(
 /// concatenation, or a `--create` dump, and a qualified name can be defined
 /// again in a later database — the other route I2 names. Stopping early there
 /// would hand back one candidate's rows where
-/// `docs/design/architecture.md`'s "One target per query"
+/// `docs/design/decisions.md`'s "D49"
 /// requires `Error::AmbiguousTable`, which is a wrong answer with no signal,
 /// exactly what that decision exists to prevent. A `query_options.database`
 /// selector does not lift this: two `\connect` segments can name the *same*
@@ -417,7 +416,7 @@ fn splice(
 /// the prefix announces that.
 ///
 /// Deficiency register: `deficiency: KD6` — the detail is
-/// `docs/design/architecture.md`'s "One target per query".
+/// `docs/design/decisions.md`'s "D49".
 fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
     if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
         return false;
@@ -501,7 +500,7 @@ async fn map_forward(
     // says so on its own (`docs/manual/dump-inspection.md`, "`parse`: reading
     // the dump"). Past here a real scan is about to run, at whatever
     // arrangement `--jobs` and the stated budget resolved to
-    // (`docs/design/architecture.md`, "Status output").
+    // (`docs/design/decisions.md`, "D64").
     tracing::info!(
         bytes = size,
         resumed_from = index.scanned_through,
@@ -540,7 +539,7 @@ async fn map_forward(
     // the iteration that read it and a wait would be safe — but the holder that
     // needs the bound is the leader's fused worker, which grants it for itself
     // and takes it back (`crate::leader::scan_region`, and
-    // `docs/design/architecture.md`, "Execution model and API surface"). This
+    // `docs/design/decisions.md`, "I/O, memory and parallelism"). This
     // loop is what the leader will run inside, so the policy stated here is
     // also what it restores.
     source.hint_wait_policy(WaitPolicy::NeverWait);
@@ -826,7 +825,7 @@ async fn map_forward(
 /// cannot hold the answer is one reader whatever `--jobs` said. This line is
 /// how a `parse` says so: the decline that says it on a query is a
 /// [`PlanNote`] on a `TableStream`, which a `parse` has none of
-/// (`docs/design/architecture.md`, "Status output").
+/// (`docs/design/decisions.md`, "D64").
 ///
 /// **Silence means the leader dispatched the announced count**, not that every
 /// one of them read at once: on a plain source above `POOL_DEPTH` workers the
@@ -907,8 +906,7 @@ async fn close_copy_block(
     let due = throttle.due();
     // **The splice rides the throttle's gate.** Rebuilding `index.spans` clones
     // the whole list, so doing it per block is O(blocks²) — the half of that
-    // quadratic the throttle did not reach (`architecture.md`, "`parse` resumes,
-    // and saves as it goes"). Nothing between gate openings reads `index`: the
+    // quadratic the throttle did not reach (`decisions.md`, "D63"). Nothing between gate openings reads `index`: the
     // metadata recompute in the `CopyStart` arm splices its own copy, and
     // `target_settled` is the one reader that would — which is why a block whose
     // header could satisfy it opens the gate too. What this costs is the
@@ -946,7 +944,7 @@ async fn close_copy_block(
 const SAVE_THROTTLE_K: u32 = 20;
 
 /// Decides whether a mid-scan cache save has earned its cost
-/// (`docs/design/architecture.md`, "`parse` resumes, and saves as it goes").
+/// (`docs/design/decisions.md`, "D63").
 ///
 /// Every save serializes the **whole** index, and the index grows with the
 /// block count, so saving at every `CopyEnd` is O(blocks²): koji's 74 blocks
@@ -1033,8 +1031,7 @@ pub struct MapRun {
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
-/// holds** — `pgdq parse`'s scan (`docs/design/architecture.md`, "CLI
-/// surface").
+/// holds** — `pgdq parse`'s scan (`docs/design/decisions.md`, "The CLI").
 ///
 /// This is [`map_forward`] with no stop target, plus the three whole-file
 /// facts that only a scan reaching EOF may state. It is a second caller for
@@ -1095,8 +1092,8 @@ pub async fn map_file(
         CacheLoad::Index(index) => index,
         // Four reasons to start cold: nothing to resume from, so the map is
         // built from byte 0, and nothing at that path is worth keeping.
-        // Spelled out rather than wildcarded (`docs/design/architecture.md`,
-        // "The cache").
+        // Spelled out rather than wildcarded (`docs/design/decisions.md`,
+        // "The compressed source and the cache").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
@@ -1223,7 +1220,7 @@ impl<'a> TableStream<'a> {
     }
 
     /// This query's resolved schema and diagnostics
-    /// (`docs/design/architecture.md`, "Type resolution":
+    /// (`docs/design/decisions.md`, "Type resolution and decoders":
     /// "one schema per stream"). The empty schema (`ResolvedSchema::default`)
     /// until the query's matching `COPY` block has been found — which, for a
     /// table that never appears in the dump, is forever; a caller checking
@@ -1249,7 +1246,7 @@ impl<'a> TableStream<'a> {
     /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, while
     /// this signal is per-column *and* conditional on a predicate — L4 — so
     /// writing it into either inverts the layering
-    /// (`docs/design/layering.md`). `pgdq query` announces these once on
+    /// (`docs/design/decisions.md`). `pgdq query` announces these once on
     /// stderr; what an embedder should be handed instead is filed in
     /// `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
     ///
@@ -1294,7 +1291,7 @@ impl<'a> TableStream<'a> {
     /// run of the file — so a caller holding one batch per sub-stream and
     /// always emitting the lowest of these offsets re-assembles the serial
     /// order at N × batch, which is what `pgdq query` does
-    /// (`docs/design/architecture.md`, "Partitioned replay").
+    /// (`docs/design/decisions.md`, "D51").
     ///
     /// It is a *start*, not the end [`Self::resume_token`] reports: the two
     /// order identically here, batches of one replay never overlapping, and a
@@ -1311,12 +1308,12 @@ impl<'a> TableStream<'a> {
 /// batch schema a [`RowBatcher`] built from it carries (see
 /// [`TableStream::resolved_schema`]'s docs) — scoped to `database`, the
 /// block's own attribution, never a guess
-/// (`docs/design/architecture.md`, "One target per query").
+/// (`docs/design/decisions.md`, "D49").
 ///
 /// `census` is the union of the array-shape censuses of **every block this
 /// stream will replay**, which is what lets a top-level array column commit
 /// to the shape the file actually holds rather than to an optimistic
-/// `List<T>` (`docs/design/architecture.md`, "The array shape census"). It is
+/// `List<T>` (`docs/design/decisions.md`, "D35"). It is
 /// a parameter rather than something `resolve_columns` looks up so that all
 /// three call sites below — the resumed one included — cannot silently
 /// disagree about a stream's schema.
@@ -1426,15 +1423,14 @@ fn snapshot(
 
 /// Everything a replay needs that the mapping pass produced, shared unchanged
 /// by every sub-stream of a partitioned replay
-/// (`docs/design/architecture.md`, "Partitioned replay").
+/// (`docs/design/decisions.md`, "D51").
 ///
 /// Held behind an `Arc` because `metadata` is the whole dump's DDL and N
 /// sub-streams would otherwise each clone it. Nothing in here is mutated
 /// after the mapping pass, which is what makes one copy correct for all of
 /// them — the census in particular is the union over **every** block the
 /// query will replay, so two partitions of one table cannot resolve its
-/// arrays differently (`docs/design/architecture.md`, "The array shape
-/// census").
+/// arrays differently (`docs/design/decisions.md`, "D35").
 struct ReplayPlan {
     scan_options: ScanOptions,
     query_options: QueryOptions,
@@ -1467,7 +1463,7 @@ enum SegmentEntry {
 /// a cut belongs to the piece before it, once, and no cut has to land on a row
 /// boundary — which is what lets a source advise cuts (block starts, or
 /// anywhere at all) that know nothing about rows
-/// (`docs/design/architecture.md`, "Partitioned replay").
+/// (`docs/design/decisions.md`, "D51").
 #[derive(Debug, Clone)]
 struct Segment {
     block: CopyBlock,
@@ -1667,7 +1663,7 @@ async fn map_for_query(
         // Four reasons to start cold: nothing to resume from, so this
         // query maps from byte 0, and nothing at that path is worth
         // keeping. Spelled out rather than wildcarded
-        // (`docs/design/architecture.md`, "The cache").
+        // (`docs/design/decisions.md`, "The compressed source and the cache").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
@@ -1686,7 +1682,7 @@ async fn map_for_query(
     // (`crate::index::scan_preamble`'s docs) — every `Typed`-mode query needs
     // it for type resolution below, not just a caller that goes on to persist
     // a cache. `CacheMode::Disabled` still runs the scan
-    // (`docs/design/architecture.md`, "Bounded preamble-only reads") but
+    // (`docs/design/decisions.md`, "D30") but
     // `cache.save` below is a no-op for it, so nothing is written. Persisted
     // immediately (not deferred to whenever the mapping pass next saves) so it
     // survives even a caller that polls the stream once and drops it.
@@ -1736,8 +1732,8 @@ async fn map_for_query(
     // map, never on how far the *row* replay has got.
     let metadata = index.metadata.clone();
 
-    // One target per query (`docs/design/architecture.md`,
-    // "One target per query"): narrow the name-only matches down to at
+    // One target per query (`docs/design/decisions.md`,
+    // "D49"): narrow the name-only matches down to at
     // most one `(database, qualified name)` candidate before reading any
     // of them, so a would-be silent union across schemas or databases
     // errors instead. `query_options.database`, when given, is the way
@@ -1773,7 +1769,7 @@ async fn map_for_query(
     // has finished, `matches` is fixed, and every block in it carries a
     // census — so the union below is the evidence for exactly the rows
     // this stream will hand back, on a cold query as much as on a full
-    // scan (`docs/design/architecture.md`, "The array shape census").
+    // scan (`docs/design/decisions.md`, "D35").
     let census = union_census(matches.iter());
     Ok(MappedTable { matches, metadata, census })
 }
@@ -1815,13 +1811,13 @@ pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> us
 /// boundaries — thinned to `want - 1` of them, evenly spaced through the list,
 /// when it offers more than the caller can use — because a cut anywhere else
 /// makes two readers decode one block twice
-/// (`docs/design/architecture.md`, "The compressed source"). An empty `At` is
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). An empty `At` is
 /// the source declining to be split, and it yields the range whole.
 ///
 /// **Shared with the leader** (`crate::leader::scan_region`), which cuts an
 /// open block's interior window with it. One cut rule for the two
 /// arrangements, exactly as the piece semantics are one rule
-/// (`docs/design/architecture.md`, "The interior split").
+/// (`docs/design/decisions.md`, "D52").
 pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
     if want <= 1 || range.start >= range.end {
         return vec![range];
@@ -1863,8 +1859,7 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 /// L1), about one column (`crate::resolve::ResolvedSchema::notes`, L2) or
 /// about one predicate term ([`ComparisonNote`], L4) — a fourth channel,
 /// deliberately not a widening of any of the other three
-/// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two
-/// types"). See [`TableStream::plan_notes`].
+/// (`docs/design/decisions.md`, "The file map and the preamble"). See [`TableStream::plan_notes`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanNote {
     pub kind: PlanNoteKind,
@@ -1897,8 +1892,7 @@ pub enum PlanNoteKind {
     /// memory budget in force does not afford one block-decoding reader, so it
     /// reads through the streaming decoder instead and every **backward** read
     /// decodes forward from its block's start rather than landing in a
-    /// retained block (`docs/design/architecture.md`, "The compressed
-    /// source"). Never a reason to refuse the query — the rows are the same —
+    /// retained block (`docs/design/decisions.md`, "The compressed source and the cache"). Never a reason to refuse the query — the rows are the same —
     /// though the forward mapping pass pays too, a declined source advising a
     /// single partition and so reading serially whatever `--jobs` says; what
     /// it names is the number to raise and how far.
@@ -1938,8 +1932,7 @@ pub enum PlanNoteKind {
     /// `limit − reserve` at zero, and a user in a tight cgroup is otherwise
     /// told nothing at all: [`PlanNoteKind::ParallelismBudgetLimited`] fires
     /// only where `requested` exceeds what was planned, which at one worker is
-    /// never (`docs/design/architecture.md`, "Execution model and API
-    /// surface").
+    /// never (`docs/design/decisions.md`, "I/O, memory and parallelism").
     ///
     /// **Keyed on the budget against what one reader holds, and on nothing
     /// about the limit.** The library is not told where its budget came from,
@@ -2045,7 +2038,7 @@ impl PlanNote {
 /// Whether this source is a compressed one that *could* be read a
 /// block at a time and is not, because the budget in force leaves no room to
 /// hold a whole block ([`crate::io::Partitioning`], and
-/// `docs/design/architecture.md`, "The compressed source").
+/// `docs/design/decisions.md`, "The compressed source and the cache").
 ///
 /// **Read off `partitions()`, not off a budget the caller would have to hand
 /// down.** A source that holds a seek table with more than one block and
@@ -2097,14 +2090,13 @@ fn compressed_block_path_declined(
 /// Split `matches` into the pieces `parallelism` and the source between them
 /// allow, then group those pieces into sub-streams — each internally in file
 /// order, and the groups themselves in file order, so concatenating them is
-/// the serial replay (`docs/design/architecture.md`, "Partitioned replay").
+/// the serial replay (`docs/design/decisions.md`, "D51").
 ///
 /// Never empty: a table with no blocks at all is one sub-stream that yields
 /// nothing, which is what [`table_stream`] does with the same map.
 ///
 /// **`max_source_span` is the second term the stated budget is solved against,
-/// not a separate cap of its own** (`docs/design/architecture.md`, "Execution model
-/// and API surface"). What one sub-stream costs the caller is its held
+/// not a separate cap of its own** (`docs/design/decisions.md`, "I/O, memory and parallelism"). What one sub-stream costs the caller is its held
 /// batch's pin (`max_source_span`, rounded out to the retained unit) *on top
 /// of* what the source charges a concurrent reader for decoding
 /// (`partition_bytes`) — a discovery worker pays only the second, but a
@@ -2186,7 +2178,7 @@ fn plan_partitions(
     // against the footprint alone rather than against the whole charge: the span
     // term puts an ordinary plain `query` at the default budget over the line,
     // which is that arrangement's own property and not a starved allocation
-    // (`docs/design/architecture.md`, "Execution model and API surface").
+    // (`docs/design/decisions.md`, "I/O, memory and parallelism").
     if let Some(memory_bytes) = parallelism.memory_bytes()
         && footprint > 0
         && memory_bytes < footprint
@@ -2417,8 +2409,7 @@ fn replay<'a>(
                     // rather than one `from_utf8` per field. **Taken on the
                     // first row that will decode something**, so a query that
                     // decodes nothing pays nothing
-                    // (`docs/design/architecture.md`, "A row's bytes are
-                    // validated once, in bulk").
+                    // (`docs/design/decisions.md`, "D27").
                     let mut validated: Option<&str> = None;
                     while let Some(event) = scanner.next_event(span, span_eof)? {
                         match event {
@@ -2596,22 +2587,22 @@ fn replay<'a>(
 /// query fingerprint disagrees with `query_options` is
 /// `Error::ResumeQueryMismatch`.
 ///
-/// `query_options.filters` applies `docs/design/architecture.md`'s post-parse
-/// row filter (`docs/design/architecture.md`, "Predicates") as a
+/// `query_options.filters` applies `docs/design/decisions.md`'s post-parse
+/// row filter (`docs/design/decisions.md`, "Predicates") as a
 /// conjunction: an empty list yields every row, and otherwise a row is kept
 /// only if **every** term matches, tested after that row has been fully
 /// unescaped. A term referencing a column absent from a matching block's own
 /// schema is `Error::UnknownPredicateColumn`.
 ///
 /// `query_options.projection` decides which columns are materialized
-/// (`docs/design/architecture.md`, "Projection"). It cuts the schema
+/// (`docs/design/decisions.md`, "D28"). It cuts the schema
 /// [`TableStream::resolved_schema`] reports as well as the batches, may
 /// reorder, and may be empty — a zero-column projection yields batches
 /// carrying a row count and nothing else. A filter term may name a column
 /// the projection does not.
 ///
 /// `cache` controls structure-cache consulting
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 /// `CacheMode::Enabled` persists the map at completed blocks as the mapping
 /// pass advances — and always at the block it stops on — so a later query
 /// against the same dump starts from a nearer
@@ -2674,7 +2665,7 @@ pub fn table_stream<'a>(
 
 /// The same query as [`table_stream`], handed back as **N sub-streams over one
 /// map** — the partitioned replay
-/// (`docs/design/architecture.md`, "Partitioned replay").
+/// (`docs/design/decisions.md`, "D51").
 ///
 /// The mapping pass runs once, here, before any sub-stream exists; each
 /// sub-stream then replays a contiguous run of the blocks that pass settled,
@@ -2705,7 +2696,7 @@ pub fn table_stream<'a>(
 /// on top — so `query_options.parallelism`'s byte half divides by the *sum* of
 /// the two, and N is capped there before `query_options.parallelism`'s job
 /// half is ever consulted
-/// (`docs/design/architecture.md`, "Execution model and API surface", "A
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism", "A
 /// caller-set budget therefore bounds the waiting holders…").
 pub async fn table_stream_partitions<'a>(
     source: &'a dyn ByteRangeSource,
@@ -2918,7 +2909,7 @@ mod tests {
 
     /// A source that declines to be split is not split, however many workers
     /// the caller has — the empty `At` is a policy, not an absence
-    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     #[test]
     fn a_source_that_declines_to_be_split_is_not() {
         assert_eq!(cut(0..1000, &Partitioning::single(0), 16), vec![0..1000]);

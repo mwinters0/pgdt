@@ -1,6 +1,5 @@
 //! The nested literal codec against real `pg_dump` output — the I20
-//! conformance test (`docs/design/architecture.md`, "Decoders and
-//! render-back").
+//! conformance test (`docs/design/decisions.md`, "D44").
 //!
 //! `nested.rs`'s own unit tests are hand-written literals, which can encode a
 //! misreading of the escaping rules twice. This file cannot: it reads every
@@ -271,8 +270,7 @@ async fn the_fixture_carries_the_array_shapes_the_census_will_have_to_report() {
 /// The input grammars against the committed comparison oracle: every literal
 /// row of `fixtures/<13-18>/oracle/literals.tsv` whose declared type resolves
 /// to a nested one, put to `parse_*` and compared with whether the server
-/// itself accepted it (`docs/design/architecture.md`, "The comparison
-/// oracle").
+/// itself accepted it (`docs/design/decisions.md`, "D70").
 ///
 /// **This is what the `*_in` supersets are checked against.** The spec's
 /// stated risk runs toward over-acceptance — a literal we take that the server
@@ -339,8 +337,7 @@ mod oracle {
     ///   first field's away while `textin` keeps the second's. The comparison
     ///   layer does not close this one and will not: a *leaf* is read in its
     ///   own type's output form and no wider, so `" 1 "` is refused rather
-    ///   than trimmed (`docs/design/architecture.md`, "Nested columns compare
-    ///   structurally"). The round trip below is therefore the whole of what
+    ///   than trimmed (`docs/design/decisions.md`, "D58"). The round trip below is therefore the whole of what
     ///   this entry describes.
     /// - **A discrete range canonicalizes its bounds.** `int4range`'s
     ///   `[1,10]` is `[1,11)` on the server, through the subtype's successor

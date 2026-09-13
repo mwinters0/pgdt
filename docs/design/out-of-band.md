@@ -47,9 +47,9 @@ ledger is struck too").
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item did is filed by subject —
-[`architecture.md`](architecture.md) for a mechanism,
+[`decisions.md`](decisions.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
-[`layering.md`](layering.md), [`../process.md`](../process.md) and
+[`decisions.md`](decisions.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
 in the dated history entry it was filed under.
 
@@ -83,5 +83,4 @@ this section. It is `KD9`, and the `INSERT` statement scan took it to
 **4.9× warm**. The
 entry stays live at that residual: part of it is a property of the two
 algorithms and cannot go, and part of it is two named, untaken cuts
-([`architecture.md`](architecture.md), "Bulk regions: one span kind, three
-payloads").
+([`decisions.md`](decisions.md), "D33").

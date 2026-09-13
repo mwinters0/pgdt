@@ -1,6 +1,6 @@
 //! `pgdq query --filter` with the four ordering operators — their CLI
-//! surface (`docs/design/architecture.md`, "Predicates", the ordering
-//! register, and "CLI surface").
+//! surface (`docs/design/decisions.md`, "Predicates", the ordering
+//! register, and "The CLI").
 //!
 //! What an ordering comparison *means* is pinned against the library in
 //! `pgdump_query/src/predicate.rs` and `pgdump_query/tests/ordering.rs`.

@@ -1,6 +1,6 @@
 //! On-disk structure cache: round-tripping, the "unusable cache is treated
-//! as absent" contract `docs/design/architecture.md` requires, and the
-//! source-identity check `docs/design/architecture.md`
+//! as absent" contract `docs/design/decisions.md` requires, and the
+//! source-identity check `docs/design/decisions.md`
 //! ("Cache: the dump file's identity is checked, not assumed") adds on top.
 
 use std::path::{Path, PathBuf};
@@ -28,7 +28,7 @@ fn colocated_path_appends_the_cache_suffix() {
 
 /// The four unusable outcomes are told apart, not collapsed: each is a
 /// different sentence `pgdq info` has to print, even though every one of them
-/// ends in `pgdq parse` (`docs/design/architecture.md`, "The cache").
+/// ends in `pgdq parse` (`docs/design/decisions.md`, "The compressed source and the cache").
 /// `SourceChanged` has its own test below, since producing it needs a second
 /// file.
 #[tokio::test]
@@ -105,7 +105,7 @@ async fn saved_index_round_trips_exactly() {
 /// always reaches EOF, it stops at the first `COPY` header — so it's the one
 /// place today that persists a real `SpanBody::Unscanned` tail, rather than
 /// the variant only ever appearing in `crate::map`'s own unit tests
-/// (`docs/design/architecture.md`, "The file map").
+/// (`docs/design/decisions.md`, "D30").
 #[tokio::test]
 async fn preamble_only_persists_a_real_unscanned_tail() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -119,8 +119,8 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
     // the cache it persists is `Incomplete` by the same completeness check
     // `pgdq info`'s default listing uses to decide whether to trust a cache
     // as the whole file's map — not `Valid`, and not `Absent` either, since
-    // it's a real, usable partial scan (`docs/design/architecture.md`,
-    // "The cache").
+    // it's a real, usable partial scan (`docs/design/decisions.md`,
+    // "The compressed source and the cache").
     let index = match cache::load(&path, &source).await.unwrap() {
         CacheStatus::Incomplete { index, .. } => index,
         CacheStatus::Valid { .. } => panic!("a preamble-only scan cannot reach EOF"),
@@ -197,7 +197,7 @@ async fn size_mismatch_invalidates_the_cache() {
 
 /// `CacheMode::load` carries all four unusable statuses across as their own
 /// [`CacheLoad`] variants rather than answering "no index" for each
-/// (`docs/design/architecture.md`, "The cache"). It is the same four
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). It is the same four
 /// `an_unusable_cache_says_which_kind_of_unusable_it_is` and
 /// `size_mismatch_invalidates_the_cache` put to `cache::load`; what this pins
 /// is that the reason survives the trip to a caller that holds a live source
@@ -246,7 +246,7 @@ async fn cache_mode_load_names_each_unusable_status() {
 /// entry points refuse a cache that records another file's stored size —
 /// naming the path, what the cache expected and what the source is — rather
 /// than starting cold and overwriting it at their first save
-/// (`docs/design/architecture.md`, "The cache"). The other three unusable
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). The other three unusable
 /// statuses still start cold; this is the one that is an error.
 ///
 /// The cache is read back byte for byte afterwards, which is the half that
@@ -367,7 +367,7 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
 
     // The existing valid cache at the colocated path is ignored, not read —
     // and the reason says so: `Disabled` is about the caller, not about
-    // anything found at a path (`docs/design/architecture.md`, "The cache").
+    // anything found at a path (`docs/design/decisions.md`, "The compressed source and the cache").
     assert_eq!(mode.load(&source).await.unwrap(), CacheLoad::Disabled);
 
     // Saving under a disabled mode is a no-op: it must not touch whatever is
@@ -388,7 +388,7 @@ fn require_enabled_errors_when_disabled() {
 
 /// An mtime that changed since the cache was saved is a **warning on the
 /// loaded index**, not an invalidation and not an error
-/// (`docs/design/architecture.md`, "The cache"): mtime granularity and preservation
+/// (`docs/design/decisions.md`, "The compressed source and the cache"): mtime granularity and preservation
 /// vary too much across filesystems, copies and restores to be conclusive.
 /// The cache's contents come back intact.
 #[tokio::test]
@@ -472,7 +472,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 /// hands it back as `CacheLoad::Index`, the same as a `Valid` cache, since its
 /// callers (`table_stream`, `preamble_only`) want a partial map to build
 /// forward from rather than a signal to start over
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
 async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -489,7 +489,7 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     assert!(index.scanned_through < size, "a preamble-only cache never reaches EOF");
 }
 
-/// `docs/design/architecture.md`, "The cache": `CacheMode::Offline` is rejected by every method that
+/// `docs/design/decisions.md`, "The compressed source and the cache": `CacheMode::Offline` is rejected by every method that
 /// requires a live source, and `CacheMode::load_offline` rejects the other
 /// two variants the opposite way.
 #[tokio::test]
@@ -515,7 +515,7 @@ async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
 /// `Incomplete` with the total size it fell short of, the same way `load`
 /// does for a live source — the completeness check reads the cache's own
 /// recorded size, since there is no live file to stat
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
 async fn load_offline_reports_incomplete_for_a_partial_scan() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -537,7 +537,7 @@ async fn load_offline_reports_incomplete_for_a_partial_scan() {
 /// A cache-only load — `Valid` or `Incomplete` — always carries a
 /// `CacheOffline` diagnostic: there is no live file to check it against, so
 /// the result is unverified and historical regardless of completeness
-/// (`docs/design/architecture.md`, "The cache").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
 async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
     use pgdump_query::DiagnosticKind;
@@ -583,7 +583,7 @@ async fn load_offline_missing_file_is_missing() {
 
 /// Compress `path` with `xz`, forcing several blocks so this exercises the
 /// seekable shape, into a temp file this test owns. `xz` is not
-/// `mise`-pinned (`docs/design/architecture.md`, "Testing philosophy"), so a
+/// `mise`-pinned (`docs/design/decisions.md`, "D73"), so a
 /// missing binary fails loudly rather than skipping
 /// (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
 ///
@@ -612,7 +612,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
 /// `XzSource` is just another `ByteRangeSource` to everything above `io.rs`:
 /// `build_index`'s scan and `cache::save`/`load`'s round trip produce the
 /// same `DumpIndex` whether the bytes came straight off disk or through the
-/// decoder (`docs/design/architecture.md`, "The compressed source") — the
+/// decoder (`docs/design/decisions.md`, "The compressed source and the cache") — the
 /// differential parity at the library level. The CLI-level parity against
 /// generated fixtures is `pgdump_query-cli/tests/xz_source.rs`.
 #[tokio::test]
@@ -762,7 +762,7 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
 /// The saving, end to end at the library level: a cache saved from an `.xz`
 /// source hands its seek table back to recognition, which builds a source
 /// from it instead of re-walking the file's stream footers
-/// (`docs/design/architecture.md`, "The compressed source"). The table the
+/// (`docs/design/decisions.md`, "The compressed source and the cache"). The table the
 /// new source reports is the one that was persisted, and it reads the same
 /// bytes.
 #[tokio::test]
@@ -847,7 +847,7 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
 /// `load` applies, done here against a plain `stat` because no source exists
 /// yet — and answering it here is what spares an `.xz` file the stream-footer
 /// walk it would otherwise pay to reach that refusal
-/// (`docs/design/architecture.md`, "The compressed source").
+/// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
 async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exists() {
     let dir = tempfile::tempdir().unwrap();

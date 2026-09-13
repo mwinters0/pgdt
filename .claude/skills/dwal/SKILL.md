@@ -39,7 +39,7 @@ An entry was written by a session that has since ended, describing code and
 docs that have moved. Before framing a single question:
 
 - Read the mechanism the entry governs — the source it names, and the
-  `architecture.md` section or spec that documents it. `CLAUDE.md`'s
+  `decisions.md` section or spec that documents it. `CLAUDE.md`'s
   read-triggers apply here as anywhere.
 - Check the entry's claims against what is actually there. An entry asserting
   that a check reads unticked lines only is a claim about code you can go read.

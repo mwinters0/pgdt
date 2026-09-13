@@ -1,5 +1,5 @@
 //! The array-shape census a full scan records on every `COPY` block
-//! (`docs/design/architecture.md`, "The array shape census").
+//! (`docs/design/decisions.md`, "D35").
 //!
 //! `src/index.rs`'s unit tests pin what a single field contributes. These
 //! pin the three things only a real dump can show: that the shapes recorded
@@ -151,7 +151,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
 /// replay — so a cold query that stopped at its target retypes as confidently
 /// as a full scan, and the `FieldDecode` refusal a multi-dimensional value
 /// used to earn is unreachable for a top-level array column on either path
-/// (`docs/design/architecture.md`, "The array shape census").
+/// (`docs/design/decisions.md`, "D35").
 #[tokio::test]
 async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
     let path = types_fixture(16, "default");

@@ -1,6 +1,5 @@
 //! `pgdq query --where` — the boolean expression grammar's CLI surface
-//! (`docs/design/architecture.md`, "A filter term is parsed for two
-//! audiences", and "Predicates").
+//! (`docs/design/decisions.md`, "D60", and "Predicates").
 //!
 //! What an expression *means* is pinned against the library in
 //! `pgdump_query/tests/batch.rs` and `pgdump_query/src/predicate.rs`; the

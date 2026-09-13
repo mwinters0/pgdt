@@ -1,7 +1,7 @@
-//! Per-type field decode and render-back (`docs/design/architecture.md`,
-//! "Decoders and render-back").
+//! Per-type field decode and render-back (`docs/design/decisions.md`,
+//! "D44").
 //!
-//! Pure, synchronous, no I/O — see `docs/design/layering.md`, L2. A decode
+//! Pure, synchronous, no I/O — see `docs/design/decisions.md`, L2. A decode
 //! function takes an already-COPY-unescaped `&str` field (what
 //! `crate::copy::decode_field` returns) and returns a plain Rust value; it
 //! never takes an Arrow builder — building the array is `batch.rs`'s job
@@ -13,7 +13,7 @@
 //! COPY-escaped bytes on disk. Converting between the two is
 //! `crate::copy::encode_field`'s job, not this module's: this module's whole
 //! job is decoded text vs. Arrow value, and reaching past that into
-//! COPY-escaping would blur the L1/L2 split `docs/design/layering.md` draws.
+//! COPY-escaping would blur the L1/L2 split `docs/design/decisions.md` draws.
 //! `tests/decode.rs`'s round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text, for exactly this reason; the on-disk-byte leg
 //! is covered separately in `tests/scan.rs`.
@@ -197,7 +197,7 @@ static DEC_DIGITS: &str = "0123456789";
 ///
 /// Three properties are load-bearing rather than stylistic, and each was a
 /// measured regression in a shape that lacked it
-/// (`docs/design/architecture.md`, "Decoders and render-back"):
+/// (`docs/design/decisions.md`, "D44"):
 ///
 /// - **The digits come out two at a time**, off [`DEC_PAIRS`], which is the
 ///   algorithm the standard library's own integer `Display` uses. The
@@ -249,7 +249,7 @@ fn push_padded(out: &mut String, value: i64, width: usize) {
 /// 53-element `integer[]` row that machinery costs several times what the
 /// digits do — measured as a whole-query regression that cancelled this
 /// slice's win on the array-bearing file
-/// (`docs/design/architecture.md`, "Decoders and render-back").
+/// (`docs/design/decisions.md`, "D44").
 #[inline]
 pub(crate) fn push_integer(out: &mut String, value: i64) {
     push_padded(out, value, 0);
@@ -370,8 +370,7 @@ pub fn render_date32(days: i32) -> String {
 
 /// [`render_date32`] appending to a caller's buffer instead of returning one.
 /// The `_into` form is the one that does the work; the owned form above is a
-/// wrapper, so the two cannot drift (`docs/design/architecture.md`, "Decoders
-/// and render-back").
+/// wrapper, so the two cannot drift (`docs/design/decisions.md`, "D44").
 pub fn render_date32_into(days: i32, out: &mut String) {
     if push_civil_date(out, i64::from(days)) {
         out.push_str(" BC");

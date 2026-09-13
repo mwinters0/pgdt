@@ -31,8 +31,7 @@ it meets the same decision in gzip's form, so if it runs first the contract is
 already settled and this phase inherits it rather than deciding it.
 
 **Origin.** 2026-09-02, grilling the compressed-input work; the reasoning is
-now beside the mechanism ([`architecture.md`](architecture.md), "The compressed
-source", which states what `size()` promises and the two relaxations refused).
+now beside the mechanism ([`decisions.md`](decisions.md), "The compressed source and the cache", which states what `size()` promises and the two relaxations refused).
 
 ---
 
@@ -59,8 +58,7 @@ crate declined the generalization deliberately rather than by oversight.
 ## The decisions the `.xz` source already made, which this phase inherits
 
 **Fact.** Four decisions bind any later decompressing source, and all four are
-built and filed by subject ([`architecture.md`](architecture.md), "The
-compressed source" and "The cache"): `stored_size()` on the trait with
+built and filed by subject ([`decisions.md`](decisions.md), "The compressed source and the cache" and "The compressed source and the cache"): `stored_size()` on the trait with
 `SourceIdentity` recording it, so the staleness check stays a `stat`; the seek
 table living in the cache envelope as a sibling of `ContainerKind`, which stays
 `Plain` because the span offsets genuinely are plain-format offsets; one
@@ -84,8 +82,7 @@ than an envelope one.
 **Fact.** `io::MEMORY_RESERVE` (384 MiB, the cap a discovered limit hands back)
 and `io::MEMORY_UNPOOLED_BOUND` (256 MiB, what `margin_allowance` predicts a
 count's resident with) were both read off `.xz` inputs alone, at 24 MiB and
-128 MiB block sizes ([`architecture.md`](architecture.md), "Execution model and
-API surface"). The second bounds what a scan holds *outside* what
+128 MiB block sizes ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). The second bounds what a scan holds *outside* what
 `WorkerMemory::at` bills: its worst over the 400-run grid the reserve was read
 off is 238.6 MiB at 24 MiB blocks and 142.0 MiB at 128, and the published
 `reserve` sitting reads 4.7–179.5 MiB — one codec at two decode units, and no
@@ -104,7 +101,7 @@ than one reader count. `scripts/measure.py`'s `charge_model_problem` is what
 would report it: its inner fault line is exactly this constant.
 
 **Origin.** The margin constant's derivation, 2026-09-12
-([`architecture.md`](architecture.md), "Execution model and API surface").
+([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
 ---
 
@@ -122,8 +119,7 @@ does not fit — it would only subtract an already-spent allocation from the
 allowance a worker count is solved against. That buys accuracy in the account
 and no protection, at the cost of the count-independent third `WorkerMemory`
 term `KD24` priced and left untaken. Registered as `KD26`
-([`architecture.md`](architecture.md), "Billed against held: one row per buffer
-the process keeps").
+([`decisions.md`](decisions.md), "D4").
 
 **Why this phase cares.** A seekable source of this phase's codec carries the
 same kind of structure — the zstd seekable format's own seek table is one entry
@@ -137,7 +133,6 @@ was widened to share one, so a decoder crate written or vendored for this phase
 should hand out a shareable handle from the start.
 
 **Origin.** The seek table's account, 2026-09-12
-([`architecture.md`](architecture.md), "Billed against held: one row per buffer
-the process keeps";
+([`decisions.md`](decisions.md), "D4";
 [`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek
 table is held twice, and the walk runs before the budget does").

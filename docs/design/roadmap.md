@@ -15,7 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
+| P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md), by subject; git holds the specs |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -39,13 +39,13 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 (`../status/STATUS.md`, "Known deficiencies").
 
 The struck phases' mechanisms are described by subject in
-[`architecture.md`](architecture.md), not by phase; their specs and notes went
+[`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
 centering"). **Phase numbering continues from `P19`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
-[`layering.md`](layering.md) assigns each module to one of four layers and
+[`decisions.md`](decisions.md) assigns each module to one of four layers and
 fixes the direction dependencies may point; several phases here are cross-layer
 by nature — P10's statistics most of all, which that doc calls the sharpest
 test of its own rules — and it holds the decision rules for them. [`postgres-invariants.md`](postgres-invariants.md)
@@ -85,8 +85,7 @@ Two things distinguish this project from existing `pg_dump` tooling
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
   HDD through NVMe, at flat memory. Where it currently stands, and what a scan
-  spends its time on, is [`architecture.md`](architecture.md), "Where a scan's
-  time goes"; the figures are [`measurements.md`](measurements.md).
+  spends its time on, is [`decisions.md`](decisions.md), "D29"; the figures are [`measurements.md`](measurements.md).
 
   This targets the `COPY`-block/bulk-row path specifically. Preamble and other
   non-data DDL scanning is bounded by schema size, not file
@@ -481,8 +480,8 @@ where the work in front of you would not require them.
 A fifth already binds: the batch layer builds `Utf8View` arrays over the
 scanner's existing chunk buffer instead of copying field bytes out of it, and
 the read path pools that buffer so it outlives the pass that scans it
-([`architecture.md`](architecture.md), "Arrow assembly and the zero-copy path"
-and "Execution model and API surface").
+([`decisions.md`](decisions.md), "D46"
+and "I/O, memory and parallelism").
 
 ### Permanent non-goals
 
@@ -503,7 +502,7 @@ things make it a phase rather than a companion, and the last one also fixes
 where it sits in the table above:
 
 - It is the only work here that spans **all four layers**, which
-  [`layering.md`](layering.md) calls the sharpest test of its own rules.
+  [`decisions.md`](decisions.md) calls the sharpest test of its own rules.
 - It is the only work here whose bug is a **wrong answer** rather than a slow
   one — see "The correctness asymmetry" below — so it cannot share a review
   cycle with a self-contained query-API change (`../process.md`, "Size a slice
@@ -575,7 +574,7 @@ validation:
 
 - The dump-file identity check (size/mtime) that the structural cache treats as
   advisory — a mismatch is a diagnostic, not a hard failure
-  ([`architecture.md`](architecture.md), "The cache") — is **mandatory** before
+  ([`decisions.md`](decisions.md), "The compressed source and the cache") — is **mandatory** before
   any statistic is trusted.
 - Statistics must be **discardable independently** of the structural index, so a
   cache written by a version with a stats bug can be downgraded to "structure
@@ -625,7 +624,7 @@ query's planning — so the run that pays the parse tax gets nothing back, and
 every benefit lands on a subsequent query against a cache that survived. That
 puts two things in the frame together whenever this phase's value is argued:
 the cache's own lifetime, which pre-1.0 ends at the next format bump
-(`architecture.md`, "The cache" — koji's cache was unreadable within days), and
+(`decisions.md`, "The compressed source and the cache" — koji's cache was unreadable within days), and
 the opt-in-and-column-selectable rule above, which is what keeps a caller who
 will never benefit from paying. Reasoning:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Pushdown
@@ -644,7 +643,7 @@ feature attached.
 
 **What it inherits is most of the design.** `read_range`/`size` were shaped
 against `object_store`'s `get_range`/`head` deliberately
-([`architecture.md`](architecture.md), "Execution model and API surface"), and
+([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and
 the read pattern a ranged backend wants is already the one the code has: with a
 complete cache, a query touches the cache, the source's identity, and the target
 block's byte range, and nothing else — the preamble prepass is skipped when the
@@ -865,16 +864,14 @@ which is what makes the difference worth minding at the moment one is found.
   cache holds up to four *units* however few readers there are — at 128 MiB
   blocks that is roughly 512 MiB a compressed scan must be charged before it
   may decode a block at all, which is most of a small container and is what
-  sends such a scan through the streaming decoder there (`architecture.md`, "Execution model and API
-  surface"). A floor that followed the count instead would charge far less at
+  sends such a scan through the streaming decoder there (`decisions.md`, "I/O, memory and parallelism"). A floor that followed the count instead would charge far less at
   one and two readers. Reworking a pool's sizing rule needs evidence the
   charge's account does not produce. **The charge bills the pool honestly
   already** — a reader holds one unit and the pool retains
   `(POOL_DEPTH.max(jobs) − 1) × unit` beside it, which no per-reader term
   carries ([2026-09-12](../status/history/2026-09-12.md), "The charge
   over-bills the pool floor at every count"), and `io::WorkerMemory` is the
-  shape that bills it ([`architecture.md`](architecture.md), "Execution model
-  and API surface").
+  shape that bills it ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
   That charge is not this item: the item is whether the floor should follow the
   count at all — and billing it is what makes the question answerable, the
   decline it widens now being the honest one. The cheap half of it — whether the
@@ -912,7 +909,7 @@ which is what makes the difference worth minding at the moment one is found.
   single-unit, every buffer a worker takes is pooled, and no partition-length
   buffer is allocated for an arena to retain — a probe on the build that
   introduced the chunked read put that at 9.4 MiB at `--jobs 24` against 209.2
-  ([`architecture.md`](architecture.md), "The interior split"). What is left is
+  ([`decisions.md`](decisions.md), "D52"). What is left is
   the cap. Its reason was to bound the allocation a raised `--chunk-size` would
   make, and no such allocation exists;
   with the cap still in place a partition is one chunk at `--chunk-size 8m` and
@@ -921,8 +918,8 @@ which is what makes the difference worth minding at the moment one is found.
   along with the read shape because it widens the *cut* at large stated chunks
   and nothing has measured that — a wider cut was measured to cost throughput
   at the compressed default, which is a different mechanism but the same
-  question asked of the same number ([`architecture.md`](architecture.md),
-  "cut-width"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
+  question asked of the same number ([`decisions.md`](decisions.md),
+  "D8"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
   before it lands, not a spec. **It also raises what the charge bills**, the
   same product being `Partitioning::partition_bytes` — which over-bills the
   plain path already
@@ -940,7 +937,7 @@ which is what makes the difference worth minding at the moment one is found.
   `Mode::Statement`, `push_statement_span`'s `Framing` veto must not eat an
   owned `toc`, and `on_copy_start`'s `Mode::Idle` arm must inherit
   `governing_toc`. The third is why this is a graded slice rather than
-  out-of-band work — `architecture.md` states `governing_toc`'s inheritance as
+  out-of-band work — `decisions.md` states `governing_toc`'s inheritance as
   a decision. The fixture half is a seventh `edge_cases` flag set (`--data-only
   --disable-triggers`), which by I31's scope limit is the only combination that
   emits anything.
@@ -1009,8 +1006,7 @@ which is what makes the difference worth minding at the moment one is found.
   ride in `ComparisonPlan`, which is already per-column and already carries two
   per-column facts. Its **prerequisite is already met**: nothing can defer to a
   collation it has not read out of the preamble, and the declared collation is
-  read ([`architecture.md`](architecture.md), "Ordering operators compare
-  typed"). It acquires a phase number when it acquires a design, and that
+  read ([`decisions.md`](decisions.md), "D55"). It acquires a phase number when it acquires a design, and that
   grilling is unblocked. Reasoning and evidence:
   [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md),
   "Collation splits by whether the answer depends on the source server".
@@ -1050,8 +1046,7 @@ which is what makes the difference worth minding at the moment one is found.
   lossless for every array PostgreSQL can produce — any dimensionality, any
   lower bound, varying freely from row to row — where the `List<T>` that ships
   today covers only the uniform 1-D case and degrades the rest to `Utf8View`
-  ([`architecture.md`](architecture.md), "What the census decides, and who may
-  believe it"). `List<T>` was chosen on koji-shaped evidence: short,
+  ([`decisions.md`](decisions.md), "D34"). `List<T>` was chosen on koji-shaped evidence: short,
   uniform, one-dimensional arrays, where the struct costs +16 bytes per row and
   the loss of `List` as the signal every generic Arrow consumer reads as "this
   is an array". **A schema of matrices or scientific data inverts that
@@ -1079,8 +1074,7 @@ which is what makes the difference worth minding at the moment one is found.
   optimistic path permanently: its shape has nowhere to be recorded, so a
   multi-dimensional or `[lb:ub]`-decorated value there stays a hard
   `FieldDecode` even after `pgdq parse`
-  ([`architecture.md`](architecture.md), "What the census decides, and who may
-  believe it"). Keying the census by a *path* within the column
+  ([`decisions.md`](decisions.md), "D34"). Keying the census by a *path* within the column
   rather than by the column closes that, at the cost of a bigger cache record
   and a per-path walk. Deferred on frequency — a composite with a
   multi-dimensional array field is rare even by that phase's standards — and it
@@ -1089,8 +1083,7 @@ which is what makes the difference worth minding at the moment one is found.
 
 - **Let a live scan emit rows again, by carrying the map in the resume token.**
   Map-building is separate from row emission
-  ([`architecture.md`](architecture.md), "Query: mapping and streaming are
-  separate passes"), which costs a second read of the queried block: once to find its extent, once to emit its rows. The
+  ([`decisions.md`](decisions.md), "D48"), which costs a second read of the queried block: once to find its extent, once to emit its rows. The
   interleaved form can be recovered without reintroducing the unmapped hole
   that motivated the split, because `ResumeToken` is opaque and valid only
   within the producing process — so it can carry the live segment's in-flight
@@ -1099,4 +1092,4 @@ which is what makes the difference worth minding at the moment one is found.
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
 
-- **pgdq caps its own glibc arenas — open.** pgdq does not set `M_ARENA_MAX`; `MALLOC_ARENA_MAX` is the operator's setting, and the CLI's `current_thread` runtime is what keeps the thread count — and so the arena count — following the work rather than the host ([`architecture.md`](architecture.md), "Execution model and API surface"). Whether the binary should set a cap of its own is an open decision ([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another look").
+- **pgdq caps its own glibc arenas — open.** pgdq does not set `M_ARENA_MAX`; `MALLOC_ARENA_MAX` is the operator's setting, and the CLI's `current_thread` runtime is what keeps the thread count — and so the arena count — following the work rather than the host ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). Whether the binary should set a cap of its own is an open decision ([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another look").

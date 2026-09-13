@@ -19,7 +19,7 @@ Every mapping pass records one, so a block in the map always carries a total
 census.
 
 It is the first per-block per-column fact gathered during the scan, and the
-`layering.md` problem it faced is the one `RowGroupStats` faces: L1 does the
+`decisions.md` problem it faced is the one `RowGroupStats` faces: L1 does the
 scanning and cannot know a column's type, which is L2's. The layering doc
 pre-answers this with rule 6 (inject the parse function downward). **The census
 did not need to.** I25 makes an array's dimensionality readable off the raw,
@@ -28,7 +28,7 @@ type-blind and entirely inside L1, and the *interpretation* (which columns are
 arrays, what a depth means) sits wholly in the consumer.
 
 **Why P10 cares.** Per-row-group column statistics are the same shape of
-problem and reach for the same rule 6 answer, which `layering.md` already
+problem and reach for the same rule 6 answer, which `decisions.md` already
 records as the intended one. Two things transfer. First, the cheaper option is
 worth checking first: a statistic that can be computed from the literal's
 lexical form alone needs no injection and no type knowledge, and stays in L1
@@ -39,8 +39,7 @@ and a two-sided believability test, because a scan reads a block's bytes once
 and a partial earlier pass leaves blocks that can never be back-filled.
 
 **Origin.** 2026-08-26. See
-[`architecture.md`](architecture.md), "The array shape census" and "What the
-census decides, and who may believe it".
+[`decisions.md`](decisions.md), "D35" and "D34".
 
 ---
 
@@ -71,7 +70,7 @@ by `resolve_columns` at L2, one per column, cut by `stream::project` with the
 rest.
 
 **Origin.** P11, 2026-09-01. See
-[`architecture.md`](architecture.md), "Ordering operators compare typed", whose
+[`decisions.md`](decisions.md), "D55", whose
 table is the register. **Contingent on** the register's divergent rows, which
 P11 went on to close one type at a time after this was filed — read the table
 rather than trusting any list of them written here.
@@ -83,8 +82,7 @@ rather than trusting any list of them written here.
 **Fact.** The `.xz` addressing layer this repo builds against is `xz-seek`, and
 it is deliberately **not published** — the dependency is a frozen read-only copy
 under `vendor/xz-seek/`, taken by `scripts/vendor_xz_seek.py` and stamped with
-its source commit ([`architecture.md`](architecture.md), "The compressed
-source"). Publication was gated on two real consumers vetting the interface
+its source commit ([`decisions.md`](decisions.md), "The compressed source and the cache"). Publication was gated on two real consumers vetting the interface
 before it is frozen into a version: the compressed source, which has landed, and
 this phase, which has not. So this phase is the remaining half of that gate.
 
@@ -114,7 +112,7 @@ ran first would settle the checkpoint interval and the other would inherit it;
 the reason evaporated when the split unit turned out to be an LF cut of a
 `COPY` interior a serial leader has already proved open, which costs one row's
 resync that `memchr` already gives
-([`architecture.md`](architecture.md), "The interior split"). Known row
+([`decisions.md`](decisions.md), "D52"). Known row
 boundaries buy a splitter nothing. `CopyBlock::sparse_index` is still a
 reserved `None`, so nothing has been built and nothing is a cache-format
 break.

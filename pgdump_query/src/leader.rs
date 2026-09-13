@@ -1,6 +1,6 @@
 //! The interior split: what one piece of an open `COPY` block's interior
 //! answers on its own, and how the pieces fold back into the block's totals
-//! (`docs/design/architecture.md`, "The interior split").
+//! (`docs/design/decisions.md`, "D52").
 //!
 //! A serial leader that has just read `COPY … FROM stdin;` knows every byte
 //! until `\.` is line-structured rows, so the interior can be handed out in
@@ -21,7 +21,7 @@
 //! mid-row byte ([`PieceEntry`]).
 //!
 //! **A piece is not a byte range, exactly as a replay segment is not**
-//! (`docs/design/architecture.md`, "Partitioned replay"). Its `limit` is not
+//! (`docs/design/decisions.md`, "D51"). Its `limit` is not
 //! where reading stops: the piece runs through the line that *ends* at the
 //! first LF at or after `limit`, which is the row the next piece's resync then
 //! skips — the two rules being one rule, since the resync looks for that same
@@ -66,8 +66,7 @@ pub(crate) struct PieceScan {
     /// This piece's own array-shape census, one [`ArrayShape`] per column.
     /// Merged with its siblings' by [`merge`]; on its own it describes only
     /// the rows this piece saw, which is why nothing may read it before the
-    /// block closes (`docs/design/architecture.md`, "What the census decides,
-    /// and who may believe it").
+    /// block closes (`docs/design/decisions.md`, "D34").
     pub census: Vec<ArrayShape>,
     /// `(terminator_offset, end_offset)` where this piece held the `\.` line.
     ///
@@ -103,7 +102,7 @@ pub(crate) struct Interior {
     pub census: Vec<ArrayShape>,
     /// The `CopyEnd` the serial scanner would have emitted — byte for byte,
     /// which is what makes a parallel scan's cache equal a serial one's
-    /// (`docs/design/architecture.md`, "The interior split").
+    /// (`docs/design/decisions.md`, "D52").
     pub end: CopyEnd,
 }
 
@@ -124,7 +123,7 @@ pub(crate) struct Interior {
 /// `spawn_blocking` worker runs, so it takes a slice rather than a source: the
 /// decode that produced the slice and the parse of it are then one thread's
 /// work, which is the whole argument for a fused worker
-/// (`docs/design/architecture.md`, "The interior split").
+/// (`docs/design/decisions.md`, "D52").
 pub(crate) fn scan_piece(
     bytes: &[u8],
     base: u64,
@@ -277,7 +276,7 @@ pub(crate) enum RegionScan {
 /// nowhere else: [`scan_region`] is the only party that sees the source's
 /// advice, and a caller that reads only [`RegionScan`] cannot tell a region
 /// the leader cut from one it was never able to
-/// (`docs/design/architecture.md`, "Status output").
+/// (`docs/design/decisions.md`, "D64").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RegionOutcome {
     /// What happened to the region.
@@ -333,7 +332,7 @@ impl BoundBy {
 /// reports it, the budget having afforded them all. A scan whose blocks are far smaller than the window each is
 /// cut from delivers the count it announced and reads orders of magnitude
 /// more than a serial scan would, reporting nothing here because nothing was
-/// cut short (`KD22`, `docs/design/architecture.md`, "The interior split").
+/// cut short (`KD22`, `docs/design/decisions.md`, "D52").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Shortfall {
     /// Readers the caller asked for — [`crate::Parallelism::jobs`], which is
@@ -366,7 +365,7 @@ pub(crate) struct Shortfall {
 /// The caller has just read `COPY … FROM stdin;`, so it knows every byte from
 /// `data_offset` until `\.` is line-structured rows — which is the whole
 /// licence for handing them out to workers that never parse structure
-/// (`docs/design/architecture.md`, "The interior split").
+/// (`docs/design/decisions.md`, "D52").
 ///
 /// **Where the file ends is `size`, and `columns` is the header's width.**
 /// `header_offset` is carried only to name the block in
@@ -381,8 +380,7 @@ pub(crate) struct Shortfall {
 /// discovery lives in the plain source's own worker recommendation
 /// (`ByteRangeSource::default_workers`), reaching an unstated `--jobs`, rather
 /// than in a branch
-/// (`docs/design/architecture.md`, "What parallelism buys, and where it
-/// stops").
+/// (`docs/design/decisions.md`, "D25").
 ///
 /// **The one rule it does apply is a floor**, and it is derived rather than
 /// chosen: cutting spends a whole reader's worth of the caller's budget on
@@ -450,7 +448,7 @@ pub(crate) async fn scan_region(
 /// What this arrangement delivers short of what was asked, for the two
 /// reasons that outlive the region — the fact `scan started` cannot carry,
 /// because the source's advice is not read until the leader is standing on an
-/// open block (`docs/design/architecture.md`, "Status output").
+/// open block (`docs/design/decisions.md`, "D64").
 ///
 /// **The source arm is asked about the whole file**, not about the region the
 /// leader is standing on: a block-decoding source past its last boundary
@@ -545,7 +543,7 @@ async fn run_region(
         // what it read, on the blocking pool. That is the fused worker: a
         // decoded block never crosses a channel, because the thread that
         // decoded it is the thread that parses it
-        // (`docs/design/architecture.md`, "The interior split").
+        // (`docs/design/decisions.md`, "D52").
         let mut dispatched: futures::stream::FuturesOrdered<_> = ranges
             .into_iter()
             .enumerate()
@@ -563,8 +561,7 @@ async fn run_region(
             })
             .collect();
         // **The lowest-offset error is the one raised, and this is what
-        // arranges it** (`docs/design/architecture.md`, "The interior
-        // split"). A window's pieces tile the region in
+        // arranges it** (`docs/design/decisions.md`, "D52"). A window's pieces tile the region in
         // ascending order, so partition order *is* file order, and
         // [`futures::stream::FuturesOrdered`] hands the results back in that
         // order however they arrived: the `?` below therefore fires on the
@@ -621,7 +618,7 @@ async fn run_region(
 /// time, which at the shipped cut width is the piece exactly and so a
 /// zero-copy slice of a block the worker was going to decode anyway. Neither
 /// shape is a property of the leader, which is why neither is written here
-/// (`docs/design/architecture.md`, "Execution model and API surface"). Both
+/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). Both
 /// halves are asserted rather than asserted-in-prose:
 /// [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
 /// [`no_read_a_worker_makes_exceeds_the_stated_unit`].
@@ -629,8 +626,8 @@ async fn run_region(
 /// **`Whole` is `min(piece, unit)`, not the piece**, so a cut wider than one
 /// unit caps the body read at a unit rather than growing it with the width.
 /// That bounds the buffer; it does not make a wider cut safe, which wants a
-/// read clipped to the next boundary (`docs/design/architecture.md`,
-/// "cut-width").
+/// read clipped to the next boundary (`docs/design/decisions.md`,
+/// "D8").
 ///
 /// **The reads repeat until the piece has passed its limit**, which no read
 /// inside it can do: the line ending at or past `range.end` needs bytes past
@@ -1209,7 +1206,7 @@ mod tests {
     ///
     /// It does **not** assert that the read is poolable, because it is not:
     /// `crate::io::BufferPool::keeps` admits the announced chunk and nothing
-    /// longer, at either width (`docs/design/architecture.md`, "cut-width").
+    /// longer, at either width (`docs/design/decisions.md`, "D8").
     #[tokio::test]
     async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
         const UNIT: u64 = 24;
@@ -1347,8 +1344,7 @@ mod tests {
     /// **A count asked for is not a count delivered, and this is the only
     /// party that knows the difference**: the budget is solved against the
     /// source's own advice here, and `scan started` has already announced the
-    /// number the caller typed (`docs/design/architecture.md`, "Status
-    /// output").
+    /// number the caller typed (`docs/design/decisions.md`, "D64").
     ///
     /// The shortfall is answered whatever became of the region, so a block too
     /// small to cut still carries the arrangement-wide fact — which is what

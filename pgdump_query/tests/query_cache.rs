@@ -1,5 +1,5 @@
 //! `table_stream`/`read_table`'s cache-consulting behavior
-//! (`docs/design/architecture.md`, "The cache"): replaying
+//! (`docs/design/decisions.md`, "The compressed source and the cache"): replaying
 //! already- cached blocks, skipping non-matching ones at zero I/O cost, and
 //! persisting newly-discovered blocks as a live scan finds them. See
 //! `tests/stream.rs`/`tests/batch.rs` for cache-free behavior, and
@@ -199,7 +199,7 @@ async fn disabled_cache_is_a_noop() {
 
 /// A cold query maps only as far as it must: every block up to and including
 /// the queried table's, and nothing past it
-/// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes"). `widgets` is the second of four blocks, so the
+/// (`docs/design/decisions.md`, "D48"). `widgets` is the second of four blocks, so the
 /// cache it leaves knows two tables, not four — that bound is the whole
 /// point, since it is what keeps a query against an early table in a huge
 /// dump from costing a full scan.
@@ -258,8 +258,8 @@ async fn scan_extent_full_maps_the_whole_file_from_a_query() {
     assert_eq!(index.scanned_through, source.size().await.unwrap());
 }
 
-/// The concrete case `docs/design/architecture.md`'s
-/// "TOC enrichment" names for why the cross-reference set can't stop
+/// The concrete case `docs/design/decisions.md`'s
+/// "D31" names for why the cross-reference set can't stop
 /// where the map does: `objects.widgets`' own `COPY` block closes long before
 /// the file's post-data `GRANT`/`ALTER DEFAULT PRIVILEGES` section
 /// (`fixtures/16/objects/default.sql`) grants `fixture_reader` access to it.
@@ -317,7 +317,7 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
 /// bytes silently skipped because an earlier query stopped early.
 ///
 /// The queried block is **fully mapped before its first row is emitted**
-/// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes"), so stopping mid-`widgets` still leaves `widgets`
+/// (`docs/design/decisions.md`, "D48"), so stopping mid-`widgets` still leaves `widgets`
 /// itself in the cache — the map can never be behind the rows a caller has
 /// already seen. That is the property the split exists for, and it is what
 /// lets a resume point always land inside mapped territory.
@@ -461,7 +461,7 @@ async fn no_duplication_on_repeat_queries() {
 /// tiles its file exactly, the same way `build_index`'s does — every byte in
 /// exactly one span, no gaps, no overlaps — with no exemption for a partial
 /// scan, a warm cache, or a resumed stream
-/// (`docs/design/architecture.md`, "The file map").
+/// (`docs/design/decisions.md`, "D30").
 ///
 /// Each state below stresses a different seam in the splice: the cold case
 /// joins the preamble prepass's spans to a live segment's; the warm case
@@ -540,7 +540,7 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
             // Span for span, array-shape census included: every mapping pass
             // censuses, so the three queries that built this index agree
             // with a single eager scan in every field
-            // (`docs/design/architecture.md`, "The array shape census").
+            // (`docs/design/decisions.md`, "D35").
             assert_eq!(
                 full.spans, eager.spans,
                 "{label}: a fully-mapped query agrees with build_index span for span"

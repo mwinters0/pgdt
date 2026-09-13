@@ -1,5 +1,5 @@
 //! Typed ordering predicates: `<`, `<=`, `>`, `>=` over the generated
-//! `types` fixture (`docs/design/architecture.md`, "Predicates", the
+//! `types` fixture (`docs/design/decisions.md`, "Predicates", the
 //! ordering register).
 //!
 //! The library-level tests only — everything here drives `table_stream`
