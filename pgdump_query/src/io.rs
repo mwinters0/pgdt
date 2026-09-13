@@ -169,10 +169,12 @@ pub trait ByteRangeSource: Send + Sync {
     /// work rather than about the memory, and cannot make the budget bind
     /// twice.
     ///
-    /// [`LocalFileSource`] inherits the default: a plain `parse` is slower than
-    /// serial at every worker count measured, including with the pool-depth
-    /// clamp lifted ("Where a scan's time goes"). [`XzSource`] overrides it,
-    /// decode being the one shape that demonstrably scales.
+    /// [`LocalFileSource`] inherits the default: on storage a plain `parse` is
+    /// already device-bound, so there is no wall clock for a second worker to
+    /// take, and splitting it adds a chunk-sized tail read per partition
+    /// besides ("Execution model and API surface", which also holds why the
+    /// warm speedup does not reopen this). [`XzSource`] overrides it, decode
+    /// being the one shape that demonstrably scales.
     fn default_workers(&self) -> usize {
         1
     }
@@ -3790,10 +3792,16 @@ mod tests {
 
     /// **Silence recommends the serial path**, the same convention
     /// `partitions` above answers with — and [`LocalFileSource`] inherits it
-    /// rather than overriding, because a plain `parse` is slower than serial at
-    /// every worker count measured ("Where a scan's time goes"). Only a reading
-    /// showing a plain parallel `parse` beating serial reopens that, and this
-    /// is where it would be reopened.
+    /// rather than overriding, because on storage a plain `parse` is already
+    /// device-bound ("Execution model and API surface").
+    ///
+    /// **The reading that was once this default's reopening condition has been
+    /// taken, and it did not reopen it.** A plain parallel `parse` does beat
+    /// serial — 1.36× at two workers — but only warm on tmpfs, and the warm
+    /// regime is not the one a default is chosen for; what reopens this is a
+    /// parallel plain scan measured on a real device, which no figure covers.
+    /// So this is still where it would be reopened, on a narrower reading than
+    /// the one that has now been spent.
     #[test]
     fn a_source_that_does_not_advise_recommends_the_serial_path() {
         assert_eq!(BareSource.default_workers(), 1);

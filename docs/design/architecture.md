@@ -455,8 +455,9 @@ goals"). **The CLI asks the source instead of holding a constant**, which is
 open file, a stated one wins outright, and there is no third spelling — `--jobs
 0` is refused, zero already reading as one through `Parallelism::workers`.
 `LocalFileSource` inherits the defaulted answer of **one**, the serial path,
-because a plain `parse` is slower than serial at every worker count measured
-and the pool-depth clamp is not what makes it so ("Where a scan's time goes");
+because on storage a plain `parse` is already device-bound — 1.00× the SATA
+floor and 1.06× the NVMe's ("Scan throughput by input shape") — so there is no
+wall clock there for a second worker to take;
 `XzSource` answers `available_parallelism()`, which is already the minimum of
 the affinity mask and every ancestor cgroup's CPU quota
 ([`runtime-invariants.md`](runtime-invariants.md), `RT7`), **capped at its own
@@ -466,6 +467,27 @@ twenty-four workers, still climbing — so a small constant such as four would
 leave the machine's own answer unspent on the only path that can use it, and
 the standing rule's four-and-twenty-four baseline already buys predictability
 by a different route ([`roadmap.md`](roadmap.md), "Standing rules").
+
+*Rejected: a plain source recommending `POOL_DEPTH` workers rather than one.*
+A plain `parse` does read **above** serial warm — 1.36× at two workers and
+1.41× at four ("What parallelism buys, and where it stops") — and that reading
+is what retired the old justification for this default, which was that
+splitting a plain source is slower than not splitting it. It does not replace
+it. The leg is warm on tmpfs, the regime that exists to expose CPU a device
+hides, and the default is chosen for the regime a user is in: on storage the
+scan is at the floor, and splitting it there **adds** device bytes rather than
+taking wall clock off, because `PLAIN_PARTITION_CHUNKS` makes each worker read
+a chunk-sized tail past its own 8 MiB partition — 12.5% more bytes by
+construction, against an NVMe budget that is the 0.072 s by which a 1.289 s
+scan exceeds `dd`. On rotational media the sequential-read loss is worse than
+that and is why no cold-parallel leg exists to quote
+([`measurements.md`](measurements.md), "Scan throughput by input shape", which
+rejects those legs by arithmetic over readings already held). The user this
+would serve is the one re-reading a page-cached file, and they reach it by
+typing `--jobs`, which the manual documents as worth about 40% there
+([`../manual/dump-inspection.md`](../manual/dump-inspection.md)). Reopening
+this needs a reading of a parallel plain scan on a real device, which is a
+regime `measurements.md` currently refuses to admit.
 
 **The block count is applied where the count is recommended, not left to bind
 downstream.** `stream::cut` cuts at block boundaries and there is no seam past
@@ -2093,10 +2115,11 @@ partition to the serial path — so moving the number cuts regions in the last
 8 MiB of a file where today it does not. The two read loops want different
 shapes, `MayWait` making the free list and the in-flight buffers one population
 on the parse path where `NeverWait` makes them two on the query path. And every
-arrangement in dispute is one a user reaches only by typing `--jobs n` at a path
-whose worker default is serial precisely because a plain `parse` is slower than
-serial at every worker count measured ("What parallelism buys, and where it
-stops"). It is an **over**-bill, so it declines readers rather than overrunning
+arrangement in dispute is one a user reaches only by typing `--jobs n`, a plain
+source's worker default being serial — a default that rests on the scan being
+device-bound on storage rather than on any claim that splitting it is slower,
+which the warm re-take falsified ("Execution model and API surface"). It is an
+**over**-bill, so it declines readers rather than overrunning
 an allocation, and `19.11`'s gate cannot reach it — that figure's legs are
 `pgdq parse` over a compressed input
 ([2026-09-12](../status/history/2026-09-12.md), "`M97` is priced, and the bill

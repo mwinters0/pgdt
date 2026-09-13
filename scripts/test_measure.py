@@ -4178,7 +4178,20 @@ class Sittings(unittest.TestCase):
     """A figure may be published outside the sweep, and then its own marker
     carries the commit it was taken at. Every reader of the session stamp
     argues from that commit instead — half-applying it leaves a mechanism
-    reasoning from a commit the doc itself says is not the figure's."""
+    reasoning from a commit the doc itself says is not the figure's.
+
+    **The cases below fabricate a sitting and name a real register entry as
+    their example, so that entry's other properties are premises they do not
+    state.** `test_the_unentangled_example_is_still_unentangled` states them
+    instead, and is what a register move fails against — asserting the premise
+    beside the test is the durable form of that lesson, because the failure
+    then names the premise that went rather than a refusal these cases were
+    never testing. A rule saying so elsewhere would be a third copy enforced by
+    nothing. The shape is specific: it bites where an assertion picks **one
+    element of a multi-cause result**, `sitting_problems` being the only such
+    producer here — an example whose property is asserted whole, as at
+    `test_a_figure_with_no_nvme_inputs_checks_nothing`, fails legibly on its
+    own."""
 
     DOC = measure.REPO / "docs/design/measurements.md"
 

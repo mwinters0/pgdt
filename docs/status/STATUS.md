@@ -507,38 +507,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**Three of `19.11`'s register-move reds were fixed rather than left for the
-paste.** `runs/19.11-reserve-gate-20260913-0005/HANDOFF.md` enumerated the reds
-the move would produce and said they were cured by the paste and not to be
-worked around. Three of them are not paste-curable, so they were fixed in the
-change that caused them: `BorrowGraph.test_every_republished_spec_is_one_its_source_takes`
-needed a `peak-rss` row in its source-key table, without which it silently skips
-the two new edges instead of checking them; and the `OutsideInvalidation.*`
-family plus one `CensoredSittingsBarPublication` assertion read a
-`measure.NOT_OURS` row and an empty-`FIGURES_BY_ID` premise that the move
-deletes for good. Leaving them red would have handed the paste session a suite
-it could not green and no way to tell those from the ten that are genuinely the
-doc's. **What would change if reconsidered**: the alternative is to leave every
-red standing and let the paste session make the same call with the tables in
-hand, which costs nothing but keeps three misleading assertions alive across a
-sweep. Reasoning: [2026-09-13](history/2026-09-13.md), "The register move is
-landed, and three of its reds were fixed with it".
-
-**A plain `parse` now reads faster than serial warm, and the serial default was
-left alone.** `parallel-scan-throughput`'s re-take on the repaired build reads
-1.36× at two workers and 1.41× at four, where the `20fd77c` sitting read 0.81×
-at every count — the `partition_bytes` → `reader_bytes` repair, exactly as
-[`../design/architecture.md`](../design/architecture.md), "What parallelism
-buys, and where it stops" predicted it would. That falsifies the *stated*
-justification for a plain source recommending one worker ("splitting one is
-slower than not splitting it"), which the manual and that section both carried
-and which is now corrected to the true one: on storage a plain `parse` is
-device-bound at 1.00–1.06× the `dd` floor, so the speedup exists only where the
-bytes are already resident. **The decision left unmade** is whether that is
-still the right default: a user parsing a file the page cache already holds
-pays 40% for the default, and `--jobs` is the only way out. Changing it means
-re-grilling `19.8`'s source-recommends-its-own-count rule, which binds beyond
-`19.11`, so this round measured it and stopped. **What would change if
-reconsidered**: the alternative is a plain source recommending `POOL_DEPTH`
-workers rather than one, which costs three more buffers of resident memory on
-every plain scan for a win nobody on a real device sees.
+*Nothing open.*
