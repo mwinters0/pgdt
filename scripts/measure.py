@@ -7333,7 +7333,6 @@ FIGURES: list[Figure] = [
         also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
-            "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
         table_label="Every run cold, on the SSD",
@@ -7354,7 +7353,6 @@ FIGURES: list[Figure] = [
         also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
-            "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
         table_label="Every run warm, on tmpfs",
@@ -7380,7 +7378,6 @@ FIGURES: list[Figure] = [
         id="scan-throughput-nvme",
         also_quoted_by=(
             "docs/design/pg-dump-compatibility.md",
-            "docs/status/STATUS.md",
         ),
         section="Scan throughput by input shape",
         table_label="Every run cold, on the NVMe",
@@ -7397,7 +7394,6 @@ FIGURES: list[Figure] = [
     # number would look interchangeable with theirs.
     Figure(
         id="chunk-size",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="What the read chunk size is worth",
         stage="warm+cold+cold-nvme",
         depends=(*SCAN, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7440,7 +7436,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="per-block-quadratic",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="Per-block cache saving is quadratic in block count, and so is the map",
         stage="warm",
         depends=(*MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS, *GEN_PERF),
@@ -7482,7 +7477,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="map-only",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
         stage="warm",
         depends=(*MAP_BUILD, *READ, *QUERY_CLI, *GEN_BLOCKS),
@@ -7491,7 +7485,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="preamble-prepass",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="The preamble prepass is bounded by the schema, not by the dump",
         stage="warm",
         #: Its second row is `per-block-quadratic`'s 4000-block `parse` reading,
@@ -7522,7 +7515,6 @@ FIGURES: list[Figure] = [
     # rather than cancelling out of a difference.
     Figure(
         id="projection-widths",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="What a column costs: five projection widths over one file",
         stage="warm",
         depends=(*SCAN, *NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7537,7 +7529,6 @@ FIGURES: list[Figure] = [
     # no row survives any of these predicates, so `push_row` never runs.
     Figure(
         id="predicate-terms",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="What a filter term costs, and how much of it is the walk to its field",
         stage="warm",
         depends=(*PREDICATE, *SCAN, *READ, *QUERY_CLI, *GEN_PERF),
@@ -7574,7 +7565,6 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="xz-decode-scaling",
-        also_quoted_by=("docs/status/STATUS.md",),
         section="What a second decode worker buys, and what the twenty-fourth does not",
         stage="warm-parallel",
         # Not the library's read path: no `pgdq` runs here at all. What can move

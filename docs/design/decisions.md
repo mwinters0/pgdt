@@ -204,11 +204,11 @@ defeats inlining); stopping the walk at the last projected column, `push_row`
 being the only `ColumnCountMismatch` site. Evidence: `predicate-terms`.
 
 ### D29 Refused micro-optimizations on the row path
-Pre-sized Arrow builders (a one-row batch allocates thousands of slots for
-nanoseconds); a viewing builder for nested `Utf8View` (recursive retention for
-a prize that is zero below arrow's inlining width); skipping a block with one
-`memmem` (the row count and the census read every row). A proposal is sized
-against `poll_next`'s per-row profile. Evidence: `nested-decode-micro`.
+Pre-sized Arrow builders (a one-row batch fills thousands of slots); a viewing
+builder for nested `Utf8View` (the prize is zero below arrow's inlining width);
+skipping a block with `memmem` (the row count and the census read every row); a
+proposal is sized against the per-row profile. Evidence: `nested-decode-micro`,
+`map-only`, `census-attribution`, `cross-file-floor`, `nested-end-to-end`.
 
 ## The file map and the preamble (`map.rs`, `index.rs`, `preamble.rs`)
 ### D30 The statement grammar is primary; the TOC is enrichment
