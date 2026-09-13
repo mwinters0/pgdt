@@ -77,6 +77,14 @@ pub struct DatabaseMetadata {
     /// Qualified table name (`schema.table`, folded the same way
     /// [`crate::copy::CopyHeader::qualified_name`] is) -> its columns in DDL
     /// order.
+    ///
+    /// Deficiency register: `deficiency: KD14` — this is the structure a scan
+    /// holds per table, and peak resident set grows with the table count while
+    /// staying flat in dump bytes, most of it live structure the preamble
+    /// alone pays (`measurements.md`, `peak-rss` and `rss-attribution`).
+    /// **(c) unowned**; promoted by a dump with tens of thousands of tables,
+    /// nothing in hand being one. It is also why every "resident set" claim
+    /// about this system is the *one-block* reading and says so.
     pub tables: BTreeMap<String, Vec<ColumnDef>>,
 }
 
@@ -1075,18 +1083,16 @@ impl StatementScan {
             // outside a string is where the bytes of an `INSERT` statement
             // that are not values live.
             //
-            // Deficiency register: `deficiency: KD9`. No `INSERT`
-            // statement's end depends on the depth, so a run-only scan would
-            // skip this pass. The device figure that the deferral once
-            // waited on has been taken and says the remainder costs most of
-            // an `INSERT` scan on NVMe — the pass stays anyway, because what
-            // would skip it is a mode flag belonging to P8's row reader,
-            // which is the caller that can say whether the count is dead
-            // weight. It is not a licence to drop `depth`: `statement_complete`
-            // and `in_open_quote` are wrappers over this type, so the count
-            // is what keeps the incremental scan and the buffer-shaped one
-            // answering the same question. Detail in `decisions.md`,
-            // "D33".
+            // Deficiency register: `deficiency: KD9` — an `INSERT` run costs
+            // several times a `COPY` scan's per-byte CPU warm, and the device
+            // is what decides whether a reader meets it
+            // (`measurements.md`, `scan-throughput-warm` and
+            // `scan-throughput-nvme`). Two cuts against the remainder are
+            // known: no `INSERT` statement's end depends on `depth`, so a
+            // run-only scan would skip this pass. **(b) owned by P8**, whose
+            // row reader is the caller that can say the count is dead weight;
+            // it is not a licence to drop `depth`, which `statement_complete`
+            // and `in_open_quote` are wrappers over.
             let rest = &bytes[i..];
             let stop = memchr::memchr3(b'\'', b'"', b'-', rest).unwrap_or(rest.len());
             let plain = &rest[..stop];

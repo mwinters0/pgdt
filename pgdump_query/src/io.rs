@@ -2244,7 +2244,13 @@ impl ByteRangeSource for LocalFileSource {
     /// `8 MiB × jobs` affords every stated reader against the same four slots
     /// — and this source recommends no count of its own to bound them with
     /// instead (`docs/design/decisions.md`, "D4").
-    // deficiency: KD25
+    // Deficiency register: `deficiency: KD25` — so plain readers are bounded
+    // by a charge describing nothing the path holds: the bill grows with the
+    // count while what is held is flat at `POOL_DEPTH` chunks, and above a
+    // budget of `PLAIN_PARTITION_CHUNKS × chunk × jobs` nothing bounds them at
+    // all. **(c) unowned.** Closing it means billing the pool's real depth and
+    // recommending a count; a reading of a parallel plain scan on a real
+    // device is what reopens it.
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         let chunk = self.pool.slot_bytes();
         let bytes = chunk.saturating_mul(PLAIN_PARTITION_CHUNKS).min(POOL_MAX_BYTES).max(chunk);
@@ -2702,12 +2708,17 @@ impl XzSource {
     /// handles are out, and [`XzSource::with_table`] passes a cached table
     /// straight in rather than having it copied behind a new one.
     ///
-    /// **Nothing bills the one copy that is left** — `KD26`, 80 B a stream and
-    /// 32 B a block, kilobytes on a fixture and 3.33 MiB on koji's
-    /// 31,150-stream download. It is unbilled on an ordering rather than a
-    /// size: the walk that builds it runs inside [`XzSource::open`], before any
-    /// budget is announced (`docs/design/decisions.md`, "D4").
-    // deficiency: KD26
+    /// **Nothing bills the one copy that is left.** It is unbilled on an
+    /// ordering rather than a size: the walk that builds it runs inside
+    /// [`XzSource::open`], before any budget is announced
+    /// (`docs/design/decisions.md`, "D4").
+    // Deficiency register: `deficiency: KD26` — this table is the only term in
+    // the memory account that grows with the *file* rather than with the
+    // worker count, and a source whose index is not small beside
+    // [`MEMORY_UNPOOLED_BOUND`] therefore holds bytes no charge names.
+    // **(c) unowned**; closing it means a per-source term, which
+    // [`WorkerMemory`] does not have. Billing it buys accuracy and no
+    // protection, the walk having already happened.
     fn assembled(
         path: PathBuf,
         stat_file: Arc<std::fs::File>,
@@ -2762,9 +2773,15 @@ impl XzSource {
             // **`jobs` here is the count the caller *announced*, not the count
             // `crate::stream::worker_count` then delivers.** They agree under
             // discovery and diverge where a stated `--jobs` outruns a stated
-            // budget, which is `KD21`
-            // (`docs/design/decisions.md`, "I/O, memory and parallelism").
-            // deficiency: KD21
+            // budget (`docs/design/decisions.md`, "I/O, memory and parallelism").
+            //
+            // Deficiency register: `deficiency: KD21` — the slot count is then
+            // bounded by the pool's byte budget rather than by the delivered
+            // count, and the lists fill to it while each delivered reader
+            // decodes into a buffer besides, so the source holds more than the
+            // stated budget. **(c) unowned**; closing it means telling the
+            // pool the *delivered* count, or [`BufferPool::slots`] reserving
+            // for the decodes in flight — either reworks a pool's sizing rule.
             blocks
                 .pool
                 .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(jobs));
@@ -2794,11 +2811,14 @@ impl XzSource {
     /// on files that fit.
     ///
     /// **It is charged once a reader, and the chunk pool's free list beside it
-    /// is charged nowhere** — `KD24`, an under-bill of
-    /// `slots × slot_bytes` flat in the count and linear in whatever chunk the
-    /// caller announced, 4 MiB at the shipped default and bounded by the stated
-    /// budget (`docs/design/decisions.md`, "D4").
-    // deficiency: KD24
+    /// is charged nowhere** (`docs/design/decisions.md`, "D4").
+    // Deficiency register: `deficiency: KD24` — that free list is a different
+    // population from the per-reader buffer this bills, so a stated budget is
+    // short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks: flat in the
+    // count, since the depth is a constant, and linear in whatever chunk the
+    // caller announced. It is never *above* the stated budget. **(c)
+    // unowned**; closing it means a count-independent term, which
+    // [`WorkerMemory`] does not have.
     fn charged_chunk_bytes(&self) -> u64 {
         match self.pool.announced_bytes() {
             Some(len) => len as u64,
@@ -2850,20 +2870,15 @@ impl XzSource {
     /// The block at `index`, from the retention list or freshly decoded into a
     /// slot of the block pool.
     ///
-    /// **Two concurrent misses on one block decode it twice**, and on the
-    /// parallel scan path that is the common case rather than the rare one:
-    /// every fused worker's chunk-sized tail read lands in the block its
-    /// *successor* owns, so each block is decoded about twice and a scan's
-    /// speedup is capped near half the reader count — `KD20`, the argument and
-    /// the readings being beside the mechanism
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
-    /// An in-flight map is the fix and is not taken here: it puts a second
-    /// lock in front of the case that does *not* collide, and this is a
-    /// throughput bound rather than a correctness one. **Widening the cut so
-    /// that fewer pieces each waste one block has been measured and refused**
-    /// ([`BOUNDARIED_PARTITION_UNITS`]), so the map is the fix left rather
-    /// than one of two.
-    // deficiency: KD20
+    /// Deficiency register: `deficiency: KD20` — two concurrent misses on one
+    /// block decode it twice, and on the parallel scan path that is the common
+    /// case: every fused worker's chunk-sized tail read lands in the block its
+    /// *successor* owns, so a scan does about twice the decode work and its
+    /// speedup is capped near half the reader count (`measurements.md`,
+    /// `parallel-scan-throughput`). **(c) unowned.** The fix left is an
+    /// in-flight map here — not taken, since it puts a second lock in front of
+    /// the case that does *not* collide — a wider cut having been measured and
+    /// refused ([`BOUNDARIED_PARTITION_UNITS`]).
     fn block(
         index: usize,
         cache: &BlockCache,

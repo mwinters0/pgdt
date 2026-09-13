@@ -17,9 +17,8 @@ Options:
       --preamble-only            Scan only the dump's preamble — the dump-level header alone, no
                                  per-block listing or row counts — instead of the whole file. Cost
                                  is independent of dump size regardless of how much `COPY` data
-                                 follows (`docs/design/architecture.md`, "Bounded preamble-only
-                                 reads"). The cache this leaves is a partial one that `pgdq info`
-                                 reads like any other
+                                 follows (`docs/design/decisions.md`, "D30"). The cache this leaves
+                                 is a partial one that `pgdq info` reads like any other
       --chunk-size <BYTES>       Bytes requested per read from the dump. The default, 1 MiB, is the
                                  fastest of the six sizes measured on the one device class where a
                                  chunk size shows anything at all, and makes no measurable

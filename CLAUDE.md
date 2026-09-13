@@ -20,7 +20,7 @@ cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [-
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
-cd scripts && uv run deficiencies.py  # KD register vs detail entries vs code markers vs phase index
+cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run python -m unittest   # every script's own tests
 ```

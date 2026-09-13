@@ -14,8 +14,8 @@ Commands:
          scan is not wasted work. Remove the cache file to force a scan from byte 0
   info   Report what a dump's cache holds. **`info` never scans** — it reads the cache `pgdq parse`
          wrote and errors if there is not one, rather than starting an hours-long scan on your
-         behalf (`docs/design/architecture.md`, "CLI surface"). A cache from an unfinished scan is
-         reported for as far as it got, with the coverage stated at the top
+         behalf (`docs/design/decisions.md`, "The CLI"). A cache from an unfinished scan is reported
+         for as far as it got, with the coverage stated at the top
   query  Stream a table's rows, optionally projected to named columns and filtered by a boolean
          expression over single-column predicates
   help   Print this message or the help of the given subcommand(s)

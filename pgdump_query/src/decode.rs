@@ -347,9 +347,16 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 
 /// `None` for `infinity`/`-infinity` (PostgreSQL's own pseudo-values for
 /// "unbounded" — real, but `Date32` has no sentinel for them, so this is a
-/// decode failure by construction, not by accident — see "Failure and
-/// diagnostics" in the phase doc) and for anything out of `Date32`'s `i32`
-/// day range.
+/// decode failure by construction, not by accident) and for anything out of
+/// `Date32`'s `i32` day range.
+///
+/// Deficiency register: `deficiency: KD8` — the anchor for all three of these
+/// refusals ([`decode_interval`]'s infinities and overflowing time part, and
+/// `NaN` on a `Decimal128`): a typed column cannot hold the value, so
+/// materializing one is an `Error::FieldDecode` and there is no typed way to
+/// read it. `--schema-mode strings` returns the literal verbatim. **(c)
+/// unowned** — what is open is materialization, where the choice between a
+/// null, a sentinel and the error belongs to whichever phase takes it up.
 pub fn decode_date32(s: &str) -> Option<i32> {
     if s == "infinity" || s == "-infinity" {
         return None;

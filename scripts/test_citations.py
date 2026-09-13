@@ -398,26 +398,22 @@ class RealTreeTests(unittest.TestCase):
     """
 
     def test_the_declared_ids(self) -> None:
-        _cites, _docs, ids, problems, _read = citations.collect(citations.REPO)
+        """The tree declares no `section:` id right now, and that is a state
+        rather than a failure: the convention exists for a heading that states
+        a measured finding, and the document that held five of them is gone.
+        What is asserted is that every id the tree *does* declare names a
+        document the walk actually opened -- a marker in a file it never reads
+        would otherwise resolve against nothing."""
+        _cites, docs, ids, problems, _read = citations.collect(citations.REPO)
         self.assertEqual(problems, [], "\n".join(problems))
-        self.assertEqual(
-            sorted(ids),
-            [
-                "attach-text-profile",
-                "cut-width",
-                "insert-profile",
-                "parse-profile",
-                "query-profile",
-            ],
-        )
-        for doc in ids.values():
-            self.assertEqual(doc, "docs/design/architecture.md")
+        for name, doc in sorted(ids.items()):
+            self.assertIn(doc, docs, name)
 
     def test_the_tree_is_still_being_read(self) -> None:
         cites, docs, _ids, _problems, _read = citations.collect(citations.REPO)
         self.assertGreater(len(cites), 400)
         self.assertGreater(len(docs), 40)
-        self.assertIn("docs/design/architecture.md", docs)
+        self.assertIn("docs/design/decisions.md", docs)
         # Every file kind contributes, so a broken extractor for one of them
         # cannot hide behind the other two.
         suffixes = {Path(c.path).suffix for c in cites}

@@ -9,8 +9,10 @@ breaking it is *caught*. A reconciliation that quietly passes on a broken
 register is worse than none, because the register is then trusted and wrong.
 
 So every test below builds a small repo in a temp directory, breaks exactly one
-thing, and asserts the failure names it. The structural test at the bottom is
-the other half: it runs the real check over the real tree.
+thing, and asserts the failure names it. The structural tests at the bottom are
+the other half: they run the real check over the real tree, and assert that the
+populations it resolves are not empty -- a register whose markers all vanished
+would otherwise reconcile perfectly.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ Prose above the table, which the parser must skip.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P3, P9 | **Struck** at a keystone review | architecture.md |
+| P1–P3, P9 | **Struck** at a keystone review | decisions.md |
 | P11 — typed predicates | **Specified**; open | roadmap-P11-typed-predicates.md |
 | P7 — scan performance | Sketched; design doc ahead of its phase | this file |
 | P12 — a phase that wrapped | Complete | this file |
@@ -54,19 +56,18 @@ Prose below the table.
 ROADMAP_SLICED = ROADMAP.replace("**Specified**; open", "**Current**; in flight")
 
 ENTRY_D1 = """- **KD1** — a thing that costs something. **(c) unowned**; promoted by a
-  dump in hand. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "A mechanism".
+  dump in hand. Detail: `pgdump_query/src/lib.rs`.
 
 """
 
 ENTRY_D2 = """- **KD2** — another thing. **(b) owned by P7**, whose plans rework it.
-  Detail: [`../design/architecture.md`](../design/architecture.md), "Another".
+  Detail: `pgdump_query/src/lib.rs`.
 
 """
 
 ENTRY_D3 = """- **KD3** — a thing P11 is going to fix. **(b) owned by P11, struck at
   11.6** — 11.5 closes the first row and 11.6 the last. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "A mechanism".
+  `pgdump_query/src/lib.rs`.
 
 """
 
@@ -85,29 +86,26 @@ Prose above the boxes, which the parser must skip.
 
 #: An entry whose owning phase has wrapped: `(b)` naming no live destination.
 ENTRY_D4 = """- **KD4** — a thing P12 was going to fix. **(b) owned by P12**, whose
-  wrap left it stranded. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "Another".
+  wrap left it stranded. Detail: `pgdump_query/src/lib.rs`.
 
 """
 
-ARCH_D3 = """<!-- deficiency: KD3 -->
-Why KD3 costs what it costs.
-"""
 
-ARCH_D4 = """<!-- deficiency: KD4 -->
-Why KD4 costs what it costs.
-"""
+def marker(ident: str) -> str:
+    """One code marker, shaped the way a real one is: the comment *is* the
+    detail, so the fixture carries a sentence rather than a bare token."""
+    return (
+        f"/// Deficiency register: `deficiency: {ident}` — what it costs, the\n"
+        f"/// stance, and what would close it.\n"
+        f"fn mechanism_{ident.lower()}() {{}}\n"
+    )
 
-ARCH_D1_D3 = """## A mechanism
 
-<!-- deficiency: KD1 -->
-Why KD1 costs what it costs.
-
-## Another mechanism
-
-<!-- deficiency: KD3 -->
-Why KD3 costs what it costs.
-"""
+CODE_D1 = marker("KD1")
+CODE_D2 = marker("KD2")
+CODE_D3 = marker("KD3")
+CODE_D4 = marker("KD4")
+CODE_D1_D3 = CODE_D1 + "\n" + CODE_D3
 
 TAIL = """## Decisions worth another look
 
@@ -130,19 +128,22 @@ def build(
     tmp: Path,
     *,
     status: str,
-    arch: str = "",
     code: str = "",
     roadmap: str | None = None,
     extra=None,
 ) -> Path:
-    """A repo shaped like this one: an index, a doc tree, a crate source dir."""
+    """A repo shaped like this one: an index, a doc tree, a crate source dir.
+
+    `code` is `pgdump_query/src/lib.rs`, which every fixture entry names as its
+    detail. A second source file, or a stray marker in a document, goes through
+    `extra`.
+    """
     roadmap = roadmap_for(status) if roadmap is None else roadmap
     (tmp / "docs" / "status").mkdir(parents=True)
     (tmp / "docs" / "design").mkdir(parents=True)
     (tmp / "pgdump_query" / "src").mkdir(parents=True)
     (tmp / "docs" / "status" / "STATUS.md").write_text(status)
     (tmp / "docs" / "design" / "roadmap.md").write_text(roadmap)
-    (tmp / "docs" / "design" / "architecture.md").write_text(arch)
     (tmp / "pgdump_query" / "src" / "lib.rs").write_text(code)
     for rel, text in (extra or {}).items():
         path = tmp / rel
@@ -166,7 +167,7 @@ class Parsing(unittest.TestCase):
         self.assertEqual(entries[0].destination, "")
         self.assertEqual(entries[1].stance, "b")
         self.assertEqual(entries[1].destination, "P7")
-        self.assertEqual(entries[0].detail, "../design/architecture.md")
+        self.assertEqual(entries[0].detail, "pgdump_query/src/lib.rs")
 
     def test_prose_above_the_entries_is_not_an_entry(self):
         entries, problems = deficiencies.parse_index(INDEX_HEAD + ENTRY_D1 + TAIL)
@@ -184,7 +185,7 @@ class Parsing(unittest.TestCase):
         self.assertIn("the register is gone", problems[0])
 
     def test_a_stanceless_entry_is_named(self):
-        text = INDEX_HEAD + "- **KD1** — a thing. Detail: [`a`](../design/architecture.md).\n" + TAIL
+        text = INDEX_HEAD + "- **KD1** — a thing. Detail: `pgdump_query/src/lib.rs`.\n" + TAIL
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("KD1 declares no stance" in p for p in problems))
 
@@ -221,6 +222,9 @@ class Parsing(unittest.TestCase):
 
 class Markers(unittest.TestCase):
     def test_the_same_token_is_found_in_both_file_kinds(self):
+        """Source is where a marker belongs, and Markdown is where the sweep
+        has to find one anyway -- a stray marker in a document is an error, and
+        an error nothing can see is not one."""
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             (tmp / "a.md").write_text("text\n<!-- deficiency: KD3 -->\nmore\n")
@@ -237,89 +241,110 @@ class Reconciliation(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
-                arch="## A mechanism\n\n<!-- deficiency: KD1 -->\nWhy it costs what it costs.\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
             self.assertIn("all resolve", text)
 
-    def test_an_indexed_entry_with_no_detail_fails(self):
+    def test_an_indexed_entry_with_no_marker_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            build(Path(d), status=INDEX_HEAD + ENTRY_D1 + TAIL, arch="## A mechanism\n")
+            build(Path(d), status=INDEX_HEAD + ENTRY_D1 + TAIL, code="")
             code, text = run(Path(d))
             self.assertEqual(code, 1)
-            self.assertIn("nothing carries its detail", text)
-
-    def test_a_detail_entry_with_no_index_line_fails(self):
-        with tempfile.TemporaryDirectory() as d:
-            build(
-                Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
-                arch=(
-                    "## A mechanism\n\n<!-- deficiency: KD1 -->\ntext\n\n"
-                    "## Another\n\n<!-- deficiency: KD4 -->\norphan\n"
-                ),
-            )
-            code, text = run(Path(d))
-            self.assertEqual(code, 1)
-            self.assertIn("carries a detail entry for KD4", text)
+            self.assertIn("no code marker carries its detail", text)
 
     def test_a_code_marker_with_no_index_line_fails(self):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
-                arch="## A mechanism\n\n<!-- deficiency: KD1 -->\ntext\n",
-                code="/// Deficiency register: `deficiency: KD9`\nfn f() {}\n",
+                code=CODE_D1 + marker("KD9"),
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("marks KD9, which the index does not list", text)
 
-    def test_a_detail_entry_in_the_wrong_file_fails(self):
+    def test_a_marker_in_a_file_the_index_does_not_name_fails(self):
+        """The entry names `lib.rs`; the marker went to the CLI crate. Nothing
+        else catches that -- both halves exist and neither is wrong alone."""
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
-                arch="## A mechanism\n",
-                extra={"docs/design/layering.md": "<!-- deficiency: KD1 -->\nfiled elsewhere\n"},
+                code="",
+                extra={"pgdump_query-cli/src/main.rs": CODE_D1},
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("but the index names", text)
 
-    def test_two_detail_entries_for_one_entry_fail(self):
+    def test_two_code_markers_for_one_entry_fail(self):
+        """One marker apiece: two make the detail two documents again, and a
+        reader has no way to know which is the live one."""
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
-                arch="<!-- deficiency: KD1 -->\none\n\n<!-- deficiency: KD1 -->\ntwo\n",
+                code=CODE_D1 + CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
-            self.assertIn("has 2 detail entries", text)
+            self.assertIn("has 2 code markers", text)
 
-    def test_the_detail_paragraph_may_not_live_in_the_index(self):
+    def test_a_marker_in_the_index_fails(self):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + "<!-- deficiency: KD1 -->\n" + TAIL,
-                arch="<!-- deficiency: KD1 -->\ntext\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
-            self.assertIn("the index is not where a detail entry lives", text)
+            self.assertIn("a document is not where a detail lives", text)
+
+    def test_a_marker_in_a_design_document_fails(self):
+        """The rule this replaced: a detail paragraph filed beside a heading is
+        a second thing to maintain, and the session editing the mechanism never
+        reads it."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                code=CODE_D1,
+                extra={
+                    "docs/design/decisions.md": "<!-- deficiency: KD1 -->\nfiled here\n"
+                },
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("a document is not where a detail lives", text)
 
     def test_a_detail_file_that_does_not_exist_fails(self):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1.replace("architecture.md", "gone.md") + TAIL,
-                arch="",
+                status=INDEX_HEAD + ENTRY_D1.replace("lib.rs", "gone.rs") + TAIL,
+                code="",
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("names a detail file that does not exist", text)
+
+    def test_a_detail_that_is_not_source_fails(self):
+        """A pointer back at a document is the shape the old rule had, so it is
+        the one most likely to be written again by hand."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1.replace("pgdump_query/src/lib.rs", "docs/design/decisions.md")
+                + TAIL,
+                code=CODE_D1,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("names a detail that is not source", text)
 
 
 class WatermarkParsing(unittest.TestCase):
@@ -354,7 +379,7 @@ class WatermarkParsing(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1.replace("KD1", "KD12") + TAIL,
-                arch="<!-- deficiency: KD12 -->\ntext\n",
+                code=marker("KD12"),
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -410,7 +435,7 @@ class OwningPhaseState(unittest.TestCase):
 
     def test_an_entry_owned_by_a_complete_phase_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            build(Path(d), status=INDEX_HEAD + ENTRY_D4 + TAIL, arch=ARCH_D4)
+            build(Path(d), status=INDEX_HEAD + ENTRY_D4 + TAIL, code=CODE_D4)
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("KD4 is (b) owned by P12, which is complete", text)
@@ -421,7 +446,7 @@ class OwningPhaseState(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D4.replace("P12", "P2") + TAIL,
-                arch=ARCH_D4,
+                code=CODE_D4,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -432,7 +457,7 @@ class OwningPhaseState(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D4.replace("P12", "P42") + TAIL,
-                arch=ARCH_D4,
+                code=CODE_D4,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -448,7 +473,7 @@ class OwningPhaseState(unittest.TestCase):
                 + ENTRY_D1
                 + "## P12 progress\n\n- [x] **12.1** A slice that landed.\n\n"
                 + TAIL,
-                arch="<!-- deficiency: KD1 -->\ntext\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -460,7 +485,7 @@ class OwningPhaseState(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D2 + TAIL,
-                arch="<!-- deficiency: KD2 -->\nAnother.\n",
+                code=CODE_D2,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
@@ -475,7 +500,7 @@ class PhaseChecklistPairing(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
-                arch=ARCH_D1_D3,
+                code=CODE_D1_D3,
                 roadmap=ROADMAP_SLICED,
             )
             code, text = run(Path(d))
@@ -488,7 +513,7 @@ class PhaseChecklistPairing(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
-                arch=ARCH_D1_D3,
+                code=CODE_D1_D3,
                 roadmap=ROADMAP,
             )
             code, text = run(Path(d))
@@ -505,7 +530,7 @@ class PhaseChecklistPairing(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
-                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+                code=CODE_D1,
                 roadmap=ROADMAP_SLICED,
             )
             code, text = run(Path(d))
@@ -526,7 +551,7 @@ class PhaseChecklistPairing(unittest.TestCase):
                 + ENTRY_D1
                 + "## P42 progress\n\n- [ ] **42.1** A slice.\n\n"
                 + TAIL,
-                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -586,7 +611,7 @@ class SlicePairing(unittest.TestCase):
             build(
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
-                arch=ARCH_D1_D3,
+                code=CODE_D1_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
@@ -604,7 +629,7 @@ class SlicePairing(unittest.TestCase):
                     ", and **strikes `KD3`**", ""
                 )
                 + TAIL,
-                arch="<!-- deficiency: KD2 -->\nAnother.\n",
+                code=CODE_D2,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
@@ -621,7 +646,7 @@ class SlicePairing(unittest.TestCase):
                     ", and **strikes `KD3`**", ""
                 )
                 + TAIL,
-                arch=ARCH_D3,
+                code=CODE_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -637,7 +662,7 @@ class SlicePairing(unittest.TestCase):
                 + ENTRY_D3
                 + CHECKLIST.replace("**11.6**", "**11.6.1**")
                 + TAIL,
-                arch=ARCH_D3,
+                code=CODE_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -655,7 +680,7 @@ class SlicePairing(unittest.TestCase):
                 + ENTRY_D3
                 + CHECKLIST.replace(", and **strikes `KD3`**", "")
                 + TAIL,
-                arch=ARCH_D3,
+                code=CODE_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -678,7 +703,7 @@ class SlicePairing(unittest.TestCase):
                     "— 11.5 closes the first row and 11.6 the last.", "11.6 closes it."
                 )
                 + TAIL,
-                arch=ARCH_D1_D3,
+                code=CODE_D1_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -696,7 +721,7 @@ class SlicePairing(unittest.TestCase):
                 + ENTRY_D3
                 + CHECKLIST.replace("`KD3`'s first row", "`KD9`'s first row")
                 + TAIL,
-                arch=ARCH_D1_D3,
+                code=CODE_D1_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -718,7 +743,7 @@ class SlicePairing(unittest.TestCase):
                     "- [ ] **11.5** The first row.", "- [x] **11.5** The first row."
                 )
                 + TAIL,
-                arch=ARCH_D3,
+                code=CODE_D3,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -739,7 +764,7 @@ class SlicePairing(unittest.TestCase):
                 .replace("- [ ] **11.5** The first row. Closes `KD3`'s first row.\n", "")
                 .replace("- [ ] **11.6** The last row, and **strikes `KD3`**.\n", "")
                 + TAIL,
-                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
@@ -759,7 +784,7 @@ class SlicePairing(unittest.TestCase):
                 .replace("- [ ] **11.5** The first row. Closes `KD3`'s first row.\n", "")
                 .replace("- [ ] **11.6** The last row, and **strikes `KD3`**.\n", "")
                 + TAIL,
-                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -784,7 +809,7 @@ class SlicePairing(unittest.TestCase):
                 .replace("- [ ] **11.5** The first row. Closes `KD3`'s first row.\n", "")
                 .replace("- [ ] **11.6** The last row, and **strikes `KD3`**.\n", "")
                 + TAIL,
-                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+                code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
@@ -794,7 +819,7 @@ class SlicePairing(unittest.TestCase):
         pointing into a slice list that is gone."""
         with tempfile.TemporaryDirectory() as d:
             build(
-                Path(d), status=INDEX_HEAD + ENTRY_D3 + TAIL, arch=ARCH_D3
+                Path(d), status=INDEX_HEAD + ENTRY_D3 + TAIL, code=CODE_D3
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -909,6 +934,35 @@ class ThisRepo(unittest.TestCase):
             self.skipTest("no phase is sliced right now")
         for n in checklists:
             self.assertEqual(phases.get(n), deficiencies.CURRENT_STATE, f"P{n}")
+
+    def test_no_marker_lives_under_docs(self):
+        """The whole point of the rule, asserted over the tree: the detail is
+        the comment at the code marker, so a document carrying one means two
+        details exist and one of them is already wrong."""
+        strays = deficiencies.markers_under(
+            (deficiencies.DOC_ROOT,), ".md", deficiencies.REPO
+        )
+        self.assertEqual(
+            [f"{m.path}:{m.line} ({m.id})" for m in strays],
+            [],
+            "a document carries a `deficiency:` marker",
+        )
+
+    def test_every_indexed_entry_has_exactly_one_code_marker(self):
+        """Not a restatement of the check: this asserts the population is
+        non-empty, so a tree that lost every marker cannot pass the
+        index-to-marker resolution vacuously."""
+        entries, problems = deficiencies.parse_index((deficiencies.STATUS).read_text())
+        self.assertEqual(problems, [])
+        self.assertTrue(entries)
+        markers = deficiencies.markers_under(
+            tuple(deficiencies.CODE_ROOTS), ".rs", deficiencies.REPO
+        )
+        counted: dict[str, int] = {}
+        for m in markers:
+            counted[m.id] = counted.get(m.id, 0) + 1
+        for entry in entries:
+            self.assertEqual(counted.get(entry.id), 1, entry.id)
 
     def test_the_index_carries_no_paragraph(self):
         """One line per entry, wrapped — an entry that has grown into a

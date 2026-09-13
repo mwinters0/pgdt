@@ -178,8 +178,12 @@ pub enum ScanExtent {
     /// scan reached. A file concatenating two dumps of the *same* database
     /// name is the case with no early signal at all.
     ///
-    /// Deficiency register: `deficiency: KD6` — the detail is
-    /// `docs/design/decisions.md`'s "D49".
+    /// Deficiency register: `deficiency: KD6` — so a second, conflicting
+    /// table past the stopping point is never seen, `Error::AmbiguousTable` is
+    /// not raised for it, and the query answers with the candidate it found.
+    /// **(b) owned by P6**, which decides what the embedded API promises here.
+    /// [`Self::Full`], or a query after `pgdq parse`, gives exact detection
+    /// today; closing it by default means giving up the early stop.
     #[default]
     UntilTargetSettled,
     /// Map the whole file before returning anything. Costs a full scan and

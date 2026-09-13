@@ -2,9 +2,8 @@
 -- neither scripts/fixture_schema_edge_cases.sql nor scripts/fixture_schema_types.sql
 -- produces, plus a large object (a shape no pg_dump flag conjures on its own).
 --
--- Backs docs/design/architecture.md, "Fixtures". The TOC
--- vocabulary (~63 `Type:` values) is enumerable from `pg_dump` source --
--- see that doc's "Scanning" section for the exact grep. Across the two
+-- Backs docs/design/decisions.md, "D69". The TOC
+-- vocabulary (~63 `Type:` values) is enumerable from `pg_dump` source. Across the two
 -- existing schemas, real pg_dump output produces only: TABLE, TABLE DATA,
 -- CONSTRAINT, FK CONSTRAINT, FUNCTION, SCHEMA, TYPE, DOMAIN, SHELL TYPE.
 -- Everything below is chosen to fill that gap.

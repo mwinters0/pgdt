@@ -26,10 +26,10 @@ tokio = { version = "1.53.1", features = ["rt", "sync"] }
 # The facade only — no subscriber, no output policy. The library names the
 # phases worth watching (the seek-table walk, the scan's start and
 # completion); the CLI decides whether and how to render them
-# (`docs/design/architecture.md`, "Status output").
+# (`docs/design/decisions.md`, "D67").
 tracing = "0.1"
 # A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
-# workspace, not published (`docs/design/architecture.md`, "The compressed
+# workspace, not published (`docs/design/decisions.md`, "The compressed
 # source"). The default features (`liblzma`, `fast-checks`) are the manifest's
 # own, and are kept over `xz4rust` so that the integration being vetted is the
 # one that ships. `serde` is turned on for `cache::CompressionIndex`,

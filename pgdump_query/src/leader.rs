@@ -389,7 +389,15 @@ pub(crate) struct Shortfall {
 /// finding it *is* the work — so the bound available is what is left of the
 /// file, which the region cannot exceed: the floor leaves a file's tail
 /// shorter than one reader's charge to the serial scanner, and a small region
-/// earlier in the file is cut and over-read (`KD22`).
+/// earlier in the file is cut and over-read.
+///
+/// Deficiency register: `deficiency: KD22` — every piece of that window is
+/// read and parsed before `merge` folds them and discards everything past the
+/// first terminator, so a dump whose blocks are far smaller than the window is
+/// read orders of magnitude over, worse at every worker added and reached with
+/// no flag typed (a compressed source's default worker count is one per core).
+/// **(c) unowned.** Neither the cut width nor this floor is the fix: it is for
+/// the leader to learn a region's extent before committing a window.
 ///
 /// **That floor is a memory charge and not a span**, which is visible on a
 /// block-decoding source, where the charge covers a block unit, a chunk and the

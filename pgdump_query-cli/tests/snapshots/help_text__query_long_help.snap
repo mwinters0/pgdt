@@ -25,8 +25,8 @@ Options:
           `column>value`, `column>=value`, `column IS DISTINCT FROM value`, `column IS NOT DISTINCT
           FROM value`, `column IS NULL`, or `column IS NOT NULL`. Repeatable — every term must
           match, so the terms are ANDed. `OR`, negation and grouping are `--where`, which takes an
-          expression over these same terms; giving both flags ANDs them
-          (`docs/design/architecture.md`, "Predicates").
+          expression over these same terms; giving both flags ANDs them (`docs/design/decisions.md`,
+          "Predicates").
           
           Every operator but the two NULL tests compares **typed**: the filter's value is read with
           the column's own decoder, so a value that is not of that type is refused by name rather
@@ -63,7 +63,7 @@ Options:
           Materialize only this column, repeatable — the output carries the columns in the order the
           flags give them, which need not be the file's. A name the table does not carry is an
           error, and so is a repeated one. Omit it entirely for every column
-          (`docs/design/architecture.md`, "Projection").
+          (`docs/design/decisions.md`, "D28").
           
           A column that is not projected is never decoded, so projecting a column away is also the
           way past a value that fails to decode while keeping every other column typed.
@@ -81,7 +81,7 @@ Options:
 
       --database <DATABASE>
           Select which database to query when `table` is ambiguous across a multi-`\connect` dump
-          (`docs/design/architecture.md`, "One target per query")
+          (`docs/design/decisions.md`, "D49")
 
       --schema-mode <SCHEMA_MODE>
           `typed` (default) resolves column types against the dump's DDL; `strings` skips that
@@ -139,12 +139,12 @@ Options:
           recommends rather than off a constant.
           
           **On `query` it divides by two terms rather than one**: what a worker costs to read, plus
-          the 64 MiB a sub-stream's held batch may pin (`docs/design/architecture.md`, "Execution
-          model and API surface") — charged on a plain file, where a batch pins read buffers the
-          first term never counted, and not on a block-decoding `.xz`, whose first term already
-          counts a decoded block. At 64 MiB — which is what a plain file gets unless a limit or a
-          flag says otherwise — the plain file's sum already exceeds the budget, so `query --jobs N`
-          on one runs serially however large `N` is; raise it past roughly 145 MiB to get a second
+          the 64 MiB a sub-stream's held batch may pin (`docs/design/decisions.md`, "I/O, memory and
+          parallelism") — charged on a plain file, where a batch pins read buffers the first term
+          never counted, and not on a block-decoding `.xz`, whose first term already counts a
+          decoded block. At 64 MiB — which is what a plain file gets unless a limit or a flag says
+          otherwise — the plain file's sum already exceeds the budget, so `query --jobs N` on one
+          runs serially however large `N` is; raise it past roughly 145 MiB to get a second
           sub-stream at all. `parse` is unaffected by the second term: it builds no batches, so
           nothing on that path pins a span.
 

@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """The deficiency register's reconciliation: STATUS.md's index against the
-detail paragraphs beside each mechanism, and against the markers in the source.
+code marker that carries each entry's detail.
 
 `docs/process.md` ("Known deficiencies") makes the register an index whose
-detail lives elsewhere -- beside the mechanism, where CLAUDE.md's read-triggers
-already send a session that is about to touch it. That buys locality and pays
-for it with a second place to drift, and an index that has drifted from its
-detail is worse than either alone. So the resolution is mechanical, in both
-directions and with no discipline in the loop:
+detail lives elsewhere -- and "elsewhere" is **the code**, in the comment at a
+`deficiency: KD<k>` marker on the mechanism itself. A session editing that
+mechanism reads the detail without being sent anywhere, which is the whole
+point; a paragraph in a design document is a second thing to maintain and the
+first to go stale, so no marker may live under `docs/` at all. That buys
+locality and pays for it with two places to drift, so the resolution is
+mechanical, in both directions and with no discipline in the loop:
 
-* every `KD<k>` in the index resolves to exactly one detail paragraph, in the
+* every `KD<k>` in the index resolves to exactly one code marker, in the `.rs`
   file the index names;
-* every detail paragraph resolves back to an index entry;
-* every source-code marker resolves to an index entry, so one outliving its
+* every code marker resolves back to an index entry, so one outliving its
   entry is an error rather than a slow lie;
+* no `deficiency: KD<k>` marker appears anywhere under `docs/`, the index
+  included -- a detail written there is the decay this rule exists to stop;
 * every `(b)` entry is owned by a phase the roadmap's index lists as still
   running, and where that phase has been sliced the entry names a slice of it
   and that slice's checklist line names the entry back;
@@ -102,17 +105,18 @@ The vocabulary is duplicated in `process.md`'s prose and in `PHASE_STATES`, and
 they can drift; that is the same duplication the stance words already accept,
 where `(c)` must say "unowned" in that word.
 
-This is `measure.py --check`'s idiom -- the doc addresses an entry by a marker
+This is `measure.py --check`'s idiom -- the index addresses an entry by a marker
 comment, never by a heading, because a heading is rewritten whenever the thing
 under it moves -- but it is not a measurement concern and shares nothing with
 that harness but the shape.
 
-**The marker is one token, `deficiency: KD<k>`, in both file kinds.** In Markdown
-it goes in an HTML comment (`<!-- deficiency: KD3 -->`) beside the paragraph; in
-Rust it goes in the doc comment of the item that would otherwise mislead. A code
-marker is *not* wanted per entry -- only where a line reads as a complete,
-deliberate choice and gives no sign that a limitation hangs off it. Most
-entries are visible in their own doc section and need none.
+**The marker is one token, `deficiency: KD<k>`, in a Rust comment**, and the
+comment it sits in *is* the detail: a few lines stating the defect, what it
+costs, the declared stance and what would close it. No measured numbers (a
+`measurements.md` figure id instead, which is re-taken when the number moves)
+and no phase history. Exactly one marker per entry, at the mechanism the entry
+is about -- so an entry with nowhere to hang a marker is an entry whose
+mechanism has not been found.
 
 Usage:
 
@@ -132,9 +136,9 @@ from typing import Iterable, Sequence
 
 REPO = Path(__file__).resolve().parent.parent
 
-#: The index. Nothing else in the tree may carry a marker: a detail paragraph
-#: written here is the decay `process.md` names -- the index has become the
-#: document, and the session editing the mechanism will not see it.
+#: The index. Nothing under `docs/` may carry a marker, this file least of all:
+#: a detail written here is the decay `process.md` names -- the index has become
+#: the document, and the session editing the mechanism will not see it.
 STATUS = REPO / "docs" / "status" / "STATUS.md"
 
 #: The phase index, which is where a `(b)` entry's owner is resolved: it is the
@@ -142,16 +146,16 @@ STATUS = REPO / "docs" / "status" / "STATUS.md"
 #: checklist that would otherwise stand in for one.
 ROADMAP = REPO / "docs" / "design" / "roadmap.md"
 
-#: Where a detail paragraph may live. Any Markdown under here.
+#: Where no marker may live. Any Markdown under here is swept and must be clean.
 DOC_ROOT = REPO / "docs"
 
-#: Where a code marker may live.
+#: Where a code marker may live -- and the only place a detail exists.
 CODE_ROOTS = (REPO / "pgdump_query" / "src", REPO / "pgdump_query-cli" / "src")
 
 SECTION_HEADING = "## Known deficiencies"
 
-#: One token, both file kinds. Deliberately not anchored to `<!--`, so the Rust
-#: comments and the Markdown ones are found by the same rule.
+#: One token. Deliberately unanchored to any comment syntax, so the sweep over
+#: `docs/` finds a stray one however it was written.
 MARKER_RE = re.compile(r"deficiency:\s*(KD\d+)")
 
 #: An index entry opens a bullet at column 0 and runs to the next one.
@@ -206,7 +210,11 @@ def _index(ident: str) -> int:
 #: recognise, not an omission.
 STANCE_RE = re.compile(r"\*\*\(([abc])\)\s+([^*]+?)\*\*")
 OWNED_RE = re.compile(r"^owned by\s+(\S.*)$")
-DETAIL_RE = re.compile(r"Detail:\s*\[[^\]]*\]\(([^)]+)\)")
+
+#: `Detail: `pgdump_query/src/io.rs``. A repo-relative path in backticks, not a
+#: link: the target is source, and a Markdown link into it resolves nowhere a
+#: reader of the rendered index can follow anyway.
+DETAIL_RE = re.compile(r"Detail:\s*`([^`]+)`")
 
 
 @dataclass(frozen=True)
@@ -220,7 +228,7 @@ class Entry:
     label: str
     #: For (b), who is going to fix it. Empty otherwise.
     destination: str
-    #: The file the index says the detail paragraph is in, repo-relative.
+    #: The `.rs` file the index says carries this entry's marker, repo-relative.
     detail: str
     #: The whole bullet, joined, for error messages.
     text: str
@@ -563,60 +571,57 @@ def markers_under(roots: Sequence[Path], suffix: str, repo: Path, skip: Path | N
 
 def reconcile(
     entries: Sequence[Entry],
-    details: Sequence[Marker],
     code: Sequence[Marker],
-    status_markers: Sequence[Marker],
+    doc_markers: Sequence[Marker],
     repo: Path,
-    status: Path,
 ) -> list[str]:
     """Every problem the register can have, in both directions."""
     problems: list[str] = []
     indexed = {e.id: e for e in entries}
 
     by_id: dict[str, list[Marker]] = {}
-    for m in details:
+    for m in code:
         by_id.setdefault(m.id, []).append(m)
 
     for entry in entries:
         found = by_id.get(entry.id, [])
-        named = (status.parent / entry.detail).resolve()
-        if not named.exists():
+        named = (repo / entry.detail).resolve()
+        if not entry.detail.endswith(".rs"):
+            problems.append(
+                f"{entry.id} names a detail that is not source: {entry.detail} — "
+                "the detail is the comment at the code marker"
+            )
+        elif not named.exists():
             problems.append(
                 f"{entry.id} names a detail file that does not exist: {entry.detail}"
             )
         if not found:
             problems.append(
-                f"{entry.id} is indexed and nothing carries its detail — "
-                f"expected `<!-- deficiency: {entry.id} -->` in {entry.detail}"
+                f"{entry.id} is indexed and no code marker carries its detail — "
+                f"expected a `deficiency: {entry.id}` comment in {entry.detail}"
             )
             continue
         if len(found) > 1:
             where = ", ".join(f"{m.path}:{m.line}" for m in found)
             problems.append(
-                f"{entry.id} has {len(found)} detail entries and must have one: {where}"
+                f"{entry.id} has {len(found)} code markers and must have one: {where}"
             )
         for m in found:
             if (repo / m.path).resolve() != named:
                 problems.append(
-                    f"{entry.id}'s detail is at {m.path}:{m.line} but the index "
+                    f"{entry.id}'s marker is at {m.path}:{m.line} but the index "
                     f"names {entry.detail}"
                 )
 
-    for m in details:
-        if m.id not in indexed:
-            problems.append(
-                f"{m.path}:{m.line} carries a detail entry for {m.id}, which the "
-                "index does not list"
-            )
     for m in code:
         if m.id not in indexed:
             problems.append(
                 f"{m.path}:{m.line} marks {m.id}, which the index does not list"
             )
-    for m in status_markers:
+    for m in doc_markers:
         problems.append(
-            f"{m.path}:{m.line} carries a `deficiency: {m.id}` marker — the index "
-            "is not where a detail entry lives"
+            f"{m.path}:{m.line} carries a `deficiency: {m.id}` marker — a document "
+            "is not where a detail lives; the comment at the code marker is"
         )
     return problems
 
@@ -774,7 +779,6 @@ def reconcile_slices(
 
 def report(
     entries: Sequence[Entry],
-    details: Sequence[Marker],
     code: Sequence[Marker],
     problems: Sequence[str],
     checklists: dict[int, list[Slice]] | None = None,
@@ -787,9 +791,6 @@ def report(
     by_code: dict[str, list[Marker]] = {}
     for m in code:
         by_code.setdefault(m.id, []).append(m)
-    by_detail: dict[str, list[Marker]] = {}
-    for m in details:
-        by_detail.setdefault(m.id, []).append(m)
 
     paired: dict[str, list[str]] = {}
     for n, slices in sorted(checklists.items()):
@@ -816,8 +817,8 @@ def report(
     ) or "not read"
 
     print(
-        f"{len(entries)} deficiencies indexed, {len(details)} detail entries, "
-        f"{len(code)} code markers. Sliced phases: {sliced}.",
+        f"{len(entries)} deficiencies indexed, {len(code)} code markers "
+        f"carrying their detail. Sliced phases: {sliced}.",
         file=out,
     )
     print(
@@ -826,11 +827,9 @@ def report(
         file=out,
     )
     for entry in sorted(entries, key=lambda e: _index(e.id)):
-        where = ", ".join(f"{m.path}:{m.line}" for m in by_detail.get(entry.id, []))
+        where = ", ".join(f"{m.path}:{m.line}" for m in by_code.get(entry.id, []))
         stance = stance_of(entry)
-        print(f"  {entry.id:<4}{stance:<{width}}{where or '(no detail entry)'}", file=out)
-        for m in by_code.get(entry.id, []):
-            print(f"        marked at {m.path}:{m.line}", file=out)
+        print(f"  {entry.id:<4}{stance:<{width}}{where or '(no code marker)'}", file=out)
         if entry.id in paired:
             print(f"        paired with {', '.join(paired[entry.id])}", file=out)
     print(file=out)
@@ -841,8 +840,7 @@ def report(
             print(f"  {p}", file=out)
     else:
         print(
-            "Index, detail entries, code markers, slice pairings and phase "
-            "states all resolve.",
+            "Index, code markers, slice pairings and phase states all resolve.",
             file=out,
         )
 
@@ -864,17 +862,16 @@ def check(repo: Path = REPO, out=sys.stdout) -> int:
             f"{repo_rel(roadmap, repo)} does not exist — the phase index is "
             "where a (b) entry's owner is resolved"
         ]
-    details = markers_under((doc_root,), ".md", repo, skip=status)
     code = markers_under(code_roots, ".rs", repo)
-    status_markers = markers_in(status, repo)
+    doc_markers = markers_under((doc_root,), ".md", repo)
     problems = (
         list(problems)
         + watermark_problems
         + phase_problems
-        + reconcile(entries, details, code, status_markers, repo, status)
+        + reconcile(entries, code, doc_markers, repo)
         + reconcile_slices(entries, checklists, phases, watermark)
     )
-    report(entries, details, code, problems, checklists, watermark, phases, out=out)
+    report(entries, code, problems, checklists, watermark, phases, out=out)
     return 1 if problems else 0
 
 

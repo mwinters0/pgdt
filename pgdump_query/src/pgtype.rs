@@ -60,6 +60,15 @@ pub enum TypeOutcome {
     /// two dimensions* and *one literal whose elements are literals*. Held
     /// apart from `OpaqueElementType` because the label would lie:
     /// `integer[]` is not opaque, it is understood and declined.
+    ///
+    /// Deficiency register: `deficiency: KD3` — this and the census's
+    /// [`crate::resolve::ColumnResolution::VaryingArrayShape`] leave the
+    /// column `Utf8View` with no way for a caller to ask for more, though
+    /// both shapes are fully understood. **(c) unowned.** One lossless
+    /// representation closes both — a shape-general
+    /// `Struct{dims, lbounds, elements}` — and it only ever touches columns
+    /// these two refusals already leave as text, which is what makes it
+    /// additive.
     NestedArrayElement,
     /// A C-level base type or a shell/undefined type — genuinely
     /// information-free, not merely unimplemented (see the phase doc's
@@ -273,12 +282,15 @@ pub enum ComparisonDivergence {
     /// whose order this build does not implement.
     ///
     /// Deficiency register: `deficiency: KD7` — this and
-    /// [`Self::NonDeterministicCollation`] are the two register rows whose
-    /// divergence the file gives enough information to close and this build
-    /// does not, and the detail is `docs/design/decisions.md`'s "D55". The two collation variants either side of
-    /// them are *not* that: [`Self::UnknownCollation`] names a fact no plain
-    /// dump carries (I32), and a stated collation that is bytewise in fact but
-    /// not named `C`/`POSIX` lands here with correct rows and a spurious note.
+    /// [`Self::NonDeterministicCollation`] are the two rows whose divergence
+    /// the file states and this build does not implement, so the row set is
+    /// not the server's: under `<`/`>` always, and under `=`/`!=` where the
+    /// dump declares the collation non-deterministic (I42). **(c) unowned**;
+    /// closing it means a comparison per named collation, up to a provider
+    /// version. The variants either side are *not* this: [`Self::UnknownCollation`]
+    /// names a fact no plain dump carries (I32), and a stated collation that is
+    /// bytewise in fact but not named `C`/`POSIX` lands here with correct rows
+    /// and a spurious note.
     NonBytewiseCollation,
     /// A collatable column stating a collation the *same dump* declares
     /// `deterministic = false` (I42). It is [`Self::NonBytewiseCollation`]
@@ -292,8 +304,8 @@ pub enum ComparisonDivergence {
     /// (I42) — so where the other three collation variants are announcements
     /// about what the file leaves unsaid, this one repeats what it said.
     ///
-    /// Deficiency register: `deficiency: KD7` — same defect, same fix (a
-    /// comparison per named collation), one operator further.
+    /// Deficiency `KD7` reaches one operator further here; its detail is at
+    /// the marker on [`Self::NonBytewiseCollation`].
     NonDeterministicCollation,
     /// A `jsonb` column, whose *structure* is compared exactly and whose
     /// string leaves and object keys are not: `compareJsonbScalarValue` orders
@@ -312,16 +324,16 @@ pub enum ComparisonDivergence {
     /// it is right for most of these types. This says it is not right for all
     /// of them.
     ///
-    /// **`box` is the member that proves it**, and the committed oracle holds
-    /// the proof: `box_eq` compares *areas*, so the server calls
-    /// `(1,1),(0,0)` and `(3,3),(2,2)` equal and a byte comparison does not
-    /// (`fixtures/<13-18>/oracle/comparisons.tsv`, `public.box_domain`).
-    /// Whether any given unmodelled type is like `box` or like `money` —
-    /// whose `=` is its value's and whose `*_out` is unique per value, so
-    /// bytewise agrees — is exactly what this register does not know, and
-    /// announcing is the conservative answer.
-    ///
-    /// Deficiency register: `deficiency: KD10`.
+    /// Deficiency register: `deficiency: KD10` — that bytewise `=` is not the
+    /// server's answer for the geometric types, so the row set is wrong:
+    /// `box_eq` compares *areas*, calling `(1,1),(0,0)` and `(3,3),(2,2)`
+    /// equal where the bytes differ (the committed oracle holds it,
+    /// `fixtures/<13-18>/oracle/comparisons.tsv`, `public.box_domain`), and
+    /// the announcement misses a type reached through a container (`box[]`).
+    /// **(c) unowned.** Closing it means a comparison for each such type;
+    /// which member is like `box` and which like `money` — whose `*_out` is
+    /// unique per value, so bytewise agrees — is what this register does not
+    /// know, and announcing is the conservative answer.
     ///
     /// *Rejected: refusing `=` here as ordering is refused.* It takes a
     /// working capability away from every type in the group to protect the
@@ -828,6 +840,14 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
 /// `collations` is what the dump's own `CREATE COLLATION` statements said
 /// about it; only the four collatable arms read either, and [`map_builtin`] —
 /// which wants the Arrow type alone — passes `None` and an empty list.
+///
+/// Deficiency register: `deficiency: KD13` — `money`'s absent arm is the one
+/// place this table falls below the ADBC floor: the driver answers `int64`
+/// and the column resolves `Utf8View`, because `cash_out` renders through the
+/// monetary locale and `pg_dump` sets `lc_monetary` nowhere, so the file
+/// cannot say which locale wrote a value. **(a) deliberate tradeoff** — an
+/// arm here would have to guess a locale or ask for one, which the bar
+/// refuses for every other type; the column still filters as text.
 fn builtin_scalar(
     base: &str,
     typmod: Option<&str>,
@@ -1317,9 +1337,12 @@ fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
 /// holds it dequoted while the declaration keeps its quotes, so the lookup
 /// misses and the column resolves `Unknown`.
 ///
-/// Deficiency register: `deficiency: KD4` — the detail is
-/// `docs/design/decisions.md`'s "Type resolution and decoders", and the fix is
-/// `roadmap.md`'s "A real type-name tokenizer", not this function's.
+/// Deficiency register: `deficiency: KD4` — a type name that needs quoting
+/// therefore resolves `Unknown` (I29). No spelling is misread and every value
+/// still decodes as the text the file holds, so what is lost is strength, not
+/// correctness, and it is unreachable from a dump whose type names are
+/// ordinary identifiers. **(c) unowned.** Closing it means a real type-name
+/// tokenizer, which is strictly additive and not this function's.
 fn array_element(declared: &str) -> Option<&str> {
     let declared = declared.trim();
     // `SimpleTypename ARRAY '[' Iconst ']'` and `SimpleTypename ARRAY`: at

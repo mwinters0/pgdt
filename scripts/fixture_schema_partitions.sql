@@ -2,8 +2,7 @@
 -- `COPY <name> FROM stdin;` header owns MORE THAN ONE block in a single
 -- pg_dump output. See I2 in docs/design/postgres-invariants.md.
 --
--- Backs docs/design/architecture.md, "Query: mapping and
--- streaming are separate passes": a query may stop scanning once the
+-- Backs docs/design/decisions.md, "D48": a query may stop scanning once the
 -- queried table's block closes, EXCEPT for blocks carrying pg_dump's
 -- `-- load via partition root <root>` marker, which is exactly this shape.
 -- Without this schema that rule would ship tested only against

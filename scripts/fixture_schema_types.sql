@@ -1,6 +1,5 @@
 -- Type-mapping fixture schema: one table per mappable type family, plus the
--- boundary values from docs/design/architecture.md's
--- "Boundary values worth building in" table.
+-- boundary values docs/design/decisions.md, "D73" calls for.
 --
 -- Deliberately NOT koji-derived: koji contains no numeric, date, uuid, bytea,
 -- or interval columns and no user-defined type at all, so this is the only
@@ -112,7 +111,7 @@ INSERT INTO public.t_float VALUES
 
 -- infinity/-infinity are PostgreSQL date pseudo-values with no numeric day
 -- offset at all, so they have no Date32 representation and decode as a
--- FieldDecode by design (docs/design/architecture.md, "Testing philosophy").
+-- FieldDecode by design (docs/design/decisions.md, "D42").
 CREATE TABLE public.t_date (
     id integer PRIMARY KEY,
     v_date date
@@ -194,8 +193,8 @@ INSERT INTO public.t_text VALUES
 
 -- The COLLATE clause. Every column below is Utf8View and every one is compared
 -- bytewise; what the clause moves is the *verdict* -- whether bytewise is
--- PostgreSQL's own answer for that column (docs/design/architecture.md,
--- "Ordering operators compare typed"). t_text, above, carries the divergent
+-- PostgreSQL's own answer for that column (docs/design/decisions.md,
+-- "D55"). t_text, above, carries the divergent
 -- half of that rule; this table is the agreeing half, which nothing in the
 -- tree had until it existed.
 --

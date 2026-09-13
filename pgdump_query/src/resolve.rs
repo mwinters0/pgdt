@@ -261,6 +261,13 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 /// type; leaving those on the optimistic path is what keeps this transform
 /// from misreading them.
 ///
+/// Deficiency register: `deficiency: KD2` — an array at that depth is
+/// therefore decided optimistically, and a multi-dimensional or
+/// `[lb:ub]=`-decorated value in one is a hard `Error::FieldDecode` naming the
+/// column, which scanning more of the file cannot improve. **(c) unowned**,
+/// deferred on frequency. Closing it means a census keyed by *path* rather
+/// than by column, so a shape one level down has somewhere to be recorded.
+///
 /// **The plan reaching here is always `Array(non-array)`.** The one declared
 /// shape that resolves to a nested `Array` — an array whose element type is
 /// itself an array, whose literal is one brace deep and whose census therefore

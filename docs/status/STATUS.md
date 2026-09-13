@@ -210,9 +210,10 @@ heading — is beside the mechanism
 
 The deficiency register. Every known deficiency carries a stable `KD<k>`,
 allocated on discovery and never reused, and **one line here**: what it costs,
-its stance, and the file whose paragraph holds the rest. That paragraph sits
-beside the mechanism, where `CLAUDE.md`'s read-triggers already send a session
-that is about to touch it. This is an index, not the document.
+its stance, and the `.rs` file carrying its `deficiency: KD<k>` marker. **The
+comment at that marker is the detail** — it sits on the mechanism, so the
+session editing the mechanism reads it without being sent anywhere. This is an
+index, not the document.
 
 Three stances, because these are not one kind of thing and the difference
 decides whether anyone should act. **(a)** a consequence of a deliberate
@@ -248,73 +249,70 @@ its destination to exist: an entry owned by a phase the roadmap's index calls
 `Complete` or `Struck`, or does not list, drops to `(c) unowned` unless a phase
 actually absorbs it.
 
-`cd scripts && uv run deficiencies.py` reconciles this index against those
-paragraphs, against the source-code markers, against the slice checklist above
-and against the roadmap's phase index, and fails on any of them. An entry owned
-by a phase with no checklist yet names no slice and is not asked to. That last
-read is pinned at both ends: a phase carrying a checklist is `Current` in the
-index and a `Current` phase carries one, so a wrap that dropped the checklist
-and left the state, or a slicing that wrote the checklist and left it, fails
-here rather than reading as a phase nobody has sliced.
+`cd scripts && uv run deficiencies.py` reconciles this index against the code
+markers — one apiece, in the file the entry names, and none anywhere under
+`docs/` — against the slice checklist above and against the roadmap's phase
+index, and fails on any of them. An entry owned by a phase with no checklist
+yet names no slice and is not asked to. That last read is pinned at both ends:
+a phase carrying a checklist is `Current` in the index and a `Current` phase
+carries one, so a wrap that dropped the checklist and left the state, or a
+slicing that wrote the checklist and left it, fails here rather than reading as
+a phase nobody has sliced.
 
 - **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
   `Span::toc`. **(c) unowned**; promoted by a dump in hand whose data spans
-  need attribution. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D31".
+  need attribution. Detail: `pgdump_query/src/map.rs`.
 
 - **KD2** — an array nested inside a composite is decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
   `Error::FieldDecode`. **(c) unowned**; promoted by a schema that holds one,
   the per-path census being deferred on frequency. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D34".
+  `pgdump_query/src/resolve.rs`.
 
 - **KD3** — two array shapes come back as text with no way to ask for more,
   `NestedArrayElement` and `VaryingArrayShape`, though both are fully
   understood. **(c) unowned**; promoted by a caller whose arrays are matrices
   or scientific data, for whom a string is the wrong answer. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D43".
+  `pgdump_query/src/pgtype.rs`.
 
 - **KD4** — a type name that needs quoting resolves `Unknown` (I29): a weaker
   type, never a wrong one. **(c) unowned**; promoted by a dump whose type names
   are not ordinary identifiers, which neither any fixture nor koji is. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "Type resolution and decoders".
+  `pgdump_query/src/pgtype.rs`.
 
-- **KD5** — a map rebuild is still a whole-list clone, so mapping is
-  O(blocks²) wherever the save throttle's gate does not close it — which is
-  every `--dqcache none` scan, since a no-op save leaves nothing to amortize:
-  19.3 s for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of
-  blocks scanned under `--dqcache none`. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D63".
+- **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
+  wherever the save throttle's gate does not close it — which is every
+  `--dqcache none` scan, since a no-op save leaves nothing to amortize: 19.3 s
+  for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of blocks
+  scanned under `--dqcache none`. Detail: `pgdump_query/src/stream.rs`.
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
   candidate it found. **(b) owned by P6**, where what the embedded API promises
-  is decided. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D49".
+  is decided. Detail: `pgdump_query/src/batch.rs`.
 
 - **KD7** — a column that *states* a collation this build does not implement is
   compared bytewise, so the row set is not the server's: under `<`/`>` always,
   and under `=`/`!=` where the dump declares it `deterministic = false` (I42);
-  the fix is a comparison per named collation, up to a provider version.
-  **(c) unowned**; promoted by [`../design/roadmap.md`](../design/roadmap.md)'s
+  the fix is a comparison per named collation, up to a provider version. **(c)
+  unowned**; promoted by [`../design/roadmap.md`](../design/roadmap.md)'s
   Future item "collation-aware comparison", intent without a phase. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D55".
+  `pgdump_query/src/pgtype.rs`.
 
 - **KD8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, nor —
   on an `interval` — a time part past `2562047:47:16.854775807`, so
   materializing one raises `Error::FieldDecode` and there is no typed way to
   read the value. **(c) unowned**; promoted by whichever phase takes typed
   materialization, which is where the choice between a null, a sentinel and the
-  error belongs. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D44".
+  error belongs. Detail: `pgdump_query/src/decode.rs`.
 
 - **KD9** — an `INSERT` run costs **4.9×** a `COPY` scan's per-byte CPU warm
   and **2.63×** the device's own time cold on NVMe against 1.06×, and two cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan both cuts are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D33".
+  `pgdump_query/src/preamble.rs`.
 
 - **KD10** — a column whose declared type this build models no comparison for
   answers `=`/`!=` bytewise, which is not the server's answer for the geometric
@@ -322,61 +320,59 @@ here rather than reading as a phase nobody has sliced.
   outright, and the announcement misses a type reached through a container
   (`box[]`). **(c) unowned**; promoted by a dump whose queried columns are
   geometric or hold a `money`-shaped extension type. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D57".
+  `pgdump_query/src/pgtype.rs`.
 
 - **KD13** — `money` is below the ADBC floor: the driver answers `int64` and we
   answer `Utf8View`, because `cash_out` renders through the monetary locale and
   `pg_dump` sets `lc_monetary` nowhere, so the file cannot say which locale
   wrote a value. **(a) deliberate tradeoff** — closing it means guessing a
   locale or asking for one, which the bar refuses for every other type. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D38".
+  `pgdump_query/src/pgtype.rs`.
 
 - **KD17** — a plain typed `query` is flat at 1.02× across the whole `--jobs`
-  axis: the sub-streams it plans never run concurrently, total CPU staying under
-  one core. The named suspect — `POOL_DEPTH` clamping the chunk pool — moved no
-  cell by more than 0.8% in a probe build that lifts it, so what serializes
-  them is unidentified.
-  **(c) unowned**; promoted by a phase that takes up plain-source extraction
-  throughput, since no defaults change reaches it. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D25".
+  axis: the sub-streams it plans never run concurrently, total CPU staying
+  under one core. The named suspect — `POOL_DEPTH` clamping the chunk pool —
+  moved no cell by more than 0.8% in a probe build that lifts it, so what
+  serializes them is unidentified. **(c) unowned**; promoted by a phase that
+  takes up plain-source extraction throughput, since no defaults change reaches
+  it. Detail: `pgdump_query/src/stream.rs`.
 
 - **KD20** — a block-decoding worker decodes its **successor's block as well as
   its own**, nothing sharing the two, so a parallel compressed scan does about
   twice the decode work and its speedup is capped near half the reader count.
   **(c) unowned**; promoted by a phase taking up compressed scan throughput,
   and the fix left is an in-flight map, a wider cut having been measured and
-  refused. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "I/O, memory and parallelism".
+  refused. Detail: `pgdump_query/src/io.rs`.
 
 - **KD21** — the block pool's slot ceiling follows the worker count a caller
   *announced* rather than the one delivered, so a `--jobs` well above what
   `--parallel-memory` affords holds more than the stated budget — 1,280 MiB
   against 1,024 at `--jobs 24 --parallel-memory 1g` on a 128 MiB-block file.
   **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
-  Detail: [`../design/decisions.md`](../design/decisions.md), "I/O, memory and parallelism".
+  Detail: `pgdump_query/src/io.rs`.
 
 - **KD22** — the leader cuts a window of `workers × partition_bytes` from a
   `COPY` block's start and drains every piece before merging, so a dump of
   blocks much smaller than that window is read and parsed two orders of
   magnitude over, worse at every worker added and reached with no flag typed.
   **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D52".
+  `pgdump_query/src/leader.rs`.
 
-- **KD23** — a `pgdq query` sub-stream can pin several decoded blocks where
-  the budget bills one: a query partition is cut over a whole `CopyBlock` rather
+- **KD23** — a `pgdq query` sub-stream can pin several decoded blocks where the
+  budget bills one: a query partition is cut over a whole `CopyBlock` rather
   than through the leader's window, so `BOUNDARIED_PARTITION_UNITS` does not
-  bound it and a held batch's `max_source_span` reaches up to four of koji's
-  24 MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
+  bound it and a held batch's `max_source_span` reaches up to four of koji's 24
+  MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
   memory, the repair reversing a recorded decision either way. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D4".
+  `pgdump_query/src/stream.rs`.
 
 - **KD24** — the chunk pool's free list is billed nowhere, so a compressed
-  source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks —
-  4 MiB at the shipped chunk, 64 MiB against 16 billed at `--chunk-size 16m`,
+  source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks — 4
+  MiB at the shipped chunk, 64 MiB against 16 billed at `--chunk-size 16m`,
   flat in the count and never above the stated budget. **(c) unowned**;
   promoted by a caller announcing a large chunk, or by a phase reworking
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D4".
+  `pgdump_query/src/io.rs`.
 
 - **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS × chunk` a reader
   where the path holds `POOL_DEPTH` chunks flat, and recommends no count at
@@ -384,22 +380,20 @@ here rather than reading as a phase nobody has sliced.
   billed against 4 held at the shipped chunk, and unbounded above a budget of
   `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
   scan on a real device, which is that path's own reopening condition. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D4".
+  `pgdump_query/src/io.rs`.
 
 - **KD26** — no charge bills a compressed source's seek table, the only
   unbilled term in the account that grows with the file rather than the count —
   3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
   read off. **(c) unowned**; promoted by a source whose index is not small
   beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
-  has no per-source term to bill it with. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D4".
+  has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **44.2 MiB** against a one-block one's 6.2 MiB.
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
-  in hand being one. Detail:
-  [`../design/decisions.md`](../design/decisions.md), "D63".
+  in hand being one. Detail: `pgdump_query/src/preamble.rs`.
 
 ## Decisions worth another look
 

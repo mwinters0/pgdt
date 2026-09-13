@@ -118,7 +118,7 @@ file whose largest block the budget cannot hold (plain `xz bigfile` is
 single-block), and there `partitions()` answers one partition, two readers
 forcing each other's restarts. Decodes read through a `File`, not a `Window`
 (larger than the chunk it spares; reopens with ranged GETs). Two misses on one
-block decode it twice (`deficiency: KD20`): an in-flight map would lock the
+block decode it twice (`KD20`): an in-flight map would lock the
 common case to spare a boundary collision.
 
 ### D16 Block decode is afforded out of the stated budget, keyed on largest block
@@ -241,7 +241,7 @@ Only `DataBlock::Copy` has inner offsets, only `COPY` having a row reader; a
 data span absorbs its TOC comment unconditionally. `INSERT` runs fold in
 `feed_line` with no scanner state (their boundaries rest on no line-anchored
 invariant) and the run's end is string-aware. Two cuts stay untaken until the
-`INSERT` row reader exists (`deficiency: KD9`).
+`INSERT` row reader exists (`KD9`).
 
 ### D34 `DumpIndex` stores no fact twice; whole-file facts need `is_complete`
 `blocks()` is a filtered iterator, `metadata` is computed once, diagnostics are

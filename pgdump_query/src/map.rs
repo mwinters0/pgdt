@@ -1824,8 +1824,13 @@ mod tests {
     /// `Framing` span of its own. The data span is unattributed either way,
     /// which is not what this test is about.
     ///
-    /// Deficiency register: `deficiency: KD1` — the detail is
-    /// `docs/design/decisions.md`'s "D31".
+    /// Deficiency register: `deficiency: KD1` — under I31's shape every data
+    /// span in the file loses its TOC attribution, `COPY` and `INSERT` alike,
+    /// so `Span::toc` is `None` where a plain dump names the table and the
+    /// coverage diagnostic under-reports by that much. **(c) unowned**, the
+    /// shape being opt-in. Closing it takes three changes that land together —
+    /// accept the prefix, veto on framing differently, re-tile the seam — and
+    /// this test is the only thing that can observe the outcome.
     #[test]
     fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {
         let mut builder = Builder::new();

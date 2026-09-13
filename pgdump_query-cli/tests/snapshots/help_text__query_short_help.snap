@@ -20,8 +20,8 @@ Options:
                                    value`, `column IS NULL`, or `column IS NOT NULL`. Repeatable —
                                    every term must match, so the terms are ANDed. `OR`, negation and
                                    grouping are `--where`, which takes an expression over these same
-                                   terms; giving both flags ANDs them
-                                   (`docs/design/architecture.md`, "Predicates")
+                                   terms; giving both flags ANDs them (`docs/design/decisions.md`,
+                                   "Predicates")
       --where <EXPR>               Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT`
                                    and parens, with `NOT` binding tighter than `AND` and `AND`
                                    tighter than `OR`. The keywords are case-insensitive and are
@@ -31,14 +31,13 @@ Options:
                                    columns in the order the flags give them, which need not be the
                                    file's. A name the table does not carry is an error, and so is a
                                    repeated one. Omit it entirely for every column
-                                   (`docs/design/architecture.md`, "Projection")
+                                   (`docs/design/decisions.md`, "D28")
       --no-columns                 Materialize no columns at all — the `COUNT(*)` shape. Each row
                                    prints as an empty line and no header line is printed, so
                                    `--no-columns | wc -l` is a row count. Incompatible with
                                    `--column`
       --database <DATABASE>        Select which database to query when `table` is ambiguous across a
-                                   multi-`\connect` dump (`docs/design/architecture.md`, "One target
-                                   per query")
+                                   multi-`\connect` dump (`docs/design/decisions.md`, "D49")
       --schema-mode <SCHEMA_MODE>  `typed` (default) resolves column types against the dump's DDL;
                                    `strings` skips that lookup entirely, matching the untyped
                                    byte-for-byte output — the way out of `Error::MetadataNotScanned`

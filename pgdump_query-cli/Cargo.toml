@@ -10,7 +10,7 @@ path = "src/main.rs"
 # The allocator is the *binary's* choice, never the library's: a
 # `#[global_allocator]` in `pgdump_query` would impose one on every embedder,
 # which is precisely P6's audience. See
-# `docs/design/architecture.md`, "The allocator is the binary's choice", and
+# `docs/design/decisions.md`, "D13", and
 # `docs/design/measurements.md`, "Which allocator a figure was taken under".
 #
 # Both features are measured legs of one figure rather than a supported
@@ -37,8 +37,7 @@ arrow = { version = "59.2.0", default-features = false }
 # at all, so a flag whose doc comment is a paragraph prints as one line the
 # terminal hard-wraps mid-word, losing the hanging indent an option list is read
 # by. A flag's help *is* its doc comment here
-# (`docs/design/architecture.md`, "A flag's help is its doc comment, citations
-# included"), so those paragraphs are the normal case rather than the
+# (`docs/design/decisions.md`, "D67"), so those paragraphs are the normal case rather than the
 # exception. `tests/help_text.rs` snapshots every page so the rendering is
 # reviewable at all.
 clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
@@ -55,13 +54,13 @@ tikv-jemallocator = { version = "0.6.0", optional = true }
 # dispatches every unit of work through `spawn_blocking`, so the multi-threaded
 # flavour would only buy reactor threads nothing runs on -- one per visible CPU,
 # each seeding a glibc arena before a byte is read. See `main`, and
-# `docs/design/architecture.md`, "Execution model and API surface".
+# `docs/design/decisions.md`, "D12".
 tokio = { version = "1.53.1", features = ["rt", "macros", "signal"] }
 tracing = "0.1"
 # `fmt` for the subscriber itself; `time` for RFC3339 timestamps
 # (`tracing_subscriber::fmt::time::UtcTime::rfc_3339`), the convention the
 # koji orchestrator logs already use
-# (`docs/design/architecture.md`, "Status output"). No `ansi`: these lines are as likely to land
+# (`docs/design/decisions.md`, "D67"). No `ansi`: these lines are as likely to land
 # in a redirected log file as a terminal.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "time"] }
 

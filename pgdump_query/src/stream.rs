@@ -358,6 +358,14 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 /// that stopped on a block's `end_offset` left that block's span ending
 /// exactly there; the blank line that follows belongs to it, not to whatever
 /// the next segment happens to recognize first.
+///
+/// Deficiency register: `deficiency: KD5` — the replacement is a whole-list
+/// clone, so mapping is O(blocks × splices) and O(blocks²) wherever the save
+/// throttle's gate never closes, which is every `--dqcache none` scan
+/// (`measurements.md`, `per-block-quadratic`). **(c) unowned**; promoted by a
+/// dump of thousands of blocks scanned that way. Closing it means an
+/// appendable frontier here rather than a rebuild; a floor under the throttle
+/// was refused, since it makes the cache's rate govern the map's cost.
 fn splice(
     prefix: &[Span],
     mut built: Vec<Span>,
@@ -415,8 +423,8 @@ fn splice(
 /// `\connect` — a plain dump with something concatenated after it. Nothing in
 /// the prefix announces that.
 ///
-/// Deficiency register: `deficiency: KD6` — the detail is
-/// `docs/design/decisions.md`'s "D49".
+/// That residue is deficiency `KD6`, whose detail is at its marker
+/// ([`crate::batch::ScanExtent::UntilTargetSettled`]).
 fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
     if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
         return false;
@@ -2126,6 +2134,23 @@ fn compressed_block_path_declined(
 /// Empty on every path that limits nothing — an empty `matches` included,
 /// since a footprint of zero never trips the budget — so a caller need not
 /// special-case "nothing to say".
+///
+/// Deficiency register: `deficiency: KD17` — the sub-streams planned here
+/// never run concurrently on a plain typed `query`: throughput is flat across
+/// the whole `--jobs` axis and total CPU stays under one core
+/// (`measurements.md`, `parallel-scan-throughput`). The named suspect, `POOL_DEPTH`
+/// clamping the chunk pool, is spent — a probe build lifting it moved no cell
+/// materially — so what serializes them is unidentified. **(c) unowned**;
+/// promoted by a phase taking up plain-source extraction throughput.
+///
+/// Deficiency register: `deficiency: KD23` — the cut here is over a whole
+/// `CopyBlock` rather than through the leader's window, so a piece spans as
+/// many units as the region holds over the worker count and a held batch's
+/// `max_source_span` can pin several decoded blocks where
+/// [`crate::io::RetainedUnit::Partition`] bills one;
+/// `BOUNDARIED_PARTITION_UNITS` does not bound this path. **(c) unowned**;
+/// promoted by a phase taking up query-path memory, the repair reversing a
+/// recorded decision either way.
 fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],

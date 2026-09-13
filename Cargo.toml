@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["pgdump_query", "pgdump_query-cli"]
 # vendor/xz-seek is a frozen, read-only copy of an unpublished crate
-# (docs/design/architecture.md, "The compressed source") -- excluded from the
+# (docs/design/decisions.md, "The compressed source") -- excluded from the
 # workspace, so it stays out of the shared lockfile and member list, but named
 # as a path dependency by pgdump_query itself.
 # `scripts/vendor_xz_seek.py` re-syncs it.
@@ -13,8 +13,8 @@ version = "0.1.0"
 edition = "2024"
 
 # The profiling build. A sampling profile is how this project attributes scan
-# cost per function rather than per subtraction (`docs/design/architecture.md`,
-# "Where a scan's time goes"), and
+# cost per function rather than per subtraction (`docs/design/decisions.md`,
+# "D25"), and
 # a profile of a stock `release` binary is unreadable: no line tables, and
 # `perf`'s frame-pointer unwinder walks into garbage the moment it leaves a
 # leaf. This profile inherits `release` and adds only what the unwinder needs,
