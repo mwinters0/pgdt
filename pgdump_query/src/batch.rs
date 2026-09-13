@@ -45,13 +45,14 @@ use crate::decode;
 use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
 use crate::pgtype::NestedPlan;
+// L4, imported by L3: `QueryOptions::filter` is the query's filter tree. One
+// of the two deviations `docs/design/decisions.md`, "D68" records.
 use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs in
-// `stream.rs`. Named here rather than reached for inline so the layering
-// check (`docs/design/decisions.md`, "D68") sees the deviation it already
-// records.
+// `stream.rs`; the other recorded deviation. Named here rather than reached
+// for inline so `tests/layering.rs` sees it.
 use crate::stream::{ResumeToken, table_stream};
 use crate::{Error, Result};
 

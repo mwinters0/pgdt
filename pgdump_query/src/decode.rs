@@ -1,7 +1,7 @@
 //! Per-type field decode and render-back (`docs/design/decisions.md`,
 //! "D44").
 //!
-//! Pure, synchronous, no I/O — see `docs/design/decisions.md`, L2. A decode
+//! Pure, synchronous, no I/O (`docs/design/decisions.md`, "D74"). A decode
 //! function takes an already-COPY-unescaped `&str` field (what
 //! `crate::copy::decode_field` returns) and returns a plain Rust value; it
 //! never takes an Arrow builder — building the array is `batch.rs`'s job

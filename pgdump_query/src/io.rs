@@ -10,6 +10,7 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 
+use crate::scan::DEFAULT_CHUNK_SIZE;
 use crate::{Error, Result};
 
 /// Minimal async byte-range read abstraction.
@@ -2723,7 +2724,7 @@ impl XzSource {
     fn charged_chunk_bytes(&self) -> u64 {
         match self.pool.announced_bytes() {
             Some(len) => len as u64,
-            None => crate::DEFAULT_CHUNK_SIZE as u64,
+            None => DEFAULT_CHUNK_SIZE as u64,
         }
     }
 

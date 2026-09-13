@@ -10,7 +10,7 @@ reused; a struck entry is deleted and its number stays spent. **Capped at 500
 lines**: an entry earns its place by being something a later session would
 otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D73 -->
+<!-- decision-watermark: D74 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -38,9 +38,8 @@ Evidence: `reserve`, `chunk-size`.
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`,
 `at`): the block pool's retention list is flat below `POOL_DEPTH` and a unit
 per reader above, which no scalar expresses. `BufferPool` is bounded in bytes,
-floored at one slot; a unit the budget cannot hold is refused by
-`BlockCache::affordable`, never shrunk. Evidence: `reserve`,
-`parallel-peak-rss`.
+floored at one slot; a unit the budget cannot hold is refused, never shrunk
+(`BlockCache::affordable`). Evidence: `reserve`, `parallel-peak-rss`.
 
 ### D5 A wait is a permission the read loop grants
 `NeverWait` is the default and allocates past the budget. Only
@@ -58,8 +57,7 @@ a per-command match; `enum AnySource`. `size_is_exact` exists for gzip/zstd.
 ### D7 `partitions()` says where and at what cost, never whether
 The same file is worth cutting for extraction and not for discovery, so the
 caller decides. The scheduler's only refusal is a memory floor against the
-file's remainder, erring toward the serial path (`KD22`). Rejected: reading
-`Anywhere` as "stay serial".
+file's remainder, erring serial (`KD22`). Rejected: `Anywhere` as "stay serial".
 
 ### D8 The cut is one unit wide, sized apart from the charge
 `BOUNDARIED_PARTITION_UNITS = 1`; `window_end` sizes the cut, `partition_bytes`
@@ -123,9 +121,8 @@ common case to spare a boundary collision.
 
 ### D16 Block decode is afforded out of the stated budget, keyed on largest block
 `BlockCache::affordable` compares one reader's charge (unit, chunk, decoder
-footprint; one composition site) against the caller's number. Rejected: a
-fixed refusal line; keying on block count; deciding per read. Evidence:
-`reserve`.
+footprint, one site) against the caller's number. Rejected: a fixed refusal
+line; keying on block count; deciding per read. Evidence: `reserve`.
 
 ### D17 Two pools per source; retained and free slots are one count
 The hinted unit drives both what a pool keeps and how it sizes, so one pool is
@@ -290,8 +287,7 @@ six comparisons. `predicate.rs` reads the plan, never the Arrow type.
 An opaque element delimiter (I22) and an array element (I26) both resolve
 `Utf8View`, decided at the end of `domain_terminal`. All `Typename` spellings
 collapse to element plus one level (I21, I28); normalizing at parse time would
-edit the user's DDL. Containers recurse with no cycle guard (I24). See `KD3`,
-`KD4`.
+edit the user's DDL. Containers recurse, no cycle guard (I24): `KD3`, `KD4`.
 
 ### D42 `interval` is the struct; special values are decode failures
 `MonthDayNano` is PostgreSQL's own three fields, so text would be below the
@@ -361,6 +357,7 @@ Rejected: decode and parse pools over a channel (the ratio is a property of
 the command); speculative splitting; cross-block pipelining. Pieces drain in
 file order so the same truncated file names the same byte. `close_copy_block`
 has one body and two callers, or a parallel cache stops matching a serial one's.
+`query` raises the lowest-indexed failed sub-stream after the rows before it.
 
 ## Predicates (`predicate.rs`, `where_expr.rs`)
 ### D53 The operator set is closed
@@ -418,8 +415,7 @@ A save is skipped unless `K` times the last save's duration has elapsed, which
 bounds overhead in every regime with no constant to tune. The map is rebuilt
 at the gate's openings, not every `CopyEnd`; the third opener matches the
 queried header, a superset of `target_settled`. Rejected: every N seconds or
-bytes; a floor for a disabled cache. `KD5` remains. Evidence:
-`per-block-quadratic`.
+bytes; a disabled-cache floor. `KD5` remains. Evidence: `per-block-quadratic`.
 
 ### D63 The interrupt flag is read at both extremes; resume is the default
 Per chunk and at every completed block, since neither alone bounds the
@@ -434,10 +430,6 @@ fresh `.xz` walks footers first; the limit is read once. Whether a number was
 typed or discovered never enters `Parallelism`. Logged durations are
 diagnostics, never figures: one stderr subscriber, no terminal detection.
 
-### D65 `query` merges sub-streams holding one batch each, raising the earliest error
-Lowest source offset first; a failed slot kills every slot after it, and the
-lowest-indexed failure is raised after the rows before it print.
-
 ### D66 Output is byte-identical whether typing is on or off
 Every value renders back to the text `pg_dump` wrote. A value contradicting
 its type is `FieldDecode` with an offset naming `--schema-mode strings`, never
@@ -451,16 +443,24 @@ with width and bare-flag assertions. Rejected: a `long_help` per flag.
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go
-L1 bytes/structure (`scan`, `copy`, `map`, `index`, `preamble`, `io`, `cache`,
-`diagnostic`, `error`), L2 PostgreSQL semantics (`pgtype`, `resolve`,
-`decode`, `nested`), L3 Arrow assembly (`batch`), L4 query (`stream`,
-`predicate`, `leader`). Dependencies point down; a module in two layers is two
-modules; a cross-layer trait is defined below and implemented above
-(`ByteRangeSource::partitions`). The one deviation, `batch::read_table`, moves
-only with a rework of that module. L1 is Arrow-free so a metadata-only caller
-compiles no Arrow, checked by grep (`arrow::datatypes` only in L2; every
-`crate::` dependency in a `use`); the cache stores declared type strings, never
-resolved Arrow types.
+L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`,
+`cache`, `diagnostic`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`,
+`nested`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`,
+`leader`); `error` and `lib` are in none; the CLI and embedders sit above L4.
+`use` points down or sideways, a module in two layers is two, and a new module
+is assigned a layer before it is written (`tests/layering.rs`). Deviations,
+moved only with a rework of `batch`: `read_table` (L4 work) and `filter` on
+`QueryOptions` naming `predicate::Expr`. Rejected: a crate split; D74 buys it.
+
+### D74 L1 is Arrow-free and L2 is pure, so a metadata-only caller compiles no Arrow
+L1 never names `arrow`; L2 names `arrow::datatypes` only, is synchronous and
+does no I/O; a decoder takes an unescaped field and returns a value, never a
+builder (L3, whose views marry array building to the read buffers, D46).
+Anything persisted is L1's vocabulary: declared type strings, never a
+`DataType` or any other L2 conclusion, for whatever the cache grows (P10's
+statistics record the declared type). A cross-layer trait is defined below and
+implemented above (`ByteRangeSource::partitions`); a predicate hook in the scan
+and P10's parse step take that shape, `predicate.rs` staying L4.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

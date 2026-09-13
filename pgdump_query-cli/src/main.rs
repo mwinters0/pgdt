@@ -1494,7 +1494,7 @@ async fn main() -> Result<()> {
             // earlier in the file however much later it arrives, and raising
             // whichever failed first in time would name a different row on each
             // run over an unchanged file
-            // (`docs/design/decisions.md`, "D65").
+            // (`docs/design/decisions.md`, "D52").
             let mut failed: Option<(usize, pgdump_query::Error)> = None;
             loop {
                 // Everything at or after a failing sub-stream is dead, and

@@ -237,7 +237,7 @@ fn dump_with_two_bad_rows(dir: &Path, rows: u32, early: u32, late: u32) -> PathB
 }
 
 /// **The lowest-offset error is the one raised, at every job count**
-/// (`docs/design/decisions.md`, "D65"). Two rows fail to decode; the later one is in a sub-stream that
+/// (`docs/design/decisions.md`, "D52"). Two rows fail to decode; the later one is in a sub-stream that
 /// reaches it in its very first batch, while the earlier one is three batches
 /// into the sub-stream before it. A merge that raised whichever failure arrived
 /// first would name `zzzLATE` at `--jobs 2` and `zzzEARLY` serially, so a user

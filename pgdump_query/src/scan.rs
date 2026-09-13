@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytes::Bytes;
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
-use crate::io::{ByteRangeSource, Parallelism, WaitPolicy};
+use crate::io::{ByteRangeSource, Parallelism, WaitPolicy, memory_budget_display};
 use crate::{Error, Result};
 
 /// The start of a COPY data block.
@@ -572,7 +572,7 @@ where
         bytes = size,
         chunk_size = options.chunk_size,
         jobs = options.parallelism.jobs(),
-        memory_bytes = %crate::io::memory_budget_display(options.parallelism),
+        memory_bytes = %memory_budget_display(options.parallelism),
         "preamble scan started",
     );
     // The chunk length this loop will ask for until EOF, announced once so a

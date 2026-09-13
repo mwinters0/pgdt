@@ -45,10 +45,10 @@ centering"). **Phase numbering continues from `P19`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
-[`decisions.md`](decisions.md) assigns each module to one of four layers and
-fixes the direction dependencies may point; several phases here are cross-layer
-by nature — P10's statistics most of all, which that doc calls the sharpest
-test of its own rules — and it holds the decision rules for them. [`postgres-invariants.md`](postgres-invariants.md)
+[`decisions.md`](decisions.md), "D68" and "D74", assign each module to one of
+four layers, fix the direction dependencies may point, and pre-answer the
+cross-layer phases below: what P10's statistics may persist and how they parse
+a value is settled there, and the sources P14, P15 and P18 add are L1. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
 
@@ -501,8 +501,11 @@ Sketched as pushdown's companion until that grilling separated them. Three
 things make it a phase rather than a companion, and the last one also fixes
 where it sits in the table above:
 
-- It is the only work here that spans **all four layers**, which
-  [`decisions.md`](decisions.md) calls the sharpest test of its own rules.
+- It is the only work here that spans **all four layers**: gathered in L1's
+  scan, needing L2 to parse a value, persisted in L1's cache. So `RowGroupStats`
+  records the **declared PostgreSQL type** a statistic was computed as, never
+  an Arrow `DataType`, and the parse function is injected downward rather than
+  imported upward ([`decisions.md`](decisions.md), "D74").
 - It is the only work here whose bug is a **wrong answer** rather than a slow
   one — see "The correctness asymmetry" below — so it cannot share a review
   cycle with a self-contained query-API change (`../process.md`, "Size a slice

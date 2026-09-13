@@ -1,7 +1,7 @@
 //! The structural summary a scan produces: where every COPY block lives.
 //!
-//! This is what the eager `pgdq parse` scan yields today and what the
-//! structure cache will persist once it exists.
+//! This is what a `pgdq parse` scan yields and what the structure cache
+//! (`cache.rs`) persists.
 
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
@@ -185,7 +185,7 @@ pub struct CopyBlock {
     /// root rather than the partition whose rows follow, and **other blocks
     /// in this same dump carry the same header name**. Stored rather than
     /// concluded from: it is a line the dump wrote, which is what
-    /// `docs/design/decisions.md`'s "D68" asks L1 to keep.
+    /// `docs/design/decisions.md`'s "D74" asks L1 to keep.
     ///
     /// `crate::stream::table_stream` reads it to decide whether a cold query
     /// may stop once the queried table's block closes, or must run to EOF

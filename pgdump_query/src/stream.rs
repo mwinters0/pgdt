@@ -76,7 +76,7 @@ use crate::index::{
 };
 use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
-    RetainedUnit, WaitPolicy, WorkerMemory,
+    RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
 };
 use crate::leader::{self, RegionScan};
 use crate::map::{Builder, Span, SpanBody, attach_text};
@@ -514,7 +514,7 @@ async fn map_forward(
         resumed_from = index.scanned_through,
         chunk_size = scan_options.chunk_size,
         jobs = scan_options.parallelism.jobs(),
-        memory_bytes = %crate::io::memory_budget_display(scan_options.parallelism),
+        memory_bytes = %memory_budget_display(scan_options.parallelism),
         "scan started",
     );
 

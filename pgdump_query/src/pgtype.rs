@@ -1,7 +1,7 @@
 //! Declared PostgreSQL type string -> Arrow `DataType`
 //! (`docs/design/decisions.md`, "Type resolution and decoders").
 //!
-//! Pure, synchronous, no I/O — see `docs/design/decisions.md`, L2. A declared
+//! Pure, synchronous, no I/O (`docs/design/decisions.md`, "D74"). A declared
 //! type is resolved against a single database's [`TypeDef`] list (already
 //! selected by the caller — [`crate::resolve`] is the one that picks which
 //! database), never against files or offsets.

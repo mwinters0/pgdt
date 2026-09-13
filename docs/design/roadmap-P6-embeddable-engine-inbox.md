@@ -477,7 +477,7 @@ between the two passes rather than a blanket "the library does not order
 errors".
 
 **Origin.** The parallel-scan work's error-ordering slice, 2026-09-07
-([`decisions.md`](decisions.md), "D65").
+([`decisions.md`](decisions.md), "D52").
 
 ---
 

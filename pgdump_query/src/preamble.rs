@@ -18,7 +18,7 @@
 //! **Store what the dump said, never what we concluded.** Declared types are
 //! kept as strings exactly as written (`character varying(16)`, not a parsed
 //! `(base, typmod)` pair) — the cache is L1 and cannot hold an L2 conclusion
-//! (`docs/design/decisions.md`, "D68"). Resolving those strings into Arrow
+//! (`docs/design/decisions.md`, "D74"). Resolving those strings into Arrow
 //! types is [`crate::pgtype`]'s job.
 //!
 //! [`extract_statement_cross_refs`] is a second, independent kind

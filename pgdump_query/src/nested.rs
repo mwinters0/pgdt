@@ -3,7 +3,7 @@
 //! functions write them inside a single `COPY` field, and as its `*_in`
 //! functions read what a user typed.
 //!
-//! Pure, synchronous, no I/O and no Arrow — see `docs/design/decisions.md`, L2.
+//! Pure, synchronous, no I/O and no Arrow (`docs/design/decisions.md`, "D74").
 //! Like `crate::decode`, every function here works on the *already
 //! COPY-unescaped* text `crate::copy::decode_field` returns, and every
 //! `render_*` is the exact inverse of its `decode_*`: feeding it a value
