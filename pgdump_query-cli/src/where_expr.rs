@@ -6,15 +6,13 @@
 //! **leaf**, handed to `parse_filter` — the same term grammar
 //! `--filter` uses, unchanged (`docs/design/decisions.md`, "D60").
 //!
-//! The delegation keeps one term grammar rather than two, and
 //! [`refuse_where_structure`] keeps the two flags meaning one thing: a
 //! `--filter` term that does not tokenize to a single [`Token::Leaf`] is
 //! refused, so this module's tokenizer *is* the definition of what the two
-//! flags may disagree about rather than a rule restated beside one.
+//! flags may disagree about.
 //!
 //! This module is the CLI's alone. `Expr` is a plain public enum an embedder
-//! fills in variant by variant, so nothing below L4 parses an expression any
-//! more than it parses a term.
+//! fills in variant by variant, so nothing below L4 parses an expression.
 
 use anyhow::{Context, Result};
 use pgdump_query::Expr;
@@ -31,9 +29,9 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
         None => Ok(expr),
         Some(token) => {
             // A stray `(` is almost always a composite or range literal
-            // written unquoted, which is the one collision between this
-            // grammar and the term grammar's values — so it earns the remedy
-            // rather than only the diagnosis.
+            // written unquoted — the one collision between this grammar and
+            // the term grammar's values — so it earns a remedy, not only a
+            // diagnosis.
             let hint = match token {
                 Token::Open => " — a `(` groups here, so quote a value that holds one",
                 _ => "",
@@ -50,33 +48,25 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
 /// that no string means one thing under `--filter` and another under
 /// `--where`.
 ///
-/// **The refusal set is the tokenizer's, not a copy of it.** A term is
-/// accepted only where [`tokenize`] gives back a single [`Token::Leaf`], which
-/// makes the refused set *exactly* the disagreeing set by construction. A
-/// second scan looking for the reserved spellings would be a duplicate of a
-/// rule — free to drift the moment either grammar moves, and drift here is
-/// silent again — and it would over-refuse today, since [`keyword_at`] wants
-/// whitespace or a paren before a keyword and `--filter 'v_text=not a'` is
-/// therefore one leaf under both flags.
+/// **The refusal set is the tokenizer's, not a copy of it**
+/// (`docs/design/decisions.md`, "D60"): a term is accepted only where
+/// [`tokenize`] gives back a single [`Token::Leaf`], which makes the refused
+/// set *exactly* the disagreeing set by construction.
 ///
 /// **The check is on the `--filter` path alone.** A `--where` leaf is what
 /// came *out* of this tokenizer, and text that is one leaf inside its
 /// expression need not be one on its own — `--where 'x=(and b)'` cuts a leaf
 /// `and b`, whose leading `and` had a paren before it there and nothing here.
 ///
-/// The one string it reaches that was never returning wrong rows is a term
-/// with no operator, such as `and is null`, which named a column `and` and is
-/// a hard parse error under `--where`. It is refused anyway: a string
-/// one flag accepts and the other rejects cannot be moved between them either,
-/// and carving the exception would cost the property that makes the tokenizer
-/// definition worth having. The remedy is the one the term grammar already
-/// teaches — `--filter '"and" is null'`.
+/// A term with no operator, such as `and is null`, is refused too even though
+/// it returns no wrong rows: a string one flag accepts and the other rejects
+/// cannot be moved between them either. The remedy is the term grammar's own
+/// — `--filter '"and" is null'`.
 pub(crate) fn refuse_where_structure(spec: &str) -> Result<()> {
     let tokens = tokenize(spec);
     // Nothing at all is not structure: an empty or all-whitespace term holds
-    // no reserved spelling to disagree about, and `parse_filter`'s usage
-    // message is the accurate one. Neither flag accepts it, so the
-    // single-meaning property is untouched by letting it through to there.
+    // no reserved spelling to disagree about, and neither flag accepts it, so
+    // `parse_filter`'s usage message is the accurate one.
     if tokens.is_empty() || matches!(tokens.as_slice(), [Token::Leaf(_)]) {
         return Ok(());
     }
@@ -122,10 +112,9 @@ impl Token<'_> {
 /// Whether `b` continues an identifier, and therefore cannot be the boundary
 /// a keyword needs.
 ///
-/// **Every byte above ASCII counts**, because a UTF-8 lead or continuation
-/// byte is part of whatever character it belongs to and a column name may be
-/// spelled in any of them: without this, `éand=1` would find a keyword one
-/// byte into a character.
+/// **Every byte above ASCII counts**: a UTF-8 lead or continuation byte is
+/// part of whatever character it belongs to, and without this `éand=1` would
+/// find a keyword one byte into a character.
 fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
 }
@@ -150,16 +139,14 @@ fn preceding_word(bytes: &[u8], i: usize) -> &[u8] {
 /// against whitespace, a paren on the matching side, or the end of the
 /// string.
 ///
-/// This is stricter than a word boundary, and deliberately: with a bare word
-/// boundary, `--where 'tag=and'` would tokenize as the term `tag=` followed
-/// by `AND`, because `=` is not a word byte. Requiring whitespace or a paren
-/// leaves that string a single leaf, which is the equality it reads as.
+/// Stricter than a word boundary, deliberately: under a bare word boundary
+/// `--where 'tag=and'` would tokenize as the term `tag=` followed by `AND`,
+/// since `=` is not a word byte.
 ///
 /// **`NOT` after the word `is` belongs to the term, not to the expression.**
-/// `IS NOT NULL` and `IS NOT DISTINCT FROM` both carry one, and both are the
-/// leaf grammar's — splitting them would make `--where 'v IS NOT NULL'` a
-/// negation of the leaf `NULL`, which is the one way a boolean grammar over
-/// this term grammar can silently mean something else.
+/// `IS NOT NULL` and `IS NOT DISTINCT FROM` both carry one and both are the
+/// leaf grammar's; splitting them would make `--where 'v IS NOT NULL'` a
+/// negation of the leaf `NULL`.
 fn keyword_at(bytes: &[u8], i: usize) -> Option<(usize, Token<'static>)> {
     let before_ok = i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b')';
     if !before_ok {
@@ -188,11 +175,9 @@ fn keyword_at(bytes: &[u8], i: usize) -> Option<(usize, Token<'static>)> {
 /// Split `spec` into parens, keywords and leaves.
 ///
 /// **Quoted regions are skipped whole**, with a doubled quote an escaped one
-/// — the same scan `split_filter_op` makes, for the same reason: a
-/// paren or the word `and` inside a quoted value is data. A quote that never
-/// closes swallows the rest of the string into one leaf, where
-/// `parse_filter` refuses it with the message every malformed quote
-/// earns.
+/// — the same scan `split_filter_op` makes: a paren or the word `and` inside
+/// a quoted value is data. A quote that never closes swallows the rest of the
+/// string into one leaf, where `parse_filter` refuses it.
 fn tokenize(spec: &str) -> Vec<Token<'_>> {
     let bytes = spec.as_bytes();
     let mut tokens = Vec::new();
@@ -286,8 +271,8 @@ impl<'a> Parser<'a> {
     ///
     /// Neither this nor [`Self::parse_and`] wraps its operand's failure in a
     /// "needs an operand on its right" line: the operand is usually *there*
-    /// and merely not a term, and that line then contradicts the cause under
-    /// it. What is missing is already said by the fault the operand raises.
+    /// and merely not a term, so that line would contradict the cause under
+    /// it.
     fn parse_or(&mut self) -> Result<Expr> {
         let mut children = vec![self.parse_and()?];
         while self.eat(&Token::Or) {
@@ -327,9 +312,8 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Leaf(text)) => {
                 self.pos += 1;
-                // The leaf's own faults keep `parse_filter`'s wording — one
-                // term grammar, so one set of messages — under a line saying
-                // which flag and which term they came from.
+                // The leaf's own faults keep `parse_filter`'s wording, under
+                // a line saying which flag and which term they came from.
                 let term = crate::parse_filter(text)
                     .with_context(|| format!("--where `{}`: in the term `{text}`", self.spec))?;
                 Ok(Expr::Term(term))
@@ -413,9 +397,8 @@ mod tests {
         assert_eq!(ok("a=1 And b=2"), "and(a=1, b=2)");
     }
 
-    /// **`NOT` binds tighter than `AND`, which binds tighter than `OR`.**
-    /// Asserted through the rendered shape rather than argued: the `OR` is
-    /// the root and the negation reaches one term.
+    /// **`NOT` binds tighter than `AND`, which binds tighter than `OR`**: the
+    /// `OR` is the root and the negation reaches one term.
     #[test]
     fn precedence_is_not_then_and_then_or() {
         assert_eq!(ok("a=1 or b=2 and c=3"), "or(a=1, and(b=2, c=3))");
@@ -452,10 +435,8 @@ mod tests {
     }
 
     /// **The `NOT` inside a term is the term's.** Both `IS NOT NULL` and
-    /// `IS NOT DISTINCT FROM` carry one, and reading either as the
-    /// expression's negation is the one way this grammar could silently mean
-    /// something other than it says — `v IS NOT NULL` would become a
-    /// negation of the leaf `NULL`.
+    /// `IS NOT DISTINCT FROM` carry one; reading either as the expression's
+    /// negation would make `v IS NOT NULL` a negation of the leaf `NULL`.
     #[test]
     fn a_not_after_is_belongs_to_the_term() {
         assert_eq!(ok("created_at IS NOT NULL"), "created_at IS NOT NULL");
@@ -477,9 +458,8 @@ mod tests {
         assert_eq!(ok("\"a and b\"=x"), "a and b=x");
     }
 
-    /// **The hazard the flag split exists for.** A widened `--filter` would
-    /// have read this as a disjunction; here the leaf `b` reaches
-    /// `parse_filter`, which refuses it, and the message says which term.
+    /// The leaf `b` reaches `parse_filter`, which refuses it, and the message
+    /// says which term — the hazard the flag split exists for.
     #[test]
     fn a_leaf_that_is_not_a_term_is_refused_loudly() {
         let message = err("note=a and b");
@@ -509,10 +489,8 @@ mod tests {
 
     /// **Two terms with no keyword between them are one leaf**, because only
     /// a paren or a keyword ends one — so the term grammar's earliest-operator
-    /// rule applies and `a=1 b=2` is `a` equal to `1 b=2`, exactly as the same
-    /// string means under `--filter`. Juxtaposition is not an implicit `AND`,
-    /// and inventing one here would be the second grammar this flag exists to
-    /// avoid.
+    /// rule applies and `a=1 b=2` is `a` equal to `1 b=2`, as under
+    /// `--filter`. Juxtaposition is not an implicit `AND`.
     #[test]
     fn juxtaposition_is_not_an_implicit_and() {
         assert_eq!(ok("a=1 b=2"), "a=1 b=2");
@@ -533,9 +511,8 @@ mod tests {
         refuse_where_structure(spec).err().map(|e| format!("{e:#}"))
     }
 
-    /// **What the refusal buys**: a term holding a reserved spelling is refused
-    /// rather than read one way here and another under `--where`, and the
-    /// message names both remedies.
+    /// A term holding a reserved spelling is refused rather than read one way
+    /// here and another under `--where`, and the message names both remedies.
     #[test]
     fn a_term_that_reads_as_structure_is_refused() {
         let message = refused("note=a and b").expect("a keyword is structure");
@@ -560,9 +537,9 @@ mod tests {
         }
     }
 
-    /// **The refusal is exactly the tokenizer's boundary rule**, so every
-    /// spelling that was one leaf stays one: a keyword needs whitespace or a
-    /// paren before it, and a term-level `NOT` is claimed by its `is`.
+    /// **The refusal is exactly the tokenizer's boundary rule**: a keyword
+    /// needs whitespace or a paren before it, and a term-level `NOT` is
+    /// claimed by its `is`.
     #[test]
     fn a_term_that_is_one_leaf_is_untouched() {
         for spec in [

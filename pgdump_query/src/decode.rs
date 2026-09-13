@@ -11,13 +11,10 @@
 //! counterpart and produces the same *decoded* text `crate::copy::decode_field`
 //! would have returned for a correctly-formed value — never the raw
 //! COPY-escaped bytes on disk. Converting between the two is
-//! `crate::copy::encode_field`'s job, not this module's: this module's whole
-//! job is decoded text vs. Arrow value, and reaching past that into
-//! COPY-escaping would blur the L1/L2 split of
-//! `docs/design/decisions.md`, "D68".
+//! `crate::copy::encode_field`'s job (`docs/design/decisions.md`, "D68").
 //! `tests/decode.rs`'s round-trip test compares against `SchemaMode::Strings`,
-//! which is also decoded text, for exactly this reason; the on-disk-byte leg
-//! is covered separately in `tests/scan.rs`.
+//! which is also decoded text; the on-disk-byte leg is covered separately in
+//! `tests/scan.rs`.
 
 /// `t`/`f`, COPY TEXT's boolean spelling.
 pub fn decode_bool(s: &str) -> Option<bool> {
@@ -175,9 +172,9 @@ const DEC_PAIRS_BYTES: [u8; 200] = {
     table
 };
 
-/// The same table as text, converted once at compile time over bytes that are
-/// ASCII by construction, so a renderer appends with `push_str` and pays no
-/// UTF-8 validation of its own — the same shape as [`HEX_PAIRS`].
+/// The same table as text, converted once at compile time, so a renderer
+/// appends with `push_str` and pays no UTF-8 validation — the same shape as
+/// [`HEX_PAIRS`].
 static DEC_PAIRS: &str = match str::from_utf8(&DEC_PAIRS_BYTES) {
     Ok(s) => s,
     Err(_) => panic!("decimal digits are ASCII"),
@@ -196,15 +193,12 @@ static DEC_DIGITS: &str = "0123456789";
 /// Three properties are load-bearing rather than stylistic
 /// (`docs/design/decisions.md`, "D44"):
 ///
-/// - **The digits come out two at a time**, off [`DEC_PAIRS`], which is the
-///   algorithm the standard library's own integer `Display` uses. The
-///   division is by a literal `100`, so it compiles to a multiply.
+/// - **The digits come out two at a time**, off [`DEC_PAIRS`], the algorithm
+///   the standard library's own integer `Display` uses.
 /// - **Every piece is a slice of a `&'static str`**, so nothing here converts
 ///   bytes to text and no UTF-8 validation is paid per field.
-/// - **The whole length is reserved once.** `push_str` into a `String` that
-///   starts empty otherwise grows it twice for a ten-digit value, and that
-///   realloc traffic is what a caller rendering one array element per
-///   allocation actually pays.
+/// - **The whole length is reserved once**, so no `push_str` grows the
+///   buffer.
 #[inline]
 fn push_padded(out: &mut String, value: i64, width: usize) {
     // Pair values, least significant first; a `u64` has at most nine of them
@@ -241,9 +235,8 @@ fn push_padded(out: &mut String, value: i64, width: usize) {
 /// An integer field's digits, appended: the same text `i64::to_string`
 /// produces, without the `String` it allocates.
 ///
-/// **The obvious spelling is the slow one.** `write!(out, "{value}")` reaches
-/// the same `Display` impl but through `core::fmt::write`, whose machinery
-/// costs several times what the digits do on an array-bearing row
+/// `write!(out, "{value}")` reaches the same `Display` impl through
+/// `core::fmt::write`, which this path never uses
 /// (`docs/design/decisions.md`, "D44").
 #[inline]
 pub(crate) fn push_integer(out: &mut String, value: i64) {
@@ -275,10 +268,9 @@ fn push_year(out: &mut String, year: i64) {
 
 /// The fractional-seconds digits, `micros` in `1..1_000_000`: six digits with
 /// trailing zeros trimmed, which is what PostgreSQL writes (`00:00:00.5`, not
-/// `.500000`). The trim is a `truncate` back to the last non-zero digit rather
-/// than a `pop` loop over a temporary, and it is bounded by `start` so it can
-/// never reach text the caller had already written — though it does not have
-/// to be: `micros` is nonzero, so one of the six digits stops it first.
+/// `.500000`). The trim is a `truncate` back to the last non-zero digit,
+/// bounded by `start` so it can never reach text the caller had already
+/// written.
 fn push_fraction(out: &mut String, micros: i64) {
     let start = out.len();
     push_two(out, micros / 10_000);
@@ -657,12 +649,10 @@ pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
 ///
 /// **`None` for a `nanos` that is not a whole number of microseconds.**
 /// PostgreSQL's time field counts microseconds, so no `interval` has such a
-/// value and there is no text to write: `EncodeInterval` has six fractional
-/// digits and a seventh has nowhere to go. Truncating would put a value in
-/// the output that is not the one the array holds, which is the one thing
-/// render-back may not do. [`decode_interval`] cannot produce one — it
-/// multiplies microseconds by a thousand — so this is reachable only from an
-/// `Interval(MonthDayNano)` array a caller built itself.
+/// value and there is no text to write; the value is refused rather than
+/// truncated (`docs/design/decisions.md`, "D44"). [`decode_interval`] cannot
+/// produce one — it multiplies microseconds by a thousand — so this is
+/// reachable only from an `Interval(MonthDayNano)` array a caller built.
 pub fn render_interval(months: i32, days: i32, nanos: i64) -> Option<String> {
     if nanos % 1_000 != 0 {
         return None;
@@ -785,8 +775,7 @@ const HEX_PAIRS_BYTES: [u8; 512] = {
 };
 
 /// The same table as text, so a renderer appends a pair with `push_str` and
-/// pays no UTF-8 validation of its own — the conversion happens once, at
-/// compile time, over a table that is ASCII by construction.
+/// pays no UTF-8 validation; the conversion happens once, at compile time.
 static HEX_PAIRS: &str = match str::from_utf8(&HEX_PAIRS_BYTES) {
     Ok(s) => s,
     Err(_) => panic!("hex digits are ASCII"),

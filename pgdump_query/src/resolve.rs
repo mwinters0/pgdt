@@ -48,41 +48,32 @@ pub enum ColumnResolution {
     /// The scan never read this block's database's DDL, so nothing is yet
     /// known about *any* of its columns.
     ///
-    /// **No mapping scan produces this pairing.** `crate::stream`'s mapping
+    /// **No mapping scan produces this pairing**: `crate::stream`'s mapping
     /// pass states a database's DDL at that database's first `COPY` block
-    /// (I1's recurring boundary), which is strictly before any of its blocks
-    /// can be banked, so a block in the map always has its database covered.
+    /// (I1's recurring boundary), before any of its blocks can be banked.
     /// What keeps the variant is that [`resolve_columns`] is public and takes
-    /// its `metadata` from the caller: an embedder resolving against an index
-    /// it assembled itself can still present the condition, and this is the
-    /// right answer when it does.
+    /// its `metadata` from the caller, so an embedder resolving against an
+    /// index it assembled itself can still present the condition.
     ///
-    /// **Held apart from [`Self::NotDeclared`], which it would otherwise look
-    /// exactly like.** `NotDeclared` means the dump never explained this
-    /// column and is final; this means "finish the parse and ask again" —
-    /// identical-looking output, opposite advice. The streaming path refuses
-    /// it outright (`crate::Error::MetadataNotScanned`) where a *reported*
-    /// schema degrades: see `docs/design/decisions.md`, "D43".
+    /// Held apart from [`Self::NotDeclared`], which is final where this means
+    /// "finish the parse and ask again" (`docs/design/decisions.md`, "D43").
     MetadataNotScanned,
     /// An array whose element type is opaque by construction — `box`, a
     /// C-level base type or a shell type, through any chain of domains. Held
     /// apart from [`Self::OpaqueBaseType`] because the column's *own* type is
-    /// perfectly well understood; it is the element that is not, and the
-    /// array's separator is the element type's (I22).
+    /// understood; it is the element that is not, and the array's separator is
+    /// the element type's (I22).
     OpaqueElementType,
     /// An array column whose element type is itself an array, through any
     /// chain of domains (I26). Held apart from [`Self::OpaqueElementType`]
     /// because the label would lie: `integer[]` is not opaque, it is
-    /// understood and declined — opaque means *never improves*, this means
-    /// *yes, if anyone needs it*.
+    /// understood and declined.
     NestedArrayElement,
     /// An array column whose values do not share one Arrow list shape: the
     /// dimensionality differs between rows, or some value carries an
     /// `[lb:ub]=` lower-bound prefix. Both are properties of the *value*
     /// (I21), so only the array-shape census can report them — and it reports
-    /// them before the schema commits, which is what makes this a resolution
-    /// outcome rather than a decode failure at row 40 million
-    /// (`docs/design/decisions.md`, "D35").
+    /// them before the schema commits (`docs/design/decisions.md`, "D35").
     VaryingArrayShape,
     /// A C-level base type or a shell/undefined type.
     OpaqueBaseType,
@@ -91,18 +82,13 @@ pub enum ColumnResolution {
 
 /// One column's full resolution, named and carrying the raw declared type
 /// string (if any DDL named one) alongside the outcome — what a human-facing
-/// display (`pgdq info`) needs in one place, for every column, not just the
-/// unmapped ones.
+/// display (`pgdq info`) needs in one place, for every column.
 ///
-/// **A note, not a diagnostic.** There is exactly one of these per column,
-/// always, and the ordinary case is a column that resolved cleanly — so this
-/// is a per-column record, not an exception report. The file-level exception
-/// channel is [`crate::diagnostic::Diagnostic`], and the two deliberately
-/// stay separate types: `DumpIndex` is L1 while [`ColumnResolution`] is an L2
-/// conclusion about PostgreSQL type semantics, so one enum spanning both
-/// would have L1 name an L2 type (`docs/design/decisions.md`, "D68"). What
-/// they share is the [`Severity`] scale, so a caller reading both filters
-/// uniformly.
+/// **A note, not a diagnostic**: there is exactly one per column, always. The
+/// file-level exception channel is [`crate::diagnostic::Diagnostic`], kept a
+/// separate type because `DumpIndex` is L1 and [`ColumnResolution`] an L2
+/// conclusion (`docs/design/decisions.md`, "D68"). What they share is the
+/// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnNote {
     pub column: String,
@@ -113,15 +99,10 @@ pub struct ColumnNote {
 impl ColumnNote {
     /// Where this column sits on the shared [`Severity`] scale: a column that
     /// resolved to a real Arrow type is `Info`; anything that fell back to
-    /// `Utf8View` is a `Warning`, since its values come back unparsed and a
-    /// caller may want to know which columns those were.
+    /// `Utf8View` is a `Warning`, since its values come back unparsed.
     ///
-    /// Derived rather than stored, for the reason
-    /// [`crate::preamble::DumpMetadata`] is a view over spans and
-    /// [`crate::index::DumpIndex::blocks`] is a filter rather than a field:
-    /// it is a pure function of `resolution`, and a stored copy could
-    /// disagree with it. A note whose severity is *not* derivable earns a
-    /// field when one exists.
+    /// Derived rather than stored — it is a pure function of `resolution`,
+    /// and a stored copy could disagree with it.
     pub fn severity(&self) -> Severity {
         match self.resolution {
             ColumnResolution::Mapped => Severity::Info,
@@ -143,27 +124,22 @@ pub struct ResolvedSchema {
     /// Which PostgreSQL literal form fills each field — positional, parallel
     /// to `schema.fields()` like `columns`.
     ///
-    /// **The Arrow type cannot say**: `int4range[]` and `int4multirange`
-    /// share one (`crate::pgtype::NestedPlan`), so the plan travels beside it
-    /// from resolution — the pair's one producer — into
-    /// `crate::batch::RowBatcher` and `crate::batch::render_field`. A scalar
-    /// column's entry is `NestedPlan::Scalar`, so every column has one and no
-    /// caller has to ask whether this vector applies to it.
+    /// The Arrow type cannot say (`docs/design/decisions.md`, "D39"), so the
+    /// plan travels beside it from resolution into `crate::batch::RowBatcher`
+    /// and `crate::batch::render_field`. A scalar column's entry is
+    /// `NestedPlan::Scalar`, so every column has one.
     pub plans: Vec<NestedPlan>,
     /// How each column compares — positional, parallel to `schema.fields()`
     /// like `columns` and `plans`.
     ///
-    /// **An L2 conclusion, produced here because this is where its inputs
-    /// meet**: the declared type string and the database's own `CREATE TYPE`
-    /// list. `crate::predicate` reads this instead of inspecting the Arrow
-    /// type, which cannot tell four unrelated declared types apart
+    /// An L2 conclusion, produced here because this is where its inputs meet:
+    /// the declared type string and the database's own `CREATE TYPE` list.
+    /// `crate::predicate` reads this instead of inspecting the Arrow type
     /// (`crate::pgtype::comparison_for`).
     ///
-    /// A column that did not resolve `Mapped` is
-    /// [`ComparisonPlan::Refused`] whatever its declared type said, so this
-    /// vector never claims an order for a column whose type is not the one
-    /// the DDL named — the census can take a column out of `Mapped` after the
-    /// declared type has been read.
+    /// A column that did not resolve `Mapped` is [`ComparisonPlan::Refused`]
+    /// whatever its declared type said — the census can take a column out of
+    /// `Mapped` after the declared type has been read.
     pub comparisons: Vec<ComparisonPlan>,
 }
 
@@ -194,9 +170,8 @@ impl ResolvedSchema {
 /// `database: None` matches the single unnamed database a plain (non-`\connect`)
 /// dump produces.
 ///
-/// Per-block attribution (`docs/design/decisions.md`, "D49") is what makes
-/// the exact match possible: the caller already knows, from the block it
-/// matched, which database's DDL applies.
+/// Per-block attribution (`docs/design/decisions.md`, "D49") is what makes the
+/// exact match possible.
 fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
     database: Option<&str>,
@@ -219,12 +194,10 @@ enum ShapeVerdict {
 ///
 /// The order of the tests is the load-bearing part. A leading brace run
 /// longer than [`MAX_ARRAY_DIMS`] did not come out of `array_out` at all
-/// (I25), so it is not *evidence about an array* and must not degrade the
-/// column: the file is damaged or hand-edited, and the honest outcome is the
-/// optimistic type plus a `FieldDecode` naming the row — the same answer
-/// every other value contradicting its declared type gets. Only after that
-/// does a lower-bound prefix disqualify the column on its own, however
-/// uniform the dimensionality is.
+/// (I25), so it is not evidence about an array and must not degrade the
+/// column: the honest outcome is the optimistic type plus a `FieldDecode`
+/// naming the row. Only after that does a lower-bound prefix disqualify the
+/// column on its own, however uniform the dimensionality is.
 fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
     if shape.dims.is_some_and(|(_, max)| max > MAX_ARRAY_DIMS) {
         return ShapeVerdict::Keep;
@@ -299,12 +272,10 @@ fn retype_from_census(
 /// dump's single unnamed database).
 ///
 /// `census` is the array-shape evidence this schema may commit to, positional
-/// like `columns` (`docs/design/decisions.md`, "D35").
-/// A caller with no evidence — or none it may believe, which for a *reported*
-/// schema means `crate::index::DumpIndex::is_complete` is false — passes
-/// `&[]`, and every column keeps the optimistic type the DDL alone gives it.
-/// That is the same answer a census of unconstrained shapes produces, so the
-/// two need not be told apart.
+/// like `columns` (`docs/design/decisions.md`, "D35"). A caller with no
+/// evidence — or none it may believe, which for a *reported* schema means
+/// `crate::index::DumpIndex::is_complete` is false — passes `&[]`, and every
+/// column keeps the optimistic type the DDL alone gives it.
 ///
 /// A column of a database whose DDL the scan never reached comes back
 /// [`ColumnResolution::MetadataNotScanned`] rather than `NotDeclared` — see
@@ -312,9 +283,8 @@ fn retype_from_census(
 /// at all has no DDL for *any* database, which is exactly `NotDeclared`.
 ///
 /// `SchemaMode::Strings` never looks anything up: every column comes back
-/// `NotDeclared`/`Utf8View`, matching the untyped path exactly and at zero
-/// cost — and with no `NestedPlan::Array` anywhere, the census cannot reach
-/// it either.
+/// `NotDeclared`/`Utf8View`, matching the untyped path exactly — and with no
+/// `NestedPlan::Array` anywhere, the census cannot reach it either.
 pub fn resolve_columns(
     qualified_table: &str,
     columns: &[String],
@@ -327,10 +297,9 @@ pub fn resolve_columns(
         SchemaMode::Strings => None,
         SchemaMode::Typed => metadata.and_then(|m| database_for_name(m, database)),
     };
-    // Metadata exists, but not for *this* block's database, so nothing is
-    // known about any column here and saying "not declared" would be a
-    // different, final claim. `metadata: None` is left alone: that is a caller
-    // with no DDL at all, which is exactly `NotDeclared`.
+    // Metadata exists, but not for *this* block's database, so "not declared"
+    // would be a different, final claim. `metadata: None` is a caller with no
+    // DDL at all, which is exactly `NotDeclared`.
     let unscanned_database =
         mode == SchemaMode::Typed && metadata.is_some() && !db.is_some_and(|d| d.preamble_complete);
     let declared_cols = db.and_then(|d| d.tables.get(qualified_table));
@@ -351,17 +320,14 @@ pub fn resolve_columns(
             None => (ColumnResolution::NotDeclared, string(), ComparisonPlan::Refused),
             Some(column) => {
                 let ty = &column.declared_type;
-                // `db` is always `Some` here: `declared_cols` only came from
-                // `db.tables`, so `db.types` is the right list to resolve
-                // this same database's `CREATE TYPE`/`DOMAIN` references
-                // against — for the comparison plan as much as for the type.
+                // `db` is always `Some` here: `declared_cols` came from
+                // `db.tables`, so `db.types` is this same database's list.
                 let types = &db.unwrap().types;
                 let refused = ComparisonPlan::Refused;
-                // The register is asked per column rather than per declared
-                // type, because the column's own `COLLATE` clause is half the
-                // question for a text column — and the dump's own `CREATE
-                // COLLATION` list is what says whether the collation that
-                // clause names is deterministic (I42).
+                // Asked per column rather than per declared type: the column's
+                // own `COLLATE` clause is half the question, and the dump's
+                // `CREATE COLLATION` list says whether it is deterministic
+                // (I42).
                 let collations = &db.unwrap().collations;
                 let comparison =
                     || comparison_for(ty, column.collation.as_deref(), types, collations);
@@ -387,10 +353,9 @@ pub fn resolve_columns(
         // shape, and it speaks after the DDL, never instead of it.
         let (resolution, (arrow_type, plan)) =
             retype_from_census(census.get(i).copied().unwrap_or_default(), resolution, pair);
-        // ... and it may take the column *out* of `Mapped`, after the
-        // declared type has already been read. A comparison plan is only ever
-        // consulted for a column that stayed in it, so the two are kept in
-        // step here rather than at the one call site that reads them.
+        // ... and it may take the column *out* of `Mapped` after the declared
+        // type has been read. A comparison plan is only consulted for a column
+        // that stayed in, so the two are kept in step here.
         let comparison = if resolution == ColumnResolution::Mapped {
             comparison
         } else {
@@ -400,9 +365,8 @@ pub fn resolve_columns(
         // DDL — see `docs/design/decisions.md`, "D37".
         let field = Field::new(name, arrow_type, true);
         // A canonical extension name is a claim about what the column's bytes
-        // *are*, so only a column that is still `Mapped` may carry one: one
-        // the census took back to `Utf8View` holds an `array_out` literal,
-        // not the value its declared type names.
+        // *are*, so only a still-`Mapped` column may carry one: one the census
+        // took back to `Utf8View` holds an `array_out` literal.
         let field = match declared {
             Some(column) if resolution == ColumnResolution::Mapped => with_extension(
                 field,
@@ -493,13 +457,11 @@ mod tests {
     }
 
     /// A block attributed to a database the metadata does not cover is
-    /// `MetadataNotScanned`, not `NotDeclared`. The two look identical in the
-    /// output and mean opposite things: one is final, the other says "finish
-    /// the parse and ask again".
+    /// `MetadataNotScanned`, not `NotDeclared`: one is final, the other says
+    /// "finish the parse and ask again".
     ///
-    /// The contrast that makes it a real distinction is the third case below:
-    /// with *no* metadata at all there is no scan to finish, so `NotDeclared`
-    /// stands.
+    /// With *no* metadata at all there is no scan to finish, so `NotDeclared`
+    /// stands — the third case below.
     #[test]
     fn a_database_the_scan_never_reached_is_told_apart_from_undeclared_columns() {
         let mut first = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
@@ -537,9 +499,8 @@ mod tests {
         let cols = vec!["id".to_string(), "other".to_string()];
         let resolved =
             resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
-        // The column the fragment *does* declare still resolves — what the
-        // dump said is what the dump said. Only the unexplained one carries
-        // the "ask again later" outcome.
+        // The column the fragment *does* declare still resolves; only the
+        // unexplained one carries the "ask again later" outcome.
         assert_eq!(
             resolved.columns,
             [ColumnResolution::Mapped, ColumnResolution::MetadataNotScanned]
@@ -706,11 +667,9 @@ mod tests {
     }
 
     /// A leading brace run longer than `MAXDIM` did not come out of
-    /// `array_out` (I25), so it is not evidence about an array. Degrading the
-    /// column on it would hide a damaged file behind a text column, and
-    /// believing it would build a `List` nested as deep as the file asked —
-    /// so the column keeps its optimistic type and the offending row is a
-    /// `FieldDecode` like any other value contradicting its declared type.
+    /// `array_out` (I25), so it is not evidence about an array: the column
+    /// keeps its optimistic type and the offending row is a `FieldDecode`
+    /// like any other value contradicting its declared type.
     #[test]
     fn a_brace_run_past_the_dimension_limit_is_not_evidence() {
         for dims in [(7, 7), (200, 200), (1, 200)] {
@@ -729,13 +688,11 @@ mod tests {
     /// multirange (whose `List` is filled by `multirange_out`, not
     /// `array_out`) read the same census entry and must ignore it.
     ///
-    /// The third column is what makes that list complete: a plan already
-    /// nested — the only shape whose census would have to be *disbelieved*
-    /// rather than merely ignored — cannot reach the transform at all, because
-    /// an array-typed element is refused at resolution (I26). It is spelled as
-    /// a domain over an array, which is the only DDL shape that reaches the
-    /// refusal: `integer[][]` is a spelling of `integer[]` (I28) and resolves
-    /// to a plain `List<Int32>` the census is free to deepen.
+    /// The third column completes the list: a plan already nested — the one
+    /// shape whose census would have to be *disbelieved* rather than ignored
+    /// — cannot reach the transform, because an array-typed element is refused
+    /// at resolution (I26), and `integer[][]` is a spelling of `integer[]`
+    /// (I28) the census is free to deepen.
     #[test]
     fn the_census_only_speaks_for_a_column_the_ddl_resolved_to_an_array() {
         let types = vec![
@@ -795,10 +752,9 @@ mod tests {
         );
     }
 
-    /// The comparison plan is a fourth positional vector, one entry per
-    /// column whether or not the column has an order — so no consumer has to
-    /// ask whether it applies — and its value is the register's own answer
-    /// for the declared type.
+    /// The comparison plan is a fourth positional vector, one entry per column
+    /// whether or not the column has an order — so no consumer has to ask
+    /// whether it applies — and its value is the register's own answer.
     #[test]
     fn every_column_carries_a_comparison_plan() {
         use crate::pgtype::{CompareKind, ComparisonPlan};
@@ -850,8 +806,7 @@ mod tests {
         );
 
         // `SchemaMode::Strings` resolves nothing, so it claims no order for
-        // any column — which is what makes an ordering operator refuse under
-        // it with no case of its own.
+        // any column — which is what makes an ordering operator refuse.
         let strings =
             resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Strings, &[]);
         assert_eq!(strings.comparisons, vec![ComparisonPlan::Refused; 5]);
@@ -859,9 +814,7 @@ mod tests {
 
     /// The register is consulted **per column**, not per declared type: two
     /// `text` columns of one table get different verdicts, because the
-    /// `COLLATE` clause is half the question and it is a fact about the
-    /// column. This is the join `comparison_for`'s second argument exists
-    /// for.
+    /// `COLLATE` clause is half the question and is a fact about the column.
     #[test]
     fn two_text_columns_of_one_table_can_compare_differently() {
         use crate::pgtype::{CompareKind, ComparisonDivergence};
@@ -888,13 +841,11 @@ mod tests {
         assert_eq!(resolved.schema.field(0).data_type(), resolved.schema.field(1).data_type());
     }
 
-    /// The other half of the same join: the register also reads the
-    /// database's own `CREATE COLLATION` list, because a `COLLATE` clause
-    /// naming a collation the dump declares `deterministic = false` is the one
-    /// equality divergence a plain dump states outright (I42).
-    ///
-    /// Two columns declaring the *same* clause therefore still compare
-    /// identically — what moves is what the whole dump said about that name.
+    /// The other half of the same join: the register also reads the database's
+    /// own `CREATE COLLATION` list, because a `COLLATE` clause naming a
+    /// collation the dump declares `deterministic = false` is the one equality
+    /// divergence a plain dump states outright (I42). What moves is what the
+    /// whole dump said about that name, not the clause.
     #[test]
     fn the_dumps_own_collation_list_decides_whether_a_clause_is_deterministic() {
         use crate::pgtype::{CompareKind, ComparisonDivergence};
@@ -926,10 +877,9 @@ mod tests {
         );
     }
 
-    /// The census speaks after the declared type, and can take a column out
-    /// of `Mapped` once the plan has already been read — so the plan is
-    /// re-answered against the outcome that survived, never against the one
-    /// the DDL alone gave.
+    /// The census speaks after the declared type and can take a column out of
+    /// `Mapped` once the plan has been read — so the plan is re-answered
+    /// against the outcome that survived.
     #[test]
     fn a_census_refused_column_claims_no_order() {
         use crate::pgtype::ComparisonPlan;
@@ -963,13 +913,11 @@ mod tests {
         assert_eq!(resolved.notes[1].declared, None);
     }
 
-    /// `database_for_name` selects by the attributed database's *name*, not
-    /// by which database's DDL happens to mention the table first — proven
-    /// here by giving the two databases genuinely different declared types
-    /// for the same qualified table name, so the outcome differs observably
-    /// depending on which name is passed. The caller knows, from the matched
-    /// `CopyBlock`'s own attribution, which database applies
-    /// (`docs/design/decisions.md`, "D49").
+    /// `database_for_name` selects by the attributed database's *name*, not by
+    /// which database's DDL mentions the table first — asserted by giving two
+    /// databases different declared types for the same qualified table name.
+    /// The caller knows which database applies from the matched `CopyBlock`'s
+    /// own attribution (`docs/design/decisions.md`, "D49").
     #[test]
     fn database_selects_by_attributed_name_not_by_first_match() {
         let mut a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);
@@ -990,7 +938,7 @@ mod tests {
 
     /// A [`ColumnNote`]'s severity is derived from its resolution, never
     /// stored — so it cannot drift out of agreement with the outcome it
-    /// describes, the same reason `DumpMetadata` is a view over spans.
+    /// describes.
     #[test]
     fn column_note_severity_follows_its_resolution() {
         let note = |resolution| ColumnNote { column: "c".to_string(), declared: None, resolution };

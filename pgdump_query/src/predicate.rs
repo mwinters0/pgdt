@@ -16,17 +16,14 @@ use crate::{Error, Result};
 
 /// Comparison operator for [`Predicate`].
 ///
-/// **Every operator but the two NULL tests compares typed**, through the
-/// column's own [`ComparisonPlan`] — the four ordering operators by decoding
-/// both sides and comparing the values, `Eq`/`Ne` by the cheapest of three
-/// canonicalizations that gives the server's answer for that column
-/// ([`equality_comparison`]). Where the register has no plan for a column —
-/// it did not resolve, it is nested, or this build orders its type not at all
-/// — `Eq`/`Ne` fall back to the string comparison every column made before,
-/// which is right for the reason it always was: every value in a dump is
-/// already in canonical `*_out` form. The ordering operators are *refused*
-/// there instead, because an order over a composite or an array literal is
-/// not a thing this layer can define.
+/// Every operator but the two NULL tests compares typed, through the column's
+/// own [`ComparisonPlan`]: the four ordering operators decode both sides and
+/// compare the values, `Eq`/`Ne` take the cheapest of three canonicalizations
+/// that gives the server's answer for that column ([`equality_comparison`]).
+/// Where the register has no plan for a column — it did not resolve, it is
+/// nested, or this build orders its type not at all — `Eq`/`Ne` compare the
+/// canonical `*_out` text the file holds and the ordering operators are
+/// refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -42,12 +39,8 @@ pub enum PredicateOp {
     Ge,
     /// `col IS DISTINCT FROM <value>` — [`Self::Ne`] with NULL counted as a
     /// value rather than as unknown, so a NULL field answers [`Truth::True`]
-    /// where `!=` answers [`Truth::Unknown`].
-    ///
-    /// **The one operator three-valued logic makes necessary rather than
-    /// redundant**: `NOT UNKNOWN` is `UNKNOWN`, so `Not(Term(a = 1))` drops a
-    /// row whose `a` is NULL and nothing else can express "different,
-    /// counting NULL as a value".
+    /// where `!=` answers [`Truth::Unknown`]
+    /// (`docs/design/decisions.md`, "D53").
     IsDistinctFrom,
     /// `col IS NOT DISTINCT FROM <value>` — [`Self::Eq`] with the same NULL
     /// rule, answering [`Truth::False`] on a NULL field.
@@ -88,24 +81,20 @@ impl PredicateOp {
 /// none). `value` is `None` for `IsNull`/`IsNotNull`, which need no
 /// comparison value; it is always `Some` for every other operator.
 ///
-/// **`value` is read with the column's own decoder, whatever the operator**,
-/// once when the block's schema resolves rather than per row — so a literal
-/// that is not a value of the column's type is `Error::PredicateValueDecode`
+/// `value` is read with the column's own decoder, whatever the operator, once
+/// when the block's schema resolves rather than per row — so a literal that
+/// is not a value of the column's type is `Error::PredicateValueDecode`
 /// before any row is read, and both sides of a `numeric(p,s)` comparison
-/// carry that column's scale. What differs between the operators is what is
-/// kept: an ordering operator keeps the decoded key and decodes the field to
-/// match, while `Eq`/`Ne` usually keep the literal *rendered back* into the
-/// `*_out` spelling the file holds and compare bytes
+/// carry that column's scale. An ordering operator keeps the decoded key and
+/// decodes the field to match; `Eq`/`Ne` usually keep the literal rendered
+/// back into the `*_out` spelling the file holds and compare bytes
 /// ([`equality_comparison`]).
 ///
-/// A NULL field is [`Truth::Unknown`] under every comparing operator — not
-/// `Eq`, not `Ne`, and not an ordering operator — because SQL's own
-/// three-valued logic says so, and a row survives only where the root is
-/// `True`. Four operators are two-valued on a NULL field by definition, and
-/// they exist because unknown swallows everything else:
-/// `IsNull`/`IsNotNull` ask about the NULL directly, and
-/// `IsDistinctFrom`/`IsNotDistinctFrom` count it as a value
-/// (`docs/design/decisions.md`, "D53").
+/// A NULL field is [`Truth::Unknown`] under every comparing operator, and a
+/// row survives only where the root is `True`. The four operators that are
+/// two-valued on a NULL field are `IsNull`/`IsNotNull`, which ask about the
+/// NULL directly, and `IsDistinctFrom`/`IsNotDistinctFrom`, which count it as
+/// a value (`docs/design/decisions.md`, "D53").
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
@@ -115,11 +104,10 @@ pub struct Predicate {
 
 /// SQL's three-valued truth domain, which is what a filter evaluates in.
 ///
-/// **A row survives only if the expression's root is [`Truth::True`]**, so
-/// `Unknown` and `False` are indistinguishable at the top — which is why
-/// collapsing unknown to "excluded" was sound while a filter was a bare
-/// conjunction, and stops being sound the moment [`Expr::Not`] can sit above
-/// a term: `NOT UNKNOWN` is `UNKNOWN`, not `TRUE`.
+/// A row survives only if the expression's root is [`Truth::True`], so
+/// `Unknown` and `False` are indistinguishable at the top — but not beneath
+/// an [`Expr::Not`], since `NOT UNKNOWN` is `UNKNOWN`
+/// (`docs/design/decisions.md`, "D54").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Truth {
     True,
@@ -153,18 +141,14 @@ impl Truth {
 /// [`Predicate`] terms — what `QueryOptions::filter` carries
 /// (`docs/design/decisions.md`, "D54").
 ///
-/// `And` and `Or` are **n-ary**, because the shape a repeated `--filter`
-/// builds is n-ary by construction and binary nesting would make the
-/// ordinary case a right-leaning chain every reader has to flatten
-/// mentally. The default is the empty conjunction, [`Expr::all`] over
-/// nothing, which every row satisfies; so "no filter" is a degenerate tree
-/// rather than a case of its own, and nothing on the row path branches on
-/// whether a filter exists.
+/// `And` and `Or` are n-ary, the shape a repeated `--filter` builds. The
+/// default is the empty conjunction, [`Expr::all`] over nothing, which every
+/// row satisfies, so "no filter" is a degenerate tree rather than a case of
+/// its own.
 ///
-/// **Nothing here is parsed.** `Expr` is a struct an embedder fills in field
-/// by field, exactly as [`Predicate`] is; the `--where` grammar that builds
-/// one from text lives in the CLI
-/// (`docs/design/decisions.md`, "D60").
+/// Nothing here is parsed: `Expr` is a struct an embedder fills in field by
+/// field, and the `--where` grammar that builds one from text lives in the
+/// CLI (`docs/design/decisions.md`, "D60").
 #[derive(Debug, Clone)]
 pub enum Expr {
     Term(Predicate),
@@ -174,9 +158,8 @@ pub enum Expr {
 }
 
 impl Expr {
-    /// The conjunction of `terms` — the shape a repeated `--filter` builds,
-    /// and the shape every filter had before expressions existed. Over an
-    /// empty iterator it is the filter that keeps every row.
+    /// The conjunction of `terms` — the shape a repeated `--filter` builds.
+    /// Over an empty iterator it is the filter that keeps every row.
     pub fn all(terms: impl IntoIterator<Item = Predicate>) -> Self {
         Self::And(terms.into_iter().map(Self::Term).collect())
     }
@@ -190,51 +173,37 @@ impl Default for Expr {
 
 /// One term of one query whose comparison does not answer what PostgreSQL's
 /// own operator for that column would — reported per stream by
-/// `crate::stream::TableStream::comparison_notes`.
+/// `crate::stream::TableStream::comparison_notes`, on its own channel rather
+/// than as a `Diagnostic` or a [`crate::resolve::ColumnNote`]
+/// (`docs/design/decisions.md`, "D59", "D68").
 ///
-/// **Per term rather than per column, because a divergence is
-/// operator-conditional**: three of the four
-/// [`ComparisonDivergence`] variants are divergences of *order* alone
-/// ([`ComparisonDivergence::affects_equality`]), so a `text` column with no
-/// `COLLATE` clause earns a note under `<` and none under `=`. A query
-/// filtering that column with both operators therefore carries one note, not
-/// two, and neither zero.
-///
-/// **Neither a `Diagnostic` nor a [`crate::resolve::ColumnNote`]**, and
-/// deliberately: `DumpIndex.diagnostics` is the L1 file-level channel and
-/// `ResolvedSchema.notes` is the L2 per-column one, while this is per-column
-/// *and* conditional on a predicate — L4. Writing it into either would
-/// invert the layering (`docs/design/decisions.md`, "D68").
+/// Per term rather than per column, a divergence being
+/// operator-conditional ([`ComparisonDivergence::affects_equality`]): a
+/// `text` column with no `COLLATE` clause earns a note under `<` and none
+/// under `=`, so a query filtering it with both operators carries one note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonNote {
     pub column: String,
     /// The position *inside* the column the divergence is about, as the
     /// accessor a user would write — `[]` for an array's elements, `.label`
     /// for a composite's field, appended as the nesting descends. `None` is
-    /// the column itself, which is every scalar column and is what the
-    /// sentence reads as when there is no nesting to name.
+    /// the column itself, which is every scalar column.
     ///
-    /// **A nested column can carry more than one**, which is why a term
-    /// yields a list of notes rather than one: `public.tagged` is
-    /// `(label text, tags text[])` and both positions are on the database's
-    /// own collation, one directly and one through an element.
+    /// A nested column can carry more than one, which is why a term yields a
+    /// list of notes rather than one: `(label text, tags text[])` is on the
+    /// database's own collation twice, once directly and once through an
+    /// element.
     pub path: Option<String>,
     /// The declared PostgreSQL type **at that position**, as the DDL spelled
     /// it — the element's or the field's for a nested note, and the column's
-    /// own where `path` is `None`. It is what sharpens the sentence, so it
-    /// has to name the type the divergence is actually about.
+    /// own where `path` is `None`.
     pub declared_type: String,
     pub divergence: ComparisonDivergence,
 }
 
 impl ComparisonNote {
-    /// One sentence naming the column and what its comparison is not.
-    ///
-    /// Each sentence names the column and its declared type, and the
-    /// declared type is what sharpens it: the collatable text types say what
-    /// the *column* stated, where `AsText` says what the type means. Both
-    /// exist because several declared types reach one Arrow type for
-    /// different reasons.
+    /// One sentence naming the column, its declared type, and what its
+    /// comparison is not.
     pub fn message(&self) -> String {
         let column = format!("{}{}", self.column, self.path.as_deref().unwrap_or(""));
         let column = &column;
@@ -242,9 +211,8 @@ impl ComparisonNote {
         let bytewise = |why: &str| format!("`{column}` ({declared}) is compared bytewise: {why}");
         match self.divergence {
             // Not "PostgreSQL orders this differently": it does not order it
-            // at all. The sentence has to say which way the difference runs,
-            // because a user who reads "diverges" and assumes the server has
-            // a better answer will go looking for one that does not exist.
+            // at all, and the sentence has to say which way the difference
+            // runs.
             ComparisonDivergence::AsText => bytewise(
                 "PostgreSQL defines no comparison for this type at all — no equality, no \
                  ordering, no operator class — so this comparison is one the server does not \
@@ -259,10 +227,8 @@ impl ComparisonNote {
                 "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
                  that collation",
             ),
-            // The only sentence here that reports what the dump *said* rather
-            // than what it left out, which is why it names equality outright:
-            // under a non-deterministic collation two values that differ byte
-            // for byte can be equal to the server.
+            // The one sentence reporting what the dump *said* rather than
+            // what it left out, which is why it names equality outright.
             ComparisonDivergence::NonDeterministicCollation => bytewise(
                 "the column declares a collation this dump declares non-deterministic, so \
                  PostgreSQL neither orders nor compares it byte for byte — two values spelled \
@@ -288,15 +254,13 @@ impl ComparisonNote {
 /// side of the point with the *insignificant* ones removed — leading zeros
 /// from the integer part, trailing zeros from the fraction.
 ///
-/// **Normalizing is what makes this PostgreSQL's own order.** `cmp_numerics`
+/// Normalizing is what makes this PostgreSQL's own order: `cmp_numerics`
 /// compares by value and never by display scale (I33), so `1.5` and `1.50`
-/// are one value that a bare `numeric` column writes two ways; and a fixed
-/// scale, which is what [`CompareKind::Decimal`] carries both sides to, does
-/// not exist here to rescale against.
+/// are one value that a bare `numeric` column writes two ways.
 ///
 /// Digit *strings* rather than a big integer, because the column is
-/// arbitrary-precision by definition: the file may hold a thousand digits,
-/// which is past every fixed-width type including `i256`.
+/// arbitrary-precision: the file may hold a thousand digits, past every
+/// fixed-width type including `i256`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NumericKey {
     /// False for a zero of either written sign — PostgreSQL has one zero, and
@@ -312,10 +276,8 @@ impl NumericKey {
     /// `[-]digits[.digits]`, the only shape `numeric_out` writes: no
     /// exponent, no sign but `-`, and at least one digit somewhere — the same
     /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
-    /// typmod'd column, so a literal one `numeric` comparison rejects as
-    /// malformed the other does too. What the two differ on is the typmod: a
-    /// literal finer than the column's scale is refused there and has nothing
-    /// to be refused against here.
+    /// typmod'd column. The two differ only on the typmod, which a bare
+    /// `numeric` has none of.
     fn parse(text: &str) -> Option<Self> {
         let (negative, rest) = match text.strip_prefix('-') {
             Some(rest) => (true, rest),
@@ -332,10 +294,9 @@ impl NumericKey {
     }
 
     /// Drop the insignificant digits from an already-split sign/integer part/
-    /// fraction, which is the whole of the normalization. The one shared
-    /// entry point, because the two callers reach a split differently: a
-    /// `numeric` field is read straight out of the text, while a `jsonb`
-    /// number's point has to be moved by its exponent first.
+    /// fraction, which is the whole of the normalization. Shared: a `numeric`
+    /// field is split straight out of the text, while a `jsonb` number's
+    /// point has to be moved by its exponent first.
     fn from_parts(negative: bool, int: &str, frac: &str) -> Self {
         let int = int.trim_start_matches('0');
         let frac = frac.trim_end_matches('0');
@@ -347,10 +308,10 @@ impl NumericKey {
     }
 
     /// Sign first, then magnitude: how many integer digits, then those digits,
-    /// then the fraction. Each stage is a plain byte comparison over ASCII
-    /// digits, which is why the normalization above has to have happened —
-    /// with trailing zeros stripped, a fraction that is a prefix of another is
-    /// the smaller of the two, so `"5"` beats `"45"` and loses to `"55"`.
+    /// then the fraction. Each stage is a byte comparison over ASCII digits,
+    /// which is why the normalization above has to have happened — with
+    /// trailing zeros stripped, a fraction that is a prefix of another is the
+    /// smaller of the two.
     fn cmp(&self, other: &Self) -> Ordering {
         match (self.negative, other.negative) {
             (false, true) => return Ordering::Greater,
@@ -370,23 +331,20 @@ impl NumericKey {
 /// One side of an `inet`/`cidr` comparison: the family, the netmask length,
 /// and the address left-aligned in sixteen bytes.
 ///
-/// **Not a byte key, and it cannot be made into one.** `network_cmp_internal`
-/// compares the *shorter* netmask's worth of address bits first, so how many
-/// bits are significant depends on the value it is being compared against —
-/// `10.1.0.0/8` sorts below `10.0.0.0/16` because their first eight bits
-/// agree and `8 < 16`, where a plain address-then-netmask key would put it
-/// above (I40). So the pair is compared, not two independently sortable keys.
+/// Not a byte key, and it cannot be made into one: `network_cmp_internal`
+/// compares the *shorter* netmask's worth of address bits first (I40), so how
+/// many bits are significant depends on the value being compared against.
+/// The pair is compared, not two independently sortable keys.
 ///
-/// `v6` is the family, as a bool because there are two and PostgreSQL's own
-/// `PGSQL_AF_INET6` is `PGSQL_AF_INET + 1` — an IPv4 address sorts below
-/// every IPv6 one.
+/// `v6` is the family; `PGSQL_AF_INET6` is `PGSQL_AF_INET + 1`, so an IPv4
+/// address sorts below every IPv6 one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NetworkKey {
     v6: bool,
     bits: u8,
     /// The address, left-aligned: an IPv4 address occupies the first four
-    /// bytes and the rest are zero, which is exactly what `bitncmp` reads
-    /// since it never looks past `maxbits`.
+    /// bytes and the rest are zero, which is what `bitncmp` reads, never
+    /// looking past `maxbits`.
     addr: [u8; 16],
 }
 
@@ -411,10 +369,9 @@ impl NetworkKey {
 }
 
 /// PostgreSQL's `bitncmp`: the first `n` bits of two addresses, most
-/// significant first. Whole bytes by `memcmp`, then the remaining bits of the
-/// straddling byte under a high-bit mask — which is the same answer as
-/// `bitncmp`'s bit-at-a-time loop, since that loop stops at the first
-/// differing bit and a masked byte comparison finds exactly that bit.
+/// significant first. Whole bytes by `memcmp`, then the straddling byte's
+/// remaining bits under a high-bit mask — the same answer as `bitncmp`'s
+/// bit-at-a-time loop, which stops at the first differing bit.
 fn bitncmp(left: &[u8; 16], right: &[u8; 16], n: u8) -> Ordering {
     let whole = usize::from(n / 8);
     let full = left[..whole].cmp(&right[..whole]);
@@ -428,13 +385,10 @@ fn bitncmp(left: &[u8; 16], right: &[u8; 16], n: u8) -> Ordering {
 
 /// One `jsonb` value, in the shape PostgreSQL stores and compares one in.
 ///
-/// **The variants are `JsonbValue`'s own type codes, in their order**, because
-/// those codes *are* the fallback order `compareJsonbContainers` uses whenever
-/// two positions hold different kinds: `jbvNull` 0x0, `jbvString` 0x1,
-/// `jbvNumeric` 0x2, `jbvBool` 0x3, `jbvArray` 0x10, `jbvObject` 0x11 (I41).
-/// So an object outranks an array, an array outranks every scalar, and a
-/// boolean outranks a number — none of which is JSON's own idea of an order,
-/// and none of which a bytewise comparison of the text produces.
+/// The variants are `JsonbValue`'s own type codes, in their order, which is
+/// the fallback order `compareJsonbContainers` uses whenever two positions
+/// hold different kinds (I41): an object outranks an array, an array outranks
+/// every scalar, and a boolean outranks a number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Jsonb {
     Null,
@@ -444,12 +398,12 @@ enum Jsonb {
     /// value, as they are for a bare `numeric` column.
     Number(NumericKey),
     Bool(bool),
-    /// `raw_scalar` marks the **pseudo-array a top-level scalar is stored
-    /// in**, and it is not cosmetic: `compareJsonbContainers` tests it before
-    /// the element count and lets the count *overwrite* the answer, so a
-    /// scalar sorts below a one- or many-element array and **above an empty
-    /// one** (I41). Only [`jsonb_key`] ever sets it; a nested array is a real
-    /// array at every depth.
+    /// `raw_scalar` marks the pseudo-array a top-level scalar is stored in.
+    /// `compareJsonbContainers` tests it before the element count and lets
+    /// the count *overwrite* the answer, so a scalar sorts below a one- or
+    /// many-element array and **above an empty one** (I41). Only
+    /// [`jsonb_key`] ever sets it; a nested array is a real array at every
+    /// depth.
     Array {
         raw_scalar: bool,
         items: Vec<Jsonb>,
@@ -474,26 +428,15 @@ impl Jsonb {
     }
 
     /// `compareJsonbContainers`, as a recursion rather than as a lockstep walk
-    /// over two token streams.
+    /// over two token streams; the two agree because both stop at the first
+    /// position where the values differ. An object is ordered by its pair
+    /// *count* before its first key, and its keys are compared by
+    /// `varstr_cmp` while being *stored* by length-then-bytes (I41).
     ///
-    /// The two agree because both stop at the first position where the values
-    /// differ, and up to that position the streams are identical: a kind
-    /// mismatch anywhere is the type-defined order, and a container's size is
-    /// settled at its opening token, before any member of it is looked at.
-    ///
-    /// **Two details are PostgreSQL's and would not be guessed.** An object is
-    /// ordered by its pair *count* before its first key, so `{"z":1}` sorts
-    /// below `{"a":1,"b":2}`; and the keys are compared by `varstr_cmp` while
-    /// being *stored* by length-then-bytes, so the walk visits `{"z":1,"aa":2}`
-    /// as `z` then `aa` and compares those keys in that order (I41).
-    ///
-    /// **A string leaf is where this stops being PostgreSQL's answer.**
-    /// `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to
-    /// `varstr_cmp`, so every string value and every object key is ordered by
-    /// the database's collation — which a plain dump does not record (I32).
-    /// Bytewise is what this build has, and
-    /// `ComparisonDivergence::JsonbStringCollation` is the column's announcement
-    /// of it.
+    /// A string leaf is where this stops being PostgreSQL's answer:
+    /// `compareJsonbScalarValue` orders it by the database's collation, which
+    /// a plain dump does not record (I32), and
+    /// `ComparisonDivergence::JsonbStringCollation` announces that.
     fn cmp(&self, other: &Self) -> Ordering {
         if self.rank() != other.rank() {
             return self.rank().cmp(&other.rank());
@@ -530,25 +473,21 @@ impl Jsonb {
 }
 
 /// The first non-`Equal` answer, or `Equal` when there is none — the
-/// member-wise half of [`Jsonb::cmp`], where the walk stops at the first
-/// position the two containers differ at.
+/// member-wise half of [`Jsonb::cmp`].
 fn first_difference(mut answers: impl Iterator<Item = Ordering>) -> Ordering {
     answers.find(|answer| answer.is_ne()).unwrap_or(Ordering::Equal)
 }
 
-/// How deep [`parse_jsonb`] will descend before refusing. PostgreSQL's own
-/// parser recurses too and is bounded by `check_stack_depth()`, so it has a
-/// limit of its own; ours is a fixed number because a Rust stack overflow
-/// aborts the process where a refusal is an error a user can read. Nothing a
-/// `jsonb_out` field of a real dump holds comes near it.
+/// How deep [`parse_jsonb`] will descend before refusing; a fixed number
+/// rather than a stack-depth check (`docs/design/decisions.md`, "D55").
+/// Nothing a `jsonb_out` field of a real dump holds comes near it.
 const JSONB_MAX_DEPTH: usize = 1000;
 
-/// The furthest a `jsonb` number's exponent may move the decimal point. It
-/// bounds the digit string this builds, and it is ours rather than
-/// PostgreSQL's — `numeric` reaches further. No *field* is affected: `jsonb`
-/// prints its numbers through `numeric_out`, which never writes an exponent,
-/// so only a literal can reach this at all, and refusing one is the weaker
-/// answer rather than the wrong one.
+/// The furthest a `jsonb` number's exponent may move the decimal point,
+/// bounding the digit string this builds. Ours rather than PostgreSQL's —
+/// `numeric` reaches further — and no *field* is affected: `jsonb` prints its
+/// numbers through `numeric_out`, which never writes an exponent, so only a
+/// literal can reach it.
 const JSONB_MAX_EXPONENT: i64 = 100_000;
 
 /// A recursive-descent reader over one JSON document, implementing what
@@ -625,8 +564,8 @@ impl<'a> JsonCursor<'a> {
                 Jsonb::Null
             }
             // Anything else is a number or nothing: a leading `+`, a bare
-            // `.5` and `NaN` all fail inside, exactly as the server's lexer
-            // fails them.
+            // `.5` and `NaN` all fail inside, as the server's lexer fails
+            // them.
             _ => Jsonb::Number(self.number()?),
         };
         self.depth -= 1;
@@ -719,10 +658,9 @@ impl<'a> JsonCursor<'a> {
                     }
                 }
                 0x00..=0x1f => return None,
-                // Every other byte is copied verbatim, and each is either
-                // ASCII or part of a multi-byte sequence copied whole — the
-                // input is a `&str`, so the result is valid UTF-8 by
-                // construction and `from_utf8` above never fails.
+                // Every other byte is copied verbatim, and each is ASCII or
+                // part of a multi-byte sequence copied whole — the input is a
+                // `&str`, so `from_utf8` above never fails.
                 _ => out.push(byte),
             }
         }
@@ -764,10 +702,9 @@ impl<'a> JsonCursor<'a> {
     /// optional `e`/`E` exponent with an optional sign. `01`, `+1`, `.5`,
     /// `1.` and `NaN` are refused, as the server refuses them (I41).
     ///
-    /// The result is the [`NumericKey`] the stored `numeric` would compare
-    /// by, so the exponent is applied by moving the decimal point rather than
-    /// kept: `1e2`, `100` and `100.00` are one value, which is what
-    /// `numeric_cmp` says of them.
+    /// The result is the [`NumericKey`] the stored `numeric` would compare by,
+    /// so the exponent is applied by moving the decimal point rather than
+    /// kept: `1e2`, `100` and `100.00` are one value (I41).
     fn number(&mut self) -> Option<NumericKey> {
         let negative = self.eat(b'-');
         let int = self.digits()?;
@@ -824,11 +761,11 @@ fn zeros(n: i64) -> String {
 /// duplicate key but the **last** one written.
 ///
 /// Storage order is `lengthCompareJsonbString` — key length first, then
-/// `memcmp` — which is why `{"z":1,"aa":2}` is stored, printed and walked in
-/// that order rather than alphabetically. The duplicate rule comes out of
+/// `memcmp` — so `{"z":1,"aa":2}` is stored, printed and walked in that order
+/// rather than alphabetically (I41). The duplicate rule comes out of
 /// `lengthCompareJsonbPair` breaking a tie on *descending* insertion order
-/// while the uniqueify pass keeps the first of each run, which is what the
-/// `reverse` here reproduces against a stable sort.
+/// while the uniqueify pass keeps the first of each run, which the `reverse`
+/// here reproduces against a stable sort.
 fn storage_order(mut pairs: Vec<(String, Jsonb)>) -> Vec<(String, Jsonb)> {
     pairs.reverse();
     pairs.sort_by(|(a, _), (b, _)| {
@@ -851,13 +788,8 @@ fn parse_jsonb(text: &str) -> Option<Jsonb> {
 }
 
 /// A `jsonb` comparison key: the document, with a **top-level scalar wrapped
-/// in the one-element pseudo-array PostgreSQL stores it in** (I41).
-///
-/// The wrapper is not bookkeeping. `compareJsonbContainers` reads the
-/// `rawScalar` flag and then lets the element count overwrite what it
-/// concluded, so `1 < [1]`, `1 < [1,2]` and `1 > []` — the last of which no
-/// "a scalar sorts below every array" rule produces, and which falls out here
-/// only because the wrapping is modelled rather than special-cased.
+/// in the one-element pseudo-array PostgreSQL stores it in** (I41). Modelling
+/// the wrapper is what gives `1 < [1]`, `1 < [1,2]` and `1 > []`.
 fn jsonb_key(text: &str) -> Option<OrderKey> {
     Some(OrderKey::Jsonb(match parse_jsonb(text)? {
         container @ (Jsonb::Array { .. } | Jsonb::Object(_)) => container,
@@ -869,16 +801,13 @@ fn jsonb_key(text: &str) -> Option<OrderKey> {
 /// [`CompareKind`]. Both sides of any one comparison come from the same kind,
 /// so a *finite* variant mismatch is unreachable by construction.
 ///
-/// **Three variants are not values of the column's Arrow type at all**, and
-/// that is the point: `infinity`, `-infinity` and `numeric`'s `NaN` are legal
-/// values of their declared PostgreSQL types with a total order (I34), while
-/// `Date32` has no infinity and `Decimal128` no NaN. Deciding an order needs
-/// strictly less than materializing a value, so they are carried as their
-/// *position* — below every finite value, above every finite value, or above
-/// `infinity` — rather than as a number that would have to be indistinguishable
-/// from a real one. A `real`/`double precision` special is **not** here: IEEE
-/// has all three, so the column's own decoder yields them inside `Float` and
-/// [`pg_float_cmp`] already orders them PostgreSQL's way.
+/// Three variants are not values of the column's Arrow type at all:
+/// `infinity`, `-infinity` and `numeric`'s `NaN` are legal values of their
+/// declared PostgreSQL types with a total order (I34), and are carried as
+/// their position in that order (`docs/design/decisions.md`, "D56"). A
+/// `real`/`double precision` special is not here: IEEE has all three, so the
+/// column's own decoder yields them inside `Float` and [`pg_float_cmp`]
+/// orders them PostgreSQL's way.
 #[derive(Debug, Clone, PartialEq)]
 enum OrderKey {
     /// PostgreSQL's `-infinity`, below every finite value of its type.
@@ -918,11 +847,10 @@ const FINITE: u8 = 1;
 
 impl OrderKey {
     /// Where this key sits in PostgreSQL's total order relative to the finite
-    /// values of its own type. Ranks are compared before values are, which is
-    /// what lets a special value be carried as a position instead of as a
-    /// sentinel that a finite value could collide with — `Date32`'s would be
-    /// free at both ends, but a `Timestamp`'s would not: `i64::MAX` micros
-    /// since 1970 is a date PostgreSQL itself accepts.
+    /// values of its own type. Ranks are compared before values are, so a
+    /// special value never collides with a finite one a sentinel could have —
+    /// `i64::MAX` micros since 1970 is a date PostgreSQL itself accepts
+    /// (`docs/design/decisions.md`, "D56").
     fn rank(&self) -> u8 {
         match self {
             Self::NegativeInfinity => 0,
@@ -947,26 +875,20 @@ impl OrderKey {
 /// in the exact spelling that type's own `*_out` writes (I34): `date`,
 /// `timestamp`, `timestamptz` and `interval` write `infinity`/`-infinity`,
 /// and a `numeric` writes `NaN`. Nothing else is accepted — a `date` field or
-/// literal reading `Infinity` is not what `date_out` writes, so it stays a
-/// decode failure, the same strictness the nested codec applies.
+/// literal reading `Infinity` is a decode failure
+/// (`docs/design/decisions.md`, "D55").
 ///
-/// **`interval`'s two are read on every file, not only on a v17 one.** They
-/// are v17 values, and no older server could have written one, so accepting
-/// the spelling unconditionally is the union rule (I35) rather than a claim
-/// about the file's own major. What it costs
-/// is a *literal* an older server would have refused, which is one word in an
-/// answer nobody's data can match.
+/// `interval`'s two are read on every file: they are v17 values no older
+/// server could have written, so accepting the spelling unconditionally is
+/// the union rule (I35) rather than a claim about the file's own major.
+/// `real`/`double precision` are absent because IEEE represents all three and
+/// [`decode::decode_f64`] already returns them.
 ///
-/// **One absence is deliberate.** `real`/`double precision` are absent
-/// because IEEE represents all three and [`decode::decode_f64`] already
-/// returns them.
-///
-/// **The two `numeric` kinds differ, and only about the infinities.**
-/// `apply_typmod_special` rejects `±Infinity` under any typmod (I34), so a
-/// [`CompareKind::Decimal`] column — which always has one — can hold a `NaN`
-/// and never an infinity, and neither can a `numeric(p,s)` past 76 digits.
-/// A *bare* `numeric` has all three, in `numeric_out`'s own spellings, which
-/// capitalize where `date_out`'s do not.
+/// The two `numeric` kinds differ only about the infinities (I34): a
+/// [`CompareKind::Decimal`] column, and a `numeric(p,s)` past 76 digits, can
+/// hold a `NaN` and never an infinity, while a *bare* `numeric` has all three
+/// in `numeric_out`'s own spellings, which capitalize where `date_out`'s do
+/// not.
 fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
         CompareKind::Date | CompareKind::Timestamp { .. } | CompareKind::Interval => match text {
@@ -986,17 +908,14 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 }
 
 /// `interval_cmp_value`'s span, in microseconds: months collapse to 30 days,
-/// days to 86400 seconds, and the time field is added on (I40). The whole
-/// point of the collapse is that `1 mon`, `30 days` and `720:00:00` are one
-/// value written three ways, which is why an `interval` is one of the two
-/// kinds equality cannot canonicalize once and compare bytewise.
+/// days to 86400 seconds, and the time field is added on (I40), so `1 mon`,
+/// `30 days` and `720:00:00` are one value written three ways — which is why
+/// an `interval` cannot canonicalize once and compare bytewise.
 ///
 /// The walk over the text is [`decode::interval_parts`], shared with the
-/// decoder — one reading of `interval_out`'s grammar (I40), which is what
-/// keeps a literal this refuses and a field the decoder refuses the same set.
-/// **The fusing is this function's alone**: it is what makes three unequal
-/// triples one value, so a decoder that did it would lose the fields Arrow
-/// carries separately.
+/// decoder, so a literal this refuses and a field the decoder refuses are the
+/// same set. The fusing is this function's alone: a decoder that did it would
+/// lose the fields Arrow carries separately.
 fn interval_span(text: &str) -> Option<i128> {
     let (months, days, time) = decode::interval_parts(text)?;
     let whole_days = i128::from(months.checked_mul(30)?.checked_add(days)?);
@@ -1004,10 +923,10 @@ fn interval_span(text: &str) -> Option<i128> {
 }
 
 /// A `time with time zone`, split into the UTC-equivalent instant and the
-/// zone PostgreSQL stores — seconds *west* of GMT, which is the negation of
-/// the offset the value displays (I40). `timetz_cmp_internal` sorts by the
-/// first and breaks ties with the second, so `00:00:00+00` and `01:00:00+01`
-/// are the same instant and still not equal.
+/// zone PostgreSQL stores — seconds *west* of GMT, the negation of the offset
+/// the value displays. `timetz_cmp_internal` sorts by the first and breaks
+/// ties with the second (I40), so `00:00:00+00` and `01:00:00+01` are the
+/// same instant and still not equal.
 fn timetz_key(text: &str) -> Option<OrderKey> {
     let (time_only, displayed) = decode::extract_offset(text)?;
     let (seconds, micros) = decode::parse_time_of_day(time_only)?;
@@ -1020,14 +939,13 @@ fn timetz_key(text: &str) -> Option<OrderKey> {
 /// `pg_inet_net_ntop` writes, with `cidr_out` always appending the netmask
 /// and `inet_out` omitting it when it is the family's full width (I40).
 ///
-/// **The address grammar is Rust's, which is narrower than `inet_in`'s.** An
-/// abbreviated IPv4 address — `10`, meaning `10.0.0.0/8` — is a spelling the
-/// server accepts and this refuses, the same weaker-never-wrong shape as the
-/// `interval` grammar above.
+/// The address grammar is Rust's, which is narrower than `inet_in`'s: an
+/// abbreviated IPv4 address — `10`, meaning `10.0.0.0/8` — is refused
+/// (`docs/design/decisions.md`, "D55").
 ///
 /// `cidr` additionally refuses a value with a bit set below its netmask,
-/// because `cidr_in` does: that is the *only* thing separating the two types,
-/// their comparison being identical.
+/// because `cidr_in` does: the *only* thing separating the two types, their
+/// comparison being identical.
 fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
     let (address, netmask) = match text.split_once('/') {
         Some((address, netmask)) => (address, Some(netmask)),
@@ -1065,8 +983,8 @@ fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
 
 /// A `macaddr`/`macaddr8` value: `octets` lowercase hex pairs joined by
 /// colons, which is what `macaddr_out` and `macaddr8_out` write (I40). The
-/// server's input function takes several other separator conventions and this
-/// takes none of them, for the reason the `interval` grammar gives.
+/// server's input function takes other separator conventions and this takes
+/// none of them (`docs/design/decisions.md`, "D55").
 fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
     let mut bytes = Vec::with_capacity(octets);
     for part in text.split(':') {
@@ -1081,16 +999,14 @@ fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
     (bytes.len() == octets).then_some(OrderKey::Bytes(bytes))
 }
 
-/// Decode one already-COPY-unescaped value into a comparable key. `None`
-/// when the text is not a value of that type — for a *field* that is
-/// `Error::FieldDecode`, exactly as the typed build path reports it; for the
-/// filter's own literal it is `Error::PredicateValueDecode`, raised before a
-/// row is read.
+/// Decode one already-COPY-unescaped value into a comparable key. `None` when
+/// the text is not a value of that type — for a *field* `Error::FieldDecode`,
+/// for the filter's own literal `Error::PredicateValueDecode`, raised before
+/// a row is read.
 ///
-/// A special value is answered by [`special_order_key`] first, since it is a
-/// legal value of the declared type that the *Arrow* type cannot hold — a
-/// separate population from text that is genuinely malformed for the column,
-/// which is what a `None` from here now means.
+/// A special value is answered by [`special_order_key`] first: it is a legal
+/// value of the declared type that the *Arrow* type cannot hold, a separate
+/// population from text that is malformed for the column.
 fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     if let Some(special) = special_order_key(kind, text) {
         return Some(special);
@@ -1099,15 +1015,12 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
         // Parsed as `i64` whatever the column's width: a literal outside a
         // `smallint`'s range still orders correctly against every value the
-        // column can hold, and refusing it would be a refusal PostgreSQL's
-        // own comparison does not need to make.
+        // column can hold.
         CompareKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
         // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
         // 4294967295 and this build does not implement that wrap, so a
-        // signed literal is `Error::PredicateValueDecode` rather than a
-        // negative key no OID could equal. Every value the column can hold
-        // widens into `i64` and orders against the rest of the key space
-        // unchanged.
+        // signed literal is `Error::PredicateValueDecode`. Every value the
+        // column can hold widens into `i64` unchanged.
         CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
@@ -1116,10 +1029,8 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         }
         CompareKind::Numeric { .. } => OrderKey::Numeric(NumericKey::parse(text)?),
         // A label the type does not declare is not a value of the column, so
-        // it is the same fault an unparseable number is: `Error::FieldDecode`
-        // for a field, `Error::PredicateValueDecode` for a literal. The
-        // linear scan is over a label list, which is a handful of entries in
-        // every enum a dump has ever carried.
+        // it is the same fault an unparseable number is. The linear scan is
+        // over a label list, a handful of entries in practice.
         CompareKind::Enum(labels) => OrderKey::Int(labels.iter().position(|l| l == text)? as i64),
         CompareKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
         CompareKind::Time => OrderKey::Int(decode::decode_time64_micros(text)?),
@@ -1136,19 +1047,16 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Text => OrderKey::Text(text.to_string()),
         // `bcTruelen` on both sides, which is what makes this the server's
         // comparison rather than one over the padding (I38). The blank is
-        // ASCII `0x20` and nothing else — a tab is a value byte, and it is
-        // the byte that separates trim-and-compare from pad-and-compare.
+        // ASCII `0x20` and nothing else; a tab is a value byte.
         CompareKind::PaddedText => OrderKey::Text(text.trim_end_matches(' ').to_string()),
     })
 }
 
 /// PostgreSQL's float order, not Rust's: `NaN` is greater than every other
-/// value, infinities included, and `NaN = NaN` is true — `float8_gt(a, b)` is
-/// `!isnan(b) && (isnan(a) || a > b)` (I33). Rust's `partial_cmp` answers
-/// `None` for either case. `real`/`double precision` are the only columns whose
-/// decoder yields a NaN at all: a `NaN` in a `numeric(p,s)` column has no
-/// `Decimal128` representation and fails to decode long before any
-/// comparison (I4).
+/// value, infinities included, and `NaN = NaN` is true (I33), where Rust's
+/// `partial_cmp` answers `None`. `real`/`double precision` are the only
+/// columns whose decoder yields a NaN at all: a `NaN` in a `numeric(p,s)`
+/// column has no `Decimal128` representation and fails to decode first (I4).
 fn pg_float_cmp(a: f64, b: f64) -> Ordering {
     match (a.is_nan(), b.is_nan()) {
         (true, true) => Ordering::Equal,
@@ -1189,14 +1097,12 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
 
 /// One side of a **nested** comparison, decoded from a container literal per
 /// the column's [`NestedCompare`]. Both sides of any one comparison come from
-/// the same plan, so a variant mismatch is unreachable by construction, the
-/// same way it is for [`OrderKey`].
+/// the same plan, so a variant mismatch is unreachable by construction.
 ///
-/// `None` in an element or field position is SQL NULL, which is a value of
-/// the container rather than the absence of one: `{1,NULL}` is a two-element
-/// array. **The whole field being NULL is a different fact** — that is the
-/// `\N` the row carries, and it is [`Truth::Unknown`] exactly as it is for a
-/// scalar column.
+/// `None` in an element or field position is SQL NULL, a value of the
+/// container rather than the absence of one: `{1,NULL}` is a two-element
+/// array. The whole field being NULL is a different fact — the `\N` the row
+/// carries — and is [`Truth::Unknown`] as it is for a scalar column.
 #[derive(Debug, Clone, PartialEq)]
 enum NestedKey {
     /// A scalar position, through the leaf type's own [`OrderKey`].
@@ -1208,22 +1114,21 @@ enum NestedKey {
     /// A `record_out` value: one entry per declared field, in declaration
     /// order.
     Record(Vec<Option<NestedKey>>),
-    /// A range value, already through [`make_range`] — so it is in the form
-    /// the server would have stored, not the form it was written in. Boxed
-    /// because a bound is itself a `NestedKey`, which makes the pair
-    /// mutually recursive; the vector the multirange holds is indirection
-    /// enough on its own.
+    /// A range value, already through [`make_range`] — the form the server
+    /// would have stored, not the form it was written in. Boxed because a
+    /// bound is itself a `NestedKey`; the vector the multirange holds is
+    /// indirection enough on its own.
     Range(Box<RangeKey>),
     /// A multirange value, already sorted, coalesced and emptied out
-    /// ([`canonical_multirange`]). Its members are never empty and never
-    /// touch, which is what makes the comparison a plain sequence walk.
+    /// ([`canonical_multirange`]), so its members are never empty and never
+    /// touch.
     Multirange(Vec<RangeKey>),
 }
 
 /// A range value in the form PostgreSQL itself stores, which is the only form
 /// two ranges may be compared in: `range_in` runs every literal through
 /// `make_range`, so `int4range '[1,10]'` and `int4range '(0,11)'` are one
-/// value and the file can only ever hold `[1,11)`.
+/// value the file can only hold as `[1,11)` (I46).
 #[derive(Debug, Clone, PartialEq)]
 struct RangeKey {
     /// The empty range, which `range_cmp` sorts below every other value and
@@ -1239,17 +1144,16 @@ struct RangeKey {
 #[derive(Debug, Clone, PartialEq)]
 struct RangeBoundKey {
     /// `None` is an **unbounded** bound — the server's `infinite` flag, and
-    /// not a value at all. A bound holding `infinity` is a different thing
-    /// and lives in the [`OrderKey`] beneath: `daterange
-    /// '[2020-01-01,infinity]'` has a finite upper bound whose *value* is
-    /// `infinity`, which is why `daterange_canonical` leaves it alone (I34,
-    /// I46).
+    /// not a value at all. A bound holding `infinity` is a different thing and
+    /// lives in the [`OrderKey`] beneath: `daterange '[2020-01-01,infinity]'`
+    /// has a finite upper bound, which is why `daterange_canonical` leaves it
+    /// alone (I34, I46).
     value: Option<NestedKey>,
     inclusive: bool,
     /// Which end this bound is. It decides the answer whenever two bounds
     /// hold the same value, so it travels with the bound rather than being
-    /// inferred from the caller — `bounds_adjacent` deliberately relabels a
-    /// pair before comparing it, exactly as the server does.
+    /// inferred from the caller — `bounds_adjacent` relabels a pair before
+    /// comparing it, as the server does.
     lower: bool,
 }
 
@@ -1267,19 +1171,14 @@ impl RangeKey {
 
 /// Read one side of a nested comparison out of `text`.
 ///
-/// **`input` is which grammar to read it in**, and it is the whole of what
-/// separates the two sides. A *field* comes out of the dump in canonical
-/// `*_out` form, so it is read with [`crate::nested`]'s strict `decode_*` —
-/// the same strictness that makes decode and render inverses. A *literal* is
-/// what the user typed, so it is read with the `array_in`/`record_in`
-/// supersets (`parse_*`), which take `{a, b}` and `{ 1 , 2 }`.
+/// `input` is which grammar to read it in, and it is the whole of what
+/// separates the two sides: a *field* is read with [`crate::nested`]'s strict
+/// `decode_*`, a *literal* with the `array_in`/`record_in` supersets
+/// (`parse_*`), which take `{a, b}` and `{ 1 , 2 }` (I44).
 ///
-/// **The leaf grammar does not widen with it.** A leaf is read by
-/// [`order_key`], which implements that type's `*_out` form and no more
-/// (`docs/design/decisions.md`, "D55"), so `--filter 'p=( 1 , a )'` is refused where
-/// `record_in` would have handed `" 1 "` to `int4in` and had the blanks
-/// thrown away there. One rule at every depth, and it is the rule a scalar
-/// column already has.
+/// The leaf grammar does not widen with it (`docs/design/decisions.md`,
+/// "D58"): a leaf is read by [`order_key`], which implements that type's
+/// `*_out` form and no more, so `--filter 'p=( 1 , a )'` is refused.
 ///
 /// `None` is "not a value of this type", which is
 /// `Error::PredicateValueDecode` for a literal and `Error::FieldDecode` for a
@@ -1302,17 +1201,15 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
             }
             NestedKey::Array { elements, dims: literal.dims, lower_bounds: literal.lower_bounds }
         }
-        // `int2vector`'s own grammar on both sides, and the elements are
-        // built here rather than through `order_key`: `int2vectorout` writes
-        // an `int16` and nothing else, so the codec has already produced the
-        // value that would be parsed back out of the text.
+        // `int2vector`'s own grammar on both sides; the elements are built
+        // here rather than through `order_key`, `int2vectorout` writing an
+        // `int16` and nothing else.
         //
-        // **`dims` and `lower_bounds` are `[n]` and `[0]` for every value,
-        // the empty vector included.** `int2vectorin` sets `ndim = 1` and
+        // `dims` and `lower_bounds` are `[n]` and `[0]` for every value, the
+        // empty vector included: `int2vectorin` sets `ndim = 1` and
         // `lbound1 = 0` unconditionally, where `array_out`'s `{}` is
-        // zero-dimensional — so an empty `int2vector` is not the empty array,
-        // and `array_cmp`'s dimension tie-breaks are constant here rather
-        // than absent (I47).
+        // zero-dimensional, so an empty `int2vector` is not the empty array
+        // (I47).
         NestedCompare::Int2Vector => {
             let values = if input {
                 nested::parse_int2vector(text)
@@ -1336,8 +1233,8 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
                 // A zero-field composite is written `()`, and so is a
                 // one-field composite holding NULL — the literal cannot tell
                 // them apart, so the declared field list decides (I23).
-                // `parse_record` asks the same question with the arity in
-                // hand; `decode_record` cannot, so it is asked here.
+                // `parse_record` has the arity in hand; `decode_record` does
+                // not, so it is asked here.
                 if plans.is_empty() && fields == [None] {
                     fields.clear();
                 }
@@ -1378,12 +1275,10 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
 /// One range value, read through its bound's plan and then put into the form
 /// the server stores it in.
 ///
-/// **Both sides go through [`make_range`], not only the literal**, and that
-/// is deliberate rather than wasteful: it is idempotent on a `range_out`
-/// field by construction — the server already applied it — so one code path
-/// serves both grammars, exactly as [`nested_key`]'s `input` flag does one
-/// level up. A field it *did* reject would be a file contradicting its own
-/// type, which everywhere else here is an error too.
+/// Both sides go through [`make_range`], not only the literal
+/// (`docs/design/decisions.md`, "D58"): it is idempotent on a `range_out`
+/// field, the server having already applied it, so one code path serves both
+/// grammars.
 fn range_key(
     bound: &NestedCompare,
     literal: &nested::RangeLiteral,
@@ -1411,12 +1306,11 @@ fn range_key(
 /// `make_range`: `range_serialize`'s type-independent checks, then the range
 /// type's canonical function where it has one, then those checks again — the
 /// order the server applies them in, and the reason `int4range '(1,2)'` is
-/// `empty` rather than a range holding nothing.
+/// `empty` (I46).
 ///
-/// `None` is the server's `22000`: a lower bound above its upper. That is a
-/// *semantic* refusal the container grammar cannot see — `[10,1)` is
-/// perfectly well-formed text — so it is raised here, where the bounds have
-/// been decoded and can be compared.
+/// `None` is the server's `22000`: a lower bound above its upper, a *semantic*
+/// refusal the container grammar cannot see (I44), so it is raised here where
+/// the bounds have been decoded.
 fn make_range(
     lower: RangeBoundKey,
     upper: RangeBoundKey,
@@ -1427,16 +1321,14 @@ fn make_range(
     if !discrete || serialized.empty {
         return Some(serialized);
     }
-    // `int4range_canonical` and its two siblings, which differ from each
-    // other only in the width they overflow at: an exclusive lower bound
-    // becomes inclusive at the successor, an inclusive upper becomes
-    // exclusive at the successor.
+    // `int4range_canonical` and its two siblings, which differ only in the
+    // width they overflow at: an exclusive lower bound becomes inclusive at
+    // the successor, an inclusive upper becomes exclusive at the successor.
     //
-    // **The `Int` pattern is `daterange_canonical`'s `DATE_NOT_FINITE`
-    // guard**, not an approximation of it. A date `infinity` decodes to
-    // `OrderKey::PositiveInfinity` rather than to a day count, so it matches
-    // no arm here and is left exactly as written — which is what makes
-    // `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
+    // The `Int` pattern is `daterange_canonical`'s `DATE_NOT_FINITE` guard: a
+    // date `infinity` decodes to `OrderKey::PositiveInfinity` rather than to
+    // a day count, so it matches no arm here and is left as written, which is
+    // what makes `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
     let successor = |bound: &RangeBoundKey| match &bound.value {
         Some(NestedKey::Leaf(OrderKey::Int(n))) => n.checked_add(1).map(|n| {
             Some(RangeBoundKey {
@@ -1495,8 +1387,8 @@ fn serialize_range(
 
 /// `range_cmp_bound_values`: the bounds' held values alone, with an absent
 /// bound settled by which end it is. Inclusivity is not consulted, which is
-/// what separates this from [`compare_bounds`] — the emptiness test and the
-/// adjacency test both need the values without it.
+/// what separates this from [`compare_bounds`] — the emptiness and adjacency
+/// tests both need the values without it.
 fn compare_bound_values(a: &RangeBoundKey, b: &RangeBoundKey) -> Ordering {
     match (&a.value, &b.value) {
         (None, None) if a.lower == b.lower => Ordering::Equal,
@@ -1520,9 +1412,8 @@ fn compare_bound_values(a: &RangeBoundKey, b: &RangeBoundKey) -> Ordering {
 
 /// `range_cmp_bounds`: infinity, then the held value, then inclusivity — and
 /// inclusivity is where which *end* a bound is starts to matter. An exclusive
-/// **lower** bound is above an inclusive one at the same value, because it
-/// means "just after"; an exclusive **upper** is below, because it means
-/// "just before" (I46).
+/// **lower** bound is above an inclusive one at the same value ("just
+/// after"), an exclusive **upper** below it ("just before") (I46).
 fn compare_bounds(a: &RangeBoundKey, b: &RangeBoundKey) -> Ordering {
     let by_value = compare_bound_values(a, b);
     if a.value.is_none() || b.value.is_none() || by_value.is_ne() {
@@ -1551,13 +1442,12 @@ fn compare_range(a: &RangeKey, b: &RangeKey) -> Ordering {
 }
 
 /// `multirange_canonicalize`: sort the members, drop the empty ones, and
-/// merge any two that overlap or touch. It is what makes a multirange
-/// comparison a plain sequence walk — after it, no member is empty and no two
-/// members meet, so the sequence is the value (I46).
+/// merge any two that overlap or touch. After it no member is empty and no
+/// two members meet, so the sequence is the value and the comparison is a
+/// plain sequence walk (I46).
 ///
 /// `None` propagates a bound the union could not re-serialize, which the
-/// shapes reaching here cannot produce; it is carried rather than unwrapped
-/// because every other range fault on this path is a refusal the user reads.
+/// shapes reaching here cannot produce; it is carried rather than unwrapped.
 fn canonical_multirange(mut members: Vec<RangeKey>, discrete: bool) -> Option<Vec<RangeKey>> {
     members.sort_by(compare_range);
     let mut out: Vec<RangeKey> = Vec::with_capacity(members.len());
@@ -1569,9 +1459,9 @@ fn canonical_multirange(mut members: Vec<RangeKey>, discrete: bool) -> Option<Ve
             out.push(current);
             continue;
         };
-        // The server's own order, and the middle test is the one that needs
-        // the sort: `range_adjacent_internal` answers true for "either meets
-        // the other", and only sorting rules out the second direction.
+        // The server's own order. The middle test needs the sort:
+        // `range_adjacent_internal` answers true for "either meets the
+        // other", and only sorting rules out the second direction.
         if ranges_adjacent(last, &current, discrete) {
             *out.last_mut().expect("just read") = range_union(last, &current, discrete)?;
         } else if range_before(last, &current) {
@@ -1602,11 +1492,9 @@ fn ranges_adjacent(a: &RangeKey, b: &RangeKey, discrete: bool) -> bool {
 /// point between them.
 ///
 /// Equal values are adjacent exactly when one end includes the point and the
-/// other does not. **Values that differ are adjacent only in a discrete
-/// range**, and the server decides that by building the range *between* them
-/// with both inclusivities flipped and asking whether it came out empty —
-/// which is the canonical function answering "there is no value here" rather
-/// than a successor being computed twice.
+/// other does not. Values that differ are adjacent only in a discrete range,
+/// which the server decides by building the range *between* them with both
+/// inclusivities flipped and asking whether it came out empty.
 fn bounds_adjacent(upper: &RangeBoundKey, lower: &RangeBoundKey, discrete: bool) -> bool {
     match compare_bound_values(upper, lower) {
         Ordering::Equal => upper.inclusive != lower.inclusive,
@@ -1643,10 +1531,9 @@ fn range_union(a: &RangeKey, b: &RangeKey, discrete: bool) -> Option<RangeKey> {
     make_range(lower, upper, false, discrete)
 }
 
-/// **One NULL rule, at every level: two NULLs are equal, and NULL sorts above
-/// not-NULL.** `array_cmp` and `record_cmp` carry that sentence verbatim, and
-/// it covers equality and ordering alike — which is what makes a nested
-/// comparison two-valued throughout, never [`Truth::Unknown`].
+/// One NULL rule, at every level: two NULLs are equal, and NULL sorts above
+/// not-NULL (I45). It covers equality and ordering alike, which is what makes
+/// a nested comparison two-valued throughout, never [`Truth::Unknown`].
 fn compare_slot(a: Option<&NestedKey>, b: Option<&NestedKey>) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
@@ -1658,15 +1545,11 @@ fn compare_slot(a: Option<&NestedKey>, b: Option<&NestedKey>) -> Ordering {
 
 /// `array_cmp`/`record_cmp`, structurally.
 ///
-/// **An array compares its elements first, and its shape only afterwards**
-/// (I45) — up to the shorter array's length, then element count, then
-/// dimension count, then the dimensions, then the lower bounds. That order is
-/// not the one `array_eq` uses, which memcmps the shape before it looks at an
-/// element; the two agree on *equality* and only `array_cmp` decides an
-/// order, so this is the one to reproduce. It is why `{1,2}` is above
-/// `[0:1]={1,2}` — the elements are equal and the lower bound settles it —
-/// and why `{1,2}` is below `{{1,2},{3,4}}`, whose extra elements are never
-/// reached.
+/// An array compares its elements first and its shape only afterwards (I45):
+/// up to the shorter array's length, then element count, then dimension
+/// count, then the dimensions, then the lower bounds — not the order
+/// `array_eq` uses. So `{1,2}` is above `[0:1]={1,2}` and below
+/// `{{1,2},{3,4}}`, whose extra elements are never reached.
 ///
 /// A record's two sides always have the same arity: [`nested_key`] checks it
 /// against the composite's own declared field list before building either.
@@ -1690,9 +1573,8 @@ fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
         ),
         (NestedKey::Range(a), NestedKey::Range(b)) => compare_range(a, b),
         // `multirange_cmp`: member-wise, and the shorter one first where the
-        // members it has all agree — which is how the server phrases it too,
-        // by treating a missing member as an empty range and `empty` as the
-        // lowest value there is.
+        // members it has all agree — the server treating a missing member as
+        // an empty range and `empty` as the lowest value there is.
         (NestedKey::Multirange(a), NestedKey::Multirange(b)) => first_difference(
             a.iter()
                 .zip(b.iter())
@@ -1704,9 +1586,9 @@ fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
 }
 
 /// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
-/// lowercase hex pairs joined by colons (I40). The whole of that output
-/// function is those two rules, which is why this type canonicalizes where
-/// the two beside it decode per row — see [`equality_comparison`].
+/// lowercase hex pairs joined by colons (I40). Those two rules are the whole
+/// of that output function, which is why this type canonicalizes where the
+/// two beside it decode per row — see [`equality_comparison`].
 fn render_macaddr(text: &str, octets: usize) -> Option<String> {
     let OrderKey::Bytes(bytes) = macaddr_key(text, octets)? else {
         unreachable!("`macaddr_key` yields its octets")
@@ -1717,42 +1599,23 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 /// How `=`/`!=` compare two values of a column of `kind`, given the filter's
 /// own literal — settled once, when the block's schema resolves.
 ///
-/// **Three canonicalizations, not two states**, and which one a kind takes is
-/// decided by one question: is the file's `*_out` text a *unique* spelling of
-/// the value it holds?
+/// Three canonicalizations, chosen by whether the file's `*_out` text is a
+/// *unique* spelling of the value it holds (`docs/design/decisions.md`,
+/// "D57"):
 ///
-/// - **[`Comparison::Canonical`] — the literal rendered once.** The field is
-///   already in `*_out` form and that form is unique, so rendering the
-///   literal into it makes the per-row comparison a byte comparison and
-///   nothing on the hot path moves. `=` on a `text` or `varchar` column is
-///   exactly the compare it always was, since `text`'s rendering is the
-///   identity.
+/// - **[`Comparison::Canonical`] — the literal rendered once** into `*_out`
+///   form, so the per-row comparison is a byte comparison. `text`'s rendering
+///   is the identity.
 /// - **[`Comparison::Trimmed`] — the field narrowed per row.** `character(n)`
-///   alone. The dump writes every value padded to `n` and `bpchareq` strips
-///   the padding from both sides (I38), so the trim is the comparison. It is
-///   admissible on the per-row path because it is not a decode: a reverse
-///   scan for `0x20` yielding a shorter slice, no allocation.
-/// - **[`Comparison::Decoded`] — both sides decoded per row.** For the kinds
-///   where `*_out` is *not* injective over the values one file can hold, so
-///   no rendering of the literal can make the comparison bytewise.
-///
-/// **Five kinds decode.** A bare `numeric` keeps its display scale, so `1.5` and `1.50` are one value
-/// written two ways (I33); an `interval` collapses months and days, so
-/// `1 mon`, `30 days` and `720:00:00` are one value written three ways (I40);
-/// `jsonb` prints its numbers through `numeric_out` and compares them by
-/// value, so `{"a": 1.50}` and `{"a": 1.5}` are one document written two ways
-/// (I41); and `real`/`double precision` have two zeros, `-0` being a value a
-/// dump can write and `float8eq` calling it equal to `0`.
-///
-/// **Two more decode for a different reason, and it is a reason about this
-/// build rather than about PostgreSQL.** `time with time zone` and
-/// `inet`/`cidr` *are* uniquely spelled by their output functions — but
-/// reproducing those spellings means re-implementing `EncodeTimeOnly` plus
-/// `EncodeTimezone`, and `pg_inet_net_ntop`'s IPv6 zero-run compression.
-/// Writing an output function to save a fixed-size parse per row is the wrong
-/// trade, and getting one subtly wrong is a silently empty result. `macaddr`
-/// goes the other way for the same test: its output rule is two sentences
-/// long, so it renders.
+///   alone, `bpchareq` stripping the padding from both sides (I38). It is
+///   admissible on the per-row path because it is a reverse scan for `0x20`,
+///   not a decode.
+/// - **[`Comparison::Decoded`] — both sides decoded per row**, for the kinds
+///   where `*_out` is *not* injective over the values one file can hold: a
+///   bare `numeric` (I33), an `interval` (I40), `jsonb` (I41), and
+///   `real`/`double precision`, which have two zeros. `time with time zone`
+///   and `inet`/`cidr` decode for a reason about this build instead, and
+///   `macaddr` renders (`docs/design/decisions.md`, "D57").
 ///
 /// `None` when the literal is not a value of the column's type at all, which
 /// is `Error::PredicateValueDecode` — the same refusal an ordering operator
@@ -1776,8 +1639,7 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         K::PaddedText => return Some(Comparison::Trimmed(text.trim_end_matches(' ').to_string())),
         // A special value is written in its own type's `*_out` spelling on
         // both sides, so it renders to itself. Only `date`, `timestamp` and
-        // `numeric(p,s)` reach this arm and admit one; the other two kinds
-        // `special_order_key` answers for decode above.
+        // `numeric(p,s)` reach this arm and admit one.
         _ if special_order_key(kind, text).is_some() => text.to_string(),
         K::Bool => decode::render_bool(decode::decode_bool(text)?).to_string(),
         K::Int => text.parse::<i64>().ok()?.to_string(),
@@ -1786,8 +1648,8 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
             decode::render_decimal(&decode::decimal_unscaled_digits(text, *scale)?, *scale)
         }
         // A label is its own canonical form; what the lookup buys is the
-        // refusal, since a string the type does not declare is not a value of
-        // the column and equality against it is a fault rather than a miss.
+        // refusal, a string the type does not declare being no value of the
+        // column.
         K::Enum(labels) => labels.iter().find(|label| label.as_str() == text)?.clone(),
         K::Date => decode::render_date32(decode::decode_date32(text)?),
         K::Time => decode::render_time64_micros(decode::decode_time64_micros(text)?),
@@ -1798,33 +1660,28 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         K::MacAddr { octets } => render_macaddr(text, *octets)?,
         K::Uuid => decode::render_uuid(&decode::decode_uuid(text)?),
         K::Bytea => decode::render_bytea(&decode::decode_bytea(text)?),
-        // The identity, and that is the point: `=` on a text column is the
-        // byte comparison it has always been, with no per-row work added.
+        // The identity: `=` on a text column is a byte comparison, with no
+        // per-row work added.
         K::Text => text.to_string(),
     };
     Some(Comparison::Canonical(rendered))
 }
 
 /// The form a **nested** literal has to be written in, as one clause of
-/// `Error::PredicateValueDecode`'s sentence.
+/// `Error::PredicateValueDecode`'s sentence: the container's own grammar, then
+/// how to spell what is inside it — as the dump does, which is each leaf
+/// type's own output form.
 ///
-/// It names the container's own grammar and then says how to spell what is
-/// inside it: as the dump does, which is each leaf type's own output form.
-/// **That second half is advice, not the boundary of what is accepted** — the
-/// leaf is read by [`order_key`], whose integer arms are `str::parse` and so
-/// take a leading `+` and leading zeros that no `*_out` writes
-/// (`docs/design/decisions.md`, "D55", whose exception this is). Stating the dump's form is
-/// still the useful sentence, because what the container's leniency about
-/// whitespace and quoting does *not* extend to is the element, and that is
-/// what refuses most literals. There is no per-leaf clause list here — the
-/// leaf that failed is not reported by [`nested_key`], which answers only "not
-/// a value of this type" — so the sentence points at the property rather than
-/// at a position.
+/// That second half is advice rather than the boundary of what is accepted:
+/// [`order_key`]'s integer arms are `str::parse`, so they take a leading `+`
+/// and leading zeros no `*_out` writes (`docs/design/decisions.md`, "D55",
+/// whose exception this is). There is no per-leaf clause list, [`nested_key`]
+/// answering only "not a value of this type".
 fn nested_accepted_form(plan: &NestedCompare) -> String {
     // The one form with no leaf clause to add, because it has no leaf: an
-    // `int2vector`'s elements are read by `int2vectorin` itself, not handed
-    // to some element type's own input function, so the superset reaches all
-    // the way down and the sentence below would be false here.
+    // `int2vector`'s elements are read by `int2vectorin` itself, so the
+    // superset reaches all the way down and the sentence below would be false
+    // here.
     if matches!(plan, NestedCompare::Int2Vector) {
         return "as whole numbers from -32768 to 32767 separated by spaces, and as nothing at \
                 all for the empty vector"
@@ -1857,35 +1714,20 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// The form a literal of `kind` has to be written in, as one clause of
 /// `Error::PredicateValueDecode`'s sentence — read after "which is written".
 ///
-/// **It lives beside the grammar rather than beside [`CompareKind`]** because
-/// it describes what [`order_key`] and [`equality_comparison`] accept, and
-/// those are here: a widening or a tightening of either has this function in
-/// the same file and the same screen, where a phrase carried on the L2 type
-/// would drift from the L4 code that decides it.
+/// It lives beside the grammar rather than beside [`CompareKind`] because it
+/// describes what [`order_key`] and [`equality_comparison`] accept, which is
+/// each type's `*_out` form and no wider (`docs/design/decisions.md`, "D55").
+/// `jsonb` needs the least here, its grammar being the whole of `jsonb_in`.
 ///
-/// **What it buys is a sentence about this build's grammar rather than about
-/// the type.** Without it the refusal reads as a claim that `true` is not a
-/// `boolean`, which is false; the grammar these two functions implement is
-/// each type's `*_out` form and no wider (`docs/design/decisions.md`, "D55"), so the one
-/// thing the user is missing is what that form looks like. `jsonb` is the
-/// exception there and so needs the least here — its grammar is the whole of
-/// `jsonb_in`, so "a JSON document" is the complete answer.
-///
-/// **Two arms answer with the kind's own payload, because there the payload
-/// *is* the answer.** An enum's declared labels are the whole of what a
-/// refused enum literal is missing, and a `numeric(p,s)`'s scale is what makes
-/// the clause true at all — see [`ENUM_LABELS_SHOWN`] and
-/// [`decimal_accepted_form`]. Nothing forbids a diagnostic naming resolved
-/// schema data; the question at each arm is whether the payload answers the
-/// user's question, which for the rest of the table it does not.
+/// Two arms answer with the kind's own payload, because there the payload
+/// *is* the answer: an enum's declared labels, and a `numeric(p,s)`'s scale
+/// — see [`ENUM_LABELS_SHOWN`] and [`decimal_accepted_form`].
 ///
 /// [`CompareKind::Text`] and [`CompareKind::PaddedText`] never refuse a
-/// literal — every string is a value of a text column — so their arm is
-/// unreachable rather than wrong; it is written out anyway because a
-/// `unreachable!` here would turn a future kind's mistake into a panic on a
-/// diagnostic path. An enum with no labels is unreachable for a second
-/// reason — `pgtype::comparison_for` refuses such a column outright — and is
-/// written out the same way.
+/// literal, and an enum with no labels is refused by `pgtype::comparison_for`
+/// outright, so both arms are unreachable; they are written out rather than
+/// `unreachable!` so a future kind's mistake is not a panic on a diagnostic
+/// path.
 fn accepted_form(kind: &CompareKind) -> String {
     use CompareKind as K;
     match kind {
@@ -1897,9 +1739,9 @@ fn accepted_form(kind: &CompareKind) -> String {
         K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`".into(),
         // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
         // `numeric` past 76 digits — has `NaN` and nothing else. Only the
-        // typed arm carries a scale to be finer than: the `p > 76` column is
+        // typed arm carries a scale to be finer than: a `p > 76` column is
         // compared as text through `NumericKey`, which normalizes rather than
-        // rescaling and so refuses no literal for its shape.
+        // rescaling.
         K::Decimal(scale) => decimal_accepted_form(*scale),
         K::Numeric { infinities: false } => "as a number, or `NaN`".into(),
         K::Numeric { infinities: true } => {
@@ -1948,32 +1790,24 @@ fn accepted_form(kind: &CompareKind) -> String {
 /// How many of an enum's labels [`accepted_form`] names before it stops
 /// counting them out.
 ///
-/// **A count cap rather than a length cap**, which is the other shape this
-/// project uses for unbounded file-derived text (`map.rs`'s `TEXT_CAP`): every
-/// label a message prints is printed whole, where a length cap would cut one
-/// mid-word and hand the user a spelling that is not a label. Nothing bounds
-/// how many labels a type declares, and a generated schema with a few hundred
-/// of them turns an uncapped clause into a message that scrolls the error
-/// itself off screen.
+/// A count cap rather than a length cap (`map.rs`'s `TEXT_CAP` is the other
+/// shape): every label a message prints is printed whole, where a length cap
+/// would hand the user a spelling that is not a label. Nothing bounds how
+/// many labels a type declares.
 ///
-/// **The overflow clause has somewhere to send the reader**: `pgdq info
-/// --detail` prints every label of an enum column *and* lists every
-/// user-defined type with its labels, both uncapped
-/// (`docs/design/decisions.md`, "The CLI"). A terse rendering is
-/// licensed by a complete one existing where the user can reach it.
+/// The overflow clause has somewhere to send the reader: `pgdq info --detail`
+/// prints every label of an enum column *and* lists every user-defined type
+/// with its labels, both uncapped (`docs/design/decisions.md`, "The CLI").
 const ENUM_LABELS_SHOWN: usize = 12;
 
 /// The enum clause: the declared labels themselves, which are the whole of
-/// what a refused enum literal is missing — a mistyped or wrong-case label is
-/// the only way to fail an enum filter, so the arm that could not answer was
-/// the arm that always fires.
+/// what a refused enum literal is missing.
 ///
-/// Each label is single-quoted with any interior quote doubled, the spelling
+/// Each label is single-quoted with any interior quote doubled — the spelling
 /// the dump's own `CREATE TYPE … AS ENUM (…)` writes and the CLI's `dequote`
-/// accepts,
-/// so a printed label pastes straight back into `--filter "col=<label>"`. The
-/// CLI's own `label_list` renders the same way for the same reason and is not
-/// shared with it: it sits a layer above this one.
+/// accepts — so a printed label pastes straight back into
+/// `--filter "col=<label>"`. The CLI's own `label_list` renders the same way
+/// and is not shared with it, sitting a layer above.
 fn enum_accepted_form(labels: &[String]) -> String {
     let shown = labels.len().min(ENUM_LABELS_SHOWN);
     let list = labels[..shown]
@@ -1992,16 +1826,14 @@ fn enum_accepted_form(labels: &[String]) -> String {
 /// The `numeric(p,s)` clause, which is about the **scale** because that is
 /// what the refusal is about: `decode::decimal_unscaled_digits` drops a
 /// trailing digit only when it is zero, so `--filter 'price>1.005'` on a
-/// `numeric(10,2)` is refused — and `1.005` is a number, which makes the
-/// scale-free clause false rather than merely narrow.
+/// `numeric(10,2)` is refused.
 ///
 /// Precision says nothing here and is not carried by
 /// [`CompareKind::Decimal`]: a literal wider than the column can hold still
-/// compares against every value in it.
-///
-/// A negative scale is legal from PostgreSQL 15 and means the column stores
-/// multiples of a power of ten, which the decoder enforces by refusing to drop
-/// a non-zero digit off the integer part.
+/// compares against every value in it. A negative scale is legal from
+/// PostgreSQL 15 and means the column stores multiples of a power of ten,
+/// which the decoder enforces by refusing to drop a non-zero digit off the
+/// integer part.
 fn decimal_accepted_form(scale: i8) -> String {
     match scale {
         0 => "as a whole number, or `NaN`".into(),
@@ -2033,24 +1865,16 @@ enum Comparison {
     /// file's spelling of a value is not unique.
     Decoded { kind: CompareKind, bound: OrderKey },
     /// A nested column, under **any** comparing operator: both sides read
-    /// into a [`NestedKey`] and compared structurally.
-    ///
-    /// **One variant for both operator families**, where a scalar has three,
-    /// and the reason is that the equality fast path a scalar gets is not
-    /// available here for free. A nested value's `=` is byte-comparable only
-    /// when *every* leaf beneath it canonicalizes — one `numeric` or
-    /// `character(n)` element anywhere makes the rendered literal the wrong
-    /// answer — so the fast path would be a second literal-side walk that
-    /// exists to be right about a shape the oracle carries no case for. The
-    /// structural walk is one path, and it is the path the four ordering
-    /// operators already needed.
+    /// into a [`NestedKey`] and compared structurally
+    /// (`docs/design/decisions.md`, "D58"). One variant for both operator
+    /// families, where a scalar has three, because a nested value's `=` is
+    /// byte-comparable only when *every* leaf beneath it canonicalizes.
     ///
     /// *Rejected: rendering the literal back and comparing bytes where every
-    /// leaf allows it.* It buys a per-row byte comparison on a filter over an
-    /// array or composite column, and costs a second code path whose only
-    /// coverage would be unit tests: every nested case in the comparison
-    /// oracle canonicalizes, so the *decoded* half — the half that has to be
-    /// right when it does not — would be the untested one.
+    /// leaf allows it* — a second code path whose decoded half, the half that
+    /// has to be right when a leaf does not canonicalize, no oracle case
+    /// covers.
+    ///
     /// Boxed: a `NestedKey` carries three vectors, and this variant is the
     /// only large one in an enum that sits inside every resolved leaf.
     Nested(Box<NestedComparison>),
@@ -2077,28 +1901,24 @@ struct ComparedTerm {
     /// ones that reach *this* term's operator
     /// ([`ComparisonDivergence::affects_equality`]).
     ///
-    /// **A list, because a nested column has a position per divergence.** A
-    /// scalar column has at most one and it is about the column itself; a
+    /// A list, because a nested column has a position per divergence: a
     /// composite can be on the database's collation twice, through two
-    /// different fields, and a user who is told about one of them has been
-    /// told half of it. Each entry carries the position's own path and
-    /// declared type, which is what makes the sentence name the right type.
+    /// different fields. Each entry carries the position's own path and
+    /// declared type (`docs/design/decisions.md`, "D59").
     divergences: Vec<(Option<String>, String, ComparisonDivergence)>,
 }
 
 /// One filter term resolved against one `COPY` block: the operator, the
 /// field index it reads, and the comparison it will make.
 ///
-/// The index is into the block's **unprojected** column list, because that is
-/// what the raw row's fields are numbered by: a term may name a column the
+/// The index is into the block's **unprojected** column list, which is what
+/// the raw row's fields are numbered by: a term may name a column the
 /// projection dropped.
 ///
-/// **It carries its own operator** rather than being read back against the
-/// [`Predicate`] it came from. A resolved filter is a tree
-/// ([`ResolvedExpr`]) whose shape mirrors the caller's [`Expr`], and walking
-/// two trees in lockstep to pair a leaf with its operator is an invariant
-/// nothing checks; carrying the operator makes the resolved tree evaluable
-/// on its own.
+/// It carries its own operator rather than being read back against the
+/// [`Predicate`] it came from, which makes the resolved tree
+/// ([`ResolvedExpr`]) evaluable without walking the caller's [`Expr`] in
+/// lockstep.
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedTerm {
     op: PredicateOp,
@@ -2138,8 +1958,7 @@ const NESTED: &str = "the column is nested (array, composite, range or multirang
 /// The refusal a nested column earns when its *shape* is compared here and
 /// one position beneath it is not — an element, a field or a bound whose own
 /// declared type has no order (`json`, `box`, an unrecognised name). It names
-/// the position and its type, because that is the whole of what the user has
-/// to change.
+/// the position and its type.
 fn nested_refusal(path: &str, declared: &str) -> String {
     format!(
         "the column is nested and `{path}` inside it is `{declared}`, which has no order here — \
@@ -2151,8 +1970,8 @@ const NO_ORDER: &str = "this build defines no ordering for the column's declared
 
 /// The sentence for a column the register can answer **no** operator on,
 /// worded here rather than in `crate::pgtype` for the same reason
-/// [`accepted_form`] is: L2 carries the fact, L3 says it in a sentence about
-/// the comparison a filter was going to make.
+/// [`accepted_form`] is: the register carries the fact, this layer says it in
+/// a sentence about the comparison a filter was going to make.
 fn unanswerable_reason(reason: &UnanswerableReason) -> String {
     match reason {
         UnanswerableReason::RangeCanonical { range_type, function } => format!(
@@ -2171,21 +1990,18 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// The two NULL tests need nothing. Every other operator reads the column's
 /// [`ComparisonPlan`] and decodes the filter's own literal here, so a value
 /// that is not of the column's type is a fault reported once rather than a
-/// filter that matches nothing.
+/// filter that matches nothing (`docs/design/decisions.md`, "D54").
 ///
-/// **The two operator families part company on a column with no plan.** An
+/// The two operator families part company on a column with no plan. An
 /// ordering operator is *refused*, before a row of this block flows, unless
 /// the column resolved `Mapped` with a [`NestedPlan::Scalar`] plan and the
-/// register gave it a comparison. `Eq`/`Ne` fall back to the string
-/// comparison instead, which is the comparison every column made before this
-/// and is right for the same reason: the file holds canonical `*_out` form.
-/// So a nested column still answers `=` and still refuses `<`.
+/// register gave it a comparison; `Eq`/`Ne` fall back to comparing the
+/// canonical `*_out` text the file holds. So a nested column still answers
+/// `=` and still refuses `<`.
 ///
-/// **Nothing here reads the Arrow type.** How a column compares is an L2
-/// conclusion resolution already reached
-/// (`crate::pgtype::comparison_for`), carried in
-/// [`ResolvedSchema::comparisons`]; this layer asks how the column compares,
-/// never what it was mapped to.
+/// Nothing here reads the Arrow type: how a column compares is a conclusion
+/// resolution already reached (`crate::pgtype::comparison_for`), carried in
+/// [`ResolvedSchema::comparisons`].
 pub(crate) fn resolve_term(
     predicate: &Predicate,
     index: usize,
@@ -2205,12 +2021,10 @@ pub(crate) fn resolve_term(
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
     // `value` is `Some` for every operator but the two NULL tests; an
     // embedder that builds a `Gt` term without one gets the same fault as an
-    // unparseable literal, named the same way.
+    // unparseable literal.
     let text = predicate.value.as_deref().unwrap_or_default();
     // `kind` is what knows which grammar was applied, so the refusal is built
-    // where it is in scope — which is every site that can raise it, since a
-    // column with no `Compared` plan either refuses the operator outright or
-    // falls back to a text comparison that cannot fail.
+    // where it is in scope.
     let refuse_literal = |kind: &CompareKind| Error::PredicateValueDecode {
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
@@ -2220,8 +2034,7 @@ pub(crate) fn resolve_term(
     };
     let mut plan = Some(&resolved.comparisons[index]);
     // The nested tree a column fell out of, kept so the bytewise `=` below
-    // can say what that fallback costs — which is a fact about the position
-    // that refused the order, not about the column's own declared type.
+    // can say what that fallback costs at the position that refused the order.
     let mut fell_back: Option<&NestedCompare> = None;
     if resolved.columns[index] != ColumnResolution::Mapped {
         if ordering {
@@ -2232,8 +2045,7 @@ pub(crate) fn resolve_term(
         // The one refusal that does not end by offering `=`/`!=`: the file
         // says the server's equality is not a comparison of the text it
         // holds, so the fall-through below would be a wrong answer rather
-        // than a weaker one. The two NULL tests have already returned — they
-        // read no value and need no comparison.
+        // than a weaker one. The two NULL tests have already returned.
         return Err(Error::UncomparablePredicateColumn {
             header_offset,
             column: predicate.column.clone(),
@@ -2241,13 +2053,11 @@ pub(crate) fn resolve_term(
             reason: unanswerable_reason(reason),
         });
     } else if let Some(ComparisonPlan::Nested(tree)) = plan {
-        // A nested column whose shape is compared here but one of whose
+        // A nested column whose *shape* is compared here but one of whose
         // positions is not: the ordering operators are refused naming that
         // position, and `=`/`!=` fall back to a byte comparison of the
-        // container's whole text — **announced**, not silent, because the
-        // position that took the order away is also what makes the fallback
-        // an answer the server does not have (`array_cmp` raises for a
-        // `json` element rather than returning a comparison).
+        // container's whole text, announced rather than silent — `array_cmp`
+        // raises for a `json` element rather than returning a comparison.
         if let Some((path, declared)) = tree.uncomparable() {
             if ordering {
                 return Err(refuse(&nested_refusal(&path, &declared)));
@@ -2259,11 +2069,9 @@ pub(crate) fn resolve_term(
         // A column the *resolver* calls nested and the register does not.
         // One shape reaches it — a range whose DDL stated no `subtype`, so
         // the resolver keeps the struct with `Utf8View` bounds and the
-        // register has no bound type to name a refusal after — and it is
-        // also where the two walks would land if they ever came to disagree
-        // about a declared type, which matters because the alternative to
-        // refusing is ordering a container's literal with a *scalar*
-        // comparison, silently.
+        // register has no bound type to name a refusal after — and it is also
+        // where the two walks would land if they disagreed about a declared
+        // type, the alternative to refusing being a silent scalar comparison.
         if ordering {
             return Err(refuse(NESTED));
         }
@@ -2288,9 +2096,9 @@ pub(crate) fn resolve_term(
                     .collect(),
             )
         }
-        // A nested column, compared structurally: the literal is read once,
-        // in the `array_in`/`record_in` superset, and the field per row in
-        // the strict `*_out` grammar the dump holds.
+        // A nested column, compared structurally: the literal is read once in
+        // the `array_in`/`record_in` superset, the field per row in the strict
+        // `*_out` grammar.
         Some(ComparisonPlan::Nested(tree)) => (
             Comparison::Nested(Box::new(NestedComparison {
                 plan: tree.clone(),
@@ -2309,32 +2117,25 @@ pub(crate) fn resolve_term(
                 .collect(),
         ),
         // No plan at all: an ordering operator has already been refused, so
-        // this is `Eq`/`Ne` on a column the register does not compare — the
-        // string comparison every column made before this one, which the
-        // file's own canonical form is what makes right.
+        // this is `Eq`/`Ne` on a column the register does not compare — a
+        // comparison of the canonical `*_out` text the file holds.
         _ if ordering => return Err(refuse(NO_ORDER)),
         //
-        // **What it announces comes from one of two places**, and which one
-        // is whether a nested tree sent the column here.
+        // What it announces comes from one of two places, and which one is
+        // whether a nested tree sent the column here.
         //
-        // A column that *fell out of a tree* announces per position, exactly
-        // as the structural arm above does: the position that refused the
-        // order carries what the bytewise fallback costs there — `AsText`
-        // for a `json` element, since `array_cmp` raises rather than
-        // comparing and the server has no `=` for the container either — and
-        // any other position whose divergence reaches equality is announced
-        // beside it. A position the *resolver* declined instead (I22, I26)
-        // never reaches here; its column is not `Mapped`.
+        // A column that *fell out of a tree* announces per position, as the
+        // structural arm above does: the position that refused the order, and
+        // any other whose divergence reaches equality. A position the
+        // *resolver* declined instead (I22, I26) never reaches here; its
+        // column is not `Mapped`.
         //
         // Every other column announces off its own **resolution**, and only
-        // two of those outcomes are claims this build cannot stand behind:
-        // `UnknownType` and `OpaqueBaseType` say the file *named* a type and
-        // this build models nothing for it — `box`, `money`, a C-level base
-        // type — and `box_eq` compares areas, so bytewise is a guess there
+        // `UnknownType` and `OpaqueBaseType` do: the file *named* a type this
+        // build models nothing for — `box`, `money`, a C-level base type —
+        // and `box_eq` compares areas, so bytewise is a guess there
         // ([`ComparisonDivergence::UnmodelledType`]). Every other outcome is
-        // silent: a column with no DDL behind it at all — `--data-only`,
-        // `--schema-mode strings` — has nothing said about its type to
-        // qualify, which `ResolvedSchema::notes` reports on L2 anyway.
+        // silent, there being no declared type to qualify.
         _ => (
             Comparison::Canonical(text.to_string()),
             match fell_back {
@@ -2368,17 +2169,16 @@ pub(crate) fn resolve_term(
 
 impl ResolvedTerm {
     /// Evaluate this term against `raw_row`, in SQL's three-valued domain.
-    /// `table` and `row_offset` are context for the one error this can
-    /// raise: a field that does not decode as its mapped type under a
-    /// comparison that reads it, which is `Error::FieldDecode`, worded
-    /// exactly as the typed build path words it.
+    /// `table` and `row_offset` are context for the one error this can raise:
+    /// a field that does not decode as its mapped type under a comparison
+    /// that reads it, which is `Error::FieldDecode`, worded exactly as the
+    /// typed build path words it.
     ///
-    /// **A NULL field is [`Truth::Unknown`]** under every comparing
-    /// operator. Four operators answer two-valued instead, and they are
-    /// exactly the ones that exist because unknown swallows everything else:
-    /// `IsNull`/`IsNotNull`, which compare nothing, and the two `IS DISTINCT
-    /// FROM` forms, which count NULL as a value — so `IsDistinctFrom` on a
-    /// NULL field is `True` where `Ne` is `Unknown`.
+    /// A NULL field is [`Truth::Unknown`] under every comparing operator. The
+    /// four that answer two-valued instead are `IsNull`/`IsNotNull`, which
+    /// compare nothing, and the two `IS DISTINCT FROM` forms, which count
+    /// NULL as a value — so `IsDistinctFrom` on a NULL field is `True` where
+    /// `Ne` is `Unknown`.
     fn eval(
         &self,
         raw_row: RawRow<'_>,
@@ -2463,9 +2263,8 @@ impl ResolvedTerm {
 }
 
 /// One [`Expr`] resolved against one `COPY` block: the same tree, with each
-/// leaf replaced by the [`ResolvedTerm`] that block's schema produced. It is
-/// what a block's `Active` state carries, and it is evaluable on its own —
-/// nothing walks it beside the caller's `Expr`.
+/// leaf replaced by the [`ResolvedTerm`] that block's schema produced. What a
+/// block's `Active` state carries, and evaluable on its own.
 #[derive(Debug, Clone)]
 pub(crate) enum ResolvedExpr {
     Term(ResolvedTerm),
@@ -2477,8 +2276,8 @@ pub(crate) enum ResolvedExpr {
 impl ResolvedExpr {
     /// Whether `raw_row` survives this filter: its root evaluates
     /// [`Truth::True`]. `Unknown` and `False` both drop the row, which is
-    /// what makes the collapse at the root sound even though it is not sound
-    /// under a `Not` (`docs/design/decisions.md`, "D54").
+    /// what makes the collapse at the root sound though it is not sound under
+    /// a `Not` (`docs/design/decisions.md`, "D54").
     pub(crate) fn matches(
         &self,
         raw_row: RawRow<'_>,
@@ -2493,20 +2292,15 @@ impl ResolvedExpr {
     /// value is determined.
     ///
     /// `exact` is what makes that "the root's" rather than "this node's". A
-    /// caller that cannot tell `False` from `Unknown` — [`Self::matches`],
-    /// and any `And`/`Or` whose own caller cannot — lets this node return
-    /// `False` for an unknown and stop at the first non-`True` conjunct,
-    /// which is precisely the short-circuit a bare conjunction had before
-    /// expressions existed. Only [`Self::Not`] distinguishes them, so it is
-    /// the one node that evaluates its child exactly, and everything beneath
-    /// a `Not` is exact too.
+    /// caller that cannot tell `False` from `Unknown` — [`Self::matches`], and
+    /// any `And`/`Or` whose own caller cannot — lets this node return `False`
+    /// for an unknown and stop at the first non-`True` conjunct. Only
+    /// [`Self::Not`] distinguishes them, so it is the one node that evaluates
+    /// its child exactly, and everything beneath a `Not` is exact too.
     ///
-    /// A decode failure is therefore raised only where evaluation reaches
-    /// it: which rows error depends on where the term sits in the tree, and
-    /// on whether a `Not` sits above it. That is the same asymmetry
-    /// projection already has — deciding needs strictly less than
-    /// materializing — and a row whose answer was settled by a field that
-    /// did decode returns nothing wrong.
+    /// A decode failure is therefore raised only where evaluation reaches it:
+    /// which rows error depends on where the term sits in the tree, and on
+    /// whether a `Not` sits above it (`docs/design/decisions.md`, "D54").
     fn eval(
         &self,
         exact: bool,
@@ -2546,9 +2340,8 @@ impl ResolvedExpr {
 
     /// The divergence notes for every term in this tree, in the order the
     /// caller wrote them — what `TableStream::comparison_notes` hands back.
-    /// Derived from the resolved tree rather than stored beside it, so the
-    /// two cannot disagree, and per *term* rather than per column because
-    /// which divergences reach an operator depends on the operator.
+    /// Derived from the resolved tree rather than stored beside it, so the two
+    /// cannot disagree (`docs/design/decisions.md`, "D59").
     pub(crate) fn comparison_notes(&self) -> Vec<ComparisonNote> {
         let mut out = Vec::new();
         self.collect_notes(&mut out);
@@ -2605,9 +2398,8 @@ mod tests {
         ResolvedTerm { op: p.op, index, compared: if p.op.is_ordering() { None } else { compared } }
     }
 
-    /// The one note a term announces, or `None` — the shape every test here
-    /// but the nested ones wants, since a scalar column has at most one
-    /// diverging position.
+    /// The one note a term announces, or `None` — a scalar column has at most
+    /// one diverging position.
     #[track_caller]
     fn only_note(term: &ResolvedTerm) -> Option<ComparisonNote> {
         let notes = term.comparison_notes();
@@ -2622,8 +2414,7 @@ mod tests {
             .unwrap()
     }
 
-    /// Whether a row survives a conjunction of text terms — the shape every
-    /// filter had before expressions existed.
+    /// Whether a row survives a conjunction of text terms.
     fn matches_all(filters: &[Predicate], indices: &[usize], raw_row: &[u8]) -> bool {
         let expr = ResolvedExpr::And(
             filters
@@ -2645,8 +2436,8 @@ mod tests {
                 kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] },
             },
             // A range whose DDL stated no `subtype` — the one shape the
-            // resolver still calls nested and the register refuses outright,
-            // since there is no bound type to name the refusal after.
+            // resolver calls nested and the register refuses outright, there
+            // being no bound type to name the refusal after.
             TypeDef {
                 name: "public.opaquerange".into(),
                 kind: TypeKind::Range {
@@ -2680,8 +2471,7 @@ mod tests {
 
     /// A one-column schema for a **nested** declared type, resolved against
     /// `types` so the Arrow type, the nested plan and the comparison plan
-    /// agree the way they do in a real query — which is what decides whether
-    /// a term is refused, compared structurally, or compared as text.
+    /// agree the way they do in a real query.
     fn nested_column(declared: &str, types: &[TypeDef]) -> ResolvedSchema {
         let crate::pgtype::TypeOutcome::Mapped(data_type, plan) =
             crate::pgtype::resolve_declared_type(declared, types)
@@ -2753,9 +2543,8 @@ mod tests {
         assert_eq!(truth(&p, b"other\ta", 1), Truth::False);
     }
 
-    /// A NULL field is *unknown* under `=` and `!=`, not false — and a row
-    /// is kept only where the root is true, so the observable answer is the
-    /// one it always was.
+    /// A NULL field is *unknown* under `=` and `!=`, not false, and a row is
+    /// kept only where the root is true.
     #[test]
     fn null_is_unknown_under_eq_and_ne() {
         let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
@@ -2814,8 +2603,7 @@ mod tests {
     #[test]
     fn an_empty_conjunction_matches_every_row() {
         assert!(matches_all(&[], &[], b"a\tb"));
-        // And the default filter *is* that conjunction, which is what makes
-        // "no filter" need no case of its own on the row path.
+        // And the default filter *is* that conjunction.
         assert!(matches!(Expr::default(), Expr::And(ref children) if children.is_empty()));
     }
 
@@ -2831,7 +2619,7 @@ mod tests {
     }
 
     /// Two terms on one column are an ordinary conjunction, and a
-    /// contradictory pair simply matches nothing — no term is special-cased.
+    /// contradictory pair matches nothing — no term is special-cased.
     #[test]
     fn two_terms_may_name_the_same_column() {
         let filters = [
@@ -2842,9 +2630,9 @@ mod tests {
         assert!(!matches_all(&filters, &[0, 0], b"2"));
     }
 
-    /// The row every tree test below is evaluated over: field 0 holds `1`
-    /// and field 1 is NULL, which is how a leaf of each truth value is
-    /// built out of real terms rather than out of a constant.
+    /// The row every tree test below is evaluated over: field 0 holds `1` and
+    /// field 1 is NULL, so a leaf of each truth value is built out of real
+    /// terms rather than out of a constant.
     const THREE_VALUED_ROW: &[u8] = b"1\t\\N";
 
     /// A leaf that evaluates to `want` over [`THREE_VALUED_ROW`]: `f0 = 1`,
@@ -2919,11 +2707,10 @@ mod tests {
         out
     }
 
-    /// **The short-circuit is verdict-preserving.** `matches` evaluates the
-    /// root inexactly — an `And` may report `False` for an `Unknown` and
-    /// stop, which is the short-circuit a bare conjunction always had — and
-    /// that is sound only because nothing above the root tells the two
-    /// apart. Asserted over every tree of height three rather than argued.
+    /// The short-circuit is verdict-preserving: `matches` evaluates the root
+    /// inexactly — an `And` may report `False` for an `Unknown` and stop —
+    /// and nothing above the root tells the two apart. Asserted over every
+    /// tree of height three.
     #[test]
     fn the_root_verdict_survives_the_short_circuit() {
         let all = trees(2);
@@ -2963,11 +2750,10 @@ mod tests {
         }
     }
 
-    /// **A decode failure surfaces only where evaluation reaches it**, so
-    /// which rows error depends on where the term sits in the tree — and on
-    /// whether a `Not` sits above it, since a `Not` is the one node that has
-    /// to tell `False` from `Unknown` and therefore cannot short-circuit an
-    /// unknown away.
+    /// A decode failure surfaces only where evaluation reaches it, so which
+    /// rows error depends on where the term sits in the tree — and on whether
+    /// a `Not` sits above it, a `Not` being the one node that has to tell
+    /// `False` from `Unknown` and so cannot short-circuit an unknown away.
     #[test]
     fn a_decode_failure_surfaces_only_where_it_is_reached() {
         let schema = two_integers();
@@ -3004,10 +2790,10 @@ mod tests {
                 .is_err()
         );
 
-        // An unknown conjunct settles the *root*, so the walk stops there —
+        // An unknown conjunct settles the *root*, so the walk stops there
         // until a `Not` above it makes `Unknown` and `False` different
-        // answers and the conjunction has to finish. Field 2 does not exist
-        // in this row, so the leading term reads NULL and is unknown.
+        // answers. Field 2 does not exist in this row, so the leading term
+        // reads NULL and is unknown.
         let unknown = || {
             let p = Predicate { column: "c".into(), op: PredicateOp::Eq, value: Some("x".into()) };
             ResolvedExpr::And(vec![ResolvedExpr::Term(text_term(&p, 2)), corrupt()])
@@ -3027,13 +2813,13 @@ mod tests {
     #[test]
     fn missing_column_index_is_treated_as_null() {
         // Can't happen once a caller resolves the index from the block's own
-        // schema, but the fallback is still exercised here.
+        // schema; the fallback is exercised anyway.
         let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
         assert_eq!(truth(&p, b"onlyone", 5), Truth::Unknown);
     }
 
     /// The four operators over the boundary itself — the case a `<` / `<=`
-    /// pair differs on, and the one an off-by-one would pass.
+    /// pair differs on.
     #[test]
     fn the_four_operators_differ_only_at_the_boundary() {
         for (op, below, at, above) in [
@@ -3054,8 +2840,8 @@ mod tests {
         }
     }
 
-    /// Numbers order as numbers, which is the whole point: the text
-    /// comparison `Eq` uses would put `9` after `10`.
+    /// Numbers order as numbers: the text comparison `Eq` uses would put `9`
+    /// after `10`.
     #[test]
     fn integers_order_numerically_not_lexicographically() {
         assert!(ordered("integer", DataType::Int32, PredicateOp::Gt, "9", "10").unwrap());
@@ -3063,8 +2849,8 @@ mod tests {
     }
 
     /// An `oid` is unsigned across its whole range: `4294967295` is above
-    /// `2147483648`, which an `Int32` reading of the same bytes would make
-    /// two negative numbers.
+    /// `2147483648`, which an `Int32` reading would make two negative
+    /// numbers (I39).
     #[test]
     fn an_oid_orders_over_the_whole_unsigned_range() {
         let oid = |op, value, field| ordered("oid", DataType::UInt32, op, value, field).unwrap();
@@ -3074,9 +2860,8 @@ mod tests {
     }
 
     /// `oidin` reads a signed literal by wrapping it — `-1` is 4294967295 —
-    /// and this build does not implement that. The literal is refused rather
-    /// than read as −1, which no OID could equal: a weaker answer, never a
-    /// wrong one.
+    /// and this build does not implement that, so the literal is refused
+    /// rather than read as −1.
     #[test]
     fn a_signed_oid_literal_is_refused_rather_than_wrapped() {
         let p = order_predicate(PredicateOp::Lt, "-1");
@@ -3098,8 +2883,7 @@ mod tests {
     }
 
     /// A literal finer than the column's scale is refused rather than
-    /// rounded: it is decoded with the column's own decoder, and that decoder
-    /// does not drop non-zero digits.
+    /// rounded: the column's own decoder does not drop non-zero digits.
     #[test]
     fn a_literal_finer_than_the_columns_scale_is_refused() {
         let err =
@@ -3125,8 +2909,8 @@ mod tests {
         assert!(f(PredicateOp::Lt, "NaN", "-Infinity"));
     }
 
-    /// A NULL field is excluded by every ordering operator, the same collapse
-    /// `Eq`/`Ne` make.
+    /// A NULL field is excluded by every ordering operator, as under
+    /// `Eq`/`Ne`.
     #[test]
     fn a_null_field_matches_no_ordering_operator() {
         for op in [PredicateOp::Lt, PredicateOp::Le, PredicateOp::Gt, PredicateOp::Ge] {
@@ -3136,8 +2920,7 @@ mod tests {
 
     /// The three special values are ordered exactly, on whichever side they
     /// appear: `-infinity` below every finite value, `infinity` above it, and
-    /// each equal to itself (I34). What cannot hold them is `Date32`, not the
-    /// file.
+    /// each equal to itself (I34).
     #[test]
     fn date_and_timestamp_infinities_are_ordered() {
         let date = |op, value, field| ordered("date", DataType::Date32, op, value, field).unwrap();
@@ -3188,8 +2971,7 @@ mod tests {
     }
 
     /// The spelling is the one that type's own `*_out` writes and nothing
-    /// else, so a `date` reading `Infinity` is still undecodable — on either
-    /// side. The same strictness the nested codec applies, and the reason a
+    /// else, so a `date` reading `Infinity` is undecodable on either side. A
     /// text column holding the word is unaffected.
     #[test]
     fn only_the_types_own_spelling_is_special() {
@@ -3208,9 +2990,8 @@ mod tests {
     }
 
     /// A field that is not a value of its mapped type is the same fault the
-    /// typed build path reports, with the same wording and the same escape.
-    /// This is the population the special values were separated *from*:
-    /// nothing can be concluded about `twelve` in an `integer`.
+    /// typed build path reports, with the same wording and the same escape —
+    /// the population the special values are separated *from*.
     #[test]
     fn an_undecodable_field_is_a_field_decode_error() {
         let err = ordered("integer", DataType::Int32, PredicateOp::Gt, "0", "twelve").unwrap_err();
@@ -3222,8 +3003,7 @@ mod tests {
     }
 
     /// A literal that is not a value of the column's type is refused when the
-    /// block's schema resolves — before a row is read, and once rather than
-    /// per row.
+    /// block's schema resolves, once rather than per row.
     #[test]
     fn an_undecodable_literal_is_refused_at_resolution() {
         let p = order_predicate(PredicateOp::Gt, "twelve");
@@ -3235,7 +3015,7 @@ mod tests {
     }
 
     /// Refusal is by resolution and plan, and the three reasons are distinct
-    /// facts about the column rather than one catch-all.
+    /// facts about the column.
     #[test]
     fn an_ordering_operator_is_refused_off_a_mapped_scalar_column() {
         let p = order_predicate(PredicateOp::Gt, "1");
@@ -3248,8 +3028,7 @@ mod tests {
         ));
 
         // A nested column the register compares not at all — a range whose
-        // DDL stated no subtype, so there is no bound type to compare by and
-        // none to name in a refusal either.
+        // DDL stated no subtype, so there is no bound type to compare by.
         let mut nested = one_column("public.opaquerange", DataType::Utf8View);
         nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         assert!(matches!(
@@ -3267,9 +3046,8 @@ mod tests {
         assert!(reason.contains("`[]` inside it is `json`"), "{reason}");
 
         // A `Mapped` scalar column whose *declared* type the register
-        // refuses: unreachable from the mapping table today — everything it
-        // maps to a scalar has a comparison in the same arm — and refused
-        // anyway.
+        // refuses: unreachable from the mapping table, everything it maps to
+        // a scalar having a comparison in the same arm, and refused anyway.
         assert!(matches!(
             resolve_term(&p, 0, &one_column("mystery", DataType::UInt8), 0).unwrap_err(),
             Error::UnorderedPredicateColumn { reason, .. } if reason == NO_ORDER
@@ -3277,10 +3055,9 @@ mod tests {
     }
 
     /// A range type declaring a `canonical` function refuses **every**
-    /// comparing operator, `=` and `!=` included, and does it through an
-    /// error of its own — the one refusal that cannot end by offering the
-    /// text comparison, because that comparison is exactly what the file says
-    /// is not the server's.
+    /// comparing operator, `=` and `!=` included, through an error of its own
+    /// — the one refusal that cannot end by offering the text comparison,
+    /// that comparison being what the file says is not the server's.
     ///
     /// The two NULL tests still answer: they read no value and consult no
     /// plan.
@@ -3337,15 +3114,15 @@ mod tests {
         assert_eq!(text.divergence, ComparisonDivergence::UnknownCollation);
         assert!(text.message().contains("collation"), "{}", text.message());
 
-        // `character(n)` asks the same collation question, over its own
-        // trimming comparison — so a bare column gets the collation
-        // sentence and one declaring `COLLATE "C"` gets no note at all.
+        // `character(n)` asks the same collation question over its own
+        // trimming comparison, so a bare column gets the collation sentence
+        // and one declaring `COLLATE "C"` gets no note at all.
         let padded = note("character(10)", DataType::Utf8View, "a").unwrap();
         assert_eq!(padded.divergence, ComparisonDivergence::UnknownCollation);
         assert!(padded.message().contains("collation"), "{}", padded.message());
 
         // `json` is what `AsText` has left: the server defines no comparison
-        // for it at all, so bytewise offers more than the server does.
+        // for it at all.
         let other = note("json", DataType::Utf8View, "1").unwrap();
         assert_eq!(other.divergence, ComparisonDivergence::AsText);
         assert!(other.message().contains("no comparison"), "{}", other.message());
@@ -3371,11 +3148,11 @@ mod tests {
     }
 
     /// `jsonb` orders by kind before value, and the kind order is
-    /// `JsonbValue`'s own type codes: an object above an array, an array
-    /// above every scalar, and a boolean above a number above a string above
-    /// JSON `null` (I41). The first three pairs are cells of
+    /// `JsonbValue`'s own type codes: an object above an array, an array above
+    /// every scalar, and a boolean above a number above a string above JSON
+    /// `null` (I41). The first three pairs are cells of
     /// `fixtures/16/oracle/comparisons.tsv`; the rest are the probe I41
-    /// records, since no oracle case carries a boolean or a string leaf.
+    /// records, no oracle case carrying a boolean or a string leaf.
     ///
     /// `holds` reads `field <op> literal`, the direction a filter asks in.
     #[test]
@@ -3393,9 +3170,9 @@ mod tests {
         assert!(holds(r#"{"a": 1}"#, PredicateOp::Gt, "null"));
     }
 
-    /// A container is ordered by its **size** before any member of it, and
-    /// only then member-wise — which is what makes a one-pair object sort
-    /// below a two-pair one whatever the keys say.
+    /// A container is ordered by its **size** before any member of it and
+    /// only then member-wise, so a one-pair object sorts below a two-pair one
+    /// whatever the keys say.
     #[test]
     fn a_jsonb_container_is_ordered_by_size_first() {
         let holds =
@@ -3432,9 +3209,7 @@ mod tests {
     /// A top-level scalar is stored in a one-element pseudo-array, and
     /// `compareJsonbContainers` lets the element count *overwrite* the
     /// `rawScalar` answer — so a scalar sorts below a one- or many-element
-    /// array and **above an empty one** (I41). It is the one place a "scalars
-    /// sort below arrays" rule is wrong, and nothing but modelling the
-    /// wrapper produces it.
+    /// array and **above an empty one** (I41).
     #[test]
     fn a_top_level_scalar_outranks_an_empty_array() {
         let holds =
@@ -3443,17 +3218,16 @@ mod tests {
         assert!(holds("null", PredicateOp::Gt, "[]"));
         assert!(holds("1", PredicateOp::Lt, "[1]"));
         assert!(holds("1", PredicateOp::Lt, "[1, 2]"));
-        // An object is above a scalar whatever its size, because the two
-        // opening tokens differ and the type order decides before any count.
+        // An object is above a scalar whatever its size: the type order
+        // decides before any count.
         assert!(holds("1", PredicateOp::Lt, "{}"));
         assert!(holds("[]", PredicateOp::Lt, "{}"));
     }
 
     /// A `jsonb` number is a `numeric`, so `1`, `1.0` and `1e0` are one value
-    /// and `9` is below `10` — none of which a bytewise comparison of the
-    /// text gives. Whitespace, key order and a duplicate key are normalized
-    /// on the way in, the last of them to the **last** value written, which
-    /// is what the server stores.
+    /// and `9` is below `10`. Whitespace, key order and a duplicate key are
+    /// normalized on the way in, the last of them to the **last** value
+    /// written, which is what the server stores.
     #[test]
     fn a_jsonb_literal_is_canonicalized_the_way_the_server_stores_it() {
         fn holds(field: &str, op: PredicateOp, literal: &str) -> bool {
@@ -3476,8 +3250,7 @@ mod tests {
         // that backslash — so the field below is four characters of escaping
         // deep and the literal, which is COPY-decoded already, is two. Both
         // spellings a JSON escape has for the character are one value;
-        // *unescaped* it is not a JSON string at all, which the refusal test
-        // below pins.
+        // *unescaped* it is not a JSON string at all.
         equal("\"a\\\\tb\"", "\"a\\u0009b\"");
         // A character above the BMP, which `escape_json` writes as itself and
         // a literal may write as a surrogate pair.
@@ -3486,8 +3259,7 @@ mod tests {
 
     /// The literal grammar is `jsonb_in`'s and nothing wider: every one of
     /// these is text the server itself refuses (I41), so it is
-    /// `Error::PredicateValueDecode` naming the value rather than a
-    /// comparison that means something else.
+    /// `Error::PredicateValueDecode` naming the value.
     #[test]
     fn a_jsonb_literal_outside_the_input_grammar_is_refused() {
         for literal in [
@@ -3513,16 +3285,15 @@ mod tests {
                 ordered("jsonb", DataType::Utf8View, PredicateOp::Gt, literal, "1").unwrap_err();
             assert!(matches!(err, Error::PredicateValueDecode { .. }), "{literal:?}: {err:?}");
         }
-        // A field the parser refuses is the other fault, worded as the build
-        // path words it.
+        // A field the parser refuses is the other fault.
         let err = ordered("jsonb", DataType::Utf8View, PredicateOp::Gt, "1", "{oops}").unwrap_err();
         assert!(matches!(err, Error::FieldDecode { .. }), "{err:?}");
     }
 
-    /// A `jsonb` column announces one thing and it is not the text-held
-    /// sentence: the structure is compared exactly and only a string leaf is
-    /// left, on the database's collation (I32, I41). `json` keeps the
-    /// text-held sentence, because the server defines no order for it at all.
+    /// A `jsonb` column announces that its structure is compared exactly and
+    /// only a string leaf is left, on the database's collation (I32, I41).
+    /// `json` keeps the text-held sentence, the server defining no order for
+    /// it at all.
     #[test]
     fn jsonb_announces_its_string_leaves_and_json_stays_text_held() {
         let note = |declared, literal| {
@@ -3539,9 +3310,9 @@ mod tests {
         assert!(json.message().contains("no comparison"), "{}", json.message());
     }
 
-    /// A bare `numeric` orders as a decimal, which is the row's whole
-    /// content: `9` is below `10` where the text it is held as puts it above,
-    /// and trailing zeros are not part of the value (I33).
+    /// A bare `numeric` orders as a decimal: `9` is below `10` where the text
+    /// it is held as puts it above, and trailing zeros are not part of the
+    /// value (I33).
     #[test]
     fn a_bare_numeric_orders_by_value_not_by_its_text() {
         let n =
@@ -3567,8 +3338,8 @@ mod tests {
     }
 
     /// All three of `numeric`'s specials are ordered, and only a *bare*
-    /// column admits the two infinities: any typmod rejects them (I34), so
-    /// on a `numeric(77,0)` the literal is refused rather than compared.
+    /// column admits the two infinities: any typmod rejects them (I34), so on
+    /// a `numeric(77,0)` the literal is refused.
     #[test]
     fn a_bare_numeric_carries_all_three_specials() {
         let n =
@@ -3579,8 +3350,7 @@ mod tests {
         assert!(n(PredicateOp::Ge, "NaN", "NaN"));
         assert!(!n(PredicateOp::Gt, "NaN", "NaN"));
         assert!(n(PredicateOp::Gt, "-Infinity", "Infinity"));
-        // `numeric_out`'s spelling and nothing else, the same strictness
-        // `date`'s lower-case `infinity` gets.
+        // `numeric_out`'s spelling and nothing else.
         let err = ordered("numeric", DataType::Utf8View, PredicateOp::Gt, "inf", "0").unwrap_err();
         assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
 
@@ -3592,9 +3362,8 @@ mod tests {
         assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
     }
 
-    /// An enum orders by declaration order, which is what the server does
-    /// (I33) and is the reverse of the label text here: `sad` is declared
-    /// first and sorts last alphabetically.
+    /// An enum orders by declaration order (I33), which is the reverse of the
+    /// label text here: `sad` is declared first and sorts last alphabetically.
     #[test]
     fn an_enum_orders_by_declaration_order() {
         let dict = || DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
@@ -3605,7 +3374,7 @@ mod tests {
         assert!(!e(PredicateOp::Gt, "sad", "sad"));
 
         // A label the type does not declare is not a value of the column, on
-        // either side — the same two faults every other type raises.
+        // either side.
         let err = ordered("public.mood", dict(), PredicateOp::Gt, "nope", "sad").unwrap_err();
         assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
         let err = ordered("public.mood", dict(), PredicateOp::Gt, "sad", "SAD").unwrap_err();
@@ -3615,11 +3384,10 @@ mod tests {
     /// An `interval`'s months collapse to 30 days and its days to 86400
     /// seconds, so `1 mon`, `30 days` and `720:00:00` are one value written
     /// three ways — every answer here read out of
-    /// `fixtures/17/oracle/comparisons.tsv`, where the server itself says so.
-    /// A bytewise comparison gets all three wrong.
+    /// `fixtures/17/oracle/comparisons.tsv`.
     ///
-    /// `holds` reads `field <op> literal`, which is the direction a filter
-    /// asks in: the row's own value on the left.
+    /// `holds` reads `field <op> literal`, the direction a filter asks in:
+    /// the row's own value on the left.
     #[test]
     fn an_interval_orders_by_its_collapsed_span() {
         let holds = |field, op, literal| {
@@ -3632,8 +3400,7 @@ mod tests {
         }
         // `-1 days` is below `00:00:00`, which bytewise it is not.
         assert!(holds("-1 days", PredicateOp::Lt, "00:00:00"));
-        // The full `interval_out` form, with a year part and a time tail:
-        // fourteen months and change, so above `1 mon` and below `2 years`.
+        // The full `interval_out` form, with a year part and a time tail.
         let full = "1 year 2 mons 3 days 04:05:06";
         assert!(holds(full, PredicateOp::Lt, "2 years"));
         assert!(holds(full, PredicateOp::Gt, "1 mon"));
@@ -3641,8 +3408,8 @@ mod tests {
         // part that follows a negative one is `AddPostgresIntPart`'s.
         assert!(holds("-1 days -04:00:00", PredicateOp::Lt, "-1 days"));
         assert!(holds("-1 days +04:00:00", PredicateOp::Gt, "-1 days"));
-        // The two infinities are v17 values read on every file, and they are
-        // `date_out`'s spellings rather than `numeric_out`'s.
+        // The two infinities are read on every file, in `date_out`'s
+        // spellings rather than `numeric_out`'s.
         assert!(holds("infinity", PredicateOp::Gt, "1 mon"));
         assert!(holds("-infinity", PredicateOp::Lt, "1 mon"));
         assert!(holds("infinity", PredicateOp::Ge, "infinity"));
@@ -3661,9 +3428,8 @@ mod tests {
 
     /// The `interval` grammar is `interval_out`'s under `IntervalStyle =
     /// postgres` (I4) and nothing wider, so a spelling the server's *input*
-    /// function takes is refused rather than guessed at. The first three are
-    /// literals `fixtures/17/oracle/literals.tsv` records the server
-    /// accepting.
+    /// function takes is refused. The first three are literals
+    /// `fixtures/17/oracle/literals.tsv` records the server accepting.
     #[test]
     fn an_interval_literal_outside_the_output_grammar_is_refused() {
         for literal in ["1.5 hours", "P1Y2M", "1 century", "1 month", "@ 1 day", "", "1 day "] {
@@ -3689,9 +3455,9 @@ mod tests {
             ordered("time with time zone", DataType::Utf8View, op, literal, field).unwrap()
         };
         assert!(holds("00:00:00-05", PredicateOp::Gt, "00:00:00+00"));
-        // Same instant, different zone: ordered, and not equal. PostgreSQL
-        // sorts by the stored zone, which is seconds *west* of GMT, so the
-        // value displaying `-05` ranks above the one displaying `+00`.
+        // Same instant, different zone: ordered, and not equal. The stored
+        // zone is seconds *west* of GMT, so the value displaying `-05` ranks
+        // above the one displaying `+00`.
         assert!(holds("00:00:00-05", PredicateOp::Gt, "05:00:00+00"));
         assert!(!holds("00:00:00-05", PredicateOp::Le, "05:00:00+00"));
         // `24:00:00` is a real boundary value, above everything finite here.
@@ -3705,8 +3471,8 @@ mod tests {
     }
 
     /// `network_cmp_internal`: family first, then the shorter netmask's worth
-    /// of address bits, then the netmask, then the whole address. The last
-    /// pair is the one no address-then-netmask key can get right.
+    /// of address bits, then the netmask, then the whole address (I40). The
+    /// last pair is the one no address-then-netmask key can get right.
     #[test]
     fn inet_orders_by_family_then_prefix_then_netmask() {
         let holds =
@@ -3714,16 +3480,15 @@ mod tests {
         // IPv4 below every IPv6 address, whatever the bytes say.
         assert!(holds("192.168.1.1", PredicateOp::Lt, "::1"));
         assert!(holds("192.168.1.1", PredicateOp::Gt, "10.0.0.1"));
-        // Same first eight bits, different netmask: the netmask decides, and
-        // it decides *before* the host bits below it are looked at.
+        // Same first eight bits, different netmask: the netmask decides,
+        // *before* the host bits below it are looked at.
         assert!(holds("10.1.0.0/8", PredicateOp::Lt, "10.0.0.0/16"));
         assert!(holds("10.0.0.0/16", PredicateOp::Gt, "10.1.0.0/8"));
     }
 
     /// `cidr` compares exactly as `inet` does; the only difference is that
     /// `cidr_in` refuses a value with a bit set below its netmask, and so
-    /// does this — the refusal `oid`'s signed literal earns, on a wider
-    /// grammar (`fixtures/16/oracle/literals.tsv`).
+    /// does this (`fixtures/16/oracle/literals.tsv`).
     #[test]
     fn a_cidr_refuses_a_literal_with_host_bits_set() {
         let holds =
@@ -3744,8 +3509,7 @@ mod tests {
 
     /// The two MAC types compare as their bytes and differ only in width, so
     /// a six-octet literal is not a `macaddr8` value and the reverse holds
-    /// too. The colon form is the only one read, which is what
-    /// `macaddr_out` writes.
+    /// too. The colon form is the only one read, `macaddr_out` writing it.
     #[test]
     fn a_macaddr_compares_as_its_octets_at_its_own_width() {
         let holds = |declared, field, op, literal| {
@@ -3789,8 +3553,7 @@ mod tests {
             )
             .unwrap()
         );
-        // `\x00ff` is COPY-escaped in the row, and sorts after `\x00`:
-        // `memcmp` ties, then the longer value wins.
+        // `\x00ff` is COPY-escaped in the row and sorts after `\x00`.
         assert!(ordered("bytea", DataType::Binary, PredicateOp::Gt, "\\x00", "\\\\x00ff").unwrap());
     }
 
@@ -3816,20 +3579,17 @@ mod tests {
 
     /// `=` renders the filter's literal into the spelling the file holds and
     /// compares bytes, so a literal that is the same *value* written
-    /// differently now matches — which is what the untyped comparison could
-    /// not do.
+    /// differently matches.
     #[test]
     fn equality_canonicalizes_the_literal_once() {
         let eq = |declared, data_type, literal, field| {
             ordered(declared, data_type, PredicateOp::Eq, literal, field).unwrap()
         };
-        // The scale the column declares, which the file always writes out in
-        // full and a person never does.
+        // The scale the column declares, which the file writes out in full.
         assert!(eq("numeric(10,2)", DataType::Decimal128(10, 2), "1.5", "1.50"));
         assert!(!eq("numeric(10,2)", DataType::Decimal128(10, 2), "1.5", "1.51"));
         // A leading zero, a leading plus, a case difference, an input-only
-        // separator: every one of them is the same value the file spells one
-        // way.
+        // separator: each is the same value the file spells one way.
         assert!(eq("integer", DataType::Int32, "+007", "7"));
         assert!(eq("oid", DataType::UInt32, "0042", "42"));
         assert!(eq(
@@ -3839,16 +3599,16 @@ mod tests {
             "0af1c2d3-0000-0000-0000-000000000000"
         ));
         assert!(eq("macaddr", DataType::Utf8View, "08:00:2B:01:02:03", "08:00:2b:01:02:03"));
-        // The two `numeric` kinds part company on `NaN`, and both spell it
-        // the way their own `*_out` does, so it renders to itself.
+        // Both `numeric` kinds spell `NaN` the way their own `*_out` does,
+        // so it renders to itself.
         assert!(eq("numeric(10,2)", DataType::Decimal128(10, 2), "NaN", "NaN"));
         assert!(eq("date", DataType::Date32, "infinity", "infinity"));
         assert!(!eq("date", DataType::Date32, "infinity", "-infinity"));
     }
 
-    /// `=` on a `text` or `varchar` column is the byte comparison it has
-    /// always been: `CompareKind::Text` renders the literal to itself, so
-    /// nothing on the per-row path moved for the commonest column there is.
+    /// `=` on a `text` or `varchar` column is a byte comparison:
+    /// `CompareKind::Text` renders the literal to itself, so the commonest
+    /// column there is carries no per-row work.
     #[test]
     fn equality_on_a_text_column_is_unchanged() {
         for declared in ["text", "character varying(10)", "name", "json"] {
@@ -3869,10 +3629,9 @@ mod tests {
         };
         assert!(eq("a", "a         "));
         assert!(eq("a         ", "a"));
-        // A tab is a value byte, not padding — the byte that separates
-        // trim-and-compare from pad-and-compare. The *field* side is COPY
-        // TEXT, so the tab is written escaped; the literal side is a
-        // `Predicate`'s own value and is not.
+        // A tab is a value byte, not padding. The *field* side is COPY TEXT,
+        // so the tab is written escaped; the literal side is a `Predicate`'s
+        // own value and is not.
         assert!(!eq("a", "a\\t        "));
         assert!(eq("a\t", "a\\t        "));
     }
@@ -3905,16 +3664,14 @@ mod tests {
         // by value (I41), so one document is written two ways.
         assert!(eq("jsonb", "{\"a\": 1.50}", "{\"a\": 1.5}"));
         assert!(!eq("jsonb", "{\"a\": 1.5}", "{\"a\": 2}"));
-        // The two that decode for a reason about this build rather than about
-        // PostgreSQL: reproducing their output functions is the cost being
-        // refused, not a non-unique spelling.
+        // The two that decode for a reason about this build rather than
+        // about PostgreSQL.
         assert!(eq("inet", "10.0.0.1/32", "10.0.0.1"));
         assert!(eq("time with time zone", "00:00:00+00", "00:00:00+00"));
         assert!(!eq("time with time zone", "00:00:00+00", "01:00:00+01"));
     }
 
-    /// `!=` is `=` inverted, and a NULL field matches neither — the collapse
-    /// `IS NULL` exists to get past.
+    /// `!=` is `=` inverted, and a NULL field matches neither.
     #[test]
     fn typed_inequality_inverts_and_a_null_matches_neither() {
         let ne = |literal, field| {
@@ -3933,8 +3690,7 @@ mod tests {
 
     /// A literal that is not a value of the column's type is
     /// `Error::PredicateValueDecode` before a row is read — the same refusal
-    /// an ordering operator makes, on the same output-form-only grammar. The
-    /// answer it replaces is an empty result that reads like an answer.
+    /// an ordering operator makes, on the same output-form-only grammar.
     #[test]
     fn an_undecodable_equality_literal_is_refused_at_resolution() {
         for (declared, data_type, literal) in [
@@ -3959,8 +3715,8 @@ mod tests {
 
     /// The refusal names the form the column's `CompareKind` reads, not only
     /// the value it turned down — so a `boolean` is told how a `boolean` is
-    /// written rather than told that `true` is not one, and `interval`,
-    /// `inet` and `macaddr` are answered by the same sentence.
+    /// written, and `interval`, `inet` and `macaddr` are answered by the same
+    /// sentence.
     #[test]
     fn a_refused_literal_names_the_form_the_column_accepts() {
         for (declared, data_type, literal, accepted) in [
@@ -3974,8 +3730,7 @@ mod tests {
             ("inet", DataType::Utf8View, "10", "a full IPv4 or IPv6 address"),
             ("macaddr", DataType::Utf8View, "08-00-2b-01-02-03", "six colon-separated hex pairs"),
             // The two arms where the kind's own payload is the answer: the
-            // labels the enum actually declares, and the scale that makes the
-            // `numeric` clause true rather than false.
+            // enum's declared labels, and the `numeric` scale.
             ("public.mood", DataType::Utf8View, "furious", "declared labels: 'sad', 'ok'"),
             (
                 "numeric(10,2)",
@@ -4014,10 +3769,10 @@ mod tests {
         assert!(clause.ends_with("and 3 more; see `info --detail`"), "{clause}");
     }
 
-    /// The `numeric(p,s)` clause branches on the sign of the scale, because
-    /// what the column refuses does: a positive scale bounds the fraction, a
-    /// zero scale admits no fraction at all, and a negative one — legal from
-    /// PostgreSQL 15 — admits only multiples of a power of ten.
+    /// The `numeric(p,s)` clause branches on the sign of the scale, as what
+    /// the column refuses does: a positive scale bounds the fraction, a zero
+    /// scale admits no fraction, and a negative one admits only multiples of
+    /// a power of ten.
     #[test]
     fn the_numeric_clause_branches_on_the_sign_of_the_scale() {
         for (scale, expected) in [
@@ -4028,9 +3783,8 @@ mod tests {
         ] {
             assert_eq!(accepted_form(&CompareKind::Decimal(scale)), expected, "scale {scale}");
         }
-        // The scale-free arm keeps the scale-free clause, and it is true
-        // there: a `p > 76` column compares as text and refuses no literal
-        // for its shape.
+        // The scale-free arm keeps the scale-free clause: a `p > 76` column
+        // compares as text and refuses no literal for its shape.
         assert_eq!(
             accepted_form(&CompareKind::Numeric { infinities: false }),
             "as a number, or `NaN`"
@@ -4038,7 +3792,7 @@ mod tests {
     }
 
     /// A divergence is operator-conditional, and three of the five reach
-    /// ordering alone: every libc collation is deterministic, so `texteq` is a
+    /// ordering alone: a libc collation is deterministic, so `texteq` is a
     /// byte comparison whatever the collation is.
     #[test]
     fn a_collation_divergence_does_not_reach_equality() {
@@ -4059,8 +3813,7 @@ mod tests {
             Some(ComparisonDivergence::JsonbStringCollation)
         );
         assert_eq!(note("jsonb", PredicateOp::Eq, "1"), None);
-        // `json` is the one that reaches both, because the server defines
-        // neither operator for it.
+        // `json` reaches both, the server defining neither operator for it.
         for op in [PredicateOp::Gt, PredicateOp::Eq] {
             assert_eq!(
                 note("json", op, "1").map(|n| n.divergence),
@@ -4070,14 +3823,14 @@ mod tests {
     }
 
     /// A column the register has no comparison for still answers `=`, as
-    /// text — and says so where the column is a resolved scalar, because
-    /// `box_eq` compares areas and a byte comparison does not.
+    /// text, and says so where the column is a resolved scalar: `box_eq`
+    /// compares areas and a byte comparison does not.
     #[test]
     fn a_column_with_no_comparison_answers_equality_and_says_when_that_is_a_guess() {
         let p = order_predicate(PredicateOp::Eq, "(1,1),(0,0)");
 
-        // `box` is `ColumnResolution::UnknownType` in a real query — this
-        // build maps no Arrow type for it — which is the outcome the
+        // `box` is `ColumnResolution::UnknownType` in a real query, this
+        // build mapping no Arrow type for it, and that is the outcome the
         // announcement is keyed on.
         let mut scalar = one_column("box", DataType::Utf8View);
         scalar.columns[0] = ColumnResolution::UnknownType;
@@ -4098,33 +3851,27 @@ mod tests {
         );
 
         // A nested column the register does not compare is the other
-        // plan-less population and is silent: its `range_out` text is a
-        // faithful rendering of the value, so a byte comparison of two
-        // canonical spellings is the server's answer.
+        // plan-less population and is silent: its `range_out` text renders
+        // the value, so a byte comparison of two canonical spellings is the
+        // server's answer.
         let mut nested = one_column("public.opaquerange", DataType::Utf8View);
         nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         assert_eq!(only_note(&resolve_term(&p, 0, &nested, 0).unwrap()), None);
 
         // So is a column no DDL explained — `--data-only`, or
-        // `--schema-mode strings`, which resolves nothing by design. There is
-        // no declared type to qualify, and `ResolvedSchema::notes` has
-        // already said so on L2.
+        // `--schema-mode strings`. There is no declared type to qualify, and
+        // `ResolvedSchema::notes` has already said so.
         let mut undeclared = one_column("mystery", DataType::Utf8View);
         undeclared.columns[0] = ColumnResolution::NotDeclared;
         assert_eq!(only_note(&resolve_term(&p, 0, &undeclared, 0).unwrap()), None);
     }
 
     /// A nested column one of whose positions has no order here still
-    /// answers `=` — over the container's whole text — and **says what that
-    /// costs**.
-    ///
-    /// The position is what makes it worth saying: `array_cmp` and
-    /// `record_cmp` look up the position type's comparison proc and raise
-    /// when there is none, so a `json` element takes the server's `=` away
-    /// as surely as it takes its order, and a byte comparison of two
-    /// `array_out` strings is an answer PostgreSQL does not have rather than
-    /// a weaker one. That is
-    /// [`ComparisonDivergence::AsText`]'s own sentence, one level down, and
+    /// answers `=`, over the container's whole text, and **says what that
+    /// costs**: `array_cmp` and `record_cmp` look up the position type's
+    /// comparison proc and raise when there is none, so a `json` element
+    /// takes the server's `=` away as surely as it takes its order. That is
+    /// [`ComparisonDivergence::AsText`]'s own sentence one level down, and
     /// the note names the position exactly as the ordering refusal does.
     #[test]
     fn a_nested_uncomparable_position_announces_under_equality() {
@@ -4148,8 +3895,8 @@ mod tests {
                 assert_eq!(note.divergence, ComparisonDivergence::AsText, "{declared}");
                 assert!(note.message().contains("no equality"), "{}", note.message());
             }
-            // The rows themselves have not moved: `=` is still the byte
-            // comparison of the container's own canonical text it was.
+            // `=` is the byte comparison of the container's own canonical
+            // text.
             let term =
                 resolve_term(&order_predicate(PredicateOp::Eq, "{1,2}"), 0, &resolved, 0).unwrap();
             assert!(
@@ -4165,8 +3912,8 @@ mod tests {
                     .is_true(),
                 "{declared}"
             );
-            // And the announcement replaces a silence under `=`, not the
-            // refusal under `<`, which still names the same position.
+            // The announcement is under `=`; `<` still names the same
+            // position in a refusal.
             let Err(err) = resolve_term(&order_predicate(PredicateOp::Lt, "{}"), 0, &resolved, 0)
             else {
                 panic!("{declared} is ordered");
@@ -4176,17 +3923,17 @@ mod tests {
     }
 
     /// A column the **resolver** declined announces off its resolution and
-    /// never off its tree — which is the boundary worth pinning, because
-    /// the tree such a column carries does hold an `Uncomparable` position
-    /// and the announcement above must not reach it. Both shapes resolve
-    /// the column itself to text (I22, I26), so `resolve_term` drops the
-    /// plan one branch earlier than the nested one.
+    /// never off its tree — the boundary worth pinning, since the tree such a
+    /// column carries does hold an `Uncomparable` position and the
+    /// announcement above must not reach it. Both shapes resolve the column
+    /// itself to text (I22, I26), so `resolve_term` drops the plan one branch
+    /// earlier than the nested one.
     ///
-    /// Silence is the right answer for `public.intarr[]` — PostgreSQL
-    /// orders it through `array_ops` and its `array_out` text renders the
-    /// value, so bytewise is the server's answer. For `box[]` it is `KD10`
-    /// one level down, `box_eq` comparing areas; closing that is a question
-    /// about which *resolutions* announce, not about this tree.
+    /// Silence is the right answer for `public.intarr[]`: PostgreSQL orders it
+    /// through `array_ops` and its `array_out` text renders the value. For
+    /// `box[]` it is `KD10` one level down, `box_eq` comparing areas; closing
+    /// that is a question about which *resolutions* announce, not about this
+    /// tree.
     #[test]
     fn a_position_the_resolver_declined_announces_nothing() {
         let types =
@@ -4212,10 +3959,10 @@ mod tests {
     /// announces under **both** operator families (I42) — the only collation
     /// divergence that reaches `=`.
     ///
-    /// The rows still come back bytewise, which is the defect the note is
-    /// there to name: under a non-deterministic collation two values spelled
-    /// differently can be equal to the server, so `=` is a weaker filter than
-    /// the server's and `<` is a different order.
+    /// The rows still come back bytewise, which is the defect the note names:
+    /// under a non-deterministic collation two values spelled differently can
+    /// be equal to the server, so `=` is a weaker filter than the server's and
+    /// `<` is a different order.
     #[test]
     fn a_non_deterministic_collation_announces_under_equality_and_ordering() {
         let collations = [CollationDef { name: "public.icu_ci".to_string(), deterministic: false }];
@@ -4240,8 +3987,7 @@ mod tests {
         let plain = schema(Some("public.icu_ci"), &[]);
         assert_eq!(only_note(&resolve_term(&eq, 0, &plain, 0).unwrap()), None);
 
-        // And the comparison itself has not moved: it is still `Text`, so the
-        // term evaluates bytewise.
+        // The comparison itself is `Text`, so the term evaluates bytewise.
         let term = resolve_term(&eq, 0, &schema(Some("public.icu_ci"), &collations), 0).unwrap();
         assert!(only_note(&term).is_some());
         assert!(
@@ -4257,22 +4003,21 @@ mod tests {
         );
     }
 
-    /// The three tie-breaks `array_cmp` reaches only when the elements
-    /// agree, in the order it reaches them: element count, then dimension
-    /// count, then the dimensions themselves, then the lower bounds (I45).
+    /// The three tie-breaks `array_cmp` reaches only when the elements agree,
+    /// in the order it reaches them: element count, then dimension count,
+    /// then the dimensions themselves, then the lower bounds (I45).
     ///
-    /// **The dimension pair is the one no oracle case carries.**
-    /// `{{1,2,3,4}}` and `{{1,2},{3,4}}` hold the same four elements in the
-    /// same order, are both two-dimensional, and differ only in `dims` —
-    /// `[1,4]` against `[2,2]` — which is three steps into the tie-break.
+    /// The dimension pair is the one no oracle case carries: `{{1,2,3,4}}` and
+    /// `{{1,2},{3,4}}` hold the same four elements in the same order, are both
+    /// two-dimensional, and differ only in `dims`.
     #[test]
     fn an_array_falls_back_to_its_shape_only_when_the_elements_agree() {
         let types = test_types();
         let lt = |field: &str, literal: &str| {
             nested_verdict("integer[]", &types, PredicateOp::Lt, field, literal).unwrap()
         };
-        // Elements first: `{1,9}` is above `{2,0}` nowhere, because element 0
-        // settles it before any count is looked at.
+        // Elements first: element 0 settles `{1,9}` against `{2,0}` before
+        // any count is looked at.
         assert_eq!(lt("{1,9}", "{2,0}"), Truth::True);
         // Element count, once the shorter array's elements agree.
         assert_eq!(lt("{1,2}", "{1,2,3}"), Truth::True);
@@ -4330,10 +4075,9 @@ mod tests {
     }
 
     /// `int2vector` names no operator of its own, so the server compares it
-    /// through `anyarray` polymorphism — element-wise, not over the text.
-    /// `'2' < '10'` is where the two answers part company, which is the
-    /// property the committed oracle case is built around and the one a
-    /// text fallback would get wrong.
+    /// through `anyarray` polymorphism — element-wise, not over the text
+    /// (I47). `'2' < '10'` is where the two answers part company, and is what
+    /// the committed oracle case is built around.
     #[test]
     fn an_int2vector_compares_element_wise_and_not_as_text() {
         let lt = |field: &str, literal: &str| {
@@ -4349,7 +4093,7 @@ mod tests {
             nested_verdict("int2vector", &[], PredicateOp::Eq, "1 2 3", "1 2 3").unwrap(),
             Truth::True
         );
-        // The literal takes `int2vectorin`'s superset, since the type has no
+        // The literal takes `int2vectorin`'s superset, the type having no
         // element input function for the leaf rule to apply to.
         assert_eq!(
             nested_verdict("int2vector", &[], PredicateOp::Eq, "1 2", "  +1   02  ").unwrap(),
@@ -4367,12 +4111,10 @@ mod tests {
     }
 
     /// The literal side reads the container's `*_in` superset and each leaf
-    /// its own `*_out` form — one rule at every depth, and it is the rule a
-    /// scalar column already has.
-    ///
-    /// So `{ 1 , 2 }` is `{1,2}` (that is `array_in` dropping whitespace
-    /// around an element) while `( 1 ,a)` is refused (that is `record_in`
-    /// keeping it, and `1 ` not being what `int4out` writes).
+    /// its own `*_out` form — one rule at every depth. So `{ 1 , 2 }` is
+    /// `{1,2}` (`array_in` drops whitespace around an element) while
+    /// `( 1 ,a)` is refused (`record_in` keeps it, and `1 ` is not what
+    /// `int4out` writes).
     #[test]
     fn a_nested_literal_is_lenient_about_the_container_and_strict_about_the_leaf() {
         let types = [TypeDef {
@@ -4401,12 +4143,11 @@ mod tests {
 
     /// A range's bounds settle infinity, then the held value, then
     /// inclusivity — and an exclusive bound's answer depends on *which end*
-    /// it is, because it means "just after" at the lower end and "just
-    /// before" at the upper (I46).
+    /// it is (I46).
     ///
-    /// `empty` below everything is the fourth rule, and it is not
-    /// recoverable from the bounds: `empty` and `(,)` both have two absent
-    /// bounds and sit at opposite ends of the order.
+    /// `empty` below everything is the fourth rule, and it is not recoverable
+    /// from the bounds: `empty` and `(,)` both have two absent bounds and sit
+    /// at opposite ends of the order.
     #[test]
     fn a_range_bound_settles_infinity_then_value_then_inclusivity() {
         let types = test_types();
@@ -4432,11 +4173,10 @@ mod tests {
     /// continuous one is not, so `[1,10]` and `[1,10)` are one value of
     /// `int4range` and two of `numrange` (I46).
     ///
-    /// **Two rewrites, and the second is not a successor at all**: bounds
-    /// that end up equal without both ends including the point collapse to
-    /// `empty`, which is why `int4range '(1,2)'` holds nothing. It runs
-    /// before the canonical function *and* after it, which is the only way
-    /// `(1,2)` reaches it.
+    /// Two rewrites, and the second is not a successor: bounds that end up
+    /// equal without both ends including the point collapse to `empty`, which
+    /// is why `int4range '(1,2)'` holds nothing. It runs before the canonical
+    /// function *and* after it, which is the only way `(1,2)` reaches it.
     #[test]
     fn a_discrete_range_is_canonicalized_and_a_continuous_one_is_not() {
         let types = test_types();
@@ -4459,10 +4199,9 @@ mod tests {
             Truth::True
         );
         // The successor can leave the subtype's range, which the server
-        // raises on. `int8range` is where this build can see it; `int4range`
-        // cannot, because a leaf literal is read as `i64` whatever the
-        // column's width (see `order_key`) and the register never learns the
-        // narrower one.
+        // raises on. `int8range` is where this build can see it: a leaf
+        // literal is read as `i64` whatever the column's width (see
+        // `order_key`), so `int4range` cannot.
         assert!(matches!(
             nested_verdict(
                 "int8range",
@@ -4489,12 +4228,10 @@ mod tests {
     /// anything is compared, so several spellings are one value and the
     /// comparison itself is a plain sequence walk (I46).
     ///
-    /// **Whether two members merge is the range type's question, not the
-    /// bounds'.** `{[1,5),[6,10)}` stays two members even in `int4range`,
-    /// where 5 is missing between them; `{[1,5],[6,10)}` becomes one, because
-    /// canonicalization has already made the first `[1,6)`. The same pair of
-    /// literals in `numrange` never merges, since a continuous range has
-    /// points between any two values.
+    /// Whether two members merge is the range type's question, not the
+    /// bounds': `{[1,5),[6,10)}` stays two members even in `int4range`, while
+    /// `{[1,5],[6,10)}` becomes one, canonicalization having already made the
+    /// first `[1,6)`. The same pair in `numrange` never merges.
     #[test]
     fn a_multirange_is_sorted_coalesced_and_emptied_before_it_is_compared() {
         let types = test_types();
@@ -4520,14 +4257,12 @@ mod tests {
 
     /// The comparison register against the committed comparison oracle:
     /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
-    /// the same `resolve_term`/`matches` path a `--filter` takes, and
-    /// compared with what the server itself said
-    /// (`docs/design/decisions.md`, "D70").
+    /// the same `resolve_term`/`matches` path a `--filter` takes, and compared
+    /// with what the server itself said (`docs/design/decisions.md`, "D70").
     ///
-    /// **This is the check the oracle exists for.** `oracle_register.py`
-    /// reconciles register arms against oracle *cases* and
-    /// `oracle_differences.py` reconciles majors against each other; both are
-    /// about which rows exist. Nothing else compares an answer to an answer.
+    /// This is the check the oracle exists for: `oracle_register.py` and
+    /// `oracle_differences.py` are about which rows exist, and nothing else
+    /// compares an answer to an answer.
     mod oracle {
         use std::collections::{BTreeMap, BTreeSet};
         use std::path::{Path, PathBuf};
@@ -4993,7 +4728,7 @@ mod tests {
             );
             // A floor, not a count: the walk skips a cell for four good
             // reasons, and a bug in any of them would leave it asserting
-            // almost nothing while passing. 52,338 today.
+            // almost nothing while passing.
             assert!(asserted > 45_000, "only {asserted} cells asserted");
         }
 
@@ -5065,8 +4800,7 @@ mod tests {
             }
             // Floors, not counts, and the second is the one that matters: a
             // build that canonicalized nothing would still satisfy the first,
-            // because most rows are already written the way the server stores
-            // them. 193 and 42 today.
+            // most rows being already written the way the server stores them.
             assert!(asked > 150, "only {asked} range literals asserted");
             assert!(rewritten > 30, "only {rewritten} of them needed rewriting");
         }

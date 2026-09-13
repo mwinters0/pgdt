@@ -11,12 +11,9 @@
 //! Turning the result back into on-disk bytes is `crate::copy::encode_field`'s
 //! job, not this module's.
 //!
-//! **`decode_*` and `parse_*` are two scanners, not one with a flag.** The
-//! first reads a dump and is deliberately strict; the second reads a filter's
-//! literal and is deliberately permissive. The strictness is what makes decode
-//! and render inverses, so it cannot be loosened, and the permissiveness is
-//! what makes `tags={a, b}` mean what it looks like, so it cannot be
-//! tightened.
+//! **`decode_*` and `parse_*` are two scanners, not one with a flag**
+//! (`docs/design/decisions.md`, "D45"): the first reads a dump and cannot
+//! loosen, the second reads a filter's literal and cannot tighten.
 //!
 //! # The output side: one scanner, three parameter sets
 //!
@@ -76,10 +73,9 @@ enum Escape {
 
 /// A set of bytes as 256 bits, tested by index rather than by search.
 ///
-/// The membership test is the innermost operation of the whole nested codec:
 /// `needs_quote` asks it once per byte of every token, in both directions, so
-/// one indexed bit answers it in a shift and a mask where a byte slice would
-/// be a linear `[u8]::contains` (`nested-decode-micro`). Every `Syntax` is a
+/// one indexed bit answers in a shift and a mask where a byte slice would be
+/// a linear `[u8]::contains` (`nested-decode-micro`). Every `Syntax` is a
 /// `const`, so every set is built at compile time.
 #[derive(Debug, Clone, Copy)]
 struct ByteSet([u64; 4]);
@@ -197,17 +193,14 @@ pub(crate) fn push_array_null(out: &mut String) {
 /// Quote, in place, the array element whose rendered text is already sitting
 /// at `out[mark..]`.
 ///
-/// **The common element needs no quoting and this copies nothing** — the text
-/// is already where it belongs, so a bare element costs one [`needs_quote`]
-/// walk and no move at all. One that does need quoting is taken aside into
-/// `scratch` and re-emitted through [`push_token`]; `scratch` is cleared per
-/// element and reused across the whole value, so a fifty-element row allocates
-/// at most once and only if some element was quotable.
-///
-/// **The scratch is unavoidable rather than incidental.** The quoting decision
-/// is made from the *finished* element text and escaping expands it, so there
-/// is no room in `out` to write the escaped form over the raw one — and
-/// `String` offers no safe way to shift bytes within itself.
+/// **The common element needs no quoting and this copies nothing** — a bare
+/// element costs one [`needs_quote`] walk and no move. One that does need
+/// quoting is taken aside into `scratch` and re-emitted through
+/// [`push_token`]; `scratch` is cleared per element and reused across the
+/// whole value, so a value allocates at most once and only if some element
+/// was quotable. The scratch is unavoidable: the quoting decision is made
+/// from the *finished* element text and escaping expands it, so there is no
+/// room in `out` to write the escaped form over the raw one.
 pub(crate) fn quote_array_element(out: &mut String, mark: usize, scratch: &mut String) {
     if !needs_quote(&out[mark..], &ARRAY) {
         return;
@@ -224,9 +217,7 @@ pub(crate) fn quote_array_element(out: &mut String, mark: usize, scratch: &mut S
 /// **Borrowed unless the token actually carries an escape.** The first pass
 /// looks for the closing quote and copies nothing; a `\` or a doubled `""`
 /// aborts it into the second, which rebuilds the token from the bytes already
-/// walked. Real `pg_dump` output quotes far more tokens than it escapes — a
-/// value holding a space or a separator is quoted with nothing inside to undo
-/// — so the borrowed arm is the common one even here.
+/// walked.
 fn scan_quoted(s: &[u8], mut i: usize, escape: Escape) -> Option<(Cow<'_, str>, usize)> {
     debug_assert_eq!(s.get(i), Some(&b'"'));
     i += 1;
@@ -332,9 +323,7 @@ fn scan_token<'a>(
 /// type carries a lifetime. `array_out` writes most elements verbatim — an
 /// escape appears only inside a quoted token that held a `"` or a `\` — so
 /// the common element is a slice of the field and only the rare escaped one
-/// is copied; a `String` per element is the larger part of the per-element
-/// decode slope (`nested-decode-micro`,
-/// `docs/design/decisions.md`, "D45").
+/// is copied (`nested-decode-micro`; `docs/design/decisions.md`, "D45").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArrayLiteral<'a> {
     /// Row-major, flattened across every dimension. `None` is a SQL NULL
@@ -771,15 +760,13 @@ fn canonical_int2(token: &str) -> Option<i16> {
 /// decimal spellings joined by **one** space, and the empty string for the
 /// empty vector (I47).
 ///
-/// It is a fourth container form and it shares nothing with the other three —
-/// no wrapper, no separator an element could contain, no quoting, no escaping
-/// and no NULL element, `int2vector` having no way to hold one. So it needs
-/// neither a [`Syntax`] nor a token scanner, and gets neither.
+/// A fourth container form sharing nothing with the other three — no wrapper,
+/// no separator an element could contain, no quoting, no escaping and no NULL
+/// element — so it needs neither a [`Syntax`] nor a token scanner.
 ///
 /// Strict, as every `decode_*` here is: an element is read only in the
 /// spelling `pg_itoa` writes, so `+1`, `01`, `-0` and a doubled space are all
-/// refused rather than guessed at. [`parse_int2vector`] is the input side and
-/// takes all four.
+/// refused. [`parse_int2vector`] is the input side and takes all four.
 pub fn decode_int2vector(s: &str) -> Option<Vec<i16>> {
     if s.is_empty() {
         return Some(Vec::new());
@@ -805,11 +792,8 @@ pub fn render_int2vector(values: &[i16]) -> String {
 //
 // Everything above reads what a dump *holds*. What follows reads what a user
 // *typed* — a filter's right-hand side, which the `*_in` functions accept a
-// good deal more of than the matching `*_out` ever writes (I44). The two are
-// deliberately separate scanners: `decode_*` may not loosen, because its
-// strictness is what makes it and `render_*` inverses, and `parse_*` may not
-// tighten, because refusing `{a, b}` makes a typed nested filter worse to use
-// than the text comparison it replaces.
+// good deal more of than the matching `*_out` ever writes (I44), through
+// separate scanners (`docs/design/decisions.md`, "D45").
 //
 // **They are four grammars, not one**, and whitespace is where they first
 // disagree: `array_in` drops unquoted whitespace around an element, while
@@ -820,10 +804,10 @@ pub fn render_int2vector(values: &[i16]) -> String {
 //
 // The result is the same `ArrayLiteral`/`RecordLiteral`/`RangeLiteral` the
 // decoders produce, holding the parts **as the user spelled them**: an
-// element is whatever text the server would have handed the element type's own
-// `*_in`, not that type's canonical output. Putting the two sides of a
-// comparison into one spelling is the caller's job, since only the caller
-// knows the element type.
+// element is whatever text the server would have handed the element type's
+// own `*_in`, not that type's canonical output. Putting the two sides of a
+// comparison into one spelling is the caller's job, only the caller knowing
+// the element type.
 
 /// PostgreSQL's `MAXDIM`: the most dimensions an array value may have.
 /// `crate::index::MAX_ARRAY_DIMS` is the same number for the shape census;
@@ -997,9 +981,7 @@ fn read_array_body<'a>(
                 elements.push(match token {
                     // Owned unconditionally: `array_in` trims, unescapes and
                     // re-cases, so a token here is rarely the bytes the user
-                    // typed. This grammar reads one filter literal per query
-                    // rather than one per row, so the borrow is not worth the
-                    // second scanner it would need.
+                    // typed, and this grammar reads one literal per query.
                     ArrayToken::Elem(value) => Some(Cow::Owned(value)),
                     _ => None,
                 });

@@ -7,87 +7,58 @@
 //! writes, on the way out, what the program held and what glibc was holding
 //! for it.
 //!
-//! # Why it exists
-//!
-//! A peak-RSS reading is one scalar with no decomposition, so the only way to
-//! take it apart is to vary something and subtract — and every subtraction is
-//! another sitting carrying both legs' spreads. That is the right instrument
-//! for *does the shipped rule survive a real allocation* and the wrong one for
-//! *what is the resident set made of*, which is the split
-//! `docs/design/roadmap.md`, "Attribution is introspective; only the gate is
-//! blind", now makes a standing rule. This module is the introspective half:
-//! the process reports its own terms instead of being differenced.
-//!
-//! What each instrument sees, what it is blind to and what it costs is
-//! `docs/design/measurements.md`, "What an instrument can see"; this
-//! mechanism's own section, with what each line means and what it refused, is
+//! This is the introspective half of `docs/design/roadmap.md`, "Attribution is
+//! introspective; only the gate is blind". What each instrument sees, what it
+//! is blind to and what it costs is `docs/design/measurements.md`, "What an
+//! instrument can see"; the mechanism's entry is
 //! `docs/design/decisions.md`, "D13".
 //!
-//! # What it reports, and why none of it needs a sampler
+//! # What it reports
 //!
-//! A snapshot at exit reports the end state rather than the peak, so the
-//! instinct is to poll. Both quantities this project keeps asking for carry
-//! their own high-water instead:
+//! A snapshot at exit, and no sampler, because each quantity carries its own
+//! high-water:
 //!
 //! * **`live_bytes` / `live_peak_bytes`** — exact bytes the *program* asked
-//!   for and had not freed, and the largest that figure ever reached. Kept by
-//!   the counting allocator itself, so the high-water costs nothing beyond the
-//!   atomics already taken.
+//!   for and had not freed, and the largest that figure ever reached, kept by
+//!   the counting allocator itself.
 //! * **`mallinfo_*`** — glibc's own view at exit: `arena` (arena-backed bytes
 //!   obtained from the OS), `hblkhd` (mmap-backed), `uordblks` (in use) and
 //!   `fordblks` (freed, held, still resident). The gap between `uordblks` and
 //!   `live_bytes` is allocator bookkeeping; the gap between `arena` and
 //!   `uordblks` is retention.
 //! * **`malloc_*`** — `malloc_info`'s document-level totals, plus the raw XML,
-//!   which carries **each arena's own `system type="max"`**. That per-arena
-//!   high-water is the one number `mallinfo2` cannot give and the one the
-//!   dynamic-mmap-threshold hypothesis is stated against.
+//!   which carries **each arena's own `system type="max"`** — the one number
+//!   `mallinfo2` cannot give.
 //!
-//! **The two families do not cover the same memory**, so the report says which
-//! each is: `live_scope` and `glibc_scope`, with the note between them. The
+//! **The two families do not cover the same memory**, so the report labels
+//! each: `live_scope` and `glibc_scope`, with the note between them. The
 //! counter sees what passes through Rust's `GlobalAlloc`; glibc sees the whole
-//! process, C included — and `liblzma` is the active `.xz` backend in the
-//! shipped build, so a reader's `XZ_DECODE_FOOTPRINT` of decoder working set
-//! is invisible to one and fully present in the other. Their difference is
-//! therefore not
-//! retention, and labelling it in the report is what stops the subtraction
-//! being made by accident.
+//! process, C included — `liblzma` is the active `.xz` backend, so a reader's
+//! `XZ_DECODE_FOOTPRINT` of decoder working set is invisible to one and fully
+//! present in the other. Their difference is therefore not retention.
 //!
 //! All of it goes to **the file [`OUT_VAR`] names**, and nowhere at all when
 //! that variable is unset — see [`report`].
 //!
-//! # What it is not
+//! **Not a fourth allocator leg**, and **this build never times anything**:
+//! `pgdq --version` names the instrument and `binary_allocator` in
+//! `scripts/measure.py` refuses such a binary.
 //!
-//! **Not a fourth allocator leg.** `ALLOCATOR_LEGS` is the `allocator`
-//! figure's published table, and this build takes an atomic on every
-//! allocation. It is stated rather than bounded: **this build never times
-//! anything**, and `pgdq --version` says so — `binary_allocator` in
-//! `scripts/measure.py` refuses a binary whose `--version` names an
-//! instrument, so an instrumented build cannot be timed as a figure by
-//! accident.
-//!
-//! # The check this instrument owes
-//!
-//! An instrument nobody can falsify is the trap a figure nobody can re-take
-//! already is. What must not happen is that the instrument moves the plan it
-//! reports on, so `main.rs`'s
+//! The instrument must not move the plan it reports on, so `main.rs`'s
 //! `the_instrument_build_resolves_what_the_default_build_resolves` pins the
 //! resolved `jobs=`/`memory_bytes=` pair across every committed runtime root.
-//! It lives beside the other resolution tests because that is what it is
-//! asserting about, and it is compiled into **both** configurations — so
-//! `cargo test -p pgdump_query-cli --features introspect` is the same
-//! assertion re-run under the counting allocator, and the two runs are the two
-//! halves of the comparison.
+//! It is compiled into **both** configurations, so
+//! `cargo test -p pgdump_query-cli --features introspect` re-runs that
+//! assertion under the counting allocator.
 
 /// The environment variable naming the file [`report`] writes to.
 ///
-/// **Unset means no report at all**, which is every run of every build that is
-/// not being measured, and the only state a default build can be in. Shared in
-/// fact rather than in type with `measure.INSTRUMENT_OUT_VAR`; the two live in
-/// two languages and `scripts/test_measure.py` holds them to each other.
+/// **Unset means no report at all**, which is the only state a default build
+/// can be in. Shared in fact rather than in type with
+/// `measure.INSTRUMENT_OUT_VAR`; `scripts/test_measure.py` holds the two to
+/// each other.
 ///
-/// Compiled into both configurations, so the name is one string and the doc
-/// links above it resolve in a default build; only the feature build reads it.
+/// Compiled into both configurations; only the feature build reads it.
 #[cfg_attr(not(feature = "introspect"), allow(dead_code))]
 pub const OUT_VAR: &str = "PGDQ_INTROSPECT_OUT";
 
@@ -95,9 +66,9 @@ pub const OUT_VAR: &str = "PGDQ_INTROSPECT_OUT";
 ///
 /// Held in `main`, so the report is emitted on the ordinary return **and** on
 /// an error propagated out of it, while tokio's blocking pool threads are
-/// still alive — which is the point, since a per-thread arena that has been
-/// torn down reports nothing. The one exit that skips destructors,
-/// `std::process::exit` on the interrupt path, calls [`report`] itself.
+/// still alive — a per-thread arena already torn down reports nothing. The one
+/// exit that skips destructors, `std::process::exit` on the interrupt path,
+/// calls [`report`] itself.
 pub struct AtExit(());
 
 /// Arm the report. A no-op without the `introspect` feature, where [`report`]
@@ -115,26 +86,13 @@ impl Drop for AtExit {
 /// Write the `key=value` lines this build can answer to the file [`OUT_VAR`]
 /// names. Nothing without the feature, and nothing with the variable unset.
 ///
-/// **A file, not a stream.** This is the first of several self-reports a build
-/// is expected to make, and a shared stream is a framing protocol paid once
-/// per writer: every further writer either collides with the `key=value`
-/// grammar or needs markers of its own. A file has one writer by
-/// construction, carries `malloc_info`'s XML without riding a log, and
-/// survives as a run artifact beside the readings it explains.
+/// **A file, not a stream**: one writer by construction, carrying
+/// `malloc_info`'s XML without riding a log. **An environment variable rather
+/// than a flag**, so the command shape is identical to the one a sweep times.
 ///
-/// **An environment variable rather than a flag**, so the command shape is
-/// identical to the one a sweep times — the instrumented leg runs the argv the
-/// figure runs. Unset means no report at all rather than a fallback onto
-/// stderr: the file is the only channel, so there is no second shape of "the
-/// report" for the one caller least able to say which shape it got, and
-/// `measure.parse_reported` reads a file's text rather than picking a block
-/// out of a stream two processes write to.
-///
-/// A write that fails says so on stderr. That is an error, not the report:
-/// the reader's own account of a missing file is what
-/// `docs/design/decisions.md`, "D13",
-/// describes, and a silent failure is the one outcome it cannot tell from a
-/// build without the feature.
+/// A write that fails says so on stderr — an error, not the report: a silent
+/// failure is the one outcome a reader cannot tell from a build without the
+/// feature (`docs/design/decisions.md`, "D13").
 pub fn report() {
     #[cfg(feature = "introspect")]
     {
@@ -149,26 +107,20 @@ mod enabled {
 
     /// Bytes the program has asked for and not yet freed.
     static LIVE: AtomicUsize = AtomicUsize::new(0);
-    /// The largest [`LIVE`] ever reached — the high-water that makes a
-    /// sampler unnecessary.
+    /// The largest [`LIVE`] ever reached.
     static PEAK: AtomicUsize = AtomicUsize::new(0);
 
     /// [`System`] with a counter in front of it.
     ///
-    /// **Over `System` specifically**, not over whichever allocator the build
-    /// selected: the glibc statistics below describe the allocator underneath,
-    /// and counting jemalloc's allocations while reading glibc's idle main
-    /// arena would be two instruments pointed at different heaps. That is why
-    /// `alloc.rs`'s guard refuses `introspect` beside `jemalloc` or
-    /// `mimalloc` rather than ordering them.
+    /// **Over `System` specifically**: the glibc statistics below describe the
+    /// allocator underneath, so counting another allocator's allocations would
+    /// point two instruments at different heaps. Hence `alloc.rs`'s guard.
     pub struct Counting;
 
-    /// `Relaxed` throughout, and `PEAK` is a high-water rather than a
-    /// snapshot: the two atomics are read only after every thread that
-    /// touched them has stopped, so nothing here orders anything else, and a
-    /// concurrent allocation that lands between the `fetch_add` and the
-    /// `fetch_max` can only make the recorded peak smaller than the true one.
-    /// It is a lower bound on the live high-water, stated as one.
+    /// `Relaxed` throughout: the atomics are read only after every thread
+    /// that touched them has stopped, so nothing here orders anything else. A
+    /// concurrent allocation landing between the `fetch_add` and the
+    /// `fetch_max` can only understate the peak, so `PEAK` is a lower bound.
     fn took(bytes: usize) {
         let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
         PEAK.fetch_max(live, Ordering::Relaxed);
@@ -226,17 +178,13 @@ mod enabled {
     /// nothing at all where the variable is unset.
     ///
     /// **The whole file is rewritten, and the last writer wins.** One process
-    /// writes one report, at its own exit, so there is nothing to append to;
-    /// a run that re-used a previous run's path would otherwise be read as
-    /// that run's, which is the one confusion a truncating write cannot
-    /// produce.
+    /// writes one report, at its own exit, so there is nothing to append to,
+    /// and a run re-using a previous run's path cannot be read as that run's.
     pub fn write_report() {
         let Some(path) = std::env::var_os(super::OUT_VAR) else { return };
         let path = std::path::PathBuf::from(path);
         if let Err(err) = std::fs::write(&path, report_text()) {
-            // Not the report — an error saying there is none. A silent failure
-            // here is indistinguishable from a build without the feature,
-            // which is exactly what the reader must be able to tell apart.
+            // Not the report — an error saying there is none.
             eprintln!(
                 "pgdq: the introspection report could not be written to {}: {err}",
                 path.display()
@@ -245,18 +193,9 @@ mod enabled {
     }
 
     /// The whole report, as text, so the formatting is testable without a
-    /// process to run.
-    ///
-    /// **Every quantity carries its scope, because the two families do not
-    /// cover the same memory.** `live_*` is what passed through Rust's
-    /// `GlobalAlloc`; `mallinfo_*` and `malloc_*` are glibc's view of the
-    /// whole process, C allocations included. Their difference is decoder
-    /// working set plus bookkeeping plus retention, and reading it as
-    /// retention alone is the mistake [`SCOPE_NOTE`] exists to stop — see
-    /// `docs/design/decisions.md`, "D13".
-    ///
-    /// The note's lines carry no `=`, so `measure.parse_reported` ignores
-    /// them exactly as it ignores the XML below.
+    /// process to run. Every quantity carries its scope, and [`SCOPE_NOTE`]
+    /// sits between the two families; the note's lines carry no `=`, so
+    /// `measure.parse_reported` ignores them as it ignores the XML below.
     pub fn report_text() -> String {
         let mut out = String::from("instrument=counting-allocator\n");
         out.push_str("live_scope=rust-global-alloc\n");
@@ -294,10 +233,8 @@ mod enabled {
                 out.push_str(&format!("malloc_heaps={}\n", totals.heaps));
                 out.push_str(&format!("malloc_system_current={}\n", totals.system_current));
                 out.push_str(&format!("malloc_system_max={}\n", totals.system_max));
-                // Verbatim, after the keys. Every line of it fails
-                // `measure.parse_reported`'s `key=value` match and is ignored
-                // there, which is what lets the per-arena detail sit in the
-                // same file the harness reads for the totals.
+                // Verbatim, after the keys: every line fails
+                // `measure.parse_reported`'s `key=value` match.
                 out.push_str("# malloc_info\n");
                 out.push_str(&xml);
                 if !xml.ends_with('\n') {
@@ -312,18 +249,16 @@ mod enabled {
     #[cfg(not(target_env = "gnu"))]
     fn push_glibc(out: &mut String) {
         // The counting half is allocator-independent and still exact; the
-        // glibc half simply does not exist off glibc, and saying so beats
-        // printing zeros that read like an instrument that works.
+        // glibc half does not exist off glibc, and saying so beats zeros that
+        // read like an instrument that works.
         out.push_str("# mallinfo2/malloc_info: this build is not linked against glibc\n");
     }
 
     /// `malloc_info`'s XML, captured through `open_memstream`.
     ///
     /// The buffer is glibc's own — allocated inside `open_memstream`, not
-    /// through the global allocator — so it is released with `libc::free` and
-    /// never reaches [`Counting`]'s counters. Freeing it any other way would
-    /// both corrupt the heap and make the instrument's own allocations show up
-    /// in its reading.
+    /// through the global allocator — so it must be released with `libc::free`
+    /// and never reaches [`Counting`]'s counters.
     #[cfg(target_env = "gnu")]
     fn malloc_info_xml() -> Option<String> {
         let mut buf: *mut libc::c_char = std::ptr::null_mut();
@@ -351,12 +286,9 @@ mod enabled {
 
 /// The parse over `malloc_info`'s XML, and nothing else.
 ///
-/// **Compiled whenever the tests are, not only under the feature.** The glibc
-/// call above cannot exist in a default build, but its *parse* is ordinary
-/// string work with a failure mode that would go unnoticed — a number read off
-/// the wrong element still looks like a plausible byte count — so it stays
-/// under `cargo test --workspace`'s cold review rather than only under the
-/// build that can call it.
+/// Compiled whenever the tests are, not only under the feature: the parse is
+/// ordinary string work whose failure mode goes unnoticed — a number read off
+/// the wrong element still looks like a plausible byte count.
 #[cfg(any(feature = "introspect", test))]
 mod xml {
     /// `malloc_info`'s document-level totals — the sums over every arena,
@@ -373,10 +305,8 @@ mod xml {
     /// **The last occurrence wins, and that is the whole parse.** Each
     /// `<heap>` carries its own `<system type="current"/>` and `<system
     /// type="max"/>`, and glibc prints the document-level pair after all of
-    /// them — so "the last one" *is* "the total", without a parser that has to
-    /// know the element nesting. The per-arena values are not summed here:
-    /// they are in the XML the report prints verbatim, which is where a
-    /// per-arena question is answered.
+    /// them, so "the last one" *is* "the total". Per-arena values are not
+    /// summed here; they are in the XML the report prints verbatim.
     pub fn totals_of(xml: &str) -> Totals {
         Totals {
             heaps: xml.matches("<heap nr=").count(),
@@ -398,17 +328,14 @@ mod xml {
 /// The report's own shape, which only the instrument build can produce.
 ///
 /// Compiled under the feature alone — `report_text` does not exist without it
-/// — so these run in `cargo test -p pgdump_query-cli --features introspect`,
-/// which is also where the resolution half of the instrument's check runs.
+/// — so these run in `cargo test -p pgdump_query-cli --features introspect`.
 #[cfg(all(test, feature = "introspect"))]
 mod instrumented_tests {
     use super::enabled::report_text;
 
-    /// **The scope labels are the report's, not the reader's.** A consumer
-    /// that differenced `live_peak_bytes` against `malloc_system_max` would be
-    /// subtracting a Rust-only count from a whole-process one and calling the
-    /// remainder retention; the two keys are what make that visible in the
-    /// artifact rather than only in the document about it.
+    /// The scope labels are the report's, not the reader's: a consumer
+    /// differencing `live_peak_bytes` against `malloc_system_max` would
+    /// subtract a Rust-only count from a whole-process one.
     #[test]
     fn every_quantity_states_which_memory_it_covers() {
         let text = report_text();
@@ -433,8 +360,8 @@ mod tests {
 
     /// A two-arena document, shaped as glibc prints one: each `<heap>` carries
     /// its own `system` pair and the document-level pair follows the last of
-    /// them. What is pinned is that the totals are the trailing pair and not
-    /// the last heap's — the two differ here on purpose.
+    /// them. The totals must be the trailing pair and not the last heap's —
+    /// the two differ here on purpose.
     const XML: &str = concat!(
         "<malloc version=\"1\">\n",
         "<heap nr=\"0\">\n<sizes>\n</sizes>\n",

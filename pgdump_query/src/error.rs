@@ -26,9 +26,9 @@ pub enum Error {
     Arrow(#[from] arrow::error::ArrowError),
     /// From `xz_seek`: a walk, a seek, or a block decode failed against an
     /// `.xz`-compressed [`crate::XzSource`]
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). The crate's own
-    /// `Error::compressed_offset`/`uncompressed_range` carry the position;
-    /// this variant only wraps and displays it.
+    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// The crate's own `Error::compressed_offset`/`uncompressed_range` carry
+    /// the position; this variant only wraps and displays it.
     #[error("xz error: {0}")]
     Xz(#[from] xz_seek::Error),
     #[error("failed to encode structure cache: {0}")]
@@ -44,12 +44,8 @@ pub enum Error {
     /// `crate::table_stream`, `crate::index::preamble_only` — before any byte
     /// of the dump is read, from
     /// [`crate::cache::CacheLoad::SourceChanged`]'s two sizes plus the path
-    /// the mode resolved.
-    ///
-    /// This is the one unusable cache outcome that is an error rather than a
-    /// cold start: `Missing`, `Unreadable` and `UnsupportedVersion` are all
-    /// caches there is nothing to lose by writing over, and this one is a
-    /// cache that is valid for some *other* file.
+    /// the mode resolved. It is the one unusable cache outcome that is an
+    /// error rather than a cold start.
     #[error(
         "the cache at {} was written for a source of {cached_stored_size} byte(s), but this source is {live_stored_size} byte(s), so scanning would overwrite a cache for another file — remove it, or name a different cache path",
         path.display()
@@ -69,13 +65,12 @@ pub enum Error {
         /// here, one naming the position beneath it that does not.
         reason: String,
     },
-    /// **Every** operator refused, `=` and `!=` included — the stronger
-    /// refusal, and a different fault from the one above rather than a
-    /// variation on it: `UnorderedPredicateColumn` ends by offering the text
-    /// comparison, which is exactly what is unavailable here. Raised where the
-    /// file *states* that the server's equality is not a comparison of the
-    /// text it holds (`crate::pgtype::UnanswerableReason`), so answering
-    /// bytewise would be a wrong answer rather than a weaker one.
+    /// **Every** operator refused, `=` and `!=` included — a different fault
+    /// from the one above, which ends by offering the text comparison that is
+    /// unavailable here. Raised where the file *states* that the server's
+    /// equality is not a comparison of the text it holds
+    /// (`crate::pgtype::UnanswerableReason`), so answering bytewise would be
+    /// a wrong answer rather than a weaker one.
     #[error(
         "`{op}` on column `{column}` in the COPY block at offset {header_offset}: {reason}; no operator can be answered for this column, `=` and `!=` included"
     )]
@@ -95,20 +90,14 @@ pub enum Error {
         op: &'static str,
         value: String,
         declared_type: String,
-        /// The form the column's comparison actually reads, named so the
-        /// sentence is about this build's grammar rather than about the type:
-        /// a `boolean` is refused `true` because it is written `t` or `f`,
-        /// not because `boolean` has no such value. Supplied by
+        /// The form the column's comparison actually reads, so the sentence
+        /// is about this build's grammar rather than about the type: a
+        /// `boolean` is refused `true` because it is written `t` or `f`, not
+        /// because `boolean` has no such value. Supplied by
         /// `crate::predicate::accepted_form`, which sits beside the grammar
-        /// it describes.
-        ///
-        /// A `String` rather than a `&'static str` because two arms answer
-        /// with the column's own comparison payload — an enum's declared
-        /// labels, a `numeric(p,s)`'s scale — and those are the arms where
-        /// the payload *is* the answer. The clause is formatted at the raise
-        /// site so the rendering stays beside the grammar; carrying a
-        /// comparison type here instead would point this module at one that
-        /// sits above it.
+        /// it describes. A `String` because two arms answer with the column's
+        /// own comparison payload — an enum's declared labels, a
+        /// `numeric(p,s)`'s scale.
         accepted: String,
     },
     #[error("projected column `{column}` not found in COPY block at offset {header_offset}")]
@@ -141,19 +130,16 @@ pub enum Error {
     },
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
     /// holds a value no PostgreSQL text form spells, so `render_field`
-    /// refuses rather than writing something the file could not have held.
+    /// refuses rather than writing something the file could not have held
+    /// (`docs/design/decisions.md`, "D44").
     ///
-    /// It names the Arrow value rather than a table, a column and a row
-    /// offset because nothing this crate scans can reach it — every typed
-    /// column it fills comes from a `decode_*`, whose range is by
-    /// construction what its `render_*` can write back. Only an array a
-    /// caller built itself carries one, and such an array has no dump
-    /// position to name.
-    ///
-    /// `interval` is its one case today: Arrow's `Interval(MonthDayNano)`
-    /// counts nanoseconds where PostgreSQL's field counts microseconds, so a
-    /// nanosecond count with a nonzero remainder is a value `interval_out`
-    /// has no spelling for.
+    /// It names the Arrow value rather than a table, column and row offset
+    /// because nothing this crate scans can reach it — every typed column it
+    /// fills comes from a `decode_*`, whose range is what its `render_*` can
+    /// write back. Only an array a caller built itself carries one, and such
+    /// an array has no dump position to name. `interval` is its one case:
+    /// Arrow's `Interval(MonthDayNano)` counts nanoseconds where
+    /// PostgreSQL's field counts microseconds.
     #[error("this Arrow value has no `{declared_type}` text form: {reason}")]
     FieldRender { declared_type: &'static str, reason: String },
 }

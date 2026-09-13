@@ -33,8 +33,7 @@ struct Cli {
     command: Command,
 }
 
-/// CLI spelling of [`SchemaMode`] — see "Output model" in
-/// `docs/design/decisions.md`.
+/// CLI spelling of [`SchemaMode`] (`docs/design/decisions.md`, "D66").
 #[derive(Clone, Copy, Default, clap::ValueEnum)]
 enum CliSchemaMode {
     #[default]
@@ -55,12 +54,10 @@ impl From<CliSchemaMode> for SchemaMode {
 /// scanning commands (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// **An omitted `--jobs` is the source's own recommendation**, not a constant
-/// here: [`ByteRangeSource::default_workers`] answers the serial path for a
-/// plain file and this machine's core count for an `.xz` one, which is why
-/// [`Discovered::resolve`] takes the open source. The library still defaults
-/// to `Parallelism::default()` — it is the *CLI* that is a program a person ran
-/// on purpose. `--jobs 1` is the serial path as a property of
-/// `Parallelism::workers` rather than of anything here.
+/// here: [`ByteRangeSource::default_workers`] answers it, which is why
+/// [`Discovered::resolve`] takes the open source
+/// (`docs/design/decisions.md`, "D64"). `--jobs 1` is the serial path as a
+/// property of `Parallelism::workers` rather than of anything here.
 #[derive(Args)]
 struct ParallelArgs {
     /// How many workers pgdq may ask for. Left unstated, the file decides: a
@@ -129,61 +126,47 @@ struct ParallelArgs {
 }
 
 impl ParallelArgs {
-    /// [`Discovered::resolve`] under `/`, composing both halves in one
-    /// call — which is what a test wants and what production cannot use,
-    /// a run having a line to print between them.
+    /// [`Discovered::resolve`] under `/`, composing both halves in one call —
+    /// what a test wants and production cannot use, a run having a line to
+    /// print between them.
     #[cfg(test)]
     fn resolve(&self, source: &dyn ByteRangeSource) -> Resolved {
         self.resolve_in(Path::new("/"), source)
     }
 
     /// [`ParallelArgs::resolve`] against an arbitrary filesystem root, for the
-    /// reason [`pgdump_query::discover_memory_limit_in`] takes one: the arms
-    /// worth pinning are a v1 hierarchy, an unlimited host and an allocation
-    /// under the reserve, and no machine is more than one of those at a time
-    /// (`pgdump_query-cli/tests/data/runtime/`).
+    /// reason [`pgdump_query::discover_memory_limit_in`] takes one: no machine
+    /// is a v1 hierarchy, an unlimited host and an allocation under the
+    /// reserve at once (`pgdump_query-cli/tests/data/runtime/`).
     #[cfg(test)]
     fn resolve_in(&self, root: &Path, source: &dyn ByteRangeSource) -> Resolved {
         self.discover_in(root).resolve(source)
     }
 
     /// The half of the resolution that needs no dump: the flags as typed, and
-    /// the limit this process runs under.
-    ///
-    /// **It is a separate step because the two halves become knowable at
-    /// different moments.** Opening an `.xz` source with no persisted seek
-    /// table walks every stream footer before it can advise anything, and
-    /// until the source has been asked there is no recommendation to lower
-    /// and no arrangement to report. Everything on this side is already true
-    /// before the file is touched, so a run says it first and a mistyped flag
-    /// is confirmed against the walk it did not affect rather than after it
+    /// the limit this process runs under. A separate step because everything
+    /// on this side is true before the file is touched, while opening a fresh
+    /// `.xz` walks every stream footer first
     /// (`docs/design/decisions.md`, "D64").
     fn discover(&self) -> Discovered<'_> {
         self.discover_in(Path::new("/"))
     }
 
     /// [`ParallelArgs::discover`] against an arbitrary filesystem root, for the
-    /// same reason [`ParallelArgs::resolve_in`] takes one.
+    /// same reason `ParallelArgs::resolve_in` takes one.
     fn discover_in<'a>(&'a self, root: &'a Path) -> Discovered<'a> {
-        // **Read even where `--parallel-memory` was stated**, because the mode
-        // is a fact about the run and not about the flag: a user who pinned a
-        // budget inside a 512 MiB cgroup is still owed the sentence saying so.
-        // It costs a handful of small reads and no I/O against the dump.
-        //
-        // Read **once**, here, rather than by each of the two lines that
-        // reports it: a second walk could answer differently — `memory.high`
-        // is writable by whoever set it — and two status lines disagreeing
-        // about the allocation is worse than either being stale.
+        // **Read even where `--parallel-memory` was stated**: the mode is a
+        // fact about the run, not the flag. Read **once**, here — `memory.high`
+        // is writable by whoever set it, so a second walk could answer
+        // differently and the two status lines would disagree.
         Discovered { args: self, root, limit: pgdump_query::discover_memory_limit_in(root) }
     }
 }
 
 /// What a run knows about its own allowance **before the dump is opened**: the
 /// two flags exactly as they were typed, and the memory limit this process is
-/// running under with the file that stated it.
-///
-/// Nothing here is downstream of the source, which is the whole of why it is
-/// its own step ([`ParallelArgs::discover`]).
+/// running under with the file that stated it. Nothing here is downstream of
+/// the source ([`ParallelArgs::discover`]).
 struct Discovered<'a> {
     args: &'a ParallelArgs,
     /// The filesystem root the limit was read under, kept because
@@ -197,10 +180,8 @@ struct Discovered<'a> {
 impl Discovered<'_> {
     /// A flag's value exactly as typed, or `(not stated)`.
     ///
-    /// **Parenthesised, like every other provenance marker on these lines**, so
-    /// that absence can never be read as a value — and spelled out rather than
-    /// left off, because the line exists for the person checking what their
-    /// shell actually passed.
+    /// Parenthesised, like every other provenance marker on these lines, so
+    /// that absence can never be read as a value.
     fn flag_display(value: Option<u64>) -> String {
         match value {
             Some(v) => v.to_string(),
@@ -212,9 +193,7 @@ impl Discovered<'_> {
     ///
     /// **The flags are named as flags here, and nowhere else.** Every other
     /// status line names the arrangement in the library's own vocabulary
-    /// (`docs/design/decisions.md`, "D64"); this one reports what
-    /// was *typed*, so the CLI's own spelling is the only one that answers the
-    /// question it is printed for.
+    /// (`docs/design/decisions.md`, "D64"); this one reports what was *typed*.
     fn announce(&self) {
         let jobs_flag = Self::flag_display(self.args.jobs.map(|j| j as u64));
         let parallel_memory_flag = Self::flag_display(self.args.parallel_memory);
@@ -237,65 +216,29 @@ impl Discovered<'_> {
     /// The [`Parallelism`] these flags state over `source`, filling in what was
     /// omitted.
     ///
-    /// **A stated flag wins outright; absence is what asks the source.** There
-    /// is no spelling for "discover" — `--jobs 0` is refused by
-    /// [`parse_jobs`], since zero already reads as one through
-    /// `Parallelism::workers` and a third meaning at the CLI would diverge from
-    /// what the library makes of the same number.
+    /// **A stated flag wins outright; absence is what asks the source**
+    /// (`docs/design/decisions.md`, "D64"). There is no spelling for
+    /// "discover", and `--jobs 0` is refused by [`parse_jobs`].
     ///
-    /// **The source is asked for both numbers, and the environment caps the
-    /// second.** A source's answer can be either because both are downstream
-    /// of recognition, which the caller has already paid for by the time it
-    /// has a source to hand here (`docs/design/decisions.md`, "I/O, memory and parallelism"); what the *environment* allows is
-    /// `Parallelism::discover_for`'s question, and it is asked only where
-    /// `--parallel-memory` is absent. What the resulting budget affords still
-    /// binds afterwards, `stream::worker_count` solving every count against it
-    /// alike.
-    ///
-    /// **The two answers come back as a pair, and only a *recommended* count
-    /// is lowered to fit.** `discover_for` is given a per-worker cost and a
-    /// count, and where the allowance affords fewer workers it hands back the
-    /// smaller count with the budget that count spends — which is the whole of
-    /// "never allocate workers there is no memory for"
-    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
-    /// permits"). Where the count came from `--jobs` the stated value is kept
-    /// and only the budget is taken, because that rule governs the absence of
-    /// a flag and never its presence: `--jobs` states what is asked for, not
-    /// what is delivered, and what is delivered is `stream::worker_count`'s to
-    /// decide from the budget as it always was.
-    ///
-    /// **A stated budget does not exempt a recommended count from that
-    /// rule.** The flag it is scoped to is `--jobs`, so where
-    /// `--parallel-memory` is typed and `--jobs` is not, the source's
-    /// recommendation is still cut to what those bytes afford — through
-    /// `Parallelism::recommended_within`, which is `discover_for`'s lowering
-    /// over a budget that arrived typed rather than discovered. Only the count
-    /// moves: the budget is taken whole, a stated flag winning outright.
-    ///
-    /// **A discovered limit can put the budget below `DEFAULT_MEMORY_BUDGET`,
-    /// and that is the point.** An allocation at or under the reserve leaves
-    /// nothing of it, and the three floors inside the mechanism make that one
-    /// reader's worth on the streaming path — where reasserting the constant
-    /// would hand a tight cgroup the same 64 MiB an unlimited host gets.
+    /// `Parallelism::discover_for` is asked what the environment allows only
+    /// where `--parallel-memory` is absent; what the resulting budget affords
+    /// still binds through `stream::worker_count`. Only a *recommended* count
+    /// is lowered to fit, and by a stated budget
+    /// (`Parallelism::recommended_within`, whose bytes are then taken whole)
+    /// as well as a discovered one (`docs/design/roadmap.md`, "A default runs
+    /// as fast as the allocation permits"); a discovered limit may put the
+    /// budget below `DEFAULT_MEMORY_BUDGET`.
     ///
     /// **A stated budget reaches the library at every worker count**, the
-    /// serial state carrying one of its own — so `--parallel-memory` is worth
-    /// stating beside a serial `--jobs`, which is what buys back a compressed
-    /// file's block path without also asking for a second worker
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
-    ///
-    /// **Only a resolved-serial arrangement can state no budget**, which is
-    /// what lets the status line say `(default)` truthfully there: the CLI's
-    /// own fallback and the library's are the same number, and printing it as
-    /// though it had been asked for is the only way that line can lie. A
-    /// `Workers` arrangement has nowhere to put "nobody stated one" —
-    /// `memory_bytes` is not an `Option` on that variant — so it carries
-    /// `DEFAULT_MEMORY_BUDGET` bare, exactly as a stated `--jobs 8` always did.
+    /// serial state carrying one of its own
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism"). Only a
+    /// resolved-serial arrangement can state no budget, which is what lets the
+    /// status line say `(default)` truthfully: `Workers::memory_bytes` is not
+    /// an `Option`, so that variant carries `DEFAULT_MEMORY_BUDGET` bare.
     fn resolve(self, source: &dyn ByteRangeSource) -> Resolved {
         let args = self.args;
-        // Asked of the source only where `--jobs` was absent — a stated count
-        // is not a recommendation and has nothing to be lowered from, which is
-        // what the mode report reads this back for.
+        // Asked of the source only where `--jobs` was absent: a stated count
+        // is not a recommendation and has nothing to be lowered from.
         let recommended_jobs = match args.jobs {
             Some(_) => None,
             None => Some(source.default_workers()),
@@ -303,9 +246,8 @@ impl Discovered<'_> {
         let jobs = args.jobs.or(recommended_jobs).unwrap_or(1);
         let parallelism = match args.parallel_memory {
             // A stated budget is taken whole — the flag wins outright — but a
-            // *recommended* count still answers to it, exactly as it answers
-            // to a discovered one. What the rule is scoped to is the absence
-            // of `--jobs`, which is absent on this arm too.
+            // *recommended* count still answers to it, the rule being scoped
+            // to the absence of `--jobs`.
             Some(stated) => match recommended_jobs {
                 Some(asked) => {
                     Parallelism::recommended_within(asked, source.default_worker_memory(), stated)
@@ -316,11 +258,9 @@ impl Discovered<'_> {
                 let discovered =
                     Parallelism::discover_in(self.root, jobs, source.default_worker_memory());
                 match (args.jobs, discovered.memory_bytes()) {
-                    // A stated count is not lowered by the environment: the
-                    // flag states what is asked for, and what the budget
-                    // delivers still binds through `stream::worker_count`.
-                    // Only the count `discover_for` was *recommending* is its
-                    // to reduce.
+                    // A stated count is not lowered by the environment; what
+                    // the budget delivers still binds through
+                    // `stream::worker_count`.
                     (Some(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
                     _ => discovered,
                 }
@@ -336,22 +276,16 @@ impl Discovered<'_> {
 }
 
 /// What a run resolved its two parallelism numbers to, and where each came
-/// from — the arrangement itself plus the provenance
-/// [`Parallelism`] has nowhere to carry
+/// from — the arrangement plus the provenance [`Parallelism`] has nowhere to
+/// carry. **Provenance is the CLI's fact, not the library's**, and cannot be
+/// recovered from a [`Parallelism`] downstream
 /// (`docs/design/decisions.md`, "D64").
-///
-/// **Provenance is the CLI's fact, not the library's.** Whether a number was
-/// typed is knowable only here, and whether a limit was read is knowable only
-/// to the walk that read it — so neither can be recovered from a
-/// [`Parallelism`] downstream, and the library's own `scan started` line keeps
-/// saying what bound applies rather than where it came from.
 #[derive(Debug, Clone)]
 struct Resolved {
     /// The arrangement the library is handed.
     parallelism: Parallelism,
-    /// The memory limit this process runs under, and the file that stated it —
-    /// `None` meaning no limit is being *enforced*, which is a complete
-    /// statement however the process was started.
+    /// The memory limit this process runs under, and the file that stated it;
+    /// `None` means no limit is being *enforced*.
     limit: Option<pgdump_query::MemoryLimit>,
     /// Whether `--parallel-memory` was given.
     budget_stated: bool,
@@ -367,22 +301,13 @@ impl Resolved {
 
     /// The worker count and its provenance, for a status line.
     ///
-    /// **A recommended count reads differently from a stated one**, and the
-    /// difference is what is being reported: a recommendation is lowered to
-    /// what the allowance affords and printed lowered, while a stated `--jobs`
-    /// is printed as typed and what it actually delivers stays
-    /// `stream::worker_count`'s to decide from the budget. So the same two
-    /// readers can appear under `jobs=2` and under `jobs=24`, and only the
-    /// first is telling the user what will run
+    /// **A recommended count reads differently from a stated one**: a
+    /// recommendation is printed lowered to what the allowance affords, a
+    /// stated `--jobs` as typed. What did the lowering is named — `by the
+    /// allocation` or `by the stated budget`, those being different numbers to
+    /// change — with [`Resolved::budget_display`] beside it naming the number
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
-    ///
-    /// **What did the lowering is named, because the two are different
-    /// numbers to change.** A discovered budget is the environment's, so the
-    /// clause says `by the allocation`; a `--parallel-memory` the user typed
-    /// lowers the count just as hard and the recourse is their own flag, so it
-    /// says `by the stated budget`. [`Resolved::budget_display`] on the line
-    /// beside it then says which number that was.
     fn jobs_display(&self) -> String {
         let jobs = self.parallelism.jobs();
         match self.recommended_jobs {
@@ -397,13 +322,11 @@ impl Resolved {
 
     /// The byte budget and its provenance.
     ///
-    /// Four spellings, because there are four ways to arrive at a number and
-    /// only the first is the user's own: the flag; a discovered limit, named
-    /// by the file that stated it, since `memory.high` throttles where
-    /// `memory.max` kills and either may be an ancestor's; the source's own
-    /// recommendation, taken whole because nothing capped it; and the
-    /// library's constant, which is what "no limit found" leaves a source that
-    /// recommends nothing.
+    /// Four spellings, for the four ways to arrive at a number: the flag; a
+    /// discovered limit, named by the file that stated it (`memory.high`
+    /// throttles where `memory.max` kills, and either may be an ancestor's);
+    /// the source's own recommendation; and the library's constant, which is
+    /// what "no limit found" leaves a source that recommends nothing.
     fn budget_display(&self) -> String {
         let bytes = self.parallelism.memory_bytes().unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
         if self.budget_stated {
@@ -421,19 +344,14 @@ impl Resolved {
     }
 
     /// The clause a plan note carries when the budget that produced it was
-    /// **not** stated — the half of the story the library cannot tell.
-    ///
-    /// Every [`pgdump_query::PlanNote`] names a memory budget as the thing that
-    /// bound the plan, and the widest of them is the compressed block path
-    /// going serial, which is a throughput cliff. Where that budget came off
-    /// the environment the note alone leaves an operator to infer *which*
-    /// number to change from a status line that says only what was resolved, so
-    /// the CLI appends the provenance — the same [`Resolved::budget_display`]
-    /// the mode report prints, so the two cannot part company
+    /// **not** stated — the half of the story the library cannot tell. Every
+    /// [`pgdump_query::PlanNote`] names the budget that bound the plan, so the
+    /// CLI appends where that number came from: the same
+    /// [`Resolved::budget_display`] the mode report prints
     /// (`docs/design/decisions.md`, "D64").
     ///
-    /// **Empty where `--parallel-memory` was stated**, because the note already
-    /// names the number that person typed and the recourse is to raise it.
+    /// **Empty where `--parallel-memory` was stated**, the note already naming
+    /// the number that person typed.
     fn plan_note_origin(&self) -> String {
         if self.budget_stated {
             return String::new();
@@ -444,19 +362,13 @@ impl Resolved {
     /// Say, once per scanning command and before the scan starts, what the
     /// source's recommendation and the allowance fitted to.
     ///
-    /// **This is the only line that can name a count the allowance lowered**,
-    /// and it is why the report is two lines rather than one: the lowering is
-    /// the source's recommendation meeting the budget, so neither number exists
-    /// until the file has been opened and asked
-    /// ([`Discovered::announce`] carries the half that does).
-    ///
-    /// **The mode is reported because the quiet failure is a recommendation
-    /// nobody can see was reduced.** Under an orchestrator the operator
-    /// assigned an allocation and pgdq fills it; with no limit found pgdq is a
-    /// guest on a machine nobody promised it and stays inside half of what the
-    /// kernel says is available (`RT8`) — and in that second arrangement a
-    /// worker count cut to fit surfaces as unexplained slowness unless the run
-    /// says so (`docs/design/decisions.md`, "D64").
+    /// **The only line that can name a count the allowance lowered**, which is
+    /// why the report is two lines: neither number exists until the file has
+    /// been opened and asked ([`Discovered::announce`] carries the half that
+    /// does). A recommendation cut to fit otherwise surfaces as unexplained
+    /// slowness — with no limit found pgdq stays inside half of what the
+    /// kernel says is available (`RT8`)
+    /// (`docs/design/decisions.md`, "D64").
     fn announce(&self) {
         tracing::info!(
             jobs = %self.jobs_display(),
@@ -467,9 +379,8 @@ impl Resolved {
 }
 
 /// A `--jobs` value: a worker count, and never zero. Zero would read as one
-/// through `Parallelism::workers`, but a person who typed it meant something,
-/// and silently answering "serial" is the kind of surprise a flag should not
-/// hold.
+/// through `Parallelism::workers`, and silently answering "serial" is a
+/// surprise a flag should not hold (`docs/design/decisions.md`, "D64").
 fn parse_jobs(text: &str) -> std::result::Result<usize, String> {
     match text.parse::<usize>() {
         Ok(0) => Err("a job count of 0 would run no workers; --jobs 1 is the serial path".into()),
@@ -480,8 +391,7 @@ fn parse_jobs(text: &str) -> std::result::Result<usize, String> {
 
 /// A `--parallel-memory` value: a byte count, and never zero. Zero affords no
 /// buffer of any unit, so every pool would fall back to its one-slot floor and
-/// a compressed source to its streaming reader — a configuration nobody wants
-/// and one the flag should refuse rather than honour.
+/// a compressed source to its streaming reader.
 fn parse_parallel_memory(text: &str) -> std::result::Result<u64, String> {
     match text.parse::<u64>() {
         Ok(0) => Err("a parallel memory budget of 0 leaves no room for a read buffer".into()),
@@ -680,10 +590,9 @@ enum Command {
 
 /// A `--chunk-size` value: a byte count, and never zero.
 ///
-/// Zero is refused here rather than at the read loop because the loop's
-/// `min(chunk_size, remaining)` would ask for nothing, forever — a scan that
-/// never advances and never errors, which is the one input shape a knob like
-/// this can turn into a hang.
+/// Zero is refused here rather than at the read loop, whose
+/// `min(chunk_size, remaining)` would ask for nothing forever — a scan that
+/// never advances and never errors.
 fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
     match text.parse::<usize>() {
         Ok(0) => Err("a chunk size of 0 would read nothing".to_string()),
@@ -697,8 +606,7 @@ fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
 /// arrangement ([`Discovered::resolve`]).
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
-/// needs the same arrangement in [`QueryOptions`] as in its mapping pass, and
-/// resolving twice would read the environment twice and announce it twice.
+/// needs the same arrangement in [`QueryOptions`] as in its mapping pass.
 fn scan_options(chunk_size: Option<usize>, parallel: &Resolved) -> ScanOptions {
     ScanOptions {
         chunk_size: chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
@@ -714,11 +622,9 @@ fn scan_options(chunk_size: Option<usize>, parallel: &Resolved) -> ScanOptions {
 /// column (`docs/design/decisions.md`, "D28").
 ///
 /// The two flags cannot both be given: clap's `conflicts_with` refuses that
-/// before this is reached, so `--no-columns` wins here only in a case that
-/// cannot occur. Nothing rejects a repeated `--column` name at this layer —
-/// the library refuses it as `Error::DuplicateProjectionColumn` before a byte
-/// of the file is read, which is the same answer with the same wording
-/// whether the caller is the CLI or an embedder.
+/// before this is reached. A repeated `--column` name is refused by the
+/// library as `Error::DuplicateProjectionColumn` before a byte is read, so
+/// the CLI and an embedder get the same answer.
 fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
     if no_columns {
         Some(Vec::new())
@@ -730,8 +636,8 @@ fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
 }
 
 /// The comparison spellings, in the order they are tried **at one position**
-/// — longest first, so `>=` is never read as `>` followed by a stray `=`,
-/// the way `!=` has always been checked before `=`.
+/// — longest first, so `>=` is never read as `>` followed by a stray `=`
+/// (`docs/design/decisions.md`, "D60").
 const FILTER_OPS: [(&str, PredicateOp); 6] = [
     ("!=", PredicateOp::Ne),
     (">=", PredicateOp::Ge),
@@ -758,22 +664,13 @@ fn skip_spaces(bytes: &[u8], i: usize) -> Option<usize> {
 }
 
 /// `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` starting at `i`, and how many
-/// bytes it runs for — the two worded infix operators, offered to the same
-/// positional scan the punctuation spellings go through so that **the
-/// earliest operator still wins**. `note=a is distinct from b` is therefore
-/// the equality it was before this existed, and `a is distinct from b=c` is
-/// the distinctness test, exactly as `name=a>b` and `a>b=c` already split.
+/// bytes it runs for — the two worded infix operators, candidates at the same
+/// positions the punctuation spellings are, so **the earliest operator still
+/// wins** (`docs/design/decisions.md`, "D60").
 ///
-/// **Whitespace is required on both sides of the phrase**, which is what
-/// keeps the addition from re-reading any term that parsed before: a column
-/// named `is distinct from` is still askable as `is distinct from=x`, since
-/// the phrase there is followed by `=` rather than by a space. What does
-/// change meaning is a term whose *column* is spelled with the phrase in it
-/// surrounded by spaces — `a is distinct from b=c` — and that is loud, not
-/// silent: the column it now names is `a`.
-///
-/// Any run of whitespace separates the words, as in SQL, and the case is
-/// free.
+/// **Whitespace is required on both sides of the phrase**, so a column named
+/// `is distinct from` is still askable as `is distinct from=x`. Any run of
+/// whitespace separates the words, as in SQL, and the case is free.
 fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
     if i == 0 || !bytes[i - 1].is_ascii_whitespace() {
         return None;
@@ -788,9 +685,9 @@ fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
     };
     j = skip_spaces(bytes, word_at(bytes, j, "distinct")?)?;
     let end = word_at(bytes, j, "from")?;
-    // A value has to follow, and be separated from `FROM`: without this,
-    // `v is distinct from` alone would split into an empty value rather than
-    // falling through to the usage message it deserves.
+    // A value has to follow, and be separated from `FROM`: otherwise
+    // `v is distinct from` alone splits into an empty value rather than
+    // falling through to the usage message.
     if !bytes.get(end).is_some_and(u8::is_ascii_whitespace) {
         return None;
     }
@@ -799,29 +696,22 @@ fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
 
 /// Split `spec` at its operator.
 ///
-/// **The earliest position wins, and the longest spelling at that position.**
-/// Scanning by position rather than by operator is what keeps a value that
-/// contains an operator byte from stealing the split — `name=a>b` is `name`
-/// equal to `a>b`, not `name=a` greater than `b`.
+/// **The earliest position wins, and the longest spelling at that position**
+/// (`docs/design/decisions.md`, "D60") — scanning by position rather than by
+/// operator is what keeps a value holding an operator byte from stealing the
+/// split, the two worded operators ([`distinct_from_at`]) included.
 ///
 /// **The scan skips quoted regions**, so a column named `a=b` is askable as
 /// `"a=b"=x`. A quote that never closes is its own outcome rather than "no
-/// operator": the operator it swallowed is real, and reinterpreting the term
-/// without it is the silent-wrong-answer shape this grammar exists to remove.
-///
-/// The two worded operators ([`distinct_from_at`]) are candidates at the same
-/// positions, so they obey the same earliest-wins rule rather than being a
-/// pass of their own — a pass would make `note=a is distinct from b` a
-/// distinctness test on a column called `note=a`.
+/// operator": reinterpreting the term without the operator it swallowed is
+/// the silent-wrong-answer shape this grammar exists to remove.
 fn split_filter_op(spec: &str) -> FilterSplit<'_> {
     let bytes = spec.as_bytes();
     // The scan walks *bytes*, and compares bytes: every character it looks
     // for is ASCII and no byte of a multi-byte UTF-8 character is, so a match
     // is always at a character boundary and the `spec[..i]` slices below are
-    // safe. Matching an operator through `str` instead would panic on the
-    // interior byte of a multi-byte character — which is not hypothetical,
-    // since trimming is Unicode's and a non-breaking space is what brings one
-    // into a term.
+    // safe. Matching through `str` would panic on the interior byte of a
+    // multi-byte character, which trimming's Unicode whitespace admits.
     let mut i = 0;
     let mut quote: Option<u8> = None;
     while i < bytes.len() {
@@ -877,10 +767,9 @@ enum FilterSplit<'a> {
 ///
 /// `None` — the part does not open with a quote, so it is data exactly as
 /// written. `Some(Err(quote))` — it opens with one and what follows is not a
-/// well-formed quoted string. An unterminated quote and text after the
-/// closing one are deliberately the *same* fault: the alternative is falling
-/// back to the unquoted reading, which hands a user who mistyped one quote a
-/// value nobody meant and an empty result that reads as an answer.
+/// well-formed quoted string; an unterminated quote and text after the closing
+/// one are deliberately the *same* fault, falling back to the unquoted reading
+/// handing a user who mistyped one quote a value nobody meant.
 fn dequote(part: &str) -> Option<Result<String, char>> {
     let quote = part.chars().next()?;
     if quote != '\'' && quote != '"' {
@@ -904,12 +793,10 @@ fn dequote(part: &str) -> Option<Result<String, char>> {
 }
 
 /// One side of a filter term as the [`Predicate`] should carry it: whitespace
-/// outside the quotes trimmed off, and a quoted part taken exactly as
-/// written. `what` names the side for the error message and nothing else.
-///
-/// Trimming is `str::trim`, the same definition the `IS NULL` forms use, so
-/// the parser holds one notion of whitespace and a non-breaking space pasted
-/// out of a web page is caught by it.
+/// outside the quotes trimmed off, and a quoted part taken exactly as written.
+/// `what` names the side for the error message. Trimming is `str::trim`, the
+/// same definition the `IS NULL` forms use, so the parser holds one notion of
+/// whitespace.
 fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
     let part = part.trim();
     match dequote(part) {
@@ -926,32 +813,26 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
     )
 }
 
-/// One `--filter` argument: the term grammar below, and before it the refusal
-/// that keeps a string from meaning one thing under each flag
-/// ([`where_expr::refuse_where_structure`], which is where that reasoning
-/// lives).
-///
-/// It runs first, so a term that is both structural and malformed earns the
-/// structural message: `--filter 'and is null'` is told that `AND` is a
-/// reserved spelling rather than that its column was not understood.
+/// One `--filter` argument: the term grammar below, and before it
+/// [`where_expr::refuse_where_structure`]. That runs first, so a term both
+/// structural and malformed earns the structural message —
+/// `--filter 'and is null'` is told that `AND` is a reserved spelling.
 fn parse_filter_flag(spec: &str) -> Result<Predicate> {
     where_expr::refuse_where_structure(spec)?;
     parse_filter(spec)
 }
 
-/// Parse one filter term into a [`Predicate`] — one term of the conjunction
-/// a repeated `--filter` builds, and equally the **leaf** of a `--where`
-/// expression ([`where_expr`]), which is one grammar rather than two:
-/// `column<op>value` for any of the six comparison spellings,
-/// `column IS [NOT] DISTINCT FROM value`, or `column IS NULL` /
-/// `column IS NOT NULL` (the worded forms matched case-insensitively — see
-/// `docs/design/decisions.md`, "D60").
+/// Parse one filter term into a [`Predicate`] — one term of the conjunction a
+/// repeated `--filter` builds, and equally the **leaf** of a `--where`
+/// expression ([`where_expr`]): `column<op>value` for any of the six
+/// comparison spellings, `column IS [NOT] DISTINCT FROM value`, or
+/// `column IS NULL` / `column IS NOT NULL`, the worded forms matched
+/// case-insensitively (`docs/design/decisions.md`, "D60").
 ///
-/// **The `IS` forms are the fallback, not the first test.** An operator
-/// outside quotes is looked for first, and the suffix is only stripped from a
-/// term that has none. Testing the suffix first made `note=this is null` an
-/// `IS NULL` on a column called `note=this`; under this order it is an
-/// equality against `this is null`, which is what it says.
+/// **The `IS` forms are the fallback, not the first test**: an operator
+/// outside quotes is looked for first and the suffix is only stripped from a
+/// term that has none, so `note=this is null` is an equality against
+/// `this is null`.
 fn parse_filter(spec: &str) -> Result<Predicate> {
     match split_filter_op(spec) {
         FilterSplit::Op(column, op, value) => Ok(Predicate {
@@ -984,12 +865,10 @@ fn parse_filter(spec: &str) -> Result<Predicate> {
 /// a matching quote: `--column` and `--table` take their names exactly as
 /// given, so the quote marks were part of what was looked for.
 ///
-/// **Only a `--filter` term has quoting to strip**, and that is not an
-/// inconsistency: a term is one string that must be split into three parts,
-/// so quotes carry boundary information there, while the shell has already
-/// delimited a `--column` argument. Stripping them here would instead make a
-/// column genuinely named with quote marks unaskable
-/// (`docs/design/decisions.md`, "D60").
+/// **Only a `--filter` term has quoting to strip**, a term being one string
+/// to split into three parts; the shell has already delimited a `--column`
+/// argument, and stripping quotes here would make a column genuinely named
+/// with quote marks unaskable (`docs/design/decisions.md`, "D60").
 fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
     let quote = name.chars().next()?;
     if quote != '\'' && quote != '"' {
@@ -1002,9 +881,9 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
     })
 }
 
-/// Add [`quoted_name_note`] to the one library refusal that can carry it. The
-/// failure is loud either way; what the note adds is *why* a name the user is
-/// sure exists was not found.
+/// Add [`quoted_name_note`] to the one library refusal that can carry it —
+/// the failure is loud either way; the note adds *why* the name was not
+/// found.
 fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
     if let pgdump_query::Error::UnknownProjectionColumn { column, .. } = &err
         && let Some(note) = quoted_name_note("--column", column)
@@ -1014,43 +893,39 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
     err.into()
 }
 
-/// Say, once per query and on stderr, which of this query's comparisons do
-/// not answer what PostgreSQL's own operator would
-/// (`docs/design/decisions.md`, "Predicates", the comparison register).
-///
-/// It is per *term*, not per column: most divergences are divergences of
-/// order alone, so a `text` column filtered with both `<` and `=` warns about
-/// the first and not the second.
-///
-/// **Announced by the CLI rather than carried by a library channel.** The
-/// signal is per-column *and* conditional on a predicate — L4 — while
-/// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, so writing
-/// it into either would invert the layering. An embedder reads
-/// `TableStream::comparison_notes` for the same facts; what it *should* be
-/// handed is filed in `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
 /// One sub-stream's place in `pgdq query`'s k-way merge: at most one batch,
 /// held with the two things a `RecordBatch` does not carry and the printer
 /// needs (`docs/design/decisions.md`, "D51").
 ///
-/// **One batch per partition is the whole bound.** Each sub-stream yields in
+/// **One batch per partition is the whole bound**: each sub-stream yields in
 /// file order and the sub-streams themselves are in file order, so emitting
 /// the held batch with the lowest source offset re-assembles the serial order
-/// while never holding more than N batches — where an unordered stream merged
-/// by buffering until the gap closes is bounded by nothing.
+/// while never holding more than N batches.
 enum Slot {
     /// Nothing held: this sub-stream is polled in the next fill round.
     Empty,
     /// A batch waiting its turn, with the source offset it begins at — the
-    /// merge key — and the nested plans of the block it came from, read at
-    /// the moment it was taken because its sub-stream may since have moved to
-    /// a block with a different schema.
+    /// merge key — and the nested plans of the block it came from, read when
+    /// it was taken because its sub-stream may since have moved to a block
+    /// with a different schema.
     Held { offset: u64, batch: RecordBatch, plans: Vec<NestedPlan> },
-    /// Drained, stopped at an error, or sitting at or after one — every row
-    /// past the earliest failure belongs to a serial replay that never got
-    /// there. Never polled again, and a batch it was holding is discarded.
+    /// Drained, stopped at an error, or sitting at or after one. Never polled
+    /// again, and a batch it was holding is discarded.
     Done,
 }
 
+/// Say, once per query and on stderr, which of this query's comparisons do
+/// not answer what PostgreSQL's own operator would
+/// (`docs/design/decisions.md`, "D59"). Per *term*, not per column: a `text`
+/// column filtered with both `<` and `=` warns about the first, not the
+/// second.
+///
+/// **Announced by the CLI rather than by a library channel** — the signal is
+/// per-column *and* conditional on a predicate, so L4, while
+/// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` L2. An embedder
+/// reads `TableStream::comparison_notes` for the same facts; what it *should*
+/// be handed is filed in
+/// `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
 fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     for note in stream.comparison_notes() {
         eprintln!("warning: {}", note.message());
@@ -1058,16 +933,12 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
 }
 
 /// Say, once per query and on stderr, when the memory budget in force cut the
-/// plan short. Every sub-stream of a partitioned replay carries the
-/// same [`pgdump_query::TableStream::plan_notes`], settled before any of them
-/// runs, so reading it off the first is reading the whole query's answer —
-/// unlike [`announce_comparisons`], this needs no block to have resolved
-/// first.
-///
-/// **Each note is followed by where its budget came from**
-/// ([`Resolved::plan_note_origin`]), which is the CLI's fact and not the
-/// library's: a note says a budget declined something, and only this layer
-/// knows whether that number was typed or read off a cgroup.
+/// plan short. Every sub-stream of a partitioned replay carries the same
+/// [`pgdump_query::TableStream::plan_notes`], settled before any of them runs,
+/// so reading it off the first is reading the whole query's answer — unlike
+/// [`announce_comparisons`], this needs no block to have resolved first. Each
+/// note is followed by where its budget came from
+/// ([`Resolved::plan_note_origin`]), which only this layer knows.
 fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolved) {
     let origin = parallel.plan_note_origin();
     for note in stream.plan_notes() {
@@ -1085,12 +956,11 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 
 /// The one line `pgdq parse` prints about *this invocation* rather than about
 /// the file: where the scan picked up. `None` for a scan that started at byte
-/// 0, which is the case that needs no explanation.
+/// 0.
 ///
-/// A run that found the cache already complete scanned nothing at all, and
-/// says so rather than reporting a resume point equal to the file's size —
-/// the two are different facts to a user checking whether an interrupted scan
-/// finished.
+/// A run that found the cache already complete scanned nothing at all and
+/// says so, rather than reporting a resume point equal to the file's size —
+/// two different facts to a user checking whether a scan finished.
 fn resume_notice(resumed_from: u64, size: u64) -> Option<String> {
     match resumed_from {
         0 => None,
@@ -1103,18 +973,10 @@ fn resume_notice(resumed_from: u64, size: u64) -> Option<String> {
 
 /// Catch `SIGINT` and `SIGTERM` for the duration of a scan, so an interrupted
 /// `pgdq parse` saves what it has instead of throwing it away
-/// (`docs/design/decisions.md`, "D63").
-///
-/// The guard is **cooperative**: the signal sets a flag the mapping loop reads
-/// once per chunk, and the loop persists the index it owns before returning.
-/// *Rejected:* `tokio::select!` in the CLI over `ctrl_c` and the scan future.
-/// It reads as the obvious form and it is the one that silently discards the
-/// work — `map_file` owns the `DumpIndex` for the whole scan, so cancelling
-/// that future drops the map rather than saving it.
-///
-/// A **second** signal, of either kind, exits immediately: a save that wedges
-/// must not be able to hold the process, and a Ctrl-C that appears to do
-/// nothing is worse than no handler at all.
+/// (`docs/design/decisions.md`, "D63"). The guard is **cooperative**: the
+/// signal sets a flag the mapping loop reads once per chunk, and the loop
+/// persists the index it owns before returning. A **second** signal, of either
+/// kind, exits immediately, so a save that wedges cannot hold the process.
 ///
 /// Returns the cell the exit code is read from: `0` until a signal lands,
 /// then that signal's number.
@@ -1145,14 +1007,11 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field_into`], so output is byte-identical whether `--schema-mode`
-/// is `typed` or `strings` (`docs/design/decisions.md`,
-/// "D66").
+/// is `typed` or `strings` (`docs/design/decisions.md`, "D66").
 ///
 /// **One buffer for the whole batch.** The line is assembled in a `String`
 /// that is cleared per row and keeps its capacity across the batch, so a
-/// scalar field is written where it will be printed from — in place of a
-/// `String` allocated per field, collected into a `Vec` and then copied again
-/// by `join`.
+/// scalar field is written where it will be printed from.
 ///
 /// `plans` is the stream's own [`pgdump_query::ResolvedSchema::plans`], which
 /// is what says whether a `List<Struct{…}>` column is written as an array of
@@ -1161,11 +1020,10 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
 ///
 /// The `Result` is `render_field_into`'s refusal of a value with no PostgreSQL
 /// text form, which **no batch this binary prints can hold**: every typed
-/// column here is filled by a decoder whose range its renderer can write back.
-/// It is propagated rather than unwrapped because an unreachable panic in the
-/// output path is a worse answer than an error message. A refused value can
-/// leave a partial field in the buffer; nothing prints it, because the error
-/// ends the query.
+/// column here is filled by a decoder whose range its renderer can write
+/// back. Propagated rather than unwrapped, an unreachable panic in the output
+/// path being a worse answer than an error. A refused value can leave a
+/// partial field in the buffer; nothing prints it, the error ending the query.
 fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
     let mut line = String::new();
     for row in 0..batch.num_rows() {
@@ -1185,20 +1043,13 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
 }
 
 /// Wire the library's `tracing` facade to stderr — on by default, uniformly,
-/// for `parse`, `info` and `query` alike (`docs/design/decisions.md`,
-/// "D64"). A
-/// per-command default would be a rule the manual has to explain, and gating
-/// on whether stderr is a terminal makes the output depend on invocation
-/// context — which is exactly the case that left the koji verification's
-/// first attempt with nothing but `dmesg` to diagnose from.
+/// for `parse`, `info` and `query` alike, with no terminal detection
+/// (`docs/design/decisions.md`, "D64").
 ///
 /// One level, `INFO`, and no way yet to raise or lower it — `-vvv` and
 /// `--quiet` are deferred and unallocated. RFC3339 timestamps
-/// (`UtcTime::rfc_3339`) are the convention the koji orchestrator logs
-/// already use, so a `pgdq` line correlates directly with one from either.
-/// No ANSI color: these lines are as likely to land in a redirected log file
-/// as a terminal, and `query` writes row data to stdout, so stderr is the
-/// only place this can go without corrupting a pipe.
+/// (`UtcTime::rfc_3339`) match the koji orchestrator's logs. No ANSI color,
+/// and stderr rather than stdout, which carries `query`'s row data.
 fn init_status_output() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -1209,36 +1060,24 @@ fn init_status_output() {
         .init();
 }
 
-/// **A `current_thread` runtime, not a multi-threaded one.** Every unit of work
-/// this binary dispatches is a `spawn_blocking` task — the positioned reads,
-/// the fused decode-and-parse workers, and the sub-streams of a partitioned
-/// replay alike (`docs/design/decisions.md`, "D12") — so the reactor never runs any of it, and a pool of reactor
-/// threads sized from the host's CPU count is threads the work never touches.
-/// The blocking pool tokio creates on demand is what actually carries the
-/// scan, so the process's thread count follows the concurrency dispatched
-/// rather than the number of CPUs it can see.
-///
-/// **Claimed as a thread-count result, not a memory one.** Fewer threads means
-/// fewer glibc arenas seeded, but an arena's retention is not proportional to
-/// how many there are — a probe on koji's `.xz` at `--jobs 4`, on a build whose
-/// runtime still sized itself from the host, found `--cpus 4` cutting 24 arenas
-/// to 8 (and the runtime's own threads with them) and anonymous resident only
-/// ~536 to ~476 MiB, a reading in no published figure — so this does not on
-/// its own make the
-/// process smaller, and no reading here says it does. What it buys is that the
-/// process no longer sizes itself from a number nobody stated.
+/// **A `current_thread` runtime, not a multi-threaded one.** Every unit of
+/// work this binary dispatches is a `spawn_blocking` task
+/// (`docs/design/decisions.md`, "D12"), so the blocking pool tokio creates on
+/// demand carries the scan and the process's thread count follows the
+/// concurrency dispatched rather than the CPUs it can see. **Claimed as a
+/// thread-count result, not a memory one**: an arena's retention is not
+/// proportional to how many there are, so this does not on its own make the
+/// process smaller and no reading here says it does.
 ///
 /// The `signal` handlers of [`install_interrupt_guard`] are ordinary
 /// `tokio::spawn` tasks and run on this thread: the scan loop awaits a
 /// `spawn_blocking` join at every piece, so the runtime is parked in
-/// `block_on` — driving the signal driver — for all of the time the work is
-/// actually running.
+/// `block_on` — driving the signal driver — whenever work is running.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // A default build drops this entirely; an `introspect` build writes what
     // the process held to the file `PGDQ_INTROSPECT_OUT` names, on the way
-    // out, whether this returns `Ok` or an error propagates through it
-    // (`src/introspect.rs`).
+    // out (`src/introspect.rs`).
     let _instrument = introspect::at_exit();
     init_status_output();
     let cli = Cli::parse();
@@ -1258,20 +1097,10 @@ async fn main() -> Result<()> {
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
-            // A cache whose compression claim this file contradicts is a
-            // cache for some other file, and `parse` refuses it exactly as
-            // `info` and `query` do: it would otherwise scan and overwrite
-            // it, which is the one thing this library does not do on its own
-            // (`docs/design/decisions.md`, "D20"). Refused having
-            // read nothing, so no footer walk is spent reaching it — and the
-            // same is true of the stored-size mismatch, which `open_for_scan`
-            // answers with the library's own error before opening anything.
-            //
-            // **The flags and the limit are announced ahead of this**, since
-            // neither waits on the file: opening a fresh `.xz` walks its
-            // stream footers first, and a mistyped `--parallel-memory` should
-            // not go unconfirmed through it
-            // (`docs/design/decisions.md`, "D64").
+            // A cache written for another file is refused here as it is by
+            // `info` and `query`, having read nothing
+            // (`docs/design/decisions.md`, "D20"). The flags and the limit
+            // are announced ahead of it, neither waiting on the file (D64).
             let stated = parallel.discover();
             stated.announce();
             let source = open_for_scan(&file, &mode)?;
@@ -1294,33 +1123,26 @@ async fn main() -> Result<()> {
                 ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
-                // No listing: the user asked the scan to stop, not for a
-                // report on what it had reached, and `pgdq info` is the
-                // command that reports. Both lines go to stderr, so a caller
-                // redirecting stdout gets an empty report rather than a
-                // truncated one.
+                // No listing: `pgdq info` is the command that reports. Both
+                // lines go to stderr, so a caller redirecting stdout gets an
+                // empty report rather than a truncated one.
                 eprintln!(
                     "interrupted at byte {} of {size} — the cache at {} holds the scan so far",
                     run.index.scanned_through,
                     path.display()
                 );
                 eprintln!("re-run `pgdq parse --source {}` to continue", file.display());
-                // Exit by signal (130/143), so a script can tell an interrupt
-                // from a failure. `SIGINT` is the fallback for a flag nothing
-                // in this binary sets any other way.
-                //
+                // Exit by signal (130/143), so a script can tell an
+                // interrupt from a failure; `SIGINT` is the fallback.
                 // `std::process::exit` runs no destructors, so the instrument
-                // is asked here rather than left to `main`'s guard — an
-                // interrupted scan is exactly the run whose resident account
-                // someone wants.
+                // is asked here rather than left to `main`'s guard.
                 introspect::report();
                 let number = signalled.load(Ordering::SeqCst);
                 std::process::exit(128 + if number == 0 { 2 } else { number });
             }
-            // The listing describes the file's state after this run, not this
-            // invocation's diff — so the one line that *is* about the
-            // invocation goes above it, where a user checking on an
-            // interrupted scan looks first.
+            // The listing describes the file's state after this run, not
+            // this invocation's diff, so the one line that *is* about the
+            // invocation goes above it.
             if let Some(notice) = resume_notice(run.resumed_from, size) {
                 println!("{notice}");
                 println!();
@@ -1339,24 +1161,17 @@ async fn main() -> Result<()> {
                 );
             }
             let Some(file) = file else {
-                // Cache-only mode (`docs/design/decisions.md`,
-                // "The compressed source and the cache"): no live dump file at all, so
-                // clap already required `--dqcache` for us.
+                // Cache-only mode (`docs/design/decisions.md`, "D22"): no
+                // live dump file at all, so clap already required
+                // `--dqcache` for us.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
                 return info_offline(&path, detail, map, json).await;
             };
             // `info` never scans, so `--dqcache none` — "ignore the cache" —
-            // would leave nothing at all to answer from. The message names the
-            // way out, the way `Error::FieldDecode` names `--schema-mode
-            // strings`: someone reaching for `none` is usually reaching for it
-            // because the dump's own directory is read-only, and what they
-            // want is a cache written somewhere else.
-            //
-            // Formed here rather than in `Error::CacheDisabled` because it
-            // interpolates the user's own `--source` path, which the library
-            // error does not have and should not take a `PathBuf` to get.
-            // `FieldDecode` names a *static* flag string, which is why that
-            // one could live in the error.
+            // leaves nothing to answer from, and the message names the way
+            // out. Formed here rather than in `Error::CacheDisabled` because
+            // it interpolates the user's own `--source` path, which the
+            // library error does not have.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
                 .require_enabled("info")
@@ -1369,12 +1184,10 @@ async fn main() -> Result<()> {
                     )
                 })?
                 .to_path_buf();
-            // `info` never scans, so a cache that does not describe this file
-            // leaves nothing to report from — and it says so having read
-            // nothing, rather than spending an `.xz` file's footer walk to
-            // reach an error it was always going to reach. Both conditions
-            // stop before the open; this one keeps `info`'s own sentence,
-            // which names the two ways out ahead of the command they enable.
+            // A cache that does not describe this file leaves `info` nothing
+            // to report from, and it says so having read nothing. This
+            // condition keeps `info`'s own sentence, which names the two ways
+            // out ahead of the command they enable.
             let source = match open_with_cache(&file, &mode)? {
                 Opened::Source(source) => source,
                 Opened::SourceChanged { cached_stored_size, live_stored_size } => {
@@ -1424,8 +1237,7 @@ async fn main() -> Result<()> {
                 None => pgdump_query::Expr::all(terms),
                 Some(spec) if terms.is_empty() => where_expr::parse_where(&spec)?,
                 // Both flags: one conjunction of the expression and the
-                // terms, flattened rather than nested, since nothing in the
-                // library prefers either shape.
+                // terms, flattened rather than nested.
                 Some(spec) => pgdump_query::Expr::And(
                     std::iter::once(where_expr::parse_where(&spec)?)
                         .chain(terms.into_iter().map(pgdump_query::Expr::Term))
@@ -1433,11 +1245,8 @@ async fn main() -> Result<()> {
                 ),
             };
             // As `info`: a cache that does not describe this file is
-            // reported having read nothing, rather than paying a footer walk
-            // and a whole scan over a map that cannot be trusted. `parse` is
-            // the command that rebuilds it.
-            // Announced in two lines, the first ahead of the open, exactly as
-            // `parse` does and for the same reason.
+            // reported having read nothing. Announced in two lines, the first
+            // ahead of the open, as `parse` does.
             let stated = parallel.discover();
             stated.announce();
             let source = open_for_scan(&file, &mode)?;
@@ -1451,25 +1260,21 @@ async fn main() -> Result<()> {
                 schema_mode: schema_mode.into(),
                 filter,
                 projection: projection(column, no_columns),
-                // The same flags on both passes: `pgdq query` runs one mapping
-                // scan and one replay over one source, so the number a person
-                // typed is the number both of them work inside.
+                // The same flags on both passes: one mapping scan and one
+                // replay over one source.
                 parallelism: parallel.parallelism(),
                 ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to
             // its literal needs the stream's `NestedPlan`s, and push mode
-            // only hands the resolved schema back once the whole stream has
-            // been drained (`docs/design/decisions.md`, "D46"). The scan itself is the same one —
-            // `read_table` drains this stream internally.
+            // hands the resolved schema back only once the whole stream has
+            // drained (`docs/design/decisions.md`, "D46").
             //
-            // Partitioned, not serial: the split is where `--jobs` becomes
-            // something other than a bound on what the source retains, and
-            // `Parallelism::Serial` — `--jobs 1` — is one sub-stream, so the
-            // serial path is reached through the same call rather than
-            // branched to (`docs/design/decisions.md`, "D51"). What `table_stream` reports as its stream's first
-            // item, this reports from the `await`; both are the same errors
-            // with the same wording.
+            // Partitioned, not serial: `Parallelism::Serial` — `--jobs 1` —
+            // is one sub-stream, so the serial path is reached through the
+            // same call rather than branched to (D51). What `table_stream`
+            // reports as its stream's first item, this reports from the
+            // `await`.
             let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
@@ -1488,32 +1293,25 @@ async fn main() -> Result<()> {
             let mut announced = false;
             let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
             // The lowest-indexed sub-stream that has failed, and its error.
-            // **Recorded rather than raised**, which is the whole of the
-            // ordering rule on this side: sub-stream `k` reads a contiguous run
-            // of blocks after `k-1`'s, so a failure in a lower-indexed one is
-            // earlier in the file however much later it arrives, and raising
-            // whichever failed first in time would name a different row on each
-            // run over an unchanged file
-            // (`docs/design/decisions.md`, "D52").
+            // **Recorded rather than raised**: sub-stream `k` reads a
+            // contiguous run of blocks after `k-1`'s, so raising whichever
+            // failed first in time would name a different row on each run
+            // over an unchanged file (`docs/design/decisions.md`, "D52").
             let mut failed: Option<(usize, pgdump_query::Error)> = None;
             loop {
                 // Everything at or after a failing sub-stream is dead, and
                 // **discarding what those slots hold is the load-bearing
-                // half**: the first round fills every slot, so the sub-streams
-                // after the failing one are routinely holding a batch, and left
-                // there it would print the moment the ones before it drained —
-                // rows past the error that a serial replay never reached. Only
-                // the sub-streams *before* the failure go on being drained, and
-                // one of them failing in turn moves the frontier down again.
+                // half**: a batch left in a slot past the failure would print
+                // the moment the ones before it drained — rows past the error
+                // a serial replay never reached.
                 let live = failed.as_ref().map_or(slots.len(), |(index, _)| *index);
                 for slot in slots.iter_mut().skip(live) {
                     *slot = Slot::Done;
                 }
-                // Refill every empty slot at once. In the first round that is
-                // every sub-stream; after it, only the one just drained — so
-                // the reads a sub-stream ahead of the printer issues stop at
-                // one batch, which is what makes the merge's bound N × batch
-                // rather than a reorder buffer.
+                // Refill every empty slot at once: every sub-stream in the
+                // first round, and after it only the one just drained — which
+                // is what makes the merge's bound N x batch rather than a
+                // reorder buffer.
                 let round = {
                     let fills = streams
                         .iter_mut()
@@ -1525,12 +1323,10 @@ async fn main() -> Result<()> {
                                 Some(Ok(batch)) => {
                                     *slot = Slot::Held {
                                         offset: stream.batch_source_offset(),
-                                        // The plans belong to the block this
-                                        // batch came from, so they are taken
-                                        // now: by the time it is printed its
-                                        // own sub-stream may have moved on to
-                                        // a block whose header named other
-                                        // columns.
+                                        // Taken now: by the time this batch
+                                        // is printed its sub-stream may have
+                                        // moved to a block whose header
+                                        // named other columns.
                                         plans: stream.resolved_schema().plans,
                                         batch,
                                     };
@@ -1547,18 +1343,15 @@ async fn main() -> Result<()> {
                             }
                         })
                         .collect::<Vec<_>>();
-                    // `join_all` answers in argument order, which is partition
-                    // order, which is file order — so the first failure in it
-                    // is the lowest-indexed of this round's, and every slot
-                    // this round could fill was already below whatever failed
-                    // before it.
+                    // `join_all` answers in argument order, which is
+                    // partition order, which is file order — so the first
+                    // failure in it is the lowest-indexed of this round's.
                     futures::future::join_all(fills).await.into_iter().flatten().next()
                 };
-                // Round again rather than printing: the sub-streams this
-                // failure has just killed may be holding batches, and the loop
-                // head is what marks them dead before the merge next picks.
-                // It terminates because a recorded failure strictly lowers
-                // `live` and a new one can only come from a slot below it.
+                // Round again rather than printing: the loop head marks the
+                // sub-streams this failure killed dead before the merge next
+                // picks. It terminates because a recorded failure strictly
+                // lowers `live`.
                 if let Some(first) = round {
                     failed = Some(first);
                     continue;
@@ -1583,19 +1376,16 @@ async fn main() -> Result<()> {
                     unreachable!("the slot the merge picked is the one it just read")
                 };
                 if !announced {
-                    // Off the first sub-stream, not off the one this batch
-                    // came from: its first segment starts at a `COPY` header,
-                    // so it has resolved a schema by now whether or not it had
-                    // rows to show for it — which is the block the serial path
-                    // announced from too.
+                    // Off the first sub-stream, not the one this batch came
+                    // from: its first segment starts at a `COPY` header, so a
+                    // schema is resolved whether or not it had rows.
                     announce_comparisons(&streams[0]);
                     announced = true;
                 }
                 any_batch = true;
-                // A zero-column projection prints no header. The header would
-                // be an empty line, and the row count `--no-columns | wc -l`
-                // is asked for would come back one too many
-                // (`docs/design/decisions.md`, "D28").
+                // A zero-column projection prints no header: it would be an
+                // empty line, and `--no-columns | wc -l` would come back one
+                // too many (`docs/design/decisions.md`, "D28").
                 if !header_printed && batch.num_columns() > 0 {
                     let names: Vec<String> =
                         batch.schema().fields().iter().map(|f| f.name().clone()).collect();
@@ -1606,17 +1396,13 @@ async fn main() -> Result<()> {
                 rows += batch.num_rows() as u64;
             }
             // Every sub-stream before the failing one is drained, so what is
-            // held now is the earliest error in the file — the one a serial
-            // replay would have stopped at, and the one every re-run gets.
-            // Raised after the rows before it have printed, exactly as the
-            // serial path prints up to the row it dies on.
+            // held now is the earliest error in the file. Raised after the
+            // rows before it have printed.
             if let Some((_, err)) = failed {
                 return Err(name_taken_verbatim(err));
             }
             // A query that matched a block but selected no rows still
-            // resolved a schema, so the announcement is owed either way; it
-            // is made at the first batch when there is one so it precedes the
-            // rows rather than trailing them.
+            // resolved a schema, so the announcement is owed either way.
             if !announced {
                 announce_comparisons(&streams[0]);
             }
@@ -1634,48 +1420,33 @@ async fn main() -> Result<()> {
 }
 
 /// What [`open_with_cache`] found: the source to read, or the one refusal the
-/// cache path settles on its own, before anything is opened.
-///
-/// **The second variant is not a refusal this helper can write.** The
-/// contradicted compression claim below reaches all three commands in one
-/// sentence, so `open_with_cache` bails on it; a stored-size mismatch does
-/// not — `parse` and `query` surface the library's own
-/// `Error::CacheSourceMismatch` and `info` prints the sentence that names the
-/// two ways out before `pgdq parse`
-/// (`docs/design/decisions.md`, "D20"). Handing the condition back is what keeps those three wordings where
-/// they already are while the walk is spared.
+/// cache path settles on its own, before anything is opened. **The second
+/// variant is not a refusal this helper can write**: a contradicted
+/// compression claim reaches all three commands in one sentence, a stored-size
+/// mismatch does not — `parse` and `query` surface
+/// `Error::CacheSourceMismatch` and `info` prints the sentence naming the two
+/// ways out (`docs/design/decisions.md`, "D20").
 enum Opened {
     /// The source, ready to read.
     Source(Arc<dyn pgdump_query::ByteRangeSource>),
     /// The cache at this mode's path records a stored size the file does not
-    /// have, so it describes another file. The very condition — and the very
-    /// two numbers — `cache::load` would have answered
-    /// [`CacheStatus::SourceChanged`] with once a source existed.
+    /// have, so it describes another file — the condition, and the two
+    /// numbers, `cache::load` would answer [`CacheStatus::SourceChanged`]
+    /// with once a source existed.
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
 }
 
 /// Open `file`, handing recognition whatever the cache at `cache` says about
 /// its compression layer, so an `.xz` source is built from the seek table a
 /// previous walk already produced instead of re-walking the file's stream
-/// footers (`docs/design/decisions.md`, "D18").
+/// footers (`docs/design/decisions.md`, "D18"). `--dqcache none` claims
+/// nothing; cache-only mode never reaches here at all, having no live source.
 ///
-/// `--dqcache none` claims nothing, which is what makes an opted-out cache
-/// cost exactly the walk it always did; cache-only mode never reaches here at
-/// all, having no live source to open.
-///
-/// **A contradicted claim is refused here rather than at each of the three
-/// call sites.** All three commands answer it identically — the cache at that
-/// path was written from another file, so it is not this one's to overwrite
-/// (`docs/design/decisions.md`, "D20") — and the mode holding the
-/// claim is the mode holding the path the message names, so the refusal has
-/// everything it needs without a caller passing it back down.
-///
-/// **A cache recorded against a file of another stored size stops here too**,
-/// as an [`Opened`] variant rather than as a bail: the file is never opened,
-/// so an `.xz` source never walks its stream footers to reach a refusal the
-/// cache path alone already settles (`docs/design/decisions.md`, "D20"). The comparison itself stays in `cache::claim`, so this is the same
-/// verdict the library reaches a moment later rather than a second reading of
-/// the same rule.
+/// Both "written for another file" conditions stop here rather than at each of
+/// the three call sites — a contradicted claim as a bail, a stored-size
+/// mismatch as an [`Opened`] variant — so an `.xz` source never walks its
+/// stream footers to reach a refusal the cache path alone settles. The
+/// comparison itself stays in `cache::claim` (D20).
 fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
     let claimed_by = match cache {
         CacheMode::Enabled(path) => Some(path.as_path()),
@@ -1700,16 +1471,12 @@ fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
     }
 }
 
-/// [`open_with_cache`] for the two commands that scan. Both surface the
-/// library's own `Error::CacheSourceMismatch` for a cache written against
-/// another file, so both raise it here — from `CacheMode::source_mismatch`,
-/// the same constructor the three scan entry points use, which is what makes
-/// the earlier refusal word-for-word the one it pre-empts
+/// [`open_with_cache`] for the two commands that scan, raising
+/// `Error::CacheSourceMismatch` from `CacheMode::source_mismatch` — the same
+/// constructor the three scan entry points use, so this refusal is
+/// word-for-word the one it pre-empts. The library still refuses on its own:
+/// this spares the walk, it does not replace the guarantee
 /// (`docs/design/decisions.md`, "D20").
-///
-/// The library still refuses on its own: this spares the walk, it does not
-/// replace the guarantee, which is the library's to keep for an embedder that
-/// never goes through this binary.
 fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
     match open_with_cache(file, cache)? {
         Opened::Source(source) => Ok(source),
@@ -1723,18 +1490,12 @@ fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query:
 /// cache at `path` records compression details the file at `source`
 /// contradicts.
 ///
-/// **This is the second of the two "written for another file" conditions**,
-/// and it is deliberately not one of [`unusable_cache_message`]'s: that
-/// function matches on [`CacheStatus`], and this condition is not one —
-/// recognition catches it before a source exists, so `load` never sees it
-/// (`docs/design/decisions.md`, "D20"). The sentence is its own rather than
-/// `Unreadable`'s — "check the path, or run `pgdq parse`" is advice `parse`
-/// cannot take, being the command that just refused, and the bytes at that
-/// path *are* a pgdq cache — for some other file.
-///
-/// The tail is the pair `Error::CacheSourceMismatch` names for the other
-/// condition, in the same words: the two ways out of a cache that is valid
-/// for a file that is not this one (D5 — there is no override).
+/// Not one of [`unusable_cache_message`]'s: that function matches on
+/// [`CacheStatus`], and recognition catches this before a source exists so
+/// `load` never sees it. The sentence is its own rather than `Unreadable`'s —
+/// "check the path, or run `pgdq parse`" is advice `parse` cannot take, being
+/// the command that just refused. The tail is [`TWO_WAYS_OUT`]
+/// (`docs/design/decisions.md`, "D20").
 fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
     format!(
         "the cache at {} records compression details that {} contradicts, so it was written for \
@@ -1746,39 +1507,26 @@ fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
 
 /// What a caller does about a cache that describes a different file, in the
 /// words both refusals use. There is no third way — no `--force`, no
-/// `CacheMode` variant meaning "replace regardless" — because a flag like that
-/// is set once in a script and never reconsidered
+/// `CacheMode` variant meaning "replace regardless"
 /// (`docs/design/decisions.md`, "D20").
-///
-/// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for
-/// the size-mismatch condition, which reaches `parse` and `query` from the
-/// library rather than from here; `refusals_name_both_ways_out`
-/// (`tests/partial_reporting.rs`) is what holds the three of them to one
-/// wording.
+/// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for the
+/// size-mismatch condition; `refusals_name_both_ways_out`
+/// (`tests/partial_reporting.rs`) holds the three to one wording.
 const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
 
-/// The sentence `pgdq info` prints for a cache it cannot use. All four causes
-/// end in `pgdq parse`, and they are still four different sentences: the fact
-/// the user needs to know differs — "you have never parsed this file" and
-/// "your file changed since you parsed it" send a reader to different places.
+/// The sentence `pgdq info` prints for a cache it cannot use — four causes,
+/// four sentences, because the fact the user needs to know differs. `parse`
+/// scans over `Missing`, `Unreadable` and `UnsupportedVersion` and refuses
+/// `SourceChanged`, so that arm names [`TWO_WAYS_OUT`] before it names the
+/// command (`docs/design/decisions.md`, "D20").
 ///
-/// **Three of the four reach `pgdq parse` directly and one does not.** `parse`
-/// scans over `Missing`, `Unreadable` and `UnsupportedVersion` — there is
-/// nothing at that path worth keeping — and refuses `SourceChanged`, so that
-/// arm names [`TWO_WAYS_OUT`] before it names the command
-/// (`docs/design/decisions.md`, "D20").
-///
-/// **One match, two renderings**, the same discipline [`resolution_words`]
-/// applies. `source` is `None` in cache-only mode, which has no dump file to
-/// name and so states the fault and stops; the two paths otherwise describe
-/// the same faults, and a second match is how they come to describe them
-/// differently. Cache-only mode cannot reach
-/// [`CacheStatus::SourceChanged`] at all — there is no live file to compare
-/// against, which is exactly what its `CacheOffline` diagnostic warns about.
+/// **One match, two renderings**, the discipline [`resolution_words`] applies.
+/// `source` is `None` in cache-only mode, which states the fault and stops; it
+/// cannot reach [`CacheStatus::SourceChanged`] at all, there being no live
+/// file to compare against — what its `CacheOffline` diagnostic warns about.
 ///
 /// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
-/// stays exhaustive: a usable status reaching here is a caller bug, and it says
-/// so rather than printing a plausible error.
+/// stays exhaustive: a usable status reaching here is a caller bug.
 fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Path>) -> String {
     // Each arm supplies its own connective and tail, because "no cache at X"
     // and "X is not a pgdq cache" do not join to the same sentence.
@@ -1803,10 +1551,9 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
             live_stored_size: live_size,
         } => {
             let source = source.expect("cache-only mode has no live source to compare against");
-            // The one arm whose remedy is not `pgdq parse` on its own. `parse`
-            // refuses this very condition rather than scanning over it, so
-            // sending a reader straight there would send them to a second
-            // refusal; the two ways out come first, and `parse` then works
+            // The one arm whose remedy is not `pgdq parse` on its own:
+            // `parse` refuses this very condition, so the two ways out come
+            // first and `parse` then works
             // (`docs/design/decisions.md`, "D20").
             format!(
                 "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
@@ -1842,12 +1589,9 @@ async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Resul
 
 /// One column's resolution outcome, in both spellings: a stable token for
 /// `--json` and the sentence `info --detail` prints
-/// (`docs/design/decisions.md`, "The CLI").
-///
-/// **One match, two renderings.** Splitting them into two functions is how the
-/// machine-readable export and the text listing drift into describing
-/// different vocabularies; a single exhaustive match makes a new
-/// [`ColumnResolution`] variant a compile error that has to answer both.
+/// (`docs/design/decisions.md`, "The CLI"). **One match, two renderings**, so
+/// a new [`ColumnResolution`] variant is a compile error that has to answer
+/// both.
 fn resolution_words(r: &ColumnResolution) -> (&'static str, &'static str) {
     match r {
         ColumnResolution::Mapped => ("mapped", "mapped"),
@@ -1889,26 +1633,21 @@ fn resolution_label(r: &ColumnResolution) -> &'static str {
 /// What one column became in Arrow — the other half of `info --detail`'s
 /// per-column line (`docs/design/decisions.md`, "The CLI").
 ///
-/// Arrow's own `Display` is terse and reversible (`List(Utf8View)`,
-/// `Struct("x": Int32, "y": Utf8View)`), and a composite's field names are the
-/// user's own, so it carries real information and is what prints — with one
-/// substitution. The five-field range struct is identical for every range
-/// column in every dump and renders as 137 characters saying so, so it
-/// collapses to `Range<T>`, `T` being the bound type: the only part that
-/// varies. The manual states the struct's real layout once, which is what
-/// makes the elision lossless.
+/// Arrow's own `Display` is what prints, with one substitution: the five-field
+/// range struct, identical for every range column in every dump, collapses to
+/// `Range<T>`, `T` being the bound type. The manual states the struct's real
+/// layout once, which makes the elision lossless.
 ///
 /// **The substitution is detected from the [`NestedPlan`], never from the
-/// field names** — a user composite is free to declare five fields with
-/// exactly those names, and `pgtype::RANGE_STRUCT_FIELDS` reserves dispatch to
-/// the plan. A built-in multirange and an array of the matching range render
-/// *identically* (`List(Range<Int32>)`), which is correct rather than a
-/// collision to fix: they are the same Arrow type, the plans differ, and the
-/// declared PostgreSQL type sits on the same line.
+/// field names** — a user composite may declare five fields with exactly
+/// those names, and `pgtype::RANGE_STRUCT_FIELDS` reserves dispatch to the
+/// plan. A built-in multirange and an array of the matching range render
+/// *identically* (`List(Range<Int32>)`): the same Arrow type, different plans,
+/// with the declared PostgreSQL type on the same line.
 ///
 /// The type and the plan come from one producer and cannot disagree; this
 /// being display code, a disagreeing pair falls back to plain `Display`
-/// rather than panicking the way the builder does.
+/// rather than panicking.
 fn arrow_type_label(data_type: &DataType, plan: &NestedPlan) -> String {
     match (plan, data_type) {
         (NestedPlan::Array(element), DataType::List(field)) => {
@@ -1944,15 +1683,13 @@ fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
 }
 
 /// An enum column's declared labels, in declaration order, or `None` for
-/// every other column — read off the column's own [`ComparisonPlan`], which is
-/// where resolution already put them (`docs/design/decisions.md`,
-/// "The CLI").
+/// every other column — read off the column's own [`ComparisonPlan`], where
+/// resolution already put them (`docs/design/decisions.md`, "The CLI").
 ///
-/// A domain over an enum answers here too, because
-/// `pgtype::comparison_user_type` recurses through the domain chain; that is
-/// the right answer, since such a column takes exactly those labels. An
-/// *empty* enum is `ComparisonPlan::Refused` and so has nothing to list, which
-/// matches the `empty enum` sentence the line above it already prints.
+/// A domain over an enum answers here too, `pgtype::comparison_user_type`
+/// recursing through the domain chain. An *empty* enum is
+/// `ComparisonPlan::Refused` and has nothing to list, matching the
+/// `empty enum` sentence the line above prints.
 fn enum_labels(plan: &ComparisonPlan) -> Option<&[String]> {
     match plan {
         ComparisonPlan::Compared { kind: CompareKind::Enum(labels), .. } => Some(labels),
@@ -1963,26 +1700,22 @@ fn enum_labels(plan: &ComparisonPlan) -> Option<&[String]> {
 /// The labels as `info --detail` prints them: each one single-quoted with any
 /// interior quote doubled, comma-separated.
 ///
-/// **Quoting is forced by the data, and this quoting by two precedents that
-/// agree.** A label is arbitrary text — `has space`, `has,comma`,
-/// `has'quote` are all legal and all in the fixtures — so a bare comma-joined
-/// list cannot be read back apart. Single quotes with `''` doubling is both
-/// what the dump's own `CREATE TYPE … AS ENUM (…)` writes and what a
-/// `--filter` value accepts ([`dequote`]), so a printed label pastes straight
-/// into `--filter "mood=<label>"` and reads the same as the file it came from.
+/// **Quoting is forced by the data**: a label is arbitrary text (`has space`,
+/// `has,comma`, `has'quote` are all legal and all in the fixtures), so a bare
+/// comma-joined list cannot be read back apart. Single quotes with `''`
+/// doubling is both what the dump's own `CREATE TYPE … AS ENUM (…)` writes
+/// and what a `--filter` value accepts ([`dequote`]).
 ///
 /// *Rejected:* Rust's `{:?}`, which `arrow_type_label` uses for a composite's
-/// field names. It is unambiguous too, but it spells a PostgreSQL literal in
-/// Rust's escape vocabulary, and the double quote it produces is the one this
-/// project's filter grammar treats as the *other* quote.
+/// field names; it spells a PostgreSQL literal in Rust's escape vocabulary,
+/// and the double quote it produces is the *other* quote here.
 fn label_list(labels: &[String]) -> String {
     labels.iter().map(|l| format!("'{}'", l.replace('\'', "''"))).collect::<Vec<_>>().join(", ")
 }
 
-/// How a database is named in the listing. A `\connect`-less dump has no
-/// name to print, and `(unnamed)` is what the listing calls that database —
-/// one spelling, so the metadata header, the block listing and `--map` cannot
-/// come to disagree about what an unnamed database is called.
+/// How a database is named in the listing. A `\connect`-less dump has no name
+/// to print, and `(unnamed)` is what the listing calls it — one spelling, so
+/// the metadata header, the block listing and `--map` cannot disagree.
 fn database_label(database: &Option<String>) -> &str {
     match database {
         Some(name) => name,
@@ -1991,14 +1724,12 @@ fn database_label(database: &Option<String>) -> &str {
 }
 
 /// Prints a `database: <name>` line each time the database changes, and only
-/// when a listing spans more than one — the common case (a plain or
-/// single-`--create` dump) prints no header at all.
+/// when a listing spans more than one.
 ///
 /// **The rows are already in file order and every `\connect` segment is
 /// contiguous in the file**, so a header whenever the value changes is the
-/// whole grouping rule: nothing has to be sorted or bucketed first. This is
-/// also what makes an `AmbiguousTable` error's candidate names actionable —
-/// they are names this listing already showed
+/// whole grouping rule. It is also what makes an `AmbiguousTable` error's
+/// candidate names ones this listing already showed
 /// (`docs/design/decisions.md`, "D49").
 struct DatabaseHeadings<'a> {
     multi: bool,
@@ -2022,17 +1753,13 @@ impl<'a> DatabaseHeadings<'a> {
 }
 
 /// Dump-level metadata header: server/`pg_dump` versions, extension and
-/// user-defined-type counts (`docs/design/decisions.md`,
-/// "The CLI"). The `database: <name>` line is only shown when it's informative —
-/// a single unnamed database (a plain, non-`--create` dump: the overwhelming
-/// common case) is printed with no header line, since one would just be
-/// noise.
+/// user-defined-type counts (`docs/design/decisions.md`, "The CLI"). The
+/// `database: <name>` line is shown only when it is informative — a single
+/// unnamed database prints no header line.
 ///
 /// Under `detail`, the `user-defined types` count becomes the heading of a
 /// listing of the types themselves, one line each, in the order the dump
-/// declares them. The count is otherwise their only trace: nothing else in
-/// `info` names a user-defined type, so a user cannot learn from it that
-/// `public.mood` exists, let alone what it holds.
+/// declares them. The count is otherwise their only trace.
 fn print_metadata(metadata: &DumpMetadata, detail: bool) {
     let multi = metadata.databases.len() > 1;
     for db in &metadata.databases {
@@ -2050,9 +1777,8 @@ fn print_metadata(metadata: &DumpMetadata, detail: bool) {
         println!("{indent}extensions: {}", db.extensions.len());
         println!("{indent}user-defined types: {}", db.types.len());
         if detail {
-            // The name column is padded to the widest name this database
-            // declares, so the kinds line up; the right edge stays ragged,
-            // an enum's label list being as long as the type is.
+            // Padded to the widest name this database declares, so the kinds
+            // line up; the right edge stays ragged.
             let width = db.types.iter().map(|t| t.name.chars().count()).max().unwrap_or(0);
             for def in &db.types {
                 println!(
@@ -2071,16 +1797,12 @@ fn print_metadata(metadata: &DumpMetadata, detail: bool) {
 /// the composite's fields, the range's subtype
 /// (`docs/design/decisions.md`, "The CLI").
 ///
-/// **Every arm renders**, not the enum alone: a listing headed `user-defined
-/// types` that showed only enums would be a lie about what the dump holds.
-/// `Composite { fields: None }` says `(fields not parsed)` explicitly, because
-/// that is the one arm whose absence changes how a column of the type
-/// resolves; a `Range` naming no subtype says so for symmetry. Neither shape
-/// is one `pg_dump` writes, so both are pinned by this module's unit test
-/// rather than against a fixture.
-///
-/// Not to be confused with [`type_kind_label`], which is `--map`'s one-word
-/// name for the same vocabulary — a span line has no room for a payload.
+/// **Every arm renders**, not the enum alone. `Composite { fields: None }`
+/// says `(fields not parsed)` explicitly, being the one arm whose absence
+/// changes how a column of the type resolves; a `Range` naming no subtype
+/// says so for symmetry. Neither shape is one `pg_dump` writes, so both are
+/// pinned by this module's unit test. [`type_kind_label`] is `--map`'s
+/// one-word name for the same vocabulary.
 fn type_kind_summary(kind: &TypeKind) -> String {
     match kind {
         TypeKind::Enum { labels } if labels.is_empty() => "enum: (no labels)".to_string(),
@@ -2103,10 +1825,8 @@ fn type_kind_summary(kind: &TypeKind) -> String {
                 .collect();
             format!("composite: {}", rendered.join(", "))
         }
-        // The `canonical` function is named where the DDL declares one,
-        // because it is the whole reason a column of this type refuses every
-        // filter operator — a user meeting that refusal comes here to see
-        // what the file said.
+        // The `canonical` function is named where the DDL declares one: it
+        // is why a column of this type refuses every filter operator.
         TypeKind::Range { subtype, canonical, .. } => {
             let over = match subtype {
                 Some(subtype) => format!("range over {subtype}"),
@@ -2124,22 +1844,18 @@ fn type_kind_summary(kind: &TypeKind) -> String {
 
 /// One `COPY` block's resolved schema, paired back with the block it came
 /// from — the single resolution pass `--detail`'s text and `--json`'s export
-/// both render (`docs/design/decisions.md`, "The CLI"). Two passes is
-/// the failure mode here: the export would quietly become a second
-/// implementation of what the listing says.
+/// both render (`docs/design/decisions.md`, "The CLI").
 ///
 /// `complete` says whether `index` covers the file
-/// ([`DumpIndex::is_complete`]), which is what decides whether a block's
-/// array-shape census may be believed. A *mapped* block's census is always
-/// total for that block, but a reported schema answers "what is this table",
-/// and one table's data can occupy several blocks (I2) — so a map that
-/// stopped short cannot speak for a block past its frontier, and every column
-/// resolves optimistically until it can
-/// (`docs/design/decisions.md`, "D35").
+/// ([`DumpIndex::is_complete`]), which decides whether a block's array-shape
+/// census may be believed: a *mapped* block's census is total for that block,
+/// but one table's data can occupy several blocks (I2), so a map that stopped
+/// short cannot speak for a block past its frontier and every column resolves
+/// optimistically until it can (`docs/design/decisions.md`, "D35").
 ///
-/// A header-less block resolves to an empty schema: its column names come from
-/// its first data row, which no index records. It is still listed, so the
-/// export's shape does not vary per block.
+/// A header-less block resolves to an empty schema, its column names coming
+/// from its first data row, which no index records. It is still listed, so
+/// the export's shape does not vary per block.
 fn block_resolutions(
     index: &DumpIndex,
     complete: bool,
@@ -2163,34 +1879,29 @@ fn block_resolutions(
 
 /// `--json`'s shape: the whole [`DumpIndex`] flattened to one object, plus the
 /// three things it does not itself carry — how much of the file it covers, the
-/// diagnostics `#[serde(skip)]` drops for the cache's own reasons
-/// (`docs/design/decisions.md`, "D22"), and the per-block type
-/// resolution, which is an L2 conclusion an L1 index has no field for. No
-/// schema stability is promised for any of this — see the `--json` flag's help
-/// text.
+/// diagnostics `#[serde(skip)]` drops (`docs/design/decisions.md`, "D22"), and
+/// the per-block type resolution, an L2 conclusion an L1 index has no field
+/// for. No schema stability is promised — see the `--json` flag's help text.
 ///
-/// **Coverage is components, not a rendered percentage.** `scanned_through`
-/// comes flattened out of the index and `total_size` sits beside it, so a
-/// script computes whatever ratio it wants instead of parsing the text
-/// listing's line back apart.
+/// **Coverage is components, not a rendered percentage**: `scanned_through`
+/// and `total_size` sit side by side, so a script computes its own ratio.
 #[derive(serde::Serialize)]
 struct IndexJson<'a> {
     #[serde(flatten)]
     index: &'a DumpIndex,
     total_size: u64,
     /// The container's shape, `null` for a plain file — the same three
-    /// numbers [`compression_line`] prints, exported because `--json` claims
-    /// to carry everything `--detail` would add and this is part of it.
+    /// numbers [`compression_line`] prints, exported because `--json` carries
+    /// everything `--detail` would add.
     compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
 }
 
 /// One `COPY` block's resolution, keyed by the block rather than rolled up per
-/// table. A table can span blocks (I2) and a header-less block names its
+/// table: a table can span blocks (I2) and a header-less block names its
 /// columns from its first row, so a per-table rollup needs a merge rule that
-/// does not exist yet; leaving the grouping to the consumer is where it
-/// honestly sits (`docs/design/decisions.md`, "The CLI").
+/// does not exist (`docs/design/decisions.md`, "D67").
 #[derive(serde::Serialize)]
 struct BlockResolutionJson<'a> {
     database: Option<&'a str>,
@@ -2251,11 +1962,8 @@ fn print_index_json(
 ///
 /// A partial index lacks *records*, not confidence: a block enters the map
 /// only at a `CopyEnd` watermark and every mapping pass censuses, so every
-/// record it holds is complete in itself. There is no half-known block, only
-/// blocks past the frontier that are not there at all — which is why this line
-/// is the only qualification the listing carries.
-///
-/// The percentage floors, so it reads 100% only for a genuinely finished scan.
+/// record it holds is complete in itself, and there is no half-known block.
+/// The percentage floors, so it reads 100% only for a finished scan.
 fn completion_line(scanned_through: u64, total_size: u64) -> String {
     // A zero-byte file is trivially covered in full, and has no ratio.
     let percent = (scanned_through.min(total_size) * 100).checked_div(total_size).unwrap_or(100);
@@ -2285,16 +1993,12 @@ fn report(
 /// The container line `info --detail` prints above the listing, and
 /// nothing at all for a plain file, which has no container to describe.
 ///
-/// **Three numbers a user is otherwise sent to `xz --list` for**, which on the
-/// shape that most wants asking (many concatenated streams) is a walk of every
-/// footer in the file. `largest block` is the largest term of what
-/// `--parallel-memory` has to clear for a query to read this file a block at a
-/// time — **four times over**, one reader's block beside the three further
+/// **Three numbers a user is otherwise sent to `xz --list` for**, which on a
+/// many-stream file walks every footer. `largest block` is the largest term of
+/// what `--parallel-memory` has to clear for a query to read this file a block
+/// at a time — **four times over**, one reader's block beside the further
 /// blocks the pool keeps however few readers run, plus a read buffer and the
-/// decompressor's own working memory — so
-/// the flag that says *raise it* is most of the way answered here, and a query
-/// that declines the block path names the whole of it
-/// (`docs/design/decisions.md`, "D16").
+/// decompressor's own working memory (`docs/design/decisions.md`, "D16").
 fn compression_line(shape: &CompressionShape) -> String {
     format!(
         "compression: {} — {} block(s) in {} stream(s), largest block {} bytes uncompressed",
@@ -2304,12 +2008,9 @@ fn compression_line(shape: &CompressionShape) -> String {
 
 /// Print the whole listing, below whatever coverage line [`report`] already
 /// stated. `complete` is passed straight through to [`block_resolutions`],
-/// which is where it means something.
-///
-/// **Nothing here is qualified by how much of the file was scanned.** The
-/// coverage line above says it once; a partial index's records are each
-/// complete in themselves (see [`completion_line`]), so repeating the caveat
-/// per block would suggest a variation that does not exist.
+/// which is where it means something, and **nothing here is qualified by how
+/// much of the file was scanned** — the coverage line says it once
+/// (see [`completion_line`]).
 fn print_index(
     index: &DumpIndex,
     compression: Option<CompressionShape>,
@@ -2374,21 +2075,17 @@ fn print_index(
                 .collect();
             println!("    columns: {}", columns.join(", "));
             if detail {
-                // One line per column that has something to say. A column
-                // that did not map says why; a column that mapped says what
-                // it mapped *to*, unless that is `Utf8View` — the
-                // no-information answer, and the only Arrow type a
-                // non-`Mapped` resolution ever produces, so the two arms
-                // never both fire.
+                // One line per column that has something to say: a column
+                // that did not map says why, one that mapped says what it
+                // mapped *to* unless that is `Utf8View` — the no-information
+                // answer, and the only Arrow type a non-`Mapped` resolution
+                // produces, so the two arms never both fire.
                 //
-                // An enum column then carries its declared labels on a
-                // continuation line beneath, uncapped: `Dictionary(Int32,
-                // Utf8)` says nothing about *which* labels, and this is the
-                // only place a user can read them without grepping the dump
-                // for its `CREATE TYPE`. It is a continuation rather than a
-                // suffix because one eight-label enum on the column's own
-                // line would wrap and break the alignment of every row around
-                // it.
+                // An enum column carries its declared labels on a
+                // continuation line beneath, uncapped: this is the only place
+                // a user can read them without grepping the dump for its
+                // `CREATE TYPE`, and a continuation rather than a suffix
+                // keeps a long list from breaking the alignment.
                 for (i, note) in resolved.notes.iter().enumerate() {
                     let data_type = resolved.schema.field(i).data_type();
                     if note.resolution != ColumnResolution::Mapped {
@@ -2417,8 +2114,7 @@ fn print_index(
     }
 
     println!();
-    // No byte count here: the coverage line above owns that, and stating it
-    // twice invites the two to disagree.
+    // No byte count here: the coverage line above owns that.
     println!("{} COPY block(s), {} row(s)", blocks.len(), index.total_rows());
     if total_unmapped > 0 {
         println!(
@@ -2428,11 +2124,10 @@ fn print_index(
 }
 
 /// `DumpIndex::diagnostics` (or, for `--preamble-only`, the diagnostics
-/// `preamble_only` reports separately), printed unconditionally, with no
-/// severity threshold hiding any of them. Cache-only mode's "unverified,
-/// historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
-/// Returns whether anything was printed, matching `print_cross_references`'s
-/// and `print_object_kinds`' convention.
+/// `preamble_only` reports separately), printed unconditionally with no
+/// severity threshold. Cache-only mode's "unverified, historical" banner rides
+/// this same path (`DiagnosticKind::CacheOffline`). Returns whether anything
+/// was printed.
 fn print_diagnostics(diagnostics: &[Diagnostic]) -> bool {
     if diagnostics.is_empty() {
         return false;
@@ -2472,10 +2167,9 @@ fn diagnostic_message(kind: &DiagnosticKind) -> String {
 }
 
 /// Referenced-role and referenced-tablespace summary
-/// (`docs/design/decisions.md`, "D31")
-/// — an empty set prints nothing, so a dump referencing neither leaves no
-/// trace here. Returns whether anything was printed, so the caller knows
-/// whether to add a separating blank line.
+/// (`docs/design/decisions.md`, "D31") — an empty set prints nothing. Returns
+/// whether anything was printed, so the caller knows whether to add a
+/// separating blank line.
 fn print_cross_references(index: &DumpIndex) -> bool {
     let mut printed = false;
     if !index.roles.is_empty() {
@@ -2493,16 +2187,13 @@ fn print_cross_references(index: &DumpIndex) -> bool {
 }
 
 /// Per-`Type:` object-kind counts — one per archive entry, the same closed
-/// ~63-value vocabulary the TOC-coverage diagnostic counts against
-/// (`docs/design/decisions.md`, "D31"). Counts `toc_owned`
-/// spans, not every attributed one: this is an object *census*, and a
-/// follow-on statement
-/// (`ALTER ... OWNER TO`, etc.) inherits its governing entry's `toc` rather
-/// than carrying `None` — counting `span.toc.is_some()` here would count that
-/// object twice ("Span boundaries: statement-anchored, object-attributed,
-/// greedy"). A span with no TOC comment at all (the header-less-input
-/// fallback) contributes to no bucket here, since there is nothing typed to
-/// count it under. Returns whether anything was printed.
+/// vocabulary the TOC-coverage diagnostic counts against
+/// (`docs/design/decisions.md`, "D31"). Counts `toc_owned` spans, not every
+/// attributed one: this is an object *census*, and a follow-on statement
+/// (`ALTER ... OWNER TO`, etc.) inherits its governing entry's `toc`, so
+/// counting `span.toc.is_some()` would count that object twice. A span with
+/// no TOC comment at all contributes to no bucket. Returns whether anything
+/// was printed.
 fn print_object_kinds(index: &DumpIndex) -> bool {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for span in &index.spans {
@@ -2524,9 +2215,8 @@ fn print_object_kinds(index: &DumpIndex) -> bool {
 
 /// `--map`: every span the full file map found, in file order — the raw
 /// structure `DumpIndex::spans` keeps, not the per-table view `blocks()`
-/// filters it down to (`docs/design/decisions.md`,
-/// "D34"). Grouped by [`DatabaseHeadings`], the
-/// same convention the ordinary block listing uses.
+/// filters it down to (`docs/design/decisions.md`, "D34"). Grouped by
+/// [`DatabaseHeadings`], as the ordinary block listing is.
 fn print_map(index: &DumpIndex) {
     let mut headings = DatabaseHeadings::new(index.spans.iter().map(|s| &s.database));
     for span in &index.spans {
@@ -2566,10 +2256,9 @@ fn span_summary(span: &Span) -> String {
     }
 }
 
-/// Short label for a [`TypeKind`] — `--map`'s compact form of the same
-/// six-emission-shape vocabulary `docs/manual/type-handling.md` explains for
-/// readers. [`type_kind_summary`] is the `--detail` type listing's fuller
-/// rendering, payload included.
+/// Short label for a [`TypeKind`] — `--map`'s compact form of the vocabulary
+/// `docs/manual/type-handling.md` explains. [`type_kind_summary`] is the
+/// `--detail` listing's fuller rendering, payload included.
 fn type_kind_label(kind: &TypeKind) -> &'static str {
     match kind {
         TypeKind::Enum { .. } => "enum",
@@ -2611,8 +2300,7 @@ mod tests {
     /// A source recommending whatever it is built with, so that
     /// [`ParallelArgs::resolve`]'s two halves — ask the source, or honour the
     /// flag — can be told apart without a real file of either shape. The three
-    /// required methods answer nothing: `resolve` reads exactly one method and
-    /// never touches a byte.
+    /// required methods answer nothing; `resolve` touches no byte.
     struct Recommends {
         jobs: usize,
         memory: Option<pgdump_query::WorkerMemory>,
@@ -2682,28 +2370,24 @@ mod tests {
 
     /// One of the committed runtime roots
     /// (`pgdump_query-cli/tests/data/runtime/README.md`) — a filesystem tree
-    /// shaped like a Linux one, so that a resolution can be pinned against an
+    /// shaped like a Linux one, so a resolution can be pinned against an
     /// environment this machine is not in.
     fn runtime_root(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/runtime").join(name)
     }
 
-    /// A source recommending twenty-four readers of 58 MiB each and no pool
-    /// of its own — the flat shape every source but the block-decoding one
-    /// states. The block-decoding shape is `BLOCK_READER` beside its unit.
+    /// One reader's charge in the flat shape every source but the
+    /// block-decoding one states; that shape is `BLOCK_READER` beside its
+    /// unit.
     const READER: u64 = 58 << 20;
 
     /// **A discovered limit is what a flagless run resolves inside, on both
-    /// cgroup versions.** The v1 arm is the one no machine here can produce
-    /// (`RT4`, `RT6`), and it is reached through `mountinfo` rather than
-    /// through the conventional mount — so what this pins is that a resolution,
-    /// not merely the reader beneath it, comes out of the shape the register
-    /// describes.
-    ///
-    /// The pair is consistent in both: the count is what the allowance affords
-    /// under the margin and the budget is exactly what that many readers
-    /// spend, never the cap itself (`docs/design/roadmap.md`, "A default runs
-    /// as fast as the allocation permits").
+    /// cgroup versions** — the v1 arm being the one no machine here can
+    /// produce (`RT4`, `RT6`), reached through `mountinfo`. The pair is
+    /// consistent in both: the count is what the allowance affords under the
+    /// margin and the budget is what that many readers spend, never the cap
+    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
+    /// permits").
     #[test]
     fn a_flagless_run_resolves_inside_a_discovered_limit_on_either_cgroup_version() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
@@ -2735,58 +2419,56 @@ mod tests {
         assert_eq!(plain.parallelism().memory_bytes(), Some(pgdump_query::DEFAULT_MEMORY_BUDGET));
     }
 
-    /// **A shared pool lowers the recommended count at every allocation**, and
-    /// hardest at the small ones. A block-decoding source's pool retains a
-    /// unit for every slot but the one a reader is filling — `POOL_DEPTH - 1`
-    /// of them below four readers and `jobs - 1` above — so the allowance
-    /// always buys fewer than a division by the per-reader charge would say.
-    /// Pinned at both ends, because a charge that billed no pool would bind
-    /// nowhere and one billing two units a reader would over-bill.
+    /// **A shared pool lowers the recommended count at every allocation.** A
+    /// block-decoding source's pool retains a unit for every slot but the one
+    /// a reader is filling — `POOL_DEPTH - 1` below four readers and
+    /// `jobs - 1` above — so the allowance buys fewer than a division by the
+    /// per-reader charge would say. Pinned at both ends: billing no pool would
+    /// bind nowhere, billing two units a reader would over-bill.
     #[test]
     fn a_shared_pool_lowers_a_recommended_count_at_every_allocation() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
         const UNIT: u64 = 24 << 20;
-        // What one reader of an ordinary 24 MiB-block dump holds: the block it
-        // is decoding — which is the block it then retains — the chunk buffer
-        // a straddling read is assembled into, and the decoder.
+        // What one reader of a 24 MiB-block dump holds: the block it is
+        // decoding and then retains, the chunk buffer a straddling read is
+        // assembled into, and the decoder.
         const BLOCK_READER: u64 = 34 << 20;
         let source = || Recommends::block_reader(24, BLOCK_READER, UNIT, 4);
 
         // v1, a 512 MiB limit: 128 MiB after the reserve, which a division by
         // the per-reader charge calls three readers. The three units the pool
-        // retains beside a single reader leave only 22 MiB of that, so a
-        // second reader does not fit and one is the honest answer — spending
-        // 34 + 3 x 24 = 106 MiB of the 128.
+        // retains beside a single reader leave too little for a second, so one
+        // is the honest answer.
         let tight = flagless.resolve_in(&runtime_root("v1-limit"), &source());
         assert_eq!(tight.parallelism().jobs(), 1);
         assert_eq!(tight.parallelism().memory_bytes(), Some(BLOCK_READER + 3 * UNIT));
 
-        // v2, a 1 GiB limit: 563.2 MiB once the reserve and the margin are
-        // both left. A division says sixteen readers; the pool slot each of
-        // them past the first also takes is what makes it ten.
+        // v2, a 1 GiB limit, once the reserve and the margin are both left. A
+        // division says sixteen readers; the pool slot each of them past the
+        // first also takes is what makes it ten.
         let roomy = flagless.resolve_in(&runtime_root("v2-limit"), &source());
         assert_eq!(roomy.parallelism().jobs(), 10);
         assert_eq!(roomy.parallelism().memory_bytes(), Some(10 * BLOCK_READER + 9 * UNIT));
     }
 
     /// **No limit found leaves the source's recommendation standing**, capped
-    /// only by half of `MemAvailable` (`RT8`) — which is the branch a `min`
-    /// against the fallback constant would have broken, making a flagless
-    /// compressed scan serial on the machine most likely to run it.
+    /// only by half of `MemAvailable` (`RT8`) — a `min` against the fallback
+    /// constant would make a flagless compressed scan serial on the machine
+    /// most likely to run it.
     #[test]
     fn no_limit_found_takes_the_sources_own_answer_under_the_memavailable_cap() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
 
-        // ~19 GiB available, so half of it is not the binding number and all
-        // twenty-four readers stand.
+        // Enough available that half of it does not bind, so all twenty-four
+        // readers stand.
         let roomy = flagless.resolve_in(&runtime_root("no-limit"), &Recommends::reader(24, READER));
         assert_eq!(roomy.parallelism().jobs(), 24);
         assert_eq!(roomy.parallelism().memory_bytes(), Some(24 * READER));
         assert!(roomy.limit.is_none(), "every limit file states max");
 
-        // 512 MiB available on the same unlimited arrangement: half of it is
-        // 256 MiB, which is four readers — the count coming down with the
-        // budget rather than being printed beside one it cannot spend.
+        // Less available on the same unlimited arrangement: half of it is
+        // four readers — the count coming down with the budget rather than
+        // being printed beside one it cannot spend.
         let cramped =
             flagless.resolve_in(&runtime_root("cramped"), &Recommends::reader(24, READER));
         assert_eq!(cramped.parallelism().jobs(), 4);
@@ -2801,15 +2483,10 @@ mod tests {
     }
 
     /// **An allocation at or under the reserve resolves to a budget of zero,
-    /// and it is a resolved value rather than an error.** What zero produces
-    /// is one reader on the streaming path, out of three floors already in the
-    /// mechanism — and the `PlanNote` beside it is what tells the user their
-    /// allocation bound the scan
-    /// (`pgdump_query/tests/partitioned_replay.rs`,
+    /// a resolved value rather than an error.** Zero produces one reader on
+    /// the streaming path, and the `PlanNote` beside it tells the user their
+    /// allocation bound the scan (`pgdump_query/tests/partitioned_replay.rs`,
     /// `a_budget_below_one_readers_worth_says_the_allocation_bound_it`).
-    ///
-    /// Pinned here so that a later change to the reserve, to the floors, or to
-    /// the fit cannot silently make a container under it something else.
     #[test]
     fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {
         let root = runtime_root("below-reserve");
@@ -2822,9 +2499,9 @@ mod tests {
         }
 
         // A stated budget still wins outright here: the allocation is what
-        // discovery answers, not a ceiling imposed on a person who typed one.
-        // The *count* beside it is nobody's statement, so it is cut to what
-        // those bytes afford — six readers of 58 MiB inside 400 MiB.
+        // discovery answers, not a ceiling on a person who typed one. The
+        // *count* beside it is nobody's statement, so it is cut to what those
+        // bytes afford.
         let stated = ParallelArgs { jobs: None, parallel_memory: Some(400 << 20) };
         let resolved = stated.resolve_in(&root, &Recommends::reader(24, READER));
         assert_eq!(resolved.parallelism().memory_bytes(), Some(400 << 20));
@@ -2832,16 +2509,13 @@ mod tests {
     }
 
     /// **A recommended count answers to the allowance however the budget
-    /// arrived.** The rule is scoped to the absence of `--jobs`
+    /// arrived**, the rule being scoped to the absence of `--jobs`
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
-    /// permits"), and `--jobs` is absent when only `--parallel-memory` is
-    /// typed — so the source's recommendation is cut by a stated budget
-    /// exactly as it is by a discovered one, and the run no longer announces a
-    /// count it will not deliver.
+    /// permits").
     ///
-    /// **Only the count moves.** The budget is the user's own number and is
-    /// taken whole, which is what separates this from discovery, where the
-    /// budget handed back is the one the lowered count spends.
+    /// **Only the count moves**: a stated budget is taken whole, unlike
+    /// discovery, where the budget handed back is the one the lowered count
+    /// spends.
     #[test]
     fn a_stated_budget_lowers_a_recommended_count_and_keeps_its_own_bytes() {
         let root = runtime_root("no-limit");
@@ -2873,31 +2547,23 @@ mod tests {
         assert_eq!(resolved.parallelism().jobs(), 24);
         assert_eq!(resolved.jobs_display(), "24 (stated)");
 
-        // A source recommending no per-worker cost has nothing to divide by,
-        // so its count is left where it is.
+        // A source recommending no per-worker cost has nothing to divide by.
         let plain = tight.resolve_in(&root, &Recommends::jobs(1));
         assert_eq!(plain.parallelism().jobs(), 1);
         assert_eq!(plain.parallelism().memory_bytes(), Some(32 << 20));
     }
 
     /// **The check `introspect` owes: the instrument must not move the plan it
-    /// reports on.** A counting `#[global_allocator]` and a `mallinfo2` call
-    /// at exit change what the process *holds*, which is the point — what they
-    /// must not change is what it *resolves*, or every reading describes an
-    /// arrangement the shipped binary does not make.
+    /// reports on.** It changes what the process *holds*, which is the point;
+    /// what it must not change is what the process *resolves*.
     ///
-    /// This is compiled into both configurations against the same literals, so
+    /// Compiled into both configurations against the same literals, so
     /// `cargo test -p pgdump_query-cli` and `cargo test -p pgdump_query-cli
-    /// --features introspect` are the two halves of the comparison and neither
-    /// can drift without failing. The roots are the committed ones rather than
-    /// this machine's `/` (`tests/data/runtime/README.md`), since a resolution
-    /// read off the host would differ between the two runs for reasons that
-    /// have nothing to do with the instrument.
-    ///
-    /// It sweeps every root rather than a chosen one: the arms differ in which
-    /// term binds — a discovered ceiling, `RT8`'s half-`MemAvailable` cap, the
-    /// reserve leaving nothing — and an instrument is exactly the kind of
-    /// change that would move one of them and not the others.
+    /// --features introspect` are the two halves of the comparison. The roots
+    /// are the committed ones rather than this machine's `/`
+    /// (`tests/data/runtime/README.md`), and every one of them is swept: the
+    /// arms differ in which term binds — a discovered ceiling, `RT8`'s
+    /// half-`MemAvailable` cap, the reserve leaving nothing.
     #[test]
     fn the_instrument_build_resolves_what_the_default_build_resolves() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
@@ -2926,12 +2592,10 @@ mod tests {
         );
     }
 
-    /// **`jobs=` reads differently by provenance, and the report says so.** A
-    /// recommended count is lowered to what the allowance affords and printed
-    /// lowered; a stated `--jobs` is printed as typed, what it actually
-    /// delivers staying `stream::worker_count`'s to decide from the budget. So
-    /// the same two readers can appear under `jobs=2` and under `jobs=24`, and
-    /// only the first line is telling the user what will run.
+    /// **`jobs=` reads differently by provenance, and the report says so**: a
+    /// recommended count is printed lowered to what the allowance affords, a
+    /// stated `--jobs` as typed — so the same two readers can appear under
+    /// either, and only the recommended line says what will run.
     #[test]
     fn the_report_says_which_of_the_two_counts_a_reader_is_looking_at() {
         let root = runtime_root("cramped");
@@ -2949,8 +2613,8 @@ mod tests {
         let stated = asked.resolve_in(&root, &source);
         assert_eq!(stated.parallelism().jobs(), 24, "a stated count is not lowered");
         assert_eq!(stated.jobs_display(), "24 (stated)");
-        // Both arrangements hold the same bytes, which is the whole reason the
-        // two lines have to read differently.
+        // Both arrangements hold the same bytes, which is why the two lines
+        // have to read differently.
         assert_eq!(stated.parallelism().memory_bytes(), recommended.parallelism().memory_bytes());
     }
 
@@ -2986,12 +2650,10 @@ mod tests {
         );
     }
 
-    /// **A plan note names the budget that bound the plan; the clause beside it
-    /// names where that budget came from.** The widest of the three notes is a
-    /// compressed source declining the block path, which is a throughput cliff
-    /// — and under discovery the number to change is the *allocation*, which
-    /// the note itself cannot know about (`docs/design/decisions.md`,
-    /// "I/O, memory and parallelism").
+    /// **A plan note names the budget that bound the plan; the clause beside
+    /// it names where that budget came from** — under discovery the number to
+    /// change is the *allocation*, which the note cannot know about
+    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     ///
     /// A stated budget gets no clause: the note already names what was typed.
     #[test]
@@ -3004,8 +2666,8 @@ mod tests {
         assert!(clause.contains("memory.limit_in_bytes"), "the file that stated it: {clause}");
         assert!(clause.contains(&format!("{}", 512u64 << 20)), "the limit itself: {clause}");
 
-        // No limit found still earns a clause — the budget is the source's own
-        // ask, which is equally not the user's.
+        // No limit found still earns a clause: the budget is the source's own
+        // ask, equally not the user's.
         let unlimited = flagless.resolve_in(&runtime_root("no-limit"), &reader);
         assert_eq!(
             unlimited.plan_note_origin(),
@@ -3024,13 +2686,10 @@ mod tests {
     /// memory limit is discovered, and the discovered allowance capped at the
     /// library's own constant where one is.
     ///
-    /// **The branch is the thing being pinned, not the number.** Before
-    /// discovery these assertions could name 64 MiB outright; now the answer
-    /// depends on the cgroup the test process is in, and a test that named the
-    /// constant would pass on a bare host and fail in a container — which is
-    /// the environment this default exists for. Every precedence claim below
-    /// is asserted against this rather than around it, so the flags' behaviour
-    /// stays pinned in both.
+    /// **The branch is the thing being pinned, not the number**: the answer
+    /// depends on the cgroup the test process is in, and a test naming the
+    /// constant would pass on a bare host and fail in a container. Every
+    /// precedence claim below is asserted against this rather than around it.
     fn flagless_budget() -> Option<u64> {
         pgdump_query::discover_memory_limit().map(|limit| {
             pgdump_query::DEFAULT_MEMORY_BUDGET
@@ -3039,39 +2698,32 @@ mod tests {
     }
 
     /// **Stating neither flag asks the source**, which is the one thing about
-    /// `--jobs` no integration test can see: the whole design promise is that a
-    /// partitioned run and a serial one produce the same bytes, so nothing in
-    /// the output distinguishes them and a default that silently reverted to a
-    /// constant would pass every other test in the tree. That drift is exactly
-    /// what happened to the measurement harness
-    /// (`docs/design/measurements.md`, "The apparatus"), so the wiring is
-    /// pinned here rather than left to a doc comment.
-    ///
-    /// The two counts are the two shipped sources' answers — one for a plain
-    /// file, the machine's cores for an `.xz` one — and which source gives
-    /// which is `ByteRangeSource::default_workers`'s own test.
+    /// `--jobs` no integration test can see: a partitioned run and a serial
+    /// one produce the same bytes, so a default that silently reverted to a
+    /// constant would pass every other test in the tree
+    /// (`docs/design/measurements.md`, "The apparatus"). Which source
+    /// recommends which count is `ByteRangeSource::default_workers`'s test.
     #[test]
     fn stating_no_parallelism_flag_asks_the_source() {
         let budget = flagless_budget();
         let filled = budget.unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
         let stated = ParallelArgs { jobs: None, parallel_memory: None };
 
-        // A source recommending the serial path gets it, carrying whatever the
-        // environment allows — and `None`, which the status line renders
-        // `(default)`, exactly where no limit was found to allow anything.
+        // A source recommending the serial path gets it, carrying whatever
+        // the environment allows — and `None`, rendered `(default)`, where no
+        // limit was found.
         assert!(stated.resolve(&Recommends::jobs(1)).parallelism().is_serial());
         assert_eq!(stated.resolve(&Recommends::jobs(1)).parallelism().memory_bytes(), budget);
 
-        // A source that recommends more gets it. `Parallelism::Workers` has
-        // nowhere to record that nobody stated a budget, so it carries the
-        // fallback bare.
+        // `Parallelism::Workers` has nowhere to record that nobody stated a
+        // budget, so it carries the fallback bare.
         assert_eq!(
             stated.resolve(&Recommends::jobs(8)).parallelism(),
             Parallelism::workers(8, filled)
         );
 
-        // And a stated flag wins outright, over a recommendation in either
-        // direction: this pins the precedence rather than the plumbing.
+        // A stated flag wins outright over a recommendation in either
+        // direction.
         let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
         assert_eq!(
             asked.resolve(&Recommends::jobs(1)).parallelism(),
@@ -3082,12 +2734,10 @@ mod tests {
         assert_eq!(serial.resolve(&Recommends::jobs(24)).parallelism().memory_bytes(), budget);
     }
 
-    /// **A stated budget survives a serial worker count.** `--jobs 1` is the
-    /// serial path as a property of the value, and the collapse that makes it
-    /// one takes the *worker count* down and not the bytes beside it — so
-    /// `--parallel-memory` alone is the whole recourse for a compressed file
-    /// whose blocks the 64 MiB default cannot hold, with no second worker
-    /// needing to be asked for
+    /// **A stated budget survives a serial worker count**: the collapse that
+    /// makes `--jobs 1` serial takes the *worker count* down and not the bytes
+    /// beside it, so `--parallel-memory` alone is the whole recourse for a
+    /// compressed file whose blocks the default cannot hold
     /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
     #[test]
     fn a_stated_budget_reaches_the_library_at_a_serial_job_count() {
@@ -3099,8 +2749,8 @@ mod tests {
         );
         assert_eq!(stated.resolve(&serial).parallelism().memory_bytes(), Some(400 << 20));
 
-        // Stated explicitly rather than taken from the source: the same value
-        // either way, and the source's own recommendation cannot change it.
+        // Stated explicitly rather than taken from the source: the same
+        // value either way.
         let one = ParallelArgs { jobs: Some(1), parallel_memory: Some(400 << 20) };
         assert_eq!(
             one.resolve(&Recommends::jobs(24)).parallelism(),
@@ -3113,9 +2763,8 @@ mod tests {
         assert_eq!(jobs_only.resolve(&serial).parallelism().memory_bytes(), flagless_budget());
     }
 
-    /// The bare spelling, unchanged: no whitespace anywhere means nothing to
-    /// trim and no quote to strip, so the sysadmin-shaped half of the
-    /// audience sees exactly what it always did.
+    /// The bare spelling: no whitespace anywhere means nothing to trim and no
+    /// quote to strip.
     #[test]
     fn a_bare_term_parses_as_it_reads() {
         assert_eq!(ok("name=alpha"), ("name".into(), PredicateOp::Eq, Some("alpha".into())));
@@ -3124,8 +2773,8 @@ mod tests {
     }
 
     /// Whitespace outside quotes is not data, on **both** sides of the
-    /// operator. Untrimmed, the value side failed loudly on a typed column
-    /// and silently on a text one — an empty result that reads as an answer.
+    /// operator — untrimmed, the value side fails loudly on a typed column and
+    /// silently on a text one.
     #[test]
     fn whitespace_outside_quotes_is_trimmed_on_both_sides() {
         assert_eq!(ok(" name = alpha "), ("name".into(), PredicateOp::Eq, Some("alpha".into())));
@@ -3150,10 +2799,8 @@ mod tests {
         assert_eq!(ok("name=   "), ("name".into(), PredicateOp::Eq, Some(String::new())));
     }
 
-    /// A quoted value is taken exactly as written, which is what restores
-    /// every value trimming would otherwise make unaskable — a space-padded
-    /// `char(n)` value is expressible from the command line, not only through
-    /// the API.
+    /// A quoted value is taken exactly as written, which is what keeps a
+    /// space-padded `char(n)` value askable from the command line.
     #[test]
     fn a_quoted_value_is_taken_as_written() {
         assert_eq!(ok(r#"name = " x""#), ("name".into(), PredicateOp::Eq, Some(" x".into())));
@@ -3161,10 +2808,9 @@ mod tests {
         assert_eq!(ok("name=''"), ("name".into(), PredicateOp::Eq, Some(String::new())));
     }
 
-    /// Both quote characters open a value. Which one a user reaches for is
-    /// decided by the shell rather than by taste — the term is normally
-    /// already inside shell single quotes — so accepting one would punish
-    /// whichever half of the audience picked the other.
+    /// Both quote characters open a value: which one a user reaches for is
+    /// decided by the shell, the term normally being inside shell single
+    /// quotes already.
     #[test]
     fn both_quote_characters_open_a_value() {
         let (_, _, double) = ok(r#"name="the answer""#);
@@ -3191,9 +2837,8 @@ mod tests {
         assert_eq!(ok(r#"note=a"b"#).2, Some(r#"a"b"#.into()));
     }
 
-    /// Quotes work on the column side too, and the operator split skips
-    /// them — which is the whole point, since it is what makes a column named
-    /// `a=b` askable at all.
+    /// Quotes work on the column side too, and the operator split skips them,
+    /// which is what makes a column named `a=b` askable.
     #[test]
     fn a_quoted_column_name_survives_the_split() {
         assert_eq!(ok(r#""my column"=x"#).0, "my column");
@@ -3209,9 +2854,8 @@ mod tests {
     }
 
     /// The two worded infix operators, in every case and with any run of
-    /// whitespace between their words — the spelling
-    /// `PredicateOp::symbol` already names them by, so the grammar and every
-    /// refusal message agree without a second table.
+    /// whitespace between their words — the spelling `PredicateOp::symbol`
+    /// names them by, so the grammar and every refusal message agree.
     #[test]
     fn the_distinct_from_forms_parse() {
         assert_eq!(
@@ -3243,10 +2887,9 @@ mod tests {
         );
     }
 
-    /// The phrase needs whitespace on both sides, which is what keeps every
-    /// term that parsed before parsing the same way: a column named
-    /// `is distinct from` is still askable unquoted, because what follows the
-    /// phrase there is `=` rather than a space.
+    /// The phrase needs whitespace on both sides: a column named
+    /// `is distinct from` is still askable unquoted, what follows the phrase
+    /// there being `=` rather than a space.
     #[test]
     fn a_worded_operator_needs_whitespace_around_it() {
         assert_eq!(
@@ -3262,10 +2905,9 @@ mod tests {
         }
     }
 
-    /// **The `IS` forms are the fallback.** Stripping the suffix from the
-    /// whole term first made this an `IS NULL` on a column called
-    /// `note=this`; an operator outside quotes is looked for first, so it is
-    /// the equality it plainly reads as.
+    /// **The `IS` forms are the fallback**: an operator outside quotes is
+    /// looked for first, so this is the equality it plainly reads as rather
+    /// than an `IS NULL` on a column `note=this`.
     #[test]
     fn a_value_ending_in_is_null_is_not_an_is_null_term() {
         assert_eq!(
@@ -3274,9 +2916,8 @@ mod tests {
         );
     }
 
-    /// The `IS` forms still parse, still case-insensitively, and now take a
-    /// quoted column name — which is what lets a column called `is null` be
-    /// named at all.
+    /// The `IS` forms parse case-insensitively and take a quoted column name,
+    /// which is what lets a column called `is null` be named.
     #[test]
     fn the_is_forms_parse_on_a_term_with_no_operator() {
         assert_eq!(ok("created_at IS NULL"), ("created_at".into(), PredicateOp::IsNull, None));
@@ -3288,10 +2929,8 @@ mod tests {
         assert_eq!(ok(r#""is null" = x"#), ("is null".into(), PredicateOp::Eq, Some("x".into())));
     }
 
-    /// A malformed quote is refused, never reinterpreted — falling back to
-    /// the unquoted reading would hand a user who mistyped one quote a value
-    /// nobody meant. Unterminated and trailing-text are one fault with one
-    /// message, wherever in the term they sit.
+    /// A malformed quote is refused, never reinterpreted. Unterminated and
+    /// trailing-text are one fault with one message.
     #[test]
     fn a_malformed_quote_is_refused() {
         for spec in ["name='x", "name='x'y", "'name=x", r#"name = "x'"#, "'name' 'is null"] {
@@ -3301,8 +2940,8 @@ mod tests {
         }
     }
 
-    /// A term with neither an operator nor an `IS` form is the usage fault it
-    /// always was, and the message still quotes the term back.
+    /// A term with neither an operator nor an `IS` form is a usage fault, and
+    /// the message quotes the term back.
     #[test]
     fn a_term_with_no_operator_at_all_is_a_usage_fault() {
         let message = err("nonsense");
@@ -3311,10 +2950,9 @@ mod tests {
     }
 
     /// **The structural refusal runs before the term grammar**, so a term
-    /// that is both structural and unparseable is told which of the two it
-    /// is. `and is null` names a column `and` under the old reading and is a
-    /// parse error under `--where`; it is refused here for the reserved
-    /// spelling, and the remedy is the quoting the grammar already teaches.
+    /// both structural and unparseable is told which of the two it is:
+    /// `and is null` is refused for the reserved spelling, and the remedy is
+    /// the quoting the grammar already teaches.
     #[test]
     fn the_flag_refuses_structure_before_it_parses_a_term() {
         let structural = parse_filter_flag("and is null").expect_err("a reserved spelling");
@@ -3365,8 +3003,7 @@ mod tests {
     }
 
     /// A scalar column's Arrow type is arrow's own `Display`, unmodified —
-    /// which is the half of the line that was never visible before, and the
-    /// reason the line is printed for every mapped non-`Utf8View` column
+    /// the reason the line is printed for every mapped non-`Utf8View` column
     /// rather than only for nested ones.
     #[test]
     fn a_scalar_column_renders_as_arrows_own_display() {
@@ -3410,8 +3047,8 @@ mod tests {
 
     /// A built-in multirange and an array of the matching range are the
     /// *same* Arrow type and different plans, so rendering identically is
-    /// correct rather than a collision — the declared PostgreSQL type sits on
-    /// the same line and tells them apart.
+    /// correct — the declared PostgreSQL type on the same line tells them
+    /// apart.
     #[test]
     fn a_multirange_and_an_array_of_the_matching_range_render_identically() {
         let multirange = arrow_type_label(
@@ -3426,9 +3063,9 @@ mod tests {
         assert_eq!(array_of_range, multirange);
     }
 
-    /// Dispatch is the plan's, never the field names' — a user composite may
-    /// declare five fields with exactly the range struct's names, and it must
-    /// still print as the struct it is.
+    /// Dispatch is the plan's, never the field names': a user composite may
+    /// declare five fields with the range struct's names and must still print
+    /// as the struct it is.
     #[test]
     fn a_composite_wearing_the_range_structs_field_names_is_not_collapsed() {
         let impostor = range_struct(DataType::Int32);
@@ -3438,11 +3075,10 @@ mod tests {
         assert!(!rendered.contains("Range<"), "{rendered}");
     }
 
-    /// Every `TypeKind` arm renders, with whatever payload it carries. The
-    /// fixtures reach all but two of these — a composite whose body held an
-    /// unparseable fragment and a range whose parameter list named no
-    /// `subtype` are shapes `pg_dump` does not write — so this is where those
-    /// two say what they say.
+    /// Every `TypeKind` arm renders, with whatever payload it carries. Two
+    /// are shapes `pg_dump` does not write — a composite whose body held an
+    /// unparseable fragment, a range whose parameter list named no `subtype` —
+    /// so this is the only place they are pinned.
     #[test]
     fn every_type_kind_renders_with_its_own_payload() {
         use pgdump_query::ColumnDef;
@@ -3496,8 +3132,8 @@ mod tests {
             }),
             "range (subtype not parsed)"
         );
-        // A declared `canonical` function is named, because it is why every
-        // filter operator refuses a column of this type.
+        // A declared `canonical` function is named: it is why every filter
+        // operator refuses a column of this type.
         assert_eq!(
             type_kind_summary(&TypeKind::Range {
                 subtype: Some("integer".to_string()),

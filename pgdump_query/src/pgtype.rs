@@ -21,12 +21,9 @@ use crate::preamble::{CollationDef, TypeDef, TypeKind};
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeOutcome {
     /// The dump alone determines the value; this is the Arrow type it maps
-    /// to (`Utf8View` included — e.g. `text`, `json`, are deliberately
-    /// mapped there, not merely defaulted), paired with the [`NestedPlan`]
-    /// that says which literal form fills it.
-    ///
-    /// **The pair has one producer** — nothing outside this module builds
-    /// either half of a nested column's pairing
+    /// to (`Utf8View` included — `text` and `json` are mapped there, not
+    /// merely defaulted), paired with the [`NestedPlan`] that says which
+    /// literal form fills it. This module is the pair's one producer
     /// (`docs/design/decisions.md`, "D39").
     Mapped(DataType, NestedPlan),
     /// A declared type string this build has no mapping for at all — neither
@@ -38,11 +35,9 @@ pub enum TypeOutcome {
     /// C-level base type, or a shell type, through any chain of domains.
     ///
     /// Refused rather than mapped to `List<Utf8View>`: the array separator is
-    /// the *element type's* `typdelim` (I22) and `box`'s is `;`, so splitting
-    /// such a literal on `,` would invent element boundaries
+    /// the *element type's* `typdelim` (I22) and `box`'s is `;`
     /// (`docs/design/decisions.md`, "D41"). Held apart from
-    /// [`Self::OpaqueBaseType`] so `pgdq info` can say which of the two
-    /// happened.
+    /// [`Self::OpaqueBaseType`] so `pgdq info` can say which happened.
     OpaqueElementType,
     /// An array whose element type is *itself* an array, through any chain of
     /// domains — `CREATE DOMAIN d AS integer[]` and a column of `d[]`, the
@@ -78,35 +73,27 @@ pub enum TypeOutcome {
 }
 
 /// Which PostgreSQL literal form fills a resolved Arrow type, at every
-/// position in it.
-///
-/// **The Arrow type alone cannot say** (`docs/design/decisions.md`, "D39"):
-/// `int4range[]` and `int4multirange` both resolve to
-/// `List<Struct{lower, upper, …}>` and are written differently —
-/// `{"[1,10)","[2,3)"}` with array quoting versus `{[1,10), [2,3)}` with none
-/// at all — and a composite that happens to have the range struct's five
-/// fields is the same collision one level down. It is a tree because the
-/// answer differs per nesting level.
+/// position in it. The Arrow type alone cannot say
+/// (`docs/design/decisions.md`, "D39"); it is a tree because the answer
+/// differs per nesting level.
 ///
 /// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
-/// included), which is where every branch bottoms out.
-/// `Serialize` so `pgdq info --json` can export a resolved schema's plans
-/// structurally rather than inventing a second spelling for them
-/// (`docs/design/decisions.md`, "D67"). **Not `Deserialize`, and
-/// never persisted**: the cache holds what the dump said, never what we
-/// concluded (`docs/design/decisions.md`, "D68").
+/// included), which is where every branch bottoms out. `Serialize` so
+/// `pgdq info --json` can export a resolved schema's plans structurally
+/// (`docs/design/decisions.md`, "D67"); **not `Deserialize`, and never
+/// persisted** — the cache holds what the dump said, never what we concluded
+/// (`docs/design/decisions.md`, "D68").
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub enum NestedPlan {
     /// Filled by `crate::decode`'s per-type decoders, or held as text.
     #[default]
     Scalar,
     /// `array_out` → `List<child>`. Nested `Array`s are the multi-dimensional
-    /// case, and **only** that: the plan's depth is the dimensionality the
+    /// case and **only** that: the plan's depth is the dimensionality the
     /// column was resolved at, and a value that disagrees is a decode
-    /// failure. The one declared shape whose literal would contradict that —
-    /// an array whose element type is an array (I26) — is refused at
+    /// failure. An array whose element type is an array (I26) is refused at
     /// resolution as [`TypeOutcome::NestedArrayElement`], so a nested `Array`
-    /// can only ever come from the shape census.
+    /// only ever comes from the shape census.
     Array(Box<NestedPlan>),
     /// `record_out` → `Struct<…>`, one plan per declared field, in
     /// declaration order.
@@ -118,12 +105,10 @@ pub enum NestedPlan {
     /// `multirange_out` → `List<` the range struct `>`. The plan is again the
     /// bound type's.
     Multirange(Box<NestedPlan>),
-    /// `int2vectorout` → `List<Int16>`. It carries no child plan because it
-    /// can have none: `int2vector`'s element type is `smallint` in the
-    /// catalog and nothing about a column can vary it (I47). It is the
-    /// clearest case of what this enum is for — the Arrow type it accompanies
-    /// is the one a `smallint[]` column gets, and the literal is a different
-    /// grammar entirely.
+    /// `int2vectorout` → `List<Int16>`. No child plan, because it can have
+    /// none: `int2vector`'s element type is `smallint` in the catalog and
+    /// nothing about a column can vary it (I47). The Arrow type is the one a
+    /// `smallint[]` column gets; the literal is a different grammar.
     Int2Vector,
 }
 
@@ -131,24 +116,21 @@ pub enum NestedPlan {
 /// be ordered by — the decoding half of a [`ComparisonPlan`], and the only
 /// thing `crate::predicate` needs in order to read a side.
 ///
-/// It is a small closed vocabulary rather than the Arrow type because the two
-/// do not correspond: `text`, bare `numeric`, `json` and `inet` all reach
-/// `Utf8View` and are four different comparisons, while `Decimal128` and
-/// `Decimal256` are one.
+/// A small closed vocabulary rather than the Arrow type, which does not
+/// correspond to it (`docs/design/decisions.md`, "D40").
 ///
-/// **Not `Copy`**, because two of its variants carry the column's own facts:
-/// an enum's labels, and whether a `numeric` column's typmod excludes the
-/// infinities. Nothing on the per-row path clones one — the kind is cloned
-/// once, into the `OrderTerm` the block's resolution builds.
+/// **Not `Copy`**: two variants carry the column's own facts — an enum's
+/// labels, and whether a `numeric` column's typmod excludes the infinities.
+/// The kind is cloned once, into the `OrderTerm` the block's resolution
+/// builds, never on the per-row path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareKind {
     Bool,
     Int,
     /// An unsigned 32-bit integer — `oid`. Held apart from [`Self::Int`]
     /// because the two differ on a *literal* carrying a minus sign, which
-    /// `oidin` wraps and this refuses: the values order identically, so
-    /// sharing the arm would order correctly and accept a literal it must
-    /// not.
+    /// `oidin` wraps and this refuses; the values themselves order
+    /// identically.
     UnsignedInt,
     Float32,
     Float64,
@@ -162,36 +144,20 @@ pub enum CompareKind {
     Bytea,
     Text,
     /// `character(n)`: bytewise over the text the file holds, after **both**
-    /// sides give up their trailing blanks. A dump writes every value of such
-    /// a column padded to `n` and every `bpchar` comparison calls `bcTruelen`
-    /// on both operands first (I38), so the padding is not part of the value
-    /// and trimming it is what makes this the same comparison the server
-    /// makes.
-    ///
-    /// Held apart from [`Self::Text`] rather than carried as a flag on it:
-    /// the register has one arm per declared type
-    /// (`docs/design/decisions.md`, "D40") and `character` is that arm. The
-    /// trim is a reverse scan for `0x20` yielding a shorter slice — no
-    /// allocation and no decode — which is why it is admissible on the
-    /// per-row path where a decode would not be.
-    ///
-    /// It is collatable exactly as [`Self::Text`] is, and for the same
-    /// reason: `bpcharcmp` hands the two trimmed strings to `varstr_cmp`
-    /// under the column's collation, so what the clause decides here is the
-    /// verdict, never the comparison.
+    /// sides give up their trailing blanks. A dump writes every value padded
+    /// to `n` and `bpcharcmp` calls `bcTruelen` on both operands before
+    /// consulting a collation (I38), so the padding is not part of the value
+    /// and the clause decides the verdict, never the comparison.
     PaddedText,
     /// Arbitrary-precision decimal read straight out of the text the file
     /// holds — a bare `numeric`, or one whose declared precision is past
-    /// `Decimal256`'s 76 digits. Held apart from [`Self::Decimal`] because
-    /// there is no scale to carry both sides to: `1.5` and `1.50` are one
-    /// value written two ways, and the comparison normalizes rather than
-    /// rescales.
+    /// `Decimal256`'s 76 digits. There is no scale to carry both sides to, so
+    /// the comparison normalizes rather than rescales: `1.5` and `1.50` are
+    /// one value written two ways.
     ///
     /// `infinities` says whether `Infinity`/`-Infinity` are values of the
     /// column. Any typmod rejects an infinity (I34), so only the bare form
-    /// admits the spelling — the same shape as [`Self::UnsignedInt`], where a
-    /// variant exists to refuse a *literal* the values themselves could never
-    /// take.
+    /// admits the spelling.
     Numeric {
         infinities: bool,
     },
@@ -204,13 +170,11 @@ pub enum CompareKind {
     /// `interval`, compared by `interval_cmp_value`'s span: months collapse
     /// to 30 days and days to 86400 seconds, so `1 mon`, `30 days` and
     /// `720:00:00` are one value written three ways (I40). The span needs 128
-    /// bits, which is why PostgreSQL's own comparison uses them.
+    /// bits.
     ///
     /// Carries the two infinities unconditionally, in `date_out`'s spellings
-    /// rather than `numeric_out`'s (I34). They are v17 values, and reading
-    /// them on an older file is the union rule (I35): no v13 server could
-    /// have written one, so nothing is misread by a build that understands
-    /// them.
+    /// rather than `numeric_out`'s (I34). They are v17 values, read on an
+    /// older file under the union rule (I35).
     Interval,
     /// `time with time zone`, compared by the UTC-equivalent instant first
     /// and by the stored zone second, so two values are equal only when both
@@ -219,14 +183,10 @@ pub enum CompareKind {
     TimeTz,
     /// `inet` and `cidr`, compared by `network_cmp_internal`: family, then
     /// the shorter netmask's worth of address bits, then the netmask length,
-    /// then the whole address (I40). Not a byte order — a `/8` and a `/16`
-    /// that agree on their first eight bits are ordered by the netmask, not
-    /// by the bytes below it.
+    /// then the whole address (I40). Not a byte order.
     ///
-    /// `cidr` says so, because that is the only difference between the two:
-    /// `cidr_in` refuses a value with a bit set below its netmask and
-    /// `inet_in` accepts one, and refusing that literal is the same shape as
-    /// [`Self::UnsignedInt`]'s.
+    /// `cidr` is the only difference between the two: `cidr_in` refuses a
+    /// value with a bit set below its netmask and `inet_in` accepts one.
     Network {
         cidr: bool,
     },
@@ -238,20 +198,14 @@ pub enum CompareKind {
     },
     /// `jsonb`, compared as `compareJsonbContainers` compares it: a walk down
     /// two containers in lockstep, deciding on the first position where they
-    /// differ — the *kind* at that position first (an object outranks an
-    /// array, an array outranks every scalar, a boolean outranks a number),
-    /// then a container's element or pair count, then the members themselves
-    /// (I41).
+    /// differ — the *kind* there first (an object outranks an array, an array
+    /// every scalar, a boolean a number), then a container's element or pair
+    /// count, then the members themselves (I41).
     ///
-    /// **The one thing it cannot reproduce is a string leaf.** Every JSON
-    /// string, object keys included, is ordered by `varstr_cmp` under
-    /// `DEFAULT_COLLATION_OID` — the *database's* collation, which a plain
-    /// dump does not record (I32) — so a `jsonb` column carries
-    /// [`ComparisonDivergence::JsonbStringCollation`] for exactly the reason a
-    /// bare `text` column carries [`ComparisonDivergence::UnknownCollation`],
-    /// one level down. A `jsonb` column cannot state a clause of its own:
-    /// `jsonb` is not a collatable type, so there is nothing for `pg_dump` to
-    /// write and nothing for the register to read.
+    /// It cannot reproduce a string leaf: every JSON string, object keys
+    /// included, is ordered by `varstr_cmp` under `DEFAULT_COLLATION_OID`
+    /// (I41) — the database's collation, absent from a plain dump (I32) — so
+    /// the column carries [`ComparisonDivergence::JsonbStringCollation`].
     Jsonb,
 }
 
@@ -262,14 +216,11 @@ pub enum CompareKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComparisonDivergence {
     /// The column is held as text and compared bytewise where the server has
-    /// no comparison at all. **`json` is its one member**, and the sentence
-    /// it prints says exactly that: PostgreSQL defines no `=`, no order and
-    /// no operator class for `json`, so bytewise offers *more* than the
-    /// server does rather than less, and "agrees with PostgreSQL" is not a
-    /// question the type can be asked.
-    ///
-    /// Every other text-held type carries a comparison of its own, and every
-    /// collatable one carries one of the two collation variants below.
+    /// no comparison at all. **`json` is its one member**: PostgreSQL defines
+    /// no `=`, no order and no operator class for it, so bytewise offers
+    /// *more* than the server does rather than less. Every other text-held
+    /// type carries a comparison of its own, and every collatable one carries
+    /// one of the two collation variants below.
     AsText,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the
@@ -296,11 +247,10 @@ pub enum ComparisonDivergence {
     /// are not byte comparisons either, so two values that differ byte for
     /// byte can be equal to the server and this build calls them distinct.
     ///
-    /// **It is the only divergence a plain dump states outright.** The
+    /// **It is the only divergence a plain dump states outright** — the
     /// collation's *order* still needs a provider version the file does not
     /// carry, but `pg_dump` writes `, deterministic = false` unconditionally
-    /// (I42) — so where the other three collation variants are announcements
-    /// about what the file leaves unsaid, this one repeats what it said.
+    /// (I42).
     ///
     /// Deficiency `KD7` reaches one operator further here; its detail is at
     /// the marker on [`Self::NonBytewiseCollation`].
@@ -310,9 +260,7 @@ pub enum ComparisonDivergence {
     /// every one of them by `varstr_cmp` under `DEFAULT_COLLATION_OID` (I41),
     /// which is the database's collation and is absent from a plain dump
     /// (I32). Held apart from [`Self::UnknownCollation`] because the column
-    /// states nothing and could not — `jsonb` is not collatable, so the
-    /// sentence about a missing `COLLATE` clause would be describing a clause
-    /// that has no place to be written.
+    /// states nothing and could not: `jsonb` is not collatable.
     JsonbStringCollation,
     /// A column whose declared type resolved, is not nested, and has no
     /// comparison in this register at all — `box`, `money`, `xml`, a
@@ -345,29 +293,19 @@ impl ComparisonDivergence {
     /// Whether this divergence reaches `=`/`!=` as well as the four ordering
     /// operators.
     ///
-    /// **Determinism is what decides it for the collation variants**, and it
-    /// is why three of the four answer `false`: a *deterministic* collation
-    /// makes `varstr_cmp` return zero exactly when the bytes are equal, so
-    /// `texteq`/`bpchareq` are byte comparisons whatever that collation
-    /// otherwise orders. A collation the file does not name, one it names and
-    /// this build does not implement, and one reached through a `jsonb` string
-    /// leaf are therefore divergences of *order* alone — the row set an `=`
-    /// returns is the server's either way, because every libc collation is
-    /// deterministic and a non-deterministic one is stated outright.
+    /// **Determinism decides it for the collation variants**: a
+    /// *deterministic* collation makes `varstr_cmp` return zero exactly when
+    /// the bytes are equal, so `texteq`/`bpchareq` are byte comparisons
+    /// whatever that collation otherwise orders, leaving three of the four
+    /// divergences of *order* alone. [`Self::NonDeterministicCollation`] is
+    /// the one a dump states outright (I42); the other two `true` answers are
+    /// not about a collation at all.
     ///
-    /// [`Self::NonDeterministicCollation`] is that statement, and the one
-    /// collation variant that reaches `=` (I42). The other two `true` answers
-    /// are not about a collation at all: the server defines no comparison
-    /// ([`Self::AsText`]), or this register models none
-    /// ([`Self::UnmodelledType`]).
-    ///
-    /// There is no `affects_ordering` beside this: every variant does, which
-    /// is what makes one method enough.
+    /// There is no `affects_ordering` beside this: every variant does.
     pub fn affects_equality(self) -> bool {
         match self {
-            // PostgreSQL defines no `=` for `json` any more than it defines
-            // an order, so bytewise equality is as much an answer the server
-            // does not have as the ordering is.
+            // The server has no `=` to disagree with (`json`), or the
+            // register models none.
             Self::AsText | Self::UnmodelledType => true,
             // The dump itself says `texteq` is not a byte comparison here.
             Self::NonDeterministicCollation => true,
@@ -380,8 +318,8 @@ impl ComparisonDivergence {
 
 /// A collatable type's *default* collation — `pg_type.typcollation`, which is
 /// what `pg_dump` compares a column's collation against when deciding whether
-/// to write a `COLLATE` clause at all (I37). So the absence of a clause means
-/// this, and the two values mean very different things.
+/// to write a `COLLATE` clause at all (I37), so the absence of a clause means
+/// this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TypeCollation {
     /// `pg_type.typcollation = C` — `name`'s. A bare column of such a type is
@@ -402,21 +340,12 @@ enum TypeCollation {
 /// type this build has no order for is an [`Self::Uncomparable`] leaf, which
 /// makes [`ComparisonPlan::orders`] answer `false` for the whole column and
 /// names the position that did it. A position that *is* ordered but not the
-/// server's way — a `text` element with no `COLLATE` clause — carries its own
-/// [`ComparisonDivergence`], so a `text[]` column diverges for the reason its
-/// element does, one level down.
+/// server's way carries its own [`ComparisonDivergence`], so a `text[]`
+/// column diverges for the reason its element does.
 ///
-/// **`json` beneath a nested type is a refusal, not a divergence.** At top
-/// level [`ComparisonDivergence::AsText`] means "bytewise, where the server
-/// orders not at all", which is more than the server offers rather than less.
-/// Inside a container it is not available at all: `array_cmp` looks up the
-/// element type's comparison proc and raises when there is none, so a
-/// `json[]` column and a composite with a `json` field have no `=` and no `<`
-/// on the server either. Such a position still carries a
-/// [`ComparisonDivergence`] of its own, because the *column* does not stop
-/// answering `=` when its order is refused — it falls back to a byte
-/// comparison of the container's whole text, and the position is what makes
-/// that an answer PostgreSQL does not have.
+/// **`json` beneath a nested type is a refusal, not a divergence**:
+/// `array_cmp` raises when the element type has no comparison proc, so a
+/// `json[]` column has no `=` and no `<` on the server either.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedCompare {
     /// A scalar position: the declared type as the DDL spelled it, and the
@@ -426,24 +355,18 @@ pub enum NestedCompare {
     /// column, and what lets the refusal name the type that caused it.
     ///
     /// **`divergence` is about the column's `=`, not about this position's
-    /// order.** The ordering operators are refused outright, but `=`/`!=`
-    /// are not: the column falls back to a byte comparison of the
-    /// container's whole `*_out` text, and this says what that fallback
-    /// costs *here*. [`ComparisonDivergence::AsText`] is the one value it
-    /// takes today — `json`, where the server has no equality either, so
-    /// bytewise is an answer it does not have. `None` is the position whose
-    /// order only *this build* declines: an element that is itself an array
-    /// (I26), an opaque element (I22), an empty enum. The server compares
-    /// those, its `=` over them is value equality, and the file's canonical
-    /// text renders the value faithfully — so bytewise is the server's
-    /// answer and there is nothing to announce.
+    /// order**: the column falls back to a byte comparison of the container's
+    /// whole `*_out` text, and this says what that fallback costs *here*.
+    /// [`ComparisonDivergence::AsText`] is the one value it takes — `json`,
+    /// where the server has no equality either. `None` is a position only
+    /// *this build* declines (I22, I26, an empty enum), where the server's `=`
+    /// is value equality over the same canonical text.
     Uncomparable { declared: String, divergence: Option<ComparisonDivergence> },
     /// `array_cmp`: elements first, up to the shorter array's length, then
     /// element count, dimension count, dimensions and lower bounds (I45).
     /// **One node whatever the dimensionality** — an `array_out` literal
     /// carries its own shape and [`crate::nested::ArrayLiteral`] flattens it,
-    /// so `integer[]` is one `Array` node whether its values are vectors or
-    /// matrices.
+    /// so `integer[]` is one `Array` node at any depth.
     Array(Box<NestedCompare>),
     /// `record_cmp`: field-wise in declaration order, which is also the order
     /// `record_out` writes them in. The name is carried for the diagnostic
@@ -455,15 +378,12 @@ pub enum NestedCompare {
     /// inclusivity (I46). `bound` is the subtype's own node, so a range over
     /// a composite composes like any other position.
     ///
-    /// **`discrete` is a property of the range type, never of its subtype.**
-    /// Only `int4range`, `int8range` and `daterange` carry a canonical
-    /// function among the built-ins — `numrange` is over a type with a
-    /// perfectly good successor at any fixed scale and has none — so the flag
-    /// is set from the range's *name* and a subtype that happens to be
-    /// discrete does not set it. A **user-defined** range never reaches this
-    /// node with the flag set either way: one that declares a `canonical`
-    /// function is [`ComparisonPlan::Unanswerable`] rather than a tree, since
-    /// the function is arbitrary server-side code this build cannot apply.
+    /// **`discrete` is a property of the range type, never of its subtype**:
+    /// only `int4range`, `int8range` and `daterange` carry a canonical
+    /// function among the built-ins, so the flag is set from the range's
+    /// *name*. A user-defined range never reaches this node with it set — one
+    /// declaring a `canonical` function is [`ComparisonPlan::Unanswerable`]
+    /// rather than a tree (I46).
     Range { bound: Box<NestedCompare>, discrete: bool },
     /// `multirange_cmp`: member-wise over members the server has already
     /// sorted, coalesced and emptied out, the shorter multirange first
@@ -471,15 +391,13 @@ pub enum NestedCompare {
     /// comparison of its own beyond the sequence.
     Multirange { bound: Box<NestedCompare>, discrete: bool },
     /// `int2vector`, compared by `array_cmp` over `smallint` elements: the
-    /// type names no operator of its own, and `anyarray` polymorphism is what
-    /// resolves `<` and `=` for it (I47). So it is [`Self::Array`]'s
-    /// comparison over a fixed element node, read in `int2vectorout`'s own
-    /// grammar rather than `array_out`'s — which is the whole of why it is a
-    /// variant and not an `Array` whose child is a `smallint` leaf.
+    /// type names no operator of its own, and `anyarray` polymorphism
+    /// resolves `<` and `=` for it (I47). [`Self::Array`]'s comparison over a
+    /// fixed element node, read in `int2vectorout`'s grammar rather than
+    /// `array_out`'s — which is why it is a variant of its own.
     ///
-    /// It carries nothing: the element is always `smallint`, which agrees
-    /// with PostgreSQL and collates not at all, so there is no position here
-    /// that could refuse an order or announce a divergence.
+    /// It carries nothing: the element is always `smallint`, so no position
+    /// here could refuse an order or announce a divergence.
     Int2Vector,
 }
 
@@ -488,10 +406,8 @@ impl NestedCompare {
     /// `(path, declared type)` — `None` when every position is comparable.
     /// The path is the accessor a user would write where one exists: `[]` for
     /// an element, `.name` for a field, appended as the walk descends. A
-    /// range's bounds have no subscript spelling, so `.bound` names the
-    /// position rather than spelling an expression, and a multirange's is
-    /// `[].bound` — its member and that member's bound in one step, because
-    /// the member is not a position with a comparison of its own.
+    /// range's bound has no subscript spelling, so `.bound` names it and a
+    /// multirange's is `[].bound`.
     pub fn uncomparable(&self) -> Option<(String, String)> {
         let mut found = None;
         self.walk(&mut String::new(), &mut |path, declared, ordered, _| {
@@ -504,17 +420,12 @@ impl NestedCompare {
 
     /// Every position beneath this one with something to announce, as
     /// `(path, declared type, divergence)`, in walk order. A column carrying
-    /// two of them — a composite with a bare `text` field and a `text[]` one
-    /// — announces both.
+    /// two of them announces both.
     ///
     /// **An [`Self::Uncomparable`] position can be one of them**, and its
     /// entry is about a different comparison from the rest: the others say
     /// the order here is not the server's, where it says the *bytewise `=`*
-    /// the whole column falls back to is not
-    /// ([`Self::Uncomparable`]'s `divergence`). Both are read by the same
-    /// caller, which asks each entry whether it reaches the operator in hand
-    /// ([`ComparisonDivergence::affects_equality`]), so nothing here has to
-    /// know which kind it is holding.
+    /// the whole column falls back to is not.
     pub fn divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
         let mut out = Vec::new();
         self.walk(&mut String::new(), &mut |path, declared, _, divergence| {
@@ -537,9 +448,8 @@ impl NestedCompare {
     ) {
         match self {
             Self::Leaf { declared, divergence, .. } => visit(path, declared, true, *divergence),
-            // One position, not two: the element node is fixed and its type
-            // has nothing to say, so the vector is visited as the leaf it
-            // effectively is.
+            // One position: the element node is fixed and has nothing to
+            // say.
             Self::Int2Vector => visit(path, "int2vector", true, None),
             Self::Uncomparable { declared, divergence } => {
                 visit(path, declared, false, *divergence)
@@ -575,13 +485,12 @@ impl NestedCompare {
     }
 }
 
-/// **The comparison register's answer for one declared type**: how a column
-/// of it compares, and whether that is the order PostgreSQL itself defines
+/// The comparison register's answer for one declared type: how a column of it
+/// compares, and whether that is the order PostgreSQL itself defines
 /// (`docs/design/decisions.md`, "D40").
 ///
-/// **One fact, not two.** "This type has no order here" and "there is no way
-/// to decode a value of it" are the same statement, so they are one variant
-/// rather than a pairing that could come to disagree.
+/// "This type has no order here" and "there is no way to decode a value of
+/// it" are one variant, not a pairing that could come to disagree.
 ///
 /// Carried per column in [`crate::resolve::ResolvedSchema::comparisons`] and
 /// consumed by `crate::predicate`, which reads it instead of inspecting the
@@ -600,14 +509,10 @@ pub enum ComparisonPlan {
     /// **No comparison at all** — every operator is refused, `=` and `!=`
     /// included, and the payload says why.
     ///
-    /// It is the stronger of the two refusals and the rarer one.
-    /// [`Self::Refused`] means "no *order*", and every site that answers it
-    /// is right to let `=`/`!=` fall through to a bytewise comparison of the
-    /// file's own canonical text — an empty enum, a C-level base type, a
-    /// column with no DDL behind it. This variant is for the case where the
-    /// file *states* that the server's equality is not that comparison, so
-    /// falling through would answer a question wrongly rather than answer a
-    /// weaker one.
+    /// The stronger of the two refusals. [`Self::Refused`] means "no
+    /// *order*", and lets `=`/`!=` fall through to a bytewise comparison of
+    /// the file's own canonical text; this variant is for the case where the
+    /// file *states* that the server's equality is not that comparison.
     Unanswerable(UnanswerableReason),
     /// No order is defined here for this declared type.
     #[default]
@@ -617,18 +522,15 @@ pub enum ComparisonPlan {
 /// Why the register can answer no operator at all for a column — the payload
 /// of [`ComparisonPlan::Unanswerable`].
 ///
-/// **A named reason rather than a message**, for the same reason
-/// [`ComparisonDivergence`] is one: the sentence a user reads is `L3`'s to
-/// write, beside the grammar it is about, and a new producer has to say which
-/// kind of unanswerable it is rather than inventing prose here.
+/// A named reason rather than a message, as [`ComparisonDivergence`] is: the
+/// sentence a user reads is written beside the grammar it is about, so a new
+/// producer has to say which kind of unanswerable it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnanswerableReason {
     /// The column's type is, or contains, a range type whose DDL declares a
-    /// `canonical` function (I46). PostgreSQL rewrites every value of such a
-    /// range through that function before storing or comparing it, so two
-    /// spellings it maps together are one value on the server — and the
-    /// function is arbitrary server-side code this build cannot run. Both
-    /// names are carried so the refusal can say which type did it.
+    /// `canonical` function (I46): the server rewrites every value through
+    /// arbitrary server-side code this build cannot run. Both names are
+    /// carried so the refusal can say which type did it.
     RangeCanonical { range_type: String, function: String },
 }
 
@@ -687,12 +589,9 @@ fn collation_parts(reference: &str) -> Option<(Option<String>, String)> {
 /// `pg_catalog."POSIX"`, the two PostgreSQL defines as `memcmp` on every
 /// server and under every libc.
 ///
-/// **The schema is checked, not just the name.** Nothing stops a user
-/// creating a collation called `"C"` in another schema, and answering
-/// "agrees" for it would be the one direction of error this register must not
-/// make. Anything else — a libc locale, an ICU collation, `ucs_basic`,
-/// a name this cannot parse — is not bytewise as far as this build is
-/// concerned.
+/// **The schema is checked, not just the name**: a collation called `"C"` in
+/// another schema is not it, and answering "agrees" for one is the one
+/// direction of error this register must not make.
 fn collation_is_bytewise(reference: &str) -> bool {
     let Some((schema, name)) = collation_parts(reference) else { return false };
     let known_schema = schema.as_deref().is_none_or(|s| s == "pg_catalog");
@@ -703,15 +602,10 @@ fn collation_is_bytewise(reference: &str) -> bool {
 /// `kind`, the column's own `COLLATE` clause (`None` for a column that
 /// carries none) and the type's default collation.
 ///
-/// **`kind` is the comparison in every case; only the verdict moves.** That
-/// is the whole of what reading the clause buys: `text COLLATE "C"` and a
-/// bare `name` are told they agree, where a column whose collation the file
-/// never states cannot be.
-///
-/// `kind` exists because `character(n)` joins this rule with a comparison of
+/// **`kind` is the comparison in every case; only the verdict moves.** It is
+/// a parameter because `character(n)` joins this rule with a comparison of
 /// its own: `bpcharcmp` trims both operands' trailing blanks and *then*
-/// consults the collation (I38), so the trim is orthogonal to the clause and
-/// the three collation arms are the same three.
+/// consults the collation (I38), so the trim is orthogonal to the clause.
 fn collated_text(
     kind: CompareKind,
     collation: Option<&str>,
@@ -719,13 +613,9 @@ fn collated_text(
     collations: &[CollationDef],
 ) -> ComparisonPlan {
     // First, because it is the strongest thing the file can say about a
-    // collation: the other three branches are all read off the *name*, where
-    // this one is read off a statement the dump wrote. The order costs nothing
-    // in practice — a non-deterministic collation is ICU-only and therefore
-    // user-defined (I42), and `collation_is_bytewise` answers `true` only for
-    // `pg_catalog."C"`/`"POSIX"`, which no user-defined collation can be — so
-    // the two can never both match. It is put first anyway, so that reading
-    // the branches top to bottom is reading them in order of evidence.
+    // collation: the other three branches read a *name*, this one a statement
+    // the dump wrote. The two can never both match (I42), so the order is
+    // evidence, not precedence.
     if collation.is_some_and(|reference| states_non_deterministic(reference, collations)) {
         return ComparisonPlan::diverging(kind, ComparisonDivergence::NonDeterministicCollation);
     }
@@ -748,19 +638,16 @@ fn collated_text(
 /// Whether `reference` — a column's `COLLATE` clause, verbatim — names a
 /// collation this dump declared `deterministic = false` (I42).
 ///
-/// **Both sides are parsed rather than compared as text**, because the two
-/// spellings come from different `pg_dump` code paths and need not match byte
-/// for byte: a `CREATE COLLATION` names the object and a `COLLATE` clause
-/// references it, and either may quote an identifier the other leaves bare.
-/// [`collation_parts`] folds an unquoted identifier the way the server does,
-/// so the join is on the same names the server would resolve.
+/// **Both sides are parsed rather than compared as text**: the two spellings
+/// come from different `pg_dump` code paths and either may quote an
+/// identifier the other leaves bare. [`collation_parts`] folds an unquoted
+/// identifier the way the server does.
 ///
 /// **A reference with no schema matches on the name alone.** `pg_dump` writes
-/// both sides schema-qualified for a user-defined collation, so the case is
-/// reachable only from a hand-written file, where the search path decides and
-/// the file does not carry it. Matching is the announcing direction — a
-/// spurious note over correct rows, never a silent wrong row set — which is
-/// the way this register errs everywhere else a name is ambiguous.
+/// both sides schema-qualified, so the case is reachable only from a
+/// hand-written file, whose search path the file does not carry. Matching is
+/// the announcing direction — a spurious note over correct rows, never a
+/// silent wrong row set.
 fn states_non_deterministic(reference: &str, collations: &[CollationDef]) -> bool {
     let Some((schema, name)) = collation_parts(reference) else { return false };
     collations.iter().any(|declared| {
@@ -779,10 +666,9 @@ pub const RANGE_STRUCT_FIELDS: [&str; 5] =
     ["lower", "upper", "lower_inclusive", "upper_inclusive", "empty"];
 
 /// Split `declared` into its base type name and typmod contents, if any
-/// (`numeric(38,10)` -> `("numeric", Some("38,10"))`). Only `numeric` cares
-/// about the typmod's *value* — every other typed mapping below is
-/// `Microsecond`-precision or otherwise typmod-independent by design, so this
-/// split is enough to let every other match ignore it entirely.
+/// (`numeric(38,10)` -> `("numeric", Some("38,10"))`). Only `numeric` reads
+/// the typmod's *value*; every other mapping below is `Microsecond`-precision
+/// or otherwise typmod-independent.
 pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
     match s.find('(') {
         Some(i) if s.ends_with(')') => (s[..i].trim_end(), Some(&s[i + 1..s.len() - 1])),
@@ -795,17 +681,16 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 /// same as arbitrary precision (I4: `NaN` is reachable through any numeric
 /// column regardless, and is a decode-time concern, not a mapping one).
 ///
-/// The `Utf8View` arms are still *ordered*, and that is the whole of what
-/// closes them: [`CompareKind::Numeric`] normalizes the text the file holds —
-/// sign, integer digits, fraction — and compares by value, which is
-/// `cmp_var_common`'s own order and is insensitive to trailing zeros (I33).
-/// The typed arms carry the column's own scale into the comparison instead,
-/// so both sides of one are unscaled integers.
+/// The `Utf8View` arms are still *ordered*: [`CompareKind::Numeric`]
+/// normalizes the text the file holds and compares by value, which is
+/// `cmp_var_common`'s order and insensitive to trailing zeros (I33). The
+/// typed arms carry the column's own scale instead, so both sides of one are
+/// unscaled integers.
 ///
-/// **Only the bare form admits an infinity.** `apply_typmod_special` rejects
-/// `±Infinity` under any typmod (I34), so the `p > 76` arm's column can hold
-/// a `NaN` and never an infinity — and accepting the spelling in a *filter's
-/// literal* there would accept a value the server refuses.
+/// **Only the bare form admits an infinity**: `apply_typmod_special` rejects
+/// `±Infinity` under any typmod (I34), so accepting the spelling in a
+/// *filter's literal* on the `p > 76` arm would accept a value the server
+/// refuses.
 fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
     let arbitrary = |infinities| ComparisonPlan::agrees(CompareKind::Numeric { infinities });
     let Some(typmod) = typmod else { return (DataType::Utf8View, arbitrary(true)) };
@@ -860,19 +745,14 @@ fn builtin_scalar(
         "integer" => (Int32, agrees(K::Int)),
         "bigint" => (Int64, agrees(K::Int)),
         // `oidout` is `snprintf("%u")`, so the file holds an unsigned 32-bit
-        // integer and `UInt32` is what it says (I39). The ADBC PostgreSQL
-        // driver maps `oid` to `Int32`, which misreads every OID at or above 2^31 —
-        // the floor rule permits a different type, never a wider one, and a
-        // narrower reading of the same bytes is not what this is.
+        // integer and `UInt32` is what it says (I39). The ADBC driver maps
+        // `oid` to `Int32`, which misreads every OID at or above 2^31
+        // (`docs/design/decisions.md`, "D38").
         //
-        // `UnsignedInt`, not `Int`, and the difference is only ever visible
-        // on a filter's literal: `oidin` accepts a leading minus and wraps
-        // (`-1` is 4294967295 on every major from 13 — I39), where this refuses the
-        // literal with `Error::PredicateValueDecode`. Refusing is what keeps
-        // the row honest — the wrap is an input-grammar behaviour this build
-        // does not implement, and reading `-1` as −1 would be a wrong answer
-        // where this is merely a weaker one. No *field* is affected: no dump
-        // ever writes a signed OID.
+        // `UnsignedInt`, not `Int`: the difference shows only on a filter's
+        // literal, where `oidin` accepts a leading minus and wraps (I39) and
+        // this refuses with `Error::PredicateValueDecode`. No *field* is
+        // affected — no dump ever writes a signed OID.
         "oid" => (UInt32, agrees(K::UnsignedInt)),
         // `false < true`, PostgreSQL's own boolean order.
         "boolean" => (Boolean, agrees(K::Bool)),
@@ -890,13 +770,11 @@ fn builtin_scalar(
         "name" => {
             (Utf8View, collated_text(K::Text, collation, TypeCollation::Bytewise, collations))
         }
-        // The fourth collatable arm, and the one that needs a comparison of
-        // its own: the dump writes every `character(n)` value blank-padded to
-        // `n` and `bpcharcmp` calls `bcTruelen` on both sides before it
-        // consults a collation at all (I38). So the padding is stripped by
-        // `K::PaddedText` and what is left is exactly the `text` question —
-        // an explicit `C`/`POSIX` agrees, anything else diverges, and a bare
-        // column is on the database's collation (I32).
+        // The fourth collatable arm, with a comparison of its own: the dump
+        // writes every `character(n)` value blank-padded to `n` and
+        // `bpcharcmp` calls `bcTruelen` on both sides before consulting a
+        // collation (I38). `K::PaddedText` strips the padding; what is left
+        // is the `text` question.
         "character" => {
             (Utf8View, collated_text(K::PaddedText, collation, TypeCollation::Database, collations))
         }
@@ -915,26 +793,22 @@ fn builtin_scalar(
         // the stored zone.
         "time with time zone" => (Utf8View, agrees(K::TimeTz)),
         // Arrow's `Interval(MonthDayNano)` carries months, days and a time
-        // part as three independent fields, which is exactly PostgreSQL's
-        // `Interval` — so the mapping is the struct, not a reading of it. The
-        // *comparison* is still `interval_cmp_value`'s fused span, months at
-        // 30 days and days at 86400 s, which is why the two halves of this
-        // arm say different things about the same type.
+        // part as three independent fields, exactly as PostgreSQL's
+        // `Interval` does — the mapping is the struct, not a reading of it.
+        // The *comparison* is `interval_cmp_value`'s fused span (I40).
         "interval" => (Interval(MonthDayNano), agrees(K::Interval)),
         // `uuid_internal_cmp` is `memcmp` over 16 bytes, and `byteacmp` is
         // `memcmp` then length — both are `[u8]`'s own order (I33).
         "uuid" => (FixedSizeBinary(16), agrees(K::Uuid)),
         "bytea" => (Binary, agrees(K::Bytea)),
-        // The two JSON types part company here. PostgreSQL defines *no*
-        // comparison for `json` — no `=`, no order, no operator class — so
-        // bytewise offers more than the server does rather than less, and
-        // `json` is the one remaining member of the register's text-held row.
+        // PostgreSQL defines *no* comparison for `json` — no `=`, no order,
+        // no operator class — so bytewise offers more than the server does
+        // rather than less. It is the register's one text-held row.
         "json" => (Utf8View, text),
-        // `jsonb` has a full order and this implements it, structurally
-        // (I41). What it cannot implement is the string leaves: they go
-        // through the database's own collation, which the file does not
-        // carry (I32), so the plan agrees about the shape and announces the
-        // residue.
+        // `jsonb` has a full order and this implements it structurally (I41).
+        // The string leaves go through the database's own collation, which
+        // the file does not carry (I32), so the plan agrees about the shape
+        // and announces the residue.
         "jsonb" => (
             Utf8View,
             ComparisonPlan::diverging(K::Jsonb, ComparisonDivergence::JsonbStringCollation),
@@ -949,9 +823,8 @@ fn builtin_scalar(
         // The one built-in that maps to a container without being spelled
         // like one. `int2vectorout` writes space-separated `int16` with no
         // quoting, no escaping and no possible NULL element (I47), so the
-        // value space is exactly `List<Int16>`'s — and the comparison is
-        // `array_cmp`'s, which is what `anyarray` polymorphism resolves for a
-        // type that names no operator of its own.
+        // value space is exactly `List<Int16>`'s; the comparison is
+        // `array_cmp`'s, via `anyarray` polymorphism.
         "int2vector" => (list_of(Int16), ComparisonPlan::Nested(NestedCompare::Int2Vector)),
         _ => return None,
     })
@@ -961,12 +834,9 @@ fn builtin_scalar(
 /// half of the mapping, which the Arrow type alone cannot carry
 /// (`docs/design/decisions.md`, "D37").
 ///
-/// Two of them exist for us, because the Arrow spec defines two whose storage
-/// type is already what we emit: `arrow.uuid` over `FixedSizeBinary(16)`, and
-/// `arrow.json` over `Utf8View`. Neither changes a column's Arrow type or a
-/// single byte of its data; both let a consumer tell a UUID from sixteen
-/// arbitrary bytes, and JSON from any other string, without asking us what the
-/// declared PostgreSQL type was.
+/// Two exist for us, the two whose storage type is already what we emit:
+/// `arrow.uuid` over `FixedSizeBinary(16)` and `arrow.json` over `Utf8View`.
+/// Neither changes a column's Arrow type or a byte of its data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanonicalExtension {
     /// `arrow.uuid`, over `FixedSizeBinary(16)`.
@@ -978,18 +848,15 @@ pub enum CanonicalExtension {
 impl CanonicalExtension {
     /// Stamp `field` with this extension's `ARROW:extension:*` metadata.
     ///
-    /// **arrow-rs's own types do the writing, and its `supports_data_type`
-    /// does the checking.** Hand-writing the two metadata keys would be four
-    /// lines and would get `arrow.json` subtly wrong: its metadata key must be
-    /// *present and empty*, and a reader calling arrow-rs's
-    /// `Field::try_canonical_extension_type` rejects the field outright when
-    /// it is absent. So the spelling comes from the crate that defines it.
+    /// arrow-rs's own types do the writing and its `supports_data_type` the
+    /// checking: `arrow.json`'s metadata key must be *present and empty*, and
+    /// a reader calling `Field::try_canonical_extension_type` rejects the
+    /// field when it is absent.
     ///
     /// The `expect` is by construction: [`extension_for`] answers `Some` only
     /// where it walked to the same base name [`builtin_scalar`] maps to that
-    /// extension's storage type, and both walks are the one in
-    /// [`resolve_declared_type`]. `the_extension_names_fit_their_storage_type`
-    /// is the test that keeps the two in step.
+    /// extension's storage type. `the_extension_names_fit_their_storage_type`
+    /// keeps the two in step.
     fn apply(self, mut field: Field) -> Field {
         let stamped = match self {
             Self::Uuid => field.try_with_extension_type(Uuid),
@@ -1003,17 +870,14 @@ impl CanonicalExtension {
 /// The canonical Arrow extension a **column** of `declared` carries, if any.
 ///
 /// The walk is [`comparison_for`]'s: an array first — an extension names the
-/// element type, not the column's, and stamping the column's own field would
-/// claim the list *is* a UUID — then a `.`-qualified user type, where only a
-/// domain can bottom out at a built-in, then the built-in name itself.
+/// element type, not the column's — then a `.`-qualified user type, where only
+/// a domain can bottom out at a built-in, then the built-in name itself.
 ///
-/// **Only a top-level column's field is stamped.** A `uuid` inside a composite
-/// or an array element keeps its `FixedSizeBinary(16)` with no name on it: the
-/// nested `Field`s are built inside this module's type constructors, which are
-/// shared by every position, and a value read through `record_out`/`array_out`
-/// is reachable through the declared type anyway. Nothing here is load-bearing
-/// for decoding — the metadata is a claim about the bytes, never an input to
-/// producing them.
+/// **Only a top-level column's field is stamped**
+/// (`docs/design/decisions.md`, "D37"): a `uuid` inside a composite or an
+/// array element keeps its `FixedSizeBinary(16)` with no name on it. Nothing
+/// here is load-bearing for decoding — the metadata is a claim about the
+/// bytes, never an input to producing them.
 pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExtension> {
     let declared = declared.trim();
     if array_element(declared).is_some() {
@@ -1046,22 +910,19 @@ pub(crate) fn with_extension(field: Field, declared: &str, types: &[TypeDef]) ->
     }
 }
 
-/// The built-in half of the mapping: [`builtin_scalar`], plus
-/// PostgreSQL's twelve built-in range and multirange types. Unlike a
-/// user-defined range (`CREATE TYPE ... AS RANGE`), those never appear
-/// schema-qualified and have no `CREATE TYPE` of their own anywhere in the
-/// file, so they need bare-name recognition here or they would wrongly fall
-/// through to `Unknown` (confirmed against `fixtures/*/types/default.sql`'s
-/// `t_range.v_range int4range`).
+/// The built-in half of the mapping: [`builtin_scalar`], plus PostgreSQL's
+/// twelve built-in range and multirange types. Unlike a user-defined range
+/// (`CREATE TYPE ... AS RANGE`), those never appear schema-qualified and have
+/// no `CREATE TYPE` anywhere in the file (I10), so they need bare-name
+/// recognition here or they fall through to `Unknown`.
 fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<TypeOutcome> {
     // No collation: an Arrow type never depends on one, and the comparison
     // half of the pair is discarded here.
     if let Some((mapped, _)) = builtin_scalar(base, typmod, None, &[]) {
-        // **The literal form is this walk's to say**, because it is the one
-        // thing neither the Arrow type nor the comparison determines: a
-        // `smallint[]` column and an `int2vector` one are both `List<Int16>`
-        // and are written in different grammars. Exactly one built-in is a
-        // container, so the table is one line long.
+        // The literal form is this walk's to say: a `smallint[]` column and
+        // an `int2vector` one are both `List<Int16>` and are written in
+        // different grammars (`docs/design/decisions.md`, "D39"). Exactly one
+        // built-in is a container.
         let plan = match base.to_ascii_lowercase().as_str() {
             "int2vector" => NestedPlan::Int2Vector,
             _ => NestedPlan::Scalar,
@@ -1100,22 +961,19 @@ struct BuiltinRange {
     /// Whether the name was the multirange half of the pair.
     multi: bool,
     /// Whether values of this type are rewritten into canonical form on the
-    /// way in — `int4range_canonical` and its two siblings, which is the
-    /// half of I46 the comparison has to reproduce. It is a fact about the
-    /// *range type*, not about the subtype: `numrange` is over a type with a
-    /// successor at any fixed scale and canonicalizes nothing.
+    /// way in — `int4range_canonical` and its two siblings, the half of I46
+    /// the comparison reproduces. A fact about the *range type*, not about
+    /// the subtype.
     discrete: bool,
 }
 
 /// The definition of one of PostgreSQL's twelve built-in range/multirange
 /// types. `None` for anything else.
 ///
-/// **Hardcoded because the catalog holds it and the DDL does not.**
-/// `TypeKind::Range::subtype` is populated only for a user-defined range;
-/// `pg_dump` writes no `CREATE TYPE` at all for a built-in one. The six
-/// multirange names carry the *same* subtypes as their range counterparts
-/// and a different literal form, which is why they are told apart here
-/// rather than sharing one answer (I10).
+/// **Hardcoded because the catalog holds it and the DDL does not** (I10):
+/// `TypeKind::Range::subtype` is populated only for a user-defined range. The
+/// six multirange names carry the *same* subtypes as their range counterparts
+/// and a different literal form, so they are told apart here.
 fn builtin_range_subtype(name: &str) -> Option<BuiltinRange> {
     let (subtype, multi, discrete) = match name {
         "int4range" => ("integer", false, true),
@@ -1158,9 +1016,7 @@ fn range_struct(bound: DataType) -> DataType {
 /// composite's field, a range's bound.
 ///
 /// Every non-`Mapped` outcome becomes `Utf8View` **in that position**, which
-/// is exactly what the same type would have become at top level; the
-/// recursion introduces no failure mode of its own, since it bottoms out on
-/// the same mapping table whose worst answer is already a string.
+/// is what the same type would have become at top level.
 fn resolve_nested(declared: &str, types: &[TypeDef]) -> (DataType, NestedPlan) {
     match resolve_declared_type(declared, types) {
         TypeOutcome::Mapped(data_type, plan) => (data_type, plan),
@@ -1176,11 +1032,10 @@ fn resolve_nested(declared: &str, types: &[TypeDef]) -> (DataType, NestedPlan) {
 fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
     let Some(def) = types.iter().find(|t| t.name == name) else {
         // Not a type of its own — but it might be a range's auto-created
-        // multirange companion, which `pg_dump` never emits a `CREATE TYPE`
-        // for at all (I10). Its only trace in the file is the
-        // `multirange_type_name` parameter inside the range's own DDL, so
-        // that's the only place left to look — and the range it names is
-        // also where the companion's bound type comes from.
+        // multirange companion, which `pg_dump` emits no `CREATE TYPE` for
+        // (I10). Its only trace is the `multirange_type_name` parameter
+        // inside the range's own DDL, which is also where the companion's
+        // bound type comes from.
         let companion_of = types.iter().find(|t| {
             matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
         });
@@ -1243,43 +1098,26 @@ fn range_bound(subtype: Option<&str>, types: &[TypeDef]) -> (DataType, Box<Neste
 /// [`NestedPlan::Array`] that fills it.
 ///
 /// **Both refusals test the terminal of one domain walk, not the declared
-/// spelling** (I22, I26). A domain records neither the `typdelim` it inherited
-/// nor the array-ness of its base, so `CREATE DOMAIN d AS box` makes `d[]` a
-/// semicolon-separated literal named neither `box` nor `TypeKind::Base`, and
-/// `CREATE DOMAIN d AS integer[]` makes `d[]` an array of arrays while being
-/// spelled like an array of any other named type. One walk answers both, which
-/// is why they are decided here rather than by two predicates that each walk
-/// it.
+/// spelling** (I22, I26; `docs/design/decisions.md`, "D41"): a domain records
+/// neither the `typdelim` it inherited nor the array-ness of its base.
 ///
-/// **The order between the two refusals decides a label, never a type.** Both
-/// answer `Utf8View`, so nothing a caller reads depends on which fires. It is
-/// written opaque-first because `OpaqueElementType` is the stronger statement
-/// — the delimiter is not `,`, so even the element boundaries are
-/// unrecoverable, where `NestedArrayElement` says the boundaries are readable
-/// and we decline to represent what is inside them.
-///
-/// As written, no input reaches both: the opaque test matches a bare type name
-/// and the array test matches that same name with array bounds appended, so a
-/// terminal of `box[]` — `CREATE DOMAIN d AS box[]`, a column of `d[]` — is
-/// only ever the second, and answers `NestedArrayElement`, true but silent
-/// about the delimiter. Making that case answer `OpaqueElementType` means
-/// testing opaqueness recursively through the element's own array levels; it
-/// is a behaviour change, and it buys a better diagnostic on a shape `pg_dump`
-/// cannot write (I21) rather than a better type.
+/// The order between them decides a label, never a type — both answer
+/// `Utf8View`; opaque is tested first because its delimiter makes even the
+/// element boundaries unrecoverable. No input reaches both, so a terminal of
+/// `box[]` answers `NestedArrayElement`, true but silent about the delimiter.
+/// *Rejected: testing opaqueness recursively through the element's own array
+/// levels, which buys a better diagnostic on a shape `pg_dump` cannot write
+/// (I21) rather than a better type.*
 ///
 /// `box` is checked by name because it is a built-in with no `CREATE TYPE` of
 /// its own; a user-defined base type sets its delimiter in DDL this build does
 /// not read, so `TypeKind::Base`/`Shell` are refused wholesale. The
 /// array-ness test reads the terminal through [`array_element`] rather than
 /// looking for a trailing `[]`, because `CREATE DOMAIN d AS integer ARRAY` is
-/// as legal as any other spelling (I28) and the walk stops on whatever the DDL
-/// wrote. That is the second of the normalization's two call sites; the first
-/// is [`resolve_declared_type`]'s entry, which every other position — a
-/// composite field, a range bound, a domain's own base type — reaches through.
+/// as legal as any other spelling (I28).
 ///
 /// See [`TypeOutcome::OpaqueElementType`] and
-/// [`TypeOutcome::NestedArrayElement`] for why each shape is refused rather
-/// than typed.
+/// [`TypeOutcome::NestedArrayElement`] for why each shape is refused.
 fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
     let terminal = domain_terminal(element, types);
     let opaque = terminal.eq_ignore_ascii_case("box")
@@ -1391,20 +1229,15 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 
 /// Walk a chain of domains to the type name it bottoms out at — the declared
 /// spelling of the first non-domain it reaches, or of `name` itself when that
-/// is not a domain.
+/// is not a domain. The terminal is returned as the DDL spelled it; its one
+/// reader normalizes what it needs to.
 ///
-/// **[`resolve_array`] tests this terminal rather than the declared spelling**
-/// (I22, I26): a domain's own DDL records neither the `typdelim` it inherited
-/// nor the array-ness of its base, so the property that decides either refusal
-/// is only visible at the end of the walk. The terminal is returned as the DDL
-/// spelled it — normalizing the array-bounds production here would have to
-/// allocate, and its one reader normalizes what it needs to.
+/// [`resolve_array`] tests this terminal rather than the declared spelling
+/// (I22, I26; `docs/design/decisions.md`, "D41").
 ///
-/// A domain chain visits each `CREATE DOMAIN` at most once, so the type list's
-/// own length bounds it. `resolve_declared_type` recurses through domains
-/// unbounded on the grounds that PostgreSQL cannot create a cycle; the bound
-/// here costs nothing and keeps a hand-edited file from spinning rather than
-/// merely failing.
+/// The loop is bounded by the type list's length — a domain chain visits each
+/// `CREATE DOMAIN` at most once — which keeps a hand-edited file from
+/// spinning rather than merely failing.
 fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
     let mut name = name.trim();
     for _ in 0..=types.len() {
@@ -1420,11 +1253,10 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
 /// [`crate::preamble::DatabaseMetadata::tables`] — against `types`, that
 /// same database's `CREATE TYPE`/`CREATE DOMAIN` list.
 ///
-/// The array check runs first because a declared array type still carries
-/// its element type's own qualification (`public.mood[]` contains a `.` too)
-/// — I21: `pg_dump` never preserves dimensionality, so a single trailing
-/// `[]` covers every array shape regardless of underlying dimensions. It runs
-/// through [`array_element`], so every spelling of the array-bounds production
+/// The array check runs first because a declared array type still carries its
+/// element type's own qualification (`public.mood[]` contains a `.` too), and
+/// `pg_dump` never preserves dimensionality (I21). It runs through
+/// [`array_element`], so every spelling of the array-bounds production
 /// collapses to the element type plus one array level (I28) before anything
 /// else looks at the string.
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
@@ -1439,18 +1271,16 @@ pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     map_builtin(base, typmod, types).unwrap_or(TypeOutcome::Unknown)
 }
 
-/// The comparison for an array column, from the same walk
-/// [`resolve_array`] makes and with the same two refusals: an element type
-/// that is opaque by construction (I22), and an element type that is itself
-/// an array (I26). Both resolve the *column* to `Utf8View`, so a column of
-/// either compares as text and never reaches this plan — but the register is
-/// asked directly too, and answering "ordered" for a column the resolver
-/// declines would be the register disagreeing with itself.
+/// The comparison for an array column, from the same walk [`resolve_array`]
+/// makes and with the same two refusals: an element type that is opaque by
+/// construction (I22), and one that is itself an array (I26). Both resolve the
+/// *column* to `Utf8View`, so a column of either compares as text and never
+/// reaches this plan — but the register is asked directly too, and must not
+/// answer "ordered" for a column the resolver declines.
 ///
-/// The column's own `COLLATE` clause is passed **down to the element**, which
-/// is where it belongs: an array type is not collatable, and `pg_dump` writes
-/// the clause on a `text[]` column to state the collation its *elements* are
-/// compared under (I37).
+/// The column's own `COLLATE` clause is passed **down to the element**: an
+/// array type is not collatable, and `pg_dump` writes the clause on a `text[]`
+/// column to state the collation its *elements* are compared under (I37).
 fn array_comparison(
     declared: &str,
     collation: Option<&str>,
@@ -1467,11 +1297,9 @@ fn array_comparison(
             Some(TypeKind::Base | TypeKind::Shell)
         );
     let child = if opaque || array_element(terminal).is_some() {
-        // No divergence, because nothing would ever read one: both shapes
-        // resolve the *column* to text as well (I22, I26), so
-        // `crate::predicate::resolve_term` takes the plan away on the
-        // resolution before it reaches this tree, and what such a column
-        // announces under `=` is keyed on that resolution instead.
+        // No divergence, because nothing reads one: both shapes resolve the
+        // *column* to text (I22, I26), so `crate::predicate::resolve_term`
+        // takes the plan away before this tree is reached.
         NestedCompare::Uncomparable { declared: element.to_string(), divergence: None }
     } else {
         match nested_position(element, collation, types, collations) {
@@ -1486,16 +1314,12 @@ fn array_comparison(
 /// whether the range type canonicalizes.
 ///
 /// **The bound is asked with no `COLLATE` clause**, which is the one place
-/// this walk knowingly answers weaker than the file allows. A range type
-/// carries its *own* `collation` parameter — `fixtures/*/types/default.sql`'s
-/// `public.textrange` declares `collation = pg_catalog."C"` — and the
-/// preamble grammar keeps only `subtype` and `multirange_type_name` (I10),
-/// so a `text`-bounded range reaches [`collated_text`]'s no-clause arm and is
-/// told its collation is the database's. That is the conservative direction:
-/// a range declaring `C` gets correct rows and a note it does not need, and
-/// one declaring anything else gets exactly `KD7`'s statement. Reading the
-/// parameter would move the verdict and never the answer, which is why it is
-/// a property here rather than a deficiency.
+/// this walk knowingly answers weaker than the file allows: a range type
+/// carries its own `collation` parameter and the preamble grammar keeps only
+/// `subtype` and `multirange_type_name` (I10), so a `text`-bounded range
+/// reaches [`collated_text`]'s no-clause arm. That is the conservative
+/// direction — reading the parameter would move the verdict and never the
+/// answer, so it is a property here rather than a deficiency.
 ///
 /// A range whose DDL stated no subtype at all is [`ComparisonPlan::Refused`]
 /// outright rather than a tree with an unnameable position in it: there is no
@@ -1523,14 +1347,11 @@ fn range_comparison(
 /// type `range_type`, whose DDL declares the canonical function `function`.
 ///
 /// **Knowing the function exists licenses declining the column, never
-/// reproducing it** (I46). PostgreSQL rewrites every value of such a range
-/// through that function before storing or comparing it, so two spellings it
-/// maps together are one value on the server; the function is arbitrary
-/// server-side code, so no amount of parsing lets this build apply it. Both
-/// operator families are then wrong rather than weak — `[1,10] = [1,11)` is
-/// true on a server whose canonical function is the successor shift and false
-/// under a bytewise comparison of the two `range_out` strings — which is why
-/// the answer is [`ComparisonPlan::Unanswerable`] and not
+/// reproducing it** (I46): PostgreSQL rewrites every value through arbitrary
+/// server-side code before storing or comparing it, so both operator families
+/// are wrong rather than weak — `[1,10] = [1,11)` is true on such a server
+/// and false under a bytewise comparison of the two `range_out` strings. That
+/// is why the answer is [`ComparisonPlan::Unanswerable`] and not
 /// [`ComparisonPlan::Refused`].
 fn unanswerable_range(range_type: &str, function: &str) -> ComparisonPlan {
     ComparisonPlan::Unanswerable(UnanswerableReason::RangeCanonical {
@@ -1544,32 +1365,17 @@ fn unanswerable_range(range_type: &str, function: &str) -> ComparisonPlan {
 /// domain beneath a container bottoms out where a domain always does.
 ///
 /// The two answers that are not a comparison collapse to
-/// [`NestedCompare::Uncomparable`], and the second of them is the one worth
-/// stating: `json` is [`ComparisonDivergence::AsText`] at top level, where
-/// bytewise offers more than the server does, and has no comparison *at all*
-/// inside a container, where `array_cmp` would have to find a proc that does
-/// not exist.
-///
-/// **They collapse to one variant and not to one answer**, which is why the
-/// divergence is carried rather than dropped. A column whose order is
-/// refused still answers `=` bytewise over the container's whole text, and
-/// only one of the two arms says anything about *that*: `json` has no
-/// server-side equality either, so the fallback is an answer PostgreSQL does
-/// not have. [`ComparisonPlan::Refused`] says only that **this build** has
-/// no order for the position — an empty enum, a C-level base type, a range
-/// with no declared subtype — which is not a claim about the server's
-/// equality in either direction, so it carries none. Where such a position
-/// makes the fallback wrong it is `KD10` one level down, announced (or not)
-/// off the column's own resolution exactly as a scalar of that type is.
+/// [`NestedCompare::Uncomparable`], carrying the divergence rather than
+/// dropping it: `json` has no comparison at all inside a container, so the
+/// `=` the column still falls back to is an answer PostgreSQL does not have,
+/// where [`ComparisonPlan::Refused`] says only that *this build* has no order
+/// for the position and makes no claim about the server's equality (`KD10`
+/// one level down is announced off the column's own resolution instead).
 ///
 /// **[`ComparisonPlan::Unanswerable`] is the one answer a position cannot
-/// hold**, and it is why this returns a `Result`. A tree can say "this
-/// position has no order" and let the column still answer `=` as text, which
-/// is what [`NestedCompare::Uncomparable`] means; it cannot say "this
-/// position has no equality either", because that is a fact about the whole
-/// column and not about the walk. So an unanswerable position short-circuits
-/// out of the tree and becomes the column's own answer — comparability is
-/// inherited by a walk, unanswerability by propagation.
+/// hold**, and it is why this returns a `Result`: "no equality either" is a
+/// fact about the whole column, not about the walk, so such a position
+/// short-circuits out of the tree and becomes the column's own answer.
 fn nested_position(
     declared: &str,
     collation: Option<&str>,
@@ -1595,7 +1401,8 @@ fn nested_position(
 }
 
 /// **The comparison register**: how a column declared `declared` compares, and
-/// whether that is PostgreSQL's own order.
+/// whether that is PostgreSQL's own order
+/// (`docs/design/decisions.md`, "D40").
 ///
 /// It walks the declared type exactly as [`resolve_declared_type`] does —
 /// array first, then the built-in table, then the database's own
@@ -1603,23 +1410,15 @@ fn nested_position(
 /// spelling of the same string and a domain compares as whatever it bottoms
 /// out at.
 ///
-/// **Keyed on the declared type, not on the Arrow one**
-/// (`docs/design/decisions.md`, "D40"): several unrelated declared types
-/// reach `Utf8View` and compare differently.
-///
 /// **A nested type answers [`ComparisonPlan::Nested`]**, one node per nesting
 /// level, built by the same walk: an array's element, a composite's fields
-/// and a range's bound are asked this same question in turn, so a position's
-/// comparison is whatever a *column* of that type would have had and nesting
-/// composes with no special case.
+/// and a range's bound are asked this same question in turn.
 ///
 /// **`collation` is the column's own `COLLATE` clause**, verbatim as the DDL
 /// wrote it ([`crate::preamble::ColumnDef::collation`]), or `None` where the
 /// column carries none — which `pg_dump` writes exactly when the column's
-/// collation is its type's default (I37), so the absence is a fact about the
-/// type rather than about the column. It is why this register is keyed per
-/// *column* and not only per declared type: two `text` columns of one table
-/// can compare differently.
+/// collation is its type's default (I37). It is why the register is keyed per
+/// *column*: two `text` columns of one table can compare differently.
 pub fn comparison_for(
     declared: &str,
     collation: Option<&str>,
@@ -1637,10 +1436,9 @@ pub fn comparison_for(
     if let Some((_, plan)) = builtin_scalar(base, typmod, collation, collations) {
         return plan;
     }
-    // The twelve built-in range and multirange names, which reach neither arm
-    // of `builtin_scalar` and appear in no `CREATE TYPE` (I10) — the same
-    // fourth step `map_builtin` takes, so the two walks agree on which names
-    // are containers.
+    // The twelve built-in range and multirange names, which reach no arm of
+    // `builtin_scalar` and appear in no `CREATE TYPE` (I10) — the same fourth
+    // step `map_builtin` takes, so the two walks agree.
     match builtin_range_subtype(&base.to_ascii_lowercase()) {
         Some(range) => {
             range_comparison(Some(range.subtype), range.discrete, range.multi, types, collations)
@@ -1661,20 +1459,17 @@ fn comparison_user_type(
     collations: &[CollationDef],
 ) -> ComparisonPlan {
     // Absent from the list: either an unknown type or a range's multirange
-    // companion, which `pg_dump` emits no `CREATE TYPE` for at all (I10). The
-    // companion is found the one way it can be — through the range whose DDL
-    // names it — exactly as `resolve_user_type` finds it, so the two walks
-    // agree about a type only one of them can see.
+    // companion, which `pg_dump` emits no `CREATE TYPE` for (I10). The
+    // companion is found through the range whose DDL names it, exactly as
+    // `resolve_user_type` finds it.
     let Some(def) = types.iter().find(|t| t.name == name) else {
         let companion_of = types.iter().find(|t| {
             matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
         });
         return match companion_of {
             // A multirange over a range that canonicalizes is unanswerable
-            // for the same reason the range itself is, and names the *range*
-            // type — the type the parameter is declared on, which is the one
-            // a reader can go and look at. `pg_dump` writes no `CREATE TYPE`
-            // for the companion, so it has no DDL of its own to name.
+            // for the same reason the range is, and names the *range* type:
+            // the companion has no DDL of its own to name (I10).
             Some(TypeDef { name, kind: TypeKind::Range { subtype, canonical, .. } }) => {
                 match canonical {
                     Some(function) => unanswerable_range(name, function),
@@ -1688,31 +1483,24 @@ fn comparison_user_type(
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
         TypeKind::Enum { labels } if labels.is_empty() => ComparisonPlan::Refused,
-        // PostgreSQL orders an enum by `pg_enum.enumsortorder`, which is
-        // assigned from *declaration* order (I33) — so the position of a
-        // label in this list is the order, and the label text is not. The
-        // labels are in hand here because the dump carries them verbatim,
-        // which is the whole reason the register is keyed on the declared
-        // type rather than on the Arrow one.
+        // PostgreSQL orders an enum by `pg_enum.enumsortorder`, assigned from
+        // *declaration* order (I33) — so a label's position in this list is
+        // the order and its text is not.
         TypeKind::Enum { labels } => {
             ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect()))
         }
-        // A domain compares as what it bottoms out at, through any chain,
-        // which is the same recursion `resolve_declared_type` makes and is
-        // finite for the same reason: PostgreSQL cannot create a cycle.
-        //
-        // The collation walks down with it, and the *column's* clause wins:
-        // a domain's own `COLLATE` is its type default, which `pg_dump` writes
-        // a column-level clause only to override (I37).
+        // A domain compares as what it bottoms out at, through any chain —
+        // the same recursion `resolve_declared_type` makes, finite because
+        // PostgreSQL cannot create a cycle. The collation walks down with it
+        // and the *column's* clause wins: a domain's own `COLLATE` is its
+        // type default, which a column-level clause only overrides (I37).
         TypeKind::Domain { base_type, collation: domain_collation } => {
             comparison_for(base_type, collation.or(domain_collation.as_deref()), types, collations)
         }
         // Field-wise in declaration order, which is `record_cmp`'s rule and
-        // also the order `record_out` writes them in, so the positional
-        // comparison costs nothing here (I23). A field list the grammar could
-        // not read is all-or-nothing exactly as it is for the Arrow type: a
-        // composite parsed short would compare field 3's text as field 2's
-        // type, so there is no partial answer to give.
+        // the order `record_out` writes them in (I23). A field list the
+        // grammar could not read is all-or-nothing: a composite parsed short
+        // would compare field 3's text as field 2's type.
         TypeKind::Composite { fields } => match fields {
             Some(fields) => {
                 let positions: Result<Vec<_>, _> = fields
@@ -1732,14 +1520,11 @@ fn comparison_user_type(
             }
             None => ComparisonPlan::Refused,
         },
-        // Bound-wise, with no canonicalization — which is the whole answer
-        // only because the range declares no `canonical` function. Where it
-        // declares one the column is unanswerable instead: the server
-        // rewrites every value through arbitrary server-side code before
-        // comparing it, so this build can reproduce neither the order nor the
-        // equality. `fixtures/*`'s `public.myrange` and `public.textrange`
-        // declare none, which is the ordinary shape and the one the oracle
-        // checks.
+        // Bound-wise, with no canonicalization — the whole answer only
+        // because the range declares no `canonical` function. Where it
+        // declares one the column is unanswerable instead (I46);
+        // `fixtures/*`'s `public.myrange` and `public.textrange` declare
+        // none.
         TypeKind::Range { subtype, canonical, .. } => match canonical {
             Some(function) => unanswerable_range(&def.name, function),
             None => range_comparison(subtype.as_deref(), false, false, types, collations),
@@ -1780,9 +1565,8 @@ mod tests {
     }
 
     /// `oid` is PostgreSQL's one unsigned integer type, and the width is the
-    /// point: the ADBC driver reads the *binary* wire format into `Int32`,
-    /// which turns every OID at or above 2^31 negative. `oidout` writes
-    /// `%u`, so the text says what it says.
+    /// point: `oidout` writes `%u`, where the ADBC driver's `Int32` turns
+    /// every OID at or above 2^31 negative.
     #[test]
     fn oid_is_unsigned() {
         assert_eq!(
@@ -1794,8 +1578,7 @@ mod tests {
     #[test]
     fn maps_case_insensitively_for_the_binary_upgrade_dummy_column_shape() {
         // `INTEGER /* dummy */` -> preamble.rs already strips the comment,
-        // leaving bare uppercase "INTEGER" (I5) -- pg_dump's own literal
-        // casing there, not something we get to normalize upstream.
+        // leaving bare uppercase "INTEGER" (I5).
         assert_eq!(
             resolve_declared_type("INTEGER", &[]),
             TypeOutcome::Mapped(DataType::Int32, NestedPlan::Scalar)
@@ -1878,17 +1661,15 @@ mod tests {
     }
 
     /// The twelve built-in range/multirange names carry their subtypes in the
-    /// catalog, never in DDL (I10), so this table is the only place they
-    /// exist. The multirange half maps to a `List` of the *same* range struct
-    /// — same subtype, different literal form.
+    /// catalog, never in DDL (I10). The multirange half maps to a `List` of
+    /// the *same* range struct — same subtype, different literal form.
     #[test]
     fn builtin_ranges_and_their_multirange_companions_map_to_their_hardcoded_subtypes() {
         let bounds = [
             ("int4range", "int4multirange", DataType::Int32),
             ("int8range", "int8multirange", DataType::Int64),
             // Bare `numeric` has no Arrow decimal representation, so a
-            // `numrange`'s bounds are text — the subtype's own mapping, not a
-            // special case here.
+            // `numrange`'s bounds are text — the subtype's own mapping.
             ("numrange", "nummultirange", DataType::Utf8View),
             ("tsrange", "tsmultirange", DataType::Timestamp(TimeUnit::Microsecond, None)),
             (
@@ -1954,9 +1735,7 @@ mod tests {
             )
         );
         // A type Arrow has no representation for is `Utf8View` *in that
-        // position*, exactly as it would be at top level — the element
-        // boundaries are still recovered, which is what a whole-column string
-        // would lose.
+        // position*, exactly as it would be at top level.
         assert_eq!(
             resolve_declared_type("inet[]", &[]),
             TypeOutcome::Mapped(
@@ -2000,10 +1779,9 @@ mod tests {
         );
     }
 
-    /// I26, and the transitive half the fixture deliberately does not carry:
-    /// a domain over a domain over an array produces a literal byte-identical
-    /// to the single-hop case, so there is no `pg_dump` output shape left to
-    /// predict and the walk is pinned here instead.
+    /// I26, and the transitive half the fixture does not carry: a domain over
+    /// a domain over an array produces a literal byte-identical to the
+    /// single-hop case, so the walk is pinned here instead.
     #[test]
     fn an_array_over_an_array_typed_element_is_refused_through_any_chain_of_domains() {
         let types = [
@@ -2018,9 +1796,8 @@ mod tests {
                 "{declared}"
             );
         }
-        // Only the outer array is refused. The domain itself is an ordinary
-        // `integer[]` column at every depth of the chain, and nothing about
-        // it changed: its literal is one brace deep and means one dimension.
+        // Only the outer array is refused: the domain itself is an ordinary
+        // `integer[]` column at every depth of the chain.
         for declared in ["public.intarr", "public.intarr2", "public.intarr3"] {
             assert_eq!(
                 resolve_declared_type(declared, &types),
@@ -2039,10 +1816,8 @@ mod tests {
     /// exactly as `integer[]` does, one array level deep.
     ///
     /// Five of the six survive no round trip through `format_type`, so
-    /// `pg_dump` can never write them (I21) and no generated fixture can
-    /// reach this. That is `roadmap.md`'s "Where a fixture is impossible"
-    /// carve-out, and the I28 citation here is its check: it puts the
-    /// behaviour inside the register's re-verify ritual at each new major.
+    /// `pg_dump` can never write them (I21) and no generated fixture reaches
+    /// this: `roadmap.md`'s "Where a fixture is impossible" carve-out.
     #[test]
     fn every_array_declaration_spelling_is_one_array_of_the_element_type() {
         let expected = TypeOutcome::Mapped(
@@ -2059,7 +1834,7 @@ mod tests {
             "integer ARRAY[4]",
             // The bracket run is unbounded in the DDL even though `MAXDIM`
             // is 6; `ARRAY` is a keyword, so its case carries nothing; and
-            // the lexer is free with whitespace. All observed on 16.15.
+            // the lexer is free with whitespace.
             "integer[][][][][][][][][]",
             "INTEGER array[4]",
             "integer  Array",
@@ -2072,9 +1847,8 @@ mod tests {
     /// The other direction of the same rule: a declaration PostgreSQL rejects
     /// gets no array type invented for it. `ARRAY` takes at most one bound and
     /// only in the `[n]` form, what precedes it is a bare type name, and a
-    /// malformed bound is not a bound. Every string here is a syntax error on
-    /// 16.15, and the outcome that says so is the honest `Unknown` — not a
-    /// refusal, which would state something false about the column.
+    /// malformed bound is not a bound. Every string here is a syntax error,
+    /// and `Unknown` says so where a refusal would state something false.
     #[test]
     fn a_declaration_postgresql_would_reject_is_not_read_as_an_array() {
         for declared in [
@@ -2092,11 +1866,10 @@ mod tests {
         }
     }
 
-    /// The normalization's second call site. A domain's base type is spelled
-    /// by whoever wrote the `CREATE DOMAIN`, so the array-ness the I26 refusal
-    /// tests for can arrive in any spelling — and the domain walk stops on the
-    /// raw text. `d[]` over `CREATE DOMAIN d AS integer ARRAY` is the same
-    /// array-of-arrays as `d[]` over `integer[]`, and is refused the same way,
+    /// A domain's base type is spelled by whoever wrote the `CREATE DOMAIN`,
+    /// so the array-ness the I26 refusal tests for can arrive in any spelling
+    /// and the domain walk stops on the raw text. `d[]` over `CREATE DOMAIN d
+    /// AS integer ARRAY` is refused exactly as `d[]` over `integer[]` is,
     /// while `d` itself is an ordinary `integer[]` column.
     #[test]
     fn a_domain_over_an_array_is_recognized_in_every_spelling() {
@@ -2121,8 +1894,7 @@ mod tests {
 
     /// The refusal composes into a composite for free: `resolve_nested` maps
     /// every non-`Mapped` outcome to `Utf8View` *in that position*, so a field
-    /// of the refused type is one string field inside an otherwise typed
-    /// `Struct` — not a refusal of the whole column.
+    /// of the refused type is one string field, not a refused column.
     #[test]
     fn a_composite_field_of_the_refused_array_type_is_a_string_field_only() {
         let types = [
@@ -2304,12 +2076,10 @@ mod tests {
     ];
 
     /// **The join that keeps `extension_for` and `builtin_scalar` in step.**
-    /// The two are separate walks of the same string, so the failure to guard
-    /// against is one of them moving: a `uuid` remapped away from
-    /// `FixedSizeBinary(16)` would make `apply`'s `expect` a panic on a real
-    /// dump. `try_with_extension_type` is arrow-rs's own
-    /// `supports_data_type`, so what this asserts is the crate's rule and not
-    /// a restatement of it.
+    /// They are separate walks of the same string: a `uuid` remapped away
+    /// from `FixedSizeBinary(16)` would make `apply`'s `expect` a panic on a
+    /// real dump. `try_with_extension_type` is arrow-rs's own
+    /// `supports_data_type`, so this asserts the crate's rule.
     #[test]
     fn the_extension_names_fit_their_storage_type() {
         for (declared, extension, storage) in EXTENSIONS {
@@ -2375,8 +2145,7 @@ mod tests {
         for declared in ["uuid[]", "json[]", "text", "integer", "public.mood", "public.d_int"] {
             assert_eq!(extension_for(declared, &types), None, "{declared}");
         }
-        // A `.`-qualified name the dump never declared resolves to nothing at
-        // all, so it certainly names no extension.
+        // A `.`-qualified name the dump never declared names no extension.
         assert_eq!(extension_for("public.nope", &types), None);
     }
 
@@ -2390,9 +2159,8 @@ mod tests {
     /// scalar, and how a column of it compares
     /// (`docs/design/decisions.md`, "D40").
     ///
-    /// **Every arm of [`builtin_scalar`] appears here**, which is what makes
-    /// the list a register rather than a sample: a type added to that table
-    /// without a row here is a type nothing states the comparison of.
+    /// **Every arm of [`builtin_scalar`] appears here**: a type added to that
+    /// table without a row here is one nothing states the comparison of.
     #[test]
     fn the_register_answers_every_builtin_scalar() {
         use CompareKind as K;
@@ -2420,12 +2188,10 @@ mod tests {
             // an infinity, so only the bare form admits the spelling (I34).
             ("numeric", agrees(K::Numeric { infinities: true })),
             ("numeric(77,0)", agrees(K::Numeric { infinities: false })),
-            // The four collatable arms, each asked with no `COLLATE`
-            // clause — which is the shape of every column in the tree today.
+            // The four collatable arms, each asked with no `COLLATE` clause.
             // `name`'s type default is `C`, so it agrees where the others
             // cannot; `character(n)` carries a comparison of its own (the
-            // padding is trimmed off both sides, I38) and then asks the same
-            // collation question the other three do.
+            // padding is trimmed off both sides, I38).
             ("text", unknown_collation()),
             ("character varying(10)", unknown_collation()),
             ("character(10)", unknown_padded()),
@@ -2449,8 +2215,7 @@ mod tests {
             ),
             // `cidr` differs from `inet` only in refusing a literal with a
             // bit set below its netmask, and `macaddr8` from `macaddr` only
-            // in its width — both distinctions the plan has to carry, since
-            // the declared name is gone by the time a value is read.
+            // in its width — both carried, the declared name being gone.
             ("inet", agrees(K::Network { cidr: false })),
             ("cidr", agrees(K::Network { cidr: true })),
             ("macaddr", agrees(K::MacAddr { octets: 6 })),
@@ -2459,8 +2224,7 @@ mod tests {
             assert_eq!(comparison_for(declared, None, &[], &[]), expected, "{declared}");
         }
         // A declared type this build maps to nothing has no comparison
-        // either — the two answers are reached through one walk of the same
-        // string, so they cannot disagree about which types exist.
+        // either — one walk of the same string answers both.
         assert_eq!(comparison_for("money", None, &[], &[]), ComparisonPlan::Refused);
         // A keyword is a keyword on both walks (I5).
         assert_eq!(comparison_for("INTEGER", None, &[], &[]), agrees(K::Int));
@@ -2470,8 +2234,7 @@ mod tests {
     /// register cannot be keyed on the Arrow type: an enum compares by
     /// declaration order, a bare `numeric` by decimal value, an `inet` by
     /// family-then-prefix, a `jsonb` by a walk down two containers, `text`
-    /// bytewise with the column's own collation deciding whether that is
-    /// right, and `json` bytewise because the server defines no order at all.
+    /// bytewise under its collation, and `json` bytewise with no order at all.
     #[test]
     fn the_register_tells_apart_types_that_share_one_arrow_type() {
         let labels = ["sad".to_string(), "ok".to_string()];
@@ -2535,16 +2298,13 @@ mod tests {
             ("name", Some("pg_catalog.\"en_US.utf8\""), named()),
             // Unqualified, as a hand-written dump might spell it.
             ("text", Some("\"C\""), agrees_text()),
-            // An unquoted `C` is the collation `c`, which is not the built-in
-            // one — the server folds it the same way, and answering "agrees"
-            // here is the one direction of error this register must not make.
+            // An unquoted `C` is the collation `c`, not the built-in one; the
+            // server folds it the same way.
             ("text", Some("C"), named()),
             // Nor is a `"C"` some other schema happens to define.
             ("text", Some("public.\"C\""), named()),
-            // `character(n)` reads the clause exactly as `text` does, and
-            // answers over its own comparison: `bpcharcmp` trims both sides'
-            // trailing blanks and *then* consults the collation (I38), so an
-            // explicit `COLLATE "C"` agrees and a bare column does not.
+            // `character(n)` reads the clause exactly as `text` does, over
+            // its own trimmed comparison (I38).
             (
                 "character(10)",
                 Some("pg_catalog.\"C\""),
@@ -2584,10 +2344,9 @@ mod tests {
     /// The fourth collation branch: a column stating a collation the *same
     /// dump* declared `deterministic = false` (I42).
     ///
-    /// It is the only one of the four that reaches `=`, and the only one read
-    /// off a statement rather than off a name — which is why the same clause
-    /// answers differently depending on what the dump's `CREATE COLLATION`
-    /// list holds.
+    /// The only one of the four that reaches `=`, and the only one read off a
+    /// statement rather than a name — so the same clause answers differently
+    /// depending on what the dump's `CREATE COLLATION` list holds.
     #[test]
     fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too() {
         use CompareKind as K;
@@ -2603,8 +2362,7 @@ mod tests {
             comparison_for("text", Some("public.icu_ci"), &[], &[]),
             ComparisonPlan::diverging(K::Text, named)
         );
-        // Declared deterministic — which is what every `CREATE COLLATION` in
-        // the committed fixtures says — moves nothing either.
+        // Declared deterministic moves nothing either.
         assert_eq!(
             comparison_for("text", Some("public.icu_ci"), &[], &[coll("public.icu_ci", true)]),
             ComparisonPlan::diverging(K::Text, named)
@@ -2648,9 +2406,8 @@ mod tests {
             comparison_for("integer", Some("public.icu_ci"), &[], &declared),
             ComparisonPlan::agrees(K::Int)
         );
-        // Quoting is not textual: `CREATE COLLATION` and a `COLLATE` clause
-        // come from different `pg_dump` paths and either may quote what the
-        // other leaves bare.
+        // Quoting is not textual: the two spellings come from different
+        // `pg_dump` paths and either may quote what the other leaves bare.
         assert_eq!(
             comparison_for(
                 "text",
@@ -2743,8 +2500,7 @@ mod tests {
             ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
         );
         // A domain over a nested type is that type's nested comparison,
-        // through the same recursion — the walk bottoms out where a domain
-        // always does.
+        // through the same recursion.
         assert_eq!(
             comparison_for("public.darr", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
@@ -2759,10 +2515,8 @@ mod tests {
 
     /// A domain over an enum carries the enum's labels, through any chain —
     /// which is what lets `pgdq info --detail` list them beneath such a
-    /// column and what lets a `--filter` term name one. **No fixture column
-    /// is one**: `public.derived_domain` bottoms out at `integer` and
-    /// `public.text_c` at `text`, so the recursion above is the only thing
-    /// that makes the claim true and this is the only thing that checks it.
+    /// column and a `--filter` term name one. **No fixture column is one**,
+    /// so this is the only check of it.
     ///
     /// A domain over an *empty* enum is refused like the enum itself: it
     /// resolves to no Arrow type, so no column of it is ever asked.
@@ -2784,10 +2538,9 @@ mod tests {
 
     /// Every nested shape the register compares, as one statement: an array,
     /// a composite, a range and a range's multirange companion, each built by
-    /// the same walk so that nesting composes with no special case.
-    ///
-    /// A base or shell type is refused for a reason of its own and is here to
-    /// keep the two populations from being read as one.
+    /// the same walk so that nesting composes with no special case. A base or
+    /// shell type is refused for a reason of its own and is here to keep the
+    /// two populations from being read as one.
     #[test]
     fn every_container_kind_compares_structurally() {
         let types = [
@@ -2845,8 +2598,7 @@ mod tests {
         );
         // A user-defined range and the companion multirange `pg_dump` writes
         // no `CREATE TYPE` for (I10) reach the same bound through two
-        // different lookups, and neither canonicalizes: this range's DDL
-        // declares no `canonical` function, which is the ordinary shape.
+        // different lookups, and neither canonicalizes.
         assert_eq!(
             comparison_for("public.myrange", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Range {
@@ -2862,9 +2614,8 @@ mod tests {
             }),
         );
         // A built-in range is named nowhere in the file (I10), so its bound
-        // and its canonicalization both come off the hardcoded table — and
-        // `discrete` is a fact about the range type, which is why two ranges
-        // over `integer` answer differently.
+        // and its canonicalization come off the hardcoded table — `discrete`
+        // is a fact about the range type, so two ranges over `integer` differ.
         assert_eq!(
             comparison_for("int4range", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Range {
@@ -2912,17 +2663,14 @@ mod tests {
 
     /// A range type declaring a `canonical` function is the one answer that
     /// is neither a comparison nor a bytewise fallback: PostgreSQL rewrites
-    /// every value of it through arbitrary server-side code before storing or
-    /// comparing one (I46), so both operator families would be *wrong* here
-    /// rather than weak.
+    /// every value through arbitrary server-side code before storing or
+    /// comparing one (I46), so both operator families would be *wrong* rather
+    /// than weak.
     ///
-    /// **Unanswerability propagates where comparability is inherited.** A
-    /// tree can carry an [`NestedCompare::Uncomparable`] position and still
-    /// let the column answer `=` as text; it has no way to say "and no
-    /// equality either", which is a fact about the whole column. So a range
-    /// like this one short-circuits out of every walk that reaches it — an
-    /// array of it, a composite holding one, its multirange companion, a
-    /// domain over it — and each answers for the column instead.
+    /// **Unanswerability propagates where comparability is inherited**: such a
+    /// range short-circuits out of every walk that reaches it — an array of
+    /// it, a composite holding one, its multirange companion, a domain over
+    /// it — and each answers for the column instead.
     #[test]
     fn a_range_declaring_a_canonical_function_answers_no_operator() {
         let types = [
@@ -2946,9 +2694,8 @@ mod tests {
             ty("public.canondom", TypeKind::domain("public.canonrange")),
         ];
         // The refusal names the *range* type and its function, whichever
-        // route reached it — the multirange companion has no DDL of its own
-        // to name (I10), and a position inside a container is not a type the
-        // parameter is declared on.
+        // route reached it: the companion has no DDL of its own to name (I10)
+        // and a position inside a container is not where the parameter sits.
         let unanswerable = || {
             ComparisonPlan::Unanswerable(UnanswerableReason::RangeCanonical {
                 range_type: "public.canonrange".to_string(),
@@ -2966,9 +2713,8 @@ mod tests {
         ] {
             assert_eq!(comparison_for(declared, None, &types, &[]), unanswerable(), "{declared}");
         }
-        // It is not an order, which is what the four ordering operators ask —
-        // and not a `Refused` either, which is what lets `=` be refused with
-        // it.
+        // Not an order, which is what the four ordering operators ask, and
+        // not a `Refused` either, which is what lets `=` be refused with it.
         assert!(!unanswerable().orders());
         assert_ne!(unanswerable(), ComparisonPlan::Refused);
         // The same range without the parameter is an ordinary bound-wise
@@ -2992,11 +2738,9 @@ mod tests {
     /// order refuses the whole column, and the tree says which position and
     /// which type so the refusal can name them.
     ///
-    /// **`json` is the case that is not obvious.** At top level it is
-    /// compared bytewise and announces that PostgreSQL orders it not at all;
-    /// inside a container there is nothing to compare with, because
-    /// `array_cmp` looks up the element type's comparison proc and there is
-    /// none.
+    /// **`json` is the case that is not obvious**: bytewise at top level, and
+    /// inside a container nothing at all, because `array_cmp` looks up the
+    /// element type's comparison proc and there is none.
     #[test]
     fn a_position_with_no_order_refuses_the_whole_column() {
         let types = [
@@ -3013,8 +2757,7 @@ mod tests {
         ];
         for (declared, path, at, announces) in [
             // `json` takes the server's `=` away with its order, so the
-            // bytewise fallback the column keeps is an answer PostgreSQL
-            // does not have — which the position says.
+            // column's bytewise fallback is an answer it does not have.
             ("json[]", "[]", "json", true),
             ("public.jsonpair", ".doc", "json", true),
             ("public.jsonpair[]", "[].doc", "json", true),
@@ -3032,8 +2775,7 @@ mod tests {
             assert_eq!(tree.uncomparable(), Some((path.to_string(), at.to_string())), "{declared}");
             // The three refused for a reason of *this build's* announce
             // nothing: PostgreSQL orders `public.intarr[]` through
-            // `array_ops` and compares `box[]` element-wise, so a byte
-            // comparison of two canonical spellings is its answer too.
+            // `array_ops` and compares `box[]` element-wise.
             let expected: Vec<_> = announces
                 .then(|| (path.to_string(), at.to_string(), ComparisonDivergence::AsText))
                 .into_iter()
@@ -3043,9 +2785,8 @@ mod tests {
     }
 
     /// Every diverging position, in walk order, each with the path and the
-    /// declared type its sentence needs — the composite that is on the
-    /// database's collation twice, once directly and once through an
-    /// element.
+    /// declared type its sentence needs — a composite on the database's
+    /// collation twice, once directly and once through an element.
     #[test]
     fn a_nested_column_announces_every_diverging_position() {
         let types = [ty(
@@ -3095,9 +2836,8 @@ mod tests {
     }
 
     /// `int2vector` is the one built-in whose Arrow type is a container and
-    /// whose declaration is not spelled like one, so the three answers it
-    /// carries are pinned together: the type, the literal form, and the
-    /// comparison.
+    /// whose declaration is not spelled like one, so its three answers are
+    /// pinned together: the type, the literal form, and the comparison.
     #[test]
     fn int2vector_is_a_list_with_a_literal_form_and_an_order_of_its_own() {
         let TypeOutcome::Mapped(data_type, plan) = resolve_declared_type("int2vector", &[]) else {
@@ -3106,8 +2846,7 @@ mod tests {
         assert_eq!(data_type, list_of(DataType::Int16));
         assert_eq!(plan, NestedPlan::Int2Vector);
         // The same Arrow type through the array spelling, and a different
-        // literal form — which is the whole reason the plan travels beside
-        // the type.
+        // literal form — the reason the plan travels beside the type.
         let TypeOutcome::Mapped(array_type, array_plan) = resolve_declared_type("smallint[]", &[])
         else {
             panic!("smallint[] maps")

@@ -16,128 +16,75 @@
 //! *next* span starts, and a caller-side pass derives `end` as `next.start`
 //! (or the scan's end, for the last span).
 //!
-//! **Why TOC-block boundaries, not pure statement-completion tracking.** A
-//! `CREATE FUNCTION`/`PROCEDURE` body is dollar-quoted, and
-//! [`crate::scan::CopyScanner`] never emits an [`crate::scan::Event::Line`]
-//! for a dollar-quoted line — not even the one that closes the tag with the
-//! statement's own terminating `;` on it. So a tracker watching only the
-//! visible line stream cannot observe that such a statement closed. Every real
-//! `pg_dump` entry — `CREATE FUNCTION` included — carries its own `-- Name:
-//! ...; Type: ...` TOC header, and that header can *never* appear inside a
-//! dollar-quoted body (the scanner filters those lines out before any event
-//! reaches this module, fake-looking `-- Name:` text included), so recognizing
-//! the next entry's header is a sound, general "the previous span has ended"
-//! signal that sidesteps the problem entirely.
+//! The anchor is the TOC block rather than statement completion because
+//! [`crate::scan::CopyScanner`] emits no [`crate::scan::Event::Line`] for a
+//! dollar-quoted line — not even the one carrying a `CREATE FUNCTION`'s own
+//! terminating `;` — and it filters TOC-shaped lines inside such a body out
+//! before any event reaches this module (I3).
 //!
-//! For input carrying **no** TOC headers there is a second signal:
-//! [`crate::scan::Event::DollarQuoteEnd`], a position-only event marking where
-//! a dollar-quoted region closed, which [`Builder::on_dollar_quote_end`]
-//! treats as completing whatever statement is in flight. Without it the first
-//! dollar-quoted body in a header-less file absorbs every statement after it
-//! into one span. The lines themselves stay unsurfaced either way.
-//!
-//! The statement-grammar fallback — used for content with no TOC header:
-//! `\connect`/`\restrict`/framing lines, and any statement, such as a
-//! trailing `ALTER ... OWNER TO`, that is not its own TOC entry — is exactly
-//! [`crate::preamble::statement_complete`], which tracks double-quoted
-//! identifiers and `--` line comments as well as string literals.
+//! Two fallbacks cover input carrying **no** TOC headers:
+//! [`crate::scan::Event::DollarQuoteEnd`], which
+//! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
+//! is in flight, and [`crate::preamble::statement_complete`] for any
+//! statement that is not its own TOC entry. The lines themselves stay
+//! unsurfaced either way.
 //!
 //! **Consequence: no "grouping".** A definition and its ungrouped trailing
-//! statement tile as two adjacent spans rather than one. That is the design's
-//! own graceful-degradation position, not an oversight; grouping via the TOC's
-//! `Dependencies:` field is unimplemented and unassigned. **Not grouping is
-//! not the same as not attributing** — see "TOC inheritance" below: the two
-//! spans stay separate, but both carry the same [`Span::toc`].
+//! statement tile as two adjacent spans rather than one, both carrying the
+//! same [`Span::toc`]; grouping via the TOC's `Dependencies:` field is
+//! unimplemented and unassigned.
 //!
 //! ## What this module owns
 //!
-//! - **Boundaries and classification.** [`Builder`] is the state machine, and
-//!   it is driven directly by [`crate::index::build_index`],
+//! - **Boundaries and classification.** [`Builder`] is the state machine,
+//!   driven directly by [`crate::index::build_index`],
 //!   [`crate::index::scan_preamble`] and `crate::stream`'s mapping pass, fed
 //!   the same [`crate::scan::Event`] stream those already walk. [`build_map`]
-//!   is a thin wrapper over the same [`Builder`], kept for callers (and this
-//!   module's own tests) that just want a span list.
+//!   is a thin wrapper for callers that just want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
-//!   its own first recognized content, **not** at the byte it began reading:
-//!   closing that seam against whatever already covers the bytes before it is
-//!   the caller's job, and `crate::stream::splice` does it by extending the
-//!   preceding span — the same rule [`Builder::push_span`] applies to every
-//!   other boundary, and what keeps a map assembled across several scans
-//!   identical to one built in a single pass.
+//!   its own first recognized content, **not** at the byte it began reading;
+//!   closing that seam is the caller's job (`crate::stream::splice`).
 //!
-//! - **Bulk regions.** [`SpanBody::Data`] holds a [`DataBlock`]:
-//!   [`DataBlock::Copy`] for a `COPY` block, [`DataBlock::InsertRun`] for a run
-//!   of `INSERT INTO <table> ...;` statements (`Mode::InsertRun`, entered from
-//!   `Mode::Statement`'s first line, or straight from `Mode::Comment`'s close
-//!   arm when a `-- Data for Name: ...` entry heads the run — which is what
-//!   attributes it, since the comment's own span would otherwise be `Framing`
-//!   and clear `governing_toc`), and [`DataBlock::LargeObjects`] for the
-//!   whole `BEGIN;`/`COMMIT;`-wrapped large-object region (I12), merged across
-//!   however many archive entries `pg_dump` split it into
-//!   ([`Builder::on_large_object_start`]).
-//!
-//!   The two get different treatment on purpose. `crate::scan` recognizes a
-//!   bare `BEGIN;`/`COMMIT;` pair at the scanner level, the same way it
-//!   recognizes a `COPY` header/`\.` pair, and skips everything between
-//!   **unread**. `INSERT` runs stay a `feed_line`-level concern with no new
-//!   scanner state, driving a [`StatementScan`] over the raw line bytes —
-//!   which costs about 4× a `COPY` scan per byte warm and nothing at all cold
-//!   (`docs/design/measurements.md`, "Scan throughput by input shape"; the
-//!   fast path and what it declines are `docs/design/decisions.md`'s "D33"). Neither carries the inner offsets [`DataBlock::Copy`] does,
-//!   because nothing reads their rows yet.
+//! - **Bulk regions.** [`SpanBody::Data`] holds a [`DataBlock`] — a `COPY`
+//!   block, an `INSERT` run, or the whole `BEGIN;`/`COMMIT;`-wrapped
+//!   large-object region (I12), merged across however many archive entries
+//!   `pg_dump` split it into. `crate::scan` skips a large-object region
+//!   **unread**; `INSERT` runs stay a `feed_line`-level concern with no
+//!   scanner state, driving a [`StatementScan`] over raw line bytes. Only
+//!   [`DataBlock::Copy`] carries inner offsets
+//!   (`docs/design/decisions.md`, "D33").
 //!
 //! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
-//!   whenever a comment block's TOC-Name line parses: `-- Name: ...` or its
-//!   `-- Data for Name: ...` sibling (I3), through `; Type: ...; Schema: ...;
-//!   Owner: ...` and the optional trailing `; Tablespace: ...` (I16). A `-` or
-//!   empty field parses to `None`, matching `_printTocEntry()`'s two ways of
-//!   writing "no value" (`sanitize_line`'s `want_hyphen` argument differs by
-//!   field and by caller). The verbose `-- TOC entry N (class C OID O)` /
-//!   `-- Dependencies: ...` lines that can precede the Name line are ordinary
-//!   comment lines to this parser — contributing nothing, exactly like any
-//!   other line that fails to parse as a header.
+//!   whenever a comment block's TOC-Name line parses (I3, I16). The verbose
+//!   `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines that can
+//!   precede the Name line are ordinary comment lines to this parser.
 //!
 //! - **TOC inheritance for follow-on statements.** A TOC entry is not one
-//!   statement: every follow-on (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH
-//!   CONFIGURATION ... ADD MAPPING FOR`, ...) would otherwise carry
-//!   `toc: None` and read as uncovered — badly undercounting the coverage
-//!   figure on a healthy, fully-TOC'd dump. `Builder`'s `governing_toc` field is
-//!   the entry a comment-less statement inherits, updated by every
-//!   [`Builder::push_span`] call: set to that span's own `toc` for a plain
-//!   statement or `Data` span, cleared to `None` for
-//!   `Framing`/`Connect`/`VersionHeader`.
-//!
-//!   [`Span::toc_owned`] records whether a span carried the header text itself
-//!   — `true` only for the span the `toc` came from. Coverage counts
-//!   attribution (`toc.is_some()`); an object *census* (`pgdq info`'s `object
-//!   kinds:`) counts `toc_owned` spans instead, one per archive entry, since
-//!   counting every attributed span would double it.
+//!   statement: `Builder`'s `governing_toc` is the entry a comment-less
+//!   follow-on inherits, and [`Span::toc_owned`] records whether a span
+//!   carried the header text itself (`docs/design/decisions.md`, "D31").
 //!
 //! - **The cross-reference set.** [`Builder`] accumulates `roles`/`tablespaces`
-//!   (both [`crate::index::DumpIndex`] fields of the same name) as spans close:
-//!   [`Builder::push_span`] reads `toc.owner`/`toc.tablespace`, and
+//!   (both [`crate::index::DumpIndex`] fields of the same name) as spans
+//!   close: [`Builder::push_span`] reads `toc.owner`/`toc.tablespace`, and
 //!   [`Builder::push_statement_span`] scans the closing statement's own text
-//!   via [`extract_statement_cross_refs`] for `OWNER TO`,
-//!   `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
-//!   default_tablespace` — the sources `Span::toc` alone cannot cover.
+//!   via [`extract_statement_cross_refs`] — the sources `Span::toc` alone
+//!   cannot cover.
 //!
 //! - **Span text and the tiling check.** [`attach_text`] fills [`Span::text`]
-//!   by slicing the file at each span's own offsets, capped at [`TEXT_CAP`]
-//!   with a `truncated` marker; `Data` and `Unscanned` spans store none.
-//!   [`check_tiling`]'s production callers ([`crate::index::build_index`] and
-//!   `crate::stream`'s mapping pass) report a failure as a
+//!   by slicing the file at each span's own offsets, capped at [`TEXT_CAP`];
+//!   `Data` and `Unscanned` spans store none. [`check_tiling`]'s production
+//!   callers report a failure as a
 //!   [`crate::diagnostic::DiagnosticKind::TilingBroken`] on the index and
-//!   return the map anyway — a hole is a bug in this module, never a reason to
-//!   refuse the file.
+//!   return the map anyway (`docs/design/decisions.md`, "D30").
 //!
 //! [`SpanBody::Unscanned`] covers whatever a partial scan has not reached, so
-//! **every** `DumpIndex` tiles its file — one built by a query included, with
-//! no exemption for a resumed stream. `DumpMetadata` is
-//! [`crate::preamble::dump_metadata_from_spans`], a derived view over `spans`
-//! computed once, which is what [`SpanBody::Connect`],
+//! **every** `DumpIndex` tiles its file, one built by a query included.
+//! `DumpMetadata` is [`crate::preamble::dump_metadata_from_spans`], a derived
+//! view over `spans` — which is what [`SpanBody::Connect`],
 //! [`SpanBody::VersionHeader`] and [`SpanBody::AlterTypeAddValue`] exist for
-//! rather than folding into generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
+//! rather than generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
@@ -171,33 +118,26 @@ pub struct Span {
     /// cache so `pgdq info` answers without re-reading the dump
     /// (`docs/design/decisions.md`, "D30"). `None` until [`attach_text`] has
     /// run, and permanently `None` for [`SpanBody::Data`] and
-    /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded and carry
-    /// nothing a reader wants.
+    /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded.
     pub text: Option<SpanText>,
     /// The TOC entry this span **belongs to** — not necessarily the comment
     /// this span's own bytes start with. A follow-on statement with no TOC
-    /// comment of its own (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH
-    /// CONFIGURATION ... ADD MAPPING FOR`, ...) **inherits** the governing
-    /// entry's header rather than carrying `None`
-    /// (`docs/design/decisions.md`, "D31") — [`toc_owned`](Self::toc_owned)
-    /// is what distinguishes the two. `None` for a span with no governing
-    /// entry at all: the header-less-input fallback, or one of the kinds
-    /// inheritance never crosses (`Framing`, `Connect`, `VersionHeader`).
-    /// Independent of, and not a substitute for, [`SpanBody`]'s own per-kind
-    /// fields: the TOC comment and the statement grammar are two
-    /// separately-sourced observations of the same object
+    /// comment of its own **inherits** the governing entry's header rather
+    /// than carrying `None`, and [`toc_owned`](Self::toc_owned) distinguishes
+    /// the two (`docs/design/decisions.md`, "D31"). `None` for a span with no
+    /// governing entry at all: the header-less-input fallback, or one of the
+    /// kinds inheritance never crosses (`Framing`, `Connect`,
+    /// `VersionHeader`). Not a substitute for [`SpanBody`]'s own per-kind
+    /// fields: the two are separately-sourced observations of one object
     /// (`docs/design/decisions.md`, "D30").
     pub toc: Option<TocHeader>,
     /// Whether *this span's own* preceding comment carried the TOC header
     /// text (`true`), as opposed to `toc` being inherited from an earlier
-    /// entry's span (`false`) — always `false` when `toc` is `None`. This is
-    /// the separate record of whether it carried the header text itself that
-    /// `docs/design/decisions.md`'s "D31" calls
-    /// for: an object census (`pgdq info`'s `object kinds:`) counts
-    /// `toc_owned` spans, one per archive entry, while TOC-coverage counts
-    /// every attributed span (`toc.is_some()`), inherited ones included —
-    /// counting `toc.is_some()` for both would double-count every object that
-    /// has a follow-on statement.
+    /// entry's span (`false`) — always `false` when `toc` is `None`. An object
+    /// census (`pgdq info`'s `object kinds:`) counts `toc_owned` spans, one
+    /// per archive entry, while TOC coverage counts every attributed span
+    /// (`toc.is_some()`), inherited ones included
+    /// (`docs/design/decisions.md`, "D31").
     pub toc_owned: bool,
     pub body: SpanBody,
 }
@@ -212,8 +152,8 @@ pub struct TocHeader {
     /// which for most kinds is unqualified (just `widgets`, not
     /// `objects.widgets`) unlike a classified [`SpanBody`]'s own `name` field.
     pub name: String,
-    /// `te->desc` — one of the closed ~63-value vocabulary I16 documents
-    /// (`TABLE`, `FK CONSTRAINT`, `POLICY`, `TABLE DATA`, ...). Never `None`:
+    /// `te->desc` — one of the closed vocabulary I16 documents (`TABLE`,
+    /// `FK CONSTRAINT`, `POLICY`, `TABLE DATA`, ...). Never `None`:
     /// `_printTocEntry()` always writes a `Type:` field.
     pub kind: String,
     /// `None` for `Schema: -` (no namespace — a database-level or
@@ -221,8 +161,8 @@ pub struct TocHeader {
     pub schema: Option<String>,
     /// `None` for `Owner: -` (`--no-owner`, or an owner-less kind like
     /// `COMMENT`) or `Owner: ` (empty — some entry kinds pass an empty string
-    /// rather than `NULL` through `sanitize_line`, observed on `COMMENT`
-    /// entries). Both mean "no owner recorded here" to a reader.
+    /// rather than `NULL` through `sanitize_line`). Both mean "no owner
+    /// recorded here" to a reader.
     pub owner: Option<String>,
     /// The `; Tablespace: <name>` suffix, present only when the entry has a
     /// non-default tablespace and `--no-tablespaces` was not given.
@@ -230,45 +170,22 @@ pub struct TocHeader {
 }
 
 /// Parse pg_dump's TOC header line into a [`TocHeader`] — `None` for any
-/// comment line that doesn't match, which is the graceful-degradation case
-/// the design already expects for header-less input: a line this doesn't
-/// recognize just leaves [`Span::toc`] `None`, exactly as if there were no
-/// TOC comment at all.
+/// comment line that doesn't match, which leaves [`Span::toc`] `None` exactly
+/// as if there were no TOC comment at all. `trimmed` is expected to have
+/// leading/trailing whitespace already removed.
 ///
-/// `trimmed` is expected to already have leading/trailing whitespace removed,
-/// matching every other caller in this module.
+/// All three of `_printTocEntry()`'s prefixes go through one code path:
+/// `TOC_PREFIX_DATA` ("Data for ") and `TOC_PREFIX_STATS` ("Statistics for ",
+/// a `pg_dump` 18+ `--statistics` component, I18) are each optional, and what
+/// follows one must still be `Name: `. Whether a prefix is also a *boundary*
+/// signal is [`looks_like_toc_name_line`]'s question
+/// (`docs/design/decisions.md`, "D31").
 ///
-/// **Handles all three of `_printTocEntry()`'s prefixes with one code path**
-/// — `TOC_PREFIX_DATA` ("Data for ") and `TOC_PREFIX_STATS` ("Statistics
-/// for ", a `pg_dump` 18+ `--statistics` component — real flag name; the
-/// register entry that first named it said `--with-statistics`, which does
-/// not exist, see I18) are each optional, and whether or not one is present,
-/// what follows must still be `Name: `.
-///
-/// The two data prefixes differ only in whether they are also a *boundary*
-/// signal, which is [`looks_like_toc_name_line`]'s question, not this one's.
-/// A `Statistics for` entry heads an ordinary `SELECT
-/// pg_catalog.pg_restore_relation_stats(...)` statement, so its span must
-/// continue into that statement. A `Data for` entry heads data, which reaches
-/// the builder without ever passing through the close arm `saw_name`
-/// governs — `crate::scan::CopyScanner` intercepts a `COPY` header as
-/// `Event::CopyStart`, so [`Builder::on_copy_start`] takes the `TocHeader`
-/// straight out of `Mode::Comment`, and under `--inserts` [`Builder::step`]'s
-/// own `Mode::Comment` close arm opens `Mode::InsertRun` at the comment's
-/// offset. The refusal therefore decides nothing on a default dump; what it
-/// buys is a `--disable-triggers` dump (I31), where a statement *does*
-/// intervene and absorbing would feed the entry to
-/// `Builder::push_statement_span`'s `Framing` veto — see
-/// [`looks_like_toc_name_line`].
-///
-/// **Splits on the field markers in the order `_printTocEntry()` writes
-/// them**, not on a fully general grammar — `sanitize_line` only strips
-/// newlines, never escapes a literal `; Type: ` (etc.) that might occur
-/// inside an object's own name, so a pathological name could in principle
-/// mis-split. I3's own caveat already treats the TOC comment as a hint, never
-/// a correctness guarantee, and this parser only ever feeds enrichment
-/// (`Span::toc`), never a span boundary — see "Span boundaries" above, whose
-/// boundary detection (`looks_like_toc_name_line`) doesn't call this at all.
+/// Splits on the field markers in the order `_printTocEntry()` writes them,
+/// not on a general grammar: `sanitize_line` never escapes a literal
+/// `; Type: ` inside an object's own name, so a pathological name can
+/// mis-split. I3 treats the TOC comment as a hint, and this parser only ever
+/// feeds enrichment, never a boundary.
 fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
     let rest = trimmed.strip_prefix("-- ")?;
     let rest = rest
@@ -304,33 +221,26 @@ pub struct SpanText {
     pub truncated: bool,
 }
 
-/// Per-span cap on stored text (`docs/design/decisions.md`, "D30"). A whole
-/// schema's DDL is small — koji's entire surface is well under the cap — so
-/// this only ever bites on a single enormous statement.
+/// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
+/// schema's DDL being small, it only bites on one enormous statement.
 pub const TEXT_CAP: usize = 64 * 1024;
 
-/// Whether a span of this kind stores its text at all. `Data` spans are
-/// excluded by the design ("`Data` spans never store text"); `Unscanned`
-/// covers bytes by definition unread, so there is nothing to slice.
+/// Whether a span of this kind stores its text at all. `Data` spans never do
+/// (`docs/design/decisions.md`, "D30"); `Unscanned` covers bytes by
+/// definition unread, so there is nothing to slice.
 fn stores_text(body: &SpanBody) -> bool {
     !matches!(body, SpanBody::Data(_) | SpanBody::Unscanned)
 }
 
 /// Fill in [`Span::text`] for every span that stores it, reading the bytes
-/// back from `source` by offset.
+/// back from `source` by offset — sliced from the file, never accumulated
+/// from [`crate::scan::Event::Line`], which emits nothing for a dollar-quoted
+/// string and would miss every function body in the file.
 ///
-/// **Sliced from the file, never accumulated from [`crate::scan::Event::Line`]**
-/// — `crate::scan` emits no line at all for anything inside, entering or
-/// leaving a dollar-quoted string, so accumulated text would be missing every
-/// function body in the file. Slicing makes text a pure function of a span's
-/// boundaries, which is the same property the tiling invariant wants.
-///
-/// Runs as a pass over finished spans rather than at the moment each span
-/// closes, because only the caller owns the source. It costs far less than
-/// one read per span: spans tile, and the spans that store text are exactly
-/// the ones between `Data` blocks, so **contiguous runs are coalesced into a
-/// single `read_range`** — in a real dump that is one read per gap between
-/// data blocks, over schema-sized regions the scan just walked.
+/// Runs as a pass over finished spans rather than as each span closes,
+/// because only the caller owns the source. Contiguous runs of text-storing
+/// spans are coalesced into one `read_range`, so this is one read per gap
+/// between data blocks rather than one per span.
 pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Result<()> {
     let mut i = 0;
     while i < spans.len() {
@@ -380,11 +290,9 @@ pub enum DataBlock {
 
 /// A run of `pg_dump --inserts`/`--column-inserts` output for one table —
 /// `INSERT INTO <table> ...;` statements, one per row, merged into a single
-/// `Data` span instead of one `Unparsed` span per statement
-/// (`docs/design/decisions.md`, "D33"). No inner offsets: unlike
-/// a `CopyBlock`, nothing reads rows out of this yet — a future row reader
-/// will use the same quote-tracking [`Builder`] already does to
-/// find the run's own boundaries.
+/// `Data` span instead of one `Unparsed` span per statement. No inner
+/// offsets, nothing reading rows out of this yet
+/// (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InsertRun {
     /// Same convention as [`CopyBlock::database`].
@@ -394,9 +302,8 @@ pub struct InsertRun {
     /// matching [`CopyHeader::qualified_name`](crate::copy::CopyHeader::qualified_name)'s
     /// convention for the same object.
     pub table: String,
-    /// Number of `INSERT` statements folded into this span. Free to compute:
-    /// finding the run's end already means recognizing each statement's own
-    /// completion.
+    /// Number of `INSERT` statements folded into this span — free to
+    /// compute, finding the run's end meaning recognizing each completion.
     pub row_count: u64,
 }
 
@@ -404,10 +311,9 @@ pub struct InsertRun {
 /// `lo_open`/`lowrite`/`lo_close` run in the file, merged into a single `Data`
 /// span regardless of how many archive entries `pg_dump` split it across (one
 /// on v13-16, one per object on v17+ — see [`Builder::on_large_object_start`]).
-/// No identity at all: "the only identity the region carries is the OID in
-/// each `lo_create('<oid>')` opener, and recovering it costs a walk of the
-/// whole region, which is exactly what one span avoids paying"
-/// (`docs/design/decisions.md`, "D33").
+/// No identity at all: the region's only identity is the OID in each
+/// `lo_create('<oid>')` opener, and recovering it costs a walk of the whole
+/// region (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LargeObjectRegion {
     /// Same convention as [`CopyBlock::database`].
@@ -430,62 +336,55 @@ pub enum SpanBody {
         name: String,
         schema: Option<String>,
     },
-    /// A `CREATE COLLATION` — kept distinct from [`Unparsed`](SpanBody::Unparsed)
-    /// because a column's `COLLATE` clause names a collation and the
-    /// comparison register needs to know whether the dump declared that one
-    /// non-deterministic (I42): `texteq` on a column of a non-deterministic
-    /// collation is not a byte comparison, and this statement is the only
-    /// place a plain dump says so.
+    /// A `CREATE COLLATION` — distinct from [`Unparsed`](SpanBody::Unparsed)
+    /// because `texteq` on a column of a non-deterministic collation is not a
+    /// byte comparison, and this statement is the only place a plain dump says
+    /// a collation is one (I42).
     Collation {
         collation: CollationDef,
     },
     /// A bulk region — a `COPY` block, an `INSERT` run, or the large-object
-    /// data region; see `docs/design/decisions.md`,
-    /// "D33". One span kind for all three — [`DataBlock`] is where they stop
-    /// sharing a shape: only [`DataBlock::Copy`] carries the inner offsets a
-    /// row reader seeks by, since it is the only one of the three a reader
-    /// exists for yet — a future reader adds one for `INSERT` runs.
+    /// data region. One span kind for all three; [`DataBlock`] is where they
+    /// stop sharing a shape, only [`DataBlock::Copy`] carrying the inner
+    /// offsets a row reader seeks by (`docs/design/decisions.md`, "D33").
     Data(DataBlock),
-    /// A `\connect <name>` meta-command — kept distinct from [`Framing`](SpanBody::Framing)
-    /// because [`crate::preamble::dump_metadata_from_spans`]
-    /// needs the database name itself, not just "this was framing", to
-    /// reconstruct `DumpMetadata`'s per-database segmenting.
+    /// A `\connect <name>` meta-command — distinct from
+    /// [`Framing`](SpanBody::Framing) because
+    /// [`crate::preamble::dump_metadata_from_spans`] needs the database name
+    /// itself to reconstruct `DumpMetadata`'s per-database segmenting.
     Connect {
         database: String,
     },
     /// The dump's (or a `\connect`ed database's) own two-line version-header
     /// comment block (I9): `-- Dumped from database version ...` / `-- Dumped
     /// by pg_dump version ...`. Distinct from [`Framing`](SpanBody::Framing)
-    /// for the same reason as [`Connect`](SpanBody::Connect) — the derived
-    /// view needs the actual version strings, not just "this was framing".
+    /// for the same reason [`Connect`](SpanBody::Connect) is: the derived view
+    /// needs the strings themselves.
     VersionHeader {
         server_version: Option<String>,
         pg_dump_version: Option<String>,
     },
     /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>'
-    /// ...;` (I6) — recognized so [`crate::preamble::dump_metadata_from_spans`]
-    /// can fold the label back into the [`TypeDef`](SpanBody::TypeDef) span
-    /// it targets.
+    /// ...;` (I6) — recognized so
+    /// [`crate::preamble::dump_metadata_from_spans`] can fold the label into
+    /// the [`TypeDef`](SpanBody::TypeDef) span it targets.
     AlterTypeAddValue {
         type_name: String,
         label: String,
     },
     /// File prologue/epilogue framing (the `PostgreSQL database dump`
     /// banner, `\restrict`/`\unrestrict`, the `SET`/`set_config` preamble
-    /// block, ...) — never a real database object, and not one of this
-    /// module's other, more specific framing-adjacent kinds.
+    /// block, ...) — never a real database object, and none of the more
+    /// specific framing-adjacent kinds above.
     Framing,
-    /// A recognized statement (has a trailing `;`, parens/quotes balanced)
-    /// that isn't one of this slice's three classified shapes — including
-    /// every object kind TOC enrichment would otherwise label, and any
-    /// statement (e.g. a trailing `ALTER ... OWNER TO`) not grouped into
-    /// its owning entry's span, per the module docs' "no grouping" note.
+    /// A recognized statement (trailing `;`, parens/quotes balanced) that is
+    /// none of this module's classified shapes — including every object kind
+    /// TOC enrichment would otherwise label, and any statement not grouped
+    /// into its owning entry's span (the module docs' "no grouping").
     Unparsed,
-    /// Bytes no scan has walked yet — always a single trailing span, since
-    /// `build_map` always scans to its target's end
-    /// (`docs/design/decisions.md`, "D30"). Not produced by [`build_map`] today
-    /// (which always scans to EOF); the incremental scan
-    /// that emits one.
+    /// Bytes no scan has walked yet — always a single trailing span
+    /// (`docs/design/decisions.md`, "D30"). Never produced by [`build_map`],
+    /// which always scans to EOF; an incremental scan is what emits one.
     Unscanned,
 }
 
@@ -507,11 +406,10 @@ pub enum TilingIssue {
 }
 
 /// Verify that `spans` tiles `[0, expected_end)` exactly: sorted, contiguous,
-/// no gaps or overlaps, starting at 0 and ending at `expected_end`
-/// (`docs/design/decisions.md`, "D30"). Returns every issue found, not
-/// just the first — a caller still gets a usable (if incomplete) map either
-/// way; per the design, a tiling failure is evidence of a bug in this
-/// module, never a reason to refuse the file.
+/// no gaps or overlaps, starting at 0 and ending at `expected_end`. Returns
+/// every issue found, not just the first; a tiling failure is a bug in this
+/// module, never a reason to refuse the file
+/// (`docs/design/decisions.md`, "D30").
 pub fn check_tiling(spans: &[Span], expected_end: u64) -> Vec<TilingIssue> {
     let mut issues = Vec::new();
     if spans.is_empty() {
@@ -555,11 +453,10 @@ enum Mode {
     Idle,
     /// Absorbing a run of `--`-prefixed lines. `saw_name` is set the moment
     /// one matches `-- Name: ...; Type: ...`; `server_version`/`pg_dump_version`
-    /// accumulate the two-line version-header block's fields (I9) as they're
-    /// seen, so the block can close as a [`SpanBody::VersionHeader`] instead
-    /// of generic [`SpanBody::Framing`] when it's neither a TOC entry nor
-    /// ordinary framing prose. `toc` is set the moment a line parses via
-    /// [`parse_toc_header_line`] — independent of `saw_name`, since a
+    /// accumulate the two-line version-header block's fields (I9), so the
+    /// block can close as a [`SpanBody::VersionHeader`] rather than generic
+    /// [`SpanBody::Framing`]. `toc` is set the moment a line parses via
+    /// [`parse_toc_header_line`], independent of `saw_name`: a
     /// `-- Data for Name: ...` line parses without matching
     /// `looks_like_toc_name_line`'s stricter boundary check.
     Comment {
@@ -571,35 +468,26 @@ enum Mode {
     },
     /// Absorbing a statement's lines via [`statement_complete`]. Started
     /// either directly (no TOC comment — `toc`/`toc_owned` seeded from
-    /// [`Builder::governing_toc`], see "Span boundaries" above) or
-    /// right after a TOC comment block closes with `saw_name` true (`toc` is
-    /// that comment's own header, `toc_owned` true) — either way `start` is
-    /// the *span's* start, which for the TOC case is the comment block's
-    /// start, not this statement's own first line.
+    /// [`Builder::governing_toc`]) or right after a TOC comment block closes
+    /// with `saw_name` true (`toc` that comment's own header, `toc_owned`
+    /// true). Either way `start` is the *span's* start, which for the TOC
+    /// case is the comment block's, not this statement's first line.
     Statement { start: u64, buf: String, toc: Option<TocHeader>, toc_owned: bool },
     /// Accumulating a run of `INSERT INTO <table> ...;` statements for one
-    /// table (`docs/design/decisions.md`, "D33") — entered
-    /// from `Mode::Statement`'s first line instead of staying there, so the
-    /// whole run becomes one `Data` span rather than one `Unparsed` span per
-    /// statement. `start`/`toc`/`toc_owned` are the span's own, same
-    /// convention as `Statement`. `table` is fixed at the run's first line; a
-    /// later statement targeting a different table ends the run (real
-    /// `pg_dump` output never does this — a TOC comment always separates two
-    /// tables' data — but a header-less input isn't guaranteed to). `scan`
-    /// tracks the *current*, not-yet-complete statement only, empty between
-    /// statements — that's the signal a fresh line either continues the run
-    /// or ends it. `row_count` is complete statements folded in so far.
+    /// table, so the whole run becomes one `Data` span
+    /// (`docs/design/decisions.md`, "D33"). `start`/`toc`/`toc_owned` are the
+    /// span's own, same convention as `Statement`. `table` is fixed at the
+    /// run's first line; a later statement targeting a different table ends
+    /// the run (header-less input may do this; real `pg_dump` output never
+    /// does). `scan` tracks the *current*, not-yet-complete statement only,
+    /// empty between statements — the signal a fresh line either continues
+    /// the run or ends it. `row_count` is complete statements folded in.
     ///
-    /// Unlike [`Mode::Statement`] this holds no statement *text*: a run's
-    /// span carries a row count and a table name and nothing reads its bytes
-    /// (`push_insert_run` goes straight to `push_span`, and
-    /// `extract_statement_cross_refs` is deliberately not run over an
-    /// `INSERT` body). So the accumulation is a [`StatementScan`] over raw
-    /// bytes rather than a `String` per line — `docs/design/decisions.md`,
-    /// "D33". `prefix` is the
-    /// `INSERT INTO <table>` byte prefix the run's first line spelled, kept
-    /// so [`Builder::insert_run_line`] can recognize a continuing statement
-    /// without re-parsing the identifier.
+    /// This holds no statement *text*, nothing reading a run's bytes, so the
+    /// accumulation is a [`StatementScan`] over raw bytes. `prefix` is the
+    /// `INSERT INTO <table>` byte prefix the run's first line spelled, kept so
+    /// [`Builder::insert_run_line`] recognizes a continuing statement without
+    /// re-parsing the identifier.
     InsertRun {
         start: u64,
         table: String,
@@ -615,27 +503,24 @@ enum Mode {
 /// The statement-driven boundary/classification pass, shared by
 /// [`build_map`] (a standalone, always-to-EOF scan) and
 /// [`crate::index::build_index`]/[`crate::index::scan_preamble`], which drive
-/// it directly so that producing spans costs no second pass over bytes
-/// [`crate::scan::scan`] already walked
+/// it directly off the events [`crate::scan::scan`] already walks
 /// (`docs/design/decisions.md`, "D34").
 pub(crate) struct Builder {
     mode: Mode,
     database: Option<String>,
     spans: Vec<Span>,
-    /// The open `COPY` block, tracked separately from `mode` (which is
-    /// always `Idle` while a `CopyStart`/`CopyEnd` pair is in flight —
-    /// `crate::scan::CopyScanner` never interleaves the two). `.0` is the
+    /// The open `COPY` block, tracked separately from `mode`, which is always
+    /// `Idle` while a `CopyStart`/`CopyEnd` pair is in flight. `.0` is the
     /// span's own start offset, which for a TOC-commented block precedes
-    /// `.1`'s `header_offset` — see [`Builder::on_copy_start`]. `.2` is the
-    /// partition-root marker this block's header carried, consumed at
-    /// `CopyStart` so a later block cannot inherit it. `.3` is the TOC header
-    /// the preceding `-- Data for Name: ...` comment (if any) parsed to.
+    /// `.1`'s `header_offset`. `.2` is the partition-root marker this block's
+    /// header carried, consumed at `CopyStart` so a later block cannot inherit
+    /// it. `.3` is the TOC header the preceding `-- Data for Name: ...`
+    /// comment (if any) parsed to.
     pending_data: Option<(u64, CopyStart, Option<String>, Option<TocHeader>)>,
     /// The `-- load via partition root <name>` marker (I2) seen since the
     /// last TOC entry began, waiting for the `COPY` header it belongs to.
-    /// Cleared by the header that consumes it, and by the next TOC `Name:`
-    /// line — an entry that turned out not to be table data at all leaves
-    /// nothing behind for the following one to pick up.
+    /// Cleared by the header that consumes it and by the next TOC `Name:`
+    /// line, so an entry that was not table data leaves nothing behind.
     pending_partition_root: Option<String>,
     /// The in-progress merged large-object `Data` span, if a `BEGIN;` has
     /// been seen with no flush since — see [`on_large_object_start`](Self::on_large_object_start).
@@ -655,25 +540,18 @@ pub(crate) struct Builder {
     roles: BTreeSet<String>,
     tablespaces: BTreeSet<String>,
     /// The TOC entry a follow-on statement with no comment of its own would
-    /// inherit — `docs/design/decisions.md`'s "D31". Updated by every
-    /// [`push_span`](Self::push_span) call: set to that span's own `toc` for
-    /// a plain statement or `Data` span (whether freshly parsed or itself
-    /// inherited — either way it's what the *next* follow-on should carry),
-    /// cleared to `None` for `Framing`/`Connect`/`VersionHeader`, which the
-    /// design says inheritance never crosses. Reset fresh by every new
-    /// `Builder` (including a live segment's — `crate::stream`'s mapping pass
-    /// always resumes exactly at a `Data` span's own boundary in practice, so
-    /// nothing real depends on this carrying across builder instances).
+    /// inherit (`docs/design/decisions.md`, "D31"). Updated by every
+    /// [`push_span`](Self::push_span) call: that span's own `toc` for a plain
+    /// statement or `Data` span, whether freshly parsed or itself inherited,
+    /// and `None` for `Framing`/`Connect`/`VersionHeader`. Reset fresh by
+    /// every new `Builder`.
     governing_toc: Option<TocHeader>,
-    /// The census accumulating for the open `COPY` block
-    /// (`ArrayShape`). Sized at `CopyStart` from the header's
-    /// column list, and grown by any row that turns out to have more fields
-    /// (a header-less block, whose column count only the rows know).
-    ///
-    /// **Every mapping pass censuses**, under either
-    /// `crate::batch::ScanExtent`: a block reaches the map only once it has
-    /// been walked end to end, so there is no such thing as a half-censused
-    /// block and no state a later pass could repair.
+    /// The census accumulating for the open `COPY` block (`ArrayShape`).
+    /// Sized at `CopyStart` from the header's column list, and grown by any
+    /// row that turns out to have more fields (a header-less block, whose
+    /// column count only the rows know). Every mapping pass censuses, a block
+    /// reaching the map only once walked end to end
+    /// (`docs/design/decisions.md`, "D35").
     pending_census: Vec<ArrayShape>,
 }
 
@@ -681,30 +559,19 @@ pub(crate) struct Builder {
 /// column, growing it for a row that turns out to have more fields than the
 /// header named (a header-less block, whose column count only the rows know).
 ///
-/// **The row is rejected wholesale before it is split.** An array literal
-/// always contains a `{`, and the only other thing that can start one is an
-/// `[lb:ub]=` prefix, so a row holding neither byte has nothing to contribute
-/// and costs one pass over its bytes — which is the overwhelming majority of
-/// rows in the overwhelming majority of dumps, koji's included. That
-/// pre-filter is the whole of what a mapping pass pays for the census on
-/// brace-free data (`docs/design/measurements.md`), so it is `memchr2` rather
-/// than a scalar loop: the byte scan is the figure.
+/// The row is rejected wholesale before it is split: an array literal always
+/// contains a `{`, the only other thing that can start one is an `[lb:ub]=`
+/// prefix, so a row holding neither byte costs one `memchr2` pass.
 ///
-/// **Two measurements are regenerated by patching this function.**
-/// `docs/design/measurements.md`'s "The census on brace-free rows" and "The
-/// census on array-bearing rows" both take their census-off column from this
-/// body preceded by a bare `return;`, which isolates exactly the census and
-/// nothing else — for **every** caller, which is why the patch point is here
-/// rather than in [`Builder::on_row`]. Renaming this function, splitting it,
-/// or moving the pre-filter out of it breaks that recipe silently — so leave
-/// those sections a way to be found from here.
+/// **Two measurements are regenerated by patching this function**, and for
+/// every caller, which is why the patch point is here rather than in
+/// [`Builder::on_row`]: `census-brace-free` and `census-arrays` take their
+/// census-off column from this body preceded by a bare `return;`. Renaming
+/// it, splitting it, or moving the pre-filter out breaks that recipe.
 ///
-/// **It is a free function because it has two callers**, and they hold their
-/// census in different places: the serial mapping pass keeps it on the
-/// [`Builder`], and an interior worker (`crate::leader`) keeps its own, to be
-/// merged with its siblings' when the block closes. Two copies of the fold
-/// would be two censuses that could drift, which is exactly the failure the
-/// both-bounds design exists to prevent.
+/// A free function because its two callers hold their census in different
+/// places: the serial mapping pass on the [`Builder`], an interior worker
+/// (`crate::leader`) its own.
 pub(crate) fn census_row(census: &mut Vec<ArrayShape>, raw: &[u8]) {
     if memchr::memchr2(b'{', b'[', raw).is_none() {
         return;
@@ -723,41 +590,25 @@ pub(crate) fn census_row(census: &mut Vec<ArrayShape>, raw: &[u8]) {
 /// `Type:`/`Schema:`/`Owner:`, only confirms this comment block is a real
 /// TOC entry rather than framing prose.
 ///
-/// `TOC_PREFIX_STATS` ("Statistics for ") counts, because what follows a
-/// statistics entry is an ordinary statement and the span must run into it.
-/// `TOC_PREFIX_DATA` ("Data for ") does not, and **what that refusal buys is
-/// narrow — it is not that a data entry would otherwise lose its header.** The
-/// only thing `saw_name` decides is whether [`Builder::step`]'s `Mode::Comment`
-/// close arm absorbs the block into the statement that follows or pushes it as
-/// its own span, and on a default dump that arm never runs for a data entry at
-/// all: the blank line after the closing `--` is absorbed in place, and
-/// `crate::scan::CopyScanner` intercepts the `COPY` header as
-/// `Event::CopyStart` before `feed_line` sees it, so
-/// [`Builder::on_copy_start`] reads the pending `TocHeader` out of
-/// `Mode::Comment` without consulting `saw_name`. Under `--inserts` the close
-/// arm does run, and it opens `Mode::InsertRun` at the comment's offset —
-/// again without needing a yes here.
-///
-/// It earns its keep on a `--disable-triggers` dump (I31), where `SET SESSION
-/// AUTHORIZATION DEFAULT;` / `ALTER TABLE … DISABLE TRIGGER ALL;` *do*
-/// intervene between the entry and its data. Absorbing there would run the
-/// entry into that `SET` statement's span, where
+/// `TOC_PREFIX_STATS` ("Statistics for ") counts, what follows a statistics
+/// entry being an ordinary statement the span must run into;
+/// `TOC_PREFIX_DATA` ("Data for ") does not
+/// (`docs/design/decisions.md`, "D31"). The refusal decides nothing on a
+/// default dump, and earns its keep on a `--disable-triggers` one (I31),
+/// where a statement *does* intervene between the entry and its data:
+/// absorbing there would run the entry into that statement's span, where
 /// [`Builder::push_statement_span`]'s `Framing` veto discards the header
-/// outright — the entry is not misplaced but **destroyed**, taking TOC
-/// coverage on such a dump from 2/24 to 1/22. Refusing leaves it on a
-/// `Framing` span of its own: worse than attributed, better than gone.
-/// Pinned by `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes`;
-/// see [`parse_toc_header_line`], which parses all three prefixes alike.
+/// outright. Pinned by
+/// `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes`.
 fn looks_like_toc_name_line(line: &str) -> bool {
     let named = line.starts_with("-- Name: ") || line.starts_with("-- Statistics for Name: ");
     named && line.contains("; Type: ")
 }
 
 /// The root table named by a `-- load via partition root <name>` marker
-/// line (I2), if `line` is one. `pg_dump` writes it into the `TABLE DATA`
-/// entry's `defn` whenever that entry's `COPY` header names the partition's
-/// **root** rather than the partition itself — which is the only shape in
-/// which one header name owns several blocks in one dump.
+/// line (I2), if `line` is one. `pg_dump` writes it whenever the entry's
+/// `COPY` header names the partition's **root** rather than the partition —
+/// the only shape in which one header name owns several blocks.
 fn partition_root_marker(line: &str) -> Option<String> {
     let rest = line.strip_prefix("-- load via partition root ")?;
     let rest = rest.trim();
@@ -766,15 +617,10 @@ fn partition_root_marker(line: &str) -> Option<String> {
 
 /// The table an `INSERT INTO <table> ...` line targets, if `line` is one —
 /// `pg_dump`'s `dumpTableData_insert()` always emits exactly this fixed
-/// casing (`--inserts`/`--column-inserts`, with or without a column list
-/// after the table name; both parse the same, since only the identifier
-/// right after `INSERT INTO ` is read). `None` for anything else, including a
-/// line that merely starts with this text as multi-line *string content* —
-/// guarded the same way [`looks_like_toc_name_line`]/[`partition_root_marker`]
-/// are, by the caller only ever checking this on a fresh statement's first
-/// line (`Mode::Statement`'s `buf.is_empty()` gate, `Mode::InsertRun`'s own,
-/// and `Mode::Comment`'s close arm — where no statement is in flight at all,
-/// since that mode holds no buffer).
+/// casing, with or without a column list, only the identifier right after
+/// `INSERT INTO ` being read. `None` for anything else, including a line that
+/// merely starts with this text as multi-line *string content*: the caller
+/// only ever checks this on a fresh statement's first line.
 fn parse_insert_target(line: &str) -> Option<String> {
     parse_insert_target_span(line).map(|(name, _prefix_len)| name)
 }
@@ -786,11 +632,10 @@ const INSERT_INTO: &str = "INSERT INTO ";
 /// the same run restates.
 ///
 /// [`Builder::insert_run_line`] keeps that prefix and compares raw bytes
-/// against it, which is what lets a run's ordinary lines be classified
-/// without parsing an identifier (and allocating a `String` for it) per row.
-/// The comparison is deliberately conservative rather than equivalent: a
-/// line that matches the prefix provably parses to the same name, and a line
-/// that does not is handed to [`Builder::step`], which parses it properly.
+/// against it, so a run's ordinary lines are classified without parsing an
+/// identifier per row. The comparison is conservative rather than equivalent:
+/// a line matching the prefix provably parses to the same name, and one that
+/// does not is handed to [`Builder::step`], which parses it properly.
 fn parse_insert_target_span(line: &str) -> Option<(String, usize)> {
     let rest = line.strip_prefix(INSERT_INTO)?;
     parse_qualified_name(rest).map(|(name, consumed)| (name, INSERT_INTO.len() + consumed))
@@ -832,10 +677,10 @@ impl Builder {
     }
 
     /// A builder with `database` already in scope — what
-    /// [`crate::stream::table_stream`]'s mapping pass needs, since it starts
-    /// at the map's frontier rather than at byte 0 and may be well inside an
-    /// already-`\connect`ed database's territory. Feeding it the file's
-    /// earlier `\connect` lines is not an option: it never reads those bytes.
+    /// [`crate::stream::table_stream`]'s mapping pass needs, starting at the
+    /// map's frontier rather than at byte 0 and possibly well inside an
+    /// already-`\connect`ed database's territory whose `\connect` line it
+    /// never reads.
     pub(crate) fn with_database(database: Option<String>) -> Self {
         Self {
             mode: Mode::Idle,
@@ -853,20 +698,19 @@ impl Builder {
 
     /// The database in scope right now — whatever the last `\\connect` this
     /// builder has seen named, or whatever [`with_database`](Self::with_database)
-    /// seeded it with. This is the same value [`on_copy_end`](Self::on_copy_end)
-    /// stamps onto a block, exposed for `crate::stream`'s mapping pass, which
-    /// has to notice that a `COPY` header belongs to a database it has not yet
-    /// stated the DDL of.
+    /// seeded it with, and the value [`on_copy_end`](Self::on_copy_end) stamps
+    /// onto a block. Exposed for `crate::stream`'s mapping pass, which has to
+    /// notice a `COPY` header belonging to a database whose DDL it has not
+    /// stated.
     pub(crate) fn database(&self) -> Option<&str> {
         self.database.as_deref()
     }
 
     /// A TOC comment's own `Owner:`/`Tablespace:` fields, added to the
-    /// cross-reference sets. One of every span's two cross-reference sources
-    /// regardless of its kind, since `_printTocEntry()` writes those fields
-    /// ahead of *every* entry, not just the ones this module classifies
-    /// (`docs/design/decisions.md`, "D31") — the other being
-    /// the statement text, which `extract_statement_cross_refs` reads.
+    /// cross-reference sets — one of every span's two sources regardless of
+    /// its kind, `_printTocEntry()` writing those fields ahead of *every*
+    /// entry (`docs/design/decisions.md`, "D31"). The other is the statement
+    /// text, which `extract_statement_cross_refs` reads.
     fn harvest_toc_cross_refs(&mut self, toc: &Option<TocHeader>) {
         let Some(t) = toc else { return };
         if let Some(owner) = &t.owner {
@@ -880,39 +724,26 @@ impl Builder {
     /// Push a newly-completed span, and — since the tiling invariant makes a
     /// span's true end exactly the next span's start — fix up the
     /// previously-pushed span's placeholder `end` at the same time. Only the
-    /// span still open when this call returns (`self.spans.last()`) carries
-    /// a not-yet-real `end`; [`finish`](Self::finish)/[`snapshot`](Self::snapshot)
-    /// are what close that one out, since nothing later has opened yet to
-    /// fix it up.
-    ///
-    /// A builder that starts partway through a file therefore opens its first
-    /// span at its first recognized content, not at the byte it began
-    /// reading; closing that seam is the caller's job, and
-    /// `crate::stream::splice` does it by extending the span before it — the
-    /// same rule this method applies to every other boundary.
+    /// span still open when this call returns (`self.spans.last()`) carries a
+    /// not-yet-real `end`; [`finish`](Self::finish)/[`snapshot`](Self::snapshot)
+    /// close that one out. The partway-through case is the module docs'.
     ///
     /// `toc_owned` is `true` iff *this span's own* preceding comment carried
     /// the header text `toc` came from — `false` for a follow-on statement
-    /// inheriting [`governing_toc`](Self::governing_toc). Every call site
-    /// but [`push_statement_span`](Self::push_statement_span)'s inherited
-    /// path passes `toc.is_some()`, since nothing else in this module ever
-    /// carries a `toc` it didn't just parse from its own comment.
-    ///
-    /// Also where [`governing_toc`](Self::governing_toc) itself updates —
-    /// centralized here, alongside the cross-reference bookkeeping below,
-    /// because every span this module ever produces passes through this one
-    /// method.
+    /// inheriting [`governing_toc`](Self::governing_toc), which every call
+    /// site but [`push_statement_span`](Self::push_statement_span)'s
+    /// inherited path passes as `toc.is_some()`. This is also where
+    /// [`governing_toc`](Self::governing_toc) updates, every span this module
+    /// produces passing through here.
     fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>, toc_owned: bool) {
-        // Any new span — this one included, unless it *is* the flush itself
-        // (which `flush_large_objects` already took `pending_large_objects`
-        // out of `self` before calling back in here) — means the pending
-        // large-object region isn't being extended, so it closes now.
+        // Any new span means the pending large-object region isn't being
+        // extended, so it closes now — the flush itself excepted, having
+        // already taken `pending_large_objects` out of `self`.
         self.flush_large_objects();
         self.harvest_toc_cross_refs(&toc);
         // `Framing`/`Connect`/`VersionHeader` are the three kinds inheritance
-        // never crosses (`docs/design/decisions.md`, "D31"); everything else becomes the entry a following
-        // comment-less statement would inherit, whether this span's own
-        // `toc` was freshly parsed or itself inherited.
+        // never crosses (`docs/design/decisions.md`, "D31"); everything else
+        // becomes the entry a following comment-less statement inherits.
         self.governing_toc = match &body {
             SpanBody::Framing | SpanBody::Connect { .. } | SpanBody::VersionHeader { .. } => None,
             _ => toc.clone(),
@@ -931,22 +762,17 @@ impl Builder {
         });
     }
 
-    /// Classify a complete statement into a span, the way every
-    /// `classify(buf)` call site below does — but first scan `buf` itself
-    /// for the cross-references [`Span::toc`] can't cover: `OWNER TO`,
+    /// Classify a complete statement into a span — but first scan `buf`
+    /// itself for the cross-references [`Span::toc`] can't cover: `OWNER TO`,
     /// `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
-    /// default_tablespace` (`extract_statement_cross_refs`).
-    /// Centralized here — rather than at each call site — so every statement
-    /// this module ever classifies is scanned exactly once, the same way
-    /// [`push_span`](Self::push_span) centralizes the TOC-sourced half.
+    /// default_tablespace` (`extract_statement_cross_refs`), so every
+    /// statement this module classifies is scanned exactly once.
     ///
-    /// **A statement that classifies as `Framing`** (a mid-file `SET
-    /// default_tablespace = ...;`/`SET ...;` — [`looks_like_framing_statement`])
-    /// **never inherits**, even though `toc`/`toc_owned` may have arrived here
-    /// carrying an inherited value: `classify` is what decides the span's
-    /// final kind, and that decision has to happen before inheritance can be
-    /// vetoed, which is why the override lives here rather than at the
-    /// `Mode::Idle`→`Statement` transition that seeds it.
+    /// A statement that classifies as `Framing` never inherits, even when
+    /// `toc`/`toc_owned` arrived carrying an inherited value: `classify`
+    /// decides the span's final kind, so the veto has to follow that decision
+    /// rather than sit at the `Mode::Idle`→`Statement` transition that seeds
+    /// it (`docs/design/decisions.md`, "D31").
     fn push_statement_span(
         &mut self,
         start: u64,
@@ -963,8 +789,7 @@ impl Builder {
 
     /// The roles/tablespaces referenced so far — see the [`roles`](Self::roles)
     /// field's docs. Read before [`finish`](Self::finish) consumes the
-    /// builder (or any time, for [`snapshot`](Self::snapshot)'s non-consuming
-    /// caller).
+    /// builder.
     pub(crate) fn roles(&self) -> &BTreeSet<String> {
         &self.roles
     }
@@ -974,35 +799,24 @@ impl Builder {
     }
 
     /// Close whatever's pending at end of scan. `on_copy_start` handles the
-    /// analogous mid-scan case (a `CopyStart` interrupting something in
-    /// flight) itself, since it needs the interrupted span's start offset
-    /// to seed the `Data` span that follows.
+    /// analogous mid-scan case itself, needing the interrupted span's start
+    /// offset to seed the `Data` span that follows.
     ///
-    /// `end` is the stop point [`finish`](Self::finish) is closing out at —
-    /// needed here (not just applied afterward) because
-    /// [`crate::index::scan_preamble`] can retreat that stop point to a
-    /// pending comment's own `start` (via [`pending_comment_start`](Self::pending_comment_start))
-    /// rather than let it guess the comment's classification. A comment with
-    /// `start >= end` is exactly that case — nothing about it was decided —
-    /// so it is dropped rather than pushed: pushing it would create a
-    /// zero-length span (`start == end`) and, being generic
-    /// `Framing`/`Unparsed`, would be the *wrong* guess besides, since the
-    /// whole reason to retreat is that a later, unfed-truncated scan is the
-    /// one that can classify it correctly (e.g. into a `Data` span).
+    /// `end` is the stop point [`finish`](Self::finish) is closing out at,
+    /// needed here because [`crate::index::scan_preamble`] can retreat it to
+    /// a pending comment's own `start` rather than guess that comment's kind
+    /// (`docs/design/decisions.md`, "D32"). A comment with `start >= end` is
+    /// exactly that case, so it is dropped rather than pushed as a
+    /// zero-length, wrongly-guessed span.
     fn flush_pending(&mut self, end: u64) {
         match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => {}
             Mode::Comment { start, saw_name, server_version, pg_dump_version, toc } => {
                 if start < end {
-                    // Only reachable for a comment block that runs to EOF
-                    // (or is interrupted by a `CopyStart` with nothing
-                    // pending-comment-aware about the stop) with no closing
+                    // Only reachable for a comment block with no closing
                     // non-`--` line — never observed in a well-formed
-                    // `pg_dump` file (every real TOC comment, and the
-                    // version-header block, is followed by something else),
-                    // but classifies the same way `step`'s own
-                    // comment-close arm would have, had a closing line ever
-                    // arrived.
+                    // `pg_dump` file, but classified the same way `step`'s own
+                    // comment-close arm would have.
                     let owned = toc.is_some();
                     self.push_span(
                         start,
@@ -1029,11 +843,10 @@ impl Builder {
             return;
         }
         let text = String::from_utf8_lossy(raw);
-        // Tracked here rather than inside `step`'s mode machine because the
-        // marker is separated from the `COPY` header it describes by a blank
-        // line, which closes whatever comment block held it — so by the time
-        // `on_copy_start` runs, no mode carries it any more. Recognized
-        // before dispatch so it is seen wherever the line lands.
+        // Tracked here rather than inside `step`'s mode machine: the marker
+        // is separated from the `COPY` header it describes by a blank line,
+        // which closes whatever comment block held it, so no mode carries it
+        // by the time `on_copy_start` runs.
         let trimmed = text.trim();
         if looks_like_toc_name_line(trimmed) {
             self.pending_partition_root = None;
@@ -1046,29 +859,21 @@ impl Builder {
     /// The `INSERT`-run fast path: one line of a run in flight, decided on
     /// raw bytes with neither a UTF-8 conversion nor a statement buffer
     /// behind it. `true` when this line is fully accounted for; `false`
-    /// leaves it to [`feed_line`](Self::feed_line)'s ordinary path, which
-    /// classifies it exactly as it always did.
+    /// leaves it to [`feed_line`](Self::feed_line)'s ordinary path.
     ///
-    /// This is `KD9`'s discharge: `feed_line`'s per-line validate-and-allocate
-    /// plus `statement_complete` re-walking an accumulated `String` is most of
-    /// an `INSERT` scan's cost, which this fast path avoids by working
-    /// directly off raw bytes (`docs/design/decisions.md`, "D33").
+    /// `KD9`'s discharge: `feed_line`'s per-line validate-and-allocate plus
+    /// `statement_complete` re-walking an accumulated `String` is most of an
+    /// `INSERT` scan's cost (`docs/design/decisions.md`, "D33").
     ///
-    /// **What it declines is what keeps it honest.** Anything the ordinary
-    /// path might classify differently is handed back: a line whose first
-    /// non-ASCII-whitespace byte is not ASCII (so `feed_line`'s
-    /// Unicode-trimmed prologue could still have something to say about it),
-    /// a line starting `-` (every boundary signal — a TOC header, a
-    /// partition-root marker, the dangling-close check — begins `--`), a
-    /// blank line, and, at a statement boundary, any line that does not
-    /// restate this run's own `INSERT INTO <table>` prefix byte for byte.
-    /// So the prologue's two markers and `step`'s own arm keep seeing every
-    /// line either of them could act on.
+    /// Anything the ordinary path might classify differently is handed back:
+    /// a line whose first non-ASCII-whitespace byte is not ASCII (`feed_line`'s
+    /// Unicode-trimmed prologue may still have something to say about it), a
+    /// line starting `-` (every boundary signal begins `--`), a blank line,
+    /// and, at a statement boundary, any line that does not restate this run's
+    /// own `INSERT INTO <table>` prefix byte for byte.
     ///
-    /// Feeding raw bytes where `step` would feed the lossy conversion of
-    /// them is not a difference: a lossy conversion neither creates nor
-    /// destroys an ASCII byte, and every byte [`StatementScan`] acts on is
-    /// ASCII.
+    /// Raw bytes where `step` would feed a lossy conversion is no difference:
+    /// every byte [`StatementScan`] acts on is ASCII.
     fn insert_run_line(&mut self, raw: &[u8]) -> bool {
         let Mode::InsertRun { scan, prefix, row_count, .. } = &mut self.mode else {
             return false;
@@ -1131,10 +936,9 @@ impl Builder {
                     return false;
                 }
                 // No comment precedes this statement: it inherits whatever
-                // entry is currently governing (`None` if none is), per
-                // `docs/design/decisions.md`'s "D31" —
-                // `push_statement_span` still vetoes this if the statement
-                // turns out to classify as `Framing`.
+                // entry is currently governing, `None` if none is, and
+                // `push_statement_span` vetoes even that if the statement
+                // classifies as `Framing` (`docs/design/decisions.md`, "D31").
                 self.mode = Mode::Statement {
                     start: offset,
                     buf: String::new(),
@@ -1157,19 +961,14 @@ impl Builder {
                     return false;
                 }
                 if trimmed.is_empty() {
-                    // A blank line right after a comment block's closing
-                    // `--` is genuinely ambiguous — `_printTocEntry()` always
-                    // writes `--\n\n` (I3), whether a DDL statement or a
-                    // `COPY` header follows. Absorbed without deciding either
-                    // way: staying in `Mode::Comment` is what lets
-                    // `on_copy_start`'s `Mode::Comment` arm still see this
-                    // block (and its `toc`) when the very next thing is a
-                    // `COPY` header — `crate::scan::CopyScanner` intercepts
-                    // that line as `Event::CopyStart` and never routes it
-                    // through `feed_line` at all, so this arm never even runs
-                    // for the block-closing case; only a genuinely
-                    // non-blank, non-`--` line (a DDL statement) ever reaches
-                    // the close/transition logic below.
+                    // A blank line does not close a pending comment
+                    // (`_printTocEntry()` writes `--\n\n` whether a DDL
+                    // statement or a `COPY` header follows, I3), so it is
+                    // absorbed without deciding either way
+                    // (`docs/design/decisions.md`, "D32"). Staying in
+                    // `Mode::Comment` is what lets `on_copy_start`'s own arm
+                    // still see this block and its `toc`; only a non-blank,
+                    // non-`--` line reaches the close logic below.
                     return false;
                 }
                 let start = *start;
@@ -1184,20 +983,13 @@ impl Builder {
                 } else if let Some((table, prefix_len)) = parse_insert_target_span(line) {
                     // An `INSERT` run follows, so this comment block is a
                     // `-- Data for Name: ...` entry — the one prefix
-                    // [`looks_like_toc_name_line`] refuses, which is what
-                    // routes it here rather than into `Mode::Statement`.
-                    // Absorb the comment into the run's outer boundary
-                    // and carry its header along, exactly as
-                    // `on_copy_start`'s `Mode::Comment` arm does for a `COPY`
-                    // block: without this the run would start at its first
-                    // `INSERT` line with `toc: None`, because the comment's
-                    // own `Framing` span clears `governing_toc`.
-                    //
-                    // Unconditional, like `on_copy_start`: a comment block
-                    // carrying no header at all is absorbed the same way,
-                    // and the version-header block is unreachable here for
-                    // the same reason it is there — `pg_dump` always writes
-                    // its `SET` statements between the header and any data.
+                    // [`looks_like_toc_name_line`] refuses, which routes it
+                    // here rather than into `Mode::Statement`. The comment is
+                    // absorbed into the run's outer boundary and its header
+                    // carried along, as `on_copy_start` does for a `COPY`
+                    // block; otherwise the run would start at its first
+                    // `INSERT` line with `toc: None`. Unconditional: a comment
+                    // block carrying no header is absorbed the same way.
                     let owned = toc.is_some();
                     self.mode = Mode::InsertRun {
                         start,
@@ -1218,19 +1010,13 @@ impl Builder {
                 true
             }
             Mode::Statement { start, buf, toc, toc_owned } => {
-                // A `--`-prefixed line reasserts a fresh boundary even
-                // though `buf` never reached `statement_complete` — the
-                // case a dollar-quoted body's invisible closing line
-                // creates (see the module docs' "Why TOC-block boundaries"
-                // section): nothing ever supplies the swallowed `;`, so
-                // without this, every following object would be absorbed
-                // into the same dangling statement forever. Guarded by
-                // `in_open_quote` so a `--`-looking continuation line that's
-                // really multi-line *string content* (a value spanning
-                // physical lines) is never mistaken for one — `pg_dump`
-                // never emits an inline comment inside this module's own
-                // recognized statement shapes, so this is unambiguous for
-                // every other case.
+                // A `--` line outside a quote closes a statement even
+                // though `buf` never reached `statement_complete`
+                // (`docs/design/decisions.md`, "D32") — the case a
+                // dollar-quoted body's invisible closing line creates, where
+                // nothing ever supplies the swallowed `;`. The `in_open_quote`
+                // guard is what keeps a `--`-looking continuation line that
+                // is really multi-line string content from counting.
                 if trimmed.starts_with("--") && !in_open_quote(buf) {
                     let start = *start;
                     let buf = std::mem::take(buf);
@@ -1241,10 +1027,9 @@ impl Builder {
                     return true;
                 }
                 // The run's first line, recognized before it ever becomes a
-                // one-statement `Unparsed` span — grouping the whole run
-                // into one `Data` span (`docs/design/decisions.md`, "D33")
-                // is what keeps a koji-scale `--inserts` dump from
-                // allocating one span per row.
+                // one-statement `Unparsed` span: the whole run is one `Data`
+                // span rather than one span per row
+                // (`docs/design/decisions.md`, "D33").
                 if buf.is_empty()
                     && let Some((table, prefix_len)) = parse_insert_target_span(line)
                 {
@@ -1275,17 +1060,15 @@ impl Builder {
                 false
             }
             // Only the lines [`insert_run_line`](Self::insert_run_line)
-            // declines reach this arm — a boundary signal, a blank line, or
-            // a fresh statement that may not continue the run. It decides
-            // them exactly as it did before that fast path existed, and
-            // feeds the *same* `scan`, so a run's classification does not
-            // depend on which of the two saw a given line.
+            // declines reach this arm — a boundary signal, a blank line, or a
+            // fresh statement that may not continue the run. It feeds the
+            // *same* `scan`, so a run's classification does not depend on
+            // which of the two saw a given line.
             Mode::InsertRun { start, table, database, scan, row_count, toc, toc_owned, .. } => {
-                // Closes the run in place — takes owned copies of everything
-                // first (mirroring `Mode::Statement`'s dangling-close arm
-                // above) so `self.mode = Mode::Idle` and the `self.push_span`
-                // call inside `push_insert_run` don't overlap this arm's
-                // borrow of `self.mode`.
+                // Closes the run in place, taking owned copies first so
+                // `self.mode = Mode::Idle` and `push_insert_run`'s
+                // `push_span` do not overlap this arm's borrow of
+                // `self.mode`.
                 macro_rules! close_and_reprocess {
                     () => {{
                         let (start, table, database, row_count, toc, toc_owned) = (
@@ -1303,10 +1086,9 @@ impl Builder {
                 }
                 if scan.is_empty() {
                     if trimmed.is_empty() {
-                        // Absorbed the same way `Mode::Comment` absorbs a
-                        // blank line between two entries — waiting to see
-                        // whether the run continues or the next TOC comment
-                        // (or EOF) closes it.
+                        // Absorbed the way `Mode::Comment` absorbs a blank
+                        // line, waiting to see whether the run continues or
+                        // the next TOC comment (or EOF) closes it.
                         return false;
                     }
                     let continues = parse_insert_target(line).as_deref() == Some(table.as_str());
@@ -1316,10 +1098,8 @@ impl Builder {
                     // Falls through to accumulate this line as the run's next
                     // statement.
                 }
-                // Defensive dangling-close, mirroring `Mode::Statement`'s —
-                // not expected in real `pg_dump` output (a `--` line always
-                // arrives between statements, handled above), kept for the
-                // same graceful-degradation reason.
+                // Defensive dangling-close, mirroring `Mode::Statement`'s;
+                // not expected in real `pg_dump` output.
                 if trimmed.starts_with("--") && !scan.in_quote() {
                     close_and_reprocess!();
                 }
@@ -1338,18 +1118,11 @@ impl Builder {
     /// flight ends with it: `pg_dump` writes the statement's own terminating
     /// `;` on the closing line (`AS $$ … $$;`), and that line never reaches
     /// [`feed_line`](Self::feed_line), so nothing else will ever complete the
-    /// statement.
+    /// statement (`docs/design/decisions.md`, "D32").
     ///
-    /// Without this, the first dollar-quoted body in a file with no TOC
-    /// comments absorbs every statement after it into one span. Real
-    /// `pg_dump` output is unaffected either way, because the next entry's
-    /// `--` header already
-    /// reasserts a boundary; this is what makes the "graceful degradation"
-    /// claim true for a `pg_dump`-compatible dump from elsewhere.
-    ///
-    /// A producer that puts the `;` on a *later* line instead leaves that
-    /// line as its own small span. Coarser, still tiling — the same trade the
-    /// rest of the fallback makes.
+    /// This is the header-less fallback; real `pg_dump` output is unaffected.
+    /// A producer that puts the `;` on a *later* line leaves that line as its
+    /// own small span — coarser, still tiling.
     pub(crate) fn on_dollar_quote_end(&mut self, _offset: u64) {
         if let Mode::Statement { start, buf, toc, toc_owned } =
             std::mem::replace(&mut self.mode, Mode::Idle)
@@ -1360,26 +1133,24 @@ impl Builder {
 
     pub(crate) fn on_copy_start(&mut self, event: CopyStart) {
         // I12 puts the large-object region after every `COPY` block, so a
-        // pending one here would mean malformed/non-`pg_dump` input — flush
-        // it rather than silently absorbing whatever follows into it.
+        // pending one here means non-`pg_dump` input — flushed rather than
+        // silently absorbing whatever follows into it.
         self.flush_large_objects();
         let (start, toc) = match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => (event.header_offset, None),
-            // A TOC comment (`-- Data for Name: ...; Type: TABLE DATA`, or,
-            // rarely, none at all) directly precedes the header: absorb it
-            // into the `Data` span's outer boundary per
-            // `docs/design/decisions.md`'s "D33" — `span.start <= header_offset`.
+            // A TOC comment directly precedes the header: absorbed into the
+            // `Data` span's outer boundary, so
+            // `span.start <= header_offset` (`docs/design/decisions.md`,
+            // "D33").
             Mode::Comment { start, toc, .. } => (start, toc),
-            // Never observed in a well-formed dump (a statement never
-            // precedes a `COPY` header with no separating blank line/TOC
-            // comment of its own), but every byte must land somewhere.
+            // Never observed in a well-formed dump, but every byte must
+            // land somewhere.
             Mode::Statement { start, buf, toc, toc_owned } => {
                 self.push_statement_span(start, &buf, toc, toc_owned);
                 (event.header_offset, None)
             }
-            // Same reasoning: a `COPY` header never follows an `INSERT` run
-            // in real `pg_dump` output (data format is dump-wide, not
-            // per-table), but every byte must land somewhere.
+            // Same: a `COPY` header never follows an `INSERT` run in real
+            // `pg_dump` output, the data format being dump-wide.
             Mode::InsertRun { .. } => {
                 self.close_insert_run();
                 (event.header_offset, None)
@@ -1390,9 +1161,8 @@ impl Builder {
     }
 
     /// Fold one data row of the open `COPY` block into its array-shape
-    /// census — see [`census_row`], which is the whole of the body and is
-    /// shared with the interior workers a split `COPY` block is scanned by
-    /// (`crate::leader`).
+    /// census — see [`census_row`], shared with the interior workers a split
+    /// `COPY` block is scanned by (`crate::leader`).
     pub(crate) fn on_row(&mut self, raw: &[u8]) {
         census_row(&mut self.pending_census, raw);
     }
@@ -1400,16 +1170,13 @@ impl Builder {
     /// Union an already-folded census into the open `COPY` block's own — what
     /// a block whose rows were counted by interior workers states instead of
     /// the [`on_row`](Self::on_row) calls it never made
-    /// (`crate::leader::scan_region`).
+    /// (`crate::leader::scan_region`). Takes `&[ArrayShape]` rather than the
+    /// leader's `Interior`: this module is L1 and the leader L4, so the shape
+    /// vector is the L1 value they share (`docs/design/decisions.md`, "D68").
     ///
-    /// **It takes `&[ArrayShape]` rather than the leader's `Interior`** because
-    /// this module is L1 and the leader is L4; the shape vector is the L1 value
-    /// they share (`docs/design/decisions.md`, "D68").
-    ///
-    /// Length-tolerant for the same reason [`crate::index::union_census`] is: a
-    /// header-less block states no width, so the rows are what grow the vector
-    /// and the workers' union can be wider than what
-    /// [`on_copy_start`](Self::on_copy_start) sized.
+    /// Length-tolerant for the same reason [`crate::index::union_census`] is:
+    /// a header-less block states no width, so the workers' union can be wider
+    /// than what [`on_copy_start`](Self::on_copy_start) sized.
     pub(crate) fn absorb_census(&mut self, census: &[ArrayShape]) {
         if census.len() > self.pending_census.len() {
             self.pending_census.resize(census.len(), ArrayShape::default());
@@ -1420,9 +1187,8 @@ impl Builder {
     }
 
     pub(crate) fn on_copy_end(&mut self, end: CopyEnd) {
-        // `on_copy_start` always runs first for a matching block
-        // (`crate::scan::CopyScanner` never emits `CopyEnd` without a prior
-        // `CopyStart`), so this is always `Some`.
+        // `crate::scan::CopyScanner` never emits `CopyEnd` without a prior
+        // `CopyStart`, so this is always `Some`.
         let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
             return;
         };
@@ -1446,22 +1212,15 @@ impl Builder {
     /// A `BEGIN;` line opened a large-object data region (I12) — see
     /// [`crate::scan::Event::LargeObjectStart`].
     ///
-    /// **This is where v13-16's single archive entry and v17+'s
-    /// one-per-object entries end up producing the same map.** Neither this
-    /// method nor [`on_large_object_end`](Self::on_large_object_end) push a
-    /// span directly: the region stays *pending* until
+    /// Where v13-16's single archive entry and v17+'s one-per-object entries
+    /// end up producing the same map. Neither this method nor
+    /// [`on_large_object_end`](Self::on_large_object_end) pushes a span: the
+    /// region stays *pending* until
     /// [`flush_large_objects`](Self::flush_large_objects) closes it, which
-    /// only happens when something else is about to open — a new statement,
-    /// a `COPY` header, or end of scan. So as long as nothing but more
-    /// `BEGIN;`/`COMMIT;` pairs (each with, at most, its own TOC comment)
-    /// arrives in between, a v17+ file's several consecutive `BLOBS` entries
-    /// merge into the exact same single span a v13-16 file's one entry
-    /// already produces. I12 is what makes this sound without checking each
-    /// entry's own TOC `Type:` field: the large-object data region is its own
-    /// contiguous priority band, so nothing else — not a `COPY` block, not
-    /// ordinary DDL — can appear between two of its entries in real `pg_dump`
-    /// output; whatever *does* arrive in between (this module never assumes
-    /// I12 holds) closes the region via `flush_large_objects` the normal way.
+    /// happens only when something else is about to open, so consecutive
+    /// `BEGIN;`/`COMMIT;` pairs merge into one span. I12 is what makes that
+    /// sound without reading each entry's TOC `Type:` field; whatever *does*
+    /// arrive in between closes the region the normal way.
     pub(crate) fn on_large_object_start(&mut self, offset: u64) {
         let (open_start, toc) = match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => (offset, None),
@@ -1478,9 +1237,8 @@ impl Builder {
                 (offset, None)
             }
         };
-        // Harvested whether or not this entry becomes its own span: a
-        // large-object entry that merges into an already-open region still
-        // named an owner.
+        // Harvested whether or not this entry becomes its own span: one
+        // that merges into an already-open region still named an owner.
         self.harvest_toc_cross_refs(&toc);
         match &mut self.pending_large_objects {
             // Continuing an already-open region: keep its own start/toc, not
@@ -1520,11 +1278,10 @@ impl Builder {
     }
 
     /// Push the finished span for a [`Mode::InsertRun`] that has ended,
-    /// however its caller found that out — [`step`](Self::step) itself
-    /// (the run ends the ordinary way), [`flush_pending`](Self::flush_pending)
-    /// (already holds the destructured `Mode::InsertRun` fields from its own
-    /// `end`-of-scan match), or [`close_insert_run`](Self::close_insert_run)
-    /// (a non-`push_span` entry point interrupts a still-open run).
+    /// however its caller found that out — [`step`](Self::step),
+    /// [`flush_pending`](Self::flush_pending) at end of scan, or
+    /// [`close_insert_run`](Self::close_insert_run) when a non-`push_span`
+    /// entry point interrupts a still-open run.
     fn push_insert_run(
         &mut self,
         start: u64,
@@ -1542,12 +1299,11 @@ impl Builder {
         );
     }
 
-    /// Close whatever [`Mode::InsertRun`] has accumulated so far into a real
-    /// span — called from the non-`push_span` entry points that can
-    /// interrupt a run ([`on_copy_start`](Self::on_copy_start),
-    /// [`on_large_object_start`](Self::on_large_object_start)). Takes
-    /// `self.mode` unconditionally — every caller has already matched it as
-    /// `Mode::InsertRun`; a no-op otherwise.
+    /// Close whatever [`Mode::InsertRun`] has accumulated into a real span —
+    /// called from the non-`push_span` entry points that can interrupt a run
+    /// ([`on_copy_start`](Self::on_copy_start),
+    /// [`on_large_object_start`](Self::on_large_object_start)). A no-op if
+    /// `self.mode` is anything else.
     fn close_insert_run(&mut self) {
         if let Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)
@@ -1561,9 +1317,9 @@ impl Builder {
     /// opened the next span.
     pub(crate) fn finish(mut self, end: u64) -> Vec<Span> {
         self.flush_pending(end);
-        // A separate field from `mode` (see its docs), so `flush_pending`
-        // doesn't already cover it — a file ending right after the
-        // large-object region's last `COMMIT;` still needs this to close it.
+        // A separate field from `mode`, so `flush_pending` does not cover
+        // it: a file ending right after the region's last `COMMIT;` needs
+        // this to close it.
         self.flush_large_objects();
         if let Some(last) = self.spans.last_mut() {
             last.end = end;
@@ -1572,32 +1328,24 @@ impl Builder {
     }
 
     /// The spans recognized so far, without consuming `self` — unlike
-    /// [`finish`](Self::finish), which a caller can only call once, at true
-    /// end of scan. `end` closes out the still-open last span, the same way
-    /// `finish`'s `end` does; the caller supplies it because this module
-    /// only ever decides where the *next* span starts, never a span's own
-    /// end (see the module docs).
+    /// [`finish`](Self::finish), callable only once, at true end of scan.
+    /// `end` closes out the still-open last span, the caller supplying it
+    /// because this module only ever decides where the *next* span starts.
     ///
-    /// Only sound to call at a boundary where nothing is mid-classification
-    /// — i.e. `self.mode` is [`Mode::Idle`] **and** no large-object region is
-    /// pending — since otherwise the last-pushed span in `self.spans` is not
-    /// actually the span open at `end`, it's the one before it, and stamping
-    /// its `end` there would be wrong.
+    /// Only sound to call where nothing is mid-classification — `self.mode`
+    /// is [`Mode::Idle`] **and** no large-object region is pending — since
+    /// otherwise the last-pushed span is the one *before* the span open at
+    /// `end`, and stamping its `end` there would be wrong.
     ///
     /// A `COPY` block's two edges are both such boundaries, and
-    /// `crate::stream`'s mapping pass calls this at each of them:
-    ///
-    /// - Right after [`on_copy_end`](Self::on_copy_end), to bank progress at
-    ///   completed blocks as it goes rather than only at the true end of its
-    ///   scan. (`on_copy_start` always leaves `mode` `Idle` for the block's
-    ///   duration, and I12 puts the large-object region strictly after every
-    ///   `COPY` block, so nothing pends one yet either.)
-    /// - Right after [`on_copy_start`](Self::on_copy_start), at the *start*
-    ///   offset of the `Data` span it just opened — which is still pending,
-    ///   so `self.spans.last()` is the DDL span before it and closing that one
-    ///   out at the block's start is exactly right. That is the boundary
-    ///   `crate::preamble::dump_metadata_from_spans` may be called at (I1),
-    ///   which is what the mapping pass wants it for.
+    /// `crate::stream`'s mapping pass calls this at each of them: right after
+    /// [`on_copy_end`](Self::on_copy_end), to bank progress at completed
+    /// blocks (`mode` is `Idle` for the block's duration and I12 puts the
+    /// large-object region strictly after it, so nothing pends one either);
+    /// and right after [`on_copy_start`](Self::on_copy_start), at the *start*
+    /// offset of the still-pending `Data` span, where `self.spans.last()` is
+    /// the DDL span before it and I1 makes this the boundary
+    /// `crate::preamble::dump_metadata_from_spans` may be called at.
     pub(crate) fn snapshot(&self, end: u64) -> Vec<Span> {
         debug_assert!(matches!(self.mode, Mode::Idle));
         debug_assert!(self.pending_large_objects.is_none());
@@ -1609,18 +1357,13 @@ impl Builder {
     }
 
     /// The start offset of a comment block currently being absorbed —
-    /// `None` unless `self.mode` is [`Mode::Comment`]. For a caller that must
-    /// stop scanning *before* the decision a `--`-prefixed run is waiting on
-    /// (a statement, or a `COPY` header this builder is never fed —
-    /// [`crate::index::scan_preamble`], the only such caller today), asking
-    /// [`finish`](Self::finish)/[`snapshot`](Self::snapshot) to close out at
-    /// the stopping point would swallow the still-open comment as a guessed
-    /// [`SpanBody::Framing`]/[`SpanBody::Unparsed`] span — permanently
-    /// wrong for a `-- Data for Name: ...` block, whose bytes belong to the
-    /// `Data` span a later, unfed-truncated scan is the one that can still
-    /// produce correctly. Retreating the stop point to this offset instead
-    /// leaves the comment's bytes for that later scan to absorb from
-    /// scratch.
+    /// `None` unless `self.mode` is [`Mode::Comment`]. A caller that must stop
+    /// scanning *before* the decision a `--`-prefixed run is waiting on
+    /// ([`crate::index::scan_preamble`]) retreats its stop point here rather
+    /// than guess the comment's kind (`docs/design/decisions.md`, "D32"):
+    /// closing out at the stopping point would swallow it as a guessed
+    /// [`SpanBody::Framing`]/[`SpanBody::Unparsed`] span, permanently wrong
+    /// for a `-- Data for Name: ...` block.
     pub(crate) fn pending_comment_start(&self) -> Option<u64> {
         match &self.mode {
             Mode::Comment { start, .. } => Some(*start),
@@ -1631,16 +1374,11 @@ impl Builder {
 
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
-/// proper (`docs/design/decisions.md`, "D31") and
-/// `_selectTablespace()` writes ahead of a definition — read for
-/// its tablespace reference by `push_statement_span`'s
-/// `extract_statement_cross_refs` call regardless of how
-/// this function classifies it. Neither is one of this module's three
-/// classified shapes, and treating both uniformly as
-/// framing (rather than `Unparsed`) matches the design doc regardless of
-/// which of the two producers wrote a given occurrence — this slice does no
-/// grouping, so a tablespace-setting `SET` ahead of an object still tiles
-/// as its own adjacent span either way.
+/// proper and `_selectTablespace()` writes ahead of a definition
+/// (`docs/design/decisions.md`, "D31"). Both classify as framing rather than
+/// `Unparsed` whichever producer wrote them; either way
+/// `push_statement_span`'s `extract_statement_cross_refs` call still reads
+/// the tablespace reference out of the text.
 fn looks_like_framing_statement(stmt: &str) -> bool {
     let trimmed = stmt.trim_start();
     let upper_prefix = |kw: &str| {
@@ -1671,8 +1409,7 @@ fn classify(stmt: &str) -> SpanBody {
 }
 
 /// Scan `source` end to end and build its full file map — see the module
-/// docs for what this slice does and doesn't classify. Always scans to EOF;
-/// there is no partial/incremental form here, so
+/// docs for what is and is not classified. Always scans to EOF, so
 /// [`SpanBody::Unscanned`] never appears in the result.
 pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
     let mut builder = Builder::new();
@@ -1704,8 +1441,7 @@ mod tests {
 
     /// Feed `lines` (each with a synthetic offset — `\n`-joined, matching
     /// how a real scan would number them) through a fresh [`Builder`] and
-    /// return the finished spans. Exercises the pure boundary/classification
-    /// logic directly, without a real file or the async scanner.
+    /// return the finished spans.
     fn spans_of(lines: &[&str]) -> Vec<Span> {
         let mut builder = Builder::new();
         let mut offset = 0u64;
@@ -1784,12 +1520,8 @@ mod tests {
     }
 
     /// `TOC_PREFIX_STATS`, the third prefix `_printTocEntry()` writes
-    /// (`fixtures/18/objects/stats.sql`, a `pg_dump 18 --statistics` dump).
-    /// Parses like the other two, and unlike `Data for ` it *is* a boundary
-    /// signal — pinned behaviourally by
-    /// `a_statistics_entry_is_one_attributed_span` below, with the refused
-    /// half pinned by
-    /// `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes`.
+    /// (`fixtures/18/objects/stats.sql`). Parses like the other two, and
+    /// unlike `Data for ` it *is* a boundary signal.
     #[test]
     fn a_statistics_entry_parses_and_opens_a_span() {
         let line =
@@ -1868,9 +1600,7 @@ mod tests {
 
     /// The whole statistics entry — comment block and the
     /// `pg_restore_relation_stats()` call it heads — is **one** span owning
-    /// its TOC entry. Before the prefix was recognized it was two, neither
-    /// attributed, which is what made the TOC-coverage diagnostic under-report
-    /// a `--statistics` dump by 14 points.
+    /// its TOC entry.
     #[test]
     fn a_statistics_entry_is_one_attributed_span() {
         let spans = spans_of(&[
@@ -1890,11 +1620,10 @@ mod tests {
     }
 
     /// A `-- Data for Name: ...` entry heading an `INSERT` run is **one**
-    /// span owning its TOC entry, the same shape `on_copy_start` already
-    /// produces for a `COPY` block. `looks_like_toc_name_line` must keep
-    /// refusing the `Data for ` prefix — see its own docs — so the absorption
-    /// happens in `Mode::Comment`'s close arm instead, and the run starts at
-    /// the comment's offset rather than at its first `INSERT` line.
+    /// span owning its TOC entry, the same shape `on_copy_start` produces for
+    /// a `COPY` block: the absorption happens in `Mode::Comment`'s close arm,
+    /// so the run starts at the comment's offset rather than at its first
+    /// `INSERT` line.
     #[test]
     fn an_insert_run_absorbs_its_data_entry_and_owns_it() {
         let spans = spans_of(&[
@@ -1919,17 +1648,15 @@ mod tests {
     }
 
     /// Every line-shape [`Builder::insert_run_line`] declines, in one run,
-    /// counted correctly — because the two paths share a
-    /// [`StatementScan`] and each line reaches exactly one of them, so a
-    /// run whose lines alternate between them must fold the same way a run
-    /// of plain one-line statements does.
+    /// counted correctly: the two paths share a [`StatementScan`] and each
+    /// line reaches exactly one of them, so a run whose lines alternate
+    /// between them folds the same way a run of plain statements does.
     ///
-    /// The shapes, in order: a value carrying a raw newline, whose
-    /// continuation lines are not `INSERT INTO` lines at all; a
-    /// continuation that *looks* like a comment and is really string content
-    /// (the `in_quote` guard); a blank line between statements; and a
-    /// statement spelled with an extra space, which the byte-prefix check
-    /// refuses on purpose and `parse_insert_target` then accepts.
+    /// The shapes, in order: a value carrying a raw newline; a continuation
+    /// that *looks* like a comment and is really string content (the
+    /// `in_quote` guard); a blank line; and a statement spelled with an extra
+    /// space, which the byte-prefix check refuses and
+    /// `parse_insert_target` then accepts.
     #[test]
     fn an_insert_run_folds_the_same_way_when_its_lines_take_the_slow_path() {
         let spans = spans_of(&[
@@ -1975,10 +1702,9 @@ mod tests {
         assert_eq!(runs, vec![("public.widgets", 1), ("public.widgets2", 1)]);
     }
 
-    /// `-- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: `
-    /// (a real fixture line, `fixtures/16/objects/verbose.sql`) — `Schema:
-    /// -` and a trailing empty `Owner: ` both mean "none", per I16 and
-    /// `_printTocEntry()`'s two ways of writing it.
+    /// `fixtures/16/objects/verbose.sql`'s `Schema: -` and trailing empty
+    /// `Owner: ` both mean "none", per I16 and `_printTocEntry()`'s two ways
+    /// of writing it.
     #[test]
     fn a_hyphen_schema_and_an_empty_owner_both_parse_to_none() {
         let header = parse_toc_header_line(
@@ -2026,8 +1752,7 @@ mod tests {
 
     /// A `Data` span's `toc` comes from its own `-- Data for Name: ...`
     /// comment, threaded through `pending_data` from `on_copy_start` to
-    /// `on_copy_end` — the one span kind [`Builder::push_span`] isn't called
-    /// for from inside [`Builder::step`] at all.
+    /// `on_copy_end`.
     #[test]
     fn a_data_span_carries_the_toc_header_its_data_for_name_comment_parsed_to() {
         let mut builder = Builder::new();
@@ -2062,9 +1787,8 @@ mod tests {
     }
 
     /// A statement with no preceding TOC comment at all — the header-less
-    /// fallback — carries no `toc` and `toc_owned: false`, which is the
-    /// graceful-degradation case the design expects rather than an error:
-    /// there is no governing entry yet for it to inherit.
+    /// fallback — carries no `toc` and `toc_owned: false`, there being no
+    /// governing entry for it to inherit.
     #[test]
     fn a_statement_with_no_toc_comment_carries_no_toc_header() {
         let spans = spans_of(&["CREATE EXTENSION pgcrypto;"]);
@@ -2072,13 +1796,11 @@ mod tests {
         assert!(!spans[0].toc_owned);
     }
 
-    /// TOC inheritance: a follow-on statement with no TOC comment
-    /// of its own (`ALTER SCHEMA ... OWNER TO ...;`, mirroring
-    /// `fixtures/*/objects/default.sql`) inherits the governing entry's
-    /// header instead of carrying `None` — `docs/design/decisions.md`,
-    /// "D31". The
-    /// two spans carry the *same* `toc` value, but only the first has
-    /// `toc_owned: true`.
+    /// TOC inheritance: a follow-on statement with no TOC comment of its own
+    /// (`ALTER SCHEMA ... OWNER TO ...;`, mirroring
+    /// `fixtures/*/objects/default.sql`) inherits the governing entry's header
+    /// instead of carrying `None` (`docs/design/decisions.md`, "D31"). Both
+    /// spans carry the *same* `toc`; only the first has `toc_owned: true`.
     #[test]
     fn a_follow_on_statement_inherits_the_governing_toc_header() {
         let spans = spans_of(&[
@@ -2101,9 +1823,7 @@ mod tests {
     /// Inheritance keeps propagating across more than one follow-on in a
     /// row — every span until the next boundary carries the *same* governing
     /// header, mirroring `fixtures/16/objects/default.sql`'s
-    /// `objects.simple_config` (several consecutive `ALTER TEXT SEARCH
-    /// CONFIGURATION ... ADD MAPPING FOR ...;` statements after one TOC
-    /// comment).
+    /// `objects.simple_config`.
     #[test]
     fn several_consecutive_follow_ons_all_inherit_the_same_header() {
         let spans = spans_of(&[
@@ -2127,10 +1847,9 @@ mod tests {
     }
 
     /// A mid-file `SET default_tablespace = ...;` classifies as `Framing`
-    /// (`looks_like_framing_statement`) and — per "Span boundaries" — never
-    /// inherits, even when it directly follows a governed entry; and it
-    /// clears the governing header for whatever comes after it, since
-    /// `Framing` is one of the three kinds inheritance never crosses.
+    /// (`looks_like_framing_statement`), never inherits even when it directly
+    /// follows a governed entry, and clears the governing header for whatever
+    /// comes after it (`docs/design/decisions.md`, "D31").
     #[test]
     fn a_mid_file_framing_statement_never_inherits_and_clears_the_governing_header() {
         let spans = spans_of(&[
@@ -2174,11 +1893,9 @@ mod tests {
         assert_eq!(last.toc, None);
     }
 
-    /// A `COPY` block with no TOC comment of its own (the header-less-input
-    /// fallback that `on_copy_start`'s `Mode::Idle` arm handles) resets
-    /// inheritance the same way `Framing`/`Connect` do: the entry governing
-    /// *before* the block does not leak past it, even though the `Data` span
-    /// itself ends up with `toc: None` too.
+    /// A `COPY` block with no TOC comment of its own resets inheritance the
+    /// same way `Framing`/`Connect` do: the entry governing *before* the block
+    /// does not leak past it, the `Data` span itself carrying `toc: None`.
     #[test]
     fn a_copy_block_with_no_comment_of_its_own_resets_inheritance() {
         let mut builder = Builder::new();
@@ -2249,13 +1966,11 @@ mod tests {
         assert_eq!(spans[1].database.as_deref(), Some("one"));
     }
 
-    /// The case the module docs' "Why TOC-block boundaries" section exists
-    /// for: a dollar-quoted function body swallows its own closing `;`
-    /// entirely (never reaches `Event::Line`), so only the next TOC
-    /// comment's boundary — not statement completion — can close the span.
-    /// `feed_line` here is only ever given the lines a real scan would still
-    /// emit as `Event::Line` (the dollar-quoted body itself is never among
-    /// them), matching `crate::scan::CopyScanner`'s actual behavior.
+    /// The case the module docs' "Span boundaries" section exists for: a
+    /// dollar-quoted function body swallows its own closing `;` entirely
+    /// (never reaches `Event::Line`), so only the next TOC comment's boundary
+    /// can close the span. `feed_line` here is given only the lines a real
+    /// scan would still emit.
     #[test]
     fn a_dollar_quoted_function_with_no_trailing_statement_closes_at_the_next_toc_comment() {
         let spans = spans_of(&[
@@ -2289,9 +2004,8 @@ mod tests {
     }
 
     /// I9's two-line version-header block gets its own span kind rather than
-    /// generic `Framing`,
-    /// so `crate::preamble::dump_metadata_from_spans` can recover the
-    /// strings without re-reading the file.
+    /// generic `Framing`, so `crate::preamble::dump_metadata_from_spans` can
+    /// recover the strings without re-reading the file.
     #[test]
     fn version_header_lines_become_their_own_span() {
         let spans = spans_of(&[
@@ -2326,14 +2040,11 @@ mod tests {
         );
     }
 
-    /// The case [`Builder::snapshot`] exists for: a caller (`stream.rs`'s
-    /// live segment, in the follow-up slice that wires this in) needs a
-    /// tiling span list *before* the scan reaches its true end, right after
-    /// each `CopyEnd` — the one point `on_copy_end` guarantees `mode` is
-    /// back to `Idle`. Drives the same `Builder` a real live segment would:
-    /// two DDL statements, a `COPY` block, then a trailing DDL statement,
-    /// checking `check_tiling` at every such boundary rather than only at
-    /// the very end.
+    /// The case [`Builder::snapshot`] exists for: `stream.rs`'s live segment
+    /// needs a tiling span list *before* the scan reaches its true end, right
+    /// after each `CopyEnd` — the one point `on_copy_end` guarantees `mode`
+    /// is back to `Idle`. `check_tiling` is checked at every such boundary
+    /// rather than only at the very end.
     #[test]
     fn snapshot_tiles_the_prefix_seen_so_far_at_every_copy_end() {
         fn feed(builder: &mut Builder, offset: &mut u64, line: &str) {
@@ -2379,9 +2090,8 @@ mod tests {
     }
 
     /// `snapshot` and `finish`, called at the same watermark once nothing
-    /// more will ever be fed, must agree — `finish` just also takes
-    /// ownership, which a caller building an intermediate checkpoint (rather
-    /// than actually finishing the scan) can't afford to do.
+    /// more will ever be fed, must agree; `finish` just also takes
+    /// ownership.
     #[test]
     fn snapshot_agrees_with_finish_at_the_same_watermark() {
         let lines = ["CREATE EXTENSION pgcrypto;", "", "CREATE SCHEMA g;"];

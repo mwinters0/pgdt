@@ -2,19 +2,18 @@
 //! `RecordBatch`es, one column builder per [`crate::resolve::ResolvedSchema`]
 //! field (`docs/design/decisions.md`, "D46").
 //!
-//! A `Utf8View` field
-//! that needs no unescaping is appended as a zero-copy view into the Arrow
-//! `Buffer` backing the read chunk it came from, rather than copied into the
-//! builder's own storage (`docs/design/decisions.md`, "D46"). Every other
-//! mapped type always copies: its decoded value has its own representation
-//! (an `i32`, a `[u8; 16]`, …), not a byte range of the original field.
+//! A `Utf8View` field that needs no unescaping is appended as a zero-copy
+//! view into the Arrow `Buffer` backing the read chunk it came from, rather
+//! than copied into the builder's own storage
+//! (`docs/design/decisions.md`, "D46"). Every other mapped type always
+//! copies: its decoded value has its own representation (an `i32`, a
+//! `[u8; 16]`, …), not a byte range of the original field.
 //!
 //! **The chunks those views point into are held here too**, in
 //! [`RetainedChunks`]: a read loop says what it read and how far the scanner
 //! has got, and this module decides when a chunk becomes an Arrow `Buffer`,
 //! how long it is kept, and when a cached builder block index stops being
-//! valid. All three are properties of the assembly, not of the read
-//! (`docs/design/decisions.md`, "D68").
+//! valid (`docs/design/decisions.md`, "D68").
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -50,9 +49,9 @@ use crate::pgtype::NestedPlan;
 use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
-// L4, imported by L3: `read_table` is a push-mode entry point that belongs in
-// `stream.rs`; the other recorded deviation. Named here rather than reached
-// for inline so `tests/layering.rs` sees it.
+// L4, imported by L3: `read_table` is a push-mode entry point that belongs
+// in `stream.rs`; the other recorded deviation, named here rather than
+// reached for inline so `tests/layering.rs` sees it.
 use crate::stream::{ResumeToken, table_stream};
 use crate::{Error, Result};
 
@@ -60,8 +59,7 @@ use crate::{Error, Result};
 ///
 /// Both halves of a query live here — the projection and the filter terms
 /// beside the batching knobs — rather than the query half arriving as
-/// positional arguments: they are the same kind of thing, and a caller should
-/// not have to learn which of them is a field and which is an argument
+/// positional arguments
 /// (`docs/design/decisions.md`, "Batches, streams and the leader").
 #[derive(Debug, Clone)]
 pub struct QueryOptions {
@@ -91,57 +89,39 @@ pub struct QueryOptions {
     /// batch.
     pub max_bytes: Option<usize>,
     /// Cap on the source byte span an in-flight batch covers — the distance
-    /// from the start of its first selected row to the end of its latest.
-    /// This is the trigger that bounds what a batch **pins** on a
-    /// chunk-shaped source: the zero-copy `Utf8View` path hands the builder a
-    /// clone of each read chunk it takes a view into, and those chunks are
-    /// held until the batch flushes, whereas `max_rows` counts *selected*
-    /// rows and `max_bytes` counts *selected* field bytes — both of which a
-    /// hard filter makes arbitrarily sparse in the file
-    /// (`docs/design/decisions.md`, "D46"). Defaults to 64 MiB, which no
-    /// ordinary query reaches; `None` leaves a batch's span unbounded.
-    ///
-    /// **What it bounds is the span rounded out to the retained unit, and on
-    /// a block-shaped source it is no longer the bound at all.** The 64 MiB
-    /// is 64 default read chunks; against a decoded xz block the same
-    /// arithmetic rounds out to 24 or 128 MiB units, so a cap under one unit
-    /// promises a bound the unit makes impossible — and a batch confined to
-    /// one worker's range inside one block pins exactly that block whatever
-    /// the cap says. There this stays a batch-size knob, and the bound is to
-    /// be the pool's slot budget once a slot acquisition waits — which it does
-    /// not yet (`docs/design/decisions.md`, "D47").
+    /// from the start of its first selected row to the end of its latest, and
+    /// the one trigger that bounds what a batch **pins** on a chunk-shaped
+    /// source: the zero-copy `Utf8View` path holds a clone of every chunk it
+    /// views until the batch flushes (`docs/design/decisions.md`, "D47").
+    /// Defaults to 64 MiB, which no ordinary query reaches; `None` leaves a
+    /// batch's span unbounded. What it bounds is the span rounded out to the
+    /// retained unit, so on a block-shaped source, whose unit can exceed the
+    /// cap, this is a batch-size knob and not the bound.
     pub max_source_span: Option<usize>,
-    /// Whether to resolve column types against the dump's DDL — see
-    /// `docs/design/decisions.md`, "D46". Every
-    /// `RecordBatch` this build produces carries the same schema as its
-    /// query's [`crate::resolve::ResolvedSchema`] — a column this build has
-    /// no mapping for stays `Utf8View`, same as `SchemaMode::Strings` maps
-    /// every column.
+    /// Whether to resolve column types against the dump's DDL
+    /// (`docs/design/decisions.md`, "D46"). Every `RecordBatch` this build
+    /// produces carries the same schema as its query's
+    /// [`crate::resolve::ResolvedSchema`] — a column this build has no
+    /// mapping for stays `Utf8View`, as `SchemaMode::Strings` maps every
+    /// column.
     pub schema_mode: SchemaMode,
     /// Selects which database's table to query when the name alone is
     /// ambiguous — matched against `DatabaseMetadata::name`
-    /// (`docs/design/decisions.md`, "D49"). `None` is the common case: a single-database dump, or a
-    /// cross-schema ambiguity a qualified name already resolves on its own.
+    /// (`docs/design/decisions.md`, "D49"). `None` is the common case: a
+    /// single-database dump, or an ambiguity a qualified name resolves.
     pub database: Option<String>,
     /// How far a query's mapping scan walks before it starts returning rows
     /// — see [`ScanExtent`].
     pub scan_extent: ScanExtent,
-    /// How much concurrency this query may use, and what it may hold while it
-    /// does — [`Parallelism::Serial`] by default, and stated here as well as
-    /// on [`ScanOptions`] because a query runs two passes with different
+    /// How much concurrency this query may use, and what it may hold while
+    /// it does — [`Parallelism::Serial`] by default, and stated here as well
+    /// as on [`ScanOptions`] because a query runs two passes with different
     /// shapes: a mapping scan, and a replay split into partitions
-    /// (`docs/design/decisions.md`, "D1").
-    ///
-    /// **The replay's buffer budget reads it, and so does the split.** The
-    /// replay loop announces it to the source
-    /// ([`crate::ByteRangeSource::hint_parallelism`]) where the mapping pass
-    /// announces [`ScanOptions::parallelism`], so the two passes are bounded
-    /// separately; and `jobs`, capped by what the bytes afford, is how many
-    /// sub-streams [`crate::table_stream_partitions`] hands back. Nothing here
-    /// spawns — the caller runs them — so a caller that sets this and then
-    /// drains the sub-streams in order has executed the serial path inside the
-    /// memory it asked for, which is what [`crate::table_stream`] does with
-    /// this field on its own.
+    /// (`docs/design/decisions.md`, "D1"). The replay loop announces it to
+    /// the source ([`crate::ByteRangeSource::hint_parallelism`]), so the two
+    /// passes are bounded separately, and `jobs`, capped by what the bytes
+    /// afford, is how many sub-streams [`crate::table_stream_partitions`]
+    /// hands back. Nothing here spawns — the caller runs them.
     pub parallelism: Parallelism,
 }
 
@@ -200,10 +180,8 @@ struct SourceChunk {
     start: u64,
     buffer: Buffer,
     /// Cached `StringViewBuilder::append_block` index per column, filled in
-    /// the first time a column takes a view into this chunk. Grown lazily
-    /// rather than sized up front, since more than one schema (from
-    /// sequential or same-name-different-schema blocks) can reference the
-    /// same chunk.
+    /// the first time a column takes a view into this chunk. Grown lazily,
+    /// since more than one schema can reference the same chunk.
     column_blocks: Vec<Option<u32>>,
 }
 
@@ -233,9 +211,8 @@ impl SourceChunk {
 /// tells it where the scanner has got to; everything else about the
 /// arrangement — that a chunk becomes an Arrow `Buffer` at all, that the
 /// buffer is what a view is taken against, when a cached block index stops
-/// being valid — is Arrow assembly's business and is why this type lives
-/// beside the builders rather than beside the read loop
-/// (`docs/design/decisions.md`, "D68").
+/// being valid — is Arrow assembly's business, which is why this type lives
+/// beside the builders (`docs/design/decisions.md`, "D68").
 pub(crate) struct RetainedChunks {
     chunks: VecDeque<SourceChunk>,
 }
@@ -251,8 +228,7 @@ impl RetainedChunks {
     /// **This is the one place a read chunk becomes an `arrow::Buffer`.** The
     /// `Bytes` is cloned rather than consumed because the caller still scans
     /// it; both refer to the same allocation, which the buffer pool reclaims
-    /// only when the last reference dies
-    /// (`docs/design/decisions.md`, "D9").
+    /// only when the last reference dies (`docs/design/decisions.md`, "D9").
     pub(crate) fn retain(&mut self, start: u64, bytes: &Bytes) {
         self.chunks.push_back(SourceChunk {
             start,
@@ -261,25 +237,24 @@ impl RetainedChunks {
         });
     }
 
-    /// Drop every chunk the scanner has walked entirely past — everything
-    /// before `floor` has already had its chance to be viewed, since that
-    /// happens synchronously as rows are pushed.
+    /// Drop every chunk the scanner has walked entirely past — viewing
+    /// happens synchronously as rows are pushed, so everything before `floor`
+    /// has had its chance.
     ///
-    /// **The chunk the scanner is inside is retained**: `end() <= floor` holds
-    /// only once the scanner has walked past a chunk's last byte, and the row
-    /// straddling the next boundary is carried rather than scanned, so it
-    /// cannot arrive needing a chunk that has gone.
+    /// **The chunk the scanner is inside is retained**: `end() <= floor`
+    /// holds only past a chunk's last byte, and the row straddling the next
+    /// boundary is carried rather than scanned, so it cannot arrive needing a
+    /// chunk that has gone.
     pub(crate) fn release_through(&mut self, floor: u64) {
         while self.chunks.front().is_some_and(|c| c.end() <= floor) {
             self.chunks.pop_front();
         }
     }
 
-    /// `StringViewBuilder::finish()` resets its internal block list to build
-    /// the next batch, which invalidates every cached block index held here —
-    /// a flush must clear them all, or a later reference to an already-seen
-    /// chunk would resolve to the wrong (or out-of-bounds) block in the new
-    /// batch.
+    /// `StringViewBuilder::finish()` resets its internal block list, which
+    /// invalidates every cached block index held here: a flush must clear
+    /// them all, or a later reference to an already-seen chunk resolves to
+    /// the wrong block in the new batch.
     pub(crate) fn invalidate_block_cache(&mut self) {
         for chunk in self.chunks.iter_mut() {
             chunk.column_blocks.clear();
@@ -289,8 +264,8 @@ impl RetainedChunks {
 
 /// The column names a `COPY` header implies: its own list, or — when it
 /// carried none, meaning "all columns, in table order" — placeholder names
-/// sized to `field_count` (the first row's field count) — there is no DDL
-/// to name them from; this is also what a headerless block's
+/// sized to `field_count` (the first row's field count), there being no DDL
+/// to name them from. This is also what a headerless block's
 /// [`crate::resolve::resolve_columns`] lookup is keyed against.
 pub(crate) fn column_names(header: &CopyHeader, field_count: usize) -> Vec<String> {
     if header.columns.is_empty() {
@@ -304,8 +279,8 @@ pub(crate) fn column_names(header: &CopyHeader, field_count: usize) -> Vec<Strin
 /// field's [`DataType`] — the complete set [`crate::pgtype::resolve_declared_type`]
 /// and [`crate::resolve::resolve_columns`] can ever produce. `with_data_type`/
 /// `with_precision_and_scale`/`with_timezone_opt` tag each builder so its
-/// `finish()`ed array's type matches the schema exactly (`RecordBatch::try_new`
-/// checks this), rather than the builder's own default `DataType`.
+/// `finish()`ed array's type matches the schema exactly, which
+/// `RecordBatch::try_new` checks.
 enum ColumnBuilder {
     Utf8View(StringViewBuilder),
     Bool(BooleanBuilder),
@@ -340,13 +315,12 @@ enum ColumnBuilder {
     /// multi-dimensional case.
     Array(ListParts),
     /// `List<` range struct `>` filled from a `multirange_out` literal —
-    /// structurally identical to an array of ranges and written differently,
-    /// which is why [`NestedPlan`] exists.
+    /// structurally identical to an array of ranges and written differently
+    /// (`docs/design/decisions.md`, "D39").
     Multirange(ListParts),
     /// `List<Int16>` filled from an `int2vectorout` literal — the same Arrow
-    /// type a `smallint[]` column gets, written in a grammar of its own, so
-    /// it is [`NestedPlan`]'s second collision and not a special case of the
-    /// first.
+    /// type a `smallint[]` column gets, written in a grammar of its own:
+    /// [`NestedPlan`]'s second collision, not a special case of the first.
     Int2Vector(ListParts),
     /// `Struct<…>` filled from a `record_out` literal, one child per declared
     /// field of the composite.
@@ -548,16 +522,12 @@ fn append_null(builder: &mut ColumnBuilder) {
 
 /// Append one already-COPY-unescaped value — or SQL NULL — into a builder
 /// sitting *inside* a nested value. Unlike the top level, a `Utf8View` here
-/// copies, deliberately: widening the zero-copy view path into a recursive
-/// builder means honouring its chunk-retention and block-invalidation edges at
-/// every level, and the swap was measured and refused
-/// (`docs/design/decisions.md`, "D29"; `measurements.md`,
+/// copies (`docs/design/decisions.md`, "D29"; `measurements.md`,
 /// `nested-decode-micro`).
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
-/// reports the *field*'s value, so a failure deep inside a nested literal is
-/// attributed to the whole literal by [`append_typed`], not to the fragment
-/// that tripped it.
+/// reports the *field*'s value, so [`append_typed`] attributes a failure deep
+/// inside a nested literal to the whole literal.
 fn append_nested(builder: &mut ColumnBuilder, value: Option<&str>) -> std::result::Result<(), ()> {
     match value {
         None => {
@@ -622,11 +592,10 @@ fn append_range(parts: &mut StructParts, range: &RangeLiteral) -> std::result::R
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
 /// via `crate::decode`'s per-type decoders and `crate::nested`'s literal
 /// codecs. `Err(text)` on a decode failure — the caller wraps it into
-/// `Error::FieldDecode` with the table/column/row context this function
-/// doesn't have. Never called for a *top-level* `ColumnBuilder::Utf8View`,
-/// which `push_field` handles itself (its zero-copy path needs the raw
-/// field's byte offset, which this function never sees); a nested one reaches
-/// [`append_nested`] instead and copies.
+/// `Error::FieldDecode` with the table/column/row context. Never called for a
+/// *top-level* `ColumnBuilder::Utf8View`, which `push_field` handles itself
+/// (its zero-copy path needs the raw field's byte offset); a nested one
+/// reaches [`append_nested`] instead and copies.
 fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<(), String> {
     let fail = || text.to_string();
     match builder {
@@ -664,10 +633,9 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
             parts.offsets.push(builder_len(&parts.child) as i32);
             parts.validity.push(true);
         }
-        // An empty vector is the empty *field*, which is a value and not a
-        // NULL: `\N` is the only NULL in COPY TEXT, so the two stay
-        // distinguishable and `''` fills a zero-length list rather than
-        // collapsing into the null beside it.
+        // An empty vector is the empty *field*, a value and not a NULL: `\N`
+        // is the only NULL in COPY TEXT, so `''` fills a zero-length list
+        // rather than collapsing into the null beside it.
         ColumnBuilder::Int2Vector(parts) => {
             let values = nested::decode_int2vector(text).ok_or_else(fail)?;
             let ColumnBuilder::Int16(child) = &mut *parts.child else {
@@ -807,8 +775,7 @@ pub(crate) struct RowBatcher {
     /// One entry per field of the **block's own** column list, in file
     /// order: the `columns` index that field feeds, or `None` for a field no
     /// projection asked for. Its length — not `columns.len()` — is the field
-    /// count a row is checked against, since a short or long row is wrong
-    /// about the block, not about the projection.
+    /// count a row is checked against.
     field_targets: Vec<Option<usize>>,
     /// Parallel to `schema.fields()` — the declared PostgreSQL type string
     /// behind each `Mapped` column, for the same error.
@@ -820,13 +787,12 @@ pub(crate) struct RowBatcher {
     /// once a row has been pushed, where `start` is the first pushed row's
     /// offset and `end` is one past the latest pushed row's last byte. A row
     /// a predicate rejected never reaches `push_row`, so it neither opens a
-    /// span nor extends one past the last *selected* row — which is what
-    /// stops an empty batch from flushing while the scanner walks a long
-    /// stretch that matches nothing.
+    /// span nor extends one, which is what stops an empty batch from flushing
+    /// across a long stretch that matches nothing.
     span: Option<(u64, u64)>,
     /// Whether any field of this block feeds a projected column. When
     /// nothing does — `COUNT(*)`, `pgdq query --no-columns` — no field is
-    /// decoded, so the read loop is spared the bulk UTF-8 validation as well
+    /// decoded and the read loop skips the bulk UTF-8 validation
     /// (`docs/design/decisions.md`, "D27").
     decodes_fields: bool,
     options: QueryOptions,
@@ -835,8 +801,7 @@ pub(crate) struct RowBatcher {
 impl RowBatcher {
     /// `resolved` is the **projected** schema — what this batcher's
     /// `RecordBatch`es carry — and `field_targets` maps the block's own
-    /// fields onto it (see the field's docs). The two come from one producer
-    /// (`crate::stream::project`) so they cannot disagree.
+    /// fields onto it. Both come from `crate::stream::project`.
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,
@@ -845,10 +810,9 @@ impl RowBatcher {
     ) -> Self {
         let schema = resolved.schema.clone();
         let declared_types = resolved.notes.iter().map(|n| n.declared.clone()).collect();
-        // `plans` is positional and parallel to `schema.fields()`, from the
-        // same producer — `resolve_columns` fills one entry per column,
-        // `NestedPlan::Scalar` included, so the two can only disagree if
-        // something built a `ResolvedSchema` by hand.
+        // `plans` is positional and parallel to `schema.fields()`:
+        // `resolve_columns` fills one entry per column, `NestedPlan::Scalar`
+        // included.
         let columns = schema
             .fields()
             .iter()
@@ -874,31 +838,26 @@ impl RowBatcher {
     }
 
     /// Where in the source the in-flight batch begins — the offset of its
-    /// first pushed row — or `None` while no row has landed in it.
-    ///
-    /// It is the `span`'s lower bound, which is already maintained for the
-    /// third flush trigger, so this is a reading of existing state rather
-    /// than a second one kept beside it. Read **before** [`Self::flush`],
-    /// which clears the span; what it is for is the key a caller merging
-    /// several partitions of one replay back into file order sorts on
+    /// first pushed row — or `None` while no row has landed in it. It is the
+    /// `span`'s lower bound, so read it **before** [`Self::flush`], which
+    /// clears the span. It is the key a caller merging several partitions of
+    /// one replay back into file order sorts on
     /// (`docs/design/decisions.md`, "D51").
     pub(crate) fn batch_start(&self) -> Option<u64> {
         self.span.map(|(start, _)| start)
     }
 
     /// Columns in this block's schema — the field count a resumed stream
-    /// needs to rebuild the same schema without re-reading the header. It is
-    /// the block's own count, **not** the projected one: a headerless block
-    /// names its columns `column1..columnN` from this number, and a resumed
-    /// stream that rebuilt those names from a projection's width would name
-    /// different columns than the original.
+    /// needs to rebuild the same schema without re-reading the header. The
+    /// block's own count, **not** the projected one: a headerless block names
+    /// its columns `column1..columnN` from this number.
     pub(crate) fn field_count(&self) -> usize {
         self.field_targets.len()
     }
 
-    /// The block's qualified table name — context for the `Error::FieldDecode`
-    /// an ordering predicate raises on a value that is not of its mapped
-    /// type, which is worded exactly as this batcher words its own.
+    /// The block's qualified table name — context for the
+    /// `Error::FieldDecode` an ordering predicate raises on a value that is
+    /// not of its mapped type, worded as this batcher words its own.
     pub(crate) fn table(&self) -> &str {
         &self.table
     }
@@ -910,9 +869,8 @@ impl RowBatcher {
 
     /// Whether any of the three flush triggers has fired. All three are
     /// evaluated after a row has been appended, so each may be overshot by at
-    /// most one row. The span trigger is additionally incapable of firing on
-    /// an empty batch whatever its cap, since `span` stays `None` until a row
-    /// lands.
+    /// most one row. The span trigger cannot fire on an empty batch whatever
+    /// its cap, `span` staying `None` until a row lands.
     pub(crate) fn should_flush(&self) -> bool {
         self.rows_in_batch >= self.options.max_rows
             || self.options.max_bytes.is_some_and(|max| self.bytes_in_batch >= max)
@@ -929,19 +887,16 @@ impl RowBatcher {
     /// Append one raw (still-escaped) COPY TEXT data row.
     ///
     /// **The whole row is walked whatever the projection is.** Skipping is
-    /// per column — `decode_field` and the builder append, which is the
-    /// expensive half — never an early stop at the last projected field. The
-    /// walk is `memchr` and is cheap, and it is the system's only field-count
-    /// check: this is the sole site that raises `Error::ColumnCountMismatch`,
-    /// and the mapping pass never errors on a count
-    /// (`docs/design/decisions.md`, "D28").
+    /// per column — `decode_field` and the builder append — never an early
+    /// stop at the last projected field, because this is the system's only
+    /// field-count check: the sole site that raises
+    /// `Error::ColumnCountMismatch`, the mapping pass never erroring on a
+    /// count (`docs/design/decisions.md`, "D28").
     ///
     /// **The walk is `split`'s**, which the caller has already offered to the
     /// filter, so a boundary a term crossed is not crossed again here and one
-    /// nothing read is found now. There is deliberately no second entry point
-    /// that walks the row directly for the unfiltered case: a second
-    /// `push_field` call site in this module costs the unfiltered path more
-    /// than the bookkeeping it would save
+    /// nothing read is found now. There is no second entry point walking the
+    /// row directly for the unfiltered case
     /// (`docs/design/decisions.md`, "D28"; `measurements.md`,
     /// `predicate-terms`).
     pub(crate) fn push_row(
@@ -1030,11 +985,10 @@ impl RowBatcher {
     }
 
     /// Finish the in-flight batch. The row count is passed explicitly rather
-    /// than inferred from the arrays: a zero-column projection has no arrays
-    /// to infer it from, and `RecordBatch::try_new` fails outright on that
-    /// ("must either specify a row count or at least one column"). Stating it
-    /// unconditionally keeps one path for both widths — with arrays present,
-    /// `try_new_with_options` still checks every one of them against it.
+    /// than inferred from the arrays, since a zero-column projection has none
+    /// to infer it from; stating it unconditionally keeps one path for both
+    /// widths, and `try_new_with_options` still checks every array against
+    /// it.
     pub(crate) fn flush(&mut self) -> Result<RecordBatch> {
         let rows = self.rows_in_batch;
         self.rows_in_batch = 0;
@@ -1050,10 +1004,9 @@ impl RowBatcher {
 }
 
 /// Append one still-escaped field to a `Utf8View` column. Reuses
-/// [`decode_field`] so the escaping rules live in exactly one place; a
+/// [`decode_field`] so the escaping rules live in one place; a
 /// `Cow::Borrowed` result (no escapes present, already UTF-8 checked) is what
-/// makes the field eligible for a zero-copy view — everything else is
-/// copied.
+/// makes the field eligible for a zero-copy view — everything else is copied.
 fn push_utf8view_field(
     builder: &mut StringViewBuilder,
     col: usize,
@@ -1088,41 +1041,34 @@ fn push_utf8view_field(
 }
 
 /// Render one row of `column` back to the same PostgreSQL text form
-/// `crate::copy::decode_field` would have produced for it — `pgdq query`'s
-/// job (`docs/design/decisions.md`, "D66": output must be
-/// byte-identical whether typing is on or off) and the round-trip tests'
-/// oracle. `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
+/// `crate::copy::decode_field` would have produced for it
+/// (`docs/design/decisions.md`, "D66"), and the round-trip tests' oracle.
+/// `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
 /// [`crate::resolve::resolve_columns`] can ever produce.
 ///
 /// **The `Result` is for a value with no text form at all**, which is a third
-/// outcome and not a NULL: [`Error::FieldRender`] says which. Nothing this
-/// crate builds can reach it — every typed column it fills comes from a
-/// `decode_*` whose range its `render_*` can write back — so it is a
-/// statement about arrays a caller assembled itself, and the alternative was
-/// to truncate one silently.
+/// outcome and not a NULL: [`Error::FieldRender`] says which, and a value is
+/// never rounded into range (`docs/design/decisions.md`, "D44"). Nothing this
+/// crate builds can reach it, so it is a statement about arrays a caller
+/// assembled itself.
 ///
 /// `plan` is needed for the same reason [`ColumnBuilder`] needs it: the Arrow
 /// type does not say which literal form a nested value is written in, and
 /// `int4range[]` and `int4multirange` share one. It comes from
 /// [`crate::resolve::ResolvedSchema::plans`], positionally; a caller that
 /// knows its column is scalar passes `&NestedPlan::Scalar`, which is
-/// [`NestedPlan`]'s `Default`.
-///
-/// **There is deliberately no plan-less entry point.** One that panicked on a
-/// nested column would make "did every caller switch?" a review question
-/// rather than a compile error.
+/// [`NestedPlan`]'s `Default`. There is no plan-less entry point
+/// (`docs/design/decisions.md`, "D39").
 pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result<Option<String>> {
-    // The null check is repeated here rather than left to the sink so that a
-    // SQL NULL costs no allocation at all, which is what this returned
-    // `Option<String>` per element costs `collect_array`.
+    // Checked here rather than left to the sink so a SQL NULL costs no
+    // allocation at all.
     if column.is_null(row) {
         return Ok(None);
     }
-    // Sized rather than empty. A `String` that starts at zero capacity is
-    // grown by whichever `push_str` writes into it first, which is a second
-    // allocation path — `grow_amortized` and a realloc — where one allocation
-    // suffices. 16 bytes is under glibc's smallest chunk, so it costs nothing
-    // over an exact fit and covers every scalar an array element can be.
+    // Sized rather than empty: a zero-capacity `String` is grown by whichever
+    // `push_str` writes into it first, where one allocation suffices. 16 bytes
+    // is under glibc's smallest chunk and covers every scalar an array
+    // element can be.
     let mut out = String::with_capacity(16);
     if render_field_into(column, row, plan, &mut out)? { Ok(Some(out)) } else { Ok(None) }
 }
@@ -1132,17 +1078,13 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
 /// written. This is the form that does the work — [`render_field`] is a
 /// wrapper over it, so the two cannot drift.
 ///
-/// **It exists so that a consumer printing a whole row builds it in one
-/// buffer**: `pgdq query` appends every column of a row into a line it reuses,
-/// where before it collected a `String` per field and joined them. A scalar
-/// column of an integer, a boolean, a text or a date/time type is written
-/// straight into that buffer and allocates nothing at all
+/// It exists so that a consumer printing a whole row builds it in one buffer:
+/// a scalar column of an integer, a boolean, a text or a date/time type is
+/// written straight into that buffer and allocates nothing
 /// (`docs/design/decisions.md`, "D44").
 ///
-/// **An error may leave a partial value behind.** A caller that reuses its
-/// buffer across rows clears it per row, and an error aborts the row, so the
-/// only discipline this asks for is not to publish a buffer an error came out
-/// of.
+/// **An error may leave a partial value behind**, so the discipline this asks
+/// for is not to publish a buffer an error came out of.
 pub fn render_field_into(
     column: &dyn Array,
     row: usize,
@@ -1311,16 +1253,12 @@ pub fn render_field_into(
 }
 
 /// Write an `array_out` literal for a `List` value straight into `out`,
-/// walking the Arrow list rather than building a [`nested::ArrayLiteral`]
-/// first.
+/// walking the Arrow list rather than building a [`nested::ArrayLiteral`].
 ///
-/// **Nothing between an element's value and the caller's buffer.** Each
-/// element is rendered where it will be read, and
-/// [`nested::quote_array_element`] moves it aside only if the grammar wants it
-/// quoted — so an `integer[]` of fifty is fifty appends and no allocation at
-/// all, where building a [`nested::ArrayLiteral`] first costs a `String` per
-/// element, the `Vec` holding them, an un-presized whole-array `String` and a
-/// copy of it into `out`.
+/// Each element is rendered where it will be read, and
+/// [`nested::quote_array_element`] moves it aside only if the grammar wants
+/// it quoted, so an `integer[]` of fifty is fifty appends and no allocation
+/// (`docs/design/decisions.md`, "D44").
 ///
 /// Lower bounds are always 1, so no `[lb:ub]=` prefix is ever written: a
 /// decorated value is refused at append time (I21), and no column holds one to
@@ -1346,15 +1284,13 @@ fn render_array_into(
     Ok(())
 }
 
-/// One `List` level of [`render_array_into`]: braces, separators, and either a
-/// recursion or the leaf elements.
+/// One `List` level of [`render_array_into`]: braces, separators, and either
+/// a recursion or the leaf elements.
 ///
 /// `dims` records the length of the first list seen at each depth **below the
-/// outermost**, which every later list at that depth is asserted against — the
-/// rectangularity guard, made per list rather than as a product over a
-/// flattened `dims`/`elements` pair. It is untouched for a one-dimensional
-/// array, where there is one list and nothing to disagree with it, which is
-/// why the common case allocates nothing.
+/// outermost**, which every later list at that depth is asserted against —
+/// the rectangularity guard. It is untouched for a one-dimensional array, so
+/// the common case allocates nothing.
 #[allow(clippy::too_many_arguments)]
 fn render_list_level(
     column: &dyn Array,
@@ -1404,19 +1340,15 @@ fn render_list_level(
 /// of every `COPY` block whose table matches `table` (qualified or bare — see
 /// [`CopyHeader::matches`]). A table with zero rows produces no batches.
 ///
-/// Push-mode entry point (`docs/design/decisions.md`, "D68"):
-/// internally drains the pull-mode [`crate::stream::table_stream`], so the two
-/// share one scan loop. The callback may return [`ControlFlow::Break`] to stop
-/// early, in which case the returned token resumes from just past the last
-/// batch delivered to it — see [`crate::stream::TableStream::resume_token`].
-/// `query_options` carries the projection and the post-parse filter terms as
-/// well as the batching knobs — see `table_stream`'s docs.
-/// `cache` controls structure-cache consulting — see `table_stream`'s docs.
-/// Rejects `CacheMode::Offline` up front: `source` is mandatory here, and a
-/// cache-only mode paired with a live source in hand is a caller contract
-/// violation (`docs/design/decisions.md`, "D30" — `Span::text` is `None` for
-/// every `Data` span regardless, so `query` could never answer from a cache
-/// alone even if this were allowed).
+/// Push-mode entry point (`docs/design/decisions.md`, "D68"): internally
+/// drains the pull-mode [`crate::stream::table_stream`], so the two share one
+/// scan loop. The callback may return [`ControlFlow::Break`] to stop early,
+/// in which case the returned token resumes from just past the last batch
+/// delivered to it — see [`crate::stream::TableStream::resume_token`].
+/// `query_options` and `cache` mean what they do on `table_stream`. Rejects
+/// `CacheMode::Offline` up front: `source` is mandatory here, and `Span::text`
+/// is `None` for every `Data` span regardless, so `query` could never answer
+/// from a cache alone (`docs/design/decisions.md`, "D30").
 pub async fn read_table<F>(
     source: &dyn ByteRangeSource,
     table: &str,
@@ -1510,14 +1442,11 @@ mod tests {
     }
 
     /// An `Interval(MonthDayNano)` array holding a value no `interval` has.
-    /// Built here by hand because nothing in this crate can produce one —
+    /// Built by hand because nothing in this crate can produce one —
     /// `append_typed` fills the column from `decode_interval`, which
-    /// multiplies microseconds by a thousand — which is exactly why the
-    /// refusal is worth pinning: it is the contract for an array a caller
-    /// assembled, and the only thing standing between that caller and a
-    /// truncated value written out as if it were the real one. The refusal
-    /// travels out of a nested column too, since the nested walk is the same
-    /// function.
+    /// multiplies microseconds by a thousand — so the refusal it pins is the
+    /// contract for an array a caller assembled. It travels out of a nested
+    /// column too, the nested walk being the same function.
     #[test]
     fn render_refuses_an_interval_with_no_postgresql_text_form() {
         let mut b = IntervalMonthDayNanoBuilder::new();
@@ -1549,9 +1478,8 @@ mod tests {
     }
 
     /// `int2vector` and `smallint[]` are one Arrow type and two literal
-    /// forms, which is the collision [`NestedPlan`] exists for — so the two
-    /// are built here side by side, from text neither could read as the
-    /// other.
+    /// forms — [`NestedPlan`]'s collision — so the two are built side by
+    /// side, from text neither could read as the other.
     #[test]
     fn an_int2vector_column_round_trips_and_is_not_the_array_of_the_same_type() {
         let array = round_trips(
@@ -1789,10 +1717,9 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
     }
 
-    /// A [`RowBatcher`] over one nullable `Utf8View` column, fed by field
-    /// `field_targets` says — for driving `push_row` at chosen file offsets.
-    /// The flush triggers are arithmetic over offsets and row lengths, and
-    /// reaching a 64 MiB span through a fixture would mean a 64 MiB fixture.
+    /// A [`RowBatcher`] over one nullable `Utf8View` column, fed by the field
+    /// `field_targets` says — for driving `push_row` at chosen file offsets,
+    /// the flush triggers being arithmetic over offsets and row lengths.
     fn one_column_batcher_fed_by(
         options: QueryOptions,
         field_targets: Vec<Option<usize>>,
@@ -1824,10 +1751,9 @@ mod tests {
         one_column_batcher_fed_by(options, vec![Some(0)], DataType::Utf8View)
     }
 
-    /// A field no projection asked for is walked and skipped: it is never
-    /// decoded — the middle field here would be a hard `Int32` decode failure
-    /// if it were — and it does not count towards `max_bytes`, which counts
-    /// what the batch actually holds.
+    /// A field no projection asked for is walked and skipped: never decoded
+    /// — the middle field here would be a hard `Int32` decode failure if it
+    /// were — and not counted towards `max_bytes`.
     #[test]
     fn an_unprojected_field_is_walked_but_never_decoded() {
         let options = QueryOptions { max_bytes: Some(4), ..Default::default() };
@@ -1882,8 +1808,7 @@ mod tests {
     }
 
     /// A row a term has already begun splitting is finished by the batcher,
-    /// not re-walked — the sharing itself, seen from the batcher's side, and
-    /// the same answer as a split nothing touched.
+    /// not re-walked, and gives the same answer as a split nothing touched.
     #[test]
     fn a_partly_filled_split_gives_the_same_row_as_a_fresh_one() {
         let rows: [&[u8]; 3] = [b"a\t1\tz", b"x\t\\N\ty", b"\t2\t"];
@@ -1973,11 +1898,9 @@ mod tests {
     }
 
     /// The span trigger measures from the first selected row's offset to one
-    /// past the latest selected row's last byte, and fires the moment that
-    /// reaches the cap — so it is overshot by at most one row, like the other
-    /// two. The rows here are four bytes apart in a file no other trigger
-    /// would ever split: `max_rows` is effectively unbounded and `max_bytes`
-    /// is off.
+    /// past the latest selected row's last byte and fires the moment that
+    /// reaches the cap, so it is overshot by at most one row. The rows here
+    /// are four bytes apart, with `max_rows` unbounded and `max_bytes` off.
     #[test]
     fn the_source_span_trigger_fires_on_the_distance_between_selected_rows() {
         let options = QueryOptions {
@@ -2021,9 +1944,7 @@ mod tests {
     }
 
     /// A stretch of rows the predicate rejects moves the scanner but not the
-    /// span, because a rejected row never reaches `push_row` and pins
-    /// nothing. Without that, a hard filter would flush a one-row batch every
-    /// time the scan crossed the cap.
+    /// span, a rejected row never reaching `push_row`.
     #[test]
     fn rows_that_were_never_pushed_do_not_widen_the_span() {
         let options = QueryOptions {
@@ -2078,10 +1999,9 @@ mod tests {
     }
 }
 
-/// The `ArrayLiteral`-building render, kept verbatim as the oracle
+/// The `ArrayLiteral`-building render, kept as the oracle
 /// [`render_array_into`]'s direct walk is checked against, over a generated
-/// corpus rather than a listed one — so a disagreement on an input nobody
-/// thought to write down is a test failure and not a report from the field.
+/// corpus rather than a listed one.
 #[cfg(test)]
 mod prior_shape {
     use super::*;
@@ -2133,11 +2053,10 @@ mod prior_shape {
 
 /// [`render_array_into`] against the literal-building oracle, over generated
 /// element text and generated shapes. The corpus is built as Arrow values
-/// directly
-/// rather than through [`append_typed`], because the quoting rule is what is
-/// under test and `decode_array` only ever hands back text `array_out` would
-/// have written — so a corpus routed through it could not reach an element
-/// holding a brace, a bare `NULL` or a lone backslash.
+/// directly rather than through [`append_typed`]: the quoting rule is what is
+/// under test, and `decode_array` only hands back text `array_out` would have
+/// written, so a corpus routed through it could not reach an element holding
+/// a brace, a bare `NULL` or a lone backslash.
 #[cfg(test)]
 mod differential {
     use arrow::datatypes::Field;
@@ -2268,9 +2187,8 @@ mod differential {
         agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
     }
 
-    /// A nested element that is not a scalar: the composite arm still builds
-    /// its own literal and is pushed through the same quoting decision, which
-    /// is the boundary this row deliberately stops at.
+    /// A nested element that is not a scalar: the composite arm builds its
+    /// own literal and goes through the same quoting decision.
     #[test]
     fn an_array_of_composites_renders_as_the_literal_builder_did() {
         let mut rng = Rng(0x5eed_071a);

@@ -4,56 +4,38 @@
 //! [`table_stream`] is the primitive: an async `Stream<Item =
 //! Result<RecordBatch>>` built directly on [`CopyScanner`]/[`RowBatcher`], the
 //! same machinery [`crate::batch::read_table`] (push mode) drives internally.
-//! [`ResumeToken`] lets a caller stop consuming partway through and pick back
-//! up later in the same process — it holds no public fields, so its
-//! representation is free to change without an API break
-//! (`docs/design/decisions.md`, "D50").
+//! [`ResumeToken`] resumes a consumption within the same process; it holds no
+//! public fields (`docs/design/decisions.md`, "D50").
 //!
 //! **Mapping and streaming are separate passes**
 //! (`docs/design/decisions.md`, "D48"). A query runs in two phases, never
 //! interleaved:
 //!
 //! 1. [`map_forward`] extends the [`DumpIndex`]'s map from its own
-//!    `scanned_through` — recording every `COPY` block it passes and
-//!    classifying the DDL between them through a [`crate::map::Builder`] —
-//!    and **yields nothing**. It stops as soon as the queried table is
-//!    settled ([`ScanExtent::UntilTargetSettled`]), which is what keeps a
-//!    query against an early table in a huge dump from costing a full scan.
-//! 2. Every block the map holds for that table is then replayed for its
-//!    rows, in file order.
+//!    `scanned_through`, recording every `COPY` block it passes and
+//!    classifying the DDL between them through a [`crate::map::Builder`], and
+//!    **yields nothing**. It stops as soon as the queried table is settled
+//!    ([`ScanExtent::UntilTargetSettled`]).
+//! 2. Every block the map holds for that table is then replayed for its rows,
+//!    in file order.
 //!
-//! The queried block's bytes are therefore read twice — once to find its
-//! extent, once to emit its rows. A [`ResumeToken`] can only ever point inside
-//! already-mapped territory, and a query-built `DumpIndex` tiles the file
-//! exactly the way [`crate::index::build_index`]'s does, with no exemption for
-//! resumed streams. **The map advances and a
-//! [`CacheMode::Enabled`] cache is persisted at the same points**: completed
-//! blocks whose save has earned its cost ([`SaveThrottle`]), the block that
-//! settles the query, and every exit — so a caller that stops polling keeps
-//! what the map learned;
-//! [`CacheMode::Disabled`] runs the same way with `save` a no-op, mapping in
-//! memory only.
+//! So the queried block's bytes are read twice, and a [`ResumeToken`] can only
+//! ever point inside already-mapped territory. A [`CacheMode::Enabled`] cache
+//! is persisted where the map advances: completed blocks whose save has earned
+//! its cost ([`SaveThrottle`]), the block that settles the query, and every
+//! exit. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
 //!
-//! **Preamble capture** (`docs/design/decisions.md`, "D30"): before
-//! any of that, [`table_stream`] runs [`crate::index::scan_preamble`] once
-//! (skipped once a cache already has it), regardless of which table was
-//! queried, whether it ever appears, or how far the live scan gets before a
-//! caller stops polling. This runs even under [`CacheMode::Disabled`]:
-//! `--dqcache none` disables *persistence*, not type resolution
-//! (`docs/design/decisions.md`, "D30") — but
-//! `cache.save` is a no-op there, so nothing is written to disk. The prepass
-//! covers the *first* database; every later `\connect`ed one is stated by
-//! [`map_forward`] when it reaches that database's first `COPY` block, which
-//! per I1 is the same kind of boundary the prepass stops at. So a cache's
-//! metadata covers exactly the databases whose data the scan reached, and one
-//! it did not reach has no blocks in the map to ask about.
+//! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
+//! that, [`table_stream`] runs [`crate::index::scan_preamble`] once (skipped
+//! once a cache already has it), whatever table was queried and under
+//! [`CacheMode::Disabled`] too. It covers the *first* database; every later
+//! `\connect`ed one is stated by [`map_forward`] at that database's first
+//! `COPY` block (I1).
 //!
-//! **Type resolution**: once a query's matching
-//! `COPY` block is found, its column list is resolved against that captured
-//! metadata into a [`crate::resolve::ResolvedSchema`], retrievable via
-//! [`TableStream::resolved_schema`]. This is a preview, not what actually
-//! decodes a row — see that method's docs and `resolve.rs`'s module docs for
-//! why the `RecordBatch`es this stream yields stay all-`Utf8View` regardless.
+//! **Type resolution**: a matching `COPY` block's column list is resolved
+//! against that captured metadata into a [`crate::resolve::ResolvedSchema`]
+//! ([`TableStream::resolved_schema`]). That is a preview, not what decodes a
+//! row: the `RecordBatch`es this stream yields stay all-`Utf8View`.
 
 use std::ops::Range;
 use std::pin::Pin;
@@ -87,28 +69,18 @@ use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
-/// accumulating its rows, `QueryOptions::filter` resolved against this
-/// block's own schema (schemas can differ block-to-block, e.g. a headerless
-/// block's placeholder names), and the database this block is attributed to
-/// (`docs/design/decisions.md`, "D49").
-///
-/// The [`ResolvedExpr`] mirrors the caller's [`Expr`] and each of its leaves
-/// carries the field index it reads — into the block's **unprojected**
-/// column list, because that is what the raw row's fields are numbered by,
-/// and a term may name a column the projection does not — plus the typed
-/// comparison it makes.
+/// accumulating its rows, `QueryOptions::filter` resolved against this block's
+/// own schema (schemas can differ block-to-block), and the database this block
+/// is attributed to (`docs/design/decisions.md`, "D49"). Each
+/// [`ResolvedExpr`] leaf carries the field index it reads — into the block's
+/// **unprojected** column list — plus the typed comparison it makes.
 type Active = (u64, CopyHeader, RowBatcher, ResolvedExpr, Option<String>);
 
 /// Where `row` sits inside `prefix`, the UTF-8-validated leading part of the
 /// span it was scanned out of — `None` when the row runs past it, which is
-/// every row of a span whose validation failed and none of a span whose
-/// validation held.
-///
-/// `str::get` rather than an index: it answers `None` for a range that is out
-/// of bounds or off a character boundary, so a mis-derived offset costs the
-/// row its fast path instead of panicking. Neither can happen here — a row
-/// starts just past a line terminator and ends just before one, and both are
-/// ASCII.
+/// every row of a span whose validation failed and none of one whose
+/// validation held. `str::get` rather than an index, so a mis-derived offset
+/// costs the row its fast path instead of panicking.
 fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a str> {
     let start = usize::try_from(row.offset.checked_sub(span_base)?).ok()?;
     prefix.get(start..start.checked_add(row.raw.len())?)
@@ -126,27 +98,19 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 
 /// Resolve `filter` against `resolved` — the block's own **unprojected**
 /// schema — once per block, returning the same tree with every leaf
-/// resolved. The empty conjunction resolves to an empty conjunction, which
-/// is what makes "no filter" need no case of its own on the row path.
+/// resolved. The empty conjunction resolves to an empty conjunction.
 ///
 /// **This is where a predicate is validated against a block**, and the only
-/// place: a term naming a column this block does not carry is
-/// `Error::UnknownPredicateColumn`, an ordering operator on a column that
-/// is not `Mapped` with a `NestedPlan::Scalar` plan is
-/// `Error::UnorderedPredicateColumn`, and a literal that is not a value of
-/// the column's type — under any comparing operator, `=` included — is
-/// `Error::PredicateValueDecode`. All are raised for the first offending
-/// term in a left-to-right walk of the tree, before a row of this block
-/// flows — so every leaf is validated whatever the evaluator would
-/// short-circuit past. A table whose blocks carry different schemas can
-/// therefore refuse at the third block after rows from the first two were
-/// emitted; that is already true of `UnknownPredicateColumn` and adds no new
-/// shape of failure.
-///
-/// It takes the whole [`ResolvedSchema`] rather than its `schema` because the
-/// ordering refusal reads `columns` and `plans` as well — the three are
-/// positional and parallel, and splitting them across two lookups is how they
-/// would come to disagree.
+/// place (`docs/design/decisions.md`, "D54"): a term naming a column this
+/// block does not carry is `Error::UnknownPredicateColumn`, an ordering
+/// operator on a column that is not `Mapped` with a `NestedPlan::Scalar` plan
+/// is `Error::UnorderedPredicateColumn`, and a literal that is not a value of
+/// the column's type — `=` included — is `Error::PredicateValueDecode`. All
+/// are raised for the first offending term in a left-to-right walk, before a
+/// row of this block flows, so a table whose blocks carry different schemas
+/// can refuse at the third block after rows from the first two were emitted.
+/// It takes the whole [`ResolvedSchema`] because the ordering refusal reads
+/// `columns` and `plans` too.
 fn resolve_expr(
     filter: &Expr,
     resolved: &ResolvedSchema,
@@ -180,22 +144,15 @@ fn resolve_expr(
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
-/// each projected column is fed by.
-///
-/// All five of [`ResolvedSchema`]'s vectors are cut together, in the
-/// requested order: they are positional and parallel by construction, and
-/// `RecordBatch::try_new` checks the built arrays against `schema` exactly,
-/// so a stream advertising the full table while emitting narrow batches
-/// would put those two out of agreement
+/// each projected column is fed by. All five of [`ResolvedSchema`]'s vectors
+/// are cut together, in the requested order
 /// (`docs/design/decisions.md`, "D28").
 ///
 /// Returns the projected schema and `field_targets` — one entry per field of
 /// the block, `Some(i)` when that field feeds projected column `i`. `None`
-/// projection is every column, in file order.
-///
-/// Duplicate names are the caller's to reject before the scan starts; this
-/// resolves each requested name independently and would silently accept one
-/// twice.
+/// projection is every column, in file order. Duplicate names are the caller's
+/// to reject: this resolves each requested name independently and would
+/// silently accept one twice.
 fn project(
     resolved: &ResolvedSchema,
     projection: Option<&[String]>,
@@ -230,21 +187,13 @@ fn project(
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
 /// projection, the filter terms, the schema mode and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
-/// (`docs/design/decisions.md`, "D50").
-///
-/// Every field is hashed through an explicit `match` rather than a derived
-/// `Hash`, so adding an operator or an option is a compile error here rather
-/// than a fingerprint that quietly stops covering it. The hasher's output is
-/// not stable across Rust releases, which costs nothing: a token is valid
-/// only within the process that produced it.
+/// (`docs/design/decisions.md`, "D50"). The hasher's output is not stable
+/// across Rust releases: a token is valid only within its own process.
 ///
 /// **`partition` is what keeps a sub-stream's token from resuming as a whole
 /// one.** A token carries an offset and nothing about the range its stream was
-/// confined to, so feeding partition *k*'s token to [`table_stream`] would
-/// replay every matching row from that offset onward — a superset of what the
-/// partition had left, silently. Stamping the partition makes that
-/// `Error::ResumeQueryMismatch` instead, which is the whole of the support a
-/// partitioned replay offers for resume
+/// confined to, so stamping the partition turns what would be a silent
+/// superset into `Error::ResumeQueryMismatch`
 /// (`docs/design/decisions.md`, "D51").
 fn query_fingerprint(
     table: &str,
@@ -281,17 +230,9 @@ fn query_fingerprint(
 
 /// Fold one filter expression into `hasher`, node kind first, then arity,
 /// then each child in order — so two trees of different shape cannot collide
-/// by carrying the same terms.
-///
-/// Two conjunctions that differ only in the order of their terms are
-/// semantically the same query and fingerprint differently; that costs a
-/// `ResumeQueryMismatch` on a resume nobody would write, and the alternative
-/// — canonicalizing the tree — would make the stamp depend on an ordering
-/// rule of its own.
-///
-/// Every variant and every operator is written out rather than derived, so
-/// adding one is a compile error here rather than a fingerprint that quietly
-/// stops covering it.
+/// by carrying the same terms. Two conjunctions differing only in term order
+/// fingerprint differently; canonicalizing instead would make the stamp depend
+/// on an ordering rule of its own (`docs/design/decisions.md`, "D50").
 fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
     use std::hash::Hash;
 
@@ -401,29 +342,19 @@ fn splice(
 }
 
 /// Whether `index`'s map now answers the query for good, so the mapping scan
-/// can stop short of EOF. Two things can make a further block share the
-/// queried name, and both have to be ruled out.
+/// can stop short of EOF (`docs/design/decisions.md`, "D49"). Two things can
+/// make a further block share the queried name, and both are ruled out:
 ///
-/// **A partition-root marker on a matching block.** Its `COPY` header names
-/// the partition's **root**, so other blocks in the same dump carry the same
-/// name — and they are *not* adjacent to it, since `TABLE DATA` entries sort
-/// by the partition's own name (I2). Only reaching EOF enumerates them.
+/// - **A partition-root marker on a matching block**, whose `COPY` header
+///   names the partition's **root**: other blocks carry the same name and are
+///   not adjacent to it (I2), so only reaching EOF enumerates them.
+/// - **Any `\connect` at all**, the file then being a `pg_dumpall`, a
+///   concatenation or a `--create` dump, where a qualified name can be defined
+///   again in a later database (I2). A `query_options.database` selector does
+///   not lift this: two `\connect` segments can name the *same* database.
 ///
-/// **Any `\connect` at all.** The file is then a `pg_dumpall`, a
-/// concatenation, or a `--create` dump, and a qualified name can be defined
-/// again in a later database — the other route I2 names. Stopping early there
-/// would hand back one candidate's rows where
-/// `docs/design/decisions.md`'s "D49"
-/// requires `Error::AmbiguousTable`, which is a wrong answer with no signal,
-/// exactly what that decision exists to prevent. A `query_options.database`
-/// selector does not lift this: two `\connect` segments can name the *same*
-/// database. So any `Connect` span means map the whole file.
-///
-/// What neither test catches is a file whose *first* segment has no
-/// `\connect` — a plain dump with something concatenated after it. Nothing in
-/// the prefix announces that.
-///
-/// That residue is deficiency `KD6`, whose detail is at its marker
+/// What neither catches is a file whose *first* segment has no `\connect` —
+/// deficiency `KD6`, detailed at its marker
 /// ([`crate::batch::ScanExtent::UntilTargetSettled`]).
 fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
     if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
@@ -445,11 +376,9 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
 /// How far [`map_forward`] got.
 ///
 /// Two variants, not three: reaching EOF and stopping at a settled target are
-/// the same fact to every caller — the loop ran until it had nothing left to
-/// do — and only [`map_file`], which never passes a target, has to tell them
-/// apart, which it does by construction. Interruption is the one outcome a
-/// caller must not mistake for either, because the map is short of the file
-/// through no decision of its own.
+/// the same fact to every caller. Interruption is the one outcome a caller
+/// must not mistake for either, the map being short of the file through no
+/// decision of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MapStop {
     /// EOF, or the queried table settled.
@@ -462,31 +391,22 @@ enum MapStop {
 
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or the scan is
-/// cancelled. Emits no rows — see the module docs.
+/// cancelled. Emits no rows — see the module docs. `target` is the
+/// `(table, database selector)` a query may stop early for once
+/// [`target_settled`] says so; **`None` means "run to EOF"**, what
+/// [`ScanExtent::Full`] asks for and what [`map_file`] always wants. Rejected:
+/// a `ScanExtent` beside a sentinel table name, which is dead data any later
+/// reader has to prove is unused.
 ///
-/// `target` is the `(table, database selector)` a query may stop early for
-/// once [`target_settled`] says so. **`None` means "run to EOF"** — what
-/// [`ScanExtent::Full`] asks for, and what [`map_file`] always wants. It is an
-/// `Option` rather than a `ScanExtent` beside an ignored table name because a
-/// stop rule with no target is not a rule: a sentinel table name would be dead
-/// data that any later reader has to prove is unused.
-///
-/// The [`crate::map::Builder`] is seeded with the segment's start offset (so
+/// The [`crate::map::Builder`] is seeded with the segment's start offset, so
 /// its first span begins at the frontier rather than at the first non-blank
-/// line past it, which would leave the blank lines in between unattributed)
-/// and with the database in scope there, which it cannot infer: it never
-/// reads the `\connect` lines earlier in the file.
+/// line past it, and with the database in scope there, which it cannot infer.
 ///
-/// **Not every completed block is persisted; every *exit* is.** See
-/// [`SaveThrottle`] for the rule and why the exits are exempt from it.
-///
-/// **`index.metadata` is restated at each `\connect`ed database's first
-/// `COPY` block**, which per I1 is one of the two boundaries
-/// [`dump_metadata_from_spans`] may be called at — and the
-/// only one this loop ever stands on, since a `CopyEnd` watermark is not one.
-/// It fires when the block's governing database differs from the one the
-/// metadata in hand was computed at, so a single-database dump (koji included)
-/// pays nothing: the preamble prepass already stood at that same offset.
+/// **Not every completed block is persisted; every *exit* is** — see
+/// [`SaveThrottle`]. **`index.metadata` is restated at each `\connect`ed
+/// database's first `COPY` block**, which per I1 is one of the two boundaries
+/// [`dump_metadata_from_spans`] may be called at, and the only one this loop
+/// stands on.
 async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -502,13 +422,10 @@ async fn map_forward(
         return Ok(MapStop::Reached);
     }
 
-    // The two checks above are "nothing to do" (an already-complete cache, or
-    // a query whose target the cache already settles), which is not a scan
-    // and earns no line — `pgdq parse` against an already-cached file already
-    // says so on its own (`docs/manual/dump-inspection.md`, "`parse`: reading
-    // the dump"). Past here a real scan is about to run, at whatever
-    // arrangement `--jobs` and the stated budget resolved to
-    // (`docs/design/decisions.md`, "D64").
+    // The two checks above are "nothing to do" and earn no line
+    // (`docs/manual/dump-inspection.md`, "`parse`: reading the dump"). Past
+    // here a real scan runs, at whatever arrangement `--jobs` and the stated
+    // budget resolved to (`docs/design/decisions.md`, "D64").
     tracing::info!(
         bytes = size,
         resumed_from = index.scanned_through,
@@ -520,10 +437,10 @@ async fn map_forward(
 
     let seg_start = index.scanned_through;
     let prefix: Vec<Span> = index.spans.iter().filter(|s| s.end <= seg_start).cloned().collect();
-    // The prefix tiles `[0, seg_start)`, so its last span is the one ending
-    // exactly at the frontier and its `database` is the one in scope there.
-    // With no prefix at all, the preamble prepass has just run and I1 puts
-    // the frontier inside the first database it captured.
+    // The prefix tiles `[0, seg_start)`, so its last span ends exactly at the
+    // frontier and its `database` is the one in scope there. With no prefix,
+    // the preamble prepass has just run and I1 puts the frontier inside the
+    // first database it captured.
     let database = prefix.last().and_then(|s| s.database.clone()).or_else(|| {
         index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
     });
@@ -532,46 +449,34 @@ async fn map_forward(
     // The database whose first `COPY` block the metadata in hand was computed
     // at — the outer `None` meaning "no metadata at all", the inner one a
     // database with no `\connect` to name it. `dump_metadata_from_spans`
-    // finalizes the *last* database it walks, so the last entry is the one
-    // whose boundary the computation stood on.
+    // finalizes the *last* database it walks, so the last entry is it.
     let mut metadata_covers: Option<Option<String>> =
         index.metadata.as_ref().and_then(|m| m.databases.last()).map(|db| db.name.clone());
 
     // The chunk length this loop repeats to the frontier, and the budget it
-    // may keep buffers inside, announced once
-    // (`ByteRangeSource::hint_read_size`, `hint_parallelism`).
+    // may keep buffers inside (`ByteRangeSource::hint_read_size`).
     source.hint_read_size(scan_options.chunk_size);
     source.hint_parallelism(scan_options.parallelism);
-    // **This loop grants no wait** (`ByteRangeSource::hint_wait_policy`). It
-    // builds spans, not batches, so every chunk is consumed and dropped inside
-    // the iteration that read it and a wait would be safe — but the holder that
-    // needs the bound is the leader's fused worker, which grants it for itself
-    // and takes it back (`crate::leader::scan_region`, and
-    // `docs/design/decisions.md`, "D5"). This loop is what the leader will run
-    // inside, so the policy stated here is also what it restores.
+    // **This loop grants no wait** (`docs/design/decisions.md`, "D5"): the
+    // leader's fused worker grants it for itself and restores this policy on
+    // the way out (`crate::leader::scan_region`).
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
     let mut carry = ChunkCarry::new();
     let mut throttle = SaveThrottle::new();
-    // Whether the `COPY` block currently open is one `target_settled` would
-    // count — see the `CopyEnd` arm, which is the only reader.
+    // Whether the open `COPY` block is one `target_settled` would count — see
+    // the `CopyEnd` arm, its only reader.
     let mut open_block_targets = false;
     // Whether `scan started`'s `jobs=` has already been corrected for this
-    // scan — see [`report_shortfall`], which is the only reader and the only
-    // writer.
+    // scan — see [`report_shortfall`], its only reader and writer.
     let mut shortfall_reported = false;
 
     loop {
-        // Once per chunk, before anything is read: this is the check that
-        // gets a scan out of a block big enough that its `CopyEnd` is an hour
-        // away (`ScanOptions::cancel`); the `CopyEnd` arm carries the other
-        // one, for the file whose whole scan fits in two chunks. `index` is
-        // consistent at the last *spliced* watermark whatever the buffer holds
-        // — nothing between splices touches it — so the save needs no snapshot
-        // logic of its own, and it is unconditional: everything since that
-        // watermark is what an interrupt costs, which the `CopyEnd` arm
-        // bounds.
+        // Once per chunk, the `CopyEnd` arm carrying the other check
+        // (`docs/design/decisions.md`, "D63").
+        // `index` is consistent at the last *spliced* watermark whatever the
+        // buffer holds, so the save needs no snapshot logic of its own.
         if scan_options.cancelled() {
             cache.save(source, index).await?;
             return Ok(MapStop::Interrupted);
@@ -587,53 +492,39 @@ async fn map_forward(
         let eof = read_pos >= size;
 
         carry.absorb(&chunk);
-        // Where the leader closed a block the workers scanned, and therefore
-        // where the serial scanner has to be put back down. `None` for a chunk
-        // no region was taken out of, which is every chunk of a serial scan.
+        // Where the leader closed a block the workers scanned, and so where
+        // the serial scanner has to be put back down. `None` for a chunk no
+        // region was taken out of.
         let mut resume_at: Option<u64> = None;
         for pass in ChunkCarry::PASSES {
             let (span, span_eof) = carry.span(pass, &chunk, eof);
             while let Some(event) = scanner.next_event(span, span_eof)? {
                 match event {
                     Event::CopyStart(start) => {
-                        // The start of the current database's first `COPY` block
-                        // is the second of the two boundaries
-                        // `dump_metadata_from_spans` may be called at (I1), and
-                        // the one that *recurs* — once per `\connect`ed database.
-                        // Stating the metadata here is what makes a `parse`
-                        // interrupted in database 3 typed for the two segments it
-                        // finished instead of for database 1 alone, and what makes
-                        // a cold query and a warm one type a `pg_dumpall` alike.
-                        //
-                        // Retreat to a pending TOC comment's own start the way
+                        // The current database's first `COPY` block is the
+                        // recurring one of the two boundaries
+                        // `dump_metadata_from_spans` may be called at (I1).
+                        // Retreat to a pending TOC comment's own start as
                         // `crate::index::scan_preamble` does, so the span list
-                        // handed over ends where the `Data` span is about to
-                        // begin rather than swallowing the comment.
+                        // ends where the `Data` span is about to begin.
                         let boundary =
                             builder.pending_comment_start().unwrap_or(start.header_offset);
-                        // Whether this block can be the one that settles `target`,
-                        // read off the header before it moves into the builder —
-                        // the `CopyEnd` arm's reason to splice for a block the
-                        // throttle would have skipped. **Deliberately the header
-                        // alone**, which is a superset: a block whose database the
-                        // selector excludes cannot settle the target either, but
-                        // repeating that test here would tie the gate's width to
-                        // `target_settled`'s body, where a later narrowing there
-                        // would silently make the gate too narrow. Over-splicing
-                        // costs a clone on a block whose name is the queried one;
-                        // under-splicing loses the early stop.
+                        // Whether this block can be the one that settles
+                        // `target` — the `CopyEnd` arm's reason to splice for
+                        // a block the throttle would have skipped.
+                        // **Deliberately the header alone**, a superset:
+                        // repeating `target_settled`'s selector test here
+                        // would tie the gate's width to that function's body.
                         open_block_targets =
                             target.is_some_and(|(table, _)| start.header.matches(table));
-                        // Read off the header before it moves into the builder,
-                        // for the offer below.
+                        // Read off the header, for the offer below.
                         let header_offset = start.header_offset;
                         let data_offset = start.data_offset;
                         let columns = start.header.columns.len();
                         builder.on_copy_start(start);
-                        // **Once per database, not once per block.** Recomputing
-                        // at every `CopyStart` and leaning on idempotence would
-                        // put a third whole-index-sized cost in this loop, beside
-                        // the two `docs/design/measurements.md` already prices.
+                        // **Once per database, not once per block**:
+                        // recomputing at every `CopyStart` would put a third
+                        // whole-index-sized cost in this loop.
                         let db = builder.database().map(str::to_owned);
                         if metadata_covers.as_ref() != Some(&db) {
                             let spans = splice(
@@ -646,15 +537,12 @@ async fn map_forward(
                             index.metadata = Some(dump_metadata_from_spans(&spans));
                             metadata_covers = Some(db);
                         }
-                        // **The offer, and this loop is the leader making it.**
-                        // Everything from `data_offset` until `\.` is
-                        // line-structured rows — the header this arm just read is
-                        // what proves it — so the region may be handed to workers
-                        // that never parse structure
-                        // (`crate::leader::scan_region`). It answers the block's
-                        // totals as the serial scanner would have stated them, or
-                        // declines and leaves the region where it is; the caller's
-                        // `--jobs` is what decides whether a cut pays.
+                        // **The offer, and this loop is the leader making it**
+                        // (`crate::leader::scan_region`): everything from
+                        // `data_offset` until `\.` is line-structured rows, so
+                        // the region may be handed to workers that never parse
+                        // structure. It answers the block's totals as the
+                        // serial scanner would have, or declines.
                         let outcome = leader::scan_region(
                             source,
                             scan_options,
@@ -667,9 +555,9 @@ async fn map_forward(
                         report_shortfall(&mut shortfall_reported, outcome.shortfall);
                         match outcome.scan {
                             RegionScan::Closed(interior) => {
-                                // The workers counted the rows, so the census
-                                // they folded stands in for the `on_row` calls
-                                // this loop never made.
+                                // The workers counted the rows, so their
+                                // census stands in for the `on_row` calls this
+                                // loop never made.
                                 builder.absorb_census(&interior.census);
                                 let watermark = interior.end.end_offset;
                                 let targets = std::mem::take(&mut open_block_targets);
@@ -689,21 +577,18 @@ async fn map_forward(
                                 )
                                 .await?
                                 {
-                                    // The serial scanner is still standing at
-                                    // this block's `data_offset` and the chunk in
-                                    // hand is bytes the workers have already
-                                    // read, so both are dropped and the loop
-                                    // starts again past the block. Handled after
-                                    // the event loop, which is where `scanner`
-                                    // and `carry` can be moved at all.
+                                    // The serial scanner is still at this
+                                    // block's `data_offset` and the chunk in
+                                    // hand is bytes the workers already read,
+                                    // so both are dropped — after the event
+                                    // loop, where they can be moved at all.
                                     BlockClose::Continue => {
                                         resume_at = Some(watermark);
                                         break;
                                     }
                                     BlockClose::Settled => {
                                         // A query stopping at its own target,
-                                        // not at EOF — [`map_forward`]'s other
-                                        // "scan complete" fires only there.
+                                        // not at EOF.
                                         tracing::info!(
                                             bytes = watermark,
                                             reached_eof = false,
@@ -715,23 +600,21 @@ async fn map_forward(
                                 }
                             }
                             // Nothing happened: the serial scanner owns the
-                            // region and reads on into it exactly as before.
+                            // region and reads on into it.
                             RegionScan::Declined => {}
                             // Cancelled between two windows, so nothing about
-                            // this block is known. `index` is consistent at the
-                            // last spliced watermark, which is before it — the
-                            // same state the per-chunk check saves at.
+                            // this block is known. `index` is consistent at
+                            // the last spliced watermark, which is before it.
                             RegionScan::Cancelled => {
                                 cache.save(source, index).await?;
                                 return Ok(MapStop::Interrupted);
                             }
                         }
                     }
-                    // This pass needs only the block's extent, which the
-                    // scanner finds from the `\.` terminator — row bytes become
-                    // batches in the replay phase. The one thing rows are read
-                    // for here is the array-shape census, which every mapping
-                    // pass records (`crate::index::CopyBlock::array_shapes`).
+                    // This pass needs only the block's extent; row bytes
+                    // become batches in the replay phase. Rows are read here
+                    // for the array-shape census alone
+                    // (`docs/design/decisions.md`, "D35").
                     Event::Row(row) => builder.on_row(row.raw),
                     Event::CopyEnd(end) => {
                         let targets = std::mem::take(&mut open_block_targets);
@@ -779,19 +662,16 @@ async fn map_forward(
         }
 
         // **The leader took a region, so the serial scanner is put back down
-        // past it.** The carry is discarded rather than fixed up: whatever it
-        // held was the front edge of a chunk the workers have since read whole,
-        // and `end_offset` is a line start, so a fresh carry is the only correct
-        // one. `read_pos` follows, since the bytes between here and the frontier
-        // are the workers' reads and this loop must not re-read them.
+        // past it.** The carry is discarded rather than fixed up — whatever it
+        // held is inside bytes the workers have since read whole, and
+        // `end_offset` is a line start — and `read_pos` follows it.
         if let Some(at) = resume_at {
             scanner = CopyScanner::resume(at, None);
             carry = ChunkCarry::new();
             read_pos = at;
             // The three hints this loop announced still stand: `scan_region`
-            // restores `WaitPolicy::NeverWait` on its way out, announces the same
-            // `Parallelism` this loop did, and never touches the read size
-            // (`crate::leader::scan_region`).
+            // restores `WaitPolicy::NeverWait` on its way out, announces the
+            // same `Parallelism`, and never touches the read size.
             continue;
         }
 
@@ -815,33 +695,21 @@ async fn map_forward(
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     cache.save(source, index).await?;
     // The true end of the file, as opposed to the two early
-    // `Ok(MapStop::Reached)`s above that stop a query at its settled target —
-    // this is what a `pgdq parse`, which passes no target, always reaches,
-    // and it is the line that tells a long scan's silence apart from a hang.
+    // `Ok(MapStop::Reached)`s above that stop a query at its settled target.
     tracing::info!(bytes = size, reached_eof = true, "scan complete");
     Ok(MapStop::Reached)
 }
 
 /// Correct `scan started`'s `jobs=` where the leader delivered fewer readers
 /// than the caller asked for, **once per scan**, and say what would buy the
-/// arrangement back.
-///
-/// `scan started` names what was asked for, because the source's advice has
-/// not been read when it fires — the leader reads it standing on an open
-/// `COPY` block, and on a compressed source whose largest block the budget
-/// cannot hold the answer is one reader whatever `--jobs` said. This line is
-/// how a `parse` says so: the decline that says it on a query is a
-/// [`PlanNote`] on a `TableStream`, which a `parse` has none of
-/// (`docs/design/decisions.md`, "D64").
+/// arrangement back (`docs/design/decisions.md`, "D64"). `scan started` names
+/// what was asked for, the source's advice not having been read when it fires;
+/// on a query the same fact is a [`PlanNote`] on a `TableStream`.
 ///
 /// **Silence means the leader dispatched the announced count**, not that every
-/// one of them read at once: on a plain source above `POOL_DEPTH` workers the
-/// rest wait for a chunk slot, and nothing reports that. The line is a correction and
-/// not a restatement, so it is emitted only where the two differ; `flag` is
-/// what keeps a dump with ten thousand `COPY` blocks from printing ten
-/// thousand copies of one scan-wide fact, which is also why
-/// [`crate::leader::Shortfall`] reports no reason that a later block could
-/// answer differently.
+/// one of them read at once. `flag` keeps one scan-wide fact from printing
+/// once per block, which is also why [`crate::leader::Shortfall`] reports no
+/// reason a later block could answer differently.
 fn report_shortfall(flag: &mut bool, shortfall: Option<leader::Shortfall>) {
     let Some(shortfall) = shortfall.filter(|_| !*flag) else {
         return;
@@ -871,19 +739,11 @@ enum BlockClose {
 
 /// Close a `COPY` block on the [`crate::map::Builder`] and do everything
 /// [`map_forward`] owes at a `CopyEnd`: the splice, the throttled save, and the
-/// early-stop check.
-///
-/// **It is a free function because it has two callers**, and they differ only in
-/// where the `CopyEnd` came from — the serial scanner, or
-/// [`crate::leader::scan_region`] folding the answers of the workers that split
-/// the block's interior. Two copies of this sequence would be two copies of a
-/// subtle ordering (splice before the settled test, save before the return), and
-/// a parallel scan's cache is byte-identical to a serial one's only if the two
-/// paths close a block the same way.
-///
-/// `targets` is whether this block's header could be the one that settles
-/// `target`, read at `CopyStart` — see [`map_forward`]'s `CopyStart` arm for why
-/// it is the header alone.
+/// early-stop check. **One body, two callers** — the serial scanner and
+/// [`crate::leader::scan_region`] (`docs/design/decisions.md`, "D52") — and
+/// the ordering it holds is splice before the settled test, save before the
+/// return. `targets` is whether this block's header could be the one that
+/// settles `target`, read at `CopyStart`.
 #[allow(clippy::too_many_arguments)]
 async fn close_copy_block(
     source: &dyn ByteRangeSource,
@@ -901,25 +761,19 @@ async fn close_copy_block(
 ) -> Result<BlockClose> {
     // `end_offset` is always a safe, resumable watermark — the scanner is back
     // in its `Outside` state there — and `on_copy_end` leaves the builder
-    // `Idle`, which is exactly where `snapshot` is sound.
+    // `Idle`, where `snapshot` is sound.
     let watermark = end.end_offset;
     builder.on_copy_end(end);
-    // The second of the guard's two check points, and the one that covers the
-    // opposite extreme from `map_forward`'s per-chunk check: a block-rich file
-    // can spend tens of seconds inside a *single* chunk, where the chunk check
-    // runs twice in the whole scan. The two together bound the response by the
-    // shorter of a chunk and a block.
+    // The second of the guard's two check points (`docs/design/decisions.md`,
+    // "D63"): the two together bound the response by the shorter of a chunk
+    // and a block.
     let cancelled = scan_options.cancelled();
     let due = throttle.due();
-    // **The splice rides the throttle's gate.** Rebuilding `index.spans` clones
-    // the whole list, so doing it per block is O(blocks²) — the half of that
-    // quadratic the throttle did not reach (`docs/design/decisions.md`,
-    // "D62"). Nothing between gate openings reads `index`: the
-    // metadata recompute in the `CopyStart` arm splices its own copy, and
-    // `target_settled` is the one reader that would — which is why a block whose
-    // header could satisfy it opens the gate too. What this costs is the
-    // interrupt's promise, bounded in *time* by the throttle rather than in
-    // blocks.
+    // **The splice rides the throttle's gate** (`docs/design/decisions.md`,
+    // "D62"). Nothing between gate openings reads `index`: the metadata
+    // recompute in the `CopyStart` arm splices its own copy, and
+    // `target_settled` is the one reader that would — which is why a block
+    // whose header could satisfy it opens the gate too.
     if targets || cancelled || due {
         index.spans = splice(prefix, builder.snapshot(watermark), seg_start, watermark, size);
         index.roles.extend(builder.roles().iter().cloned());
@@ -927,13 +781,13 @@ async fn close_copy_block(
         index.scanned_through = index.scanned_through.max(watermark);
     }
     // Only a block `target_settled` counts can turn it from false to true, and
-    // `index` has just been spliced for exactly those — so this reads a map that
-    // is current through `watermark` every time it is consulted.
+    // `index` has just been spliced for exactly those — so this always reads a
+    // map current through `watermark`.
     let settled =
         targets && target.is_some_and(|(table, selector)| target_settled(index, table, selector));
-    // The save at the *last* watermark before an early stop is what persists the
-    // map for the next query, so a settled target saves whether or not the
-    // throttle would have — and so does an interrupt.
+    // The save at the *last* watermark before an early stop is what persists
+    // the map for the next query, so a settled target and an interrupt save
+    // whether or not the throttle would have.
     if settled || cancelled || due {
         throttle.save(cache, source, index).await?;
     }
@@ -947,31 +801,23 @@ async fn close_copy_block(
 }
 
 /// How many times the elapsed scan has to cover the last save's own cost
-/// before another save is worth taking, which is what bounds save overhead at
-/// roughly `1/K` of scan time.
+/// before another save is worth taking, which bounds save overhead at roughly
+/// `1/K` of scan time.
 const SAVE_THROTTLE_K: u32 = 20;
 
 /// Decides whether a mid-scan cache save has earned its cost
 /// (`docs/design/decisions.md`, "D62").
 ///
-/// Every save serializes the **whole** index, and the index grows with the
-/// block count, so saving at every `CopyEnd` is O(blocks²)
-/// (`measurements.md`, `per-block-quadratic`).
-///
 /// **The rule is self-tuning, not an interval**: skip a block's save unless at
 /// least [`SAVE_THROTTLE_K`] times the last save's own duration has elapsed
-/// since it — a cheap cache saves often, an expensive one saves rarely.
+/// since it. **Exits are exempt** — EOF, a settled target and an interrupt all
+/// save unconditionally.
 ///
-/// **Exits are exempt.** EOF, a settled target and an interrupt all save
-/// unconditionally — the whole risk the throttle adds is the window between
-/// saves, and those three are where that window would cost something real.
-///
-/// **The gate also decides when the map is rebuilt.** `stream::splice` is the
-/// other half of the same quadratic, and it fires at the openings of this gate
-/// rather than at every `CopyEnd` (see [`map_forward`]'s `CopyEnd` arm). So the
-/// rule prices two costs at once: with a disabled cache `save` is ~free, so the
-/// gate always clears and the map is rebuilt per block — the residual `KD5`
-/// names.
+/// **The gate also decides when the map is rebuilt.** `stream::splice` fires
+/// at the openings of this gate rather than at every `CopyEnd` (see
+/// [`map_forward`]'s `CopyEnd` arm). With a disabled cache `save` is ~free, so
+/// the gate always clears and the map is rebuilt per block — the residual
+/// `KD5` names.
 struct SaveThrottle {
     last_save: Instant,
     last_cost: Duration,
@@ -979,14 +825,12 @@ struct SaveThrottle {
 
 impl SaveThrottle {
     /// Starts due: `last_cost` is zero, so the first block of a segment always
-    /// banks. A scan that dies before ever saving would otherwise leave a
-    /// resumable frontier it never wrote down.
+    /// banks, rather than leaving a resumable frontier never written down.
     fn new() -> Self {
         Self { last_save: Instant::now(), last_cost: Duration::ZERO }
     }
 
-    /// The rule itself, over measured quantities rather than clocks, so it is
-    /// testable without one.
+    /// The rule itself, over measured quantities rather than clocks.
     fn due_after(elapsed: Duration, last_cost: Duration) -> bool {
         elapsed >= last_cost.saturating_mul(SAVE_THROTTLE_K)
     }
@@ -996,8 +840,7 @@ impl SaveThrottle {
     }
 
     /// Save, and time the save — that duration is the whole input to the next
-    /// decision. A disabled cache makes this ~free and so never throttles,
-    /// which is right: there is nothing to amortize.
+    /// decision. A disabled cache makes this ~free and so never throttles.
     async fn save(
         &mut self,
         cache: &CacheMode,
@@ -1012,78 +855,51 @@ impl SaveThrottle {
     }
 }
 
-/// What one [`map_file`] run did.
-///
-/// `resumed_from` is the frontier the run *started* at — `0` for a scan that
-/// began at byte 0, the cache's `scanned_through` for one that resumed — which
-/// is what `pgdq parse` prints about the invocation before the listing that
-/// describes the file.
+/// What one [`map_file`] run did. `resumed_from` is the frontier the run
+/// *started* at: `0` for a scan that began at byte 0, the cache's
+/// `scanned_through` for one that resumed.
 #[derive(Debug)]
 pub struct MapRun {
     /// The map as it stands after the run: whole-file when `interrupted` is
-    /// false, everything up to the last *spliced* watermark when it is true —
-    /// which is the last save, since both ride one gate ([`SaveThrottle`]).
+    /// false, everything up to the last *spliced* watermark when it is true,
+    /// which is also the last save ([`SaveThrottle`]).
     pub index: DumpIndex,
     /// The frontier this run started from.
     pub resumed_from: u64,
-    /// Whether [`ScanOptions::cancel`] stopped the run short of EOF. The
-    /// index and the cache agree either way; what differs is whether the
-    /// index describes the whole file.
+    /// Whether [`ScanOptions::cancel`] stopped the run short of EOF. The index
+    /// and the cache agree either way; what differs is whether the index
+    /// describes the whole file.
     pub interrupted: bool,
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
-/// holds** — `pgdq parse`'s scan (`docs/design/decisions.md`, "D61").
+/// holds** — `pgdq parse`'s scan (`docs/design/decisions.md`, "D61"). This is
+/// [`map_forward`] with no stop target, plus the three whole-file facts that
+/// only a scan reaching EOF may state; `crate::index::build_index` stays the
+/// eager, cache-blind producer. Rejected: teaching *it* to resume, which
+/// duplicates the splice-onto-a-prefix logic here.
 ///
-/// This is [`map_forward`] with no stop target, plus the three whole-file
-/// facts that only a scan reaching EOF may state. It is a second caller for
-/// the incremental loop, not a second implementation of it: `crate::index::build_index`
-/// stays the eager, cache-blind producer, and teaching *it* to resume would
-/// duplicate the splice-onto-a-prefix logic here with a different set of bugs.
-///
-/// **It opens with the bounded preamble prepass** [`table_stream`] has always
-/// run, under the same "unless the first database's preamble is already
-/// complete" guard. Without it an interrupted `parse` leaves a cache with no
-/// `DumpMetadata` at all, and `crate::resolve::resolve_columns` turns that
-/// into `NotDeclared` for every column of every block — the *final* "the dump
-/// never explained this column" answer, where the truth is
-/// [`crate::resolve::ColumnResolution::MetadataNotScanned`], "finish the parse
-/// and ask again". It costs one read of the preamble rather than two:
-/// `scan_preamble` stops at the first `COPY` header and leaves
-/// `scanned_through` there, which is exactly where `map_forward` picks up.
-///
-/// The prepass runs only for a scan starting at byte 0. Its spans *are* the
-/// prefix — it produces a tiling of `[0, preamble_end)`, not something to
-/// splice onto one — so running it over a resumed map would discard it. A
-/// resumed cache carries whatever metadata its own scan stated, and
-/// `map_forward`'s per-database recompute repairs one that carries none.
+/// **It opens with the bounded preamble prepass** [`table_stream`] runs, under
+/// the same "unless the first database's preamble is already complete" guard
+/// (`docs/design/decisions.md`, "D30"), and only for a scan starting at byte 0
+/// — its spans *are* the prefix, so running it over a resumed map would
+/// discard one.
 ///
 /// **The three finishing steps are this function's, not `map_forward`'s.**
 ///
-/// - `metadata` is recomputed over the whole span list. `map_forward` states
-///   it at each database's first `COPY` block (I1's recurring boundary), which
-///   already covers every database whose data the scan reached; EOF is the
-///   other boundary [`dump_metadata_from_spans`] may be
-///   called at, and it is what covers a trailing database with no `COPY` block
-///   of its own — and a file with no blocks at all, where the recurring
-///   boundary is never reached.
-/// - `diagnostics` are recomputed rather than inherited: they are
-///   `#[serde(skip)]`, so an index that came wholly from the cache carries
-///   none, and whatever [`CacheMode::load`] reported about the cache *file*
-///   (an mtime mismatch) is kept ahead of them rather than overwritten.
-/// - The cache is saved once more at the end. `map_forward` already saved at
-///   EOF, but with the pre-EOF metadata; this is the save that persists the
-///   finished index, and it is also the only save when the cache already
-///   covered the file and nothing was scanned at all.
+/// - `metadata` is recomputed over the whole span list. EOF is the other
+///   boundary [`dump_metadata_from_spans`] may be called at (I1), covering a
+///   trailing database with no `COPY` block of its own, and a file with no
+///   blocks at all.
+/// - `diagnostics` are recomputed rather than inherited, being
+///   `#[serde(skip)]`; whatever [`CacheMode::load`] reported about the cache
+///   *file* is kept ahead of them.
+/// - The cache is saved once more at the end, persisting the finished index;
+///   it is also the only save when nothing was scanned at all.
 ///
 /// **An interrupted run states none of the three**, and returns
-/// [`MapRun::interrupted`] rather than an index that would claim to describe
-/// the whole file: a span list cut at a `CopyEnd` watermark is not a boundary
-/// `dump_metadata_from_spans` may be called at, and a coverage figure computed
-/// over a partial map would read as a finished one. `map_forward` has already
-/// persisted what it holds by then — including the metadata it stated at the
-/// legal boundaries it *did* stand on, which is what makes an interrupted
-/// cache typed rather than merely labelled.
+/// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a
+/// boundary `dump_metadata_from_spans` may be called at.
 pub async fn map_file(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -1092,24 +908,20 @@ pub async fn map_file(
     let size = source.size().await?;
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Four reasons to start cold: nothing to resume from, so the map is
-        // built from byte 0, and nothing at that path is worth keeping.
-        // Spelled out rather than wildcarded
+        // Four reasons to start cold, spelled out rather than wildcarded
         // (`docs/design/decisions.md`, "D22").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
         | CacheLoad::UnsupportedVersion => DumpIndex::default(),
         // The fifth is a refusal, before a byte of the dump is read: this
-        // cache describes another file, and the scan would overwrite it at
-        // its first throttled save.
+        // cache describes another file.
         CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
             return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
         }
     };
-    // The one diagnostic about the cache *file* rather than about the map:
-    // everything else the load computed is recomputed below over the finished
-    // spans, and `map_forward` assigns `diagnostics` wholesale at EOF anyway.
+    // The one diagnostic about the cache *file* rather than about the map;
+    // everything else the load computed is recomputed below.
     let carried: Vec<Diagnostic> = index
         .diagnostics
         .drain(..)
@@ -1123,10 +935,9 @@ pub async fn map_file(
         .and_then(|m| m.databases.first())
         .is_some_and(|db| db.preamble_complete);
     if resumed_from == 0 && !first_db_preamble_known {
-        // Persisted before `map_forward` runs, so an interrupt arriving during
-        // the very first chunk still finds banked metadata. `scan_preamble`
-        // itself ignores the cancel flag on purpose (`ScanOptions::cancel`):
-        // the preamble is an uncancellable region bounded by its own length.
+        // Persisted before `map_forward` runs, so an interrupt in the very
+        // first chunk still finds banked metadata. `scan_preamble` itself
+        // ignores the cancel flag (`docs/design/decisions.md`, "D26").
         let (metadata, spans, preamble_end, roles, tablespaces) =
             scan_preamble(source, scan_options).await?;
         index.metadata = Some(metadata);
@@ -1155,7 +966,7 @@ pub async fn map_file(
 
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
 /// consumption, sufficient to resume from just past the last batch a caller
-/// accepted. Valid only within the process that produced it — persisting it
+/// accepted. Valid only within the process that produced it; persisting one
 /// across a restart is out of scope (`docs/design/roadmap.md`).
 #[derive(Debug, Clone)]
 pub struct ResumeToken {
@@ -1164,13 +975,10 @@ pub struct ResumeToken {
     /// Stamp of the query this token came out of — see [`query_fingerprint`].
     /// Resuming a stream whose options hash differently is
     /// `Error::ResumeQueryMismatch`, which is what defends "one schema per
-    /// stream, resolved up front" now that a projection can change the
-    /// schema without changing the table.
+    /// stream, resolved up front".
     query_fingerprint: u64,
-    /// Reserved for the structural cache's generation stamp. The cache
-    /// doesn't stamp generations, so this is always 0; carrying
-    /// the field now avoids a later breaking change to this already-opaque
-    /// type.
+    /// Reserved for the structural cache's generation stamp; the cache does
+    /// not stamp generations, so this is always 0.
     #[allow(dead_code)]
     generation: u64,
     in_copy: Option<InCopyResume>,
@@ -1223,11 +1031,9 @@ impl<'a> TableStream<'a> {
 
     /// This query's resolved schema and diagnostics — one schema per stream
     /// (`docs/design/decisions.md`, "Type resolution and decoders"). The empty
-    /// schema (`ResolvedSchema::default`)
-    /// until the query's matching `COPY` block has been found — which, for a
-    /// table that never appears in the dump, is forever; a caller checking
-    /// before consuming any batches only learns that once the whole stream
-    /// has been drained.
+    /// schema (`ResolvedSchema::default`) until the query's matching `COPY`
+    /// block has been found, which for a table that never appears in the dump
+    /// is forever.
     pub fn resolved_schema(&self) -> ResolvedSchema {
         self.resolved_schema.lock().unwrap().clone()
     }
@@ -1235,50 +1041,28 @@ impl<'a> TableStream<'a> {
     /// The terms of this query whose comparison does not answer what
     /// PostgreSQL's own operator for that column's type would — one
     /// [`ComparisonNote`] per such term, in term order, empty until this
-    /// query's matching `COPY` block has resolved (and forever, for a table
-    /// that never appears).
+    /// query's matching `COPY` block has resolved.
     ///
-    /// **Per term, because a divergence is operator-conditional.** Most of
-    /// them are divergences of *order* alone
-    /// (`crate::pgtype::ComparisonDivergence::affects_equality`), so a `text`
-    /// column with no `COLLATE` clause earns a note under `<` and none under
-    /// `=`.
-    ///
-    /// A **third channel, and deliberately not a fourth thing to unify**:
-    /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, while
-    /// this signal is per-column *and* conditional on a predicate — L4 — so
-    /// writing it into either inverts the layering
-    /// (`docs/design/decisions.md`, "D59"). `pgdq query` announces these once
-    /// on stderr; what an embedder should be handed instead is filed in
-    /// `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
-    ///
-    /// Like [`Self::resolved_schema`], it describes the **last** block whose
-    /// schema resolved: a table whose blocks carry different schemas can
-    /// diverge on one block and not on another.
+    /// **Per term, because a divergence is operator-conditional**
+    /// (`docs/design/decisions.md`, "D59"): most are divergences of *order*
+    /// alone (`crate::pgtype::ComparisonDivergence::affects_equality`), so a
+    /// `text` column with no `COLLATE` clause earns a note under `<` and none
+    /// under `=`. A third channel beside `DumpIndex.diagnostics` (L1) and
+    /// `ResolvedSchema.notes` (L2). Like [`Self::resolved_schema`], it
+    /// describes the **last** block whose schema resolved.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
         self.comparison_notes.lock().unwrap().clone()
     }
 
     /// Facts about *this query's plan* rather than about a column or a
-    /// predicate — today three, and all three are the memory budget in force
-    /// declining something: [`PlanNoteKind::ParallelismBudgetLimited`],
-    /// `--jobs` asking for more sub-streams than that budget affords;
-    /// [`PlanNoteKind::CompressedBlockPathDeclined`], an `.xz` source with
-    /// blocks too large to hold under it; and
-    /// [`PlanNoteKind::AllocationBelowFloor`], a budget affording less than
-    /// one reader of any source, which is the arrangement a memory limit at or
-    /// under `crate::io::MEMORY_RESERVE` resolves to.
+    /// predicate — today three, all of them the memory budget in force
+    /// declining something ([`PlanNoteKind`]). A fourth channel beside
+    /// `DumpIndex.diagnostics` (L1), `ResolvedSchema.notes` (L2) and
+    /// [`Self::comparison_notes`] (L4).
     ///
-    /// **A fourth channel** beside `DumpIndex.diagnostics` (L1),
-    /// `ResolvedSchema.notes` (L2) and [`Self::comparison_notes`] (L4) — see
-    /// [`PlanNote`]'s own docs.
-    ///
-    /// **Settled before any block is read, unlike [`Self::resolved_schema`]
-    /// and [`Self::comparison_notes`]**, because [`plan_partitions`] decides
-    /// it from the map alone — so every sub-stream of a partitioned replay
-    /// carries the same value from construction, and a caller need not poll
-    /// the stream to learn it. Empty for [`table_stream`]'s serial replay,
-    /// which never calls [`plan_partitions`].
+    /// **Settled before any block is read**, because [`plan_partitions`]
+    /// decides it from the map alone. Empty for [`table_stream`]'s serial
+    /// replay, which never calls [`plan_partitions`].
     pub fn plan_notes(&self) -> &[PlanNote] {
         &self.plan_notes
     }
@@ -1287,52 +1071,32 @@ impl<'a> TableStream<'a> {
     /// returned begins: the offset of its first row, and 0 before anything
     /// has been polled.
     ///
-    /// **This is the key a caller merges partitions on.** A `RecordBatch`
-    /// carries no position, and the sub-streams of a partitioned replay
-    /// ([`table_stream_partitions`]) each run in file order over a contiguous
-    /// run of the file — so a caller holding one batch per sub-stream and
-    /// always emitting the lowest of these offsets re-assembles the serial
-    /// order at N × batch, which is what `pgdq query` does
-    /// (`docs/design/decisions.md`, "D51").
-    ///
-    /// It is a *start*, not the end [`Self::resume_token`] reports: the two
-    /// order identically here, batches of one replay never overlapping, and a
-    /// start is the one that stays a merge key if that ever stops holding.
-    /// A batch carrying no rows — reachable only through a `max_rows` of 0,
-    /// which makes every row event a flush — reports the scanner's position
-    /// instead, so the value is monotone within a sub-stream either way.
+    /// **This is the key a caller merges partitions on**
+    /// (`docs/design/decisions.md`, "D51"): a caller holding one batch per
+    /// sub-stream and always emitting the lowest of these offsets re-assembles
+    /// the serial order. It is a *start*, not the end [`Self::resume_token`]
+    /// reports. A batch carrying no rows — reachable only through a `max_rows`
+    /// of 0 — reports the scanner's position instead, so the value is monotone
+    /// within a sub-stream either way.
     pub fn batch_source_offset(&self) -> u64 {
         *self.batch_offset.lock().unwrap()
     }
 }
 
-/// Build the [`ResolvedSchema`] for a table-matching block — the actual
-/// batch schema a [`RowBatcher`] built from it carries (see
-/// [`TableStream::resolved_schema`]'s docs) — scoped to `database`, the
-/// block's own attribution, never a guess
-/// (`docs/design/decisions.md`, "D49").
+/// Build the [`ResolvedSchema`] for a table-matching block — the actual batch
+/// schema a [`RowBatcher`] built from it carries (see
+/// [`TableStream::resolved_schema`]) — scoped to `database`, the block's own
+/// attribution, never a guess (`docs/design/decisions.md`, "D49"). `census` is
+/// the union of the array-shape censuses of **every block this stream will
+/// replay**, a parameter rather than something `resolve_columns` looks up so
+/// that no call site can silently disagree
+/// (`docs/design/decisions.md`, "D35").
 ///
-/// `census` is the union of the array-shape censuses of **every block this
-/// stream will replay**, which is what lets a top-level array column commit
-/// to the shape the file actually holds rather than to an optimistic
-/// `List<T>` (`docs/design/decisions.md`, "D35"). It is
-/// a parameter rather than something `resolve_columns` looks up so that all
-/// three call sites below — the resumed one included — cannot silently
-/// disagree about a stream's schema.
-///
-/// `Typed` mode against metadata that doesn't (yet) have a *complete* entry
-/// for `database` is `Error::MetadataNotScanned` rather than a silent
-/// `NotDeclared` degradation.
-///
-/// **No caller can trip it today**, and that is deliberate rather than
-/// accidental: all three call sites are in [`table_stream`], which reads
-/// `index.metadata` *after* its mapping pass, and the mapping pass states a
-/// database's DDL at that database's first `COPY` block — strictly before any
-/// of its blocks can be replayed. The resumed path ([`resume_state`]) shares
-/// that same clone, so a [`ResumeToken`] does not reach it either. The check
-/// stays because it is what stands between a future reordering — moving that
-/// clone back above `map_forward` — and a silently wrongly-typed row, and it
-/// is pinned by a unit test rather than left as untested defence.
+/// `Typed` mode against metadata that has no *complete* entry for `database`
+/// is `Error::MetadataNotScanned` rather than a silent `NotDeclared`
+/// degradation. **No caller can trip that today**: every call site reads
+/// `index.metadata` after the mapping pass, which states a database's DDL at
+/// its first `COPY` block. The check is pinned by a unit test.
 fn resolve_block(
     header: &CopyHeader,
     field_count: usize,
@@ -1351,10 +1115,9 @@ fn resolve_block(
     Ok(resolve_columns(&header.qualified_name(), &names, metadata, database, schema_mode, census))
 }
 
-/// Reconstruct the in-progress block state a [`ResumeToken`] captured, if
-/// any: the scanner's row counter (so a later `CopyEnd` reports the block's
-/// true total, not just rows-since-resume) and a fresh [`RowBatcher`] built
-/// from the same schema the original block used.
+/// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
+/// the scanner's row counter (so a later `CopyEnd` reports the block's true
+/// total) and a fresh [`RowBatcher`] on the original block's schema.
 fn resume_state(
     token: &ResumeToken,
     query_options: &QueryOptions,
@@ -1425,14 +1188,11 @@ fn snapshot(
 
 /// Everything a replay needs that the mapping pass produced, shared unchanged
 /// by every sub-stream of a partitioned replay
-/// (`docs/design/decisions.md`, "D51").
-///
-/// Held behind an `Arc` because `metadata` is the whole dump's DDL and N
-/// sub-streams would otherwise each clone it. Nothing in here is mutated
-/// after the mapping pass, which is what makes one copy correct for all of
-/// them — the census in particular is the union over **every** block the
-/// query will replay, so two partitions of one table cannot resolve its
-/// arrays differently (`docs/design/decisions.md`, "D35").
+/// (`docs/design/decisions.md`, "D51"). Held behind an `Arc`, `metadata` being
+/// the whole dump's DDL, and never mutated after the mapping pass: the census
+/// in particular is the union over **every** block the query will replay, so
+/// two partitions of one table cannot resolve its arrays differently
+/// (`docs/design/decisions.md`, "D35").
 struct ReplayPlan {
     scan_options: ScanOptions,
     query_options: QueryOptions,
@@ -1443,10 +1203,10 @@ struct ReplayPlan {
 /// What state a [`Segment`]'s scanner starts in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SegmentEntry {
-    /// Outside a block, at [`Segment::start`] — which is the `COPY` header
-    /// line for a whole block, so the header the scanner reads is what
-    /// resolves the schema. Also how a [`ResumeToken`] that paused *between*
-    /// blocks re-enters.
+    /// Outside a block, at [`Segment::start`] — the `COPY` header line for a
+    /// whole block, so the header the scanner reads is what resolves the
+    /// schema. Also how a [`ResumeToken`] that paused *between* blocks
+    /// re-enters.
     Header,
     /// Inside the block's data: reading begins at the first row boundary at
     /// or after [`Segment::start`], and the schema comes from the map's own
@@ -1457,15 +1217,12 @@ enum SegmentEntry {
 /// One contiguous piece of one `COPY` block that a sub-stream replays.
 ///
 /// **The two offsets are not a byte range, and the difference is what makes
-/// the pieces tile.** `start` is where the *search* for this piece's first row
-/// begins; the piece's first row is the one starting just past the first LF at
-/// or after it. `limit` is not where reading stops either: the piece runs
-/// through the line that *ends* at the first LF at or after `limit`, which is
-/// exactly the row the next piece's search then skips. So a row that straddles
-/// a cut belongs to the piece before it, once, and no cut has to land on a row
-/// boundary — which is what lets a source advise cuts (block starts, or
-/// anywhere at all) that know nothing about rows
-/// (`docs/design/decisions.md`, "D51").
+/// the pieces tile** (`docs/design/decisions.md`, "D51"). `start` is where the
+/// *search* for this piece's first row begins: its first row is the one just
+/// past the first LF at or after it. `limit` is not where reading stops: the
+/// piece runs through the line that *ends* at the first LF at or after
+/// `limit`, which is the row the next piece's search then skips. So a row
+/// straddling a cut belongs to the piece before it, once.
 #[derive(Debug, Clone)]
 struct Segment {
     block: CopyBlock,
@@ -1477,12 +1234,9 @@ struct Segment {
 impl Segment {
     /// The bytes this piece is responsible for, for balancing sub-streams
     /// against each other. Approximate at both ends by exactly one row, which
-    /// is why nothing reads it as an extent.
-    ///
-    /// Measured from the block's **data**, so the first piece is not charged
-    /// for the header line it also covers: the header is not work, and on a
-    /// small block charging for it is enough to push the piece after it into
-    /// a neighbour's group.
+    /// is why nothing reads it as an extent. Measured from the block's
+    /// **data**, so the first piece is not charged for the header line it also
+    /// covers.
     fn weight(&self) -> u64 {
         self.limit.saturating_sub(self.start.max(self.block.data_offset))
     }
@@ -1512,9 +1266,7 @@ impl StreamShared {
 
     /// Attach the plan-level notes [`plan_partitions`] returned — a plain
     /// `Vec`, not a `Mutex` slot, because they are known in full before any
-    /// sub-stream is built and never change after (unlike `resolved_schema`
-    /// and `comparison_notes`, which the replay loop updates as it reads
-    /// blocks).
+    /// sub-stream is built and never change after.
     fn with_plan_notes(mut self, plan_notes: Vec<PlanNote>) -> Self {
         self.plan_notes = plan_notes;
         self
@@ -1541,9 +1293,7 @@ impl StreamShared {
 ///
 /// The three places a block becomes active — a `COPY` header the scanner
 /// read, the first row of a headerless block, and a partition that started
-/// inside a block and took the header off the map — differ only in where the
-/// header and the field count come from, so they share this rather than
-/// carrying three copies of the same six steps that would drift apart.
+/// inside a block — differ only in where the header and field count come from.
 fn activate(
     header: CopyHeader,
     header_offset: u64,
@@ -1578,16 +1328,12 @@ fn activate(
 /// further than `end` — the byte just past the first LF in `[from, end)`, or
 /// `None` when there is none.
 ///
-/// **A partition never resyncs by handing the scanner a mid-row byte.** The
-/// scanner in its `InCopy` state treats every line as a row, and the tail of a
-/// row can be the two bytes `\.` — a value ending in an escaped backslash, cut
-/// between the two — which it would read as the block's terminator. I7's
-/// guarantee that `\.` cannot open a data line is about a *line start*, so it
-/// covers a scanner started here and does not cover one started mid-row.
-///
-/// The read is one chunk in the common case and is re-read by the segment's
-/// own loop immediately after; on a block-decoding source it lands inside the
-/// block that segment was going to decode anyway.
+/// **A partition never resyncs by handing the scanner a mid-row byte**
+/// (`docs/design/decisions.md`, "D51"). The scanner in its `InCopy` state
+/// treats every line as a row, and a row's tail can be the two bytes `\.`,
+/// which it would read as the block's terminator; I7's guarantee is about a
+/// *line start*, so it covers a scanner started here and not one started
+/// mid-row.
 async fn first_row_start(
     source: &dyn ByteRangeSource,
     from: u64,
@@ -1621,10 +1367,8 @@ struct MappedTable {
 }
 
 /// The two checks that are about the *request* rather than about the file, so
-/// they fire before a byte is read and regardless of whether the table turns
-/// up: a projection naming a column twice is wrong whatever the file holds,
-/// and a resume token from another query would otherwise be discovered only
-/// once its first block resolved.
+/// they fire before a byte is read and whether or not the table turns up: a
+/// duplicate projection column, and a resume token from another query.
 fn validate_request(
     query_options: &QueryOptions,
     resume: Option<&ResumeToken>,
@@ -1646,11 +1390,8 @@ fn validate_request(
 /// Pass 1 of a query, whole: load or start the map, capture the preamble,
 /// extend the map until this query's table is settled, then narrow the
 /// name-only matches to at most one candidate and take their census. Yields
-/// no rows — see the module docs.
-///
-/// **Both entry points run exactly this**, which is what makes a partitioned
-/// replay map the file once rather than once per sub-stream, and what makes
-/// the two agree about which blocks a query covers.
+/// no rows — see the module docs. **Both entry points run exactly this**, so a
+/// partitioned replay maps the file once rather than once per sub-stream.
 async fn map_for_query(
     source: &dyn ByteRangeSource,
     table: &str,
@@ -1662,32 +1403,24 @@ async fn map_for_query(
 
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Four reasons to start cold: nothing to resume from, so this
-        // query maps from byte 0, and nothing at that path is worth
-        // keeping. Spelled out rather than wildcarded
+        // Four reasons to start cold, spelled out rather than wildcarded
         // (`docs/design/decisions.md`, "D22").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
         | CacheLoad::UnsupportedVersion => DumpIndex::default(),
         // The fifth is a refusal, before a byte of the dump is read: this
-        // cache describes another file, and this query's own mapping pass
-        // would overwrite it.
+        // cache describes another file.
         CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
             return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
         }
     };
 
-    // The first database's preamble always gets captured before anything else
-    // runs, regardless of which table this particular call queries or whether
-    // it ever reaches the file's first `COPY` block itself
-    // (`crate::index::scan_preamble`'s docs) — every `Typed`-mode query needs
-    // it for type resolution below, not just a caller that goes on to persist
-    // a cache. `CacheMode::Disabled` still runs the scan
-    // (`docs/design/decisions.md`, "D30") but
-    // `cache.save` below is a no-op for it, so nothing is written. Persisted
-    // immediately (not deferred to whenever the mapping pass next saves) so it
-    // survives even a caller that polls the stream once and drops it.
+    // The first database's preamble is captured before anything else runs,
+    // whatever table this call queries (`docs/design/decisions.md`, "D30").
+    // `CacheMode::Disabled` still runs the scan, with `cache.save` a no-op.
+    // Persisted immediately, so it survives a caller that polls the stream
+    // once and drops it.
     let first_db_preamble_known = index
         .metadata
         .as_ref()
@@ -1695,9 +1428,8 @@ async fn map_for_query(
         .is_some_and(|db| db.preamble_complete);
     if !first_db_preamble_known {
         // The prepass's spans are kept, not discarded: they tile
-        // `[0, preamble_end)`, which is exactly the prefix `map_forward`
-        // splices its own output onto. Without them the map would start
-        // at the frontier with nothing beneath it and could not tile.
+        // `[0, preamble_end)`, which is the prefix `map_forward` splices its
+        // own output onto.
         let (metadata, spans, preamble_end, roles, tablespaces) =
             scan_preamble(source, scan_options).await?;
         index.metadata = Some(metadata);
@@ -1715,38 +1447,27 @@ async fn map_for_query(
         ScanExtent::UntilTargetSettled => Some((table, selector)),
         ScanExtent::Full => None,
     };
-    // A cancelled mapping pass is an error here rather than a short
-    // stream: the blocks it would replay are only the ones it happened to
-    // reach, and a caller that asked for a table's rows would be handed a
-    // prefix of them with nothing saying so. `pgdq query` never sets the
-    // flag; an embedder that does gets told.
+    // A cancelled mapping pass is an error here rather than a short stream
+    // (`docs/design/decisions.md`, "D48"). `pgdq query` never sets the flag;
+    // an embedder that does gets told.
     if map_forward(source, scan_options, cache, &mut index, target, size).await?
         == MapStop::Interrupted
     {
         return Err(Error::ScanCancelled { scanned_through: index.scanned_through });
     }
 
-    // Read *after* the mapping pass, not before it: `map_forward` states
-    // the metadata at each `\connect`ed database's first `COPY` block, so
-    // a cold query on a `pg_dumpall` types a later database's blocks
-    // exactly as a query after `pgdq parse` does. The two passes are still
-    // strictly ordered (see the module docs), so the schema depends on the
-    // map, never on how far the *row* replay has got.
+    // Read *after* the mapping pass, not before it: `map_forward` states the
+    // metadata at each `\connect`ed database's first `COPY` block, so the
+    // schema depends on the map and never on how far the row replay has got.
     let metadata = index.metadata.clone();
 
-    // One target per query (`docs/design/decisions.md`,
-    // "D49"): narrow the name-only matches down to at
-    // most one `(database, qualified name)` candidate before reading any
-    // of them, so a would-be silent union across schemas or databases
-    // errors instead. `query_options.database`, when given, is the way
-    // out of an otherwise-ambiguous bare or cross-database name — it
-    // filters candidates first, exactly like a `WHERE` clause narrowing
-    // matches rather than picking among them after the fact.
-    //
-    // Because the map is now complete before any row is emitted, this
-    // check runs over every candidate the scan reached rather than
-    // incrementally as blocks turn up — so an ambiguous name errors
-    // before a single row goes out, not partway through one candidate's.
+    // One target per query (`docs/design/decisions.md`, "D49"): narrow the
+    // name-only matches down to at most one `(database, qualified name)`
+    // candidate before reading any of them, so a would-be silent union across
+    // schemas or databases errors instead. `query_options.database`, when
+    // given, filters candidates first rather than picking among them after
+    // the fact. The map being complete already, an ambiguous name errors
+    // before a single row goes out.
     let matches: Vec<CopyBlock> = index
         .blocks_for(table)
         .filter(|b| selector.is_none() || b.database.as_deref() == selector)
@@ -1767,11 +1488,10 @@ async fn map_for_query(
         }
     }
 
-    // **A streamed schema needs no completeness test.** The mapping pass
-    // has finished, `matches` is fixed, and every block in it carries a
-    // census — so the union below is the evidence for exactly the rows
-    // this stream will hand back, on a cold query as much as on a full
-    // scan (`docs/design/decisions.md`, "D35").
+    // **A streamed schema needs no completeness test**
+    // (`docs/design/decisions.md`, "D34"): the mapping pass has finished and
+    // `matches` is fixed, so the union below is the evidence for exactly the
+    // rows this stream will hand back (`docs/design/decisions.md`, "D35").
     let census = union_census(matches.iter());
     Ok(MappedTable { matches, metadata, census })
 }
@@ -1780,20 +1500,13 @@ async fn map_for_query(
 /// footprint allow between them.
 ///
 /// **Both numbers bind, and the bytes bind on the *stream* count rather than
-/// per block**, because the sub-streams are what run at once: capping each
-/// block's cut at the memory allowance and then handing out one sub-stream per
-/// piece would multiply the allowance by the block count. A source that states
-/// no footprint (the declining default) is bounded by `jobs` alone.
-///
-/// **The budget is *solved* against the source's cost, not divided by it**
-/// ([`crate::io::WorkerMemory::affords`], and `docs/design/decisions.md`,
-/// "D4") — the same repair [`Parallelism::fit`] takes on the *recommended*
-/// count, applied to the delivered one.
-///
-/// **Shared with the leader**, which asks the same question of an open `COPY`
-/// block's interior (`crate::leader::scan_region`): how many readers may run
-/// at once is one rule, and the cold path and the cached one differ in what
-/// they cut rather than in how many pieces they may afford.
+/// per block**, the sub-streams being what run at once. A source that states
+/// no footprint (the declining default) is bounded by `jobs` alone, and the
+/// budget is *solved* against the source's cost, never divided by it
+/// ([`crate::io::WorkerMemory::affords`], and
+/// `docs/design/decisions.md`, "D4"). **Shared with the leader**, which asks
+/// the same question of an open `COPY` block's interior
+/// (`crate::leader::scan_region`, and `docs/design/decisions.md`, "D48").
 pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> usize {
     let jobs = parallelism.jobs();
     match parallelism.memory_bytes() {
@@ -1803,20 +1516,15 @@ pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> us
 }
 
 /// Cut `range` into at most `want` pieces where `advice` permits, in ascending
-/// order and tiling it exactly.
-///
-/// `Anywhere` is cut evenly, which is the plain file's answer and the only one
-/// that can balance exactly. `At(offsets)` is cut at the source's own
-/// boundaries — thinned to `want - 1` of them, evenly spaced through the list,
-/// when it offers more than the caller can use — because a cut anywhere else
-/// makes two readers decode one block twice
-/// (`docs/design/decisions.md`, "D15"). An empty `At` is
-/// the source declining to be split, and it yields the range whole.
+/// order and tiling it exactly. `Anywhere` is cut evenly; `At(offsets)` at the
+/// source's own boundaries, thinned to `want - 1` of them and evenly spaced
+/// through the list when it offers more than the caller can use
+/// (`docs/design/decisions.md`, "D15"). An empty `At` is the source declining
+/// to be split, and it yields the range whole.
 ///
 /// **Shared with the leader** (`crate::leader::scan_region`), which cuts an
-/// open block's interior window with it. One cut rule for the two
-/// arrangements, exactly as the piece semantics are one rule
-/// (`docs/design/decisions.md`, "D52").
+/// open block's interior window with it: one cut rule for the two
+/// arrangements (`docs/design/decisions.md`, "D52").
 pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {
     if want <= 1 || range.start >= range.end {
         return vec![range];
@@ -1831,14 +1539,11 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
             let inside: Vec<u64> =
                 offsets.iter().copied().filter(|&o| o > range.start && o < range.end).collect();
             let take = (want - 1).min(inside.len());
-            // `n` offers describe `n + 1` pieces, and what is being spread
-            // evenly is the **pieces**, not the offers: with four offers and
-            // three wanted groups the cuts fall after the second and fourth
-            // piece, not after the second and third offer. `ceil` is what
-            // rounds that the right way, and it keeps the picks strictly
-            // increasing (the step is at least one whole piece, since
-            // `take <= len`), so they need no dedup pass and collapse to "all
-            // of them" when the source offers no more than the caller wants.
+            // `n` offers describe `n + 1` pieces, and what is spread evenly
+            // is the **pieces**, not the offers: with four offers and three
+            // wanted groups the cuts fall after the second and fourth piece.
+            // `ceil` rounds that the right way and keeps the picks strictly
+            // increasing, so they need no dedup pass.
             (1..=take).map(|j| inside[(j * (inside.len() + 1)).div_ceil(take + 1) - 1]).collect()
         }
     };
@@ -1854,11 +1559,11 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 }
 
 /// One fact about *this query's plan*, as opposed to a fact about the file
-/// ([`crate::diagnostic::Diagnostic`]/[`crate::diagnostic::DiagnosticKind`],
-/// L1), about one column (`crate::resolve::ResolvedSchema::notes`, L2) or
-/// about one predicate term ([`ComparisonNote`], L4) — a fourth channel,
-/// deliberately not a widening of any of the other three
-/// (`docs/design/decisions.md`, "D19"). See [`TableStream::plan_notes`].
+/// ([`crate::diagnostic::DiagnosticKind`], L1), about one column
+/// (`crate::resolve::ResolvedSchema::notes`, L2) or about one predicate term
+/// ([`ComparisonNote`], L4) — a fourth channel, deliberately not a widening of
+/// any of the other three (`docs/design/decisions.md`, "D19"). See
+/// [`TableStream::plan_notes`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanNote {
     pub kind: PlanNoteKind,
@@ -1868,18 +1573,13 @@ pub struct PlanNote {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNoteKind {
     /// `--jobs` asked for more concurrent sub-streams than the stated memory
-    /// budget affords, once both terms of the charge [`worker_count`] solves
-    /// against are counted:
-    /// `footprint` is the widest touched block's decode cost
-    /// (`crate::io::Partitioning::partition_bytes`) and `max_source_span` is
-    /// the second term (`crate::batch::QueryOptions::max_source_span`) —
-    /// `None` where no span was charged, in which case the footprint alone was
-    /// too big for `memory_bytes`. It reads `None` for two different reasons
-    /// and names the number in neither: the caller left the span unbounded, or
-    /// this source retains by the partition and the footprint has already
-    /// charged for what a batch pins (`crate::io::RetainedUnit`). Never a reason to refuse the
-    /// query: `planned` sub-streams run regardless, this only names why there
-    /// are not `requested` of them and what would raise it.
+    /// budget affords, counting both terms of the charge [`worker_count`]
+    /// solves against: `footprint`, the widest touched block's decode cost
+    /// (`crate::io::Partitioning::partition_bytes`), and `max_source_span`
+    /// (`crate::batch::QueryOptions::max_source_span`) — `None` where the
+    /// caller left the span unbounded or the source retains by the partition
+    /// (`crate::io::RetainedUnit`). Never a reason to refuse the query:
+    /// `planned` sub-streams run regardless.
     ParallelismBudgetLimited {
         requested: usize,
         planned: usize,
@@ -1889,31 +1589,20 @@ pub enum PlanNoteKind {
     },
     /// The `.xz` source this query reads declined the block-decode path: the
     /// memory budget in force does not afford one block-decoding reader, so it
-    /// reads through the streaming decoder instead and every **backward** read
-    /// decodes forward from its block's start rather than landing in a
-    /// retained block (`docs/design/decisions.md`, "D15"). Never a reason to
-    /// refuse the query — the rows are the same —
-    /// though the forward mapping pass pays too, a declined source advising a
-    /// single partition and so reading serially whatever `--jobs` says; what
-    /// it names is the number to raise and how far.
-    /// `max_block_uncompressed` is the file's largest block and `block_count`
-    /// says how much seeking the file would otherwise offer, while
-    /// `reader_bytes` is what the budget was actually compared against: one
-    /// reader together with the retention list the pool keeps beside it, four
-    /// block units in all — a block pool holding one block being the
-    /// un-poolable shape it rejects by name ([`crate::io`], `BlockCache`) —
-    /// plus the chunk buffer and the decoder's own retention. The source
-    /// states that number rather than this note deriving it
-    /// ([`crate::io::ByteRangeSource::block_decode_bytes`]), so the recourse
-    /// and the rule cannot part company.
+    /// reads through the streaming decoder and every **backward** read decodes
+    /// forward from its block's start (`docs/design/decisions.md`, "D15").
+    /// Never a reason to refuse the query, though the forward mapping pass
+    /// pays too: a declined source advises a single partition and so reads
+    /// serially whatever `--jobs` says.
     ///
-    /// **Not a [`crate::diagnostic::DiagnosticKind`], for the reason its
-    /// sibling above is not one.** The *file* having no seek structure at all
-    /// is one — `NonSeekableCompressedSource`, which a persisted seek table
-    /// replays with no dump present. This is a decline, and a decline is a
-    /// property of the file **and this run's budget**: two queries over one
-    /// file with different `memory_bytes` get different answers, so it
-    /// belongs to a plan and not to a file.
+    /// `max_block_uncompressed` is the file's largest block, `block_count`
+    /// says how much seeking the file would otherwise offer, and
+    /// `reader_bytes` is what the budget was compared against — stated by the
+    /// source rather than derived here
+    /// ([`crate::io::ByteRangeSource::block_decode_bytes`]).
+    ///
+    /// **Not a [`crate::diagnostic::DiagnosticKind`]**, for the reason its
+    /// sibling above is not one (`docs/design/decisions.md`, "D19").
     CompressedBlockPathDeclined {
         block_count: usize,
         max_block_uncompressed: u64,
@@ -1922,30 +1611,21 @@ pub enum PlanNoteKind {
     },
     /// The budget in force affords less than a **single** reader of this
     /// source, so the plan runs at the one-slot floors already inside the
-    /// mechanism rather than at anything a count could raise
-    /// (`crate::stream::worker_count`'s `.max(1)`, `crate::io::BufferPool`'s
-    /// clamp to one slot, and a compressed source's refusal to decode a whole
-    /// block).
+    /// mechanism (`crate::stream::worker_count`'s `.max(1)`,
+    /// `crate::io::BufferPool`'s clamp to one slot, and a compressed source's
+    /// refusal to decode a whole block).
     ///
     /// **It is the arrangement below the reserve, named rather than left to
-    /// emerge.** A memory limit at or under `crate::io::MEMORY_RESERVE` leaves
-    /// `limit − reserve` at zero, and a user in a tight cgroup is otherwise
-    /// told nothing at all: [`PlanNoteKind::ParallelismBudgetLimited`] fires
-    /// only where `requested` exceeds what was planned, which at one worker is
-    /// never (`docs/design/decisions.md`, "D3").
+    /// emerge** (`docs/design/decisions.md`, "D3"): a memory limit at or under
+    /// `crate::io::MEMORY_RESERVE` leaves the budget at zero, and
+    /// [`PlanNoteKind::ParallelismBudgetLimited`] fires only where `requested`
+    /// exceeds what was planned, which at one worker is never.
     ///
-    /// **Keyed on the budget against what one reader holds, and on nothing
-    /// about the limit.** The library is not told where its budget came from,
-    /// and the arithmetic is the same fact either way: `unit_bytes` is
-    /// `crate::io::Partitioning::partition_bytes` — the widest touched
-    /// block's, for a compressed source — and `memory_bytes` is the budget it
-    /// was compared against. The **span** term is deliberately not added: a
-    /// plain `query` at the 64 MiB default already exceeds the budget once a
-    /// batch's pin is counted, which is a property of that arrangement and not
-    /// a starved allocation.
-    ///
-    /// Never a reason to refuse anything: the rows are the same, and what it
-    /// names is why one reader is all there is.
+    /// `unit_bytes` is `crate::io::Partitioning::partition_bytes` and
+    /// `memory_bytes` the budget it was compared against. The **span** term is
+    /// deliberately not added: a plain `query` at the default budget already
+    /// exceeds it once a batch's pin is counted. Never a reason to refuse
+    /// anything.
     AllocationBelowFloor { unit_bytes: u64, memory_bytes: u64 },
 }
 
@@ -1988,10 +1668,9 @@ impl PlanNote {
         }
     }
 
-    /// One sentence naming why the plan fell short of what was asked, and
-    /// what to raise to close the gap — phrased in the library's own
-    /// vocabulary rather than any one caller's flag names, exactly as
-    /// [`ComparisonNote::message`] is.
+    /// One sentence naming why the plan fell short of what was asked, and what
+    /// to raise to close the gap — in the library's own vocabulary rather than
+    /// any caller's flag names, as [`ComparisonNote::message`] is.
     pub fn message(&self) -> String {
         match &self.kind {
             PlanNoteKind::ParallelismBudgetLimited {
@@ -2041,25 +1720,14 @@ impl PlanNote {
 /// `docs/design/decisions.md`, "D15").
 ///
 /// **Read off `partitions()`, not off a budget the caller would have to hand
-/// down.** A source that holds a seek table with more than one block and
-/// still advises a *single* partition over the whole of it has declined —
-/// that is exactly the streaming fallback's answer, and it is a comparison
-/// between two values already in hand rather than a rule restated here. What
-/// the source *is* asked for is the number the message names as the recourse
-/// ([`crate::io::ByteRangeSource::block_decode_bytes`]), because deriving that
-/// from the table would be a second copy of the source's own arithmetic.
-///
-/// **Asked over the whole file** rather than over the blocks this query
-/// matched: a query whose rows all sit inside one compressed block would be
-/// advised one partition on the block path too, and reading the decline off
-/// that would announce it against a file that never declined anything. The
-/// answer costs one boundary list — `block_count - 1` offsets, collected and
-/// dropped once per query.
-///
-/// `None` for every plain source, which holds no seek table, and for a file
-/// with no more than one block: that shape has nothing to seek by at any
-/// budget and is already `DiagnosticKind::NonSeekableCompressedSource`, a
-/// property of the file that a persisted table replays with no dump present.
+/// down**: a source holding a seek table with more than one block and still
+/// advising a *single* partition over the whole of it has declined. What the
+/// source *is* asked for is the recourse the message names
+/// ([`crate::io::ByteRangeSource::block_decode_bytes`]). **Asked over the
+/// whole file**, since a query whose rows all sit inside one compressed block
+/// would be advised one partition on the block path too. `None` for every
+/// plain source and for a file with no more than one block, which is already
+/// `DiagnosticKind::NonSeekableCompressedSource`.
 fn compressed_block_path_declined(
     source: &dyn ByteRangeSource,
     parallelism: Parallelism,
@@ -2075,10 +1743,8 @@ fn compressed_block_path_declined(
         table.block_count(),
         table.max_block_uncompressed(),
         // What a reader of this file would have held on the path it declined.
-        // A source advising one partition over a seekable table is a
-        // compressed source by construction, so the fallback is unreachable;
-        // it is written as one rather than unwrapped because nothing in the
-        // trait obliges the two answers to agree.
+        // The fallback is unreachable, but nothing in the trait obliges the
+        // two answers to agree.
         source.block_decode_bytes().unwrap_or(0),
         // The budget actually in force, which is what the source compared its
         // reader against: a caller that stated no number leaves every pool on
@@ -2150,29 +1816,24 @@ fn plan_partitions(
     parallelism: Parallelism,
     max_source_span: Option<usize>,
 ) -> (Vec<Vec<Segment>>, Vec<PlanNote>) {
-    // **Announced before the advice is asked for, not when the first
-    // sub-stream runs.** A compressed source decides from the stated budget
-    // whether it can decode a whole block at all, and that decision is what
-    // its answer here is read off (`ByteRangeSource::partitions`) — so asking
-    // under the mapping pass's budget would plan against a read path the
-    // replay is not going to take. Each sub-stream re-announces the same
-    // value, which is idempotent.
+    // **Announced before the advice is asked for**, since a compressed source
+    // decides from the stated budget whether it can decode a whole block at
+    // all (`ByteRangeSource::partitions`): asking under the mapping pass's
+    // budget would plan against a read path the replay will not take. Each
+    // sub-stream re-announces the same value, idempotently.
     source.hint_parallelism(parallelism);
     // A block's own advice, and its footprint, are read once per block; the
-    // footprint that decides the sub-stream count is the largest of them,
-    // since one sub-stream may read any of the blocks.
+    // footprint that decides the sub-stream count is the largest of them.
     let advice: Vec<Partitioning> =
         matches.iter().map(|b| source.partitions(b.data_offset..b.end_offset)).collect();
     let footprint = advice.iter().map(Partitioning::partition_bytes).max().unwrap_or(0);
     // The span is a cost of a chunk-shaped source only. `all` over an empty
-    // advice would be vacuously true and drop the charge on a match set that
-    // stated nothing, so the emptiness is tested rather than left to fall out.
+    // advice would be vacuously true, so the emptiness is tested.
     let retains_partitions =
         !advice.is_empty() && advice.iter().all(|a| a.retained_unit() == RetainedUnit::Partition);
     let charged_span = if retains_partitions { None } else { max_source_span };
     // The charge the count is solved against: the largest per-worker footprint
-    // above, carrying that source's own shared pool term, plus whatever span this
-    // caller pins on top of it.
+    // above, carrying that source's shared pool term, plus this caller's span.
     let charge = advice
         .iter()
         .map(Partitioning::worker_memory)
@@ -2184,19 +1845,15 @@ fn plan_partitions(
     };
     let workers = worker_count(parallelism, charge).max(1);
     let requested = parallelism.jobs();
-    // The decline comes first because it is the wider fact: it is about how
-    // every read of this file is served, where the count below is about how
-    // many readers there are.
+    // The decline comes first because it is the wider fact: how every read of
+    // this file is served, where the count below is how many readers there are.
     let mut notes: Vec<PlanNote> =
         compressed_block_path_declined(source, parallelism).into_iter().collect();
-    // **Below one reader's worth the floors decide, and they are silent.** The
-    // count note below fires only where `requested` exceeds what was planned,
-    // which at one worker never happens — so a budget too small for a single
-    // partition would otherwise reach a user as unexplained slowness. Charged
-    // against the footprint alone rather than against the whole charge: the span
-    // term puts an ordinary plain `query` at the default budget over the line,
-    // which is that arrangement's own property and not a starved allocation
-    // (`docs/design/decisions.md`, "D3").
+    // **Below one reader's worth the floors decide, and they are silent**, the
+    // count note below firing only where `requested` exceeds what was planned.
+    // Charged against the footprint alone rather than the whole charge: the
+    // span term puts an ordinary plain `query` at the default budget over the
+    // line (`docs/design/decisions.md`, "D3").
     if let Some(memory_bytes) = parallelism.memory_bytes()
         && footprint > 0
         && memory_bytes < footprint
@@ -2222,9 +1879,8 @@ fn plan_partitions(
             None => workers,
         };
         // The **data** range is what is cut, not `[header_offset, …)`: a cut
-        // inside the header line would give the first piece no rows and the
-        // second all of them. The first piece is then extended back over the
-        // header, which is where its schema comes from.
+        // inside the header line would give the first piece no rows. The first
+        // piece is then extended back over the header, its schema's source.
         for (i, piece) in
             cut(block.data_offset..block.end_offset, advice, want).into_iter().enumerate()
         {
@@ -2240,16 +1896,11 @@ fn plan_partitions(
 }
 
 /// Group `segments` into at most `streams` contiguous, byte-balanced runs,
-/// dropping the empty ones.
-///
-/// **Contiguous rather than round-robin**, so a sub-stream reads a run of the
-/// file rather than every *n*th piece of it: on a block-decoding source that
-/// is what keeps one worker's blocks its own, and it is what makes
-/// concatenating the sub-streams in order equal the serial replay.
-///
-/// The group is chosen from a segment's **midpoint** in the running total, so
-/// one huge piece beside many small ones does not push everything after it
-/// into the last group.
+/// dropping the empty ones. **Contiguous rather than round-robin**, so
+/// concatenating the sub-streams in order equals the serial replay
+/// (`docs/design/decisions.md`, "D51"). The group is chosen from a segment's
+/// **midpoint** in the running total, so one huge piece beside many small ones
+/// does not push everything after it into the last group.
 fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
     let streams = streams.max(1).min(segments.len().max(1));
     if streams == 1 {
@@ -2277,12 +1928,10 @@ fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
 }
 
 /// Pass 2, for one sub-stream: replay `segments` in file order, in whatever
-/// batches `plan.query_options` asks for.
-///
-/// This is the whole of the row path, and there is one of it: a serial
-/// [`table_stream`] is this function over one segment per matching block, and
-/// a partitioned replay is this function over each group
-/// [`plan_partitions`] handed out.
+/// batches `plan.query_options` asks for. This is the whole of the row path: a
+/// serial [`table_stream`] is this function over one segment per matching
+/// block, a partitioned replay it over each group [`plan_partitions`] handed
+/// out.
 fn replay<'a>(
     source: &'a dyn ByteRangeSource,
     plan: Arc<ReplayPlan>,
@@ -2296,31 +1945,24 @@ fn replay<'a>(
         let query_options = &plan.query_options;
 
         // The chunk length every segment's replay repeats, announced once for
-        // the whole sub-stream rather than per segment
-        // (`ByteRangeSource::hint_read_size`). The budget comes from
-        // `QueryOptions`, not `ScanOptions`: the mapping pass has finished, and
-        // a query states the two passes' parallelism separately because they
-        // split differently. Every sub-stream of a partitioned replay announces
-        // the same three values, so the announcements are idempotent whatever
-        // order the caller polls them in.
+        // the whole sub-stream (`ByteRangeSource::hint_read_size`). The budget
+        // comes from `QueryOptions`, not `ScanOptions`: a query states the two
+        // passes' parallelism separately because they split differently.
         source.hint_read_size(scan_options.chunk_size);
         source.hint_parallelism(query_options.parallelism);
-        // **The replay loop could not grant a wait even if the shipped loops
-        // armed the bound**, which is what makes stating it here different
-        // from the two mapping ones: `RetainedChunks` pins every chunk a batch
-        // has taken a `Utf8View` into until that batch flushes, and the batch
-        // then goes to the caller, so this loop holds many buffers at once and
-        // can never be the task that frees one it would be waiting on
-        // (`ByteRangeSource::hint_wait_policy`). Stated here rather than left
-        // to the default, so that whatever the mapping pass granted is
-        // un-stated on the same source.
+        // **The replay loop could not grant a wait**
+        // (`docs/design/decisions.md`, "D5"): `RetainedChunks` pins every
+        // chunk a batch has taken a `Utf8View` into until that batch flushes,
+        // so this loop can never be the task that frees one it waits on.
+        // Stated rather than left to the default, so whatever the mapping pass
+        // granted is un-stated on the same source.
         source.hint_wait_policy(WaitPolicy::NeverWait);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
 
         // Only the first segment can start mid-row (a resumed stream paused
         // between two of one block's rows); its scanner and in-flight batcher
-        // are prebuilt here so `resume_state`'s logic isn't duplicated below.
+        // are prebuilt here.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) if token.in_copy.is_some() => {
                 let (scanner, active, resolved) =
@@ -2337,8 +1979,8 @@ fn replay<'a>(
         };
         // A matching header with no column list, waiting on its first row to
         // learn the field count. Never non-empty across a resume point: a
-        // stream only yields right after a flush, and by then any pending
-        // headerless block has already seen its first row (see `active`).
+        // stream only yields right after a flush, by which time a pending
+        // headerless block has seen its first row.
         let mut pending: Option<(CopyHeader, u64, Option<String>)> = None;
         // One buffer for the whole replay: every row of a block has the same
         // width, so after the first it never grows again.
@@ -2355,11 +1997,10 @@ fn replay<'a>(
                 None => match segment.entry {
                     SegmentEntry::Header => CopyScanner::resume(segment.start, None),
                     SegmentEntry::Interior => {
-                        // Where this piece's first row starts — and whether it
-                        // has one at all. A piece whose search lands past its
-                        // own limit is a piece two cuts fell inside one row
-                        // of: the row belongs to the piece before it, and this
-                        // one is empty rather than a duplicate.
+                        // Where this piece's first row starts — and whether
+                        // it has one at all. A piece whose search lands past
+                        // its own limit had two cuts fall inside one row: the
+                        // row belongs to the piece before it.
                         let Some(row_start) =
                             first_row_start(source, segment.start, seg_end, scan_options).await?
                         else {
@@ -2370,9 +2011,8 @@ fn replay<'a>(
                         }
                         // No header line is in range, so the schema comes off
                         // the map's own copy of it — resolved now when the
-                        // header named its columns, and deferred to the first
-                        // row when it did not, exactly as the live paths below
-                        // do.
+                        // header named its columns, deferred to the first row
+                        // when it did not, as the live paths below do.
                         if block.header.columns.is_empty() {
                             pending = Some((
                                 block.header.clone(),
@@ -2398,9 +2038,9 @@ fn replay<'a>(
             let mut read_pos = scanner.position();
             let mut carry = ChunkCarry::new();
             let mut chunks = RetainedChunks::new();
-            // Set once this segment has read the line that ends at or past its
-            // limit — the last line it owns. The next segment's search skips
-            // exactly that line, so the two tile.
+            // Set once this segment has read the line that ends at or past
+            // its limit — the last it owns, and the one the next segment's
+            // search skips, so the two tile.
             let mut past_limit = false;
 
             loop {
@@ -2420,14 +2060,13 @@ fn replay<'a>(
                     let (span, span_eof) = carry.span(pass, &chunk, eof);
                     // `pos` is 0 at the top of every pass — `take_consumed`
                     // resets it — so this is the absolute offset of `span[0]`,
-                    // which is what turns a row's file offset into a position
-                    // inside `validated` below.
+                    // which turns a row's file offset into a position in
+                    // `validated` below.
                     let span_base = scanner.position();
-                    // The span's rows, validated as UTF-8 in one SIMD pass
-                    // rather than one `from_utf8` per field. **Taken on the
-                    // first row that will decode something**, so a query that
-                    // decodes nothing pays nothing
-                    // (`docs/design/decisions.md`, "D27").
+                    // The span's rows, validated as UTF-8 in one pass rather
+                    // than one `from_utf8` per field. **Taken on the first row
+                    // that will decode something**, so a query that decodes
+                    // nothing pays nothing (`docs/design/decisions.md`, "D27").
                     let mut validated: Option<&str> = None;
                     while let Some(event) = scanner.next_event(span, span_eof)? {
                         match event {
@@ -2486,9 +2125,8 @@ fn replay<'a>(
                                     } else {
                                         unchecked
                                     };
-                                    // One split per row, shared: the terms
-                                    // find the boundaries they read and
-                                    // `push_row` finds the rest.
+                                    // One split per row, shared
+                                    // (`docs/design/decisions.md`, "D28").
                                     split.restart();
                                     let keep = filter.matches(
                                         raw,
@@ -2535,18 +2173,16 @@ fn replay<'a>(
                                     yield batch;
                                 }
                             }
-                            // A replay segment covers exactly one block, so the
-                            // only non-row line in range is the `COPY` header
-                            // itself, which arrives as `CopyStart`. Nothing
-                            // outside a block — a dollar-quoted region or a
-                            // large-object region included — can fall inside one.
+                            // A replay segment covers exactly one block, so
+                            // the only non-row line in range is the `COPY`
+                            // header itself, which arrives as `CopyStart`.
                             Event::Line(_) | Event::DollarQuoteEnd(_) => {}
                             Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                         }
                         // The line just consumed ended at or past this
-                        // segment's limit, so it was the last one this segment
-                        // owns. Checked after the event rather than before it,
-                        // because the straddling row is *this* segment's.
+                        // segment's limit, so it was its last. Checked after
+                        // the event, the straddling row being *this*
+                        // segment's.
                         if scanner.position() > seg_limit {
                             past_limit = true;
                             break;
@@ -2559,9 +2195,8 @@ fn replay<'a>(
                 }
 
                 // Everything before the scanner's new position has already had
-                // its chance to be referenced by a zero-copy view (that happens
-                // synchronously above, before we get here), so it's safe to
-                // drop. Which chunks that actually releases is
+                // its chance to be referenced by a zero-copy view, so it is
+                // safe to drop. Which chunks that releases is
                 // `RetainedChunks`' rule, not this loop's.
                 chunks.release_through(scanner.position());
 
@@ -2578,8 +2213,8 @@ fn replay<'a>(
 
             // A segment that stopped at its limit rather than at the block's
             // `\.` has no `CopyEnd` to flush it, so it flushes here — and
-            // clears the block state either way, since the next segment may be
-            // a different block with a different schema.
+            // clears the block state either way, the next segment possibly
+            // being a different block with a different schema.
             pending = None;
             if let Some((_, _, mut batcher, _, _)) = active.take()
                 && !batcher.is_empty()
@@ -2601,35 +2236,28 @@ fn replay<'a>(
 /// [`CopyHeader::matches`]). A table with zero rows yields no batches.
 ///
 /// `resume` continues a previous consumption from a [`ResumeToken`] it
-/// produced; `None` starts from the beginning of `source`. A token whose
-/// query fingerprint disagrees with `query_options` is
-/// `Error::ResumeQueryMismatch`.
+/// produced; `None` starts from the beginning of `source`. A token whose query
+/// fingerprint disagrees with `query_options` is `Error::ResumeQueryMismatch`.
 ///
-/// `query_options.filters` applies the post-parse row filter
-/// (`docs/design/decisions.md`, "D54") as a
-/// conjunction: an empty list yields every row, and otherwise a row is kept
-/// only if **every** term matches, tested after that row has been fully
-/// unescaped. A term referencing a column absent from a matching block's own
-/// schema is `Error::UnknownPredicateColumn`.
+/// `query_options.filters` applies the post-parse row filter as a conjunction
+/// (`docs/design/decisions.md`, "D54"): an empty list yields every row, and
+/// otherwise a row is kept only if **every** term matches, tested after that
+/// row has been fully unescaped. A term referencing a column absent from a
+/// matching block's own schema is `Error::UnknownPredicateColumn`.
 ///
 /// `query_options.projection` decides which columns are materialized
 /// (`docs/design/decisions.md`, "D28"). It cuts the schema
 /// [`TableStream::resolved_schema`] reports as well as the batches, may
 /// reorder, and may be empty — a zero-column projection yields batches
-/// carrying a row count and nothing else. A filter term may name a column
-/// the projection does not.
+/// carrying a row count and nothing else. A filter term may name a column the
+/// projection does not.
 ///
 /// `cache` controls structure-cache consulting
-/// (`docs/design/decisions.md`, "D22").
-/// `CacheMode::Enabled` persists the map at completed blocks as the mapping
-/// pass advances — and always at the block it stops on — so a later query
-/// against the same dump starts from a nearer
-/// frontier; `CacheMode::Disabled` runs identically but writes nothing,
-/// mapping in memory for this call only. Either way rows come from replaying
-/// mapped blocks, never from the mapping pass itself — see the module docs.
-///
-/// `query_options.scan_extent` decides how much of the file the mapping pass
-/// walks before any row comes back; see [`ScanExtent`].
+/// (`docs/design/decisions.md`, "D22"): `CacheMode::Enabled` persists the map
+/// as the mapping pass advances, `CacheMode::Disabled` runs identically but
+/// writes nothing. Either way rows come from replaying mapped blocks, never
+/// from the mapping pass itself. `query_options.scan_extent` decides how much
+/// of the file that pass walks before any row comes back; see [`ScanExtent`].
 pub fn table_stream<'a>(
     source: &'a dyn ByteRangeSource,
     table: &str,
@@ -2650,9 +2278,8 @@ pub fn table_stream<'a>(
             map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
 
         // Pass 2: replay each matching block for its rows, as one segment
-        // apiece. A resumed stream picks up inside this same list — every
-        // resume point is inside a mapped block by construction, so there is
-        // no live-scan fallback and no cache bookkeeping left to do here.
+        // apiece. A resumed stream picks up inside this same list, every
+        // resume point being inside a mapped block by construction.
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = mapped
             .matches
@@ -2691,12 +2318,9 @@ pub fn table_stream<'a>(
 /// ([`ByteRangeSource::partitions`]) and no finer than
 /// `query_options.parallelism` allows. **The caller runs them**, concurrently
 /// or not: running them in order and concatenating is exactly what
-/// [`table_stream`] yields, so the serial path is not a second implementation.
-///
-/// The returned `Vec` is never empty and never holds an empty sub-stream
-/// beyond the degenerate one a table with no rows produces.
-/// The serial state is one sub-stream, which is the serial replay, whether or
-/// not it carries a budget of its own.
+/// [`table_stream`] yields. The returned `Vec` is never empty and never holds
+/// an empty sub-stream beyond the degenerate one a table with no rows
+/// produces; the serial state is one sub-stream.
 ///
 /// **Each sub-stream carries its own schema, notes and position.**
 /// [`TableStream::resolved_schema`] is empty on a sub-stream until that
@@ -2704,16 +2328,14 @@ pub fn table_stream<'a>(
 /// consuming anything reads it off the *first* sub-stream, whose first segment
 /// starts at a `COPY` header. [`TableStream::resume_token`] is stamped with the
 /// partition it came from, so feeding one back to [`table_stream`] is
-/// `Error::ResumeQueryMismatch` rather than a silent superset of the rows that
-/// partition had left — resuming a partitioned replay is not supported.
+/// `Error::ResumeQueryMismatch`: resuming a partitioned replay is not
+/// supported.
 ///
-/// **What N sub-streams cost resident is N times one, and N is chosen against
-/// that whole cost rather than half of it.** Each holds its own read chunks
-/// for as long as its in-flight batch pins them (`QueryOptions::max_source_span`),
-/// and the source holds `Partitioning::partition_bytes` per concurrent reader
-/// on top — so `query_options.parallelism`'s byte half divides by the *sum* of
-/// the two, and N is capped there before `query_options.parallelism`'s job
-/// half is ever consulted (`docs/design/decisions.md`, "D4").
+/// **What N sub-streams cost resident is N times one**, and N is solved
+/// against the sum of what a sub-stream's in-flight batch pins
+/// (`QueryOptions::max_source_span`) and what the source charges a concurrent
+/// reader (`Partitioning::partition_bytes`)
+/// (`docs/design/decisions.md`, "D4").
 pub async fn table_stream_partitions<'a>(
     source: &'a dyn ByteRangeSource,
     table: &str,
@@ -2752,7 +2374,7 @@ pub async fn table_stream_partitions<'a>(
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers
-/// (the CLI) with no ambient `tokio` runtime — nesting this inside one
+/// with no ambient `tokio` runtime — nesting this inside one
 /// (e.g. a `#[tokio::main]` function) panics, same as any other
 /// `Runtime::block_on` call.
 pub struct BlockingTableIter<'a> {
@@ -2787,10 +2409,9 @@ mod tests {
     use super::*;
 
     /// The throttle's whole rule, over measured quantities rather than a
-    /// clock. What it has to get right at the edges: a save that cost nothing
-    /// never blocks another (the first save of a segment, and every save under
-    /// `CacheMode::Disabled`), and a save that cost something blocks the next
-    /// one until the scan has done `K` times that much work.
+    /// clock: a save that cost nothing never blocks another, and a save that
+    /// cost something blocks the next one until the scan has done `K` times
+    /// that much work.
     #[test]
     fn a_save_is_due_once_the_scan_has_outrun_the_last_ones_cost() {
         let ms = Duration::from_millis;
@@ -2803,8 +2424,7 @@ mod tests {
         assert!(SaveThrottle::due_after(ms(200), ms(10)));
         assert!(SaveThrottle::due_after(ms(1000), ms(10)));
 
-        // A dump whose blocks are tens of seconds apart and whose saves are
-        // sub-second is untouched.
+        // Blocks far apart and saves far cheaper than they are: untouched.
         assert!(SaveThrottle::due_after(Duration::from_secs(45), ms(300)));
 
         // And the pathological one: a cache expensive enough that saving it
@@ -2821,19 +2441,11 @@ mod tests {
     }
 
     /// **The guard no caller can trip, pinned so it stays that way.**
-    /// [`resolve_block`] refuses `Typed` resolution against metadata that has
-    /// no complete entry for the block's database, and every one of its three
-    /// call sites now satisfies that by construction: `table_stream` reads
-    /// `index.metadata` *after* its mapping pass, and the mapping pass states a
-    /// database's DDL at that database's first `COPY` block, strictly before
-    /// any of its blocks can be replayed.
-    ///
-    /// That makes `Error::MetadataNotScanned` unreachable through every public
-    /// entry point — and makes this check the thing standing between a future
-    /// reordering (moving the clone back above `map_forward`, say) and a
-    /// silently wrongly-typed row. An untested guard is one that gets deleted
-    /// as dead code, so it is exercised directly here rather than through an
-    /// integration test that can no longer construct the state.
+    /// [`resolve_block`] refuses `Typed` resolution against metadata with no
+    /// complete entry for the block's database, which every call site
+    /// satisfies by construction — so `Error::MetadataNotScanned` is
+    /// unreachable through every public entry point, and this is what stands
+    /// between a future reordering and a silently wrongly-typed row.
     #[test]
     fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
         use crate::preamble::DatabaseMetadata;
@@ -2860,15 +2472,14 @@ mod tests {
             "{err:?}"
         );
 
-        // The same block in the database the metadata *does* cover resolves,
-        // so the refusal is about coverage and not about the lookup failing.
+        // The same block in a database the metadata covers resolves, so the
+        // refusal is about coverage and not about the lookup failing.
         assert!(
             resolve_block(&header, 1, Some(&metadata), Some("first"), SchemaMode::Typed, &[])
                 .is_ok()
         );
 
-        // And `Strings` never looks, so it is never refused — the documented
-        // way out of the error.
+        // `Strings` never looks, so it is never refused.
         assert!(
             resolve_block(&header, 1, Some(&metadata), Some("second"), SchemaMode::Strings, &[])
                 .is_ok()
@@ -2877,8 +2488,7 @@ mod tests {
 
     /// The two properties every cut has to have, whatever the source advised:
     /// the pieces **tile** the range exactly, in ascending order, and there
-    /// are never more of them than the caller asked for. Everything above
-    /// this — which rows a piece owns — rests on the tiling.
+    /// are never more of them than the caller asked for.
     fn assert_tiles(range: Range<u64>, pieces: &[Range<u64>], want: usize) {
         assert!(!pieces.is_empty(), "a cut always yields at least the range itself");
         assert!(pieces.len() <= want.max(1), "{} pieces for want {want}", pieces.len());
@@ -2891,8 +2501,7 @@ mod tests {
 
     /// `Anywhere` is cut evenly, and never into pieces of zero bytes: a range
     /// shorter than the worker count is cut into one piece per byte and no
-    /// finer, since a piece with no bytes in it can own no rows and would
-    /// only cost a sub-stream a resync read.
+    /// finer, a piece with no bytes being able to own no rows.
     #[test]
     fn an_anywhere_source_is_cut_evenly_and_never_below_a_byte() {
         let advice = Partitioning::anywhere(1 << 20);
@@ -2905,9 +2514,9 @@ mod tests {
         assert_eq!(pieces, vec![10..11, 11..12, 12..13]);
     }
 
-    /// `At` is cut only where the source offered, and thinned evenly when it
-    /// offers more boundaries than the caller can use — an offer of exactly
-    /// as many as are wanted is taken whole.
+    /// `At` is cut only where the source offered, thinned evenly when it
+    /// offers more boundaries than the caller can use, and taken whole when it
+    /// offers exactly as many as are wanted.
     #[test]
     fn an_at_source_is_cut_only_where_it_offered() {
         let advice = Partitioning::at(vec![20, 40, 60, 80], 1 << 20);
@@ -2915,8 +2524,7 @@ mod tests {
         assert_eq!(cut(0..100, &advice, 9), vec![0..20, 20..40, 40..60, 60..80, 80..100]);
         assert_eq!(cut(0..100, &advice, 3), vec![0..40, 40..80, 80..100]);
         assert_eq!(cut(0..100, &advice, 2), vec![0..60, 60..100]);
-        // Boundaries outside the range are not cuts, and the range's own ends
-        // are not either — `n` offers inside describe `n + 1` pieces.
+        // Boundaries outside the range are not cuts, nor are its own ends.
         assert_eq!(cut(40..80, &advice, 4), vec![40..60, 60..80]);
         for want in [1usize, 2, 3, 4, 5, 9] {
             assert_tiles(0..100, &cut(0..100, &advice, want), want);
@@ -2940,13 +2548,11 @@ mod tests {
         let per = WorkerMemory::per_worker;
         assert_eq!(worker_count(eight, per(32 << 20)), 2);
         assert_eq!(worker_count(eight, per(4 << 20)), 8);
-        // A footprint larger than the whole budget still leaves one worker:
-        // the serial path is what a caller with no room for two gets.
+        // A footprint larger than the whole budget still leaves one worker.
         assert_eq!(worker_count(eight, per(128 << 20)), 1);
         // A source that states no footprint is bounded by `jobs` alone.
         assert_eq!(worker_count(eight, per(0)), 8);
-        // The serial state is one worker, not a pool of one — and a budget it
-        // carries changes nothing, the count being what caps the count.
+        // The serial state is one worker, whatever budget it carries.
         assert_eq!(worker_count(Parallelism::default(), per(32 << 20)), 1);
         assert_eq!(worker_count(Parallelism::workers(1, 1 << 30), per(32 << 20)), 1);
     }
@@ -2954,9 +2560,7 @@ mod tests {
     /// **A shared pool is billed, so the budget is solved rather than
     /// divided.** The block pool retains a unit for every slot but the one a
     /// reader is filling — `POOL_DEPTH - 1` of them below four readers and
-    /// `jobs - 1` above — which a per-worker charge does not carry: at 16 MiB
-    /// a worker over a four-slot pool of 16 MiB units, a 64 MiB budget affords
-    /// one where a division would have said four.
+    /// `jobs - 1` above — which a per-worker charge does not carry.
     #[test]
     fn a_shared_pool_is_billed_before_the_count_is_handed_back() {
         let eight = Parallelism::workers(8, 64 << 20);
@@ -2964,8 +2568,7 @@ mod tests {
         // One reader costs 16 + 3 x 16 = 64 MiB, two cost 32 + 48 = 80 — so
         // this budget affords exactly one where the division said four.
         assert_eq!(worker_count(eight, charge), 1);
-        // One byte short of it, and nothing fits at all: the serial floor is
-        // what is left, which is never zero.
+        // One byte short, and the serial floor is what is left: never zero.
         assert_eq!(worker_count(Parallelism::workers(8, (64 << 20) - 1), charge), 1);
         // Above the pool's own depth every reader takes a slot with it, so the
         // cost is `n x 32 - 16` MiB: 240 MiB affords eight, and 224 seven.
@@ -2974,9 +2577,8 @@ mod tests {
     }
 
     /// Grouping keeps the pieces in file order and contiguous, which is what
-    /// makes concatenating the sub-streams equal the serial replay — and it
-    /// balances by bytes, so one long piece beside many short ones does not
-    /// land in the same group as all of them.
+    /// makes concatenating the sub-streams equal the serial replay, and it
+    /// balances by bytes.
     #[test]
     fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
         let block = CopyBlock {
@@ -3005,7 +2607,7 @@ mod tests {
         assert_eq!(groups.len(), 5);
         assert!(groups.iter().all(|g| g.len() == 1));
 
-        // Contiguity and order: flattening the groups is the original list.
+        // Contiguity and order: flattening the groups gives the input list.
         for streams in [1usize, 2, 3, 4, 5, 9] {
             let groups = distribute(segments.clone(), streams);
             assert!(groups.len() <= streams.max(1));
@@ -3014,8 +2616,7 @@ mod tests {
             assert_eq!(flat, vec![0, 10, 20, 30, 40], "streams {streams}");
         }
 
-        // One piece carrying most of the bytes gets a group of its own rather
-        // than dragging its neighbours in with it.
+        // One piece carrying most of the bytes gets a group of its own.
         let lopsided = vec![piece(0, 1), piece(1, 2), piece(2, 1002), piece(1002, 1003)];
         let groups = distribute(lopsided, 2);
         assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2]);
@@ -3031,9 +2632,8 @@ mod tests {
     }
 
     /// A sub-stream's resume token is stamped with the partition it came out
-    /// of, so it cannot be mistaken for a whole stream's — which is what
-    /// turns "resuming a partition is unsupported" into an error rather than
-    /// into a silent superset of the rows that partition had left.
+    /// of, so "resuming a partition is unsupported" is an error rather than a
+    /// silent superset of the rows that partition had left.
     #[test]
     fn a_partitions_fingerprint_differs_from_the_whole_streams() {
         let options = QueryOptions::default();

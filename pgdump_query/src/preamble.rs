@@ -11,13 +11,10 @@
 //! is then [`dump_metadata_from_spans`] — a derived view over the resulting
 //! spans, computed once, never a second line-by-line scan
 //! (`docs/design/decisions.md`, "D34").
-//! A second line-by-line state machine running in parallel with the span
-//! builder is the shape this deliberately replaced — it held the same fact
-//! twice and the two could diverge.
 //!
-//! **Store what the dump said, never what we concluded.** Declared types are
+//! It stores what the dump said, never what we concluded: declared types are
 //! kept as strings exactly as written (`character varying(16)`, not a parsed
-//! `(base, typmod)` pair) — the cache is L1 and cannot hold an L2 conclusion
+//! `(base, typmod)` pair), L1 being unable to hold an L2 conclusion
 //! (`docs/design/decisions.md`, "D74"). Resolving those strings into Arrow
 //! types is [`crate::pgtype`]'s job.
 //!
@@ -54,16 +51,13 @@ pub struct DatabaseMetadata {
     pub name: Option<String>,
     /// Whether this database's preamble was read to completion. Always
     /// `true` for every entry a [`crate::index::build_index`] full scan or a
-    /// [`crate::index::scan_preamble`] prepass produces — both only ever
-    /// finish a database's segment, never leave one half-read. What it
-    /// composes with is `DumpIndex::scanned_through`: the *first* database's
-    /// metadata is guaranteed present after any scan that persists a cache
-    /// (the preamble prepass — see `docs/design/decisions.md`, "D36"), and every later `\connect`ed
-    /// database's is stated when the mapping pass reaches that database's
-    /// first `COPY` block. So the list covers exactly the databases whose
-    /// data the scan reached — a caller walking `DumpIndex::metadata` still
-    /// checks this per-database rather than assuming the whole list is
-    /// complete just because a cache file exists.
+    /// [`crate::index::scan_preamble`] prepass produces, neither ever leaving
+    /// a segment half-read. The *first* database's metadata is present after
+    /// any scan that persists a cache (the preamble prepass,
+    /// `docs/design/decisions.md`, "D36") and every later `\connect`ed
+    /// database's once the mapping pass reaches its first `COPY` block, so a
+    /// caller walking `DumpIndex::metadata` checks this per database rather
+    /// than assuming the whole list is complete.
     pub preamble_complete: bool,
     pub server_version: Option<String>,
     pub pg_dump_version: Option<String>,
@@ -105,12 +99,11 @@ impl DatabaseMetadata {
 
 /// A `CREATE COLLATION` statement, as the DDL wrote it.
 ///
-/// **Two fields, because two are all a plain dump carries that anything here
-/// reads** (I42): the collation's name, and whether the statement said
-/// `deterministic = false`. The provider and locale are in the file too and
-/// are deliberately not kept — nothing resolves a collation's *order* from
-/// them, and a plain dump omits the `collversion` that would be needed to
-/// (I42), so keeping them would be storing a fact with no reader.
+/// Two fields, all a plain dump carries that anything here reads (I42): the
+/// collation's name, and whether the statement said `deterministic = false`.
+/// The provider and locale are in the file and deliberately not kept —
+/// nothing resolves a collation's *order* from them, a plain dump omitting
+/// the `collversion` that would be needed to (I42).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollationDef {
     /// Schema-qualified name, verbatim as the DDL wrote it
@@ -119,12 +112,11 @@ pub struct CollationDef {
     pub name: String,
     /// `false` only where the statement carried `deterministic = false`.
     ///
-    /// **The absence of the clause is the server's own default, not a
-    /// conclusion of ours**: `CREATE COLLATION` defaults to deterministic, and
-    /// `pg_dump` writes `, deterministic = false` unconditionally wherever the
-    /// catalog says otherwise — it is not gated on any dump option (I42). So a
-    /// statement with no clause is a collation the file *states* is
-    /// deterministic, and `true` here is that statement rather than a guess.
+    /// The absence of the clause is the server's own default, not a
+    /// conclusion of ours: `CREATE COLLATION` defaults to deterministic, and
+    /// `pg_dump` writes `, deterministic = false` wherever the catalog says
+    /// otherwise, gated on no dump option (I42). So `true` here is what the
+    /// file states, not a guess.
     pub deterministic: bool,
 }
 
@@ -139,17 +131,17 @@ pub struct Extension {
 
 /// One column of a `CREATE TABLE`, as the DDL wrote it.
 ///
-/// **Every field is the dump's own text, never a conclusion** (see the module
-/// docs). `declared_type` is the literal type string (`character
-/// varying(16)`), and `collation` is the `COLLATE` clause's reference exactly
-/// as written — `pg_catalog."C"`, schema-qualified and quoted the way
-/// `pg_dump` writes it (I37).
+/// Every field is the dump's own text, never a conclusion (see the module
+/// docs): `declared_type` is the literal type string (`character
+/// varying(16)`), and `collation` the `COLLATE` clause's reference exactly as
+/// written — `pg_catalog."C"`, schema-qualified and quoted the way `pg_dump`
+/// writes it (I37).
 ///
 /// **`None` is "no clause", not "the database default".** `pg_dump` omits the
 /// clause whenever a column's collation is its *type's* default, so a bare
 /// `name` column is `C` and a bare `text` column is the database's — two
-/// different facts behind one absence. [`crate::pgtype::comparison_for`] is
-/// where that is decided.
+/// facts behind one absence, decided by
+/// [`crate::pgtype::comparison_for`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnDef {
     pub name: String,
@@ -195,32 +187,27 @@ pub enum TypeKind {
     /// Field name -> declared type, in declaration order — or `None` when the
     /// body held a fragment this grammar could not parse.
     ///
-    /// **All-or-nothing, unlike `CREATE TABLE`'s column list**, which keeps
-    /// its `filter_map`. `record_out` is positional and carries no field
-    /// names (I23), so there is no join to recover a dropped field the way
-    /// `crate::resolve::resolve_columns` recovers a dropped column by name:
-    /// a three-field type parsed as two would make every valid row of it
-    /// fail the field-count check, and relaxing that check would decode
-    /// field 3's text as field 2's type. `Some(vec![])` is a real
-    /// zero-field composite (`CREATE TYPE x AS ();`, I23) and maps to a
-    /// zero-field `Struct`; `None` resolves the column to `Utf8View`, like
-    /// anything else the grammar does not recognize.
+    /// All-or-nothing, unlike `CREATE TABLE`'s column list: `record_out` is
+    /// positional and carries no field names (I23), so there is no join to
+    /// recover a dropped field the way `crate::resolve::resolve_columns`
+    /// recovers a dropped column by name, and a three-field type parsed as
+    /// two would fail the field-count check on every valid row of it.
+    /// `Some(vec![])` is a real zero-field composite (`CREATE TYPE x AS ();`,
+    /// I23) and maps to a zero-field `Struct`; `None` resolves the column to
+    /// `Utf8View`, like anything else the grammar does not recognize.
     Composite { fields: Option<Vec<ColumnDef>> },
     /// The subtype named in the `CREATE TYPE ... AS RANGE (...)` parameter
     /// list, if the grammar found one, plus the name of its auto-created
-    /// companion multirange type (PG14+), if the DDL named one explicitly
-    /// via `multirange_type_name` (I10, `docs/design/postgres-invariants.md`).
-    /// `pg_dump` never emits a `CREATE TYPE` for that companion at all — this
-    /// parameter is its only trace in the file, which is why `crate::pgtype`
-    /// needs it to resolve a column declared with that name instead of
-    /// falling through to `Unknown`.
+    /// companion multirange type (PG14+) if the DDL named one explicitly via
+    /// `multirange_type_name` (I10). `pg_dump` emits no `CREATE TYPE` for that
+    /// companion, so this parameter is its only trace in the file and what
+    /// `crate::pgtype` resolves a column declared with that name from.
     ///
-    /// `canonical` is the `canonical = <function>` parameter, verbatim as the
-    /// DDL spelled it, which `pg_dump` writes whenever `pg_range.rngcanonical`
-    /// is set (I46). It is kept because its *presence* is the fact
-    /// `crate::pgtype` needs: a user's canonical function is arbitrary
-    /// server-side code, so knowing it exists licenses declining the column
-    /// rather than reproducing the rewriting it performs.
+    /// `canonical` is the `canonical = <function>` parameter, verbatim, which
+    /// `pg_dump` writes whenever `pg_range.rngcanonical` is set (I46). Its
+    /// *presence* is the fact `crate::pgtype` needs: a user's canonical
+    /// function is arbitrary server-side code, so knowing it exists licenses
+    /// declining the column rather than reproducing its rewriting.
     Range {
         subtype: Option<String>,
         multirange_type_name: Option<String>,
@@ -288,9 +275,8 @@ pub(crate) fn parse_qualified_name(s: &str) -> Option<(String, usize)> {
 /// returning the index just past its closing quote — or `bytes.len()` for an
 /// unterminated one, which lets a caller's scan terminate rather than loop.
 ///
-/// **One implementation of the quoting rule**: both scanners below have to
-/// know that `''` is an escaped quote rather than the end of the string, and
-/// nothing would make a copy each of them agree.
+/// One implementation of the quoting rule, `''` being an escaped quote rather
+/// than the end of the string, for both scanners below.
 fn skip_quoted(bytes: &[u8], open_idx: usize) -> usize {
     debug_assert_eq!(bytes.get(open_idx), Some(&b'\''));
     let mut i = open_idx + 1;
@@ -475,12 +461,10 @@ const STOP_WORDS: &[&str] = &[
     "CONSTRAINT",
 ];
 
-/// Strip `/* ... */` block comments — not real SQL syntax `pg_dump` itself
-/// would need to escape around, but the literal shape it writes a
+/// Strip `/* ... */` block comments — the literal shape `pg_dump` writes a
 /// `--binary-upgrade`-recreated dropped column's placeholder type in
-/// (`INTEGER /* dummy */`, I5) — confirmed:
-/// `fixtures/*/edge_cases/binary-upgrade.sql`. Assumes no nesting, which
-/// matches every comment `pg_dump` itself emits.
+/// (`INTEGER /* dummy */`, I5; `fixtures/*/edge_cases/binary-upgrade.sql`).
+/// Assumes no nesting, which matches every comment `pg_dump` emits.
 fn strip_block_comments(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -581,21 +565,18 @@ fn parse_create_extension(rest: &str) -> Option<Extension> {
 /// …][, rules = …]);` — or the `CREATE COLLATION <name> FROM <other>;` copy
 /// form, which carries no option list at all.
 ///
-/// **Only `deterministic` is read**, and only at the option list's top level.
-/// A `locale = 'x, deterministic = false'` literal is stepped over the way
-/// [`extract_collation`]'s scan steps over a `DEFAULT`, because
-/// [`split_top_level_commas`] already respects quoting — which matters here
-/// rather than being theoretical, since an ICU locale is an arbitrary string
-/// the server never re-quotes on the way out.
+/// Only `deterministic` is read, and only at the option list's top level: a
+/// `locale = 'x, deterministic = false'` literal is stepped over, since
+/// [`split_top_level_commas`] respects quoting and an ICU locale is an
+/// arbitrary string the server never re-quotes on the way out.
 ///
-/// The copy form is `deterministic = true` by this parse and is *not* the same
+/// The copy form parses as `deterministic = true`, which is *not* the same
 /// claim as reading the source collation's own determinism: `CREATE COLLATION
-/// x FROM y` copies `collisdeterministic` along with everything else, so a
-/// copy of a non-deterministic collation is non-deterministic and this parse
-/// would call it deterministic. `pg_dump` never writes the copy form — it
-/// emits the full option list for every collation it dumps (I42) — so the
-/// shape is reachable only from a hand-written file, where under-claiming
-/// costs a note that is not printed rather than a wrong row set.
+/// x FROM y` copies `collisdeterministic`, so a copy of a non-deterministic
+/// collation would be called deterministic here. `pg_dump` never writes the
+/// copy form (I42), so the shape is reachable only from a hand-written file,
+/// where under-claiming costs an unprinted note rather than a wrong row
+/// set.
 fn parse_create_collation(rest: &str) -> Option<CollationDef> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let after = rest[consumed..].trim_start();
@@ -679,9 +660,8 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
 /// Parse the body of `ALTER TYPE <name> ADD VALUE '<label>' [BEFORE|AFTER
 /// '<other>'];` — the `--binary-upgrade` shape for enum labels (I6) — after
 /// `ALTER TYPE` has already been stripped. `BEFORE`/`AFTER` is ignored: a
-/// `--binary-upgrade` dump only ever emits these in declaration order to
-/// recreate the type from scratch (confirmed:
-/// `fixtures/*/types/binary-upgrade.sql`), so appending is equivalent to
+/// `--binary-upgrade` dump only ever emits these in declaration order
+/// (`fixtures/*/types/binary-upgrade.sql`), so appending is equivalent to
 /// respecting them. Used by [`crate::map::classify`] to recognize the
 /// statement as its own [`crate::map::SpanBody::AlterTypeAddValue`] span,
 /// since that module has no already-open `TypeDef` to fold into the way
@@ -695,18 +675,13 @@ pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, Str
 }
 
 /// Record one `CREATE TYPE`/`CREATE DOMAIN` into `types`, keyed on the type
-/// name rather than on the statement: **one entry per type, not one per
-/// statement.**
+/// name rather than on the statement — one entry per type, not one per
+/// statement (`docs/design/decisions.md`, "D36"): `pg_dump` emits a completed
+/// C-level base type *twice* under one name, `CREATE TYPE x;` under
+/// `SHELL TYPE` and then the full definition (I11).
 ///
-/// `pg_dump` emits a completed C-level base type *twice* under one name —
-/// `CREATE TYPE x;` under `SHELL TYPE`, then the full definition (I11) — so a
-/// list that appended both would carry two entries for one type. Every lookup
-/// is a first-match `find` by name, so the shell would win and
-/// [`TypeKind::Base`] would be unreachable from any real dump; `pgdq info`'s
-/// `user-defined types` count would count that type twice.
-///
-/// Two rules, and the second is what makes the shell lose: a definition for a
-/// name already present **replaces** it, and a [`TypeKind::Shell`] never
+/// Two rules, the second of which is what makes the shell lose: a definition
+/// for a name already present **replaces** it, and a [`TypeKind::Shell`] never
 /// replaces anything. Replacement is in place, so the list stays in the order
 /// each name was first declared.
 fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
@@ -741,15 +716,13 @@ fn ident_after(haystack: &str, marker: &str) -> Option<String> {
 }
 
 /// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
-/// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty —
-/// `PUBLIC` is a pseudo-role, never reported as one. Case-insensitive
-/// because [`ident_after`]'s [`Cursor::parse_ident`] lowercases every
-/// *unquoted* identifier it parses (matching how Postgres itself folds one),
-/// so the literal keyword always arrives here as `public`, not `PUBLIC` — the
-/// same fold a role genuinely (and unusually) named `public` would go through
-/// if written unquoted, which is an irreducible ambiguity in the dump text
-/// itself: `GRANT ... TO public;` unquoted always means the pseudo-role to
-/// PostgreSQL's own parser too, never a same-named real role.
+/// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty:
+/// `PUBLIC` is never reported as a role. Case-insensitive because
+/// [`ident_after`]'s [`Cursor::parse_ident`] lowercases every *unquoted*
+/// identifier, so the keyword arrives here as `public` — the same fold an
+/// unquoted role genuinely named `public` goes through, which is an
+/// irreducible ambiguity in the dump text: `GRANT ... TO public;` unquoted
+/// means the pseudo-role to PostgreSQL's own parser too.
 pub(crate) fn insert_role(roles: &mut BTreeSet<String>, role: String) {
     if !role.eq_ignore_ascii_case("PUBLIC") {
         roles.insert(role);
@@ -784,12 +757,11 @@ pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: 
 ///   empty string (`SET default_tablespace = '';`), which means "revert to
 ///   the database's own default," not a reference to a real tablespace.
 ///
-/// Matching is by marker substring, the same tolerance [`parse_toc_header_line`]
-/// documents for the TOC grammar: this only ever feeds enrichment, never a
-/// span boundary, so an identifier that happens to contain a marker text
-/// (`" TO "`, `" FROM "`) is a known, accepted source of a missed or
-/// mis-attributed reference rather than something this module defends
-/// against.
+/// Matching is by marker substring, the same tolerance
+/// [`parse_toc_header_line`] documents: this only feeds enrichment, never a
+/// span boundary, so an identifier containing a marker text (`" TO "`,
+/// `" FROM "`) is an accepted source of a missed or mis-attributed
+/// reference.
 pub(crate) fn extract_statement_cross_refs(
     stmt: &str,
     roles: &mut BTreeSet<String>,
@@ -827,13 +799,10 @@ pub(crate) fn extract_statement_cross_refs(
 }
 
 /// The four statement shapes [`classify_statement`] recognizes directly.
-/// `ALTER TYPE ADD VALUE` isn't among them: it doesn't introduce a new
-/// object, it mutates an already-declared one, which needs a different
-/// signature — [`parse_alter_type_add_value_body`] for
-/// [`crate::map::classify`] (no open `TypeDef` to fold into; gets its own
-/// [`crate::map::SpanBody::AlterTypeAddValue`] span instead) and
-/// [`fold_alter_type_add_value`] for [`dump_metadata_from_spans`] (which
-/// folds that span's label into the `TypeDef` it targets).
+/// `ALTER TYPE ADD VALUE` is not among them: it mutates an already-declared
+/// object rather than introducing one, so it has its own two entry points —
+/// [`parse_alter_type_add_value_body`] for [`crate::map::classify`] and
+/// [`fold_alter_type_add_value`] for [`dump_metadata_from_spans`].
 #[derive(Debug)]
 pub(crate) enum StatementShape {
     Table { name: String, columns: Vec<ColumnDef> },
@@ -884,26 +853,23 @@ pub(crate) fn parse_connect(line: &str) -> Option<String> {
 /// double-quoted identifier or a `--` line comment, and what the last
 /// non-whitespace byte was.
 ///
-/// **Byte-level rather than `char`-level, and that is what makes it cheap.**
-/// Every byte it acts on — `'`, `"`, `-`, `(`, `)`, `\n` — is ASCII, and an
-/// ASCII byte never occurs inside a multi-byte UTF-8 sequence, so the scan
-/// gives the same answer over raw bytes as over a validated `str` and needs
-/// no validation pass in front of it. That is what lets [`crate::map`]'s
-/// `INSERT` runs be classified without a `String` per line
-/// (`docs/design/decisions.md`, "D33").
+/// Byte-level rather than `char`-level: every byte it acts on — `'`, `"`,
+/// `-`, `(`, `)`, `\n` — is ASCII, and an ASCII byte never occurs inside a
+/// multi-byte UTF-8 sequence, so the scan gives the same answer over raw bytes
+/// as over a validated `str` and needs no validation pass in front of it.
+/// That is what lets [`crate::map`]'s `INSERT` runs be classified without a
+/// `String` per line (`docs/design/decisions.md`, "D33").
 ///
-/// **It is incremental, and a caller may split the statement's bytes
-/// anywhere.** A `''`, `""` or `--` pair straddling two [`feed`](Self::feed)
-/// calls is carried across in `pending`, so a reader walking a file in chunks
-/// gets the same answer as one holding the whole statement in a buffer —
-/// which is what a future `INSERT` row reader will need of it.
+/// **A caller may split the statement's bytes anywhere.** A `''`, `""` or
+/// `--` pair straddling two [`feed`](Self::feed) calls is carried across in
+/// `pending`, so a reader walking a file in chunks gets the same answer as one
+/// holding the whole statement in a buffer.
 ///
-/// Tracking double quotes and comments is not decoration: without it an
-/// apostrophe inside either (`public."it's"`, `-- it's here`) would open a
-/// string that never closes and swallow every following line into the same
-/// pending statement forever. `E'…'` escapes are not a concern — `pg_dump`
-/// sets `standard_conforming_strings = on`, so `''` is the only in-string
-/// escape.
+/// Double quotes and comments are tracked because without it an apostrophe
+/// inside either (`public."it's"`, `-- it's here`) would open a string that
+/// never closes and swallow every following line. `E'…'` escapes are not a
+/// concern — `pg_dump` sets `standard_conforming_strings = on`, so `''` is the
+/// only in-string escape.
 #[derive(Debug, Clone)]
 pub(crate) struct StatementScan {
     depth: i32,
@@ -1145,13 +1111,11 @@ impl StatementScan {
     }
 
     /// Whether the bytes so far end inside an open single-quoted string or
-    /// double-quoted identifier — the one case where a line that
-    /// syntactically *looks* like a fresh boundary (starts with `--`, in
-    /// [`crate::map`]'s case) is really just string content spanning
-    /// physical lines, and must not be treated as one. `pg_dump` never emits
-    /// a `--` comment inside a non-dollar-quoted statement's own parens, so
-    /// paren depth doesn't gate that the same way — only being mid-string
-    /// does.
+    /// double-quoted identifier — the one case where a line that *looks* like
+    /// a fresh boundary (starts with `--`, in [`crate::map`]'s case) is really
+    /// string content spanning physical lines. `pg_dump` never emits a `--`
+    /// comment inside a non-dollar-quoted statement's own parens, so paren
+    /// depth does not gate this the same way.
     pub(crate) fn in_quote(&self) -> bool {
         self.in_string_settled() || self.in_dquote_settled()
     }
@@ -1167,10 +1131,9 @@ impl StatementScan {
 
 /// Whether `buf` (everything accumulated for a statement so far) is a
 /// complete SQL statement — [`StatementScan::complete`] over a buffer a
-/// caller is holding whole rather than feeding incrementally. The two share
-/// one implementation on purpose: [`crate::map`] decides the same question
-/// two ways, from a `String` for a DDL statement whose text it still needs
-/// and from raw bytes for an `INSERT` run whose text nothing reads.
+/// caller holds whole rather than feeding incrementally. One implementation
+/// for both, [`crate::map`] deciding the same question from a `String` for a
+/// DDL statement and from raw bytes for an `INSERT` run.
 pub(crate) fn statement_complete(buf: &str) -> bool {
     let mut scan = StatementScan::new();
     scan.feed(buf.as_bytes());
@@ -1206,13 +1169,11 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 }
 
 /// Build a [`DumpMetadata`] by walking already-classified [`crate::map::Span`]s
-/// instead of raw lines — the derived view
-/// `docs/design/decisions.md`'s "D34" calls for: multi-database segmenting on
+/// instead of raw lines — the derived view `docs/design/decisions.md`'s "D34"
+/// calls for: multi-database segmenting on
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
-/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] — see
-/// `docs/design/decisions.md` for why those three
-/// span kinds needed to exist before this could be written.
+/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`].
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
 /// end of file, or (per I1) the start of the current database's first `COPY`
@@ -1303,9 +1264,8 @@ mod tests {
 
     /// Feed `lines` (joined with `\n`, the same way `crate::map::Builder`
     /// accumulates a statement) to [`classify_statement`] and unwrap the
-    /// result — these tests exercise the DDL grammar directly rather than
-    /// through a database-segmenting builder, since nothing about that
-    /// grammar depends on one.
+    /// result — the DDL grammar exercised directly, nothing about it
+    /// depending on a database-segmenting builder.
     fn parse(lines: &[&str]) -> StatementShape {
         classify_statement(&lines.join("\n")).unwrap()
     }
@@ -1411,9 +1371,8 @@ mod tests {
 
     /// The scan is top-level and quote-aware, so neither a string literal
     /// containing the word nor a parenthesized `CHECK` expression using the
-    /// operator can be mistaken for the column's own clause. Neither shape is
-    /// hypothetical — `pg_dump` writes a column's `CHECK` inline for a domain
-    /// and its `DEFAULT` inline for a table.
+    /// operator can be mistaken for the column's own clause — `pg_dump`
+    /// writes both inline.
     #[test]
     fn a_collate_inside_a_literal_or_an_expression_is_not_the_column_s() {
         let (_, cols) = parse_table(&[
@@ -1487,13 +1446,11 @@ mod tests {
         );
     }
 
-    /// The `--binary-upgrade` fold (I6) is [`dump_metadata_from_spans`]'s job
-    /// now, not `classify_statement`'s — it needs an already-open `TypeDef`
-    /// to fold the label into, which a span-level view of one statement at a
-    /// time doesn't have. Exercised here at the level it now lives at: a
-    /// `TypeDef` span for the empty enum, an unrelated `Unparsed` span for
-    /// the `binary_upgrade_set_next_pg_enum_oid` noise every real dump
-    /// interleaves (I6), and two `AlterTypeAddValue` spans.
+    /// The `--binary-upgrade` fold (I6) is [`dump_metadata_from_spans`]'s
+    /// job, not `classify_statement`'s, needing an already-open `TypeDef` to
+    /// fold the label into: a `TypeDef` span for the empty enum, an unrelated
+    /// `Unparsed` span for the `binary_upgrade_set_next_pg_enum_oid` noise
+    /// every real dump interleaves (I6), and two `AlterTypeAddValue` spans.
     #[test]
     fn binary_upgrade_enum_labels_arrive_via_alter_type() {
         let spans = vec![
@@ -1612,14 +1569,12 @@ mod tests {
 
     /// `pg_dump` writes `canonical = <function>` for any range type whose
     /// `pg_range.rngcanonical` is set (I10), in the same `key = value` body
-    /// every other parameter is in — so capturing it is one more branch of
-    /// the split that was already discarding it. The value is kept verbatim,
-    /// like `subtype`: nothing reads it beyond its presence.
+    /// every other parameter is in; the value is kept verbatim, like
+    /// `subtype`, nothing reading it beyond its presence.
     ///
-    /// The body here is every parameter `dumpRangeType` can append, in the
-    /// order it appends them, so the two the grammar keeps are found past the
-    /// three it still steps over — `collation` in particular, whose value
-    /// carries a quoted identifier and a `.`.
+    /// The body here is every parameter `dumpRangeType` can append, in order,
+    /// so the two the grammar keeps are found past the three it steps over —
+    /// `collation` in particular, whose value carries a quoted identifier.
     #[test]
     fn parses_a_range_type_declaring_a_canonical_function() {
         let def = parse_type(&[
@@ -1755,11 +1710,10 @@ mod tests {
 
     /// I9: every `\connect`-segment in a real `pg_dumpall`/concatenated dump
     /// carries its own version-header pair ahead of its own `\connect`, not
-    /// just the first one — see `postgres-invariants.md`. Guards against a
-    /// second database's headers being silently dropped because they land
-    /// while `current` is still the first database's already-
-    /// `preamble_complete` segment, the gap the concatenated fixture
-    /// (`fixtures/*/edge_cases/create.sql` x2) surfaced.
+    /// just the first one. Guards against a second database's headers being
+    /// dropped because they land while `current` is still the first
+    /// database's already-`preamble_complete` segment
+    /// (`fixtures/*/edge_cases/create.sql` x2).
     #[test]
     fn a_later_connect_segment_keeps_its_own_version_headers_too() {
         let meta = dump_metadata_from_spans(&[

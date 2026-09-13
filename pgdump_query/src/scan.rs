@@ -68,9 +68,7 @@ pub struct CopyEnd {
 /// nor part of a dollar-quoted string — DDL, comments, blank lines, or a
 /// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
 /// `crate::preamble` parses into a [`crate::index::DumpMetadata`]; every
-/// other caller ignores it. Cheap to emit: outside a COPY block's data rows,
-/// which never reach this arm, the preamble of even a multi-database dump is
-/// a few thousand lines against however many billion rows follow it.
+/// other caller ignores it. A COPY block's data rows never reach this arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line<'a> {
     /// Absolute file offset of the line's first byte.
@@ -358,13 +356,8 @@ pub enum ChunkPass {
 /// newline. That is the entirety of what the next chunk needs joined to it,
 /// so a chunk is scanned in two passes: the carry with the chunk's first
 /// line-terminated prefix appended, then the chunk's remainder **where it
-/// lies**. Per chunk that is one row's worth of copying instead of the
-/// chunk's whole length.
-///
-/// *Rejected:* one growing buffer per read loop, appended to per chunk and
-/// `drain`ed of the consumed prefix — it copies every byte of the file twice,
-/// once in and once when the remainder shifts down
-/// (`docs/design/decisions.md`, "D23").
+/// lies** (`docs/design/decisions.md`, "D23"). Per chunk that is one row's
+/// worth of copying instead of the chunk's whole length.
 ///
 /// **Handing the scanner two buffers within one chunk costs it nothing**:
 /// [`CopyScanner::base`] is an absolute file offset, and each pass is
@@ -373,8 +366,7 @@ pub enum ChunkPass {
 ///
 /// The degenerate case is a chunk containing no newline at all: the whole of
 /// it joins the carry and the in-place pass is empty, which is the growth
-/// [`ScanOptions::max_line_bytes`] bounds and is what the one-buffer shape
-/// did on every chunk.
+/// [`ScanOptions::max_line_bytes`] bounds.
 #[derive(Debug, Default)]
 pub struct ChunkCarry {
     /// The unterminated line carried over, extended by [`absorb`](Self::absorb)
@@ -459,26 +451,19 @@ impl ChunkCarry {
 
 /// Bytes requested per read from the source, unless a caller says otherwise.
 ///
-/// **One measured constant, not a runtime probe** — the shipped default is the
-/// one that is worst-case-best across the device classes measured
-/// (`docs/design/measurements.md`, "What the read chunk size is worth"). It is
-/// named rather than written inline because it is what
-/// [`ScanOptions::chunk_size`] is compared against, and because the
-/// measurement that chose it has to be able to name the value it chose.
-///
-/// **It is public for callers that compare against or scale from the
-/// default**, which `ScanOptions::default().chunk_size` serves badly: it
-/// builds a whole options struct to read one number, and it is not a constant
-/// expression. The CLI's use of it is incidental to that.
+/// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
+/// is worst-case-best across the device classes measured
+/// (`docs/design/measurements.md`, "What the read chunk size is worth").
+/// Public and named because it is what [`ScanOptions::chunk_size`] is
+/// compared against and what callers scale from.
 ///
 /// **Raising it costs memory, not pooling.** Every read loop announces the
 /// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so
-/// a chunk of any size is kept and reused by the local source's buffer pool
-/// rather than allocated and zeroed afresh. What a larger chunk does cost is
-/// the pool holding four buffers of it, or the caller's stated memory
-/// budget's worth ([`crate::Parallelism`], defaulting to
-/// [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count falls
-/// out of that budget, so the cost levels off rather than scaling with the size
+/// a chunk of any size is kept and reused by the local source's buffer pool.
+/// What a larger chunk costs is the pool holding four buffers of it, or the
+/// caller's stated memory budget's worth ([`crate::Parallelism`], defaulting
+/// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count
+/// falls out of that budget, so the cost levels off
 /// (`docs/design/decisions.md`, "D9").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 
@@ -498,31 +483,24 @@ pub struct ScanOptions {
     /// and reports that it was interrupted
     /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
     ///
-    /// **Chunk granularity is the point**, not `CopyEnd` granularity: a
-    /// single `COPY` block can be hundreds of gigabytes, and a Ctrl-C that
-    /// waits for the next block boundary cannot be told from a hang.
-    ///
-    /// **Only [`crate::stream::map_forward`] reads it** — the mapping loop
-    /// behind `pgdq parse` and `pgdq query`, which is the one driver with
-    /// somewhere to put a partial result (the cache) and a way to report the
-    /// stop. [`scan`] and the eager producers built on it ignore it, because
-    /// stopping there would be indistinguishable from reaching EOF and would
-    /// silently truncate the index they return.
+    /// Chunk granularity, not `CopyEnd` granularity, and read by
+    /// [`crate::stream::map_forward`] alone — the one driver with somewhere
+    /// to put a partial result and a way to report the stop. [`scan`] and the
+    /// eager producers built on it ignore it
+    /// (`docs/design/decisions.md`, "D26").
     pub cancel: Option<Arc<AtomicBool>>,
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code
     /// path this build has rather than a pool of one
     /// (`docs/design/decisions.md`, "D1").
     ///
-    /// **The read path's buffer budget reads it, and so does the leader's
-    /// scheduler.** Every read loop announces it to the source
+    /// Every read loop announces it to the source
     /// ([`crate::ByteRangeSource::hint_parallelism`]), which sizes its pools
     /// from the byte half and — for a compressed source — decides from it
     /// whether a whole block can be decoded at all. The `jobs` half is that
     /// source's retention depth, one decoded block per concurrent reader, and
     /// the ceiling on the workers [`crate::leader::scan_region`] runs over an
-    /// open `COPY` block's interior — which the mapping pass offers it at every
-    /// `COPY` header, so this is what a `parse` splits by.
+    /// open `COPY` block's interior, which is what a `parse` splits by.
     pub parallelism: Parallelism,
 }
 
@@ -560,14 +538,9 @@ where
 {
     let size = source.size().await?;
     // Named "preamble scan", not "scan": this function's only real caller is
-    // `index::scan_preamble` (`build_index`/`build_map` run it too, but
-    // neither is reachable from a shipped command — see their own docs), and
-    // `stream::map_forward` — the loop a `pgdq parse` or `query`'s mapping
-    // pass actually spends most of its time in — announces itself as "scan".
-    // A single, uninterrupted `parse` runs both in sequence: the preamble
-    // scan first, then the real one from wherever the preamble left off. Two
-    // passes sharing one name would make that ordinary sequence unreadable as
-    // anything but an interrupted-and-resumed run.
+    // `index::scan_preamble`, and `stream::map_forward` announces itself as
+    // "scan". A single `parse` runs both in sequence, so two passes sharing
+    // one name would read as an interrupted-and-resumed run.
     tracing::info!(
         bytes = size,
         chunk_size = options.chunk_size,
@@ -581,13 +554,9 @@ where
     // to keep them inside (`ByteRangeSource::hint_parallelism`).
     source.hint_read_size(options.chunk_size);
     source.hint_parallelism(options.parallelism);
-    // **This loop grants no wait** (`ByteRangeSource::hint_wait_policy`). It
-    // consumes each chunk before it reads the next — the carry copies what it
-    // keeps and an `Event` borrows only for the callback — so it *could* be
-    // made to wait safely; what it would buy is exposure rather than coverage,
-    // the wait's own test driving a bare pool, and the two failure directions
-    // are not comparable. The leader's fused worker is the holder that needs
-    // the bound and is where it is granted (`crate::leader::scan_region`, and
+    // This loop grants no wait (`ByteRangeSource::hint_wait_policy`): the
+    // leader's fused worker is the holder that needs the bound and is where
+    // one is granted (`crate::leader::scan_region`, and
     // `docs/design/decisions.md`, "D5").
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::new();
@@ -637,10 +606,9 @@ where
 mod tests {
     use super::*;
 
-    /// Drive [`CopyScanner`] over `file` in `chunk_size` pieces exactly as the
-    /// three read loops do, and report the events rendered as text alongside
-    /// the high-water mark of the carry — which is the number this whole
-    /// mechanism exists to hold down.
+    /// Drive [`CopyScanner`] over `file` in `chunk_size` pieces exactly as
+    /// the three read loops do, and report the events rendered as text
+    /// alongside the high-water mark of the carry.
     fn drive(file: &[u8], chunk_size: usize) -> (Vec<String>, usize) {
         let mut scanner = CopyScanner::new();
         let mut carry = ChunkCarry::new();
@@ -690,8 +658,7 @@ mod tests {
 
     /// The claim the whole mechanism rests on: what a chunk leaves unconsumed
     /// is one unterminated line, so the bytes a read loop copies are bounded
-    /// by the longest line and not by the chunk size. A one-buffer loop's
-    /// high-water mark would be a chunk.
+    /// by the longest line and not by the chunk size.
     #[test]
     fn the_carry_is_bounded_by_the_longest_line_not_by_the_chunk() {
         let file = control();
@@ -745,9 +712,8 @@ mod tests {
         assert_eq!(carry.span(ChunkPass::InPlace, chunk, false).0, b"ghi\njkl");
     }
 
-    /// The degenerate case, and it is the one-buffer loop's behaviour: a chunk
-    /// with no newline in it joins the carry whole, which is the growth
-    /// `ScanOptions::max_line_bytes` bounds.
+    /// The degenerate case: a chunk with no newline in it joins the carry
+    /// whole, which is the growth `ScanOptions::max_line_bytes` bounds.
     #[test]
     fn a_chunk_with_no_newline_joins_the_carry_whole() {
         let mut carry = carrying(b"abc");

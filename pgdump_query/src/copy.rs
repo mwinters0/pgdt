@@ -237,18 +237,15 @@ impl Iterator for FieldRanges<'_> {
 /// One row's field boundaries, discovered once and shared by everything that
 /// reads that row.
 ///
-/// [`field_ranges`] walks from the front every time it is asked, so calling
-/// it directly would have a predicate's N terms walk the row N times and
-/// [`crate::batch::RowBatcher`] once more. This is the same split, memoized:
-/// each boundary is found by exactly one `memchr`, whichever consumer asks
-/// for it first, and every later ask is an index into what is already here.
+/// [`field_ranges`] walks from the front every time it is asked; this is the
+/// same split, memoized: each boundary is found by exactly one `memchr`,
+/// whichever consumer asks for it first, and every later ask is an index into
+/// what is already here (`docs/design/decisions.md`, "D28").
 ///
 /// **It extends only as far as it is asked to.** A term reading field 3 finds
 /// four boundaries and stops; the walk to the end of the row happens when
 /// something needs the end of the row, which on a row the filter rejects is
-/// never. That is what makes the sharing pay on a deep or many-term filter
-/// and cost almost nothing on a shallow one — see
-/// `docs/design/decisions.md`, "D28".
+/// never.
 #[derive(Debug, Default)]
 pub struct RowSplit {
     /// The end offset of every field found so far, in order. Field `i` runs
@@ -280,19 +277,14 @@ impl RowSplit {
     ///
     /// The accessors take the row on every call and nothing in the types says
     /// it is the row the ends were found in, so a missed [`Self::restart`]
-    /// would yield **in-range indices into the wrong row**: wrong fields,
-    /// wrong comparisons, wrong rows emitted, and no panic anywhere. That is
-    /// the failure mode the borrowed-slice design accepts in exchange for
-    /// having no `unsafe` in the split, and it is only acceptable because it
-    /// is a test failure rather than a silent answer — which is what this is.
+    /// would yield **in-range indices into the wrong row** and no panic
+    /// anywhere (`docs/design/decisions.md`, "D28").
     ///
     /// **A length, not the row's identity.** It is free (the accessors hold
     /// `row.len()` already), it survives a row that moved, and it catches the
-    /// mistake in the shape it actually occurs: a `restart` missed on a row
-    /// path runs on every row of a block, and a block whose rows are all the
-    /// same length is not one any real dump is made of. What it does not catch
-    /// is a single equal-length pair, which is why this is a guard rather than
-    /// a proof.
+    /// mistake in the shape it occurs: a `restart` missed on a row path runs
+    /// on every row of a block. What it does not catch is a single
+    /// equal-length pair, which is why this is a guard and not a proof.
     #[inline]
     fn bind(&mut self, row: &[u8]) {
         #[cfg(debug_assertions)]
@@ -382,13 +374,11 @@ impl RowSplit {
 /// validated row is itself validated. See `docs/design/decisions.md`, "D27".
 ///
 /// Cutting at the last newline is what makes the call safe to make on a
-/// *chunk*: the bytes after it are a partial line whose continuation is in the
-/// next chunk, and a multi-byte sequence split across that boundary would
+/// *chunk*: the bytes after it are a partial line whose continuation is in
+/// the next chunk, and a multi-byte sequence split across that boundary would
 /// fail validation for no reason. A failure anywhere in the prefix answers
-/// empty rather than a shorter prefix — the fallback is the per-field check
-/// this replaces, which raises `Error::InvalidUtf8` at exactly the fields it
-/// always did, so a dump carrying non-UTF-8 bytes behaves exactly as before
-/// and only pays for the extra pass.
+/// empty rather than a shorter prefix, which puts every row of the span back
+/// on the per-field check that raises `Error::InvalidUtf8`.
 pub fn validated_prefix(span: &[u8]) -> &str {
     let end = memchr::memrchr(b'\n', span).map_or(0, |i| i + 1);
     simdutf8::basic::from_utf8(&span[..end]).unwrap_or("")
@@ -411,7 +401,7 @@ pub struct RawRow<'a> {
 
 impl<'a> RawRow<'a> {
     /// A row whose bytes nothing has validated: each field is UTF-8-checked
-    /// as it is decoded, which is what `decode_field` always did.
+    /// as it is decoded.
     pub fn unchecked(bytes: &'a [u8]) -> Self {
         Self { bytes, text: None }
     }
@@ -432,10 +422,8 @@ impl<'a> RawRow<'a> {
     /// **The `str` path is a total fallback, not an assertion.** `str::get`
     /// answers `None` for a range that is out of bounds or not on a character
     /// boundary, and this drops back to the checked decode there rather than
-    /// panicking — so a caller that computes a range wrongly gets the old
-    /// answer, never a crash and never undefined behaviour. Neither can
-    /// happen for a range this module produced: fields are delimited by ASCII
-    /// bytes, which are always character boundaries.
+    /// panicking. Neither can happen for a range this module produced: fields
+    /// are delimited by ASCII bytes, which are always character boundaries.
     pub fn decode(&self, field: Range<usize>) -> Result<Option<Cow<'a, str>>> {
         match self.text.and_then(|text| text.get(field.clone())) {
             Some(text) => decode_validated_field(text),
@@ -935,8 +923,7 @@ mod tests {
     }
 
     /// The shared split answers exactly what `field_ranges` answers, at every
-    /// index and one past the end — which is the whole of its contract, since
-    /// two consumers now read a row through it instead of walking it twice.
+    /// index and one past the end — the whole of its contract.
     #[test]
     fn a_row_split_answers_what_field_ranges_answers() {
         let mut split = RowSplit::default();
@@ -969,8 +956,7 @@ mod tests {
     }
 
     /// A term deep in the row leaves the split holding every boundary it
-    /// crossed and no more — the property that keeps sharing from costing
-    /// anything on a row nothing else reads.
+    /// crossed and no more.
     #[test]
     fn a_row_split_extends_only_as_far_as_it_is_asked() {
         let bytes = b"a\tb\tc\td\te";
@@ -1033,9 +1019,8 @@ mod tests {
     #[test]
     fn a_prefix_that_does_not_validate_answers_empty() {
         // 0xFF is not UTF-8 anywhere. The whole prefix is refused rather than
-        // shortened, which is what puts every row of the span back on the
-        // per-field check that raises `Error::InvalidUtf8` exactly where it
-        // always did.
+        // shortened, which puts every row of the span back on the per-field
+        // check that raises `Error::InvalidUtf8`.
         let mut span = b"good row\n".to_vec();
         span.extend_from_slice(b"bad \xff row\n");
         assert_eq!(validated_prefix(&span), "");
