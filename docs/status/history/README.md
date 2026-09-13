@@ -5,10 +5,17 @@ Dated notes, for two purposes only:
 - What a future session should pick up mid-work (state that isn't obvious
   from `../STATUS.md` alone — e.g. a half-finished approach, a known-bad
   path already tried).
-- A discovery that changed the plan. The resulting decision belongs in the
-  relevant design doc (`docs/design/*.md`); the entry here is where the
-  reasoning/evidence behind it lives, referenced by a pointer from that
-  doc — not inlined into it.
+- A discovery that changed the plan. The decision goes in the doc that holds
+  the decision; its evidence is a figure in `measurements.md`, a test, an
+  invariant, or a `runs/` artifact, cited from there. The entry here points at
+  those. It is not where reasoning lives.
+
+**A day's entry is short** — pointers and settled facts, about a hundred lines
+at most. Reasoning that must outlive the day goes beside its mechanism.
+
+**Entries are deleted at each keystone** once nothing outside this directory
+cites them; git holds them. A live document that needs a fact from an entry
+takes the fact, not the pointer.
 
 Not a changelog. Routine progress already reflected in `../STATUS.md`
 doesn't get an entry here.
