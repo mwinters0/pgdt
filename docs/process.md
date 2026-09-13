@@ -110,12 +110,11 @@ two registers.
     state, naming whatever would promote the entry. A `(b)` owner is read from
     the roadmap's phase index, so one owned by a `Complete`, `Struck` or
     unlisted phase drops to `(c)` unless a phase absorbs it.
-  - **The register is an index; the detail lives at the code marker** — a
-    `deficiency: KD<k>` comment on the item that would otherwise mislead — **or
-    beside the figure in `measurements.md`** for a measured one, never in a
-    design doc and never in `STATUS.md`: locality is what makes a session
-    touching the mechanism meet its limitations, and `deficiencies.py` resolves
-    each indexed entry to its detail and each detail and marker back.
+  - **The register is an index; the detail lives at the code marker** — one
+    `deficiency: KD<k>` comment at the mechanism, in the `.rs` file the index
+    line names, never in a document: locality is what makes a session touching
+    the mechanism meet its limitations, and `deficiencies.py` resolves each
+    indexed entry to exactly one marker and each marker back.
   - **An entry is struck by the change that closes its last part**, not at a
     phase boundary — index line, detail and marker together. Partial closure
     **rewrites** it to what is still true, and a part closing into a *property*
@@ -290,7 +289,7 @@ high-water mark, unlanded items' numbers being spent too.
 | Why it is that shape, what was refused, what would reopen it | a **`D<k>`** entry |
 | A measured quantity | **measurements.md**, once; everything else cites the figure |
 | What exists right now | **STATUS.md** |
-| A deficiency we know about and are not fixing now | the **`KD<k>` register** — one indexed line in STATUS, the detail at the code marker or beside the figure |
+| A deficiency we know about and are not fixing now | the **`KD<k>` register** — one indexed line in STATUS, the detail at the code marker |
 | A limitation whose remedy the user already has today | beside the **mechanism**; it is a property, not a deficiency |
 | A call made unattended, reviewed, and **affirmed with nothing changed** | the `D<k>` entry it governs, as its `Rejected` line — then the STATUS entry is deleted |
 | Why we changed our mind, and the evidence | a **history** entry, cited from the doc holding the decision — never inlined into it |
