@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P16, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P19 — efficient defaults for a parallel scan | **Current** | [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md) |
+| P19 — efficient defaults for a parallel scan | **Complete** | [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md); notes: [`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -492,14 +492,19 @@ item; see below.
 
 ## P19 — Efficient defaults for a parallel scan
 
-**Specified and sliced:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md). Its
-inbox was drained into that spec and deleted.
+**Complete**, 2026-09-13. Spec:
+[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), whose
+inbox was drained into it and deleted; notes:
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md).
+The mechanisms are in [`architecture.md`](architecture.md), filed by subject.
 
-The parallel scan mechanism exists; this phase ships it set correctly. **The
-mechanism existing is not parallelization being finished**: this phase is what
-makes a person who states no flag get a good arrangement, on the file they have
-and inside the memory they were allocated.
+The parallel scan mechanism existed; this phase shipped it set correctly — a
+person who states no flag now gets a worker count the source recommends, inside
+a budget read off the cgroup limit they were actually given. **The mechanism
+existing was not parallelization being finished, and it still is not**:
+converting cores into extraction throughput on a plain source waits on
+mechanism rather than on defaults ([`architecture.md`](architecture.md), "What
+parallelism buys, and where it stops"), and `KD17` is the open question there.
 
 ## P10 — Per-row-group column statistics
 
@@ -893,7 +898,7 @@ which is what makes the difference worth minding at the moment one is found.
   count by varying the reserve alone: four readers is 1.66× the streaming
   fallback and three is 1.31×, but **two readers is 6% slower than declining and
   one reader is 3% slower**, holding 250 MiB and 63 MiB against the fallback's
-  15 (`docs/design/roadmap-P19.16-reserve-constant-notes.md`, "The block path
+  15 (`docs/design/roadmap-P19-efficient-defaults-notes.md`, "The block path
   buys nothing below three readers, on this file"). One file, one limit and a
   probe rather than a figure — but it moves the item's shape: the cheap half is
   answered, and what is left is whether a count-tracking floor would put a third

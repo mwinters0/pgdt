@@ -51,21 +51,21 @@ replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
 declares.
 
-Two binaries this cannot build for itself, by design:
+One binary this cannot build for itself, by design: the **census-off** binary is
+`map::Builder::on_row`'s body preceded by a bare `return;` -- a source patch no
+harness should perform. Build it by hand (the recipe is in measurements.md) and
+point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it. **It carries a `.stamp` beside it
+naming the commit it was built from**, the way a generated input does, and a
+census figure is refused unless that commit is an ancestor of the one being
+measured with no path the selected census figures declare changed in between:
+not building it and not trusting an unstamped one are different rules, and the
+second is what says the difference between the two binaries is the census.
 
-* the **census-off** binary is `map::Builder::on_row`'s body preceded by a bare
-  `return;` -- a source patch no harness should perform. Build it by hand (the
-  recipe is in measurements.md) and point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it.
-  **It carries a `.stamp` beside it naming the commit it was built from**, the
-  way a generated input does, and a census figure is refused unless that commit
-  is an ancestor of the one being measured with no path the selected census
-  figures declare changed in between: not building it and not trusting an
-  unstamped one are different rules, and the second is what says the difference
-  between the two binaries is the census;
-* the **pre-throttle** binary for the quadratic table's "before" column is a
-  release build of a historical commit. This one *is* mechanical, so the
-  harness builds it into a git worktree when it is missing, or takes
-  `PGDQ_MEASURE_BEFORE_BIN`.
+**It is the only historical build here, and that is the point.** A comparison
+against a pinned commit measures everything that differs between the two trees,
+which grows every time the tree moves and the pinned side does not -- so a
+subtraction is registered here only with an expiry that refuses it, and one that
+had none is retired rather than carried.
 
 Machine facts stay out of here: every path is an environment variable whose
 default suits the machine CLAUDE.local.md describes, and the procedure lives in
@@ -136,11 +136,6 @@ SCRIPTS = REPO / "scripts"
 GIB = 1024**3
 MIB = 1024**2
 
-# The commit preceding `SaveThrottle`, which is the quadratic table's "before"
-# column. A whole-commit comparison, not a throttle-isolating one -- see that
-# section in measurements.md.
-BEFORE_COMMIT = "b726f6b"
-
 #: The only path `cargo build --release -p pgdump_query-cli` writes. It is a
 #: constant rather than a literal inside `Config` because `ensure_pgdq_binary`
 #: reads it back: the harness may claim to have built `cfg.bin_pgdq` only when
@@ -198,9 +193,6 @@ class Config:
     bin_pgdq: Path = Path(_env("PGDQ_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
     bin_nocensus: Path = Path(
         _env("PGDQ_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdq-nocensus"))
-    )
-    bin_before: Path = Path(
-        _env("PGDQ_MEASURE_BEFORE_BIN", str(REPO / "runs/pgdq-before-throttle"))
     )
     # The `allocator` figure's three legs. Each is a full cargo target dir, so
     # it goes on scratch rather than under `runs/`, which holds logs and small
@@ -2160,7 +2152,8 @@ LIBRARY_DEFAULT_BUDGET = 64 << 20
 #: four, so its reserve is a constant and the smallest budget is the
 #: conservative end; a block-decoding `.xz` reads a line in the *sub-stream
 #: count* the budget affords, so no cell of it is a constant at all
-#: (`roadmap-P19.6-reserve-figure-notes.md`). One reading could have said
+#: (`roadmap-P19-efficient-defaults-notes.md`, "The reserve figure's first
+#: sitting"). One reading could have said
 #: neither.
 RESERVE_BUDGETS: tuple[int, ...] = (64 << 20, 128 << 20, 256 << 20, 512 << 20)
 
@@ -2519,7 +2512,9 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
       retention list accounts for — inside `billed`, reported beside it because
       it is the one term unbounded in the block size.
     - **unnamed** is `held - billed`, which is glibc's arena retention as far
-      as any reading here goes (`roadmap-P19.18-compressed-account-notes.md`).
+      as any reading here goes
+      (`roadmap-P19-efficient-defaults-notes.md`, "The compressed path's resident
+      account").
 
     **This is an account and not a fit** — every term is arithmetic from the
     source, evaluated at the cell, which is what `19.16` did by hand over
@@ -2636,7 +2631,8 @@ def rederived_unpooled_bound(worst_unnamed: float) -> int:
     next step up being 256 — re-done over whatever sitting is in hand, which is
     why a cell above the bound publishes with its finding instead of barring the
     sweep: the re-derivation is arithmetic over readings already taken, not a
-    re-take (`roadmap-P19.26-margin-constant-notes.md`).
+    re-take (`roadmap-P19-efficient-defaults-notes.md`, "The margin constant,
+    derived by arithmetic").
     """
     steps = (max(0, int(worst_unnamed)) + UNPOOLED_BOUND_STEP - 1) // UNPOOLED_BOUND_STEP
     return max(1, steps) * UNPOOLED_BOUND_STEP
@@ -3478,8 +3474,6 @@ class Session:
             return self.cfg.bin_pgdq
         if which == "nocensus":
             return self.cfg.bin_nocensus
-        if which == "before":
-            return ensure_before_binary(self.cfg, self.log)
         if which == "xzdecode":
             return ensure_xz_decode_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
@@ -3940,12 +3934,33 @@ class Session:
         Returns the specs that were satisfied, which is empty when the source
         figure was not in this sitting. What is *not* satisfied is left absent
         rather than faked, so the figure's own sweep measures it and the note
-        says so."""
+        says so.
+
+        **A run's resident set crosses the share with its wall clock.** The
+        borrow copied `readings` alone while every figure standing in one
+        published a duration; the two resident figures that will share
+        `peak-rss`'s runs publish a *peak RSS* off exactly the same reps, and a
+        borrow that left `rss` behind would satisfy the spec — `has` reads
+        `readings` — and then fail in the renderer with a `KeyError` on a key
+        the sitting believes it holds. The key is copied whenever the source has
+        one, **empty list included**: an *absent* `rss` key means "this shape
+        carries no RSS wrapper" and an empty one means "every rep of it was
+        killed", which is the distinction `sweep` opens the key to preserve.
+
+        The other two channels are deliberately not copied. `reported` and
+        `instrument` are read by the run function of the figure that *declared*
+        them — `RunSpec.instrument` is a declaration of what the harness must
+        find, not a property of the run — and no republished spec is such a
+        leg, which a test holds. Copying them would hand a borrower a report it
+        never asked the harness to look for."""
         got = []
         for spec in shared.republished:
-            readings = self.readings.get(spec.key(shared.source))
+            source_key = spec.key(shared.source)
+            readings = self.readings.get(source_key)
             if readings:
                 self.readings[spec.key(figure)] = list(readings)
+                if (rss := self.rss.get(source_key)) is not None:
+                    self.rss[spec.key(figure)] = list(rss)
                 got.append(spec)
         return got
 
@@ -4010,18 +4025,18 @@ def census_binary_problem(
     the hand that wrote it, so it cannot catch a re-stamp without a rebuild.
     What it does catch is *age*, which is the failure that actually happened
     and the one nothing else can see. Three things stay deliberately out of
-    scope: a dirty tree, which the session stamp already declares;
-    `bin_before`, which is a build of a fixed historical commit -- not HEAD by
-    design -- and which the harness builds for itself and therefore knows the
-    provenance of; and `--dry-run`, which checks no binary at all because it
-    measures nothing and must run where none exists, so the refusal it would
-    give lands seconds later instead, at the first second of the sitting that
-    would have published the figure.
+    scope: a dirty tree, which the session stamp already declares; and
+    `--dry-run`, which checks no binary at all because it measures nothing and
+    must run where none exists, so the refusal it would give lands seconds later
+    instead, at the first second of the sitting that would have published the
+    figure.
 
     The *other* side of every census subtraction, `bin_pgdq`, is out of scope
-    here for `bin_before`'s reason rather than for a weaker one: the harness
-    builds it too (`ensure_pgdq_binary`), so it knows that provenance and has
-    nothing to ask a stamp.
+    here for a reason rather than for a weaker one: the harness builds it
+    (`ensure_pgdq_binary`), so it knows that provenance and has nothing to ask a
+    stamp. This binary is the register's only pinned historical build, and it is
+    pinned *with* an expiry -- which is what the one that had none, the
+    quadratic table's retired pre-throttle column, is the argument for.
     """
     # Defaulted here rather than in the signature: both are git helpers defined
     # further down the file, where the rest of them live.
@@ -4106,10 +4121,10 @@ def ensure_pgdq_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     **Built, not stamped, and the harness's own record is what settles which.**
     `census_binary_problem` refuses to build its subject because "a harness that
     patches its own subject can produce any figure it likes" — a reason that
-    reaches a source patch and not an unpatched build of the current tree; that
-    same docstring exempts `bin_before` because the harness "builds for itself
-    and therefore knows the provenance of" it, which is the principle in the
-    affirmative; and `ensure_allocator_binary` rebuilds every leg once per
+    reaches a source patch and not an unpatched build of the current tree, and
+    that says nothing at all about a build the harness performs itself and
+    therefore knows the provenance of; and `ensure_allocator_binary` rebuilds
+    every leg once per
     process precisely because "short-circuiting on the file's existence would
     have silently timed the previous session's binary against this one's
     reference". That last is this failure, already written down as a rejected
@@ -4138,33 +4153,6 @@ def ensure_pgdq_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     run(["cargo", "build", "--release", "-p", "pgdump_query-cli"], cwd=REPO)
     _PGDQ_BUILT = True
     return cfg.bin_pgdq
-
-
-def ensure_before_binary(cfg: Config, log: Callable[[str], None]) -> Path:
-    """The pre-throttle release build, from a git worktree.
-
-    Unlike the census-off patch this is mechanical -- a commit and a release
-    build -- so the harness does it rather than asking for a binary. It is
-    cached under runs/, keyed by the commit."""
-    if cfg.bin_before.exists():
-        return cfg.bin_before
-    work = cfg.out_dir / f"worktree-{BEFORE_COMMIT}"
-    log(f"  building the pre-throttle binary at {BEFORE_COMMIT}")
-    if cfg.dry_run:
-        return cfg.bin_before
-    cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    if not work.exists():
-        run(["git", "worktree", "add", "--detach", str(work), BEFORE_COMMIT], cwd=REPO)
-    try:
-        run(
-            ["cargo", "build", "--release", "-p", "pgdump_query-cli"],
-            cwd=work,
-        )
-        shutil.copyfile(work / "target/release/pgdq", cfg.bin_before)
-        cfg.bin_before.chmod(0o755)
-    finally:
-        run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO)
-    return cfg.bin_before
 
 
 #: Whether this process has already built the `xz_decode` instrument. Per
@@ -5103,40 +5091,57 @@ _QUADRATIC_ROWS: tuple[tuple[str, str], ...] = (
 
 
 def run_per_block_quadratic(session: Session) -> str:
+    """The series and its control, on the shipped binary alone.
+
+    **There was a "before" column here, built at the commit preceding
+    `SaveThrottle`, and it is retired rather than repaired.** A pinned
+    historical build prices everything that differs between the two trees, and
+    that set only grows: by the time anything ran the column the gap was 453
+    commits, so it charged 453 commits of unrelated work to the throttle while
+    the section conceded only that it was "a whole-commit comparison". What the
+    throttle and its gate bought is a settled historical fact and is recorded as
+    one beside the mechanism (`architecture.md`, "`parse` resumes, and saves as
+    it goes"), which costs a sentence rather than a build with no expiry
+    condition on it."""
     figure = "per-block-quadratic"
-    specs = []
-    for name, _ in _QUADRATIC_ROWS:
-        for binary in ("before", "pgdq"):
-            specs.append(RunSpec(binary, name, "parse-cache-out", "warm", f"{binary} {name}"))
+    specs = [
+        RunSpec("pgdq", name, "parse-cache-out", "warm", name) for name, _ in _QUADRATIC_ROWS
+    ]
     session.sweep(figure, specs, session.cfg.reps(2))
 
-    rows, per_rep = [], []
+    counts = [input_block_count(name) for name, _ in _QUADRATIC_ROWS]
+    rows, per_rep, save_counts = [], [], []
     for name, label in _QUADRATIC_ROWS:
         dump = session.input_path(name, "warm")
-        before = session.get(figure, RunSpec("before", name, "parse-cache-out", "warm", ""))
-        after = session.get(figure, RunSpec("pgdq", name, "parse-cache-out", "warm", ""))
-        saves_before, _ = count_saves(session.cfg, session.binary_path("before"), dump, session.log)
-        saves_after, cache_size = count_saves(
+        readings = session.get(figure, RunSpec("pgdq", name, "parse-cache-out", "warm", ""))
+        saves, cache_size = count_saves(
             session.cfg, session.binary_path("pgdq"), dump, session.log
         )
+        save_counts.append(saves)
         rows.append(
             [
                 label,
                 _fmt_bytes(file_size(session.cfg, dump, name)),
                 _fmt_bytes(cache_size),
-                f"{fmt_s(median(before))} s",
-                f"{fmt_s(median(after))} s",
-                f"{saves_before} → {saves_after}",
+                f"{fmt_s(median(readings))} s",
+                str(saves),
             ]
         )
-        per_rep.append(f"- {label} — before: {fmt_readings(before)}; after: {fmt_readings(after)}")
-    table = md_table(
-        ["blocks", "dump", "final cache", "before", "after", "saves before → after"], rows
+        per_rep.append(f"- {label}: {fmt_readings(readings)}")
+    table = md_table(["blocks", "dump", "final cache", "parse", "saves"], rows)
+    # Read off the column rather than asserted beside it: the sentence is the
+    # throttle's whole visible signature here, and a claim the renderer states
+    # without computing is one that goes false the sitting the shape changes.
+    span = (
+        f"stays at {save_counts[0]}"
+        if len(set(save_counts)) == 1
+        else f"runs {min(save_counts)}–{max(save_counts)}"
     )
     note = (
-        f"\n\n\"Before\" is `{BEFORE_COMMIT}`, the commit preceding `SaveThrottle`; it is a "
-        "whole-commit comparison, not a throttle-isolating one. Save counts are `strace -f -e "
-        "trace=open,openat` on the host, untimed.\n"
+        "\n\nSave counts are `strace -f -e trace=open,openat` on the host, untimed. Across a "
+        f"block count multiplying by {counts[-1] // counts[0]:,}× from the control, "
+        f"the save count {span} — the throttle is a ratio against elapsed time, not a count of "
+        "watermarks.\n"
     )
     return table + note + "\nPer-rep readings (s):\n" + "\n".join(per_rep) + "\n"
 
@@ -5305,8 +5310,15 @@ def run_rss_attribution(session: Session) -> str:
     for _, binary, _ in _ATTRIBUTION_LEGS:
         if binary.startswith("alloc:"):
             ensure_allocator_binary(session.cfg, binary.removeprefix("alloc:"), session.log)
+    # The `parse` reference row, from `peak-rss` where this sitting took it.
+    # Borrowed rather than re-measured so the doc carries one number per
+    # measurement, and *dropped from the interleave* rather than left in it: a
+    # spec the sitting already holds would spend a reading to overwrite one.
+    note = share_readings(session, figure)
     specs = [spec for _, small, big in legs for spec in (small, big)]
-    session.sweep(figure, specs, session.cfg.reps(3))
+    session.sweep(
+        figure, [s for s in specs if not session.has(figure, s)], session.cfg.reps(3)
+    )
 
     small_n, big_n = (input_block_count(name) for name in _ATTRIBUTION_INPUTS)
     rows, per_rep = [], []
@@ -5333,6 +5345,7 @@ def run_rss_attribution(session: Session) -> str:
     )
     return (
         table
+        + (f"\n{note}" if note else "")
         + f"\n\nPer-rep readings (MiB, {small_n:,} then {big_n:,}):\n"
         + "\n".join(per_rep)
         + "\n"
@@ -6008,14 +6021,11 @@ def _fmt_budget_bytes(n: int) -> str:
 #: The one reading this figure does not take on the budget axis: the shipped
 #: serial arrangement, at the library's own `DEFAULT_MEMORY_BUDGET`.
 #:
-#: **It is `peak-rss`'s `control` row, spec for spec**, which is what makes it
-#: the `Shared` edge this figure declares when it is published — the same
-#: binary, command, input and regime, so measuring it twice would put two
-#: numbers in the doc for one measurement. It is measured here while the figure
-#: is untaken, for the reason `rss-attribution` declares no edge either: an edge
-#: declared from `UNTAKEN` entangles `peak-rss`, which the doc carries from a
-#: standalone sitting, and refuses that sitting's marker with no sweep yet to
-#: cure it.
+#: **It is `peak-rss`'s `control` row, spec for spec**, which is why this
+#: figure declares it as its one `Shared` edge — the same binary, command,
+#: input and regime, so measuring it twice would put two numbers in the doc for
+#: one measurement. A sitting that took `peak-rss` borrows it; one that did not
+#: measures it here and says so in the table's own provenance paragraph.
 _RESERVE_BASELINE = RunSpec("pgdq", "control", "parse-rss", "warm", "plain, serial default")
 
 
@@ -6444,6 +6454,10 @@ def run_reserve(session: Session) -> str:
     # interrogated here.
     if instrument:
         ensure_instrument_binary(session.cfg, session.log)
+    # The serial baseline, from `peak-rss` where this sitting took it, and
+    # dropped from the interleave below rather than left in it — a spec the
+    # sitting already holds would spend a reading to overwrite one.
+    note = share_readings(session, figure)
     specs = [
         *flagless,
         *instrument,
@@ -6452,7 +6466,9 @@ def run_reserve(session: Session) -> str:
         *stated,
         _RESERVE_BASELINE,
     ]
-    session.sweep(figure, specs, session.cfg.reps(3))
+    session.sweep(
+        figure, [s for s in specs if not session.has(figure, s)], session.cfg.reps(3)
+    )
 
     per_rep: list[str] = []
 
@@ -7297,8 +7313,9 @@ def run_reserve(session: Session) -> str:
         f"{_fmt_budget(LIBRARY_DEFAULT_BUDGET)} default and holds "
         f"{fmt_mib_median_spread(base)}, a reserve of **{fmt_rss_delta(base_reserve)}**. That "
         "run is `peak-rss`'s own `control` row — the same binary, command, input and regime — "
-        "so publishing this table means declaring it a shared reading rather than measuring "
-        "it twice.\n"
+        "so it is one reading this table shares with that one rather than a second "
+        "measurement of it.\n"
+        + note
         + "\nPer-rep readings (peak RSS):\n"
         + "\n".join(per_rep)
         + "\n"
@@ -7722,65 +7739,19 @@ FIGURES: list[Figure] = [
         memory=PARALLEL_MEMORY,
         run=run_parallel_peak_rss,
     ),
-]
-
-FIGURES_BY_ID = {f.id: f for f in FIGURES}
-
-#: Instruments that are **built but whose figure has not been taken**.
-#:
-#: A sweep does not run these and the doc carries no table *of this harness's*
-#: for them, which is why they sit outside `ALL_FIGURES`: the marker
-#: reconciliation would otherwise demand a section with no numbers under it,
-#: and `quoted_by` would have to name consumers of a figure that does not exist
-#: yet. `--figure <id>` still selects one, which is how the reading gets taken —
-#: and taking it moves the entry into `FIGURES`, where the doc-side checks
-#: start applying.
-#:
-#: The distinction is worth a list rather than a comment because *built* and
-#: *taken* fail differently. An instrument nobody built is work; an instrument
-#: built and never run is a claim nobody checked, and it is invisible unless
-#: something names it.
-#:
-#: **Empty is the healthy state, not a disused mechanism.** A figure published
-#: outside a stamped sweep declares inside its own marker the commit it was
-#: taken at, and a sitting run from a working tree carrying its own uncommitted
-#: apparatus has no such commit to name — so an instrument built ahead of that
-#: commit waits here rather than in `FIGURES`. Four entries have left this list
-#: so far: `projection-widths`, `xz-decode-scaling`, `parallel-scan-throughput`
-#: and `parallel-peak-rss` were each taken and moved into `FIGURES`, and
-#: `composite-isolated` — which isolated one column by declaring it two ways
-#: over byte-identical rows — was deleted unpublished, because
-#: `projection-widths` makes the same isolation a subtraction between two
-#: adjacent rows of one table over one file.
-UNTAKEN: list[Figure] = [
-    # The attribution's instrument, folded in from the standalone script
-    # that took the readings `measurements.md` currently carries. It waits here
-    # rather than standing in `FIGURES` because **those readings are not this
-    # harness's** — the table under that heading was printed by
-    # `scripts/rss_attribution.py`, so the section keeps its
-    # `outside-register` declaration until a sweep takes the figure and
-    # replaces them. Taking it is `M74`.
+    # The attribution's instrument, folded in from the standalone
+    # `scripts/rss_attribution.py` whose readings the doc carried before this
+    # figure was taken (`M74`).
     #
-    # **It cannot be taken alone, and that is what decides when it lands.** Its
+    # **It cannot be taken alone, and the `Shared` edge is what says so.** Its
     # `parse` reference row runs `peak-rss`'s `blocks500` and `blocks4000`
-    # shapes — same binary, same command, same apparatus — but a reading is
-    # keyed by figure *and* spec, so the two are separate measurements until a
-    # `Shared` edge makes one consume the other. Today they are separate and
-    # they disagree: the doc publishes 9.73/43.78 MiB under `peak-rss` and
-    # 9.58/44.26 MiB here, two numbers for one measurement a section apart.
-    # Collapsing them is what the borrow is for, and a figure standing in a
-    # share may be published only from a stamped sweep (`sitting_problems`;
-    # `measurements.md`, "A figure may be published outside the sweep").
-    #
-    # **The edge is declared in the change that takes the sitting, because
-    # declaring it earlier closes nothing.** The marker still could not go on —
-    # it asserts the stamp's *taken by this harness* clause over numbers the
-    # standalone script printed — so an early edge buys no part of `M74` and
-    # costs `--check` exiting 1 on `peak-rss`'s own `41c96bb` sitting marker
-    # until a sweep cures it. That is a failing gate, not a `--stale` figure
-    # left red with its reason written down. `test_measure.py` holds the two
-    # halves together: an `rss-attribution` in `FIGURES` must declare the
-    # borrow.
+    # shapes — same binary, same command, same apparatus — and a reading is
+    # keyed by figure *and* spec, so without the edge the two are separate
+    # measurements of one run: the standalone readings and `peak-rss`'s
+    # disagreed at 9.58/44.26 MiB against 9.73/43.78, two numbers for one
+    # measurement a section apart. Standing in that share is also what confines
+    # this figure to a stamped sweep (`sitting_problems`; `measurements.md`,
+    # "A figure may be published outside the sweep").
     Figure(
         id="rss-attribution",
         section="What the per-block resident growth is made of",
@@ -7812,33 +7783,33 @@ UNTAKEN: list[Figure] = [
             "docs/status/STATUS.md",
             "docs/manual/dump-inspection.md",
         ),
+        #: Read off `_attribution_specs` rather than respelling the two
+        #: `RunSpec`s: a leg is identified by its binary and shape, and a second
+        #: spelling of one is what drifts.
+        shares=(
+            Shared(
+                "peak-rss",
+                "the `parse` reference row at both block counts",
+                _attribution_specs()[0][1:],
+            ),
+        ),
         warm_inputs=_ATTRIBUTION_INPUTS,
         run=run_rss_attribution,
     ),
     # The budget rule's one number, the compressed path's account, and the third
-    # resident-set instrument. It waits here rather than in `FIGURES` because the
-    # sitting that takes it is **diagnostic** — the phase spec gives it no
-    # published table until the closing sweep, which is also the sitting that can
-    # afford it the `Shared` edge below.
+    # resident-set instrument.
     #
-    # **The edges it owes when it is published are one, and the second is a
-    # stated non-edge.** Onto `peak-rss`: its serial-default row is that figure's
-    # `control` row spec for spec, so the two must share a reading rather than
-    # take one each. Onto `rss-attribution`: **none**, and that is a reading of
-    # the leg set rather than an omission — that figure's every leg runs over
+    # **It stands in one edge, and the second is a stated non-edge.** Onto
+    # `peak-rss`: its serial-default row is that figure's `control` row spec for
+    # spec, so the two share a reading rather than take one each. Onto
+    # `rss-attribution`: **none**, and that is a reading of the leg set rather
+    # than an omission — that figure's every leg runs over
     # `blocks500`/`blocks4000`, the two block-count shapes whose axis it is,
     # where every leg here runs over `control`, `control_xz` or `control_xz128`,
     # so no two of their runs are the same run. What the three do share is a
-    # *sitting*: all three read resident, so `M74`'s sweep takes them together,
-    # and that collapse is the closure the harness computes rather than an edge
-    # any one of them declares.
-    #
-    # **No edge is declared while it is untaken**, for `rss-attribution`'s
-    # reason: declaring one from here entangles `peak-rss`, which the doc carries
-    # from a standalone `41c96bb` sitting, and fails `--check` on that sitting's
-    # marker with no sweep yet to cure it. **Whichever sweep declares it owes a
-    # harness change with it**: `Session.borrow` copies wall clock only, so an
-    # RSS reading cannot cross a share today.
+    # *sitting*: all three read resident, so one sweep takes them together, and
+    # that collapse is the closure the harness computes rather than an edge any
+    # one of them declares.
     Figure(
         id="reserve",
         section="What a scan holds above the budget it was given",
@@ -7874,10 +7845,57 @@ UNTAKEN: list[Figure] = [
                 )
             )
         ),
+        #: The shipped serial arrangement, which is `peak-rss`'s `control` row
+        #: spec for spec.
+        shares=(
+            Shared(
+                "peak-rss",
+                "the shipped serial arrangement's peak resident set",
+                (_RESERVE_BASELINE,),
+            ),
+        ),
+        # The budget rule's constant, the `--parallel-memory` guidance and the
+        # phase's central memory claim are all read off this table.
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/manual/dump-inspection.md",
+            "docs/status/STATUS.md",
+        ),
         memory=PARALLEL_MEMORY,
         run=run_reserve,
     ),
 ]
+
+FIGURES_BY_ID = {f.id: f for f in FIGURES}
+
+#: Instruments that are **built but whose figure has not been taken**.
+#:
+#: A sweep does not run these and the doc carries no table *of this harness's*
+#: for them, which is why they sit outside `ALL_FIGURES`: the marker
+#: reconciliation would otherwise demand a section with no numbers under it,
+#: and `quoted_by` would have to name consumers of a figure that does not exist
+#: yet. `--figure <id>` still selects one, which is how the reading gets taken —
+#: and taking it moves the entry into `FIGURES`, where the doc-side checks
+#: start applying.
+#:
+#: The distinction is worth a list rather than a comment because *built* and
+#: *taken* fail differently. An instrument nobody built is work; an instrument
+#: built and never run is a claim nobody checked, and it is invisible unless
+#: something names it.
+#:
+#: **Empty is the healthy state, not a disused mechanism, and it is empty
+#: now.** A figure published outside a stamped sweep declares inside its own
+#: marker the commit it was taken at, and a sitting run from a working tree
+#: carrying its own uncommitted apparatus has no such commit to name — so an
+#: instrument built ahead of that commit waits here rather than in `FIGURES`.
+#: Six entries have left this list so far: `projection-widths`,
+#: `xz-decode-scaling`, `parallel-scan-throughput`, `parallel-peak-rss`,
+#: `rss-attribution` and `reserve` were each taken and moved into `FIGURES`,
+#: and `composite-isolated` — which isolated one column by declaring it two
+#: ways over byte-identical rows — was deleted unpublished, because
+#: `projection-widths` makes the same isolation a subtraction between two
+#: adjacent rows of one table over one file.
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -8368,21 +8386,6 @@ NOT_OURS = {
                 "pgdump_query/src/pgtype.rs",
                 *QUERY_CLI,
             ),
-        ),
-        Outside(
-            "rss-attribution",
-            "What the per-block resident growth is made of",
-            "The *readings* the doc carries are not ours: they were printed by the standalone "
-            "`scripts/rss_attribution.py`, before that instrument was folded in. The figure "
-            "itself is registered and untaken (`measure.UNTAKEN`), and it must share "
-            "`peak-rss`'s two block-count runs, so it may be published only from a stamped "
-            "sweep — `M74`, which deletes this row and the section's `outside-register` marker "
-            "together.",
-            # The registered instrument's own edge, read off it rather than
-            # copied: the readings differ from the figure's in provenance, not
-            # in what moves them, and two spellings of one edge would drift in
-            # the window before `M74` lands. It leaves with the row.
-            depends=EVERY_BY_ID["rss-attribution"].depends,
         ),
         Outside(
             "benches",
@@ -9061,8 +9064,15 @@ def render(cfg: Config, run_dir: Path) -> int:
     if unknown:
         print(f"unknown figure(s) in {raw_path}: {', '.join(unknown)}", file=sys.stderr)
         return 2
-    figures = [by_id[fid] for fid in raw["figures"]]
+    # A figure the sitting failed took no readings, so replaying it would die
+    # on a missing key rather than rebuild a table -- and the run's own record
+    # already says which those were.
+    failed = {fid for fid, _ in raw.get("failures", [])}
+    figures = [by_id[fid] for fid in raw["figures"] if fid not in failed]
     head, whole_sweep = raw["commit"], raw.get("whole_sweep", False)
+    # An older sitting recorded the *selection* here, so re-deriving it is what
+    # keeps a re-render from restoring a stamp the run was not entitled to.
+    whole_sweep = stamps_the_document(whole_sweep, sorted(failed))
 
     with tempfile.TemporaryDirectory(prefix="pgdq-render-") as tmp:
         session = ReplaySession(cfg, raw, Path(tmp), lambda msg: None)
@@ -9094,6 +9104,23 @@ def render(cfg: Config, run_dir: Path) -> int:
     return 0
 
 
+def stamps_the_document(selected_sweep: bool, failures: Sequence[object]) -> bool:
+    """Whether a sitting may re-stamp `measurements.md` with a session stamp.
+
+    **Selecting the whole sweep is not taking it, and the stamp speaks for
+    tables this sitting did not produce.** A run that selected every figure and
+    lost one leaves those tables in the document from whatever sitting put them
+    there, so a stamp saying every figure below came from this one is false of
+    exactly the tables nobody re-took. That is not a smaller version of a
+    partial sitting -- it is the same thing, and it declares itself the same
+    way: each table it *did* take carries the commit inside its own marker.
+
+    It is a function so that the predicate is testable and named. Computed
+    inline it was `{f.id for f in FIGURES} <= {f.id for f in figures}` evaluated
+    before the first reading, which cannot see a failure at all."""
+    return selected_sweep and not failures
+
+
 def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     out_root = cfg.out_dir / f"measure-{time.strftime('%Y%m%dT%H%M%S')}"
     out_root.mkdir(parents=True, exist_ok=True)
@@ -9111,11 +9138,17 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     # each table it emits carries the commit it was taken at inside its own
     # marker and every reader of the stamp argues from that
     # (`measurements.md`, "A figure may be published outside the sweep").
-    whole_sweep = {f.id for f in FIGURES} <= {f.id for f in figures}
+    #
+    # **Selecting the whole sweep is not taking it.** This is the *selection*;
+    # a figure that fails takes no table, so a run that selected all of them
+    # and lost one leaves the document's other tables from an older sitting
+    # while a stamp would claim they came from this one. The predicate that
+    # decides the stamp is computed after the loop, once `failures` is known.
+    selected_sweep = {f.id for f in FIGURES} <= {f.id for f in figures}
     log(
         f"measure.py — {len(figures)} figure(s), commit {head}{' (dirty)' if dirty else ''}"
         + (f", allocator {allocator}" if allocator else "")
-        + ("" if whole_sweep else ", a sitting of its own (each table declares this commit)")
+        + ("" if selected_sweep else ", a sitting of its own (each table declares this commit)")
     )
     log(f"output: {out_root}")
     unpublishable = cfg.unpublishable_reason
@@ -9169,7 +9202,10 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             governor.__enter__()
         session.sampler.start()
 
-    parts: list[str] = []
+    #: One entry per figure that produced a table: its id, the section heading
+    #: it opens (empty where it shares one), and everything below the marker.
+    #: Assembled into `parts` after the loop, when the marker is decidable.
+    rendered: list[tuple[str, str, str]] = []
     sections_seen: set[str] = set()
     failures: list[tuple[str, str]] = []
     # Figures that lost a leg to the OOM killer. A kill inside `KILL_TOLERANT`
@@ -9233,9 +9269,27 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
         sections_seen.add(fig.section)
         label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
-        marker = figure_marker(fig.id, None if whole_sweep else head)
         bar = censored_note(kills) if kills else ""
-        parts.append(f"{heading}{marker}\n\n{label}{bar}{body}\n{apparatus}{consumers}")
+        # The marker is filled in below, not here: whether this run re-stamps
+        # the document is a fact about the *whole* sitting, and a figure taken
+        # third cannot know that the nineteenth will fail.
+        rendered.append((fig.id, heading, f"{label}{bar}{body}\n{apparatus}{consumers}"))
+
+    # What the sitting actually took. A selection short of the sweep never
+    # stamped; a selection of the whole sweep that lost a figure must not
+    # either, because the tables it did not take stay in the document from
+    # whatever sitting put them there and the stamp speaks for those too.
+    whole_sweep = stamps_the_document(selected_sweep, failures)
+    if selected_sweep and failures:
+        log(
+            f"\n!! the whole sweep was selected and {len(rendered)} of {len(figures)} figures "
+            "produced a table, so this sitting does not re-stamp the document: each table it "
+            "did take declares this commit inside its own marker instead"
+        )
+    parts = [
+        f"{heading}{figure_marker(fid, None if whole_sweep else head)}\n\n{tail}"
+        for fid, heading, tail in rendered
+    ]
 
     stager.cleanup()
     if not cfg.dry_run:
@@ -9257,7 +9311,9 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     if whole_sweep:
         lead = session_stamp(head, dirty, allocator, outside)
     else:
-        lead = partial_lead(len(figures), head, dirty, allocator, unpublishable)
+        # `len(rendered)`, not `len(figures)`: the lead counts the tables below
+        # it, and a selected figure that failed produced none.
+        lead = partial_lead(len(rendered), head, dirty, allocator, unpublishable)
     header = [
         "# measure.py output",
         "",
@@ -10434,8 +10490,8 @@ def cmd_verify_additive(since: str | None) -> int:
         print(
             f"regenerating {len(specs)} input(s) at {VERIFY_SIZE_GIB} GiB under both revisions\n"
         )
-        # Under `runs/`, like the pre-throttle build's worktree: gitignored, so
-        # a crashed run leaves no untracked tree inside the repo being measured.
+        # Under `runs/`: gitignored, so a crashed run leaves no untracked tree
+        # inside the repo being measured.
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", rev)
         work = cfg.out_dir / f"worktree-verify-{safe}"
         run(["git", "worktree", "add", "--detach", str(work), rev], cwd=REPO, quiet=True)

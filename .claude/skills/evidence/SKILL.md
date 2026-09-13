@@ -1,6 +1,6 @@
 ---
 name: evidence
-description: How to draw a conclusion from a measurement or a test — account before fitting, check a fit inside its own data, and what makes two readings independent rather than merely agreeing. Use before concluding anything from a benchmark, profile, resident-set reading or timing; before fitting a model to measurements; before planning a slice whose deliverable is a reading; when a measured quantity is partly unexplained; and when writing a code comment that asserts a property the code does not test.
+description: How to draw a conclusion from a measurement or a test — account before fitting, check a fit inside its own data, and what makes two readings independent rather than merely agreeing. Use before concluding anything from a benchmark, profile, resident-set reading or timing; before fitting a model to measurements; before planning a slice whose deliverable is a reading; when a measured quantity is partly unexplained; when building or reading a figure that subtracts one build from another; and when writing a code comment that asserts a property the code does not test.
 ---
 
 `docs/design/measurements.md` and `scripts/measure.py` govern **how a figure is
@@ -8,7 +8,7 @@ taken** — the apparatus, the staleness edges, what may be published. They say
 nothing about **what may be concluded from it**, and that is the half that has
 actually gone wrong here. This skill is that half.
 
-It is short on purpose. Six rules, each with the failure it prevents.
+It is short on purpose. Seven rules, each with the failure it prevents.
 
 ## 1. Account before you fit
 
@@ -108,6 +108,40 @@ price it.
 
 And: a residual's *shape* is evidence. Whether it rises, falls or is flat along
 each axis usually eliminates more candidates than another sitting would.
+
+## 7. A comparison between two builds decays unless something expires it
+
+A figure that subtracts one build from another names the change it means to
+price — the census, the throttle. What it *measures* is everything that differs
+between the two commits, and that set is not fixed: it grows every time the
+tree moves and the pinned side does not. So the subtraction's honesty is a
+condition rather than a property, and a condition nobody checks is one that has
+already quietly failed.
+
+**State the expiry when the comparison is built, and make it refuse rather than
+drift.** Say out loud what would have to remain true for this difference to
+still be the thing you named, then encode it — an ancestry check, a
+declared-path check, a rebuild-and-restamp — so the figure is *refused* when it
+stops holding instead of returning a plausible-looking number for something
+else. A comparison whose caveat lives only in prose is one that will be read
+without the caveat.
+
+A pinned historical build is the common case and the worst-behaved. It cannot
+be re-taken, so it accumulates every unrelated change by construction, and
+nothing about running it looks wrong. Where the thing being priced is a
+*settled* historical fact, prefer recording the number beside its mechanism
+over re-measuring it every sitting: re-measurement buys apparatus consistency,
+and once the gap is wide enough that is no longer what dominates the reading.
+
+> The census-off binary carries a `.stamp` and is refused unless its commit is
+> an ancestor of the one being measured with **no declared path changed in
+> between**. The pre-throttle binary, one figure over, had no such guard. By
+> the time anything ran it, "before the throttle" was 453 commits back and the
+> column priced 453 commits of unrelated work under the throttle's name — the
+> doc conceding it was "a whole-commit comparison" while the gap grew by two
+> orders of magnitude. It surfaced as a crash only because a later apparatus
+> rule handed it a flag it predated; a figure that merely *ran* would have
+> published the wrong number (2026-09-13).
 
 ## Before planning a slice whose deliverable is a reading
 

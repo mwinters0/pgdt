@@ -461,7 +461,7 @@ and the pool-depth clamp is not what makes it so ("Where a scan's time goes");
 the affinity mask and every ancestor cgroup's CPU quota
 ([`runtime-invariants.md`](runtime-invariants.md), `RT7`), **capped at its own
 block count**. Decode is the one
-shape that demonstrably scales — a compressed `parse` reaches 5.82× at
+shape that demonstrably scales — a compressed `parse` reaches 5.60× at
 twenty-four workers, still climbing — so a small constant such as four would
 leave the machine's own answer unspent on the only path that can use it, and
 the standing rule's four-and-twenty-four baseline already buys predictability
@@ -557,10 +557,8 @@ separated the reserve from the defects beneath it — a 24 MiB-block file in a
 partition defect below — and after those repairs the thin point moved to the
 *middle* of the range, 1 GiB and 1.5 GiB, which is where this number was
 chosen. The readings are in
-[`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md),
-[`roadmap-P19.19-per-file-term-notes.md`](roadmap-P19.19-per-file-term-notes.md)
-and
-[`roadmap-P19.16-reserve-constant-notes.md`](roadmap-P19.16-reserve-constant-notes.md).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The reserve constant, read off five builds" and "The budget rule
+against real cgroups".
 
 **The count answers to the criterion, which is what a constant reserve cannot
 do on its own.** A constant leaves *constant* headroom — roughly
@@ -663,7 +661,7 @@ one of those leaves at least 24% of its limit, which is the criterion met with
 the readings rather than by construction
 ([2026-09-12](../status/history/2026-09-12.md), "The margin applies the
 criterion twice, because `MEMORY_RESERVE` already contains one";
-[`roadmap-P19.26-margin-constant-notes.md`](roadmap-P19.26-margin-constant-notes.md)).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The margin constant, derived by arithmetic").
 
 **The block pool's retention list is the charge's second term, not the
 reserve's.** `BufferPool::slots` clamps that pool at `POOL_DEPTH.max(jobs)` and
@@ -739,7 +737,7 @@ mmap threshold's signature, it scales with the number of threads that have ever
 decoded a block, and `MALLOC_ARENA_MAX=2` moves it in exactly the place the
 instrument predicts: `fordblks` 102.5 MiB → 68.2 with arenas 6 → 2, and 7% off
 resident. Readings and what the constant may not be read off:
-[`roadmap-P19.18-compressed-account-notes.md`](roadmap-P19.18-compressed-account-notes.md).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The compressed path's resident account".
 
 That does **not** overturn the concavity above, and the window is why: the
 program-side fit covers four readers and up, where the slot arithmetic's step
@@ -794,7 +792,7 @@ business knowing which shape a source is, and a read size derived from the
 charge or from the boundaries is one more value with two consumers. What each
 arm cost when it was read the other way is beside the cut width
 ("cut-width") and in
-[`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The cut width, decided by measurement".
 
 **What one reader holds is stated against the chunk a scan settles at, not
 against an unannounced pool's ceiling** (`XzSource::charged_chunk_bytes`).
@@ -833,7 +831,7 @@ decode work**, which puts a **ceiling** near half the reader count on the
 speedup: a stated-count `parse` of the 24 MiB-block control runs
 17.8 → 17.9 → 9.9 → 7.4 s over one, two, four and six readers, against a serial
 scan's 17.8. Measurement runs under that ceiling and falls further behind as
-the count grows — 1.8 where it allows 2.0, 2.4 where it allows 3.0, and 5.82×
+the count grows — 1.8 where it allows 2.0, 2.4 where it allows 3.0, and 5.60×
 at twenty-four where it allows 12× — so it bounds the term rather than
 accounting for it, and the residual is unexplained.
 
@@ -846,7 +844,7 @@ half the speed, so one unit stays and this entry keeps its whole cost ("cut-widt
 scan throughput, since no defaults change reaches it, and the fix left is the
 in-flight map rather than the width. It is not new — it is what the arrangement
 before the charge-and-cut confusion also did, and it is inside the published
-`parallel-scan-throughput` leg that reaches 5.82× at twenty-four workers. What
+`parallel-scan-throughput` leg that reaches 5.60× at twenty-four workers. What
 is new is that it is named: the alternative reading, that widening a partition
 is what buys throughput, is what that confusion was worth in wall clock, and it
 cost hundreds of megabytes a reader to have.
@@ -924,10 +922,9 @@ stated the count is printed as typed, and what that delivers is
 `query`-only cost either: `leader::scan_region` refuses to cut on
 `advice.max_partitions() == Some(1)`, which is the shape a declined source
 advertises, so a declined `.xz` `parse` is serial whatever `--jobs` says. That
-remaining half is `P19`'s to close, as a slice that states the **delivered**
-count on the `scan started`/`scan complete` channel both commands carry
-("Status output", below), where `scan_region` is the one party that sees the
-advice.
+remaining half is closed by the `scan arrangement` line, which states the
+**delivered** count on the same channel both commands carry ("Status output",
+below), `scan_region` being the one party that sees the advice.
 
 *Rejected: a `parse`-side decline line in the CLI.* It would print a decline
 beside a `jobs=` line that is itself wrong in the same arrangement, and it
@@ -1157,11 +1154,15 @@ channel whose whole job is to be trustworthy about how much memory this process
 may take.
 
 **The asymmetry the default ships is stated rather than smoothed over.** The
-same count gives a compressed `parse` 5.82× and a compressed typed `query` only
-1.60×, its sub-stream count capped by the divisor below. That is a count asked
-for and partly not delivered, and `PlanNoteKind::ParallelismBudgetLimited` is
-what says so to the user rather than leaving it to be read off the arithmetic
-("When the divisor declines the requested count", below).
+same count gives a compressed `parse` 5.60× and a compressed typed `query` only
+1.56×. **The divisor is no longer what holds the second one back**: the
+published sitting states a 2.00 GiB budget, which affords thirty-five
+sub-streams on that leg, so all twenty-four are planned and the shortfall is
+somewhere else — the same shape `KD17` names on the plain leg, one column over.
+Where the divisor *does* decline a count, that is a count asked for and partly
+not delivered, and `PlanNoteKind::ParallelismBudgetLimited` is what says so to
+the user rather than leaving it to be read off the arithmetic ("When the
+divisor declines the requested count", below).
 
 **Workers are `spawn_blocking` tasks, and no runtime flavour is imposed.** The
 library keeps `tokio` at `features = ["rt", "sync"]` — **`rt-multi-thread` is
@@ -1425,7 +1426,7 @@ bounded at both ends** — a byte budget, and nothing kept that does not fit a
 slot, which is 8 MiB until a caller announces its read size — because
 `map::attach_text`'s coalesced span read can be far larger than a chunk and
 happens once per map, and holding one of those for the life of the process
-would trade a scan's ~5.9 MiB resident
+would trade a scan's ~6.2 MiB resident
 set ([`measurements.md`](measurements.md), "What a scan holds resident") for an
 allocation nothing asks for twice. The bound that follows is
 `slots × max(8 MiB, announced)`, not four chunks: **below the ceiling a one-off
@@ -1765,7 +1766,7 @@ everything further out is clearly slower, and on the other two it is flat
 ([`measurements.md`](measurements.md), "What the read chunk size is worth"). What decides all three of the I/O defaults is one subtraction:
 **no scheme that overlaps I/O with parsing can put a cold scan below the time
 the device takes to deliver the bytes**, and on the fastest disk this project
-owns a cold `COPY` scan exceeds that floor by 5.8%
+owns a cold `COPY` scan exceeds that floor by 5.6%
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"). On
 the SATA SSD the same subtraction is ~1%; on the HDD the scan is device-bound
 by a factor of several. **That ceiling is a fact about the fastest disk we
@@ -1811,9 +1812,9 @@ looked like.
 
 *Rejected:* double-buffered readahead — issuing chunk *N+1*'s read while chunk
 *N* is parsed. Its prize is `min(device time, parse time)` and it is bounded by
-the same 5.8%, on the one device class where that number is not ~0; against
+the same 5.6%, on the one device class where that number is not ~0; against
 that it is a rework of three read loops, a second in-flight buffer against the
-~5.9 MiB a scan holds resident ([`measurements.md`](measurements.md), "What a
+~6.2 MiB a scan holds resident ([`measurements.md`](measurements.md), "What a
 scan holds resident"), and one more thing the interrupt guard
 and the query path's chunk retention have to be correct about. Most of the
 parse CPU is already hidden behind the read on that device, and overlapping
@@ -1822,7 +1823,7 @@ harder cannot recover what is already overlapped.
 **What a raised chunk size costs is memory, and the bound is the caller's own
 number.** The pool's budget affords four slots at 16 MiB, so a 16 MiB chunk can
 hold 64 MiB against the
-~5.9 MiB a one-block scan otherwise sits at
+~6.2 MiB a one-block scan otherwise sits at
 ([`measurements.md`](measurements.md), "What a scan holds resident") — which a
 caller who asked for 16 MiB buffers has largely accepted already. That is the whole cost, and it is stated in the
 flag's help, in the manual and in `DEFAULT_CHUNK_SIZE`'s own doc comment.
@@ -1830,12 +1831,13 @@ flag's help, in the manual and in `DEFAULT_CHUNK_SIZE`'s own doc comment.
 **What it used to cost is the measurement of what the pool is worth.** Before
 the announced read size, a chunk above the ceiling was never returned to the
 pool, so every chunk became the fresh `calloc` the pool exists to remove:
-0.472 s → 0.866 s warm at 16 MiB against 8 MiB, **1.83×**, not a few percent
-([`measurements.md`](measurements.md), "What the read chunk size is worth" —
-whose 16 MiB row was taken under that behaviour and is stale until the figure
-is re-taken). The number is kept because it prices the pool from the outside:
-it is what a per-chunk allocation costs on a real file, measured rather than
-argued, and nothing else in the register states it.
+0.472 s → 0.866 s warm at 16 MiB against 8 MiB, **1.83×**, not a few percent.
+The figure has since been re-taken with the announced size in place and that
+row fell to 0.546 s, 1.30× the 8 MiB row
+([`measurements.md`](measurements.md), "What the read chunk size is worth") —
+so the 1.83× is a historical reading of what a per-chunk allocation cost on a
+real file, and the gap between the two is what the pool is worth. It is kept
+because nothing else in the register states it.
 
 **Two entry points, deliberately different in kind:**
 
@@ -1942,6 +1944,16 @@ the unnamed remainder over:
 - the Arrow builders and the emitted batch, deliberately the caller's ("Three flush triggers");
 - `DumpIndex`, which grows with the dump's span count and is what `peak-rss` is mostly reading;
 - the runtime's threads and glibc's per-thread arena retention, which `19.18` identified as the bulk of it.
+
+**The figure is published, and every cell of its charge table is `met`.** The
+sweep of 2026-09-13 reads unnamed remainders of 4.7–179.5 MiB over both block
+sizes and six allocations, under `MEMORY_UNPOOLED_BOUND` and
+`MEMORY_RESERVE` alike, with no leg killed
+([`measurements.md`](measurements.md), "What a scan holds above the budget it
+was given"). Its instrument legs put a reader's Rust outside the pool at
+26.0 MiB, which with one 8.0 MiB `liblzma` dictionary is 34.0 MiB against the
+34.0 MiB `BlockCache::reader_bytes` bills — so the per-reader half of the rule
+is exact and the reserve covers the flat term beside it.
 
 **What the `reserve` figure can and cannot see.** Its legs are `pgdq parse` over
 a compressed input, so they reach the first table and the third bullet-list
@@ -2177,7 +2189,7 @@ blocks against a slot count of thirteen, so from `k` = 2 the cache cannot hold
 what its readers are working on. A default that is twice as slow on the shape
 the phase is named for is not paid for by a stated-count win, so one unit
 stays. Readings:
-[`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The cut width, decided by measurement".
 
 *Rejected: deriving the cut width from the charge*, which is what
 `19.14` did by accident and cost `KD19`. The charge answers to a memory
@@ -2288,7 +2300,7 @@ block into one per chunk, each taking the cache's lock. The cost is
 unattributed — the candidate is that a block evicted while a view is out lives
 past the slot cap, and chunk reads multiply the eviction events by the chunk
 count — and it is not claimed as accounted for
-([`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md)).
+([`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The cut width, decided by measurement").
 
 A `BlockTask` is `Copy` and owns its block, its resolved
 check and the reader's decode settings, so the decode runs with no lock held —
@@ -2563,8 +2575,8 @@ announced unit is a single value driving both what it keeps and how it sizes a
 slot ("Execution model and API surface"), so one pool set to the chunk length
 would drop every decoded block on release, making each decode a fresh `calloc`
 of 24 or 128 MiB; set to the block length it keeps blocks and takes the chunk
-path's pooling away, which is the **1.83×** a miss costs
-([`measurements.md`](measurements.md), "What the read chunk size is worth").
+path's pooling away, which is the **1.83×** a miss cost when it was last
+measurable ("Execution model and API surface": what a raised chunk size costs).
 Each pool keeps the existing derivation intact, and how the two budgets sum is
 the caller's parallelism budget to state. *Rejected:* an announced *set* of
 units, with the keep rule and the slot count reasoning over it — it complicates
@@ -2770,7 +2782,7 @@ the identity that guards it.
 **Concurrent `read_range` calls decode concurrently, and nothing calls
 concurrently yet** — every read loop in this crate is still sequential, so what
 exists is the capability and not a consumer of it. That is where the scaling
-is: one core decodes ~435 MB/s of plaintext on koji's 15.70× bytes where four
+is: one core decodes ~433 MB/s of plaintext on koji's 15.70× bytes where four
 concurrent per-stream decodes reach ~1.50 GB/s, and `xz`'s own threaded decoder
 gains nothing on a many-streams file because it parallelises blocks *within* a
 stream. The first two are
@@ -2782,7 +2794,7 @@ over one source.
 
 **Scaling stops well short of the worker count.** Both legs of that figure are
 within a few percent of linear to four workers; past that koji flattens hard,
-reaching 7.78× its one-worker rate at twenty-four, where the twenty-fourth
+reaching 7.85× its one-worker rate at twenty-four, where the twenty-fourth
 worker buys essentially nothing over the sixteenth. So a worker count read off a
 linear extrapolation of a one-core rate is a floor on what will be needed, not
 an estimate of what will suffice — which is what the parallel-scan work sizes
@@ -2804,9 +2816,9 @@ density.** koji is not a file with a compression ratio but one with a ratio
 *range*: sampled at twelve depths it runs from 5.02× to 33.05×, against a
 whole-file 19.41×. The figure's koji leg is taken on one slice of that range,
 and the legs themselves show what the range is worth — the control's 5.45×
-bytes decode at ~205 MB/s on one core where koji's 15.70× bytes decode at ~435.
+bytes decode at ~204 MB/s on one core where koji's 15.70× bytes decode at ~433.
 So a rate stated here names the density it was measured at, and nothing may
-say "koji decodes at 435 MB/s" unqualified: fitting the two legs gives
+say "koji decodes at 433 MB/s" unqualified: fitting the two legs gives
 rate ∝ ratio^0.71, which would put the file's 19.41×-average bytes nearer
 ~500 MB/s.
 
@@ -2816,7 +2828,7 @@ another by 6.6× — the head compresses 56.19× over its first 3 GiB and the
 sampled floor is 5.02× — so the koji leg's 15.70× is one draw from a wide
 distribution rather than "the file's own neighbourhood", and the *control*'s
 5.45× sits on top of that sampled floor. The floor a worker count should be
-sized against is therefore the control's ~205 MB/s, not koji's ~435.
+sized against is therefore the control's ~204 MB/s, not koji's ~433.
 *Rejected: a third koji column at a second offset.* It re-measures a spread the
 control already spans, and a table of one file at three depths says something
 about koji rather than about the decoder. Moving the offset moves the absolute
@@ -3229,9 +3241,9 @@ the two paths is a consequence of that call, not the argument for it.
 
 <!-- deficiency: KD9 -->
 **An `INSERT` run costs a few times a `COPY` scan per byte.** Warm it is
-**4.9×** — 2.25 s against 0.457 s over 3.00 GiB — and **7.05× the `dd` floor**
-where a `COPY` scan is 1.8×; cold on the SSD the difference is gone, 1.02× the
-floor against 1.00×, and **cold on the NVMe it is back, 2.62× against 1.06×**
+**4.9×** — 2.20 s against 0.447 s over 3.00 GiB — and **7.14× the `dd` floor**
+where a `COPY` scan is 1.5×; cold on the SSD the difference is gone, 1.02× the
+floor against 1.00×, and **cold on the NVMe it is back, 2.63× against 1.06×**
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"). Which
 of those three a user meets is decided by their storage, not by their dump.
 Carry it as a magnitude rather than a value: the legs are warm
@@ -3260,8 +3272,8 @@ land on the dominant term.
 figure that says so has been taken.** "Cold, the difference is gone" was always
 a claim about the SATA SSD, whose ~557 MB/s hides a path running well above it.
 It does not carry to the NVMe: cold on a 970 EVO Plus an `INSERT` scan is
-**2.62× the device's own time** where the `COPY` path is 1.06×, so roughly 2.0 s
-of a 3.40 s scan is spent where the disk is idle
+**2.63× the device's own time** where the `COPY` path is 1.06×, so roughly 1.97 s
+of a 3.19 s scan is spent where the disk is idle
 ([`measurements.md`](measurements.md), "Scan throughput by input shape", the
 cold-NVMe table). That is what [`roadmap.md`](roadmap.md)'s goal of device-bound
 "on hardware from HDD through NVMe" asks of the bulk-row path, and an `INSERT`
@@ -3744,9 +3756,9 @@ by patching that function.
 
 **The cost is one tier in practice: the rows that pass the pre-filter.** On
 brace-free data — the koji shape — a row pays the pre-filter alone, tens of
-nanoseconds per 16-column row (60 ns at the current reading, 36 ns at the
-`ba2fc12` stamp), a few percent of a scan reading from memory; a row that passes
-pays field splitting and `observe` on top, 287 ns over 19 columns, +54% warm. Both
+nanoseconds per 16-column row (55 ns at the current reading, 71 ns at the stamp
+before it), a few percent of a scan reading from memory; a row that passes
+pays field splitting and `observe` on top, 282 ns over 19 columns, +49% warm. Both
 collapse to +0% and +1% cold on this SSD, where the device floor hides them
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
 "…on array-bearing rows"). It runs unconditionally anyway: the alternative is a
@@ -5029,8 +5041,8 @@ both literals to render them back. What says it is not worth that reach is the
 figure: `record_2/decode` fell **190 ns → 114 ns** when the array's elements were
 borrowed and the record's were *not*, because the win there was `scan_quoted`
 sizing a quoted token before it allocates rather than the final `String`. The
-whole composite column is **+0.75 µs a row** at the end-to-end level against the
-two array columns' +6.03 ([`measurements.md`](measurements.md), "What a column
+whole composite column is **+0.78 µs a row** at the end-to-end level against the
+two array columns' +5.98 ([`measurements.md`](measurements.md), "What a column
 costs"), so one `String` per field of it is a sliver of a sliver — and its prize
 is whatever the landed levers leave, which nobody has measured.
 
@@ -5720,7 +5732,7 @@ and `scan_region` is the scheduler over them.
 
 *Rejected:* **a split decode pool and a parse pool**, each feeding the other
 over a channel. It has a ratio to be tuned to, and the right ratio is a
-property of the *command* rather than of the machine: against decode's ~435 MB/s
+property of the *command* rather than of the machine: against decode's ~433 MB/s
 a core it is **~16 decode workers per discovery thread** and **~1.5 per
 typed-extraction thread**, an order of magnitude apart and not a number any
 caller could state. A worker that decodes and parses its own range spends its
@@ -5962,7 +5974,7 @@ nothing on this path to take back
 ([`../manual/dump-inspection.md`](../manual/dump-inspection.md)). Readings:
 [`../status/history/2026-09-09.md`](../status/history/2026-09-09.md), "`19.12`:
 the coupling did not return the bytes", and
-[`roadmap-P19.20-cut-width-notes.md`](roadmap-P19.20-cut-width-notes.md).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The cut width, decided by measurement".
 
 **The slot count still bounds what is outstanding**, so `--jobs 4` remains the
 ceiling on plain-file readers whatever is kept.
@@ -6161,12 +6173,12 @@ still does not show it costing anything.
 **What a projection saves is measured, and it is the columns' whole build
 cost.** One 3.00 GiB file read at five widths, warm and typed
 ([`measurements.md`](measurements.md), "What a column costs: five projection
-widths over one file"): `--no-columns` costs **1.61 µs a row** where all 19
-columns cost **12.97**, so the replay a projection cannot avoid — the block
+widths over one file"): `--no-columns` costs **1.68 µs a row** where all 19
+columns cost **13.06**, so the replay a projection cannot avoid — the block
 read, every row walked and field-counted, the predicate evaluated — is an
 eighth of a complete typed read. Between those, one `smallint` is +0.12 µs, the
-other fifteen scalars +4.46 between them, the composite +0.75, and the two
-array columns **+6.03** — 89% of what all three nested columns cost, and more
+other fifteen scalars +4.53 between them, the composite +0.78, and the two
+array columns **+5.98** — 88% of what all three nested columns cost, and more
 than every scalar column in the table. So the saving is real, it is
 concentrated in the nested columns, and it is what makes projecting one array
 column away worth more than projecting every scalar away.
@@ -6293,9 +6305,10 @@ reads its field out of one `copy::RowSplit`, which the replay's row arm resets
 per row and hands to the filter first. Each boundary is found by exactly one
 `memchr`, by whichever consumer asks first, and every later ask is an index
 into what is already there. Measured over the 16-column control, with nothing
-surviving to be decoded: a term one field in costs 0.033 µs a row, one thirteen
-fields in 0.09–0.12 — wall readings from a sitting the machine was not quiet
-for, so magnitudes rather than exact figures — and before the sharing, a
+surviving to be decoded: five terms thirteen fields in cost **0.04 µs a row**
+more than the same five one field in, and one term thirteen fields in 0.09 µs
+more than one term at the front — a few hundredths of a microsecond either way,
+so magnitudes rather than exact figures — and before the sharing, a
 five-term disjunction at that depth spent **49% of the whole query's user
 instructions** on the walk alone, which is the deterministic half of that
 reading ([`measurements.md`](measurements.md), "What a filter term costs").
@@ -7880,22 +7893,22 @@ which stage binds, and the rule the parallel scan was built on is one line:
 **parallelize what is CPU-bound**. Three cases fall out of it rather than being
 enumerated, and each rate is a figure in [`measurements.md`](measurements.md):
 
-- **Decode: always.** One core decodes ~435 MB/s of plaintext ("What a second
+- **Decode: always.** One core decodes ~433 MB/s of plaintext ("What a second
   decode worker buys, and what the twenty-fourth does not"), which is below
   every device this project owns and still below the HDD's offer at twenty-four
   workers. A compressed source hands the parser roughly 19.4 plaintext bytes
   for each byte the device delivers — koji is 784 GB against 40,397,009,888 —
   so serial decode is the only thing standing between that offer and the
   parser.
-- **Extraction: on any source.** A typed `query` runs at ~680 MB/s and a string
-  one at ~940, under the NVMe's 2602 MB/s floor and the second under the SATA
-  SSD's 561, so extraction is CPU-bound on every device here whatever the
+- **Extraction: on any source.** A typed `query` runs at ~675 MB/s and a string
+  one at ~915, under the NVMe's 2647 MB/s floor and the second under the SATA
+  SSD's 560, so extraction is CPU-bound on every device here whatever the
   source is.
 - **Discovery: only with a decoder in front of it.** `parse` runs at
-  7049 MB/s warm ("Scan throughput by input shape"), above every device, so on
+  7214 MB/s warm ("Scan throughput by input shape"), above every device, so on
   a plain file it is device-bound — cold on the NVMe it is 1.06× the `dd`
-  floor, and the entire prize for splitting it is the 0.076 s by which a
-  1.314 s scan exceeds that floor.
+  floor, and the entire prize for splitting it is the 0.072 s by which a
+  1.289 s scan exceeds that floor.
 
 **The worker is fused — one thread decodes and parses its own range — because
 those rates make any split arrangement a tuning problem.** That argument and
@@ -7906,34 +7919,41 @@ what it refuses are beside the mechanism ("The interior split").
 one-core rate by a worker count; two of that figure's four legs behave as the
 projection said and two do not ([`measurements.md`](measurements.md), "What a
 second scan worker buys, and where the plain path stops"). A compressed `parse`
-reaches **5.82×** at twenty-four workers, sublinearly, which is the decode
-figure's own shape — **and that leg is the one claim in this section taken at a
-partitioning the code has since left and returned to.** It was measured at
-`20fd77c`, before `partition_bytes` became `reader_bytes`. Between those two
-points a partition read took `read_by_blocks`' copying arm into a chunk-pool
-buffer, so the pool's four slots capped the fused workers flat from four; the
-repair puts the cut back on the source's own units ("Execution model and API
-surface"), and a stated-count probe on the repaired build runs 17.8 → 17.9 →
-9.9 → 7.4 s over one, two, four and six readers, still climbing where the
-intervening build was flat. What bounds it is `KD20` — each worker decoding its
+reaches **5.60×** at twenty-four workers, sublinearly, which is the decode
+figure's own shape. What bounds it is `KD20` — each worker decoding its
 successor's block for a chunk-sized tail — and widening the cut to amortise
 that has since been measured and refused at the default ("cut-width"), so the
-number above is taken at the arrangement that ships. The number above stands as what the
-figure says until `19.11`'s sitting replaces it, which is why it is flagged here
-rather than edited there. A compressed typed `query` reaches **1.60×**, its
-sub-stream count capped at eleven by the stated budget's divisor. A plain
-`parse` *falls* to **0.81×**, paying coordination for a scan that was already
-device-bound — which is the refusal of parallel plain-file discovery, arrived
-at as a measurement rather than as a branch. And a plain typed `query` is
-**flat at 0.98×** across the whole range although the rule says it is
-CPU-bound: the cores are asked for and not delivered.
+number is taken at the arrangement that ships. Its **two-worker cell reads
+0.97×**, which is the doubling-decode ceiling above meeting the axis: two
+readers do about twice the decode work, so no speedup is the ceiling's own
+prediction there, and the leg clears it only once the count outruns the waste.
+A compressed typed `query` reaches **1.56×**, and no longer because the
+budget's divisor caps it — see the asymmetry the default ships, under
+"Execution model and API surface". And a plain typed `query` is **flat at
+1.02×** across the whole range although the rule says it is CPU-bound: the
+cores are asked for and not delivered.
 
-**A plain `parse` is slower than serial at every worker count, and that is what
-sets the plain source's own default.** A diagnostic sitting against a build
-whose plain source lifts the pool-depth clamp reaches 0.87× at its best point,
-still below one worker — so the sizing and depth terms named below are real
-costs to shrink and not a route to a plain `parse` that scales. What that scan
-is made of is beside its mechanism ("The interior split").
+**A plain `parse` now reads *above* serial warm, which reverses what this
+section said, and the cause is the repair rather than the measurement.** The
+leg was taken at `20fd77c`, before `partition_bytes` became `reader_bytes`;
+between those two points a partition read took `read_by_blocks`' copying arm
+into a chunk-pool buffer, so the pool's four slots capped the fused workers flat
+from four and every cell fell below one worker — 0.81× at twenty-four. The
+repair puts the cut back on the source's own units ("Execution model and API
+surface"), and the re-take reads **1.36× at two workers and 1.41× at four**,
+falling back to 1.18× once `POOL_DEPTH` stops admitting another, exactly as the
+repaired build's stated-count probe predicted.
+
+**That does not by itself argue for a parallel plain default, and the default is
+unchanged.** The leg is *warm, on tmpfs*, which is the regime that exists to
+expose CPU a device hides; on every real device this project owns a plain
+`parse` is already device-bound — 1.00× the SATA floor and 1.06× the NVMe's
+("Scan throughput by input shape") — so there is no wall clock there for a
+second worker to take. What the reversal costs is the *stated* justification
+for the serial default, which was that splitting a plain source is slower than
+not splitting it; that sentence is now true only of storage, and it is recorded
+under `STATUS.md`'s "Decisions worth another look" rather than acted on here.
+What that scan is made of is beside its mechanism ("The interior split").
 
 <!-- deficiency: KD17 -->
 **What makes a plain typed `query` flat is not known, and the obvious suspect is
@@ -8008,7 +8028,7 @@ amount and only the share differs.
 the subtraction that measures it.** Grouping the out-of-line entry points with
 their inlined ones puts the LF search at 48.8% and the brace pre-filter at
 35.0%, or 0.059 s against 0.042 s — and that second figure is the check, since
-the census-on/census-off pair reads **+0.057 s** where it stands today, against
+the census-on/census-off pair reads **+0.045 s** where it stands today, against
 +0.030 s under the stamp before the read path stopped allocating and copying
 ([`measurements.md`](measurements.md), "The census on brace-free rows"). A
 share that agrees with a subtraction taken by a different instrument is the
@@ -8143,8 +8163,8 @@ two `query` rows of [`measurements.md`](measurements.md), "Which allocator a
 figure was taken under" — the only table that times both modes against a
 co-measured warm floor. They are `pgdq query` figures: an embedder that
 consumes `RecordBatch`es pays `poll_next` and nothing under `print_batch`. A
-typed query is **15.0×** that floor and a `strings` one **10.9×** (4.75 s and
-3.44 s against 0.317 s), where before this section's render-path work they
+typed query is **15.8×** that floor and a `strings` one **11.5×** (4.84 s and
+3.52 s against 0.307 s), where before this section's render-path work they
 were 31× and 13.3×. The library's own typed extraction is 3.10 µs a row
 against `strings`'s 2.42 — a factor of 1.3, where the CLI's wall times showed
 2.4 and now show **1.38**. The gap between the library's factor and the CLI's
@@ -8440,8 +8460,8 @@ published as a comparison of two identical binaries.
 
 The reading is [`measurements.md`](measurements.md), "Which allocator a figure
 was taken under", and the decision it exists to make is **settled**: over the
-three headline shapes `jemalloc` is 1.02× / 1.12× / 1.10× and `mimalloc`
-0.97× / 0.97× / 0.99×. The lever's stake — a factor, on the evidence that two
+three headline shapes `jemalloc` is 0.99× / 1.12× / 1.09× and `mimalloc`
+0.97× / 0.97× / 0.97×. The lever's stake — a factor, on the evidence that two
 stock libcs differ by 1.8–2.4× — did not survive contact with two allocators
 that are both tuned for this shape of work: what is on the table is single
 percentage points, in a table whose own instrument does not resolve them. The
@@ -8473,14 +8493,15 @@ pooling.
   `madvise` calls against glibc's 50 over a file read in 3,072 chunks: it was
   `LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` handed back to
   the kernel and re-faulted once per chunk. With the buffer pooled ("Execution
-  model and API surface") it is 1.02× and has stayed there, while that leg's
-  two `query` cells — 1.12× and 1.10× — are the clearest losses in the table.
+  model and API surface") it read 1.02× twice and 0.99× at the latest sitting,
+  a cell whose spread now swallows the reference's whole, while that leg's
+  two `query` cells — 1.12× and 1.09× — are the clearest losses in the table.
 - **`mimalloc`'s `typed` was 0.96×**, twice, on non-overlapping within-sitting
   spreads — the one cell of that table that reproduced its magnitude and the
   whole of the case for adopting. Pooled, it read 1.01× with its spread *above*
-  the reference's, and at the wrap sweep 0.99× with the spreads overlapping. A
-  cell that has read below, above and below again across three sittings is
-  measuring the apparatus.
+  the reference's, at the wrap sweep 0.99× and at the closing sweep 0.97×, the
+  spreads overlapping in both. A cell that has read below, above and below
+  again across four sittings is measuring the apparatus.
 
 *Rejected:* adopting `mimalloc`. It has been refused twice on two different
 numbers, and the reason is the same both times. The one-line default flip was
@@ -8493,7 +8514,7 @@ its least informative moment, on a ranking whose largest number was measuring
 an allocation about to be deleted; the next sitting agreed, reading that cell
 at 1.01×. **On the 1–3% margin it shows now**, the price is the same and the
 evidence is weaker still: no cell's spread clears the reference's, and a lever
-whose sign has changed twice across three sittings is one more sitting away
+whose sign has changed twice across four sittings is one more sitting away
 from changing again. What would settle it is not another sitting of this
 figure but an instrument that resolves a 1% wall difference, which this
 campaign does not own and which the deterministic one — user instructions —
@@ -9093,9 +9114,17 @@ splice-onto-a-prefix logic with a different set of bugs.
 **The save throttle is self-tuning, not an interval.** Every save serializes
 the *whole* index and the index grows with the block count, so saving at every
 watermark is O(blocks²): koji's 74 blocks cost +1.5% wall, while 4000 small
-blocks cost 47 s against a file of 1.9 MB (`measurements.md`, "Per-block cache
-saving"). `SaveThrottle` skips a block's save unless at least `K = 20` times
-the last save's own *measured duration* has elapsed since it, which bounds save
+blocks cost **47.7 s** against a file of 1.9 MB, at 4003 saves.
+
+**That last reading is a historical fact, recorded here rather than re-taken.**
+It is the build at `b726f6b`, the commit preceding `SaveThrottle`, measured
+2026-09-05. A subtraction against a pinned commit prices everything that has
+landed between the two trees, and that set only grows — so what the figure
+carries now is the throttled scan alone, at five saves whatever the block count
+(`measurements.md`, "Per-block cache saving").
+
+`SaveThrottle` skips a block's save unless at least `K = 20` times the last
+save's own *measured duration* has elapsed since it, which bounds save
 overhead at roughly `1/K` of scan time in every regime with no constant that
 has to be right in two of them — a cheap cache saves often, an expensive one
 saves rarely, koji is untouched. *Rejected:* "every N seconds" and "every N
@@ -9107,8 +9136,9 @@ count rather than bytes read.
 whole span list (`map::Builder::snapshot`, then `stream::splice` over the
 prefix) whether or not anything read the result. So `map_forward` rebuilds
 `index.spans` at the gate's openings rather than at every watermark, which
-takes a 4000-block `parse` from 20.8 s to **0.113 s** (`measurements.md`,
-"Per-block cache saving"). The two costs were multiplying rather than adding:
+took a 4000-block `parse` from **20.8 s** to **0.113 s** — a reading taken once,
+at the commits either side of the gate, and recorded here on the same terms as
+the one above. The two costs were multiplying rather than adding:
 the splice inflated the scan, and a longer scan is what the throttle reads as
 licence to save again, so removing one shrank the other with it.
 
@@ -9183,28 +9213,28 @@ is `(c) unowned` rather than owned by a phase that would not have closed it.
 account for.** Peak resident set is flat in *bytes* — 1535× the bytes of a
 one-block dump moves it by less than the readings' own spread — and it is **not**
 flat in *blocks*: ~8.0 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
-`parse` sits at 43.8 MiB where a one-block one sits at 5.9 MiB
+`parse` sits at 44.2 MiB where a one-block one sits at 6.2 MiB
 ([`measurements.md`](measurements.md), "What a scan holds resident"). That is
 deficiency `KD14` (`../status/STATUS.md`, "Known deficiencies"), unowned, and
 what would promote it is a dump with tens of thousands of tables — which nothing
 in hand is, koji having 74 blocks. What it already changes is how the design's
-memory claim reads: the ~5.9 MiB every consumer above quotes is the *one-block*
+memory claim reads: the ~6.2 MiB every consumer above quotes is the *one-block*
 reading, and they say so.
 
 **It is attributed, and it is mostly none of the three things this paragraph
 used to name.** Three fifths of it is **live structure per table**, paid before a
 data block is read: `parse --preamble-only` stops at the end of the schema
-section and is already carrying **+6,002 B a block**, and an `info` over the
+section and is already carrying **+6,101 B a block**, and an `info` over the
 finished cache — an index deserialized rather than built, with no scanner,
-census or splice anywhere — costs **+5,722 B**, two different routes agreeing to
+census or splice anywhere — costs **+5,826 B**, two different routes agreeing to
 within 5% ([`measurements.md`](measurements.md), "What the per-block resident
 growth is made of"). The whole-list clone is real and smaller: turning the
 throttle off with `--dqcache none`, against a cached twin differing in that flag
 alone, costs **one to two kilobytes a block**. And the allocator is not it —
-under the shipped shape glibc has the *lowest* slope of the three, +10,390 B
-against mimalloc's +11,415 and jemalloc's +13,703, so an allocator that returns
+under the shipped shape glibc has the *lowest* slope of the three, +10,311 B
+against mimalloc's +11,421 and jemalloc's +12,603, so an allocator that returns
 more does not make the growth smaller. Only where the throttle is off does
-retention appear at all, and there mimalloc recovers ~4 KB a block. What is
+retention appear at all, and there mimalloc recovers ~2.7 KB a block. What is
 left, ~4.5 KB a block, is the scan's own working set over what holding the
 finished index costs.
 

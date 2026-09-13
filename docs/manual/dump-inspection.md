@@ -167,11 +167,15 @@ and `parse` builds a fresh one.
 changes that, and the reason to mention it at all is to say that the default
 was chosen by measurement rather than by taste: over six sizes from 64 KiB to
 16 MiB, on a SATA SSD, an NVMe drive and a RAM disk, 1 MiB was the fastest on
-the only one of the three where the size made any difference at all, and the
-sizes either side of it were ties rather than improvements.
+the NVMe — the only real device of the three whose speed a chunk size can
+change at all — and the sizes either side of it were ties rather than
+improvements. On the SATA SSD every size reads the same, the device being the
+whole cost. On the RAM disk, which is not storage, 4 and 8 MiB come out a few
+percent ahead of 1 MiB; that is the per-chunk work rather than anything a disk
+does, and it is not what the default is chosen on.
 
 Two things are worth knowing if you change it anyway. **Small is slower**:
-64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
+64 KiB costs about 40% more CPU than 1 MiB, because the per-chunk work is paid
 sixteen times as often. **Large costs memory, and the cost levels off**: read
 buffers are reused at whatever size you ask for, and the pool holds four of
 them or `--parallel-memory`'s worth, whichever is fewer — so under a 64 MiB
@@ -266,7 +270,7 @@ thing the worker count answers to.** What kills a container is one run's peak
 and not its average, so pgdq takes the largest worker count whose predicted
 total — the readers' own buffers, plus 256 MiB for everything a scan holds
 outside them — still fits in four fifths of the limit, and reads with that many.
-In a 1 GiB container a 24 MiB-block `.xz` reads with nine readers rather than
+In a 1 GiB container a 24 MiB-block `.xz` reads with ten readers rather than
 the eleven the ceiling alone would buy. **Below about 640 MiB the fifth costs
 you nothing**, because the 384 MiB already taken off the top is the tighter of
 the two; above it, it is what stops a wider machine reading the same allocation
@@ -293,8 +297,12 @@ If that is more than you want a flagless run to take, state
 directions.
 
 **`--jobs <n>` is how many workers pgdq may ask for. Left unstated, the file
-decides.** A plain (uncompressed) dump reads serially, because splitting one is
-slower than not splitting it. An `.xz` dump takes the CPUs this process was
+decides.** A plain (uncompressed) dump reads serially, because on storage there
+is nothing for a second worker to take: reading such a dump already runs at the
+speed the disk delivers the bytes, so the work is the device's and not the
+CPU's. State `--jobs` if you want workers on one anyway — from a RAM disk or a
+page cache the file is already sitting in, where the disk is not the cost, a
+few of them are worth about 40%. An `.xz` dump takes the CPUs this process was
 given — the machine's cores, or fewer where a container quota says so, since
 decompression is the one part of the work that a second core reliably finishes
 sooner — and fewer still where the file itself has fewer blocks than that:

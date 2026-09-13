@@ -614,3 +614,23 @@ budget. See [`../status/history/2026-09-10.md`](../status/history/2026-09-10.md)
 **Contingent on.** DataFusion 55's `MemoryPool` contract continuing to exclude
 data sources, and `target_partitions` remaining pull-style. Re-check both at the
 version P6 actually targets.
+
+## `bytes::Bytes` is in the trait's signature and the library does not re-export it
+
+**Fact.** `ByteRangeSource::read_range` names `bytes::Bytes` in its signature,
+and `pgdump_query` re-exports neither the type nor the crate. Anything outside
+this workspace that implements the trait therefore has to take a direct
+dependency on `bytes` and keep its version in step with ours. The CLI already
+pays it: `bytes` is a **dev**-dependency there purely so a test double can be
+written.
+
+**Why this phase cares.** P6 is the phase where an embedder — rather than one
+of our own tests — implements a source. Re-exporting `bytes::Bytes` from
+`pgdump_query` is the other answer and costs one line; the reason it was not
+taken during `P19` is that a dev-dependency was enough for a test, which is not
+the case a public trait is for. Decide it when the embeddable surface is
+specified, alongside whatever else the crate re-exports.
+
+**Origin.** `19.8`, the source's own worker default, 2026-09-09. The trait's
+current shape is [`architecture.md`](architecture.md), "Execution model and API
+surface".

@@ -14,153 +14,77 @@ reviews; how each mechanism works is
 which is where a session touching one meets its rejected alternatives and its
 limitations. The capability table below says what state each is in.
 
-[`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
-stamp of 2026-09-05, and **seventeen of its twenty-one tables come from one
-sitting**: sixteen from the scan-performance wrap sweep and `session-drift`,
-which no sweep can take because it is derived *across* two, from that sweep and
-a second begun the minute it finished. The other four are `peak-rss`, taken alone
-at `41c96bb`; `xz-decode-scaling`, taken alone at `7d21c6e`; `parallel-peak-rss`,
-taken alone at `e29939c` and unmoved since (the sub-stream divisor never
-reaches its command shape); and `parallel-scan-throughput`, re-taken alone at
-`20fd77c` once that divisor change landed — the two
-no longer share a commit, which was never a `shares` edge between them, each **saying
-so inside its own figure marker**, which is where
-`--stale`, acknowledgement spentness and `--verify-additive` each read the
-commit they argue that figure from; none shares a reading with any other,
-which is the condition under which a figure may be published outside a sweep at
-all. So no table carries a partial-sitting note and no absolute in the
-document is a cross-sitting reading. The fresh
-stamp spent all six of the previous acknowledgements, which were deleted rather
-than kept as sediment; the register carries three now — P7's wrap and
-keystone, both comment-only, plus `a30cc43`, which is not: it
-excuses `parallel-peak-rss` on reachability, an executable diff that never
-reaches that figure's command shape. Under the previous `ba2fc12`
-stamp ten of the seventeen stood outside the sweep.
+[`../design/measurements.md`](../design/measurements.md) carries the `9b35bea`
+stamp of 2026-09-13, and **every one of its twenty-three tables comes from one
+sitting**: twenty-two from `19.11`'s closing sweep, plus `session-drift`, which
+no sweep can take because it is derived *across* two. **No figure stands
+outside the stamp**, which the document has never been able to say before —
+`peak-rss`, `xz-decode-scaling` and both `parallel-*` tables each entered from a
+sitting of their own at an earlier stamp, and this sweep takes all four back
+inside. `peak-rss` could not have stayed out in any case: `rss-attribution` and
+`reserve` each borrow a run from it, and a figure standing in a `shares` edge
+may not be published alone. The fresh stamp spent all three of the previous
+acknowledgements — P7's wrap and keystone and `a30cc43` — which were deleted
+rather than kept as sediment, so `measure.ACKNOWLEDGED` is empty, the state a
+fresh stamp leaves behind.
 
-**The largest correction the register has carried is `census-arrays`.** Its warm
-census cost read 1.045 s and 1.49 µs a row under the old stamp and now reads
-**0.201 s and 287 ns** — a factor of five — because the census's field split
-went behind `memchr` and the split was the byte loop, not the census. It was
-red on `pgdump_query/src/copy.rs` throughout, so nothing about the register
-missed it; what a red figure never says is *how far* a number has moved.
+**Two figures are published for the first time.** `rss-attribution` leaves
+`measure.NOT_OURS` and the doc's `outside-register` declaration with it, closing
+`M74`: its `parse` row is now `peak-rss`'s own run rather than a second,
+disagreeing measurement of one command shape. `reserve` publishes the check that
+the budget rule survives a real cgroup — the flagless axis at six allocations
+and two block sizes, the charge against what was held cell by cell, and the
+introspection build's own account beside it. **Every cell of that charge table
+is `met`**, with no leg killed anywhere in the sitting, which is the condition
+`19.11` accepted on.
 
-**Four other findings changed shape rather than magnitude.** The census's two
-tiers are now within a factor of four of each other — the pre-filter is 25% of
-what an inspected row costs, against 4% before — so "one tier, not two" no
-longer holds. `census-attribution`'s baseline gap fell from +0.874 s to
-+0.033 s, which is inside the drift figure, so the untyped baseline's
-file-dependence is now invisible without the census-off binary rather than
-obvious with it. `predicate-terms` measures the shared field split, and its
-term-count axis has gone flat: five terms at one depth cost +0.05 µs a row over
-one, against +0.37 before. And the I/O-defaults ceiling fell from 8.9% to
-**5.8%**, because the read-path work took the parse below the device by more
-than it took the device — every I/O lever declined at 8.9% is declined harder
-now.
+**A plain `parse` reads above serial warm, reversing what the record said.**
+`parallel-scan-throughput` was last taken at `20fd77c`, before
+`partition_bytes` became `reader_bytes`; every plain cell then fell below one
+worker (0.81× at twenty-four) because a partition read went through the chunk
+pool's four slots. The re-take on the repaired build reads **1.36× at two
+workers and 1.41× at four**, falling back to 1.18× once `POOL_DEPTH` stops
+admitting another. The default is unchanged and the leg is warm, on tmpfs — on
+every real device a plain `parse` is already device-bound — but the *stated*
+justification for the serial default no longer holds as written, and that is
+under "Decisions worth another look" below.
 
-**The query path roughly halved.** A typed control query went 10.36 s → 4.75 s
-and the `--arrays --composite` file 19.93 s → 9.12 s, against `strings` legs of
-4.42 s → 3.44 s and 5.36 s → 3.45 s; the nested-column increment went
-**13.5 µs → 6.5 µs a row** and every row of `projection-widths` about halved
-with the same ordering intact. The scalar decoders, the read path and the four
-render-path changes are what moved them.
+**Two other findings changed shape rather than magnitude.** The `chunk-size`
+table's 16 MiB row is no longer a pool miss: with the announced read size in
+place it fell 0.866 s → 0.546 s warm and 1.829 s → 1.578 s cold on the NVMe, so
+all three rows above the default now carry the `fadvise` refusal where two used
+to, and the 1.83× a pool miss cost is a historical reading rather than a cell.
+And `census-brace-free` reads its cold Δ **negative** for the second time in the
+figure's life, −0.009 s on a 5.77 s scan, which is the plainest available
+statement that the census is smaller than the noise a device-bound leg sits in;
+its warm Δ is +11%, mid-band across eight sweeps that have all read it positive.
 
-**One reading weakened a settled claim without reopening it.** `mimalloc` now
-reads 0.97×, 0.97× and 0.99× on the three headline shapes — marginally ahead of
-the platform allocator on all three, where the previous sitting read
-1.00×/0.99×/1.01×. Every cell's spread overlaps the reference's and the largest
-gap is 3%, so the decision stands and the platform allocator is kept, but the
-statement behind it has weakened from "nothing beats it" to "nothing beats it by
-more than the instrument's own noise". Reviewed and affirmed at P7's wrap; what
-would reopen it is an instrument that resolves a 1% wall difference, not another
-sitting of this one ([`../design/architecture.md`](../design/architecture.md),
-"The allocator is the binary's choice").
+**Three claims the sitting left where it found them.** `mimalloc` reads 0.97×
+on all three headline shapes — the third sitting of four to put it marginally
+ahead, every cell's spread overlapping the reference's — so the platform
+allocator stays, on the reasoning already filed beside the mechanism
+([`../design/architecture.md`](../design/architecture.md), "The allocator is
+the binary's choice"). `KD17`'s plain typed `query` is still flat, at 1.02×
+across the whole `--jobs` range. And `peak-rss` moved by nothing a three-rep
+instrument can separate from its own scatter across four sittings now:
+5.88 / 5.64 / 9.53 / 43.59, then 5.90 / 5.85 / 9.73 / 43.78, now
+6.20 / 6.13 / 9.77 / 44.19 MiB.
 
-**The pair that produced this stamp cleared the contention gate on the number
-alone**, which the previous stamp did not: no warm floor is near the ~15%
-threshold, and the two files' floors moved in *opposite* directions — `control`
-−2.5% to −5.3%, `arrays` +3.4% — which is the opposite of the shared slow move
-that disqualifies a sweep
-([`../design/measurements.md`](../design/measurements.md), "The floor is read
-directionally"). Session drift over 92 shared readings is a median absolute
-**1.6%** and a largest 14.3%.
-
-**Twenty of the twenty-one figures are stale, and no acknowledgement can
-excuse them.** Six rounds of library work did it. The read-path work made the
-buffer pool keep the chunk size a read loop announces, touching `io.rs`,
-`scan.rs`, `stream.rs` and the CLI; the compressed-input work reshaped every
-`ByteRangeSource` signature to a boxed future and added a second
-implementation, touching `io.rs`, `cache.rs`, `index.rs`, `diagnostic.rs` and
-the CLI again; the cache-replacement work put a refusal in front of all three
-scan entry points, touching `cache.rs`, `index.rs`, `stream.rs` and the CLI
-once more; the parallel-scan work moved `io.rs`, `scan.rs`, `stream.rs`,
-`batch.rs`, `map.rs` and the CLI again on top of that; and the per-file-term
-repair separated a partition's cut size from its memory charge, moving `io.rs`
-and `leader.rs` once more; and the margin on the resolved count moved `io.rs`
-again, twice — `19.23` adding it and `19.26` giving it its own constant —
-though **no registered command shape's arrangement moves with either** —
-the margin can only lower a count above one, every shape but the jobs-axis
-families states `--jobs 1`, and those three state a budget as well, which is
-the arm that never reaches a discovered limit; and the delivered-count report
-moved `leader.rs` and `stream.rs`, adding a few comparisons per `COPY` block
-and a status line no registered shape can print — `--jobs 1` returns before the
-source's advice is read, and the jobs-axis families state a budget that affords
-the count they ask for. All of them add
-executable lines, so neither mechanical oracle applies: reachability excuses
-only a diff no command shape executes, and byte-identity settles generator
-changes alone.
-
-**Three of the parallel-scan changes are red on their own terms rather than
-inheriting another change's red**, because each moved what a *registered*
-command shape executes. `pgdq query` runs the partitioned entry point at
-whatever `--jobs` allows. `pgdq parse`'s mapping pass offers every `COPY`
-region large enough to cut to the leader's scheduler, and every query's mapping
-pass with it. And `main()` installs a `tracing_subscriber` on every invocation,
-with one event around the seek-table build and one at each scan's start and
-completion — every registered shape reaches at least the completion site. What
-can be said without an oracle is that those lines are a fixed few per
-invocation rather than one per row or per block, and that they read and write
-nothing belonging to the dump. **The worker-count apparatus rule bounds the exposure**: every
-command shape states `--jobs 1` rather than inheriting the CLI default, so a
-figure re-taken today measures the serial arrangement the published tables were
-taken under — and the CLI default's own fall to 1 therefore moved what a person
-who states no flag gets and nothing the register measures.
-
-**The rest are red on paths they share with those changes, and three carry a
-reason of their own.** `xz-decode-scaling` is red on
-`scripts/generate_xz_input.py`, which gained a `--block-size` flag: a generator
-change, the one case a mechanical oracle settles, so `--verify-additive` is
-available to whichever change spends it — checked by hand meanwhile on a 77 MiB
-input, where the pre- and post-change generators write byte-identical `.xz`
-files at the default. `session-drift` has been red on `scripts/measure.py`
-since the harness took the derived direction of the borrow graph.
-`parallel-peak-rss` is red on the read path since its own `e29939c` sitting,
-with one change excused: `a30cc43`'s sub-stream divisor is inside
-`stream::plan_partitions`, which its `pgdq parse` command shape never calls.
-`nested-decode-micro` is the one figure of any kind still green, timing
-decoders none of this touched.
-
-**One published number actually moves**, the
-`chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
-the buffer pool; that row is called out where it stands. A stale figure obliges
-no sweep ([`../design/measurements.md`](../design/measurements.md), "A stale
-figure does not oblige a sweep"), and a sweep is what re-takes these: seventeen
-of the twenty-one tables from one sitting is the property the `af15eac` stamp has
-and a partial sitting would spend.
-
-**`peak-rss` is the figure whose red says least about its numbers.** `io.rs`,
-`cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and
-`41c96bb`, and those are executable changes — but the re-take at `41c96bb`
-reads 5.90 / 5.85 / 9.73 / 43.78 MiB against 5.88 / 5.64 / 9.53 / 43.59, every
-one inside the other's spread. Three rounds of read-path, compressed-source and
-cache work changed what a scan holds resident by nothing a three-rep instrument
-can see, and the red it carries now is a struct that changed modules.
-
-The two acknowledgements the register carries still stand and still hold for
-what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose
-every hunk is a comment, a docstring, or a `quoted_by` edge into the phase docs
-they deleted; each entry names the diff that re-checks it.
-`scripts/acknowledged.py` is its own module precisely so that an acknowledgement
-edit does not re-stale the stamp it was just given.
+**One figure is stale on its own evidence, and every other is stale on a
+comment.** `session-drift` is red on `scripts/measure.py`, which the sitting
+itself carried uncommitted changes to — the stamp says so — and which is the
+apparatus that figure measures; re-taking it means a second sweep run back to
+back with a first, not a `--figure`. Every other figure reads red on
+`pgdump_query/src/io.rs`, which the fold-in itself touched: the corrections it
+made are the numbers those doc comments quote — `5.82×` → `5.60×`, `~5.9 MiB` →
+`~6.2 MiB`, the two `window_end` traps and three retargeted citations — and
+every hunk is inside a `///`. **That red owes an acknowledgement rather than a
+sweep**, and it cannot be written until the change is committed, an entry
+naming a sha. Until then the reason is here, which is the standing requirement
+([`../design/measurements.md`](../design/measurements.md), "A stale figure does
+not oblige a sweep"). Outside the register, the koji section is red on ten
+scanner paths since `f5768e7`, which no acknowledgement can excuse and only a
+run on the HDD would clear.
 
 | Capability | State |
 |---|---|
@@ -173,8 +97,8 @@ edit does not re-stale the stamp it was just given.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). **It splits a `COPY` block's interior at `--jobs`** — the mapping pass offers each open region to the leader's scheduler, which declines a region smaller than one of the source's partitions, so a dump of small tables mostly reads serially and a dump of huge ones mostly does not; a cancelled region banks nothing and resumes like any other stop. **An omitted `--jobs` is the source's own recommendation** (`ByteRangeSource::default_workers`), not a constant: a plain file inherits the defaulted **one**, an `.xz` file answers `available_parallelism()` — already the minimum of the affinity mask and every ancestor cgroup's CPU quota — and a stated flag wins outright in either direction, there being no third spelling since `--jobs 0` is refused. So a flagless `parse` of a compressed dump reports the machine's cores on the `scan started` line and a plain one still reports `jobs=1`. **What that line announces is corrected where it is not delivered**: `scan arrangement` states the delivered reader count beside the announced one, once per scan, with which rule cut it and what the refused arrangement would have held — the number that buys it back, read off the source rather than re-derived. Silence means the announced count ran; the one refusal it does not report is a `COPY` region too small to cut, which is a property of that block rather than of the run ([`../design/architecture.md`](../design/architecture.md), "Status output"); nothing in the library reads the recommendation, so an embedder's silence is still `Parallelism::default()`. What the stated budget affords binds afterwards, through the divisor every count passes alike, and **a recommended count is lowered by whichever budget is in force** before that — discovered or stated, the rule being scoped to the absence of `--jobs` rather than to the absence of a budget, so only a count somebody typed is announced unlowered. **A discovered limit lowers it twice over**: once to what `limit − MEMORY_RESERVE` affords, and again to the count whose predicted resident leaves `MEMORY_MARGIN_PERCENT` of that limit unused — which is what makes the resolved arrangement a property of the allocation rather than of the host's core count, and which can never take the last reader or the budget it spends. `info` reports from the cache and never scans. **`query` reads its rows partitioned**, through `table_stream_partitions` at whatever `--jobs` allows, and merges them back into file order one batch per sub-stream, so the rows and their order are the same at every setting and only the reading changes ([`../design/architecture.md`](../design/architecture.md), "`pgdq query` merges the sub-streams back into file order"). Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); a raised value keeps its pooling, because each read loop announces the length it repeats, and costs four buffers of that size in RSS instead, or `--parallel-memory`'s worth, whichever is fewer — the pool's slot count falls out of that byte budget, which is what lets a slot be a decoded xz block ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"). `--detail` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, a compressed dump's container shape (blocks, streams, largest block — `--json` carries the same object under `compression`), and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. **Every help page is wrapped** — `clap`'s `wrap_help`, at the terminal's width, `COLUMNS`, or 100 columns in a redirect — and all eight of them (both depths, four commands) are snapshotted in `pgdump_query-cli/tests/help_text.rs`, which also asserts outright that no line overruns the width and that no flag renders with nothing beside it ([`../design/architecture.md`](../design/architecture.md), "A flag's help is its doc comment, citations included"). Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twenty-one figures the doc carries, sixteen taken by a sweep, one derived across two and four taken alone, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` asks for a diagnostic sitting: it borrows nothing and marks its whole run unpublishable, joining `--reps` and the size override, so the publication refusal below stops firing for it by construction rather than by an exemption. **Nothing it runs inherits a `--jobs` default**: `measure.SWEEP_JOBS` is stated by every command shape, by the profile recipe's argv and by the three untimed invocations that publish numbers all the same — the host `parse` behind every per-row divisor, the `strace`d save count, and the RSS attribution's nine legs — while koji takes the count as a parameter (`--koji-jobs`), its leg being a leg at some count against a serial one. `--check` refuses a shape carrying neither `--jobs N` nor, for the decode instrument, `--workers N`, with two exemptions and both named as such — `dd`, which is not a run of ours, and the reserve instrument's **flagless** legs, whose reading *is* the count a run stating nothing resolves (`measure._NO_FLAGS`), and which `flagless_flag_problems` holds from the other side by failing one that states either flag; a test parses `_script`'s own branches back out of its source — resolving a branch that dispatches on a *named* tuple of prefixes, not literals only — so a shape added there cannot be exempted by not being enumerated, and a second test holds the doc's apparatus line to naming the count the harness pins. The value is **1** because that reproduces the arrangement every published table was taken under, so raising it is an apparatus change owing a re-sweep exactly as the allocator would ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). **A figure whose axis *is* the worker count is the one exemption, and it is declared at both ends**: three command-shape families are named in `measure.JOBS_AXIS` and take their counts from `measure.PARALLEL_JOBS`, and `pinned_count_problems` — a second `--check` refusal beside the first — fails a shape pinning some third number without declaring itself an axis. So the exemption is from the constant, never from stating a count. **The boundary of that register is declared rather than inferred**: a section outside it carries an `<!-- outside-register: <id> -->` marker, `--check` resolves those against `measure.NOT_OURS` in both directions and fails on a declared section that also carries a figure marker, and the doc's session stamp is scoped to the markers rather than to everything printed below it. **A declared section still carries an invalidation edge**, and its marker names the commit its readings were taken at, so `--stale` reports one whose inputs have moved beside the figures and an acknowledgement may name it — being outside the register means the harness cannot re-take the readings, not that nothing is told when they go wrong ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). **A figure taken outside the sweep declares its sitting commit inside that same marker**, and `--stale`, acknowledgement spentness and `--verify-additive` each argue from that figure's own commit rather than from the stamp — permitted only where the figure stands in no borrow edge in either direction, which `--check` fails on, along with a sitting that does not descend from the stamp and a stamp whose accounting sentence is not the one the harness generates; `--figure` refuses such a sitting before the measurement is spent ([`../design/measurements.md`](../design/measurements.md), "A figure may be published outside the sweep"). Its reverse direction is **named rather than taken**: a table whose row is a difference over another figure's reps — `cross-file-floor` over `nested-end-to-end`, the register's one such edge — is not a closure edge, so `--figure` names it in the run log and in the emitted header when a sitting re-takes the reps it is derived from, and `--check` reports the relationship beside the partial sittings ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). `measure.UNTAKEN` carries two entries. `rss-attribution`: the standalone attribution script was folded in, so the figure has an id and both declared edges, but the readings `measurements.md` prints under that heading were the script's and the section keeps its `outside-register` declaration until a sweep takes the figure — `M74`, the only sitting that may, its reference row running `peak-rss`'s two block-count shapes, which the two must share as one reading rather than measure separately as they do today. And `reserve`, which has no table in the doc at all and no marker with it: it is the compressed path's account as well as the budget rule's one number, four families under one id — the stated budget axis, twelve flagless legs whose axis is the **container limit** and which carry it on the `RunSpec` rather than in the command shape, three mechanism legs at one block size, and the path step one byte either side of what **one** block-decoding reader costs the budget rule — the per-reader term plus that reader's share of the pool's retention list, which is `BlockCache::affordable` exactly, asked in the one place (`block_path_afforded`) that also labels every flagless cell `block path` or `streaming` — and the edges it will owe when a sweep publishes it are one (`peak-rss`'s `control` row) plus a stated non-edge (`rss-attribution` shares no run with any leg of it), both computed by a test rather than asserted. **That figure also checks a model rather than reporting readings alone**: `charge_model` predicts what each flagless cell held from what the budget rule billed it, names the block pool's retention list — the `(POOL_DEPTH.max(jobs) − 1) × unit` the per-reader charge does not carry — as a column of its own, and answers a criterion registered before the sitting, now in **three** lines: the unnamed remainder is non-negative, a negative one being an over-bill a headroom sweep reads as headroom; no larger than `MEMORY_UNPOOLED_BOUND`, the number the margin predicts a count's resident with; and no larger than `MEMORY_RESERVE`, which is what covers it by construction. A refuted cell is **named in the emitted verdict and does not raise**, a remainder outside the band being a finding about the library rather than an apparatus fault. **The verdict names which of the three lines each faulting cell crossed, and `19.11`'s gate is an enumeration of bands rather than a threshold**: `bound` alone is released — the allocation is intact *and* the sitting re-derives that constant from its own cells — while a `rule` breach and an over-bill both bar, as does any band nobody has recorded a stance for, which `--check` reports until somebody does. **The pool column is filled in at every cell**: the term was `max(0, POOL_DEPTH − jobs) × unit` and so clamped off at four readers, which is why `544m` and `1088m` were registered under the clamp, one per block size; `M93` restated it as what the pool holds, so it is billed at every count and is the larger half of the charge above four readers. The two limits stay as additive legs whose reader counts no other limit resolves, and the four earlier limits and their readings are untouched. **A published line needs three distinct reader counts, and below that it is a secant**: `measure.RESERVE_FIT_MIN_COUNTS` is a property of the two-term model rather than of one family, so it sits at `_fit_or_secant`, the boundary all three fitted lines cross — the flagless fit, its band and the instrument account's own line. **That boundary is also where the pool's retention list comes off**: the charge is piecewise linear with a kink at `POOL_DEPTH`, the bend is in the measured resident and not only in the bill, and both registered families straddle it — so a single straight line across it reads the intercept ≈49 MiB high at 24 MiB blocks and ≈421 MiB high at 128, and the slope 31% low. `_depooled` subtracts `(POOL_DEPTH.max(jobs) − 1) × unit` — arithmetic over quantities all known before the sitting and already mirror-checked against the library's constants — and the line is fitted to the remainder, so both published terms are what a leg held *outside* the pool and the `98% of reader_bytes` comparison has a `reader_bytes` on the other side that excludes the same list. A test holds `_least_squares` to exactly one call site, inside `_fit_or_secant`, so a fourth line cannot be fitted around it, and a leg that declined the block path is out of every line by name, there being no retention list to take off a streaming leg. A two-term model passes exactly through two points, so its residual there is zero by construction; the *slope* is not, being the measured difference between two named legs, so below three counts the slope is published with no fixed term and no residual beside it, which is what keeps `19.18`'s `98% of reader_bytes` comparison alive in a sitting a kill has censored. `_least_squares` keeps its own floor of two, which is where the arithmetic rather than the publication stops, and `reserve_axis_problems` carries the static half — a registered axis whose limits afford fewer than three distinct counts is refused before a sitting is spent, a necessary condition and not a sufficient one, since a host with fewer cores collapses two fits onto one count. **It builds two instruments and refuses to build a third**: the `allocator` figure's legs, and the `xz_decode` example the decode-scaling figure runs, which is an *example* target so that `target/release/pgdq` — the binary every other figure is timed against — is never replaced by a build the harness made for one figure. A figure may also declare its own container memory, which is an apparatus departure its own table states: the register's line is a 512 MB container, and twenty-four decoded 24 MiB blocks are not one. Its inputs are no longer all plain dumps either — an input names its own suffix, and one may be *derived* from another, folding that one's stamp into its own so a change to the perf generator regenerates the compression of it as well. **The one binary it refuses to build, it now refuses to trust unstamped**: `runs/pgdq-nocensus` carries a `.stamp` naming the commit it was built from, the way a generated input does, and a `census-*` figure whose stamp is missing, unreadable as a commit, or not an **ancestor** of the commit being measured is refused in the first second — a census figure being a subtraction that charges everything differing between the two trees to the census. An ancestor is tolerated only where no path the census figures *being taken* declare changed in between, read through the same prefix predicate `--stale` argues staleness from and off the selected figures' own `depends`, so the refusal names the declared path that moved ([`../design/measurements.md`](../design/measurements.md), "The census-off binary is a source patch"). The binary in this tree is `f5768e7`, and read-path work has moved since, so the next census sitting rebuilds and re-stamps it. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
-| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 1.61 µs a row against 12.97 for all 19, the two array columns alone are +6.03 and the composite +0.75 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twenty-three figures the doc carries, twenty-two taken by one sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` asks for a diagnostic sitting: it borrows nothing and marks its whole run unpublishable, joining `--reps` and the size override, so the publication refusal below stops firing for it by construction rather than by an exemption. **Nothing it runs inherits a `--jobs` default**: `measure.SWEEP_JOBS` is stated by every command shape, by the profile recipe's argv and by the three untimed invocations that publish numbers all the same — the host `parse` behind every per-row divisor, the `strace`d save count, and the RSS attribution's nine legs — while koji takes the count as a parameter (`--koji-jobs`), its leg being a leg at some count against a serial one. `--check` refuses a shape carrying neither `--jobs N` nor, for the decode instrument, `--workers N`, with two exemptions and both named as such — `dd`, which is not a run of ours, and the reserve instrument's **flagless** legs, whose reading *is* the count a run stating nothing resolves (`measure._NO_FLAGS`), and which `flagless_flag_problems` holds from the other side by failing one that states either flag; a test parses `_script`'s own branches back out of its source — resolving a branch that dispatches on a *named* tuple of prefixes, not literals only — so a shape added there cannot be exempted by not being enumerated, and a second test holds the doc's apparatus line to naming the count the harness pins. The value is **1** because that reproduces the arrangement every published table was taken under, so raising it is an apparatus change owing a re-sweep exactly as the allocator would ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). **A figure whose axis *is* the worker count is the one exemption, and it is declared at both ends**: three command-shape families are named in `measure.JOBS_AXIS` and take their counts from `measure.PARALLEL_JOBS`, and `pinned_count_problems` — a second `--check` refusal beside the first — fails a shape pinning some third number without declaring itself an axis. So the exemption is from the constant, never from stating a count. **The boundary of that register is declared rather than inferred**: a section outside it carries an `<!-- outside-register: <id> -->` marker, `--check` resolves those against `measure.NOT_OURS` in both directions and fails on a declared section that also carries a figure marker, and the doc's session stamp is scoped to the markers rather than to everything printed below it. **A declared section still carries an invalidation edge**, and its marker names the commit its readings were taken at, so `--stale` reports one whose inputs have moved beside the figures and an acknowledgement may name it — being outside the register means the harness cannot re-take the readings, not that nothing is told when they go wrong ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). **A figure taken outside the sweep declares its sitting commit inside that same marker**, and `--stale`, acknowledgement spentness and `--verify-additive` each argue from that figure's own commit rather than from the stamp — permitted only where the figure stands in no borrow edge in either direction, which `--check` fails on, along with a sitting that does not descend from the stamp and a stamp whose accounting sentence is not the one the harness generates; `--figure` refuses such a sitting before the measurement is spent ([`../design/measurements.md`](../design/measurements.md), "A figure may be published outside the sweep"). Its reverse direction is **named rather than taken**: a table whose row is a difference over another figure's reps — `cross-file-floor` over `nested-end-to-end`, the register's one such edge — is not a closure edge, so `--figure` names it in the run log and in the emitted header when a sitting re-takes the reps it is derived from, and `--check` reports the relationship beside the partial sittings ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). `measure.UNTAKEN` is empty, which its own docstring calls the healthy state: `rss-attribution` and `reserve` moved into `measure.FIGURES` for `19.11`'s closing sweep, each declaring one `Shared` edge onto `peak-rss` — the `parse` reference row at both block counts, and the shipped serial arrangement, which is that figure's `control` row spec for spec — and both are published, `rss-attribution` closing `M74`. `reserve` is the compressed path's account as well as the budget rule's one number, four families under one id — the stated budget axis, twelve flagless legs whose axis is the **container limit** and which carry it on the `RunSpec` rather than in the command shape, three mechanism legs at one block size, and the path step one byte either side of what **one** block-decoding reader costs the budget rule — the per-reader term plus that reader's share of the pool's retention list, which is `BlockCache::affordable` exactly, asked in the one place (`block_path_afforded`) that also labels every flagless cell `block path` or `streaming` — and its edges are one (`peak-rss`'s `control` row) plus a stated non-edge (`rss-attribution` shares no run with any leg of it), both computed by a test rather than asserted. **That figure also checks a model rather than reporting readings alone**: `charge_model` predicts what each flagless cell held from what the budget rule billed it, names the block pool's retention list — the `(POOL_DEPTH.max(jobs) − 1) × unit` the per-reader charge does not carry — as a column of its own, and answers a criterion registered before the sitting, now in **three** lines: the unnamed remainder is non-negative, a negative one being an over-bill a headroom sweep reads as headroom; no larger than `MEMORY_UNPOOLED_BOUND`, the number the margin predicts a count's resident with; and no larger than `MEMORY_RESERVE`, which is what covers it by construction. A refuted cell is **named in the emitted verdict and does not raise**, a remainder outside the band being a finding about the library rather than an apparatus fault. **The verdict names which of the three lines each faulting cell crossed, and `19.11`'s gate is an enumeration of bands rather than a threshold**: `bound` alone is released — the allocation is intact *and* the sitting re-derives that constant from its own cells — while a `rule` breach and an over-bill both bar, as does any band nobody has recorded a stance for, which `--check` reports until somebody does. **The pool column is filled in at every cell**: the term was `max(0, POOL_DEPTH − jobs) × unit` and so clamped off at four readers, which is why `544m` and `1088m` were registered under the clamp, one per block size; `M93` restated it as what the pool holds, so it is billed at every count and is the larger half of the charge above four readers. The two limits stay as additive legs whose reader counts no other limit resolves, and the four earlier limits and their readings are untouched. **A published line needs three distinct reader counts, and below that it is a secant**: `measure.RESERVE_FIT_MIN_COUNTS` is a property of the two-term model rather than of one family, so it sits at `_fit_or_secant`, the boundary all three fitted lines cross — the flagless fit, its band and the instrument account's own line. **That boundary is also where the pool's retention list comes off**: the charge is piecewise linear with a kink at `POOL_DEPTH`, the bend is in the measured resident and not only in the bill, and both registered families straddle it — so a single straight line across it reads the intercept ≈49 MiB high at 24 MiB blocks and ≈421 MiB high at 128, and the slope 31% low. `_depooled` subtracts `(POOL_DEPTH.max(jobs) − 1) × unit` — arithmetic over quantities all known before the sitting and already mirror-checked against the library's constants — and the line is fitted to the remainder, so both published terms are what a leg held *outside* the pool and the `98% of reader_bytes` comparison has a `reader_bytes` on the other side that excludes the same list. A test holds `_least_squares` to exactly one call site, inside `_fit_or_secant`, so a fourth line cannot be fitted around it, and a leg that declined the block path is out of every line by name, there being no retention list to take off a streaming leg. A two-term model passes exactly through two points, so its residual there is zero by construction; the *slope* is not, being the measured difference between two named legs, so below three counts the slope is published with no fixed term and no residual beside it, which is what keeps `19.18`'s `98% of reader_bytes` comparison alive in a sitting a kill has censored. `_least_squares` keeps its own floor of two, which is where the arithmetic rather than the publication stops, and `reserve_axis_problems` carries the static half — a registered axis whose limits afford fewer than three distinct counts is refused before a sitting is spent, a necessary condition and not a sufficient one, since a host with fewer cores collapses two fits onto one count. **It builds two instruments and refuses to build a third**: the `allocator` figure's legs, and the `xz_decode` example the decode-scaling figure runs, which is an *example* target so that `target/release/pgdq` — the binary every other figure is timed against — is never replaced by a build the harness made for one figure. A figure may also declare its own container memory, which is an apparatus departure its own table states: the register's line is a 512 MB container, and twenty-four decoded 24 MiB blocks are not one. Its inputs are no longer all plain dumps either — an input names its own suffix, and one may be *derived* from another, folding that one's stamp into its own so a change to the perf generator regenerates the compression of it as well. **The one binary it refuses to build, it now refuses to trust unstamped**: `runs/pgdq-nocensus` carries a `.stamp` naming the commit it was built from, the way a generated input does, and a `census-*` figure whose stamp is missing, unreadable as a commit, or not an **ancestor** of the commit being measured is refused in the first second — a census figure being a subtraction that charges everything differing between the two trees to the census. An ancestor is tolerated only where no path the census figures *being taken* declare changed in between, read through the same prefix predicate `--stale` argues staleness from and off the selected figures' own `depends`, so the refusal names the declared path that moved ([`../design/measurements.md`](../design/measurements.md), "The census-off binary is a source patch"). The binary in this tree is `9b35bea`, rebuilt and re-stamped on 2026-09-13 when the closing sweep's preflight refused an `f5768e7` one that five declared paths had moved past. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
+| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 1.68 µs a row against 13.06 for all 19, the two array columns alone are +5.98 and the composite +0.78 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
 | The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` are candidates at the same positions the punctuation spellings are, so the earliest operator still wins in both directions, and the phrase needs whitespace on both sides — which is what leaves a column named `is distinct from` askable as `is distinct from=x`. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
@@ -214,7 +138,7 @@ API surface"). A file with no more than one block is **warned about, never refus
 | Caller-stated parallelism | **working end to end: the read path's memory budget, the replay's split and the leader's scheduler all read it, and the mapping pass calls the leader** — `Parallelism` is `Serial { memory_bytes: Option<u64> }` or `Workers { jobs, memory_bytes }`, mirroring `xz_seek::Bulk::new(workers, budget_bytes)`, with a budget-less `Serial` the library default and one worker spelled `Serial` rather than as a `Workers` of one, so `--jobs 1` is the serial path as a property of the value. **The collapse at one worker takes the count down and leaves the budget standing**: the two are independent numbers, so a stated `--parallel-memory` sizes every pool at the default `--jobs` and buys back a compressed file's block path with no second worker asked for beside it, and `None` is reserved for the caller that stated nothing — which is what the status line's `(default)` marker reports. It sits on `ScanOptions` and `QueryOptions` both, and each of the three read loops announces it to the source through a defaulted trait method of its own, `hint_parallelism` — the mapping pass and `scan` from `ScanOptions`, the replay from `QueryOptions`, so a query's two passes are bounded separately. **The stated bytes can be made a ceiling on what is outstanding and not only on what is idle**: `BufferPool::obtain` waits while `slots()` buffers taken under a granted wait are out, and whether a loop's reads may be blocked is a **defaulted method of its own**, `hint_wait_policy` — a **permission** rather than a description of the holder, since what the pool needs to know is whether it may block this loop. **All three top-level read loops state `WaitPolicy::NeverWait`**, which is also the `Default`: the replay loop cannot grant a wait, `RetainedChunks` pinning every chunk a batch has taken a view into before the batch goes to the caller, and `scan` and the mapping pass could but do not, the wait's own test driving a bare pool so a shipped loop's grant would buy exposure rather than coverage. **The one loop that grants it is the leader's fused worker**, which holds exactly one read at a time and restores `NeverWait` on the way out, and a `parse` or a query's mapping pass reaches it whenever the caller states a `Parallelism` over a region the source is willing to cut — which is a thing asked for, and what a flagless CLI resolves on a plain file is one worker. **A granted permission reaches a compressed source's chunk pool only**: the block pool's holder is the retention list rather than the loop, so `BlockCache::slot`'s drain frees no slot for a caller holding a view into what it evicts, and a grant there deadlocked. The charge rides on the buffer rather than on the pool's current policy, and is discharged whether or not the ceiling keeps the buffer. So the bound is two terms in both pools, and the block pool is the one where the library owns both: the chunk pool's are the waiting holders' slots and what in-flight batches pin, the block pool's are `slots` retained blocks and `stream::worker_count` live ones ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"). The **bytes** size every pool: `LocalFileSource`'s one free list, and `XzSource`'s two, divided chunks-first so one stated number bounds the source rather than each pool; and they draw the block-decode line, `BLOCK_DECODE_MAX_BYTES`' flat 256 MiB having retired into `BlockCache::affordable`, which is what stops the pool's one-slot floor from making the stated number a fiction. The **jobs** half is the block pool's retention depth, one decoded block per would-be reader, floored at `POOL_DEPTH`, and the ceiling on how many sub-streams `pgdq query`'s replay is cut into; the chunk pool's depth is deliberately untouched by it. `DEFAULT_MEMORY_BUDGET` is 64 MiB — the serial path's number, under which every published figure was taken — so `xz -9 -T0`'s ~192 MiB blocks and `xz --block-size=128MiB` now fall back to the streaming reader where a flat cap took them down the block path over budget; the recourse is `--parallel-memory`, and the fallback **says so on a query**, above ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface" and "The compressed source"). The CLI states both, and **neither carries a constant default any more**: absent `--jobs` it asks the open source for a worker count (`LocalFileSource` answers one, `XzSource` the cores capped at the block count), and absent `--parallel-memory` it asks the source what one worker holds and fits that against the memory allocation it discovered — so a flagless plain `parse` is still serial and a flagless `.xz` one is not. Zero is refused for each. The budget half of that is `19.13`: a discovered limit less `MEMORY_RESERVE`'s 384 MiB, which `19.16` read off five builds. A stated `--jobs` is **what is asked for, not what is delivered** — two shapes admit no parallelism at all, and on a plain file the chunk pool's `POOL_DEPTH` binds first, so a `parse` above `--jobs 4` runs four workers and queues the rest, which the flag's help text and the manual both say ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--jobs` and `--parallel-memory`") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
-| Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism came later and is filed beside its own mechanisms. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
+| Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism came later and is filed beside its own mechanisms. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.8× the `dd` floor where it was 31×, a `strings` one 11.5× where it was 13.3×, and a `parse` 1.45×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
 | Per-row-group column statistics, sparse row index | not started — **both are P10's**, the index included: the parallel-scan work found that splitting an open `COPY` block's interior at LF boundaries costs one row's resync, so known row boundaries buy it nothing `memchr` does not already give, and P10 owns the index and its interval outright. `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
@@ -240,62 +164,54 @@ where the counting `#[global_allocator]` cannot
 ([`../design/measurements.md`](../design/measurements.md), "What an instrument
 can see"). Nothing in `runs/` from it yet.
 
-**Figures.** All sixteen sweep figures in
+**Figures.** All twenty-two sweep figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
-`af15eac` sweep of 2026-09-05, folded in whole, each table carrying an
-apparatus line and none carrying a partial-sitting note. `--check` reconciles
-twenty-one markers against twenty-one figures, **and the register's boundary as
-well**: the three sections the harness does not own — koji, the `cargo bench`
-tripwires and the RSS attribution — each carry an
+`9b35bea` sweep of 2026-09-13, folded in whole, each table carrying an
+apparatus line and none carrying a partial-sitting note or a sitting marker of
+its own. `--check` reconciles twenty-three markers against twenty-three
+figures, **and the register's boundary as well**: the two sections the harness
+does not own — koji and the `cargo bench` tripwires — each carry an
 `<!-- outside-register: <id> -->` marker reconciled
 against `measure.NOT_OURS` both ways and held to carrying no figure marker, so
-the session stamp's "every figure below" now claims only what the register
+the session stamp's "every figure below" claims only what the register
 holds. Each such section also declares **what invalidates it** and the commit
 its readings were taken at, so `--stale` reports one whose inputs have moved in
 a stanza of its own — koji reads red against `f5768e7` today, discharged by the
 next koji run rather than by an acknowledgement, and `benches` declares no edge
-because it publishes no number. `session-drift` is derived across that sweep and a second begun the
-minute it finished on the same commit, which is the pair `--drift` reads;
-`peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`), `parallel-peak-rss`
-(`e29939c`) and `parallel-scan-throughput` (`20fd77c`) were each taken alone,
-which their markers declare and `--check`
-holds to descending from the stamp, standing in no borrow edge, and being
-accounted for in the stamp's generated sentence.
-`measure.ACKNOWLEDGED` carries the two commits of P7's wrap and keystone, both
-comment-only against a declared path, plus `a30cc43` — reachability,
-not comment-only, discharging `parallel-peak-rss` from the sub-stream divisor's
-change rather than a declared path moving nothing; the previous six were spent by the
-`af15eac` stamp and `--check` named them so they were deleted rather than kept
-as sediment.
+because it publishes no number. `session-drift` is derived across the `af15eac`
+sweep and a second begun the minute it finished on the same commit, which is
+the pair `--drift` reads, and it is therefore the one table the stamp does not
+replace. `measure.ACKNOWLEDGED` is **empty**: the three entries it carried —
+P7's wrap and keystone, both comment-only against a declared path, and
+`a30cc43`, reachability rather than comment-only — were all spent by this
+stamp, and `--check` named them so they were deleted rather than kept as
+sediment.
 
-**The two parallel figures were built as apparatus and taken afterwards**,
-which is what a figure published outside a stamped sweep costs: it names the
-commit it was taken at inside its own marker, and a sitting run from a tree
+**Both `parallel-*` figures are back inside a stamped sweep**, having been
+built as apparatus and taken alone at `e29939c` and `20fd77c`, which is what a
+figure published outside a stamped sweep costs while it stands there: it names
+the commit it was taken at inside its own marker, and a sitting run from a tree
 carrying its own uncommitted apparatus has no such commit to name
 ([`../design/measurements.md`](../design/measurements.md), "A figure may be
-published outside the sweep"). `parallel-peak-rss` stands at `e29939c`, the
-commit that carried the apparatus and the block pool's deadlock fix both, so a
-`--jobs` leg over an `.xz` measured the path that fix moved; `parallel-scan-throughput`
-was re-taken alone at `20fd77c` once the sub-stream divisor landed, and the two
-therefore no longer share a commit. `parallel-scan-throughput`'s `quoted_by`
+published outside the sweep"). `parallel-scan-throughput`'s `quoted_by`
 names [`../design/architecture.md`](../design/architecture.md), "What
 parallelism buys, and where it stops", which reads all four of its legs against
-the rule the design argues from; `parallel-peak-rss`'s names
+the rule the design argues from — and the re-take reversed one of them, the
+plain `parse` leg, on the `reader_bytes` repair that section had already
+predicted would do it. `parallel-peak-rss`'s names
 `STATUS.md` itself, for the claim that its `--jobs` axis goes flat past the
-point the stated budget stops affording another worker — confirmed on the
-128 MiB-block leg, which plateaus at ~2.11 GiB from eight jobs on while the
+point the stated budget stops affording another worker — confirmed again on the
+128 MiB-block leg, which plateaus at ~3.0 GiB from sixteen jobs on while the
 24 MiB-block leg is still climbing at twenty-four.
 
-**`measure.UNTAKEN` is empty again, which is its healthy state.** Four entries
-have left it so far: `projection-widths` and `xz-decode-scaling` earlier, then
-`parallel-scan-throughput` and `parallel-peak-rss`, each waiting
-only for a **commit to name** as its sitting, since a figure published outside a
-stamped sweep declares one inside its own marker and a sweep is the thing none
-of these four could be part of, deliberately occupying the quiet machine a sweep
-needs.
-Three earlier entries left by the list's two exits: `projection-widths` and
-`xz-decode-scaling` were taken and moved into `FIGURES`, and
-`composite-isolated` was deleted unpublished along
+**`measure.UNTAKEN` is empty, which is its healthy state.** Six entries have
+left it so far: `projection-widths` and `xz-decode-scaling` earliest, then
+`parallel-scan-throughput` and `parallel-peak-rss`, each of those four waiting
+only for a **commit to name** as its sitting; and `rss-attribution` and
+`reserve`, which `19.11` moved into `measure.FIGURES` so that a sweep would
+take them, each declaring one `Shared` edge onto `peak-rss`.
+One further entry left by the list's other exit: `composite-isolated` was
+deleted unpublished along
 with its whole apparatus — the `--weak-composite` generator flag, the
 `composite_text` input and the fidelity case pairing them — because the
 projection table makes the same isolation a subtraction between two adjacent
@@ -310,7 +226,7 @@ forcing 64-byte function alignment collapsed the gap. There was nothing to
 bisect to. What it changes is how a figure is read, which is now a standing
 rule ([`../design/measurements.md`](../design/measurements.md), "Two builds of
 one source can differ by layout"). The ratio was never in doubt at the time —
-16.5× against 16.7× — and the `INSERT` statement scan took it to 4.3×, where the read path's own gains have since put it at 4.9×.
+16.5× against 16.7× — and the `INSERT` statement scan took it to 4.3×, where the read path's own gains have since put it at 4.9× and held it there.
 
 **The sweep's `control` warm floor sits 22.4% above the previous stamp's**,
 which is over the ~15% a co-measured floor is judged against — and the sweep
@@ -344,265 +260,19 @@ heading — is beside the mechanism
 ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes").
 
-## P19 progress
-
-Spec: [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
-**The numbers after the evidence slices are allocation order, not schedule** —
-the five orderings that bind are in the spec, not here. The sweep runs last; the
-list below is numeric, so its first unticked box is not the next piece of work.
-**`19.11`, the closing sweep, is all that remains** — the
-new rows were admitted on 2026-09-12 and took the next free numbers
-rather than being inserted ([2026-09-12](history/2026-09-12.md), "The reserve
-entry closes on 384, and the grilling found the charge wrong below four
-readers"; "A `parse` reports what was asked for and never what ran"; "The
-margin applies the criterion twice, because `MEMORY_RESERVE` already contains
-one").
-
-**All three defaults are shipped, a `parse` says what it delivered and the
-charge is repaired, so what remains is the sweep.** `19.18`'s sitting says the
-program holds `4 MiB + 49.0 MiB a reader` and that a reader costs 98% of what
-one more reader adds to the charge — the charge is right — while the resident
-excess above the budget is **glibc arena retention**, and `19.16`'s arithmetic
-puts that retention *inside* the per-reader charge, leaving a flat
-83.6–214.6 MiB above it for the reserve to cover. `19.16` read the constant off
-five builds and picked **384 MiB**, the smallest meeting the 20% margin, and
-`19.13` ships it. The block pool's retention list is **no longer the reserve's
-to cover**: `19.22` made a source's cost a shape rather than a scalar
-(`io::WorkerMemory`), every budget is now solved against it, and `M93` restated
-the block half of it as what the pool actually holds — one unit a reader plus
-`(POOL_DEPTH.max(jobs) − 1)` shared, one unit less than the charge billed at
-every count. `M94` is priced and closed the other way: the chunk pool's free
-list is unbilled by 4 MiB at the shipped chunk, and since the repair needs a
-count-independent term `WorkerMemory` cannot carry, it is registered as `KD24`
-and left inside `MEMORY_UNPOOLED_BOUND`. Nor is the
-margin at a large limit: `19.23` put the criterion itself in front of the
-count, so what a limit resolves is the same on a host of any width — and since
-`19.26` the prediction it refuses against is `at(n) + MEMORY_UNPOOLED_BOUND`,
-**256 MiB** read off `19.16`'s grid under today's charge, so the criterion is
-enforced once rather than twice and the margin is inert below a 640 MiB limit,
-where the cap is already tighter. **The harness
-checks that account rather than searching for it** —
-`19.24` prints the charge against what was held at every flagless cell, with
-the pool's retention list as its own named column and a criterion registered
-before the sitting.
-
-- [x] **19.1** `runtime-invariants.md` — the register (`RT1`–`RT7`), and
-      `CLAUDE.md`'s read-trigger beside the Postgres one. No code. Notes:
-      [`../design/roadmap-P19.1-runtime-invariants-notes.md`](../design/roadmap-P19.1-runtime-invariants-notes.md)
-- [x] **19.2** The plain-path account, both instruments run and read: a plain
-      `parse` at `--jobs ≥ 2` reads every byte twice, and `POOL_DEPTH` is
-      refuted as the cause of the typed-`query` flatness. Notes:
-      [`../design/roadmap-P19.2-plain-path-account-notes.md`](../design/roadmap-P19.2-plain-path-account-notes.md)
-- [x] **19.3** The CLI runs a `current_thread` runtime, and `rt-multi-thread`
-      is gone from the workspace. Notes:
-      [`../design/roadmap-P19.3-current-thread-runtime-notes.md`](../design/roadmap-P19.3-current-thread-runtime-notes.md)
-- [x] **19.4** `Serial` carries an optional budget, so the worker count's
-      collapse at `--jobs 1` no longer takes the stated bytes down with it —
-      `KD16` struck. Notes:
-      [`../design/roadmap-P19.4-serial-budget-notes.md`](../design/roadmap-P19.4-serial-budget-notes.md)
-- [x] **19.5** `Partitioning` states its retained unit, and a plain source's
-      partition is eight read chunks capped at `POOL_MAX_BYTES` — `19.2`'s
-      repair 1, folded in here. Notes:
-      [`../design/roadmap-P19.5-retained-unit-notes.md`](../design/roadmap-P19.5-retained-unit-notes.md)
-- [x] **19.6** The reserve figure registered and taken diagnostically
-      (`--alone`, NOT PUBLISHABLE): a fixed term exists on the plain path and
-      not on the compressed one. Notes:
-      [`../design/roadmap-P19.6-reserve-figure-notes.md`](../design/roadmap-P19.6-reserve-figure-notes.md)
-- [x] **19.7** `BufferPool`'s accounting alone — `held_bytes()` becomes a bound,
-      the block pool's two lists share one slot count, and `affordable` wants
-      room for two units. Notes:
-      [`../design/roadmap-P19.7-pool-accounting-notes.md`](../design/roadmap-P19.7-pool-accounting-notes.md)
-- [x] **19.8** The source's own worker default; `DEFAULT_JOBS` removed. A
-      stated `--jobs` wins outright in both directions. Notes:
-      [`../design/roadmap-P19.8-source-worker-default-notes.md`](../design/roadmap-P19.8-source-worker-default-notes.md)
-- [x] **19.9** The resolution is tested and a run says what it resolved: the
-      CLI's **mode report**, on every scanning command, with both numbers
-      carrying their provenance. Notes:
-      [`../design/roadmap-P19.9-resolution-report-notes.md`](../design/roadmap-P19.9-resolution-report-notes.md)
-- [x] **19.10** The manual and both flags' help text, on the correction that a
-      **discovered limit is a ceiling, not the budget**. Notes:
-      [`../design/roadmap-P19.10-manual-notes.md`](../design/roadmap-P19.10-manual-notes.md)
-- [ ] **19.11** The closing sweep — publishes the reserve figure and
-      `rss-attribution`, closing `M74`, and re-takes both `parallel-*` figures,
-      which were taken before `partition_bytes` changed. **It does not start
-      until a `--figure reserve --alone` sitting completes with no killed leg**,
-      so it is behind `19.19` and `19.17.1`, not merely behind `19.13`. **Nothing
-      blocks it now**: `M88` landed, so every flagless cell names the path it
-      ran, `M89` with it, so the acceptance evaluates a cell that bills the
-      pool's own term rather than none at all, and `M90`, which puts
-      the three-count guard at the model's own boundary and publishes a secant
-      below it, so a sitting that loses legs to kills states a slope rather than
-      an intercept nothing checks
-      ([`../design/out-of-band.md`](../design/out-of-band.md)); `M91` split the
-      verdict into bands, and `M92` says which of them the gate releases —
-      **`bound` alone**, so a cell between `MEMORY_UNPOOLED_BOUND` and
-      `MEMORY_RESERVE` publishes with its finding while an over-bill bars, and a
-      band nobody has argued out bars by default. **`M93` closed the last of it,
-      and the gate sitting is what found it.** That sitting ran on 2026-09-12
-      (`runs/measure-20260912T170937/tables.md`, NOT PUBLISHABLE): no leg was
-      killed — the whole axis survived its own allocation, which is the half of
-      the gate `19.18` failed — but the charge over-billed by one block unit at
-      every count, 130.0 MiB billed against 111.1 held at 24 MiB blocks and 650.0
-      against 526.9 at 128, which is the `over-bill` band and not the `bound` one.
-      `M93` restated the block term as what the pool holds; one unit off every
-      cell's bill lands the whole criterion met with the worst remainder at
-      153.4 MiB against a 256 MiB bound, so no constant moved
-      ([`../design/out-of-band.md`](../design/out-of-band.md);
-      [2026-09-12](history/2026-09-12.md), "The charge over-bills the pool floor
-      at every count"). **The gate has to be re-run on the repaired build** —
-      the readings above were taken under the old charge, so the sitting that
-      releases this box is a fresh `--figure reserve --alone`. **`M95` has
-      landed, so no row is in the way**: the charge is piecewise linear with a
-      kink at `POOL_DEPTH`, and the fit is now over the remainder that is left
-      once the pool's retention list — known before the sitting — comes off each
-      ordinate, where one straight line across the bend put ≈421 MiB of it into
-      the 128 MiB family's intercept and read its slope 31% low. The gate itself
-      was never affected, being per cell; what the repair restores is what the
-      sitting *publishes*, `19.18`'s `98% of reader_bytes` comparison included
-      ([`../design/out-of-band.md`](../design/out-of-band.md);
-      [2026-09-12](history/2026-09-12.md), "The fit is a straight line across a
-      kink the charge now states"). **`M96` has landed and `M94` is priced**:
-      the billed-against-held pass
-      enumerated every
-      pool, buffer and retained structure on all three read paths
-      ([`../design/architecture.md`](../design/architecture.md), "Billed against
-      held") and turned up three further discrepancies — `M97`, an 8× over-bill
-      on the plain path, `M98`, a query-path under-bill of every block a batch's
-      span pins past the first, and `M99`, the unbilled seek table — **none of
-      which this sitting can reach**, its legs being `pgdq parse` over a
-      compressed input ([2026-09-12](history/2026-09-12.md), "Billed against
-      held, in one pass"). `M94` it *does* reach, and the answer is that it
-      stays unbilled: the chunk pool's free list is 4 MiB at the shipped chunk,
-      flat in the count, and billing a count-independent term needs a third one
-      in `WorkerMemory` — so it is a register entry and the sitting's unnamed
-      remainder carries it ([2026-09-12](history/2026-09-12.md), "The chunk
-      pool's floor is priced, and 4 MiB does not buy a third term"). What this slice then owes is unchanged: the
-      sweep itself,
-      `reserve`'s `Shared` edge onto `peak-rss` with the `Session.borrow` change
-      that lets an RSS reading cross a share, `rss-attribution` published and
-      `M74` closed, and both `parallel-*` figures re-taken.
-      **The gate sitting at `88cf781` completed and does not release this box,
-      for an apparatus reason rather than a library one**
-      (`runs/measure-20260912T204517/tables.md`, NOT PUBLISHABLE). No leg was
-      killed, and both one-reader cells came back `over-bill` — 24 MiB blocks at
-      `-m 512m` and 128 MiB at `-m 1g`, each over-billed by the whole of its
-      bill against a 15 MiB resident set. The cause is that
-      `target/release/pgdq` is timed and never rebuilt: the copy in the tree was
-      built before `M93`, `M94` and `M95` landed, so the sitting ran the charge
-      `M93` replaced against `measure.py`'s repaired mirror of it. It is settled
-      by arithmetic and not by a second sitting — all eight resolved budgets are
-      the pre-`M93` `WorkerMemory` exactly, and the resolved counts are
-      byte-identical to `880d09e`'s where `M93` had to move them. `M93`'s
-      prediction is therefore untested rather than refuted, and no constant
-      moves ([2026-09-12](history/2026-09-12.md), "The gate sitting timed a
-      binary three commits stale, and its verdict is about a library nobody
-      ran"). The hole is admitted as **`M101`**, blocking this phase: the
-      harness guards the census-off binary's provenance and not the binary every
-      figure is timed against ([`../design/out-of-band.md`](../design/out-of-band.md)).
-      **The gate passed on a hand-built `88cf781` binary**
-      (`runs/measure-20260912T211806/tables.md`, NOT PUBLISHABLE): no leg was
-      killed and all ten evaluated cells read `met`, the worst unnamed remainder
-      155.9 MiB against a 256 MiB `MEMORY_UNPOOLED_BOUND` — `M93`'s predicted
-      153.4. The binary check it stands on is satisfied: the resolved counts
-      moved to 1/2/10/11/17/24 and 1/1/1/1/4/5, matching the instrument legs the
-      harness builds for itself, where the stale sitting's were byte-identical
-      to `880d09e`'s. **`M101` has landed, so nothing is in the way**: the harness
-      builds `target/release/pgdq` in the first second of every sitting rather
-      than timing whatever the last build left there, which is what let that
-      gate run three commits stale — a diagnostic sitting's own budgets say
-      which binary ran, where most of the twenty-one published tables carry no
-      such fingerprint ([`../design/out-of-band.md`](../design/out-of-band.md);
-      [`../design/measurements.md`](../design/measurements.md), "The apparatus").
-      **`M102` has landed too, and it was the last row admitted as blocking**:
-      the re-sync takes `xz_seek`'s shared seek table, so the sweep and the gate
-      sitting ahead of it both run on a tree where `pgdump_query/src/io.rs` and
-      `vendor/xz-seek/src/` are already at the arrangement they will publish
-      against ([`../design/out-of-band.md`](../design/out-of-band.md)).
-      **What is left of this box is the sweep.**
-- [x] **19.12** The reserve re-taken diagnostically against `19.7`'s build
-      (`--alone`, NOT PUBLISHABLE): `19.7`'s prediction is refuted, and what the
-      sitting found is a divisor under-charging a sub-stream. Notes:
-      [`../design/roadmap-P19.12-reserve-retake-notes.md`](../design/roadmap-P19.12-reserve-retake-notes.md)
-- [x] **19.13** `discover_memory_limit`, `Parallelism::discover` and the budget
-      rule, shipping the **384 MiB** `MEMORY_RESERVE` `19.16` chose, the
-      source's own budget recommendation, and the decline's report. Notes:
-      [`../design/roadmap-P19.13-budget-discovery-notes.md`](../design/roadmap-P19.13-budget-discovery-notes.md)
-- [x] **19.14** A compressed sub-stream is charged what one reader holds,
-      through the one `reader_bytes` the charge and the decline both call.
-      Notes:
-      [`../design/roadmap-P19.14-reader-charge-notes.md`](../design/roadmap-P19.14-reader-charge-notes.md)
-- [x] **19.15** The budget rule run in real cgroups, and **the gate does not
-      pass** — 0.6% of the limit left at the worst rep, and the fixed term
-      rather than the per-reader one is what exceeds the reserve. A `runs/`
-      probe, not a figure. Notes:
-      [`../design/roadmap-P19.15-budget-probe-notes.md`](../design/roadmap-P19.15-budget-probe-notes.md)
-- [x] **19.16** The reserve constant, from a reading rather than a fit — **384
-      MiB**, over five builds and 400 runs, reviewed on 2026-09-12 and standing.
-      A `runs/` probe, not a figure. Notes:
-      [`../design/roadmap-P19.16-reserve-constant-notes.md`](../design/roadmap-P19.16-reserve-constant-notes.md)
-- [x] **19.17** The compressed account's instrument, no library code: `reserve`
-      becomes four families, the flagless one reading its resolved count off the
-      run's own `scan started` line. Notes:
-      [`../design/roadmap-P19.17-compressed-instrument-notes.md`](../design/roadmap-P19.17-compressed-instrument-notes.md)
-- [x] **19.18** The compressed path's resident account (`--alone`, NOT
-      PUBLISHABLE): the charge is right to 2%, and the excess above the budget
-      is **glibc arena retention**. Owns nothing. Notes:
-      [`../design/roadmap-P19.18-compressed-account-notes.md`](../design/roadmap-P19.18-compressed-account-notes.md)
-- [x] **19.17.1** A killed leg is recorded and the sitting continues; a killed
-      leg bars publication. An **earned third level** — `19.17` shipped the
-      wrong contract. Notes:
-      [`../design/roadmap-P19.17.1-killed-leg-notes.md`](../design/roadmap-P19.17.1-killed-leg-notes.md)
-- [x] **19.19** The per-file term, billed where the file is open — `KD19`
-      struck, the cut size separated from the memory charge, and the tail read's
-      duplicate block decode named as `KD20`. Notes:
-      [`../design/roadmap-P19.19-per-file-term-notes.md`](../design/roadmap-P19.19-per-file-term-notes.md)
-- [x] **19.20** The cut width, decided by measurement — **one unit stays**, the
-      read shape becomes the source's own statement, `KD18` is struck, and
-      `KD20` now knows the width is not its fix. Notes:
-      [`../design/roadmap-P19.20-cut-width-notes.md`](../design/roadmap-P19.20-cut-width-notes.md)
-- [x] **19.21** The introspection the compressed account needs: `introspect`, a
-      third off-by-default feature, whose build `measure.binary_allocator`
-      refuses — so "never timed" is mechanical. Notes:
-      [`../design/roadmap-P19.21-introspection-notes.md`](../design/roadmap-P19.21-introspection-notes.md)
-- [x] **19.22** The charge bills the pool floor: a source's cost is an
-      `io::WorkerMemory` — a per-worker term and a shared floor — and
-      `Parallelism::fit` and `stream::worker_count` both solve against it
-      instead of dividing. The decline widens, which is the finding. Notes:
-      [`../design/roadmap-P19.22-pool-floor-notes.md`](../design/roadmap-P19.22-pool-floor-notes.md)
-- [x] **19.23** The count answers to the criterion, not to the core count:
-      `MEMORY_MARGIN_PERCENT`, and a `fit` that refuses a count whose predicted
-      resident leaves under a fifth of the limit. Notes:
-      [`../design/roadmap-P19.23-count-margin-notes.md`](../design/roadmap-P19.23-count-margin-notes.md)
-- [x] **19.24** The harness checks the model rather than searching for a
-      constant: `charge_model` and a two-sided criterion registered before the
-      sitting, the pool floor as its own named column, and the `reader_bytes`
-      mirror's pre-`19.19` claim corrected. Notes:
-      [`../design/roadmap-P19.24-charge-model-check-notes.md`](../design/roadmap-P19.24-charge-model-check-notes.md)
-- [x] **19.25** A `parse` says what ran, not what was asked for: `scan
-      arrangement`, once per scan, naming the delivered count beside the
-      announced one and what would buy the refused arrangement back. Notes:
-      [`../design/roadmap-P19.25-delivered-count-notes.md`](../design/roadmap-P19.25-delivered-count-notes.md)
-- [x] **19.26** The margin predicts with its own constant:
-      `io::MEMORY_UNPOOLED_BOUND` is **256 MiB**, derived by arithmetic over
-      `19.16`'s 400 runs under today's charge, and the harness faults at both
-      constants. The flagless axis moved — 9/10/16/23 readers where it had read
-      7/8/14/21, since moved again by `M93`'s repair — and the two one-reader
-      legs did not. Notes:
-      [`../design/roadmap-P19.26-margin-constant-notes.md`](../design/roadmap-P19.26-margin-constant-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P19 is open and all three defaults it is named for are now set** — the
-  worker default comes from the source, and the memory-limit discovery and the
-  budget rule are in the tree carrying the 384 MiB reserve `19.16` read and the
-  20% margin `19.23` put in front of the count, and `19.25` made a `parse`
-  report the count it delivers rather than the one it was asked for. What
-  remains is the closing sweep, whose flagless axis `19.26` moved. Its
-  checklist is above and its spec is
-  [`../design/roadmap-P19-efficient-defaults.md`](../design/roadmap-P19-efficient-defaults.md).
+- **No phase is open.** P19 wrapped on 2026-09-13 with all three defaults it
+  was named for set — the worker count comes from the source, the memory limit
+  is discovered, and the budget rule carries the 384 MiB reserve `19.16` read
+  and the 20% margin `19.23` put in front of the count, with a `parse` saying
+  what it delivered rather than what it was asked for. Its notes are
+  [`../design/roadmap-P19-efficient-defaults-notes.md`](../design/roadmap-P19-efficient-defaults-notes.md)
+  and its mechanisms are in
+  [`../design/architecture.md`](../design/architecture.md), filed by subject.
   Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
   table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
   about the order they run in. Each gets its own full grilling when it becomes
@@ -688,7 +358,7 @@ here rather than reading as a phase nobody has sliced.
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is
   O(blocks²) wherever the save throttle's gate does not close it — which is
   every `--dqcache none` scan, since a no-op save leaves nothing to amortize:
-  19.1 s for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of
+  19.3 s for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of
   blocks scanned under `--dqcache none`. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
   and saves as it goes".
@@ -719,7 +389,7 @@ here rather than reading as a phase nobody has sliced.
   render-back".
 
 - **KD9** — an `INSERT` run costs **4.9×** a `COPY` scan's per-byte CPU warm
-  and **2.62×** the device's own time cold on NVMe against 1.06×, and two cuts
+  and **2.63×** the device's own time cold on NVMe against 1.06×, and two cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan both cuts are in; the cold-NVMe
   figure confirmed the entry where it might have retired it. Detail:
@@ -743,7 +413,7 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "The floor: the ADBC
   driver's answer bounds ours".
 
-- **KD17** — a plain typed `query` is flat at 0.98× across the whole `--jobs`
+- **KD17** — a plain typed `query` is flat at 1.02× across the whole `--jobs`
   axis: the sub-streams it plans never run concurrently, total CPU staying under
   one core. The named suspect — `POOL_DEPTH` clamping the chunk pool — is
   refuted by a build that lifts it, so what serializes them is unidentified.
@@ -815,7 +485,7 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
-  4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
+  4,000-table `parse` holds **44.2 MiB** against a one-block one's 6.2 MiB.
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
@@ -830,4 +500,38 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*Nothing open.*
+**Three of `19.11`'s register-move reds were fixed rather than left for the
+paste.** `runs/19.11-reserve-gate-20260913-0005/HANDOFF.md` enumerated the reds
+the move would produce and said they were cured by the paste and not to be
+worked around. Three of them are not paste-curable, so they were fixed in the
+change that caused them: `BorrowGraph.test_every_republished_spec_is_one_its_source_takes`
+needed a `peak-rss` row in its source-key table, without which it silently skips
+the two new edges instead of checking them; and the `OutsideInvalidation.*`
+family plus one `CensoredSittingsBarPublication` assertion read a
+`measure.NOT_OURS` row and an empty-`FIGURES_BY_ID` premise that the move
+deletes for good. Leaving them red would have handed the paste session a suite
+it could not green and no way to tell those from the ten that are genuinely the
+doc's. **What would change if reconsidered**: the alternative is to leave every
+red standing and let the paste session make the same call with the tables in
+hand, which costs nothing but keeps three misleading assertions alive across a
+sweep. Reasoning: [2026-09-13](history/2026-09-13.md), "The register move is
+landed, and three of its reds were fixed with it".
+
+**A plain `parse` now reads faster than serial warm, and the serial default was
+left alone.** `parallel-scan-throughput`'s re-take on the repaired build reads
+1.36× at two workers and 1.41× at four, where the `20fd77c` sitting read 0.81×
+at every count — the `partition_bytes` → `reader_bytes` repair, exactly as
+[`../design/architecture.md`](../design/architecture.md), "What parallelism
+buys, and where it stops" predicted it would. That falsifies the *stated*
+justification for a plain source recommending one worker ("splitting one is
+slower than not splitting it"), which the manual and that section both carried
+and which is now corrected to the true one: on storage a plain `parse` is
+device-bound at 1.00–1.06× the `dd` floor, so the speedup exists only where the
+bytes are already resident. **The decision left unmade** is whether that is
+still the right default: a user parsing a file the page cache already holds
+pays 40% for the default, and `--jobs` is the only way out. Changing it means
+re-grilling `19.8`'s source-recommends-its-own-count rule, which binds beyond
+`19.11`, so this round measured it and stopped. **What would change if
+reconsidered**: the alternative is a plain source recommending `POOL_DEPTH`
+workers rather than one, which costs three more buffers of resident memory on
+every plain scan for a win nobody on a real device sees.

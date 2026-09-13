@@ -451,7 +451,8 @@ amendments:
 
 Reasoning: [2026-09-11](../status/history/2026-09-11.md), "The budget rule's
 headroom fails at 512 MiB, and not where it was predicted to", and
-[`roadmap-P19.15-budget-probe-notes.md`](roadmap-P19.15-budget-probe-notes.md).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md),
+"The budget rule against real cgroups".
 
 **A fourth amendment: the reserve is not one constant, because the term it
 covers scales with the block unit.** Everything above argues about whether the

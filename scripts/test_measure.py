@@ -1298,9 +1298,10 @@ class BorrowGraph(unittest.TestCase):
     a `session.borrow` call site names the source it just asked for, and behind
     the allocator table that is two figures where the honest set is four."""
 
-    def _session(self, readings=None):
+    def _session(self, readings=None, rss=None):
         session = measure.Session.__new__(measure.Session)
         session.readings = dict(readings or {})
+        session.rss = dict(rss or {})
         return session
 
     def test_requires_is_read_off_the_declared_borrows(self):
@@ -1336,11 +1337,15 @@ class BorrowGraph(unittest.TestCase):
             },
             "per-block-quadratic": {
                 measure.RunSpec(
-                    binary, name, "parse-cache-out", "warm", ""
+                    "pgdq", name, "parse-cache-out", "warm", ""
                 ).key("per-block-quadratic")
                 for name, _ in measure._QUADRATIC_ROWS
-                for binary in ("before", "pgdq")
             },
+            # The two resident figures borrow from this one, which is what made
+            # `Session.borrow` carry an RSS reading. Both are keyed against the
+            # same `parse-rss` rows, so a rename on either side reads here as a
+            # figure measuring its own reference cell and calling it shared.
+            "peak-rss": {spec.key("peak-rss") for spec in _peak_rss_specs()},
         }
         for fig in measure.EVERY_FIGURE:
             for shared in fig.shares:
@@ -1385,6 +1390,55 @@ class BorrowGraph(unittest.TestCase):
         self.assertEqual(session.readings[source.key("scan-throughput-warm")], [1.0, 2.0])
         self.assertIn("Shared, not measured again", note)
         self.assertNotIn("Partial sweep", note)
+
+    def test_a_resident_set_crosses_the_share_with_the_wall_clock(self):
+        """The half `19.11` needs, and the half that fails as a `KeyError`.
+
+        `has` reads `readings`, so a borrow that copied the duration alone
+        would report the spec satisfied and then leave the borrowing figure's
+        renderer asking `get_rss` for a key nothing wrote — an hour into a
+        sweep, not at the declaration."""
+        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        session = self._session(
+            {source.key("census-brace-free"): [1.0, 2.0]},
+            {source.key("census-brace-free"): [5.9, 6.0]},
+        )
+        measure.share_readings(session, "scan-throughput-warm")
+        self.assertEqual(session.rss[source.key("scan-throughput-warm")], [5.9, 6.0])
+
+    def test_a_source_with_no_resident_reading_leaves_the_key_absent(self):
+        # An absent `rss` key means "this shape carries no RSS wrapper", which
+        # `sweep` is careful to distinguish from an empty one. Manufacturing an
+        # empty list here would turn the first fact into the second.
+        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        session = self._session({source.key("census-brace-free"): [1.0, 2.0]})
+        measure.share_readings(session, "scan-throughput-warm")
+        self.assertNotIn(source.key("scan-throughput-warm"), session.rss)
+
+    def test_an_all_killed_source_leg_crosses_as_an_empty_list(self):
+        # The other side of the same distinction: the source opened the key and
+        # every rep was censored. That is a fact about the leg and it travels.
+        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        session = self._session(
+            {source.key("census-brace-free"): [1.0]},
+            {source.key("census-brace-free"): []},
+        )
+        measure.share_readings(session, "scan-throughput-warm")
+        self.assertEqual(session.rss[source.key("scan-throughput-warm")], [])
+
+    def test_no_republished_spec_is_an_instrument_leg(self):
+        """Why `borrow` copies two channels and not four.
+
+        `reported` and `instrument` are read by the figure that *declared* the
+        leg, and `RunSpec.instrument` is that declaration rather than a
+        property of the run. A borrow that carried them would hand a borrower a
+        report it never asked the harness to find — sound only while no shared
+        spec is such a leg, which is what this holds."""
+        for fig in measure.EVERY_FIGURE:
+            for shared in fig.shares:
+                for spec in shared.republished:
+                    with self.subTest(figure=fig.id, spec=spec.key(shared.source)):
+                        self.assertFalse(spec.instrument)
 
     def test_an_unsatisfied_borrow_names_the_whole_closure(self):
         note = measure.share_readings(self._session(), "allocator")
@@ -1940,12 +1994,6 @@ class Reserve(unittest.TestCase):
             len(self._fig().warm_inputs), len(set(self._fig().warm_inputs))
         )
 
-    def test_it_carries_no_marker_in_the_document(self):
-        # An untaken instrument has no table in the doc, so a marker for it
-        # would be a section with no numbers under it.
-        doc = (measure.REPO / "docs/design/measurements.md").read_text()
-        self.assertNotIn("<!-- figure: reserve ", doc)
-
 class CompressedAccount(unittest.TestCase):
     """The three families `reserve` grew when the compressed path got an account.
 
@@ -2419,7 +2467,7 @@ class CompressedAccount(unittest.TestCase):
     #: `19.16`'s own readings, off `control_xz128` at a 384 MiB reserve, as its
     #: notes doc commits them: reader count, worst rep in MiB, the budget the
     #: run reported, and the residual that slice computed by hand after the
-    #: sitting (`roadmap-P19.16-reserve-constant-notes.md`, "The charge
+    #: sitting (`roadmap-P19-efficient-defaults-notes.md`, "The charge
     #: under-bills the pool floor", read forward through `M93`'s one-unit
     #: restatement).
     #:
@@ -3998,7 +4046,7 @@ class OutsideInvalidation(unittest.TestCase):
         # the same sentence that puts it outside the register: it quotes no
         # number in the doc, so there is nothing a diff could falsify.
         publishing = {oid for oid, o in measure.NOT_OURS.items() if o.depends}
-        self.assertEqual(publishing, {"koji", "rss-attribution"})
+        self.assertEqual(publishing, {"koji"})
         self.assertEqual(measure.NOT_OURS["benches"].depends, ())
 
     def test_koji_s_edge_covers_what_a_koji_run_concludes(self):
@@ -4023,13 +4071,17 @@ class OutsideInvalidation(unittest.TestCase):
                     measure.declared_hits(measure.NOT_OURS["koji"], [path]), [path]
                 )
 
-    def test_the_attribution_s_edge_is_the_registered_instrument_s(self):
-        # Read off the figure rather than copied: the readings differ from it
-        # in provenance, not in what moves them, and two spellings of one edge
-        # drift in the window before `M74` lands.
-        self.assertEqual(
-            measure.NOT_OURS["rss-attribution"].depends,
-            measure.EVERY_BY_ID["rss-attribution"].depends,
+    def test_the_attribution_is_no_longer_a_section_the_harness_disowns(self):
+        # It carried an `Outside` row whose edge was read off the figure rather
+        # than copied, for the window in which the doc published a standalone
+        # script's readings under a registered instrument's name. `M74` closed
+        # that window: the row and the section's `outside-register` marker left
+        # together, which is the reconciliation `--check` makes both ways.
+        self.assertNotIn("rss-attribution", measure.NOT_OURS)
+        self.assertIn("rss-attribution", measure.FIGURES_BY_ID)
+        self.assertNotIn(
+            "outside-register: rss-attribution",
+            (measure.REPO / "docs/design/measurements.md").read_text(),
         )
 
     def test_one_predicate_answers_for_a_figure_and_a_section(self):
@@ -4082,7 +4134,7 @@ class OutsideInvalidation(unittest.TestCase):
         problems = measure.outside_sitting_problems(
             self.DOC.read_text(), resolve=lambda rev: None
         )
-        self.assertEqual(len(problems), 2)
+        self.assertEqual(len(problems), 1)
         for line in problems:
             self.assertIn("not a commit in this repository", line)
 
@@ -4099,7 +4151,7 @@ class OutsideInvalidation(unittest.TestCase):
         # Never from the session stamp, which is scoped to the register and
         # says nothing about a section outside it.
         bases = measure.outside_bases(self.DOC.read_text())
-        self.assertEqual(set(bases), {"koji", "rss-attribution"})
+        self.assertEqual(set(bases), {"koji"})
         self.assertNotEqual(bases["koji"], measure.stamp_in(self.DOC.read_text()))
 
     def test_since_asks_one_question_of_every_section(self):
@@ -4184,8 +4236,23 @@ class Sittings(unittest.TestCase):
     def test_a_figure_that_shares_a_reading_may_not_be_published_alone(self):
         # What one sitting buys is differencing, so the condition is the borrow
         # graph: `allocator`'s reference column *is* three other tables' rows.
-        self.assertEqual(measure.entangled_with("peak-rss"), [])
+        self.assertEqual(measure.entangled_with("map-only"), [])
         self.assertIn("census-brace-free", measure.entangled_with("allocator"))
+
+    def test_the_unentangled_example_is_still_unentangled(self):
+        """`map-only` is the figure the fabricated sittings below are written
+        against, and it is load-bearing that it stands in no edge.
+
+        `peak-rss` used to be that figure, and the register move that put
+        `reserve` and `rss-attribution` into `FIGURES` gave it two — so seven
+        assertions started failing on a refusal that fired before the one they
+        were checking, which reads as a doc problem and is not one. Asserting
+        the premise here is what makes the next such move fail with a sentence
+        that says which premise went."""
+        self.assertEqual(measure.entangled_with("map-only"), [])
+        self.assertEqual(
+            measure.entangled_with("peak-rss"), ["reserve", "rss-attribution"]
+        )
 
     def test_a_derivation_entangles_in_both_directions(self):
         # Not a closure edge, and still an edge: `cross-file-floor`'s first row
@@ -4202,7 +4269,7 @@ class Sittings(unittest.TestCase):
         self.assertIn("only a sweep", refusals[0])
 
     def test_a_figure_standing_in_no_edge_may_be_taken_on_its_own(self):
-        self.assertEqual(measure.publication_refusals([measure.ALL_BY_ID["peak-rss"]]), [])
+        self.assertEqual(measure.publication_refusals([measure.ALL_BY_ID["map-only"]]), [])
 
     def _cli_stderr(self, argv: list[str]) -> str:
         """`main` up to its first refusal, with nothing measured.
@@ -4244,7 +4311,7 @@ class Sittings(unittest.TestCase):
 
     def test_a_sitting_that_repeats_the_stamp_is_a_marker_that_should_not_be_there(self):
         problems = measure.sitting_problems(
-            {"peak-rss": "aaaaaaa"},
+            {"map-only": "aaaaaaa"},
             "aaaaaaa",
             resolve=lambda rev: rev * 5,
             ancestor=lambda a, b: True,
@@ -4257,7 +4324,7 @@ class Sittings(unittest.TestCase):
         # table at once — so it is a marker a sweep left behind or a hand edit,
         # and either puts --stale back on the wrong commit.
         problems = measure.sitting_problems(
-            {"peak-rss": "bbbbbbb"},
+            {"map-only": "bbbbbbb"},
             "aaaaaaa",
             resolve=lambda rev: rev * 5,
             ancestor=lambda a, b: False,
@@ -4268,7 +4335,7 @@ class Sittings(unittest.TestCase):
     def test_a_descendant_sitting_passes(self):
         self.assertEqual(
             measure.sitting_problems(
-                {"peak-rss": "bbbbbbb"},
+                {"map-only": "bbbbbbb"},
                 "aaaaaaa",
                 resolve=lambda rev: rev * 5,
                 ancestor=lambda a, b: True,
@@ -4278,13 +4345,13 @@ class Sittings(unittest.TestCase):
 
     def test_a_sitting_naming_no_commit_is_refused(self):
         problems = measure.sitting_problems(
-            {"peak-rss": "bbbbbbb"}, "aaaaaaa", resolve=lambda rev: None
+            {"map-only": "bbbbbbb"}, "aaaaaaa", resolve=lambda rev: None
         )
         self.assertEqual(len(problems), 1)
         self.assertIn("not a commit", problems[0])
 
     def test_a_sitting_with_no_stamp_to_be_outside_of_is_refused(self):
-        problems = measure.sitting_problems({"peak-rss": "bbbbbbb"}, None)
+        problems = measure.sitting_problems({"map-only": "bbbbbbb"}, None)
         self.assertEqual(len(problems), 1)
         self.assertIn("session stamp names no commit", problems[0])
 
@@ -5521,6 +5588,69 @@ class Render(unittest.TestCase):
         for field in ("allocator", "whole_sweep", "header", "input_sizes", "rss", "reported"):
             self.assertIn(f'"{field}"', source, f"emit does not record {field}")
 
+    def test_a_render_skips_the_figures_the_sitting_failed(self):
+        """A failed figure took no readings, so replaying it raises rather than
+        rebuilding a table — and the sitting's own record says which those
+        were."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "raw.json").write_text(
+                json.dumps(
+                    {
+                        "commit": "abcdef1",
+                        "figures": ["per-block-quadratic"],
+                        "failures": [["per-block-quadratic", "before one_block exited 2"]],
+                        "whole_sweep": False,
+                        "header": ["# measure.py output"],
+                        "allocator": None,
+                        "input_sizes": {},
+                        "readings": {},
+                        "rss": {},
+                        "reported": {},
+                        "runs": [],
+                    }
+                )
+            )
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = measure.render(measure.Config(), run_dir)
+            self.assertEqual(rc, 0)
+            self.assertIn("0 figure(s)", out.getvalue())
+
+
+class StampingTheDocument(unittest.TestCase):
+    """Which sittings may re-stamp `measurements.md`.
+
+    The defect: `emit` decided this from the *selection*, before the first
+    reading, so a sweep that selected 22 figures and took 20 emitted a full
+    session stamp claiming every figure below came from it — over 20 tables,
+    with the other two still standing in the document from an older sitting the
+    stamp had just claimed."""
+
+    def test_a_whole_sweep_that_took_everything_stamps(self):
+        self.assertTrue(measure.stamps_the_document(True, []))
+
+    def test_a_whole_sweep_that_lost_a_figure_does_not(self):
+        self.assertFalse(
+            measure.stamps_the_document(True, [("per-block-quadratic", "exited 2")])
+        )
+
+    def test_a_selection_short_of_the_sweep_never_stamps(self):
+        self.assertFalse(measure.stamps_the_document(False, []))
+        self.assertFalse(measure.stamps_the_document(False, [("x", "boom")]))
+
+    def test_emit_decides_it_after_the_figure_loop_not_before(self):
+        """The predicate has to be evaluated where `failures` is populated.
+
+        Asserted on the source because the ordering *is* the fix: computing it
+        early type-checks, runs, and reproduces the defect exactly."""
+        source = inspect.getsource(measure.emit)
+        self.assertLess(
+            source.index("failures.append"),
+            source.index("stamps_the_document"),
+            "emit decides the stamp before a figure can have failed",
+        )
+
 
 class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
     """The renderer itself, over synthetic readings.
@@ -6206,7 +6336,7 @@ class ChargeModelSection(unittest.TestCase):
     #: The four original limits are `19.16`'s r384 grid as it read them — the
     #: 24 MiB rows are that sitting's headroom column inverted against its
     #: container limit, the 128 MiB rows its pool-floor table
-    #: (`roadmap-P19.16-reserve-constant-notes.md`). **`544m` and `1088m` are
+    #: (`roadmap-P19-efficient-defaults-notes.md`). **`544m` and `1088m` are
     #: constructed**, no sitting having measured them: each is a one- or
     #: two-reader arrangement whose worst rep satisfies the criterion, chosen so
     #: the model table carries a one-reader cell at each block size, which is the
@@ -6543,14 +6673,20 @@ class CensoredSittingsBarPublication(unittest.TestCase):
         self.assertIn("failures or censored", source)
 
     def test_an_untaken_instruments_sitting_can_be_re_rendered(self):
-        # `render` looked its figures up in `FIGURES`, so a diagnostic sitting
-        # of an untaken instrument came back "unknown figure" — and an untaken
-        # instrument is the case that needs re-rendering most, being taken
-        # repeatedly while its renderer is still being written. `reserve` is
-        # also the only figure that can carry a censored cell at all.
-        self.assertIn("reserve", measure.SELECTABLE_BY_ID)
-        self.assertNotIn("reserve", measure.FIGURES_BY_ID)
+        """`render` reads `SELECTABLE_BY_ID`, which is wider than `FIGURES`.
+
+        It looked its figures up in `FIGURES`, so a diagnostic sitting of an
+        untaken instrument came back "unknown figure" — and an untaken
+        instrument is the case that needs re-rendering most, being taken
+        repeatedly while its renderer is still being written. `UNTAKEN` is
+        empty today, so nothing in the register exercises the difference; the
+        past sittings that need re-rendering are exactly the ones taken while
+        it was not."""
         self.assertIn("by_id = SELECTABLE_BY_ID", inspect.getsource(measure.render))
+        self.assertEqual(
+            {f.id for f in measure.SELECTABLE},
+            {f.id for f in measure.FIGURES} | {f.id for f in measure.UNTAKEN},
+        )
 
     def test_a_sitting_records_its_kills_so_a_render_reproduces_the_cells(self):
         # The same reconciliation `test_a_sitting_records_what_a_render_needs`

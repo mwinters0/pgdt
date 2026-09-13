@@ -86,7 +86,7 @@ and `io::MEMORY_UNPOOLED_BOUND` (256 MiB, what `margin_allowance` predicts a
 count's resident with) were both read off one grid: 400 runs over `.xz` inputs
 at 24 MiB and 128 MiB block sizes ([`architecture.md`](architecture.md),
 "Execution model and API surface";
-[`roadmap-P19.26-margin-constant-notes.md`](roadmap-P19.26-margin-constant-notes.md)).
+[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The margin constant, derived by arithmetic").
 The second bounds what a scan holds *outside* what `WorkerMemory::at` bills, and
 the measured remainder is not flat in the codec's parameters: 83.5–214.6 MiB at
 24 MiB blocks against 10.9–13.8 MiB at 128, i.e. **an order of magnitude

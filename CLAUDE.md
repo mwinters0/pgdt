@@ -345,10 +345,12 @@ what may be concluded from it** — and it is the half that has actually gone
 wrong here. **Invoke it before concluding anything from a benchmark, a profile
 or a resident-set reading, before fitting a model to measurements, before
 planning work whose deliverable is a reading, and whenever a measured quantity
-is partly unexplained.** Its six rules are short and each names the failure it
-prevents; the first — *account before you fit*, an account being arithmetic
-from the source rather than a slope — is the one that would have saved three
-sessions of `P19`.
+is partly unexplained, and whenever a figure subtracts one build from
+another.** Its seven rules are short and each names the failure it prevents;
+the first — *account before you fit*, an account being arithmetic from the
+source rather than a slope — is the one that would have saved three sessions of
+`P19`, and the seventh — *a comparison between two builds decays unless
+something expires it* — is what the retired pre-throttle column cost.
 
 **Neither of those says which instrument to reach for, and that is
 [`docs/design/roadmap.md`](docs/design/roadmap.md), "Attribution is

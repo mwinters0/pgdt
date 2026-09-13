@@ -390,3 +390,28 @@ phase hands it. If this phase does take it, `decoder_bytes()` is the divisor and
 the re-vendor, and the window route priced and refused". Contingent on that
 crate keeping the guarantee; it is stated in its `architecture.md`, so re-check
 there rather than trusting this entry.
+
+## The trait grew two more members a remote source must answer, and one constant predicts its resident
+
+**Fact.** `ByteRangeSource` gained `default_worker_memory()` — returning an
+`io::WorkerMemory`, a per-worker term plus a shared pool floor, which
+`Parallelism::fit` and `stream::worker_count` both *solve against* rather than
+divide by — and `PartitionRead`, which is how a source states the shape of the
+read a partition performs rather than having it inferred. Both landed after
+this inbox's `retained_unit` entry was written, and a remote source has to
+answer all three. Separately, `io::MEMORY_UNPOOLED_BOUND` (256 MiB) is what the
+margin predicts a count's resident with, and it was bracketed off xz readings
+alone.
+
+**Why this phase cares.** A ranged-GET window is exactly the unpooled term that
+constant is sized against — an in-flight HTTP body is held outside every pool
+this crate owns — so a remote source is the first one that can falsify it, and
+it must decide its `WorkerMemory` before the budget rule can size a count for
+it. The gzip and zstd inboxes carry the same warning about the constant being
+xz-derived; this phase has the additional problem that its per-worker term is
+set by a network buffer nobody here has measured.
+
+**Origin.** `19.22` (the pool floor), `19.20` (the read shape) and `19.26` (the
+bound), 2026-09-12. The mechanisms are
+[`architecture.md`](architecture.md), "Execution model and API surface" and
+"The compressed source".

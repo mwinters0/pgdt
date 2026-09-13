@@ -767,6 +767,20 @@ impl Partitioning {
     ///   to `limit`, and the thinning still cannot give a piece more than `k`
     ///   units, since the window never contains more than `want × k` of them.
     ///
+    /// **Two traps, and the second is the form anyone reaches for first.**
+    ///
+    /// - *The window's first piece is not a stub.* A window starting mid-block
+    ///   looks as though it must begin with a fragment. It does not: the
+    ///   previous window's last piece read *past* its own limit to finish a
+    ///   row, so the frontier sits a few hundred bytes into a block rather
+    ///   than most of the way through it, and the first piece is a whole block
+    ///   less epsilon.
+    /// - *Do not size the window at `want × unit`.* From a mid-block frontier
+    ///   that window contains `want` boundaries, [`crate::stream::cut`] is
+    ///   asked for `want` pieces, and the thinning drops the first — which
+    ///   puts two blocks in the first piece and reintroduces exactly the
+    ///   defect above. Hence "strictly past `start`" and the `× k`.
+    ///
     /// Asserted rather than asserted-in-prose:
     /// [`a_block_decoding_partition_spans_at_most_the_cut_width`].
     pub fn window_end(&self, start: u64, want: usize, limit: u64) -> u64 {
@@ -1127,7 +1141,8 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 /// chunk size the read-chunk sweep measured
 /// (`docs/design/measurements.md`, "What the read chunk size is worth"), so
 /// nothing at or below 16 MiB loses a slot to it and the 1.83× a pool miss
-/// costs cannot come back through this ceiling. It is also the line a
+/// cost when it was last measurable cannot come back through this ceiling
+/// (`docs/design/architecture.md`, "Execution model and API surface"). It is also the line a
 /// compressed source's whole-block decode is refused above, which is what
 /// makes the number a *bound* rather than an aspiration — see
 /// [`BlockCache::affordable`] and `docs/design/architecture.md`, "The
@@ -1156,7 +1171,8 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// describing it, and **384 MiB is the smallest of five candidates measured
 /// against it** — 256, 320, 384, 448 and 512 MiB, each a build of its own, over
 /// two block sizes and four container limits with nothing stated
-/// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`). What one reader
+/// (`docs/design/roadmap-P19-efficient-defaults-notes.md`, "The reserve
+/// constant, read off five builds"). What one reader
 /// holds is billed to within 1.3% by [`BlockCache::reader_bytes`], so what
 /// this covers is the excess above that charge and not a per-reader term.
 ///
@@ -1214,7 +1230,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// charge** — the measured worst-resident slope is 0.987 of what
 /// [`BlockCache::reader_bytes`] bills — so a reserve computed from an arena
 /// count would be reserving for a term that is billed twice
-/// (`docs/design/roadmap-P19.16-reserve-constant-notes.md`, "Arena retention is
+/// (`docs/design/roadmap-P19-efficient-defaults-notes.md`, "Arena retention is
 /// inside the charge, not above it").
 ///
 /// **Below it the budget goes to zero rather than to a floor.** A limit under
@@ -1296,7 +1312,8 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// every surviving block-path leg runs **83.5–214.6 MiB** on a 24 MiB-block
 /// file and **10.9–13.8 MiB** on a 128 MiB-block one. 256 MiB is the worst of
 /// those rounded up to a 64 MiB step
-/// (`docs/design/roadmap-P19.26-margin-constant-notes.md`).
+/// (`docs/design/roadmap-P19-efficient-defaults-notes.md`, "The margin
+/// constant, derived by arithmetic").
 ///
 /// **What justifies the value is the criterion's slack, not the rounding.**
 /// What this crate promises is [`MEMORY_MARGIN_PERCENT`]; the bound is an input
@@ -1660,7 +1677,7 @@ const POOL_DEPTH: usize = 4;
 /// tunable through `ScanOptions::chunk_size`. What can be far larger is
 /// `crate::map::attach_text`'s coalesced span read, which happens once per
 /// map and never again; holding one of those for the rest of a process would
-/// trade the ~5.9 MiB a scan holds resident (`docs/design/measurements.md`,
+/// trade the ~6.2 MiB a scan holds resident (`docs/design/measurements.md`,
 /// "What a scan holds resident") for an allocation nothing is going to ask for
 /// twice.
 ///
@@ -2733,7 +2750,7 @@ impl XzSource {
     /// block pool is given what is left after the chunk pool's own ceiling
     /// (`BufferPool::held_bytes`) — 4 MiB at the 1 MiB default chunk, so a
     /// 64 MiB budget leaves 60 for blocks. Chunks come first because that pool
-    /// is the one every read path uses and the one the 1.83× pool-miss figure
+    /// is the one every read path uses and the one the 1.83× pool-miss reading
     /// was measured through; the block pool is what a large budget is
     /// *for*, and it is the term that actually grows.
     ///
@@ -3179,7 +3196,7 @@ impl ByteRangeSource for XzSource {
     /// already reads.
     ///
     /// **Decode is the one shape that demonstrably scales** — a compressed
-    /// `parse` reaches 5.82× at twenty-four workers and is still climbing
+    /// `parse` reaches 5.60× at twenty-four workers and is still climbing
     /// (`docs/design/measurements.md`, "What a second scan worker buys") — so
     /// a small constant such as four would leave the machine's own answer
     /// unspent on the only path that can use it. What the caller's budget
