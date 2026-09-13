@@ -19,8 +19,7 @@ use crate::pgtype::{
 };
 use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
-/// Whether a query resolves column types at all. See "Output model" in the
-/// phase doc.
+/// Whether a query resolves column types at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SchemaMode {
     /// Each column gets the narrowest Arrow type this build's mapping table
@@ -35,10 +34,9 @@ pub enum SchemaMode {
 }
 
 /// Per-column outcome of resolving one declared type against this build's
-/// mapping table — see "Failure and diagnostics" in the phase doc. Distinct
-/// from [`crate::pgtype::TypeOutcome`]: this adds the "no DDL explained this
-/// column at all" case, which is a join-against-`DumpMetadata` question, not
-/// a type-mapping one.
+/// mapping table. Distinct from [`crate::pgtype::TypeOutcome`]: this adds
+/// the "no DDL explained this column at all" case, which is a
+/// join-against-`DumpMetadata` question, not a type-mapping one.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnResolution {
     Mapped,
@@ -50,26 +48,21 @@ pub enum ColumnResolution {
     /// The scan never read this block's database's DDL, so nothing is yet
     /// known about *any* of its columns.
     ///
-    /// **No mapping scan leaves this pairing any more.** `crate::stream`'s
-    /// mapping pass states a database's DDL at that database's first `COPY`
-    /// block (I1's recurring boundary), which is strictly before any of its
-    /// blocks can be banked, so a block in the map always has its database
-    /// covered. What keeps the variant is that [`resolve_columns`] is public
-    /// and takes its `metadata` from the caller: an embedder resolving against
-    /// an index it assembled itself can still present the condition, and this
-    /// is the right answer when it does.
+    /// **No mapping scan produces this pairing.** `crate::stream`'s mapping
+    /// pass states a database's DDL at that database's first `COPY` block
+    /// (I1's recurring boundary), which is strictly before any of its blocks
+    /// can be banked, so a block in the map always has its database covered.
+    /// What keeps the variant is that [`resolve_columns`] is public and takes
+    /// its `metadata` from the caller: an embedder resolving against an index
+    /// it assembled itself can still present the condition, and this is the
+    /// right answer when it does.
     ///
     /// **Held apart from [`Self::NotDeclared`], which it would otherwise look
     /// exactly like.** `NotDeclared` means the dump never explained this
     /// column and is final; this means "finish the parse and ask again" —
-    /// identical-looking output, opposite advice.
-    ///
-    /// The streaming path refuses this outright
-    /// (`crate::Error::MetadataNotScanned`) rather than degrading, because a
-    /// stream hands back rows and a wrongly-typed one is a wrong answer. A
-    /// *reported* schema cannot refuse: one unresolvable block must not sink
-    /// the whole listing, so it reports the reason instead
-    /// (`docs/design/decisions.md`, "The CLI").
+    /// identical-looking output, opposite advice. The streaming path refuses
+    /// it outright (`crate::Error::MetadataNotScanned`) where a *reported*
+    /// schema degrades: see `docs/design/decisions.md`, "D43".
     MetadataNotScanned,
     /// An array whose element type is opaque by construction — `box`, a
     /// C-level base type or a shell type, through any chain of domains. Held
@@ -107,9 +100,9 @@ pub enum ColumnResolution {
 /// channel is [`crate::diagnostic::Diagnostic`], and the two deliberately
 /// stay separate types: `DumpIndex` is L1 while [`ColumnResolution`] is an L2
 /// conclusion about PostgreSQL type semantics, so one enum spanning both
-/// would have L1 name an L2 type
-/// (`docs/design/decisions.md`, "The file map and the preamble"). What they share is the
-/// [`Severity`] scale, so a caller reading both filters uniformly.
+/// would have L1 name an L2 type (`docs/design/decisions.md`, "D68"). What
+/// they share is the [`Severity`] scale, so a caller reading both filters
+/// uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnNote {
     pub column: String,
@@ -201,11 +194,9 @@ impl ResolvedSchema {
 /// `database: None` matches the single unnamed database a plain (non-`\connect`)
 /// dump produces.
 ///
-/// This used to be "the first database whose DDL mentions `qualified_table`"
-/// — a guess, since nothing tracked which database a `CopyBlock` actually
-/// belonged to. Per-block attribution (`docs/design/decisions.md`,
-/// "D49") turns it into a fact: the caller already knows,
-/// from the block it matched, which database's DDL applies.
+/// Per-block attribution (`docs/design/decisions.md`, "D49") is what makes
+/// the exact match possible: the caller already knows, from the block it
+/// matched, which database's DDL applies.
 fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
     database: Option<&str>,
@@ -405,8 +396,8 @@ pub fn resolve_columns(
         } else {
             ComparisonPlan::Refused
         };
-        // Every Arrow field is nullable, regardless of a `NOT
-        // NULL` in the DDL -- see "Nullability" in the phase doc.
+        // Every Arrow field is nullable, regardless of a `NOT NULL` in the
+        // DDL — see `docs/design/decisions.md`, "D37".
         let field = Field::new(name, arrow_type, true);
         // A canonical extension name is a claim about what the column's bytes
         // *are*, so only a column that is still `Mapped` may carry one: one
@@ -976,12 +967,9 @@ mod tests {
     /// by which database's DDL happens to mention the table first — proven
     /// here by giving the two databases genuinely different declared types
     /// for the same qualified table name, so the outcome differs observably
-    /// depending on which name is passed. This is what the one-target-per-query
-    /// rule
-    /// (`docs/design/decisions.md`, "D49") turned the old first-match guess into: the caller already
-    /// knows, from the matched `CopyBlock`'s own attribution, which database
-    /// applies — see `docs/design/decisions.md`,
-    /// "D49", for the guess this test used to pin down.
+    /// depending on which name is passed. The caller knows, from the matched
+    /// `CopyBlock`'s own attribution, which database applies
+    /// (`docs/design/decisions.md`, "D49").
     #[test]
     fn database_selects_by_attributed_name_not_by_first_match() {
         let mut a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);

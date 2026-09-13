@@ -10,8 +10,8 @@
 //! So both are collected on [`crate::index::DumpIndex`] and left for a
 //! caller to drain.
 //!
-//! **Not persisted.** `DumpIndex::diagnostics` is `#[serde(skip)]`, because a
-//! cached diagnostic would replay a warning about a check *this* run
+//! **Not persisted.** `DumpIndex::diagnostics` is `#[serde(skip)]`
+//! (`docs/design/decisions.md`, "D34"), because a cached diagnostic would replay a warning about a check *this* run
 //! performed successfully — the mtime a cache was saved with is not the mtime
 //! the next run observes. Recomputing on load is O(spans) against a scan that
 //! just read the file, so it is free.
@@ -22,15 +22,15 @@
 //! [`Severity`] and the `{severity, kind}` shape — **not** a single enum.
 //! `DumpIndex` is **L1**, and `crate::resolve::ColumnResolution` is an **L2**
 //! conclusion about PostgreSQL type semantics, so a [`DiagnosticKind`]
-//! variant carrying one would make L1 name an L2 type: rule 1 in
-//! `docs/design/decisions.md`, and against L1's whole "parses a declared type
+//! variant carrying one would make L1 name an L2 type
+//! (`docs/design/decisions.md`, "D68"), and against L1's whole "parses a declared type
 //! as an opaque string and never interprets it" premise.
 //!
 //! So L1 owns this file-level channel, and `crate::resolve::ColumnNote` is
 //! the per-column record at L2 — one per column, always present, reporting
 //! its position on this same scale through `ColumnNote::severity`. A caller
 //! reading both filters uniformly. Unifying at the *drain* point stays open:
-//! a future caller-supplied sink (`docs/design/roadmap.md`, P6) can take
+//! a future caller-supplied sink (see `docs/design/roadmap.md`) can take
 //! both
 //! (`docs/design/decisions.md`, "The file map and the preamble").
 
@@ -59,12 +59,12 @@ pub enum DiagnosticKind {
     /// The map does not tile its file: a gap, an overlap, an empty span, or
     /// a span list that doesn't reach the scanned end. Always a bug in
     /// `crate::map`, never a property of the input
-    /// (`docs/design/decisions.md`, "D73").
+    /// (`docs/design/decisions.md`, "D30").
     TilingBroken { issues: Vec<TilingIssue> },
     /// A loaded cache recorded a different mtime than the source now has.
     /// Deliberately not an invalidation: mtime granularity and preservation
     /// vary too much across filesystems, copies and restores to be
-    /// conclusive (`docs/design/decisions.md`, "The compressed source and the cache"). A *size* mismatch is an
+    /// conclusive (`docs/design/decisions.md`, "D21"). A *size* mismatch is an
     /// invalidation instead, and never reaches this channel because the
     /// cache is discarded outright.
     CacheMtimeChanged,
@@ -85,7 +85,7 @@ pub enum DiagnosticKind {
     CacheOffline,
     /// A `.xz` source has no usable seek structure — one stream, one block —
     /// so every read (forward included) decodes from byte zero
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). Never a reason
+    /// (`docs/design/decisions.md`, "D19"). Never a reason
     /// to refuse the file: `pgdq parse` is unaffected since it never reads
     /// backwards, and `pgdq query` still answers, just by paying the decode
     /// each time. `block_count` is `SeekTable::block_count()` — 0 or 1 for a
@@ -126,7 +126,7 @@ impl Diagnostic {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOffline }
     }
 
-    /// D2's warning — a `.xz` source read correctly but with every read
+    /// D19's warning — a `.xz` source read correctly but with every read
     /// decoding from byte zero, since it has no more than one block. Usable
     /// as-is, so `Warning` rather than `Error`, matching `CacheMtimeChanged`'s
     /// and `CacheOffline`'s severity.

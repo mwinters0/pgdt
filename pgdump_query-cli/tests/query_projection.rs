@@ -6,7 +6,7 @@
 //! pin: which flag combinations the parser refuses and at what exit status,
 //! and what the rendered stream looks like — above all that a zero-column
 //! query prints one line per row and no header, because
-//! `--no-columns | wc -l` is the filtered-row-count idiom the phase's figure
+//! `--no-columns | wc -l` is the filtered-row-count idiom a figure
 //! is built on and an off-by-one there is silent.
 
 use std::path::Path;
@@ -86,7 +86,7 @@ fn a_table_that_yields_nothing_still_says_no_rows_were_found() {
 }
 
 /// The filtered row count: the filter names a column the projection does not,
-/// which is the shape the phase's figure floor row is built on.
+/// which is the shape a figure's floor row is built on.
 #[test]
 fn a_filter_may_name_a_column_no_column_flag_projects() {
     let out = widgets(&["--no-columns", "--filter", "is_active=t"]);
@@ -148,10 +148,8 @@ fn projecting_a_column_away_escapes_its_decode_failure() {
 
 /// **The `projection-widths` figure's five command shapes actually run.**
 ///
-/// `scripts/measure.py` registered them before the flags existed, on the
-/// understanding that this slice would make them executable, and the failure
-/// they were guarding against has no other guard: a flag the CLI does not
-/// accept is discovered only when a sweep runs the query — minutes into a
+/// The failure this guards against has no other guard: a flag the CLI does
+/// not accept is discovered only when a sweep runs the query — minutes into a
 /// figure, with the figure lost. So the flags come from `projection_flags`
 /// itself rather than being transcribed here, and every width is run against
 /// a real generated input.

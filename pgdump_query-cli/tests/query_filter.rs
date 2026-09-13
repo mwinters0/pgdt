@@ -118,9 +118,9 @@ fn a_conjunction_composes_with_a_projection() {
 }
 
 /// **Whitespace around the operator is not data.** The value side is trimmed
-/// like the column side, so the SQL-shaped spelling finds the row; untrimmed
-/// this looked for `" alpha"`, matched nothing, and printed an empty result
-/// that read as an answer.
+/// like the column side, so the SQL-shaped spelling finds the row; without
+/// trimming this would look for `" alpha"`, match nothing, and print an empty
+/// result that reads as an answer.
 #[test]
 fn a_spaced_term_finds_the_row_it_names() {
     assert_eq!(kept(&["--filter", "name = alpha"]), 1);

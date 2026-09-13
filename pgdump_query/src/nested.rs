@@ -60,7 +60,7 @@
 //!
 //! The separator is hardcoded to `,`. An array whose element type sets a
 //! different `typdelim` (`box`, or any C-level base type) is not decoded as an
-//! array at all — see `docs/design/decisions.md`, "Type resolution and decoders".
+//! array at all — see `docs/design/decisions.md`, "D41".
 
 use std::borrow::Cow;
 
@@ -77,12 +77,10 @@ enum Escape {
 /// A set of bytes as 256 bits, tested by index rather than by search.
 ///
 /// The membership test is the innermost operation of the whole nested codec:
-/// `needs_quote` asks it once per byte of every token, in both directions.
-/// Held as a byte slice it was a linear `[u8]::contains`, which specializes to
-/// `memchr` over four to six bytes and cost **10.4% of a typed
-/// `--arrays --composite` query** on its own; one indexed bit answers the same
-/// question in a shift and a mask. Every `Syntax` is a `const`, so every set is
-/// built at compile time.
+/// `needs_quote` asks it once per byte of every token, in both directions, so
+/// one indexed bit answers it in a shift and a mask where a byte slice would
+/// be a linear `[u8]::contains` (`nested-decode-micro`). Every `Syntax` is a
+/// `const`, so every set is built at compile time.
 #[derive(Debug, Clone, Copy)]
 struct ByteSet([u64; 4]);
 
@@ -334,10 +332,9 @@ fn scan_token<'a>(
 /// type carries a lifetime. `array_out` writes most elements verbatim — an
 /// escape appears only inside a quoted token that held a `"` or a `\` — so
 /// the common element is a slice of the field and only the rare escaped one
-/// is copied. The alternative, a `String` per element, is what
-/// `docs/design/measurements.md`, "Nested decode costs what it copies",
-/// measured at 77 ns of the per-element decode slope against the 48 ns the
-/// scan alone costs.
+/// is copied; a `String` per element is the larger part of the per-element
+/// decode slope (`nested-decode-micro`,
+/// `docs/design/decisions.md`, "D45").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArrayLiteral<'a> {
     /// Row-major, flattened across every dimension. `None` is a SQL NULL
@@ -1438,10 +1435,10 @@ mod tests {
         assert_eq!(a.elements, vec![elem("a,b"), elem("c{d}"), elem(r#"e"f"#), elem(r"g\h")]);
     }
 
-    /// The borrowed arm is what slice 7.9 is: an element is a slice of the
-    /// literal unless it actually carried an escape, and a *quoted* element
-    /// with nothing to undo is still borrowed. Asserted on the arm rather
-    /// than on the text, since `Cow`'s own equality cannot tell them apart.
+    /// An element is a slice of the literal unless it actually carried an
+    /// escape, and a *quoted* element with nothing to undo is still borrowed.
+    /// Asserted on the arm rather than on the text, since `Cow`'s own
+    /// equality cannot tell them apart.
     #[test]
     fn an_element_is_copied_only_where_the_literal_escaped_it() {
         let plain = decode_array(r#"{1,"a,b","c{d}",NULL,""}"#).unwrap();
@@ -1475,11 +1472,11 @@ mod tests {
         assert_eq!(decode_array(&render_array(&a)).unwrap(), a);
     }
 
-    /// The bit set answers exactly what the byte slice it replaced answered,
-    /// over the whole byte domain rather than over the cases the round-trip
-    /// tests happen to reach. Each syntax is checked against the literal it
-    /// was written as, so a typo in one of the three `ByteSet::new` calls is a
-    /// failure here rather than a token that silently stops being quoted.
+    /// The bit set answers over the whole byte domain rather than over the
+    /// cases the round-trip tests happen to reach. Each syntax is checked
+    /// against the literal it was written as, so a typo in one of the three
+    /// `ByteSet::new` calls is a failure here rather than a token that
+    /// silently stops being quoted.
     #[test]
     fn the_force_quote_set_holds_exactly_the_bytes_each_syntax_names() {
         for (syntax, spelled) in
@@ -1741,8 +1738,8 @@ mod tests {
     /// Every array literal with no elements is the zero-dimensional empty
     /// array, whatever brace structure produced it. `{{},{}}` is the one
     /// place two supported majors disagree about the *input* grammar: v13–v16
-    /// refuse it and v17+ accept it as `{}` (I44), and implementing the newer
-    /// grammar is the phase's union rule.
+    /// refuse it and v17+ accept it as `{}` (I44); the newer grammar is what
+    /// the union rule (I35) implements.
     #[test]
     fn an_element_less_array_literal_is_the_empty_array_however_it_was_written() {
         for literal in ["{}", "{ }", "{{},{}}"] {

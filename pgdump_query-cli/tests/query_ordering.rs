@@ -41,7 +41,7 @@ fn kept(table: &str, column: &str, extra: &[&str]) -> Vec<String> {
     stdout_of(&out).lines().skip(1).map(str::to_string).collect()
 }
 
-/// **The point of the whole slice.** `public.t_int` holds `-32768`, `32767`
+/// **The point of this test.** `public.t_int` holds `-32768`, `32767`
 /// and `0`; compared as text `-32768` would sort last, so the answer
 /// distinguishes a typed comparison from the string one `=` uses.
 #[test]

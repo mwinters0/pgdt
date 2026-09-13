@@ -12,8 +12,7 @@
 //! `"scan …"`), and a single uninterrupted run reports both in sequence. Every
 //! assertion here that touches a line spelling `"scan started"` or `"scan
 //! complete"` is careful to say which of the two it means — a test written
-//! against the ambiguous substring would have passed the day this file's
-//! first defect shipped.
+//! against the ambiguous substring cannot tell the two apart.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -407,10 +406,9 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
 
 /// **The stated half is printed before the seek-table walk, which is the whole
 /// of why it is a line of its own.** Opening a fresh `.xz` source walks every
-/// stream footer before it can advise anything — 85 s on the koji download
-/// (`CLAUDE.local.md`) — so a mistyped `--parallel-memory` would otherwise go
-/// unconfirmed until after a wait it had no bearing on
-/// (`docs/design/decisions.md`, "D64").
+/// stream footer before it can advise anything, so a mistyped
+/// `--parallel-memory` would otherwise go unconfirmed until after a wait it
+/// had no bearing on (`docs/design/decisions.md`, "D64").
 ///
 /// Asserted on a fixture whose walk is instant, since what is being pinned is
 /// the **order** of two lines and not the duration between them.
@@ -558,7 +556,7 @@ fn a_fully_cached_reparse_announces_no_scan() {
 
 /// `info` never scans, so it never announces either pass — its output is
 /// read entirely from the cache
-/// (`docs/design/decisions.md`, "The CLI").
+/// (`docs/design/decisions.md`, "D61").
 #[test]
 fn info_announces_no_scan() {
     let dir = tempfile::tempdir().unwrap();
@@ -588,9 +586,9 @@ fn info_announces_no_scan() {
 
 /// A fresh `.xz` open walks the footers and says so; a second `parse` against
 /// the cache that walk left behind opens from the persisted table instead
-/// (`XzSource::with_table`) and earns no line — the walk this phase names is
+/// (`XzSource::with_table`) and earns no line — the walk that gets no line is
 /// the one a cached table exists to skip (`docs/design/decisions.md`,
-/// "The compressed source and the cache").
+/// "D18").
 #[test]
 fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
     let (_dir, xz_path) = seekable_xz();
@@ -627,7 +625,7 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
 /// (above); the same command over an `.xz` file says the cores this process was
 /// given, capped at the blocks the file offers to cut at, because decode is the
 /// one shape that scales and a seam past the last block does not exist
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D2").
 ///
 /// Asserted against `available_parallelism()` and the file's own table rather
 /// than a literal — the count is the machine's and the cap is the fixture's,
@@ -671,8 +669,8 @@ fn arrangement_lines(stderr: &str) -> Vec<&str> {
     stderr.lines().filter(|l| l.contains("scan arrangement")).collect()
 }
 
-/// **`parse` says what ran, where until now it only said what was asked
-/// for.** A compressed source whose largest block the budget cannot hold
+/// **`parse` says what ran, not only what was asked for.** A compressed
+/// source whose largest block the budget cannot hold
 /// reads through the streaming decoder and is therefore serial whatever
 /// `--jobs` says — a decline `query` announces on a plan note and `parse` has
 /// no plan notes to carry. The correction is on the status channel both

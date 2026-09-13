@@ -151,14 +151,12 @@ impl ParallelArgs {
     /// the limit this process runs under.
     ///
     /// **It is a separate step because the two halves become knowable at
-    /// different moments, and one of those moments is 85 s later.** Opening an
-    /// `.xz` source with no persisted seek table walks every stream footer
-    /// before it can advise anything — the koji download's 31,150 of them cost
-    /// 85 s (`CLAUDE.local.md`) — and until the source has been asked there is
-    /// no recommendation to lower and no arrangement to report. Everything on
-    /// this side is already true before the file is touched, so a run says it
-    /// first and a mistyped flag is confirmed against the walk it did not
-    /// affect rather than after it
+    /// different moments.** Opening an `.xz` source with no persisted seek
+    /// table walks every stream footer before it can advise anything, and
+    /// until the source has been asked there is no recommendation to lower
+    /// and no arrangement to report. Everything on this side is already true
+    /// before the file is touched, so a run says it first and a mistyped flag
+    /// is confirmed against the walk it did not affect rather than after it
     /// (`docs/design/decisions.md`, "D64").
     fn discover(&self) -> Discovered<'_> {
         self.discover_in(Path::new("/"))
@@ -458,8 +456,7 @@ impl Resolved {
     /// guest on a machine nobody promised it and stays inside half of what the
     /// kernel says is available (`RT8`) — and in that second arrangement a
     /// worker count cut to fit surfaces as unexplained slowness unless the run
-    /// says so ([2026-09-10](../../docs/status/history/2026-09-10.md), "The
-    /// no-limit cap is affirmed, and a run says which mode it is in").
+    /// says so (`docs/design/decisions.md`, "D64").
     fn announce(&self) {
         tracing::info!(
             jobs = %self.jobs_display(),
@@ -534,7 +531,7 @@ enum Command {
     /// Report what a dump's cache holds. **`info` never scans** — it reads the
     /// cache `pgdq parse` wrote and errors if there is not one, rather than
     /// starting an hours-long scan on your behalf
-    /// (`docs/design/decisions.md`, "The CLI"). A cache from an
+    /// (`docs/design/decisions.md`, "D61"). A cache from an
     /// unfinished scan is reported for as far as it got, with the coverage
     /// stated at the top.
     Info {
@@ -567,7 +564,7 @@ enum Command {
         /// the per-`COPY`-block type resolution `--detail` renders as text.
         /// No schema stability is promised — this is a raw dump of our
         /// internal representation, not a supported interchange format
-        /// (`docs/design/decisions.md`, "The CLI"). Incompatible with
+        /// (`docs/design/decisions.md`, "D67"). Incompatible with
         /// `--detail`/`--map`, which format detail this already carries in
         /// full.
         #[arg(long)]
@@ -1149,7 +1146,7 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field_into`], so output is byte-identical whether `--schema-mode`
 /// is `typed` or `strings` (`docs/design/decisions.md`,
-/// "The CLI").
+/// "D66").
 ///
 /// **One buffer for the whole batch.** The line is assembled in a `String`
 /// that is cleared per row and keeps its capacity across the batch, so a
@@ -1215,7 +1212,7 @@ fn init_status_output() {
 /// **A `current_thread` runtime, not a multi-threaded one.** Every unit of work
 /// this binary dispatches is a `spawn_blocking` task — the positioned reads,
 /// the fused decode-and-parse workers, and the sub-streams of a partitioned
-/// replay alike (`docs/design/decisions.md`, "I/O, memory and parallelism") — so the reactor never runs any of it, and a pool of reactor
+/// replay alike (`docs/design/decisions.md`, "D12") — so the reactor never runs any of it, and a pool of reactor
 /// threads sized from the host's CPU count is threads the work never touches.
 /// The blocking pool tokio creates on demand is what actually carries the
 /// scan, so the process's thread count follows the concurrency dispatched
@@ -1254,7 +1251,7 @@ async fn main() -> Result<()> {
             parallel,
         } => {
             // `parse` is the only scanner (`docs/design/decisions.md`,
-            // "The CLI"). Reject `--dqcache none` up front, before paying
+            // "D61"). Reject `--dqcache none` up front, before paying
             // for a scan we won't be allowed to persist.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
@@ -1265,15 +1262,15 @@ async fn main() -> Result<()> {
             // cache for some other file, and `parse` refuses it exactly as
             // `info` and `query` do: it would otherwise scan and overwrite
             // it, which is the one thing this library does not do on its own
-            // (`docs/design/decisions.md`, "The compressed source and the cache"). Refused having
+            // (`docs/design/decisions.md`, "D20"). Refused having
             // read nothing, so no footer walk is spent reaching it — and the
             // same is true of the stored-size mismatch, which `open_for_scan`
             // answers with the library's own error before opening anything.
             //
             // **The flags and the limit are announced ahead of this**, since
             // neither waits on the file: opening a fresh `.xz` walks its
-            // stream footers first, which is 85 s on the koji download, and a
-            // mistyped `--parallel-memory` should not go unconfirmed through it
+            // stream footers first, and a mistyped `--parallel-memory` should
+            // not go unconfirmed through it
             // (`docs/design/decisions.md`, "D64").
             let stated = parallel.discover();
             stated.announce();
@@ -1660,7 +1657,7 @@ enum Opened {
 /// Open `file`, handing recognition whatever the cache at `cache` says about
 /// its compression layer, so an `.xz` source is built from the seek table a
 /// previous walk already produced instead of re-walking the file's stream
-/// footers (`docs/design/decisions.md`, "The compressed source and the cache").
+/// footers (`docs/design/decisions.md`, "D18").
 ///
 /// `--dqcache none` claims nothing, which is what makes an opted-out cache
 /// cost exactly the walk it always did; cache-only mode never reaches here at
@@ -1669,14 +1666,14 @@ enum Opened {
 /// **A contradicted claim is refused here rather than at each of the three
 /// call sites.** All three commands answer it identically — the cache at that
 /// path was written from another file, so it is not this one's to overwrite
-/// (`docs/design/decisions.md`, "The compressed source and the cache") — and the mode holding the
+/// (`docs/design/decisions.md`, "D20") — and the mode holding the
 /// claim is the mode holding the path the message names, so the refusal has
 /// everything it needs without a caller passing it back down.
 ///
 /// **A cache recorded against a file of another stored size stops here too**,
 /// as an [`Opened`] variant rather than as a bail: the file is never opened,
 /// so an `.xz` source never walks its stream footers to reach a refusal the
-/// cache path alone already settles (`docs/design/decisions.md`, "The compressed source and the cache"). The comparison itself stays in `cache::claim`, so this is the same
+/// cache path alone already settles (`docs/design/decisions.md`, "D20"). The comparison itself stays in `cache::claim`, so this is the same
 /// verdict the library reaches a moment later rather than a second reading of
 /// the same rule.
 fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
@@ -1708,7 +1705,7 @@ fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
 /// another file, so both raise it here — from `CacheMode::source_mismatch`,
 /// the same constructor the three scan entry points use, which is what makes
 /// the earlier refusal word-for-word the one it pre-empts
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D20").
 ///
 /// The library still refuses on its own: this spares the walk, it does not
 /// replace the guarantee, which is the library's to keep for an embedder that
@@ -1730,11 +1727,10 @@ fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query:
 /// and it is deliberately not one of [`unusable_cache_message`]'s: that
 /// function matches on [`CacheStatus`], and this condition is not one —
 /// recognition catches it before a source exists, so `load` never sees it
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). It borrowed
-/// `Unreadable`'s sentence until the refusal made the two answers differ:
-/// "check the path, or run `pgdq parse`" is advice `parse` cannot take, being
-/// the command that just refused, and the bytes at that path *are* a pgdq
-/// cache — for some other file.
+/// (`docs/design/decisions.md`, "D20"). The sentence is its own rather than
+/// `Unreadable`'s — "check the path, or run `pgdq parse`" is advice `parse`
+/// cannot take, being the command that just refused, and the bytes at that
+/// path *are* a pgdq cache — for some other file.
 ///
 /// The tail is the pair `Error::CacheSourceMismatch` names for the other
 /// condition, in the same words: the two ways out of a cache that is valid
@@ -1752,7 +1748,7 @@ fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
 /// words both refusals use. There is no third way — no `--force`, no
 /// `CacheMode` variant meaning "replace regardless" — because a flag like that
 /// is set once in a script and never reconsidered
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D20").
 ///
 /// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for
 /// the size-mismatch condition, which reaches `parse` and `query` from the
@@ -1770,7 +1766,7 @@ const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
 /// scans over `Missing`, `Unreadable` and `UnsupportedVersion` — there is
 /// nothing at that path worth keeping — and refuses `SourceChanged`, so that
 /// arm names [`TWO_WAYS_OUT`] before it names the command
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D20").
 ///
 /// **One match, two renderings**, the same discipline [`resolution_words`]
 /// applies. `source` is `None` in cache-only mode, which has no dump file to
@@ -1811,7 +1807,7 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
             // refuses this very condition rather than scanning over it, so
             // sending a reader straight there would send them to a second
             // refusal; the two ways out come first, and `parse` then works
-            // (`docs/design/decisions.md`, "The compressed source and the cache").
+            // (`docs/design/decisions.md`, "D20").
             format!(
                 "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
                  the cache at {} was written), so every offset in the cache could be \
@@ -1828,10 +1824,9 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
 }
 
 /// `pgdq info` with no `--source`: answer strictly from the cache at `path`
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). An `Incomplete` cache is
+/// (`docs/design/decisions.md`, "D22"). An `Incomplete` cache is
 /// reported like any other, with its coverage stated — cache-only mode has no
-/// scan to extend it with, but "as far as the scan got" is still an answer,
-/// and refusing it was what this phase removed.
+/// scan to extend it with, but "as far as the scan got" is still an answer.
 async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {
     let mode = CacheMode::Offline(path.to_path_buf());
     let (index, total_size, compression) = match mode.load_offline().await? {
@@ -2169,7 +2164,7 @@ fn block_resolutions(
 /// `--json`'s shape: the whole [`DumpIndex`] flattened to one object, plus the
 /// three things it does not itself carry — how much of the file it covers, the
 /// diagnostics `#[serde(skip)]` drops for the cache's own reasons
-/// (`docs/design/decisions.md`, "The compressed source and the cache"), and the per-block type
+/// (`docs/design/decisions.md`, "D22"), and the per-block type
 /// resolution, which is an L2 conclusion an L1 index has no field for. No
 /// schema stability is promised for any of this — see the `--json` flag's help
 /// text.
@@ -2252,7 +2247,7 @@ fn print_index_json(
 }
 
 /// How much of the file the index covers, stated **once, at the top**, with
-/// nothing below it qualified (`docs/design/decisions.md`, "The CLI").
+/// nothing below it qualified (`docs/design/decisions.md`, "D67").
 ///
 /// A partial index lacks *records*, not confidence: a block enters the map
 /// only at a `CopyEnd` watermark and every mapping pass censuses, so every
@@ -2299,7 +2294,7 @@ fn report(
 /// decompressor's own working memory — so
 /// the flag that says *raise it* is most of the way answered here, and a query
 /// that declines the block path names the whole of it
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D16").
 fn compression_line(shape: &CompressionShape) -> String {
     format!(
         "compression: {} — {} block(s) in {} stream(s), largest block {} bytes uncompressed",
@@ -2433,9 +2428,9 @@ fn print_index(
 }
 
 /// `DumpIndex::diagnostics` (or, for `--preamble-only`, the diagnostics
-/// `preamble_only` reports separately), printed unconditionally — this is
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). Cache-only mode's
-/// "unverified, historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
+/// `preamble_only` reports separately), printed unconditionally, with no
+/// severity threshold hiding any of them. Cache-only mode's "unverified,
+/// historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
 /// Returns whether anything was printed, matching `print_cross_references`'s
 /// and `print_object_kinds`' convention.
 fn print_diagnostics(diagnostics: &[Diagnostic]) -> bool {

@@ -5,7 +5,7 @@
 //!
 //! [`decode_field`]/[`encode_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
-//! text — see `docs/design/decisions.md`, L1. [`crate::decode`] (L2) never
+//! text — see `docs/design/decisions.md`, "D68". [`crate::decode`] (L2) never
 //! sees escaped bytes at all: it takes `decode_field`'s already-unescaped
 //! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
 
@@ -149,8 +149,7 @@ fn find_dollar_delimiter(line: &[u8], from: usize) -> Option<std::ops::Range<usi
 /// PostgreSQL dollar-quoting (`$tag$ ... $tag$`, tag optional) is how
 /// `pg_dump` emits function/procedure bodies verbatim, and a line inside one
 /// can coincidentally match the `COPY` header grammar — see
-/// `docs/design/decisions.md`, "D32". The
-/// scanner must never structurally
+/// `docs/design/decisions.md`, "D24". The scanner must never structurally
 /// interpret a line while inside a dollar-quoted string.
 ///
 /// `tag` is the delimiter currently open, if any — `None` outside any
@@ -238,8 +237,8 @@ impl Iterator for FieldRanges<'_> {
 /// One row's field boundaries, discovered once and shared by everything that
 /// reads that row.
 ///
-/// [`field_ranges`] walks from the front every time it is asked, so a
-/// predicate's N terms used to walk the row N times and
+/// [`field_ranges`] walks from the front every time it is asked, so calling
+/// it directly would have a predicate's N terms walk the row N times and
 /// [`crate::batch::RowBatcher`] once more. This is the same split, memoized:
 /// each boundary is found by exactly one `memchr`, whichever consumer asks
 /// for it first, and every later ask is an index into what is already here.
@@ -249,7 +248,7 @@ impl Iterator for FieldRanges<'_> {
 /// something needs the end of the row, which on a row the filter rejects is
 /// never. That is what makes the sharing pay on a deep or many-term filter
 /// and cost almost nothing on a shallow one — see
-/// `docs/design/decisions.md`, "Predicates".
+/// `docs/design/decisions.md`, "D28".
 #[derive(Debug, Default)]
 pub struct RowSplit {
     /// The end offset of every field found so far, in order. Field `i` runs
@@ -335,9 +334,8 @@ impl RowSplit {
     /// wherever the last consumer stopped.
     ///
     /// This is one tight walk rather than [`Self::field`] called in a loop,
-    /// and the difference is measurable: the caller is
-    /// `RowBatcher::push_row`, which wants all of them, and the walk it
-    /// replaces was `memchr` in a loop with the position in a register.
+    /// which the caller — `RowBatcher::push_row`, wanting every field — would
+    /// otherwise drive as `memchr` in a loop with the position in a register.
     #[inline]
     pub fn complete(&mut self, row: &[u8]) -> &[usize] {
         self.bind(row);

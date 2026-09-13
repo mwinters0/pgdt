@@ -109,11 +109,10 @@ pub struct LargeObjectEnd {
 /// [`Event::Line`] is emitted for any line inside, entering or leaving a
 /// dollar-quoted string — including the one carrying the statement's own
 /// closing `;` — so without this the first such body in a TOC-comment-less
-/// file absorbs every statement after it into one span
-/// (`docs/status/history/2026-08-23.md`, measured). Surfacing the *lines*
-/// stays rejected: it would leak a mapping concern into L1's event contract,
-/// and span text is sliced from the file by offset anyway
-/// (`docs/design/decisions.md`, "D32").
+/// file absorbs every statement after it into one span. Surfacing the
+/// *lines* stays rejected: it would leak a mapping concern into L1's event
+/// contract, and span text is sliced from the file by offset anyway
+/// (`docs/design/decisions.md`, "D30").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DollarQuoteEnd {
     /// Absolute file offset just past the line the region closed on — the
@@ -363,10 +362,9 @@ pub enum ChunkPass {
 /// chunk's whole length.
 ///
 /// *Rejected:* one growing buffer per read loop, appended to per chunk and
-/// `drain`ed of the consumed prefix. It copies every byte of the file twice —
-/// once in, once when the remainder shifts down — and was **38.0% of a warm
-/// `parse`'s user time**, the largest single term left in it
-/// (`docs/design/decisions.md`, "D29").
+/// `drain`ed of the consumed prefix — it copies every byte of the file twice,
+/// once in and once when the remainder shifts down
+/// (`docs/design/decisions.md`, "D23").
 ///
 /// **Handing the scanner two buffers within one chunk costs it nothing**:
 /// [`CopyScanner::base`] is an absolute file offset, and each pass is
@@ -481,7 +479,7 @@ impl ChunkCarry {
 /// budget's worth ([`crate::Parallelism`], defaulting to
 /// [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count falls
 /// out of that budget, so the cost levels off rather than scaling with the size
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D9").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 
 /// Tuning knobs for a full-file scan.
@@ -514,7 +512,7 @@ pub struct ScanOptions {
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code
     /// path this build has rather than a pool of one
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// (`docs/design/decisions.md`, "D1").
     ///
     /// **The read path's buffer budget reads it, and so does the leader's
     /// scheduler.** Every read loop announces it to the source
@@ -569,8 +567,7 @@ where
     // A single, uninterrupted `parse` runs both in sequence: the preamble
     // scan first, then the real one from wherever the preamble left off. Two
     // passes sharing one name would make that ordinary sequence unreadable as
-    // anything but an interrupted-and-resumed run
-    // (`docs/design/decisions.md`, "D64").
+    // anything but an interrupted-and-resumed run.
     tracing::info!(
         bytes = size,
         chunk_size = options.chunk_size,
@@ -591,7 +588,7 @@ where
     // the wait's own test driving a bare pool, and the two failure directions
     // are not comparable. The leader's fused worker is the holder that needs
     // the bound and is where it is granted (`crate::leader::scan_region`, and
-    // `docs/design/decisions.md`, "I/O, memory and parallelism").
+    // `docs/design/decisions.md`, "D5").
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();

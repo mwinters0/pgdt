@@ -1,12 +1,11 @@
 //! The `xz-decode-scaling` figure's instrument: decode one `.xz` file's whole
 //! plaintext at a declared worker count, and print what was decoded.
 //!
-//! It exists so that decode scaling is a figure and not a **probe** — "one
-//! core decodes ~446 MB/s of plaintext, four concurrent decodes reach
-//! ~1.48 GB/s" was taken by hand, with no harness, no `drop_caches` discipline
-//! and no repetition (`docs/design/decisions.md`, "The compressed source and the cache"). A
-//! number that decides how many workers a scan is worth has to be a figure,
-//! and a figure needs a command a later session can run again.
+//! It exists so that decode scaling is a figure and not a **probe** taken by
+//! hand, with no harness, no `drop_caches` discipline and no repetition
+//! (`docs/design/decisions.md`, "D25"). A number that decides how many
+//! workers a scan is worth has to be a figure, and a figure needs a command a
+//! later session can run again.
 //!
 //! ```sh
 //! cargo build --release -p pgdump_query --example xz_decode
@@ -33,10 +32,11 @@
 //!
 //! That is affordable only because every one of those is bounded and small
 //! **for the inputs this figure declares**: both are single-file `.xz` inputs
-//! whose walk is one read per stream, against a decode of ~3 GiB of plaintext.
-//! It would not be affordable against the koji download's 31,150-stream walk,
-//! which is 85 s on its own — which is one of the reasons that file is not an
-//! input here and a stream-boundary prefix of it is.
+//! whose walk is one read per stream, against a decode of a few GiB of
+//! plaintext. It would not be affordable against the koji download's
+//! many-thousand-stream walk, whose footer walk alone dominates a run —
+//! which is one of the reasons that file is not an input here and a
+//! stream-boundary prefix of it is.
 //!
 //! # The two things it refuses
 //!

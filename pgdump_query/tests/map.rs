@@ -58,9 +58,7 @@ async fn build_index_spans_match_build_map_exactly() {
 /// `dump_metadata_from_spans` (span-driven) must recover exactly what a
 /// line-driven preamble pass does, across every fixture shape — multi-database `\connect` segmenting,
 /// version-header staging across that boundary, and `--binary-upgrade` enum
-/// label folding included. This is the equivalence this slice's cutover
-/// (removing the separate `PreambleBuilder` pass from `build_index`) rests
-/// on; see `docs/design/decisions.md`.
+/// label folding included (`docs/design/decisions.md`, "D30").
 #[tokio::test]
 async fn metadata_from_spans_matches_preamble_builder_exactly() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
@@ -76,8 +74,7 @@ async fn metadata_from_spans_matches_preamble_builder_exactly() {
 /// fixture — so it's exactly the "statement-grammar fallback, no TOC
 /// header" path, and its two dollar-quoted `CREATE FUNCTION`s (including
 /// one whose adversarial body contains lines that look exactly like `COPY`
-/// headers, `docs/design/decisions.md`'s dollar-quote-tracking
-/// motivation) still have to tile.
+/// headers, `docs/design/decisions.md`, "D30") still have to tile.
 #[tokio::test]
 async fn edge_cases_dump_tiles_exactly() {
     let (spans, size) = map_of(&edge_cases()).await;
@@ -118,8 +115,7 @@ async fn data_only_dump_tiles_exactly() {
 /// own], `public.escapes`, `public.generated_column`, `public.widgets`), so
 /// five `Data(InsertRun)` spans, not 132-plus `Unparsed` ones. The value that
 /// matters here is tiling across the embedded-raw-newline row
-/// (`public.escapes` row 10, `docs/status/history/2026-08-23.md`) and the
-/// zero-row table.
+/// (`public.escapes` row 10) and the zero-row table.
 #[tokio::test]
 async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
     use pgdump_query::DataBlock;
@@ -518,19 +514,12 @@ async fn text_over_the_cap_is_truncated_and_marked() {
     assert_eq!(spans[0].end, body.len() as u64, "offsets are untouched by the cap");
 }
 
-/// The regression `Event::DollarQuoteEnd` exists for: with no TOC comments,
-/// boundary
-/// detection used to work until the first dollar-quoted body and then stop
-/// working at all — the two functions and the table after them collapsed into
-/// **one** `Unparsed` span, because `scan.rs` emits no `Event::Line` for the
-/// line carrying a `CREATE FUNCTION`'s own closing `;`, so nothing ever told
-/// the accumulator the statement had ended.
-///
-/// `Event::DollarQuoteEnd` is what tells it. This is exactly the
-/// "`pg_dump`-compatible dump from elsewhere in the ecosystem" shape the
-/// phase's "Scanning" decision is justified by, and it is why "graceful
-/// degradation" is one span per object rather than one span for the rest of
-/// the file.
+/// What `Event::DollarQuoteEnd` is for: with no TOC comments, `scan.rs` emits
+/// no `Event::Line` for the line carrying a `CREATE FUNCTION`'s own closing
+/// `;`, so nothing else tells the accumulator the statement has ended
+/// (`docs/design/decisions.md`, "D32") — without it, the two functions and
+/// the table after them would collapse into **one** `Unparsed` span instead
+/// of degrading to one span per object.
 #[tokio::test]
 async fn a_header_less_dump_degrades_to_one_span_per_object() {
     let dir = tempfile::tempdir().unwrap();

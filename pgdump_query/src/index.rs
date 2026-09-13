@@ -185,13 +185,13 @@ pub struct CopyBlock {
     /// root rather than the partition whose rows follow, and **other blocks
     /// in this same dump carry the same header name**. Stored rather than
     /// concluded from: it is a line the dump wrote, which is what
-    /// `decisions.md` rule 5 asks L1 to keep.
+    /// `docs/design/decisions.md`'s "D68" asks L1 to keep.
     ///
     /// `crate::stream::table_stream` reads it to decide whether a cold query
     /// may stop once the queried table's block closes, or must run to EOF
     /// because more blocks can share the name — the blocks are *not*
     /// adjacent, so nothing cheaper than EOF enumerates them
-    /// (`docs/design/decisions.md`, "D48").
+    /// (`docs/design/decisions.md`, "D49").
     pub partition_root: Option<String>,
     /// Reserved — see [`SparseRowIndex`]. Always `None`.
     pub sparse_index: Option<SparseRowIndex>,
@@ -335,7 +335,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
 }
 
 /// Run the tiling check over a finished map and turn any failure into a
-/// diagnostic (`docs/design/decisions.md`, "D73").
+/// diagnostic (`docs/design/decisions.md`, "D30").
 ///
 /// A hole means *we* have a bug, not that the dump is bad, so the map is
 /// still returned: refusing to answer "which roles does this file need" over
@@ -363,14 +363,14 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
     Diagnostic::toc_coverage(attributed, spans.len())
 }
 
-/// D2's warning for a `.xz` source with no usable seek structure — `None`
+/// D19's warning for a `.xz` source with no usable seek structure — `None`
 /// when there is no compression layer at all (`table` is `None`) or the
 /// table already has more than one block. Shared by [`build_index`] and
 /// [`preamble_only`], which read it off a live [`ByteRangeSource`], and
 /// `crate::cache::status_from_file`, which reads it off a table just loaded
 /// from a persisted cache — one function so "does this table warrant the
 /// warning" is answered the same way regardless of which of those handed it
-/// the table (`docs/design/decisions.md`, "The compressed source and the cache").
+/// the table (`docs/design/decisions.md`, "D19").
 pub(crate) fn non_seekable_compression_diagnostic(
     table: Option<&xz_seek::SeekTable>,
 ) -> Option<Diagnostic> {
@@ -462,7 +462,7 @@ pub(crate) async fn scan_preamble(
 }
 
 /// Answer from the preamble alone (`docs/design/decisions.md`,
-/// "The CLI", `--preamble-only`): reuse a cache's already-known metadata when
+/// "D61", `--preamble-only`): reuse a cache's already-known metadata when
 /// present, falling back to a fresh [`scan_preamble`] otherwise and
 /// persisting the result when the cache is enabled (a no-op when it isn't —
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
@@ -492,7 +492,7 @@ pub async fn preamble_only(
         // so the preamble is scanned from scratch, and nothing at that path
         // is worth keeping. Spelled out rather than wildcarded so a reason
         // added later has to be answered here rather than falling through
-        // (`docs/design/decisions.md`, "The compressed source and the cache").
+        // (`docs/design/decisions.md`, "D22").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable

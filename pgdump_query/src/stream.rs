@@ -1,16 +1,17 @@
-//! Pull-mode streaming API (`docs/design/decisions.md`, "I/O, memory and parallelism").
+//! Pull-mode streaming API (`docs/design/decisions.md`, "Batches, streams and
+//! the leader").
 //!
 //! [`table_stream`] is the primitive: an async `Stream<Item =
 //! Result<RecordBatch>>` built directly on [`CopyScanner`]/[`RowBatcher`], the
-//! same machinery [`crate::batch::read_table`] (push mode) now drives
-//! internally rather than duplicating. [`ResumeToken`] lets a caller stop
-//! consuming partway through and pick back up later in the same process — it
-//! holds no public fields (`docs/design/decisions.md` is explicit that it must
-//! stay opaque), so its representation is free to change without an API break.
+//! same machinery [`crate::batch::read_table`] (push mode) drives internally.
+//! [`ResumeToken`] lets a caller stop consuming partway through and pick back
+//! up later in the same process — it holds no public fields, so its
+//! representation is free to change without an API break
+//! (`docs/design/decisions.md`, "D50").
 //!
 //! **Mapping and streaming are separate passes**
-//! (`docs/design/decisions.md`, the section of that
-//! name). A query runs in two phases, never interleaved:
+//! (`docs/design/decisions.md`, "D48"). A query runs in two phases, never
+//! interleaved:
 //!
 //! 1. [`map_forward`] extends the [`DumpIndex`]'s map from its own
 //!    `scanned_through` — recording every `COPY` block it passes and
@@ -22,11 +23,10 @@
 //!    rows, in file order.
 //!
 //! The queried block's bytes are therefore read twice — once to find its
-//! extent, once to emit its rows — and that is the price of the split. What
-//! it buys: the map is never behind the rows, so a [`ResumeToken`] can only
-//! ever point inside already-mapped territory, and a query-built `DumpIndex`
-//! tiles the file exactly the way [`crate::index::build_index`]'s does, with
-//! no exemption for resumed streams. **The map advances and a
+//! extent, once to emit its rows. A [`ResumeToken`] can only ever point inside
+//! already-mapped territory, and a query-built `DumpIndex` tiles the file
+//! exactly the way [`crate::index::build_index`]'s does, with no exemption for
+//! resumed streams. **The map advances and a
 //! [`CacheMode::Enabled`] cache is persisted at the same points**: completed
 //! blocks whose save has earned its cost ([`SaveThrottle`]), the block that
 //! settles the query, and every exit — so a caller that stops polling keeps
@@ -547,9 +547,8 @@ async fn map_forward(
     // the iteration that read it and a wait would be safe — but the holder that
     // needs the bound is the leader's fused worker, which grants it for itself
     // and takes it back (`crate::leader::scan_region`, and
-    // `docs/design/decisions.md`, "I/O, memory and parallelism"). This
-    // loop is what the leader will run inside, so the policy stated here is
-    // also what it restores.
+    // `docs/design/decisions.md`, "D5"). This loop is what the leader will run
+    // inside, so the policy stated here is also what it restores.
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
@@ -914,7 +913,8 @@ async fn close_copy_block(
     let due = throttle.due();
     // **The splice rides the throttle's gate.** Rebuilding `index.spans` clones
     // the whole list, so doing it per block is O(blocks²) — the half of that
-    // quadratic the throttle did not reach (`decisions.md`, "D63"). Nothing between gate openings reads `index`: the
+    // quadratic the throttle did not reach (`docs/design/decisions.md`,
+    // "D62"). Nothing between gate openings reads `index`: the
     // metadata recompute in the `CopyStart` arm splices its own copy, and
     // `target_settled` is the one reader that would — which is why a block whose
     // header could satisfy it opens the gate too. What this costs is the
@@ -947,26 +947,20 @@ async fn close_copy_block(
 }
 
 /// How many times the elapsed scan has to cover the last save's own cost
-/// before another save is worth taking. `20` puts the ceiling on save
-/// overhead at ~5% of scan time.
+/// before another save is worth taking, which is what bounds save overhead at
+/// roughly `1/K` of scan time.
 const SAVE_THROTTLE_K: u32 = 20;
 
 /// Decides whether a mid-scan cache save has earned its cost
-/// (`docs/design/decisions.md`, "D63").
+/// (`docs/design/decisions.md`, "D62").
 ///
 /// Every save serializes the **whole** index, and the index grows with the
-/// block count, so saving at every `CopyEnd` is O(blocks²): koji's 74 blocks
-/// cost +1.5% wall, while 4000 small blocks cost 44 s against a scan of
-/// milliseconds (`docs/design/measurements.md`, "Per-block cache saving").
+/// block count, so saving at every `CopyEnd` is O(blocks²)
+/// (`measurements.md`, `per-block-quadratic`).
 ///
 /// **The rule is self-tuning, not an interval**: skip a block's save unless at
 /// least [`SAVE_THROTTLE_K`] times the last save's own duration has elapsed
-/// since it. That bounds the overhead at roughly `1/K` of scan time in every
-/// regime with no constant that has to be right in two of them — a cheap cache
-/// saves often, an expensive one saves rarely, and koji (blocks ~45 s apart,
-/// saves well under a second) is untouched. *Rejected:* "every N seconds" and
-/// "every N bytes"; both pick a number against one dump shape, and the cost
-/// tracks block count rather than bytes read.
+/// since it — a cheap cache saves often, an expensive one saves rarely.
 ///
 /// **Exits are exempt.** EOF, a settled target and an interrupt all save
 /// unconditionally — the whole risk the throttle adds is the window between
@@ -974,10 +968,10 @@ const SAVE_THROTTLE_K: u32 = 20;
 ///
 /// **The gate also decides when the map is rebuilt.** `stream::splice` is the
 /// other half of the same quadratic, and it fires at the openings of this gate
-/// rather than at every `CopyEnd` (see [`map_forward`]'s `CopyEnd` arm). The
-/// consequence for this type is that its rule now prices two costs at once:
-/// with a disabled cache `save` is ~free, so the gate always clears and the
-/// map is rebuilt per block exactly as it was — the residual `KD5` names.
+/// rather than at every `CopyEnd` (see [`map_forward`]'s `CopyEnd` arm). So the
+/// rule prices two costs at once: with a disabled cache `save` is ~free, so the
+/// gate always clears and the map is rebuilt per block — the residual `KD5`
+/// names.
 struct SaveThrottle {
     last_save: Instant,
     last_cost: Duration,
@@ -1039,7 +1033,7 @@ pub struct MapRun {
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
-/// holds** — `pgdq parse`'s scan (`docs/design/decisions.md`, "The CLI").
+/// holds** — `pgdq parse`'s scan (`docs/design/decisions.md`, "D61").
 ///
 /// This is [`map_forward`] with no stop target, plus the three whole-file
 /// facts that only a scan reaching EOF may state. It is a second caller for
@@ -1100,8 +1094,8 @@ pub async fn map_file(
         CacheLoad::Index(index) => index,
         // Four reasons to start cold: nothing to resume from, so the map is
         // built from byte 0, and nothing at that path is worth keeping.
-        // Spelled out rather than wildcarded (`docs/design/decisions.md`,
-        // "The compressed source and the cache").
+        // Spelled out rather than wildcarded
+        // (`docs/design/decisions.md`, "D22").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
@@ -1227,9 +1221,9 @@ impl<'a> TableStream<'a> {
         self.position.lock().unwrap().clone()
     }
 
-    /// This query's resolved schema and diagnostics
-    /// (`docs/design/decisions.md`, "Type resolution and decoders":
-    /// "one schema per stream"). The empty schema (`ResolvedSchema::default`)
+    /// This query's resolved schema and diagnostics — one schema per stream
+    /// (`docs/design/decisions.md`, "Type resolution and decoders"). The empty
+    /// schema (`ResolvedSchema::default`)
     /// until the query's matching `COPY` block has been found — which, for a
     /// table that never appears in the dump, is forever; a caller checking
     /// before consuming any batches only learns that once the whole stream
@@ -1254,8 +1248,8 @@ impl<'a> TableStream<'a> {
     /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, while
     /// this signal is per-column *and* conditional on a predicate — L4 — so
     /// writing it into either inverts the layering
-    /// (`docs/design/decisions.md`). `pgdq query` announces these once on
-    /// stderr; what an embedder should be handed instead is filed in
+    /// (`docs/design/decisions.md`, "D59"). `pgdq query` announces these once
+    /// on stderr; what an embedder should be handed instead is filed in
     /// `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
     ///
     /// Like [`Self::resolved_schema`], it describes the **last** block whose
@@ -1671,7 +1665,7 @@ async fn map_for_query(
         // Four reasons to start cold: nothing to resume from, so this
         // query maps from byte 0, and nothing at that path is worth
         // keeping. Spelled out rather than wildcarded
-        // (`docs/design/decisions.md`, "The compressed source and the cache").
+        // (`docs/design/decisions.md`, "D22").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
@@ -1789,15 +1783,12 @@ async fn map_for_query(
 /// per block**, because the sub-streams are what run at once: capping each
 /// block's cut at the memory allowance and then handing out one sub-stream per
 /// piece would multiply the allowance by the block count. A source that states
-/// no footprint (the declining default, and every source before this method
-/// existed) is bounded by `jobs` alone.
+/// no footprint (the declining default) is bounded by `jobs` alone.
 ///
 /// **The budget is *solved* against the source's cost, not divided by it**
-/// ([`crate::io::WorkerMemory::affords`]). A block-decoding source shares a
-/// retention list that no per-worker term carries, so a division admits
-/// readers whose share of that list the allowance never granted — the same
-/// repair [`Parallelism::fit`] takes on the *recommended* count, applied to
-/// the delivered one.
+/// ([`crate::io::WorkerMemory::affords`], and `docs/design/decisions.md`,
+/// "D4") — the same repair [`Parallelism::fit`] takes on the *recommended*
+/// count, applied to the delivered one.
 ///
 /// **Shared with the leader**, which asks the same question of an open `COPY`
 /// block's interior (`crate::leader::scan_region`): how many readers may run
@@ -1819,7 +1810,7 @@ pub(crate) fn worker_count(parallelism: Parallelism, memory: WorkerMemory) -> us
 /// boundaries — thinned to `want - 1` of them, evenly spaced through the list,
 /// when it offers more than the caller can use — because a cut anywhere else
 /// makes two readers decode one block twice
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). An empty `At` is
+/// (`docs/design/decisions.md`, "D15"). An empty `At` is
 /// the source declining to be split, and it yields the range whole.
 ///
 /// **Shared with the leader** (`crate::leader::scan_region`), which cuts an
@@ -1867,7 +1858,7 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 /// L1), about one column (`crate::resolve::ResolvedSchema::notes`, L2) or
 /// about one predicate term ([`ComparisonNote`], L4) — a fourth channel,
 /// deliberately not a widening of any of the other three
-/// (`docs/design/decisions.md`, "The file map and the preamble"). See [`TableStream::plan_notes`].
+/// (`docs/design/decisions.md`, "D19"). See [`TableStream::plan_notes`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanNote {
     pub kind: PlanNoteKind,
@@ -1900,7 +1891,8 @@ pub enum PlanNoteKind {
     /// memory budget in force does not afford one block-decoding reader, so it
     /// reads through the streaming decoder instead and every **backward** read
     /// decodes forward from its block's start rather than landing in a
-    /// retained block (`docs/design/decisions.md`, "The compressed source and the cache"). Never a reason to refuse the query — the rows are the same —
+    /// retained block (`docs/design/decisions.md`, "D15"). Never a reason to
+    /// refuse the query — the rows are the same —
     /// though the forward mapping pass pays too, a declined source advising a
     /// single partition and so reading serially whatever `--jobs` says; what
     /// it names is the number to raise and how far.
@@ -1940,7 +1932,7 @@ pub enum PlanNoteKind {
     /// `limit − reserve` at zero, and a user in a tight cgroup is otherwise
     /// told nothing at all: [`PlanNoteKind::ParallelismBudgetLimited`] fires
     /// only where `requested` exceeds what was planned, which at one worker is
-    /// never (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// never (`docs/design/decisions.md`, "D3").
     ///
     /// **Keyed on the budget against what one reader holds, and on nothing
     /// about the limit.** The library is not told where its budget came from,
@@ -2046,7 +2038,7 @@ impl PlanNote {
 /// Whether this source is a compressed one that *could* be read a
 /// block at a time and is not, because the budget in force leaves no room to
 /// hold a whole block ([`crate::io::Partitioning`], and
-/// `docs/design/decisions.md`, "The compressed source and the cache").
+/// `docs/design/decisions.md`, "D15").
 ///
 /// **Read off `partitions()`, not off a budget the caller would have to hand
 /// down.** A source that holds a seek table with more than one block and
@@ -2104,7 +2096,8 @@ fn compressed_block_path_declined(
 /// nothing, which is what [`table_stream`] does with the same map.
 ///
 /// **`max_source_span` is the second term the stated budget is solved against,
-/// not a separate cap of its own** (`docs/design/decisions.md`, "I/O, memory and parallelism"). What one sub-stream costs the caller is its held
+/// not a separate cap of its own** (`docs/design/decisions.md`, "D4"). What one
+/// sub-stream costs the caller is its held
 /// batch's pin (`max_source_span`, rounded out to the retained unit) *on top
 /// of* what the source charges a concurrent reader for decoding
 /// (`partition_bytes`) — a discovery worker pays only the second, but a
@@ -2203,7 +2196,7 @@ fn plan_partitions(
     // against the footprint alone rather than against the whole charge: the span
     // term puts an ordinary plain `query` at the default budget over the line,
     // which is that arrangement's own property and not a starved allocation
-    // (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    // (`docs/design/decisions.md`, "D3").
     if let Some(memory_bytes) = parallelism.memory_bytes()
         && footprint > 0
         && memory_bytes < footprint
@@ -2612,8 +2605,8 @@ fn replay<'a>(
 /// query fingerprint disagrees with `query_options` is
 /// `Error::ResumeQueryMismatch`.
 ///
-/// `query_options.filters` applies `docs/design/decisions.md`'s post-parse
-/// row filter (`docs/design/decisions.md`, "Predicates") as a
+/// `query_options.filters` applies the post-parse row filter
+/// (`docs/design/decisions.md`, "D54") as a
 /// conjunction: an empty list yields every row, and otherwise a row is kept
 /// only if **every** term matches, tested after that row has been fully
 /// unescaped. A term referencing a column absent from a matching block's own
@@ -2627,7 +2620,7 @@ fn replay<'a>(
 /// the projection does not.
 ///
 /// `cache` controls structure-cache consulting
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D22").
 /// `CacheMode::Enabled` persists the map at completed blocks as the mapping
 /// pass advances — and always at the block it stops on — so a later query
 /// against the same dump starts from a nearer
@@ -2720,9 +2713,7 @@ pub fn table_stream<'a>(
 /// and the source holds `Partitioning::partition_bytes` per concurrent reader
 /// on top — so `query_options.parallelism`'s byte half divides by the *sum* of
 /// the two, and N is capped there before `query_options.parallelism`'s job
-/// half is ever consulted
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism", "A
-/// caller-set budget therefore bounds the waiting holders…").
+/// half is ever consulted (`docs/design/decisions.md`, "D4").
 pub async fn table_stream_partitions<'a>(
     source: &'a dyn ByteRangeSource,
     table: &str,
@@ -2812,8 +2803,8 @@ mod tests {
         assert!(SaveThrottle::due_after(ms(200), ms(10)));
         assert!(SaveThrottle::due_after(ms(1000), ms(10)));
 
-        // koji's shape — blocks ~45s apart, saves well under a second — is
-        // untouched, which is the regime the measurement said not to change.
+        // A dump whose blocks are tens of seconds apart and whose saves are
+        // sub-second is untouched.
         assert!(SaveThrottle::due_after(Duration::from_secs(45), ms(300)));
 
         // And the pathological one: a cache expensive enough that saving it
@@ -2829,7 +2820,7 @@ mod tests {
         assert!(!SaveThrottle::due_after(Duration::MAX / 2, Duration::MAX));
     }
 
-    /// **The guard no caller can trip any more, pinned so it stays that way.**
+    /// **The guard no caller can trip, pinned so it stays that way.**
     /// [`resolve_block`] refuses `Typed` resolution against metadata that has
     /// no complete entry for the block's database, and every one of its three
     /// call sites now satisfies that by construction: `table_stream` reads
@@ -2934,7 +2925,7 @@ mod tests {
 
     /// A source that declines to be split is not split, however many workers
     /// the caller has — the empty `At` is a policy, not an absence
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// (`docs/design/decisions.md`, "D7").
     #[test]
     fn a_source_that_declines_to_be_split_is_not() {
         assert_eq!(cut(0..1000, &Partitioning::single(0), 16), vec![0..1000]);

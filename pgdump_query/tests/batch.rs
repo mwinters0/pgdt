@@ -116,8 +116,7 @@ async fn predicate_ne_excludes_the_matching_row() {
 /// Row 2 (`beta`) has a NULL `description`. Neither `=` nor `!=` against any
 /// value selects it — SQL's own three-valued logic collapses both to
 /// "excluded" — which is exactly why `IS [NOT] NULL` exists as its own
-/// operator below, rather than trying to express it through `=`/`!=`
-/// (`docs/status/history/2026-08-22.md`).
+/// operator below, rather than trying to express it through `=`/`!=`.
 #[tokio::test]
 async fn predicate_never_matches_a_null_field() {
     for op in [PredicateOp::Eq, PredicateOp::Ne] {
@@ -565,8 +564,8 @@ async fn max_source_span_splits_batches() {
     assert_eq!(previous, 132, "a one-byte cap flushes after every row");
 }
 
-/// `None` restores the pre-trigger behaviour: with the other two triggers off
-/// as well, a block is one batch however far apart its rows are.
+/// `None` disables the trigger: with the other two triggers off as well, a
+/// block is one batch however far apart its rows are.
 #[tokio::test]
 async fn a_none_source_span_leaves_the_block_as_one_batch() {
     let options = QueryOptions {
@@ -709,9 +708,9 @@ async fn escapes_table_round_trips_through_postgres_batched() {
 }
 
 /// `query` requires a live source and can never answer from a cache alone —
-/// `Span::text` is `None` for every `Data` span regardless of this decision
-/// (`docs/design/decisions.md`, "The compressed source and the cache") — so `read_table` rejects `CacheMode::Offline` up front
-/// rather than silently doing the wrong thing.
+/// `Span::text` is `None` for every `Data` span
+/// (`docs/design/decisions.md`, "D30") — so `read_table` rejects
+/// `CacheMode::Offline` up front rather than silently doing the wrong thing.
 #[tokio::test]
 async fn read_table_rejects_offline_cache_mode() {
     let source = LocalFileSource::open(edge_cases()).unwrap();

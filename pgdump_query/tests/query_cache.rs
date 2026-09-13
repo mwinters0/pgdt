@@ -550,9 +550,8 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
 }
 
 /// A resumed stream replays out of the map rather than falling back to a
-/// live scan, so the index it leaves tiles like any other — the case that
-/// used to be the reason `check_tiling` was only ever exercised against
-/// `build_index`'s output.
+/// live scan, so the index it leaves tiles like any other, not only the one
+/// `build_index` produces directly.
 #[tokio::test]
 async fn a_resumed_query_leaves_a_tiling_index() {
     let (_dir, dump) = sandboxed_edge_cases();

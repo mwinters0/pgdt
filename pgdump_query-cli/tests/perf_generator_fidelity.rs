@@ -2,26 +2,22 @@
 //! guard for the benchmark generator.
 //!
 //! The generator's charter is that its output is "shaped closely enough that
-//! pgdq can read it back" (its module docstring). Nothing checked that, and
-//! three infidelities survived in it until someone read its output beside a
-//! real dump: three type spellings `pg_dump` never writes, fractional seconds
-//! PostgreSQL would have trimmed, and a float64 `repr()` in a `real` column.
-//! A benchmark for the *typed* path was measuring 13 of its 16 scalar columns
-//! untyped.
+//! pgdq can read it back" (its module docstring). Nothing else checks that a
+//! generated column resolves the way real `pg_dump` output would, or that a
+//! generated value round-trips through both schema modes identically.
 //!
 //! **Two assertions, because one does not imply the other.** A column whose
 //! declared type pgdq cannot map stays `Utf8View` and is therefore rendered
 //! identically by both schema modes — so the byte comparison alone is blind
-//! to the spellings, which is exactly how they survived. The resolution check
-//! catches those; the byte comparison catches a value pgdq re-renders
-//! differently from what the file holds.
+//! to a type spelling `pg_dump` never writes. The resolution check catches
+//! those; the byte comparison catches a value pgdq re-renders differently
+//! from what the file holds.
 //!
 //! **Failed, not skipped, when `uv` is absent.** `uv` is the one tool
 //! `mise.toml` pins, and `mise install` is the remedy — which is the point of
 //! pinning tools at all (`docs/design/roadmap.md`, "A test may assume the
 //! tools `mise` pins"). A skip here is invisible in a green suite and takes
-//! the generator's only drift guard with it, which is how three infidelities
-//! survived in the first place.
+//! the generator's only drift guard with it.
 
 use std::path::Path;
 use std::process::Command;

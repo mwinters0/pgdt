@@ -1,5 +1,5 @@
 //! What each read loop permits the buffer pool to do to it
-//! (`docs/design/decisions.md`, "I/O, memory and parallelism").
+//! (`docs/design/decisions.md`, "D5").
 //!
 //! **The claim these tests exist for**: none of the three top-level read loops
 //! grants [`WaitPolicy::MayWait`], so nothing a `build_index` or a

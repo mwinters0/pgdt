@@ -158,8 +158,8 @@ async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
 
 /// A bare `numeric` orders by decimal value, against the fixture's own
 /// column. `t_numeric.v_untyped` holds `NaN`, `0`, `100.00` and `12345.6789`,
-/// and the three assertions below are each a case the bytewise comparison
-/// this row used to make would get wrong: `100.00` sorts *below* `9` as text,
+/// and the three assertions below are each a case a bytewise comparison of
+/// this row would get wrong: `100.00` sorts *below* `9` as text,
 /// `100.00` and `100` are one value written two ways, and `NaN` is the
 /// largest value rather than a letter.
 #[tokio::test]
@@ -295,8 +295,8 @@ async fn the_network_types_order_by_address_not_by_text() {
 /// and both assertions below are cases the padded comparison gets wrong:
 ///
 /// - `<= hi` keeps `hi` + eight blanks, which padded sorts *above* the
-///   unpadded literal and so used to be dropped — the row the server keeps
-///   and the direction the divergence used to run in;
+///   unpadded literal and so a padded comparison would drop it — the row the
+///   server keeps, and the direction a padded comparison would diverge in;
 /// - a literal carrying padding of its own is the same value, so `>= hi` and
 ///   `>= hi` + three blanks keep the same rows.
 ///
@@ -332,9 +332,9 @@ async fn json_is_still_announced_as_compared_bytewise() {
 
 /// `jsonb` compares as a container, against the fixture's own two values —
 /// an object (`{"a": 1, "b": [1, 2, 3]}`) and the JSON scalar `null`. Both
-/// filters below are cases the bytewise comparison this replaced gets wrong,
-/// and they are wrong in opposite directions: the first keeps a row that
-/// should go, the second drops the only row that should stay.
+/// filters below are cases a bytewise comparison would get wrong, and they
+/// are wrong in opposite directions: the first keeps a row that should go,
+/// the second drops the only row that should stay.
 ///
 /// A `jsonb` string sorts *below* every number, array and object and above
 /// JSON `null`, so `> "zzz"` keeps the object alone — where bytewise the
@@ -582,7 +582,7 @@ async fn a_composite_orders_field_wise_with_null_above_every_value() {
 /// Equality on a nested column reads the **input** grammar for the literal
 /// and the strict output grammar for the field, so a spelling `array_in`
 /// accepts and `array_out` never writes still matches the row the server
-/// would match — where the byte comparison this column made before did not.
+/// would match — where a byte comparison of this column would not.
 #[tokio::test]
 async fn a_nested_equality_reads_the_input_grammar() {
     for literal in ["{NULL,ok}", "{ null , ok }", "{NULL,\"ok\"}"] {
@@ -676,10 +676,9 @@ async fn a_nested_column_announces_each_diverging_position() {
 /// then the real one with `canonical` after `multirange_type_name`, which is
 /// the order `dumpRangeType` appends the parameters in.
 ///
-/// Every operator is refused, `=` and `!=` included, which is the whole point
-/// of the slice: the server rewrites both operands through that function
-/// before comparing them, so answering bytewise would be a wrong answer
-/// rather than a weaker one.
+/// Every operator is refused, `=` and `!=` included: the server rewrites both
+/// operands through that function before comparing them, so answering
+/// bytewise would be a wrong answer rather than a weaker one.
 #[tokio::test]
 async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
     let dir = tempfile::tempdir().unwrap();
@@ -916,9 +915,9 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
             ComparisonDivergence::UnknownCollation,
             "no COLLATE clause",
         ),
-        // `json` is what `AsText` covers now: the enum, the bare `numeric`,
-        // the four types the text-held row lost and `jsonb` all order by
-        // their own values.
+        // `json` is what `AsText` covers: the enum, the bare `numeric`, and
+        // the other types with their own decoder all order by their own
+        // values instead, leaving `json` as the text-held case.
         ("public.t_json", "v_json", "a", ComparisonDivergence::AsText, "no comparison"),
         // `jsonb` is compared structurally and diverges only at a string
         // leaf, which is a different sentence for a different reason. Its
@@ -1079,8 +1078,8 @@ async fn an_agreeing_comparison_reports_nothing() {
 }
 
 /// The resume fingerprint covers each term's operator, so a token taken from
-/// a `>` stream cannot be handed to a `>=` one — the four new operators are
-/// hashed, not silently equal to the ones they were added beside.
+/// a `>` stream cannot be handed to a `>=` one — the ordering operators are
+/// hashed like any other, not silently equal to each other or to `=`/`!=`.
 #[tokio::test]
 async fn a_resume_token_does_not_cross_two_ordering_operators() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();

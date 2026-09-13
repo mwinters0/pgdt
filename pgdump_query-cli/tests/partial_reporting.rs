@@ -1,5 +1,5 @@
-//! `pgdq parse` / `pgdq info` end to end — the split this phase drew: **`info`
-//! reads, `parse` scans** (`docs/design/decisions.md`, "The CLI").
+//! `pgdq parse` / `pgdq info` end to end: **`info`
+//! reads, `parse` scans** (`docs/design/decisions.md`, "D61").
 //!
 //! These drive the real binary (`CARGO_BIN_EXE_pgdq`) rather than the library,
 //! because what they pin is the *command's* contract: which invocations fail,
@@ -99,11 +99,11 @@ async fn block_frontier(dump: &Path, n: usize) -> u64 {
 // `info` never scans
 // ---------------------------------------------------------------------------
 
-/// **The two messages that were collapsed.** Both end in `pgdq parse`, and
-/// both have to be distinguishable: "you have never parsed this file" sends a
-/// reader to run it, "your file changed since you parsed it" sends them to ask
-/// what changed. Collapsing them is what this slice undid, so both are
-/// asserted rather than one standing in for the other.
+/// **The two messages must stay distinguishable.** Both end in `pgdq parse`,
+/// and both have to be distinguishable: "you have never parsed this file"
+/// sends a reader to run it, "your file changed since you parsed it" sends
+/// them to ask what changed. Both are asserted rather than one standing in
+/// for the other.
 #[tokio::test]
 async fn info_with_no_cache_names_parse_and_exits_non_zero() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
@@ -135,11 +135,11 @@ async fn info_against_a_changed_file_says_the_file_changed() {
     assert!(!err.contains("no cache at"), "the two messages must not collapse: {err}");
 }
 
-/// **`parse` refuses that same cache rather than scanning over it.** It used
-/// to load it, get a mismatch, scan, and overwrite the file within its first
-/// throttled save — so aiming `--dqcache` at another file's cache destroyed
-/// an index that was valid for its own input, with nothing said
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). The byte comparison is the
+/// **`parse` refuses that same cache rather than scanning over it and
+/// overwriting the file within its first throttled save** — so aiming
+/// `--dqcache` at another file's cache leaves that file's own valid index
+/// untouched, with the refusal said aloud
+/// (`docs/design/decisions.md`, "D20"). The byte comparison is the
 /// half that would fail silently.
 #[tokio::test]
 async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone() {
@@ -170,7 +170,7 @@ async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone()
 /// prints for the size mismatch and all three print for a contradicted
 /// compression claim — and there is no third way out, no `--force` and no
 /// `CacheMode` variant meaning "replace regardless"
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). A refusal that named only one
+/// (`docs/design/decisions.md`, "D20"). A refusal that named only one
 /// of them would read as a tool with no recourse; one that named a way out the
 /// others do not is the drift this test exists to catch, the wording living in
 /// two crates.
@@ -228,7 +228,7 @@ async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
     assert!(stderr_of(&out).contains("written by a different pgdq build"), "{}", stderr_of(&out));
 }
 
-/// `--dqcache none` means "ignore the cache", which after this phase leaves
+/// `--dqcache none` means "ignore the cache", which leaves
 /// `info` with nothing at all to answer from. Rejected up front rather than
 /// silently reporting an empty index — and the message names the way out,
 /// since the usual reason to reach for `none` is a read-only directory beside
@@ -314,7 +314,7 @@ async fn a_complete_cache_reports_full_coverage() {
 
 /// Cache-only mode reports a partial cache too. It cannot extend one — there
 /// is no dump file to extend it from — but "as far as the scan got" is still
-/// an answer, and refusing it outright is what this phase removed.
+/// an answer.
 #[tokio::test]
 async fn cache_only_mode_reports_a_partial_cache() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
@@ -371,9 +371,9 @@ async fn a_cold_parse_prints_no_resume_line() {
     assert!(!text.contains("nothing to scan"), "{text}");
 }
 
-/// `--preamble-only` hangs off `parse` now: it is a scan extent, and after
-/// this phase `info` has none. It leaves an ordinary partial cache, which
-/// `info` then reads like any other.
+/// `--preamble-only` hangs off `parse`: it is a scan extent, and `info` has
+/// none. It leaves an ordinary partial cache, which `info` then reads like
+/// any other.
 #[tokio::test]
 async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");

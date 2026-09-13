@@ -13,7 +13,8 @@
 //! COPY-escaped bytes on disk. Converting between the two is
 //! `crate::copy::encode_field`'s job, not this module's: this module's whole
 //! job is decoded text vs. Arrow value, and reaching past that into
-//! COPY-escaping would blur the L1/L2 split `docs/design/decisions.md` draws.
+//! COPY-escaping would blur the L1/L2 split of
+//! `docs/design/decisions.md`, "D68".
 //! `tests/decode.rs`'s round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text, for exactly this reason; the on-disk-byte leg
 //! is covered separately in `tests/scan.rs`.
@@ -33,9 +34,8 @@ pub fn render_bool(v: bool) -> &'static str {
 
 /// Split the decimal digits and exponent out of Rust's own shortest
 /// round-trip scientific formatting (`{:e}`), which is exactly the digit
-/// generator PostgreSQL's own float formatter also produces — confirmed
-/// empirically against `postgres:16-alpine` with `extra_float_digits = 3`
-/// (`docs/status/history/2026-08-23.md`). `exp` is the power of ten such that
+/// generator PostgreSQL's own float formatter produces under
+/// `extra_float_digits = 3`. `exp` is the power of ten such that
 /// `value == 0.<digits> * 10^(exp+1)` (equivalently, the position of the
 /// decimal point is `exp + 1` digits from the left).
 fn shortest_digits(mantissa_exp: &str) -> (String, i32) {
@@ -51,7 +51,7 @@ fn shortest_digits(mantissa_exp: &str) -> (String, i32) {
 /// and 15 — as the threshold regardless of how many significant digits
 /// `extra_float_digits = 3` actually produced), fixed-point otherwise.
 /// Exponent form always carries an explicit sign and at least two digits
-/// (`e+06`, `e-05`, `e+100`), matching observed PostgreSQL output.
+/// (`e+06`, `e-05`, `e+100`).
 fn format_shortest(neg: bool, digits: &str, exp: i32, sig_digits: i32) -> String {
     let mut out = String::new();
     if neg {
@@ -103,8 +103,7 @@ pub fn decode_f64(s: &str) -> Option<f64> {
 }
 
 /// `FLT_DIG` — the significant-digit threshold PostgreSQL's `float4out`
-/// switches to scientific notation at, empirically confirmed (see
-/// [`format_shortest`]'s docs).
+/// switches to scientific notation at (see [`format_shortest`]'s docs).
 const FLT_DIG: i32 = 6;
 /// `DBL_DIG`, `float8out`'s equivalent threshold.
 const DBL_DIG: i32 = 15;
@@ -162,9 +161,8 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
 /// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every zero-padded field a
 /// `date`, a `time` or a `timestamp` is written from is two digits wide, so a
-/// field becomes an indexed slice and a two-byte copy in place of the
-/// `format!("{v:02}")` that drove `core::fmt`'s `pad_integral` for each of
-/// them.
+/// field becomes an indexed slice and a two-byte copy rather than a trip
+/// through `core::fmt` (`docs/design/decisions.md`, "D44").
 const DEC_PAIRS_BYTES: [u8; 200] = {
     let digits = *b"0123456789";
     let mut table = [0u8; 200];
@@ -195,8 +193,7 @@ static DEC_DIGITS: &str = "0123456789";
 /// all once the digits are already that wide. `width` of `0` is therefore
 /// exactly `i64::to_string`, which is what [`push_integer`] is.
 ///
-/// Three properties are load-bearing rather than stylistic, and each was a
-/// measured regression in a shape that lacked it
+/// Three properties are load-bearing rather than stylistic
 /// (`docs/design/decisions.md`, "D44"):
 ///
 /// - **The digits come out two at a time**, off [`DEC_PAIRS`], which is the
@@ -245,10 +242,8 @@ fn push_padded(out: &mut String, value: i64, width: usize) {
 /// produces, without the `String` it allocates.
 ///
 /// **The obvious spelling is the slow one.** `write!(out, "{value}")` reaches
-/// the same `Display` impl but through `core::fmt::write`, and on a
-/// 53-element `integer[]` row that machinery costs several times what the
-/// digits do — measured as a whole-query regression that cancelled this
-/// slice's win on the array-bearing file
+/// the same `Display` impl but through `core::fmt::write`, whose machinery
+/// costs several times what the digits do on an array-bearing row
 /// (`docs/design/decisions.md`, "D44").
 #[inline]
 pub(crate) fn push_integer(out: &mut String, value: i64) {
@@ -404,9 +399,8 @@ pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
         return None;
     }
     // `frac` is checked above to be at most six ASCII digits, so padding it
-    // to six and parsing the result — which is what this replaces, at two
-    // allocations per field — is exactly a scale by a power of ten: `.5` is
-    // 500000 µs, `.000001` is 1.
+    // to six and parsing the result — two allocations per field — is exactly
+    // a scale by a power of ten: `.5` is 500000 µs, `.000001` is 1.
     let mut micros: i64 = 0;
     for b in frac.bytes() {
         micros = micros * 10 + i64::from(b - b'0');
@@ -417,8 +411,7 @@ pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
 /// The exact inverse of [`parse_time_of_day`]'s micros-since-midnight value —
 /// shared by [`render_time64_micros`] and [`render_timestamp_micros`]'s
 /// time-of-day component. PostgreSQL trims trailing zeros from the fraction
-/// (confirmed empirically: `00:00:00.5`, not `.500000` —
-/// `docs/status/history/2026-08-23.md`) and omits it entirely when zero.
+/// (`00:00:00.5`, not `.500000`) and omits it entirely when zero.
 fn format_hms_frac_into(out: &mut String, total_micros: i64) {
     let seconds = total_micros.div_euclid(1_000_000);
     let micros = total_micros.rem_euclid(1_000_000);
@@ -753,10 +746,9 @@ const BAD_NIBBLE: u8 = 0xFF;
 /// always dumps lowercase, but nothing forces that on a hand-edited fixture).
 ///
 /// Hyphens are dropped wherever they fall and exactly 32 hex digits must
-/// remain — the same rule as the `chars().filter().collect::<String>()` this
-/// replaces, without that string: `-` is ASCII, so dropping it from the
-/// bytes and dropping it from the chars leave the same sequence, and a
-/// non-ASCII byte is not a hex digit either way.
+/// remain. The filter runs over bytes rather than chars: `-` is ASCII, so
+/// the two leave the same sequence, and a non-ASCII byte is not a hex digit
+/// either way.
 pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
     let mut nibbles = s.bytes().filter(|b| *b != b'-');
     let mut bytes = [0u8; 16];
@@ -777,9 +769,9 @@ pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
 /// bytes at `b * 2` — [`HEX_NIBBLE`]'s counterpart in the render direction.
 /// The two renderers below are the only per-*byte* loops on the render-back
 /// path, and each knows its whole output length before it starts, so a byte
-/// becomes an indexed slice and a two-byte copy into a pre-sized `String`, in
-/// place of the `format!("{b:02x}")` that allocated a `String` per byte and
-/// drove `core::fmt` for each of them.
+/// becomes an indexed slice and a two-byte copy into a pre-sized `String`
+/// rather than a trip through `core::fmt`
+/// (`docs/design/decisions.md`, "D44").
 const HEX_PAIRS_BYTES: [u8; 512] = {
     let digits = *b"0123456789abcdef";
     let mut table = [0u8; 512];
@@ -986,8 +978,7 @@ mod tests {
         assert_eq!(render_f64(decode_f64("-0").unwrap()), "-0");
     }
 
-    /// Ground truth captured live from `postgres:16-alpine`,
-    /// `extra_float_digits = 3` (`docs/status/history/2026-08-23.md`) —
+    /// Ground truth from a live server under `extra_float_digits = 3` —
     /// exercises the fixed/scientific switch at both ends and at both
     /// `FLT_DIG`/`DBL_DIG` thresholds, which a fixture round-trip alone
     /// can't be relied on to hit.
@@ -1043,11 +1034,10 @@ mod tests {
     }
 
     /// `interval_out` under `IntervalStyle = postgres` (I40), round-tripped
-    /// through the triple. Every string here is a real server's answer,
-    /// taken from a live `postgres:16` (and the four in
-    /// `fixtures/*/types/default.sql`'s `t_interval`), because the three
-    /// rules that decide the form are all sign-conditional and none of them
-    /// is reachable from the fixture's own values: a unit takes an `s`
+    /// through the triple. Every string here is a real server's answer (four
+    /// of them `fixtures/*/types/default.sql`'s `t_interval`), because the
+    /// three rules that decide the form are all sign-conditional and none of
+    /// them is reachable from the fixture's own values: a unit takes an `s`
     /// whenever the count is not exactly `1` — so `-1 mons` — and a part
     /// that is positive and follows a negative one carries a `+`, the time
     /// tail included.
@@ -1115,7 +1105,7 @@ mod tests {
     }
 
     /// The literal grammar is `interval_out`'s and no wider — the same
-    /// refusal the ordering path makes, now reached through the decoder that
+    /// refusal the ordering path makes, reached through the decoder that
     /// shares its walk.
     #[test]
     fn interval_refuses_spellings_interval_out_never_writes() {
@@ -1147,7 +1137,7 @@ mod tests {
         assert_eq!(decode_time64_micros("00:00:00.000001"), Some(1));
         assert_eq!(render_time64_micros(1), "00:00:00.000001");
         // PostgreSQL trims trailing zeros from the fraction rather than
-        // always showing 6 digits -- confirmed live (2026-08-23).
+        // always showing 6 digits.
         assert_eq!(render_time64_micros(500_000), "00:00:00.5");
         assert_eq!(render_time64_micros(100_000), "00:00:00.1");
     }
@@ -1171,11 +1161,9 @@ mod tests {
     /// *its* epoch (2000-01-01); `Timestamp(Microsecond)` is `i64` micros
     /// since the Unix epoch (1970-01-01), 30 years earlier, so the same
     /// bit width runs out about 30 years sooner counted from 1970 than from
-    /// 2000. Confirmed by direct computation
-    /// (`docs/status/history/2026-08-23.md`): the true representable ceiling
-    /// is 294247-01-10, not PostgreSQL's 294276-12-31 -- so PostgreSQL's own
-    /// maximum value is a genuine, expected `FieldDecode` overflow for this
-    /// mapping, not a bug.
+    /// 2000: the true representable ceiling is 294247-01-10, not
+    /// PostgreSQL's 294276-12-31 — so PostgreSQL's own maximum value is a
+    /// genuine, expected `FieldDecode` overflow for this mapping, not a bug.
     #[test]
     fn postgresqls_own_max_timestamp_overflows_the_unix_epoch_i64_range() {
         assert_eq!(decode_timestamp_micros("294276-12-31 23:59:59.999999", false), None);
@@ -1251,7 +1239,7 @@ mod tests {
     #[test]
     fn negative_scale_numeric() {
         // PG15+ negative-scale numerics print with no fractional digits at
-        // all -- not exercised by the fixtures (no negative-scale column
+        // all — not exercised by the fixtures (no negative-scale column
         // there), so pinned here from the type's own documented semantics.
         let unscaled = decimal_unscaled_digits("1200", -2).unwrap();
         assert_eq!(unscaled, "12");
@@ -1259,12 +1247,12 @@ mod tests {
     }
 }
 
-/// The four scalar decoders, the two hex renderers and the three date/time
-/// renderers this module's allocation-free forms replaced, kept verbatim as
-/// the oracle they are checked against. A function that is asked to be exactly
-/// what it was is checked against what it was: the corpora below are generated
-/// rather than listed, so a disagreement on an input nobody thought to write
-/// down is a test failure and not a report from the field.
+/// The straightforward `format!`/`parse` spellings of the four scalar
+/// decoders, the two hex renderers and the three date/time renderers, kept as
+/// the oracle the allocation-free forms above are checked against. Those forms
+/// are asked to be exactly this, so the corpora below are generated rather
+/// than listed: a disagreement on an input nobody thought to write down is a
+/// test failure and not a report from the field.
 #[cfg(test)]
 mod prior_shape {
     use super::civil_from_days;
@@ -1790,7 +1778,7 @@ mod differential {
                 |rng| {
                     // Leading zeros, all-zero values and both signs, since
                     // the trim, the collapse to `"0"` and the sign are the
-                    // three places the rewrite could disagree.
+                    // three places the two forms could disagree.
                     let mut s = String::new();
                     if rng.below(3) == 0 {
                         s.push('-');

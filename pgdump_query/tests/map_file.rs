@@ -123,7 +123,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
     }
 }
 
-/// **The phase's central claim.** A query that stopped at its target leaves a
+/// **The central claim of resuming.** A query that stopped at its target leaves a
 /// genuinely partial cache; `map_file` finishes it, and the result is span for
 /// span — census included — what one eager pass gives.
 #[tokio::test]
@@ -332,10 +332,9 @@ impl ByteRangeSource for FailsPast<'_> {
 }
 
 /// **The write-per-block claim, and the reason resuming is worth building.**
-/// Under the previous `parse` the cache was written only once the whole scan
-/// returned, so an interrupted scan left nothing at all — neither something to
-/// resume from nor something to report. Now every completed block is banked at
-/// a `CopyEnd` watermark, which is a resumable point by construction.
+/// Every completed block is banked at a `CopyEnd` watermark, which is a
+/// resumable point by construction — an interrupted scan leaves something to
+/// resume from and something to report, rather than nothing at all.
 ///
 /// The interruption is cut exactly one byte past the first block's end, with
 /// one-byte reads so that boundary is a read boundary: the block's own save has
@@ -768,8 +767,8 @@ fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
         .collect()
 }
 
-/// **The defect this slice exists for.** An interrupted `parse` used to leave
-/// a cache with no `DumpMetadata` at all, so `resolve_columns` answered
+/// **What the preamble prepass buys an interrupted `parse`.** Without it, a
+/// cache with no `DumpMetadata` would leave `resolve_columns` answering
 /// `NotDeclared` — "the dump never explained this column", final — for every
 /// column of every block it had just banked, with the `CREATE TABLE` sitting
 /// in the same cache's spans. The preamble prepass is what makes those blocks

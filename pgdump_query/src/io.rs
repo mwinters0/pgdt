@@ -14,21 +14,14 @@ use crate::{Error, Result};
 
 /// Minimal async byte-range read abstraction.
 ///
-/// The three required methods are shaped to mirror `object_store`'s
-/// `get_range`/`head` semantics so a real `object_store`-backed implementation
-/// can be added later (behind a Cargo feature flag — see
-/// `docs/design/decisions.md`, "I/O, memory and parallelism") without
-/// changing them. [`ByteRangeSource::hint_read_size`] sits outside that mirror
-/// and is defaulted, so such an implementation need not know it exists.
+/// The three required methods mirror `object_store`'s `get_range`/`head`
+/// semantics. [`ByteRangeSource::hint_read_size`] sits outside that mirror and
+/// is defaulted, so an implementation need not know it exists.
 ///
-/// **Dyn-compatible on purpose** (`docs/design/decisions.md`, "I/O, memory and parallelism"): each method returns a
-/// boxed future rather than `impl Future` (RPITIT), so callers can hold
-/// `&dyn ByteRangeSource` / `Arc<dyn ByteRangeSource>` instead of being
-/// generic over the source. [`XzSource`] is the second implementation and the
-/// case this was done for — a *wrapping* source composes with whatever it
-/// wraps instead of multiplying the branch at every call site, and a remote
-/// source would square that again. One allocation per `read_range` call is
-/// noise beside a chunk-sized read.
+/// **Dyn-compatible on purpose**: each method returns a boxed future rather
+/// than `impl Future` (RPITIT), so callers can hold `&dyn ByteRangeSource` /
+/// `Arc<dyn ByteRangeSource>` instead of being generic over the source. See
+/// `docs/design/decisions.md`, "D6".
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(
         &self,
@@ -37,18 +30,16 @@ pub trait ByteRangeSource: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>>;
     fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>>;
     /// Last-modified time, if the source exposes one — `object_store`'s
-    /// `head` carries this too. `None` rather than an error for a source
-    /// that genuinely has no notion of one; the structure cache
-    /// (`docs/design/decisions.md`, "The compressed source and the cache") treats an absent mtime as
-    /// nothing to compare against, never as a mismatch.
+    /// `head` carries this too. `None` rather than an error for a source that
+    /// genuinely has no notion of one; the structure cache treats an absent
+    /// mtime as nothing to compare against, never as a mismatch. See
+    /// `docs/design/decisions.md`, "D21".
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
     /// Bytes as stored on the device — what a `stat` reports — as opposed to
-    /// [`ByteRangeSource::size`]'s addressable (possibly decompressed) length
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). This is the structure
-    /// cache's staleness check now:
-    /// checking `size()` on a decompressing source would cost that source's
-    /// whole stream-index walk on every `pgdq info`/`pgdq parse` invocation,
-    /// where `stored_size()` costs one `stat`.
+    /// [`ByteRangeSource::size`]'s addressable (possibly decompressed) length.
+    /// This is the structure cache's staleness check, which keeps that check a
+    /// `stat` on a source whose addressable length costs a stream-index walk.
+    /// See `docs/design/decisions.md`, "D21".
     ///
     /// Defaults to [`ByteRangeSource::size`], which is exactly right for a
     /// source that does not decompress — [`LocalFileSource`] never overrides
@@ -58,10 +49,11 @@ pub trait ByteRangeSource: Send + Sync {
         self.size()
     }
     /// Whether [`ByteRangeSource::size`] is this source's *exact* addressable
-    /// length rather than a bound (`docs/design/decisions.md`, "I/O, memory and parallelism"). Every source implemented so far answers `true`
-    /// honestly, xz's own size coming from its stream index exactly; nothing
-    /// reads this yet; it exists for the gzip and zstd sources (P15, P18),
-    /// whose sizes cannot always be known exactly ahead of a full decode.
+    /// length rather than a bound. Every source implemented so far answers
+    /// `true` honestly, xz's own size coming from its stream index exactly,
+    /// and nothing reads it yet: it exists for the gzip and zstd sources,
+    /// whose sizes cannot always be known ahead of a full decode. See
+    /// `docs/design/decisions.md`, "D6".
     fn size_is_exact(&self) -> bool {
         true
     }
@@ -74,13 +66,11 @@ pub trait ByteRangeSource: Send + Sync {
     /// `read_range` call carries it: an implementation that recycles buffers
     /// has to tell a chunk read, which repeats for the whole scan, from
     /// `map::attach_text`'s coalesced span read, which happens once per map,
-    /// and by length alone it cannot ([`LocalFileSource`], and
-    /// `docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// and by length alone it cannot. See `docs/design/decisions.md`, "D9".
     fn hint_read_size(&self, _len: usize) {}
     /// The xz seek table behind this source, for a caller building a cache
-    /// envelope to persist alongside it
-    /// (`docs/design/decisions.md`, "The compressed source and the cache" — the sibling field
-    /// `crate::cache::CompressionIndex` wraps this at save time).
+    /// envelope to persist alongside it (`crate::cache::CompressionIndex`
+    /// wraps this at save time). See `docs/design/decisions.md`, "D18".
     ///
     /// `None` by default, which is exactly right for a source with no
     /// compression layer; [`LocalFileSource`] never overrides it.
@@ -94,62 +84,50 @@ pub trait ByteRangeSource: Send + Sync {
         None
     }
     /// How this source would like `range` split across concurrent readers,
-    /// and what one of those readers costs it resident
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// and what one of those readers costs it resident.
     ///
     /// **Advisory, and the caller never learns what is underneath.** A
     /// scheduler asks the source how to split, runs the partitions, and names
     /// no source type; a local file answers "anywhere, one buffer each" and a
     /// compressed one answers "at these block boundaries, a block each". That
-    /// is what keeps decode scheduling out of the query layer, and it is the
-    /// question a remote source inherits with a different answer — a
-    /// ranged-GET size.
+    /// is what keeps decode scheduling out of the query layer.
     ///
     /// **The default declines to advise**: one partition, at no stated cost.
     /// A source that has not thought about being read concurrently must not be
     /// split by a caller that assumed it had, and a cost is meaningless for a
     /// split that is not happening.
     ///
-    /// **It answers where and at what cost, never whether.** Whether a split
-    /// pays depends on the work the caller is about to do, not on the source:
-    /// the same [`LocalFileSource`] over the same range is worth cutting for
-    /// extraction and not for discovery. A caller reads this for the shape of
-    /// the cut and decides on its own whether to make one
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// **It answers where and at what cost, never whether** — the caller
+    /// reads this for the shape of the cut and decides on its own whether to
+    /// make one. See `docs/design/decisions.md`, "D7".
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
 
     /// What reading this source's container a block at a time would cost at
     /// **one** reader, in bytes — the number a memory budget has to clear for
-    /// that path to be taken at all, whether or not it was
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// that path to be taken at all, whether or not it was.
     ///
     /// **One reader's charge *plus the retention list it leaves behind*,
-    /// because that is the line the gate actually draws**
-    /// ([`BlockCache::affordable`]): a pool serving one reader still holds
-    /// [`POOL_DEPTH`] slots, so the recourse a declined source names would be
-    /// short of the budget that buys the path back if it named the per-reader
-    /// term alone.
+    /// because that is the line [`BlockCache::affordable`] draws**: a pool
+    /// serving one reader still holds [`POOL_DEPTH`] slots, so a recourse
+    /// naming the per-reader term alone would fall short of the budget that
+    /// buys the path back.
     ///
     /// `None` for a source with no such path to take, which is every source
     /// but a compressed one.
     ///
-    /// **It exists so that the decline has one statement of its rule.** A
-    /// caller that meant to name what to raise a budget *to* would otherwise
-    /// re-derive the source's own arithmetic — [`POOL_DEPTH`] block units, the
-    /// chunk buffer and the decoder's own retention — and the two copies would
-    /// part company at the first change to any of them. Whether the path was
-    /// declined is still read off [`ByteRangeSource::partitions`], which is a
-    /// comparison between two values already in hand; this is only the number
-    /// the message needs.
+    /// **It exists so that the decline has one statement of its rule**, rather
+    /// than a caller re-deriving the source's own arithmetic. Whether the path
+    /// was declined is still read off [`ByteRangeSource::partitions`]; this is
+    /// only the number the message needs. See `docs/design/decisions.md`,
+    /// "D16".
     fn block_decode_bytes(&self) -> Option<u64> {
         None
     }
 
     /// How many concurrent readers this source recommends to a caller that has
-    /// stated no count of its own — a **recommendation**, never a bound
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// stated no count of its own — a **recommendation**, never a bound.
     ///
     /// **The default is one, which is the serial path**, and it is the same
     /// convention [`ByteRangeSource::partitions`] follows for the same reason:
@@ -167,29 +145,23 @@ pub trait ByteRangeSource: Send + Sync {
     /// work rather than about the memory, and cannot make the budget bind
     /// twice.
     ///
-    /// [`LocalFileSource`] inherits the default: on every real device measured
-    /// a serial plain `parse` is already device-bound, no reading times a
-    /// parallel one on such a device, and splitting it adds a chunk-sized tail
-    /// read per partition besides ("Execution model and API surface", which
-    /// also holds why the warm speedup does not reopen this). [`XzSource`] overrides it, decode
-    /// being the one shape that demonstrably scales.
+    /// [`LocalFileSource`] inherits the default; [`XzSource`] overrides it,
+    /// decode being the one shape that scales. See
+    /// `docs/design/decisions.md`, "D2".
     fn default_workers(&self) -> usize {
         1
     }
 
     /// What the workers of this source hold, where the caller has stated no
     /// budget of its own — a **recommendation**, never a bound, and the budget
-    /// sibling of [`ByteRangeSource::default_workers`]
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// sibling of [`ByteRangeSource::default_workers`].
     ///
     /// **It is per worker rather than a total, and that is what makes the two
     /// recommendations a consistent pair.** A total would have to be a total
-    /// *for some count*, and the only count a source knows is its own — so a
-    /// caller that stated `--jobs 4` against a source recommending
-    /// twenty-four would get a budget for twenty-four either way, and a
-    /// composition trying to recover the per-worker cost from it would divide
-    /// by the wrong number ([`Parallelism::discover_for`], which is where the
-    /// two meet). Stated per worker, the source answers a question that has
+    /// *for some count*, and the only count a source knows is its own, so a
+    /// caller that stated its own `--jobs` would get a budget for the
+    /// source's count either way ([`Parallelism::discover_for`], where the two
+    /// meet). Stated per worker, the source answers a question that has
     /// nothing to do with any count, and multiplying is the caller's.
     ///
     /// **The default is `None`: no recommendation at all**, which leaves a
@@ -199,14 +171,13 @@ pub trait ByteRangeSource: Send + Sync {
     /// count, and for the same reason: a source that has not thought about
     /// being read concurrently asks for nothing to read it with.
     ///
-    /// **It is what keeps "no limit found" from meaning "serial".** The first
-    /// block-decoding reader of an ordinary dump, with the retention list the
-    /// pool keeps beside it, costs about 106 MiB, so the 64 MiB fallback
-    /// affords none of them — which would override [`XzSource`]'s
-    /// `available_parallelism()` worker count to the serial streaming path on
-    /// an unlimited host, the machine most likely to run this. A count
-    /// nothing can afford is not a recommendation, so a source that recommends
-    /// a count recommends what each of those workers needs.
+    /// **It is what keeps "no limit found" from meaning "serial".**
+    /// [`DEFAULT_MEMORY_BUDGET`] affords no block-decoding reader at all, so
+    /// without a recommendation here [`XzSource`]'s `available_parallelism()`
+    /// count would collapse to the serial streaming path on an unlimited host,
+    /// the machine most likely to run this. A count nothing can afford is not
+    /// a recommendation, so a source that recommends a count recommends what
+    /// each of those workers needs.
     ///
     /// **Nothing in the library reads it**, exactly as with the worker count:
     /// a caller that states a budget gets that budget, and this exists for the
@@ -214,19 +185,17 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **It is a [`WorkerMemory`] rather than a scalar, because one source's
     /// cost is not linear in the count.** A block-decoding source shares a
-    /// retention list that no per-worker term can express — it is
-    /// `(POOL_DEPTH − 1)` units at one reader and `(jobs − 1)` above the
-    /// depth — so the recommendation is a shape a budget is *solved* against
+    /// retention list that no per-worker term can express, so the
+    /// recommendation is a shape a budget is *solved* against
     /// ([`Parallelism::fit`]) rather than a number it is divided by. Every
-    /// other source states its per-worker term and no pool, which is the same
-    /// division it always was.
+    /// other source states its per-worker term and no pool. See
+    /// `docs/design/decisions.md`, "D4".
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         None
     }
     /// How much concurrency this caller allows, and how many bytes the source
     /// may hold while serving it — announced once before a read loop starts,
-    /// exactly where [`ByteRangeSource::hint_read_size`] is
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// exactly where [`ByteRangeSource::hint_read_size`] is.
     ///
     /// **Advisory, and it defaults to doing nothing**, for the same reason the
     /// read-size hint is: the numbers are the *caller's*, stated on
@@ -241,7 +210,7 @@ pub trait ByteRangeSource: Send + Sync {
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     /// How long the read loop about to start will hold the bytes it gets back
     /// — announced once, beside the other two hints
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// (`docs/design/decisions.md`, "D5").
     ///
     /// **This is what makes a bound on outstanding buffers safe**, and like
     /// one-off-ness it is a property of the *caller* that nothing in a
@@ -267,35 +236,32 @@ pub trait ByteRangeSource: Send + Sync {
 }
 
 /// Whether a read loop's acquisitions may be made to **wait** for a pooled
-/// slot (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// slot. See `docs/design/decisions.md`, "D5".
 ///
 /// **It is a permission, not a description of the holder.** What the pool needs
 /// to know is whether it may block this loop, and a loop grants that or
 /// withholds it; how long the loop happens to keep its bytes is the *reason*
-/// behind the answer rather than the answer itself. Naming it after the holder
-/// made `scan` — which retains nothing — state something false about itself in
-/// order to select the behaviour it wanted.
+/// behind the answer rather than the answer itself.
 ///
 /// **The distinction is a deadlock, not a preference.** A loop that retains
 /// into a batch holds every buffer it has taken a view into until that batch
-/// flushes — `(max_source_span / chunk) + 1` chunk buffers for the serial
-/// replay loop, and every whole decoded block the batch spans on a compressed
-/// source. If such a loop waited, the only task that could
-/// free the slot would be the one waiting for it. A loop that reads, consumes
-/// and drops holds exactly one buffer, so a wait is backpressure.
+/// flushes — chunk buffers for the serial replay loop, and every whole decoded
+/// block the batch spans on a compressed source. If such a loop waited, the
+/// only task that could free the slot would be the one waiting for it. A loop
+/// that reads, consumes and drops holds exactly one buffer, so a wait is
+/// backpressure.
 ///
 /// **No pair of option values stands in for this.** `TableStream` yields its
 /// batches to the caller and a `Utf8View` batch carries the buffers its
 /// columns were built on, so how many slots are outstanding is a property of
-/// consumer code (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// consumer code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WaitPolicy {
     /// This loop is never to be blocked: a read allocates past the pool's
     /// budget rather than waiting for a slot.
     ///
-    /// **The default, and what every read in this build did before the policy
-    /// existed.** It is the safe answer in the direction that matters — a
-    /// policy that fails to bind costs memory and shows up in `peak-rss`,
+    /// **The default.** It is the safe answer in the direction that matters —
+    /// a policy that fails to bind costs memory and shows up in `peak-rss`,
     /// where a wait that should not have been permitted is a hang with nothing
     /// to measure — so a source nobody announces to cannot block, and a loop
     /// whose discipline is in any doubt grants nothing.
@@ -314,8 +280,8 @@ pub enum WaitPolicy {
     MayWait,
 }
 
-/// Where a source is willing to be split
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// Where a source is willing to be split. See `docs/design/decisions.md`,
+/// "D7".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PartitionBoundaries {
     /// Anywhere in the range: no offset costs more to start reading at than
@@ -336,19 +302,19 @@ pub enum PartitionBoundaries {
     /// none is saying that splitting this range makes its readers worse, not
     /// that it failed to find a seam — which is exactly what a compressed
     /// source reading through a restart-and-discard decoder says
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D15").
     At(Vec<u64>),
 }
 
 /// What a caller's **retained** bytes are rounded out to on this source — the
 /// unit a batch held across reads pins, as against the bytes one concurrent
 /// reader costs while it is reading, which is
-/// [`Partitioning::partition_bytes`]
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// [`Partitioning::partition_bytes`].
 ///
 /// It exists because a caller budgeting sub-streams charges each one its held
 /// batch's span *on top of* the decode footprint, and that second charge is
-/// honest for one source shape and double-counts for the other.
+/// honest for one source shape and double-counts for the other. See
+/// `docs/design/decisions.md`, "D47".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RetainedUnit {
     /// The read chunk. A batch spanning `crate::batch::QueryOptions`'
@@ -356,10 +322,9 @@ pub enum RetainedUnit {
     /// into, and those are bytes [`Partitioning::partition_bytes`] has not
     /// charged for — so a caller adds the span. A plain file's answer.
     ///
-    /// **The default, for the same reason [`WaitPolicy::NeverWait`] is one.**
-    /// It is what every source was charged before the term existed, and it is
-    /// the safe direction: over-charging plans fewer readers than the budget
-    /// could hold, where under-charging plans readers it cannot.
+    /// **The default, for the same reason [`WaitPolicy::NeverWait`] is one**:
+    /// over-charging plans fewer readers than the budget could hold, where
+    /// under-charging plans readers it cannot.
     #[default]
     ReadChunk,
     /// The partition itself. A batch confined to a partition pins that
@@ -386,9 +351,9 @@ pub enum RetainedUnit {
 ///
 /// It is a separate statement from [`RetainedUnit`] and from
 /// [`Partitioning::partition_bytes`] on purpose. Those two say what a reader
-/// *holds*; this says what shape its reads are, and deriving one from another
-/// is how the cut size came to follow the memory charge
-/// ([`Partitioning::window_end`]).
+/// *holds*; this says what shape its reads are, and the cut size must not
+/// follow the memory charge ([`Partitioning::window_end`], and
+/// `docs/design/decisions.md`, "D8").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PartitionRead {
     /// `ScanOptions::chunk_size` at a time, repeating until the piece is
@@ -396,13 +361,9 @@ pub enum PartitionRead {
     /// [`RetainedUnit::ReadChunk`] is one**: a chunk-sized read is the
     /// announced length, so [`BufferPool::keeps`] pools every buffer a worker
     /// takes, and a source that has said nothing about itself is charged and
-    /// read the conservative way.
-    ///
-    /// A probe on the plain control at `--jobs 24`, on the build that
-    /// introduced this read shape and in no published figure, read **9.4 MiB
-    /// resident against 209.2** for a partition-length read, and 1.26 s against
-    /// 1.54 — the partition-length buffer that `keeps` refuses and the
-    /// releasing thread's arena retains is not allocated at all.
+    /// read the conservative way. A partition-length read here would allocate
+    /// a buffer `keeps` refuses to pool and the releasing thread's arena
+    /// retains; a chunked one allocates it not at all.
     #[default]
     Chunked,
     /// One of the source's own `unit`s in a single call — the whole piece
@@ -411,16 +372,8 @@ pub enum PartitionRead {
     /// answer, where that read is a **zero-copy slice** of a block the worker
     /// was going to decode anyway — so it allocates nothing at all, where
     /// reading the same block a chunk at a time is 24 lookups against one
-    /// ([`BlockCache::lookup`], which takes the cache's lock).
-    ///
-    /// A probe on the 24 MiB-block control, flagless in 1 GiB on an earlier
-    /// build where both arrangements resolved thirteen readers, read **854 MiB
-    /// median resident against 931, none killed against one of three**; no
-    /// published figure times the two against each other. What a chunk-sized
-    /// read costs there is unattributed — the candidate is that a block
-    /// evicted while a view is out lives past the slot cap, and chunk reads
-    /// multiply the eviction events by the chunk count — and it is not claimed
-    /// as accounted for.
+    /// ([`BlockCache::lookup`], which takes the cache's lock). What a
+    /// chunk-sized read costs there beyond those lookups is unattributed.
     ///
     /// **The unit is what bounds the buffer, and it is the source's number
     /// rather than the cut's.** `crate::leader::scan_partition` reads
@@ -445,15 +398,14 @@ pub enum PartitionRead {
 
 /// How many of a boundaried source's own units one partition covers
 /// ([`Partitioning::window_end`], [`PartitionBoundaries::At`]) — **the cut
-/// width, chosen by measurement**.
+/// width**. See `docs/design/decisions.md`, "D8".
 ///
-/// **What it buys is the tail read's second decode, amortised.** A worker
-/// finishes its piece by reading one chunk past the piece's end, and on a
-/// block-decoding source those bytes are in the block its *successor* owns —
-/// so both decode that block and nothing shares the result (`KD20`). The waste
-/// is one unit's decode per **piece**, whatever the piece covers, so a piece of
-/// `k` units pays `1/k` of a unit per unit read: at one it doubles the decode
-/// work of the region, at two it adds half, at four a quarter.
+/// **What a wider cut would buy is the tail read's second decode, amortised.**
+/// A worker finishes its piece by reading one chunk past the piece's end, and
+/// on a block-decoding source those bytes are in the block its *successor*
+/// owns — so both decode that block and nothing shares the result (`KD20`).
+/// The waste is one unit's decode per **piece**, whatever the piece covers, so
+/// a piece of `k` units pays `1/k` of a unit per unit read.
 ///
 /// **It does not widen what a reader holds.** Retention on this path is capped
 /// by [`BufferPool::slots`] and not by the piece — [`BlockCache::slot`] drains
@@ -464,15 +416,14 @@ pub enum PartitionRead {
 /// numbers, which is the whole reason [`Partitioning::window_end`] exists
 /// apart from [`Partitioning::partition_bytes`].
 ///
-/// **What it costs is granularity.** A window is `want × k` units wide, so a
-/// region shorter than that is cut into fewer pieces than there are workers
-/// and the last window of every region is ragged. That is the trade the
-/// measurement priced.
+/// **What a wider cut costs is granularity.** A window is `want × k` units
+/// wide, so a region shorter than that is cut into fewer pieces than there are
+/// workers and the last window of every region is ragged.
 const BOUNDARIED_PARTITION_UNITS: usize = 1;
 
 /// What a source holds resident while some number of concurrent workers read
 /// it — **a shape rather than a scalar**, because the cost is not linear in
-/// the count (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// the count. See `docs/design/decisions.md`, "D4".
 ///
 /// Two terms:
 ///
@@ -491,9 +442,8 @@ const BOUNDARIED_PARTITION_UNITS: usize = 1;
 /// worker alone: at one reader the shared half is `(POOL_DEPTH − 1)` units the
 /// allowance was never asked for, and above [`POOL_DEPTH`] it is `(jobs − 1)`,
 /// because the depth is the caller's own count. It is **unbounded in the block
-/// size** — 72 MiB at koji's 24 MiB blocks, 384 MiB at 128 and 1.5 GiB at 512,
-/// at a single reader — which is why [`MEMORY_RESERVE`] cannot absorb it and
-/// why it is billed here instead.
+/// size**, which is why [`MEMORY_RESERVE`] cannot absorb it and why it is
+/// billed here instead.
 ///
 /// **A budget is solved against this, never divided by it**
 /// ([`WorkerMemory::affords`]). `cap / per_worker` is the arithmetic this type
@@ -549,8 +499,8 @@ impl WorkerMemory {
     }
 
     /// Whether this source states no cost at all, which is the declining
-    /// default and every source before a cost was stated: such a source is
-    /// bounded by the caller's own count and by nothing here.
+    /// default: such a source is bounded by the caller's own count and by
+    /// nothing here.
     pub const fn is_zero(self) -> bool {
         self.per_worker == 0 && self.pool_unit == 0
     }
@@ -683,21 +633,19 @@ impl Partitioning {
     /// number has two consumers (`KD25`). For a block-decoding compressed one it is
     /// the block unit **once** — the block being decoded, which is the block
     /// the reader then retains — plus the chunk buffer a read straddling a
-    /// boundary is assembled into, plus the decoder's own retention: 34 MiB
-    /// against the 24 MiB blocks koji's download carries. The rest of the
-    /// retention list is shared and is [`WorkerMemory`]'s second term.
+    /// boundary is assembled into, plus the decoder's own retention. The rest
+    /// of the retention list is shared and is [`WorkerMemory`]'s second term.
     ///
-    /// **The decoder's own retention is inside it, and it is a published
+    /// **The decoder's own retention is inside it, and it is a declared
     /// number rather than a guess.** `xz_seek::Reader::decode_footprint()` —
     /// the LZMA2 dictionary, the compressed input buffer and the backend's own
     /// state — costs no source read and is the same whatever range is read, so
-    /// the source charges it once at construction and never re-derives it
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). The dictionary
-    /// is written in each block's *header* and the table records the first
-    /// block's per stream, so that number is a very good estimate and not a
-    /// sound ceiling; what cannot understate is the reader's `memlimit`,
+    /// the source charges it once at construction and never re-derives it. The
+    /// dictionary is written in each block's *header* and the table records the
+    /// first block's per stream, so that number is a very good estimate and not
+    /// a sound ceiling; what cannot understate is the reader's `memlimit`,
     /// compared against each block's own declared dictionary before any backend
-    /// object is built.
+    /// object is built. See `docs/design/decisions.md`, "D16".
     ///
     /// **A shared cost is not a per-reader one.** The streaming fallback keeps
     /// one decoder behind a mutex however many readers a caller runs, so that
@@ -743,11 +691,11 @@ impl Partitioning {
     /// they answer to different pressures — the charge to a memory allowance,
     /// the coverage to the tail read's wasted decode
     /// ([`BOUNDARIED_PARTITION_UNITS`]) — so computing the second from the
-    /// first is what let a change made for one silently move the other. It
-    /// did: raising the charge to [`BlockCache::reader_bytes`] widened the
-    /// window until [`crate::stream::cut`] had to thin the boundaries on
-    /// offer, and a partition became 2.08–2.42 blocks with no decision
-    /// recorded anywhere (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// first lets a change made for one silently move the other: raising the
+    /// charge would widen the window until [`crate::stream::cut`] had to thin
+    /// the boundaries on offer, and a partition would span more than the cut
+    /// width with no decision recorded anywhere
+    /// (`docs/design/decisions.md`, "D8").
     ///
     /// So the two are computed apart:
     ///
@@ -795,14 +743,13 @@ impl Partitioning {
 }
 
 /// How much concurrency a caller allows a scan or a query, and how much
-/// memory that concurrency may hold
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// memory that concurrency may hold.
 ///
 /// **The library defaults to a [`Parallelism::Serial`] stating no budget**,
-/// which is the serial
-/// code path this build has and not a pool of one: an embeddable component
-/// does not spawn threads by surprise, so parallelism is opted into. The CLI
-/// makes the opposite default, being a program a person ran on purpose.
+/// which is the serial code path and not a pool of one: an embeddable
+/// component does not spawn threads by surprise, so parallelism is opted into.
+/// The CLI makes the opposite default, being a program a person ran on
+/// purpose. See `docs/design/decisions.md`, "D1".
 ///
 /// **Two numbers, and whichever binds first wins**, mirroring
 /// `xz_seek::Bulk::new(workers, budget_bytes)` — which is the interface a
@@ -828,15 +775,15 @@ impl Partitioning {
 ///
 /// **Three mechanisms read it, and only the third spawns.** `memory_bytes` is
 /// what both pools in a source are sized from, and it is what decides whether
-/// a compressed source can afford to decode a whole block ("The compressed
-/// source"); `jobs` is the block pool's depth, one retained block per
+/// a compressed source can afford to decode a whole block
+/// (`docs/design/decisions.md`, "D16"); `jobs` is the block pool's depth, one retained block per
 /// concurrent reader, and — capped by what the bytes afford — how many
 /// sub-streams a partitioned replay is cut into
 /// (`crate::table_stream_partitions`). The caller runs those sub-streams, so
 /// what `jobs` states is a ceiling rather than a request. The third is
 /// [`crate::leader::scan_region`], which both numbers size a window of fused
 /// workers from, and which the mapping pass offers every open `COPY` region to
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D48").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parallelism {
     /// The serial code path: one thread, reading in file order — inside
@@ -852,14 +799,12 @@ pub enum Parallelism {
     /// between them.
     Workers {
         /// The ceiling on concurrent workers — a ceiling rather than a
-        /// request, since three input shapes admit no parallelism at all
-        /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+        /// request, since some input shapes admit no parallelism at all.
         jobs: NonZeroUsize,
         /// What those workers may hold resident between them, in bytes. This
         /// is the number a memory cgroup is denominated in, and the one a
-        /// worker count cannot be promised to: eight readers cost about
-        /// 440 MiB on a file of 24 MiB blocks and about 2 GiB on a file of
-        /// 128 MiB ones ([`WorkerMemory::at`]).
+        /// worker count cannot be promised to: what a given count costs scales
+        /// with the source's block size ([`WorkerMemory::at`]).
         memory_bytes: u64,
     },
 }
@@ -881,7 +826,7 @@ impl Parallelism {
     /// serial path, but the bytes beside it were still stated, so they ride
     /// through into [`Parallelism::Serial`]'s own field rather than being
     /// dropped — which is what makes a stated budget worth stating at any
-    /// worker count (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// worker count.
     ///
     /// Zero reads as one rather than as an error, exactly as
     /// `xz_seek::Bulk::new` reads it: it is a shape a caller's own arithmetic
@@ -903,9 +848,9 @@ impl Parallelism {
     /// [`Parallelism::default`] and nothing else.
     ///
     /// `None` rather than [`DEFAULT_MEMORY_BUDGET`] because "the caller said
-    /// nothing" and "the caller said 64 MiB" are different facts, and a source
-    /// that already holds a budget of its own — one set by an earlier
-    /// announcement — must be able to tell them apart.
+    /// nothing" and "the caller stated that same number" are different facts,
+    /// and a source that already holds a budget of its own — one set by an
+    /// earlier announcement — must be able to tell them apart.
     pub fn memory_bytes(&self) -> Option<u64> {
         match self {
             Self::Serial { memory_bytes } => *memory_bytes,
@@ -925,21 +870,19 @@ impl Parallelism {
     /// The arrangement to run when the caller has stated neither number and
     /// has nothing open — the environment's own answer, composed from
     /// [`discover_memory_limit`] and `std::thread::available_parallelism`
-    /// through [`MEMORY_RESERVE`]
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// through [`MEMORY_RESERVE`].
     ///
     /// **It is a convenience over two primitives, and taking it is opting
     /// in.** [`Parallelism::default`] is still the serial path stating no
     /// budget, so a library caller that says nothing still spawns nothing;
     /// this is for the caller that wants the whole answer and would otherwise
-    /// reimplement the reserve arithmetic, which is a measured finding rather
-    /// than a detail.
+    /// reimplement the reserve arithmetic. See `docs/design/decisions.md`,
+    /// "D1" and "D11".
     ///
-    /// **An unlimited environment falls back to today's constant**, which is
-    /// what keeps discovery strictly additive: with no limit found and no
-    /// source to recommend otherwise, this is
-    /// [`DEFAULT_MEMORY_BUDGET`] — or, at a serial count,
-    /// [`Parallelism::default`] itself.
+    /// **An unlimited environment falls back to the shipped constant**, which
+    /// is what keeps discovery strictly additive: with no limit found and no
+    /// source to recommend otherwise, this is [`DEFAULT_MEMORY_BUDGET`] — or,
+    /// at a serial count, [`Parallelism::default`] itself.
     pub fn discover() -> Self {
         Self::discover_for(std::thread::available_parallelism().map_or(1, NonZeroUsize::get), None)
     }
@@ -961,19 +904,18 @@ impl Parallelism {
     ///
     /// **The composition is not a `min`, and the difference is one
     /// `Option`.** Written as `min(want, discovered)` it breaks the case it
-    /// exists for: on an unlimited host `discover` falls back to today's
-    /// 64 MiB constant, so the minimum would be 64 MiB and a compressed scan —
-    /// whose first reader costs about 106 MiB — would be serial again. What
-    /// distinguishes *no limit found* from *a small limit* is that the first
-    /// has no cap at all:
+    /// exists for: on an unlimited host `discover` falls back to
+    /// [`DEFAULT_MEMORY_BUDGET`], which affords no block-decoding reader, so a
+    /// compressed scan would be serial again. What distinguishes *no limit
+    /// found* from *a small limit* is that the first has no cap at all:
     ///
     /// - a discovered limit caps at `limit − MEMORY_RESERVE`, and
     ///   `jobs × per_worker` — or [`DEFAULT_MEMORY_BUDGET`] where the caller
     ///   has no recommendation — is taken no higher. That is "do not take what
     ///   you cannot use", and it is allowed to fall **below**
     ///   [`DEFAULT_MEMORY_BUDGET`], because reasserting that constant under a
-    ///   small limit would put today's default back in the one case discovery
-    ///   was built for. The **count** answers to a second condition beside
+    ///   small limit would put the flagless default back in the one case
+    ///   discovery was built for. The **count** answers to a second condition beside
     ///   that cap: its predicted resident must leave
     ///   [`MEMORY_MARGIN_PERCENT`] of the limit unused
     ///   ([`margin_allowance`]), which is what stops the answer depending on
@@ -1007,7 +949,7 @@ impl Parallelism {
                 Some(margin_allowance(limit.bytes)),
             ),
             // Nothing discovered and nothing recommended: no cap to state, and
-            // no recommendation to cap. That is today's default, unchanged.
+            // no recommendation to cap, which is the library's own default.
             None if memory.is_none() => (None, None),
             // `MemAvailable` unreadable is the one shape with a recommendation
             // and no ceiling to hold it under — and no limit to take a margin
@@ -1092,7 +1034,7 @@ impl Parallelism {
     /// lower a count and never decline the one reader the mechanism's own
     /// floors deliver; and the budget stays `cap`-bounded rather than
     /// ceiling-bounded, so what a lowered count reports is still what it
-    /// spends (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// spends (`docs/design/decisions.md`, "D3").
     fn fit(
         jobs: usize,
         memory: Option<WorkerMemory>,
@@ -1113,12 +1055,12 @@ impl Parallelism {
 /// bare, renders an unstated budget as `None`, which states nothing a
 /// reader can act on. Deliberately a free function rather than a method on
 /// [`Parallelism`]: that type's own `memory_bytes` exists precisely to keep
-/// "the caller said nothing" apart from "the caller said 64 MiB" for a source
-/// that must not have an already-announced budget silently overwritten, and a
-/// status line has no such source to protect — it wants the number actually
-/// in force either way, worded honestly about which one it got: the stated
-/// byte count, or [`DEFAULT_MEMORY_BUDGET`] — what every pool falls back to —
-/// marked `(default)` since nothing was asked for it
+/// "the caller said nothing" apart from "the caller stated that number" for a
+/// source that must not have an already-announced budget silently overwritten,
+/// and a status line has no such source to protect — it wants the number
+/// actually in force either way, worded honestly about which one it got: the
+/// stated byte count, or [`DEFAULT_MEMORY_BUDGET`] — what every pool falls
+/// back to — marked `(default)` since nothing was asked for it
 /// (`docs/design/decisions.md`, "D64").
 pub(crate) fn memory_budget_display(p: Parallelism) -> String {
     match p.memory_bytes() {
@@ -1132,15 +1074,12 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 /// for `--parallel-memory`.
 ///
 /// **It is the serial path's budget and it is deliberately not the largest
-/// block anyone might write.** 64 MiB is [`POOL_DEPTH`] slots at the largest
-/// chunk size the read-chunk sweep measured
-/// (`docs/design/measurements.md`, "What the read chunk size is worth"), so
-/// nothing at or below 16 MiB loses a slot to it and the 1.83× a pool miss
-/// cost when it was last measurable cannot come back through this ceiling
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). It is also the line a
-/// compressed source's whole-block decode is refused above, which is what
-/// makes the number a *bound* rather than an aspiration — see
-/// [`BlockCache::affordable`] and `docs/design/decisions.md`, "The compressed source and the cache".
+/// block anyone might write.** It is [`POOL_DEPTH`] slots at the largest chunk
+/// size the `chunk-size` figure measured, so no chunk size in that range loses
+/// a slot to it and a pool miss cannot come back through this ceiling. It is
+/// also the line a compressed source's whole-block decode is refused above,
+/// which is what makes the number a *bound* rather than an aspiration — see
+/// [`BlockCache::affordable`]. See `docs/design/decisions.md`, "D3".
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
 /// What [`Parallelism::discover`] holds back from a discovered memory limit,
@@ -1148,35 +1087,31 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// — the runtime's threads, glibc's per-thread arenas, the decoder state a
 /// compressed source keeps outside its pools, and the binary itself.
 ///
-/// **It is a subtraction rather than a fraction, and the shape argument is
-/// what chose it.** A percentage would under-reserve at a small limit and
-/// over-reserve at a large one, which is backwards: the small cgroup is where
-/// being wrong kills the process. The reason that looks like it supports the
-/// choice — that resident above a stated budget is roughly constant *because*
-/// [`BufferPool::slots`] clamps at `POOL_DEPTH.max(jobs)` — is false: that
-/// clamp is what makes resident piecewise linear in the reader count, a unit
-/// steeper a reader above [`POOL_DEPTH`] than below it
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// **It is a subtraction rather than a fraction.** A percentage would
+/// under-reserve at a small limit and over-reserve at a large one, which is
+/// backwards: the small cgroup is where being wrong kills the process. The
+/// reason that looks like it supports the choice — that resident above a
+/// stated budget is roughly constant *because* [`BufferPool::slots`] clamps at
+/// `POOL_DEPTH.max(jobs)` — is false: that clamp is what makes resident
+/// piecewise linear in the reader count, a unit steeper a reader above
+/// [`POOL_DEPTH`] than below it. See `docs/design/decisions.md`, "D3".
 ///
-/// **What it must satisfy: the worst observed rep leaves at least 20% of the
-/// limit**, the median being context rather than the gate, because a cgroup's
-/// killer reads one run's peak. The criterion bounds this number rather than
-/// describing it, and **384 MiB is the smallest of five candidates measured
-/// against it** — 256, 320, 384, 448 and 512 MiB, each a build of its own, over
-/// two block sizes and four container limits with nothing stated
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). What
-/// one reader holds is billed by [`BlockCache::reader_bytes`] — one block
-/// unit, the chunk buffer and the decoder's whole footprint — and the
-/// published sitting's fitted per-reader slope, 26.0 MiB of Rust outside the
-/// pool plus the 8.0 MiB `liblzma` dictionary, matches that charge's 34.0 MiB;
-/// so what this covers is the remainder above the charge and not a per-reader
-/// term (`docs/design/measurements.md`, "What a scan holds above the budget it
-/// was given").
+/// **What it must satisfy: the worst observed rep leaves
+/// [`MEMORY_MARGIN_PERCENT`] of the limit**, the median being context rather
+/// than the gate, because a cgroup's killer reads one run's peak. The
+/// criterion bounds this number rather than describing it, and this is the
+/// smallest of the candidates measured against it, each a build of its own,
+/// over two block sizes and four container limits with nothing stated
+/// (`reserve`). What one reader holds is billed by
+/// [`BlockCache::reader_bytes`] — one block unit, the chunk buffer and the
+/// decoder's whole footprint — and the fitted per-reader slope matches that
+/// charge, so what this covers is the remainder above the charge and not a
+/// per-reader term.
 ///
 /// **It is the cap, and it is not the bound on that excess.** This constant is
 /// the smallest meeting the criterion *under the cap rule*, so it already
-/// contains `0.2 × 1 GiB`, and subtracting it again as a predicted term would
-/// apply the same criterion twice. What bounds the excess is
+/// contains the margin at one limit, and subtracting it again as a predicted
+/// term would apply the same criterion twice. What bounds the excess is
 /// [`MEMORY_UNPOOLED_BOUND`], which is what [`margin_allowance`] predicts
 /// with; this one still comes off the top of a discovered limit and still
 /// decides what [`BlockCache::affordable`] sees.
@@ -1185,11 +1120,10 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// knob, and the floor below which a compressed scan is serial is implicit in
 /// it rather than stated separately.
 ///
-/// **What it was validated over, and what carries the rest.** It was
-/// measured to a 2 GiB limit *on a 24-core host*, where
-/// `std::thread::available_parallelism` clamps the count the allowance would
-/// otherwise afford — so the criterion held at that limit by the host's width
-/// rather than by this number. It is not asked to: the count answers to
+/// **What it was validated over, and what carries the rest.** At the top of
+/// the measured band `std::thread::available_parallelism` clamps the count the
+/// allowance would otherwise afford, so the criterion held there by the host's
+/// width rather than by this number. It is not asked to: the count answers to
 /// the criterion directly ([`MEMORY_MARGIN_PERCENT`]), which is what makes the
 /// resolved arrangement a property of the allocation and not of the machine's
 /// core count. What this constant covers is the unbilled remainder below.
@@ -1199,46 +1133,36 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// while a reader holds one unit of its own, so the pool holds
 /// `(POOL_DEPTH.max(jobs) − 1) × unit` that no per-reader term carries —
 /// unbounded in the block size, which is why it is billed by [`WorkerMemory`]
-/// rather than reserved for here
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// rather than reserved for here.
 ///
 /// **One constant, taken from the compressed leg, over-reserving the plain
 /// path by roughly the difference.** The two paths hold very different amounts
-/// outside what they are billed — a plain `parse` holds 6.13 MiB resident in
-/// all at the serial default and under 10 MiB at every budget the `reserve`
-/// figure states, where a block-decoding one's remainder above its charge
-/// reaches 179.5 MiB in that same figure — and a per-source reserve
-/// is not available where the number is needed: [`Parallelism::discover`] is
-/// the primitive a caller reaches with nothing open, and a source's own answer
-/// is downstream of recognition, which is I/O. Over-reserving is the safe
+/// outside what they are billed (`reserve`), and a per-source reserve is not
+/// available where the number is needed: [`Parallelism::discover`] is the
+/// primitive a caller reaches with nothing open, and a source's own answer is
+/// downstream of recognition, which is I/O. Over-reserving is the safe
 /// direction, and a caller who wants a plain scan's real headroom states a
 /// budget.
 ///
 /// **Sizing it from the arena count is refused, and the count is not the free
-/// variable it looks like.** glibc's own ceiling is `8 × ncores` — 192 on a
-/// 24-core host — and a scan never approaches it: the published `reserve`
-/// instrument legs read 2, 4, 12, 13, 19 and 26 arenas at 1, 2, 10, 11, 17 and
-/// 24 readers, `readers + 2` from two readers up, so the thread count this
-/// crate chooses is what binds and the maximum never is. There is no getter
-/// for `M_ARENA_MAX` to read in any case, and this crate does not set it:
+/// variable it looks like.** glibc's own ceiling is `8 × ncores` and a scan
+/// never approaches it — the `reserve` instrument legs read roughly
+/// `readers + 2` arenas from two readers up — so the thread count this crate
+/// chooses is what binds and the maximum never is. There is no getter for
+/// `M_ARENA_MAX` to read in any case, and this crate does not set it:
 /// `MALLOC_ARENA_MAX` is the operator's setting, and whether the binary should
 /// set a cap of its own is an open decision (`docs/status/STATUS.md`,
 /// "Decisions worth another look"). Nor does the remainder above the charge
-/// give arithmetic a reader trend to model: the published sitting reads it at
-/// about 5 MiB at one reader, 105–180 MiB from two readers up on 24 MiB blocks
-/// and 139–140 MiB at four and five readers on 128 MiB blocks, and over the
-/// five-build grid the reserve was read off — two to twenty-four readers — its
-/// worst showed no trend in the count
-/// (`docs/design/measurements.md`, "What a scan holds above the budget it was
-/// given").
+/// give arithmetic a reader trend to model: over the grid the reserve was read
+/// off, its worst showed no trend in the count (`reserve`).
 ///
 /// **Below it the budget goes to zero rather than to a floor.** A limit under
 /// this leaves nothing, and the three floors already in the mechanism —
 /// `crate::stream::worker_count`'s `.max(1)`, [`BufferPool::slots`]' clamp to
 /// one, and [`BlockCache::affordable`] refusing block decode — make that one
 /// reader's worth on the streaming path. Reasserting
-/// [`DEFAULT_MEMORY_BUDGET`] there would put today's constant back under a new
-/// name in the one case discovery exists for.
+/// [`DEFAULT_MEMORY_BUDGET`] there would put the flagless constant back under
+/// a new name in the one case discovery exists for.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a **discovered** memory limit a resolved arrangement must leave
@@ -1246,21 +1170,17 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// chosen against, enforced on the worker count instead of being left to hold
 /// by accident.
 ///
-/// **Twenty percent, and it is a judgement rather than a derived number**
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). A
-/// cgroup's killer reads one run's peak, so the criterion is
-/// about the worst rep and not the median; ten reps is the estimate of a tail
-/// this project can make.
+/// **A judgement rather than a derived number** (`docs/design/decisions.md`,
+/// "D3"). A cgroup's killer reads one run's peak, so the criterion is about
+/// the worst rep and not the median.
 ///
 /// **A constant reserve leaves constant headroom, and the criterion is a
 /// fraction — so the two only agree at one limit.** `limit − MEMORY_RESERVE`
 /// aims resident *at* the limit by construction, leaving roughly
 /// `MEMORY_RESERVE` minus what a scan holds outside its pools however large
-/// the limit is; as a *share* of the limit that shrinks, so the cap alone meets
-/// the criterion at a 1 GiB limit and not at 2 GiB. On a 24-core host
-/// `std::thread::available_parallelism` clamps the count below what the cap
-/// affords at 2 GiB; a 64-core host under the cap alone resolves twenty-nine
-/// readers of a 24 MiB-block file there, predicted to leave 6.5% of the limit
+/// the limit is; as a *share* of the limit that shrinks, so the cap alone
+/// stops meeting the criterion as the limit grows. A wide enough host under
+/// the cap alone resolves a count predicted to leave less than this share
 /// against [`MEMORY_UNPOOLED_BOUND`]. Enforcing the criterion on the count is
 /// what makes the answer a property of the allocation rather than of the
 /// host's width.
@@ -1268,17 +1188,14 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// **Enforced once, against [`MEMORY_UNPOOLED_BOUND`].** The predicted
 /// resident a count is held to is `WorkerMemory::at(n)` plus that bound, not
 /// plus [`MEMORY_RESERVE`]: the reserve is the smallest constant meeting this
-/// criterion under the *cap* rule, so it decomposes as `0.2 × 1 GiB +
-/// 179.2 MiB` and predicting with it would subtract the margin a second time,
-/// at a cost of exactly `0.2 × limit` per limit
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// criterion under the *cap* rule, so predicting with it would subtract the
+/// margin a second time, at a cost proportional to the limit.
 ///
 /// **So it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and
-/// nowhere below**, which is 640 MiB at today's two constants: under that the
-/// cap `limit − MEMORY_RESERVE` is the tighter of the two conditions and this
-/// one is inert. That is the intended shape — a constant reserve leaves a
-/// shrinking *share* as the limit grows, so the large end is the end that
-/// needed a fraction.
+/// nowhere below**: under that the cap `limit − MEMORY_RESERVE` is the tighter
+/// of the two conditions and this one is inert. That is the intended shape — a
+/// constant reserve leaves a shrinking *share* as the limit grows, so the
+/// large end is the end that needed a fraction.
 ///
 /// **It bounds the count and never the budget, and it cannot decline a
 /// reader.** [`Parallelism::fit`] keeps one worker at whatever the cap is —
@@ -1293,11 +1210,10 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// allocation we cannot show we use" and never binds, because
 /// [`BufferPool::slots`]' clamp and the solved count already prove it:
 /// resident saturates at [`WorkerMemory::at`] of the announced count plus what
-/// no pool holds, and every byte of budget above that is inert
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). This
-/// asserts headroom against a killer, binds where that one never did — at
-/// large limits, where the count is what grows — and is checked against a
-/// stated criterion rather than against a hedge.
+/// no pool holds, and every byte of budget above that is inert. This asserts
+/// headroom against a killer, binds where that one never did — at large
+/// limits, where the count is what grows — and is checked against a stated
+/// criterion rather than against a hedge.
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:
@@ -1306,49 +1222,42 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// the binary itself. [`margin_allowance`] predicts with it, and nothing else
 /// reads it.
 ///
-/// **A bound, not a term, and it is read off a grid rather than fitted.** Four
-/// hundred runs — five reserve constants over two block sizes and four
-/// container limits, ten reps each — re-read under the shipped charge
-/// ([`WorkerMemory::at`]) put the unnamed remainder `held − at(jobs)` over
-/// every surviving block-path leg at worst **238.6 MiB** on a 24 MiB-block
-/// file, at seventeen readers in `1536m`, and **142.0 MiB** on a 128 MiB-block
-/// one; the published sitting reads 4.7–179.5 MiB. 256 MiB is the smallest
-/// 64 MiB step covering both, which leaves about 17 MiB of slack over the
-/// grid's worst (`docs/design/decisions.md`, "I/O, memory and parallelism"; `docs/design/measurements.md`, "What a scan holds above the
-/// budget it was given"). Two of the grid's 270 block-path reps read the
-/// remainder negative, which is scatter and not an over-bill.
+/// **A bound, not a term, and it is read off a grid rather than fitted.** The
+/// grid behind `reserve` — five reserve constants over two block sizes and
+/// four container limits — re-read under the shipped charge
+/// ([`WorkerMemory::at`]) puts the unnamed remainder `held − at(jobs)` under
+/// this on both block sizes, and this is the smallest 64 MiB step covering
+/// both (`docs/design/decisions.md`, "D3"). A couple of the grid's
+/// block-path reps read the remainder negative, which is scatter and not an
+/// over-bill.
 ///
-/// *Rejected: 320 MiB.* The bound is subtracted, so its weight grows as the
-/// limit falls: the margin's crossover drops from 640 MiB to 320 MiB, and the
-/// margin starts taking readers across the band it exists to leave alone.
+/// *Rejected: the next step down.* The bound is subtracted, so its weight
+/// grows as the limit falls: the margin's crossover halves, and the margin
+/// starts taking readers across the band it exists to leave alone.
 ///
 /// *Rejected: a bound per block size.* A constant that varies with the file is
 /// one the margin cannot state before the file is open.
 ///
-/// **It is carried as a constant rather than as a per-reader term.** The
-/// published sitting reads the remainder at about 5 MiB at one reader,
-/// 105–180 MiB from two readers up on 24 MiB blocks and 139–140 MiB at four and
-/// five readers on 128 MiB blocks; over the grid above, two to twenty-four
-/// readers, its worst showed no trend in the count.
+/// **It is carried as a constant rather than as a per-reader term**: over the
+/// grid above, two to twenty-four readers, the remainder's worst showed no
+/// trend in the count.
 ///
-/// **What it is, is attributed only in bulk.** In the published instrument
-/// account glibc's retained free memory at exit (`fordblks`) is at least 82% of
-/// the unattributed term — heap high-water less Rust's live high-water and the
-/// decoder dictionaries — at every leg where that term is positive; against
-/// the charge table's remainder it is 69% at `544m`, 71% at `1g` and more than
-/// the whole of it at the three larger limits. No term table sums to it. `scripts/measure.py`'s
-/// `charge_model_problem` faults a cell whose remainder exceeds this, which is
-/// the finding that would move it — and separately at [`MEMORY_RESERVE`],
-/// which is the rule failing rather than the bound being low.
+/// **What it is, is attributed only in bulk.** In the instrument account
+/// glibc's retained free memory at exit (`fordblks`) is most of the
+/// unattributed term — heap high-water less Rust's live high-water and the
+/// decoder dictionaries — at every leg where that term is positive. No term
+/// table sums to it. `scripts/measure.py`'s `charge_model_problem` faults a
+/// cell whose remainder exceeds this, which is the finding that would move it
+/// — and separately at [`MEMORY_RESERVE`], which is the rule failing rather
+/// than the bound being low.
 ///
 /// **Why it is not [`MEMORY_RESERVE`].** That constant is the smallest meeting
-/// [`MEMORY_MARGIN_PERCENT`] under the *cap* rule, so it already contains
-/// `0.2 × 1 GiB`; predicting with it enforces the criterion twice and costs
-/// `0.2 × limit` at every limit — 11→7 readers at 1 GiB where 10 is what the
-/// criterion alone asks for. The two numbers are
-/// separate because they answer separate questions: the reserve is what a
-/// discovered limit hands back before anything is spent, and this is what the
-/// arrangement is predicted to hold on top of what it spends.
+/// [`MEMORY_MARGIN_PERCENT`] under the *cap* rule, so it already contains the
+/// margin at one limit; predicting with it enforces the criterion twice and
+/// costs readers at every limit. The two numbers are separate because they
+/// answer separate questions: the reserve is what a discovered limit hands
+/// back before anything is spent, and this is what the arrangement is
+/// predicted to hold on top of what it spends.
 pub const MEMORY_UNPOOLED_BOUND: u64 = 256 << 20;
 
 /// The most a resolved arrangement may be **charged** under a discovered
@@ -1360,7 +1269,7 @@ pub const MEMORY_UNPOOLED_BOUND: u64 = 256 << 20;
 /// constant being what bounds the one term the charge does not bill. Using
 /// [`MEMORY_RESERVE`] here instead would apply [`MEMORY_MARGIN_PERCENT`] twice,
 /// the reserve being the smallest constant meeting that criterion under the
-/// cap rule (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// cap rule (`docs/design/decisions.md`, "D3").
 ///
 /// Integer arithmetic, rounding **down** the fraction of the limit so the
 /// allowance errs small.
@@ -1523,7 +1432,7 @@ fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<Mem
 }
 
 /// A memory limit this process is running under, and the file that states it
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D11").
 ///
 /// **The path is carried because the two v2 files do different things and the
 /// walk minimises over both.** `memory.high` throttles where `memory.max`
@@ -1544,8 +1453,7 @@ pub struct MemoryLimit {
 }
 
 /// The memory limit this process is actually running under, in bytes, or
-/// `None` where nothing limits it
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// `None` where nothing limits it (`docs/design/decisions.md`, "D11").
 ///
 /// **A primitive, not a policy.** It reports what the environment states and
 /// makes nothing of it: what a caller may usefully take from a limit is
@@ -1647,27 +1555,26 @@ pub fn available_memory_in(root: &Path) -> Option<u64> {
 ///
 /// **It is a wish, not the bound** — the stated budget is the bound, and the
 /// two together are what make a slot able to hold a decoded xz block rather
-/// than only a read chunk (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// than only a read chunk (`docs/design/decisions.md`, "D9").
 ///
 /// **It is also the floor under a stated worker count**, not a second number
 /// beside it: a pool told to keep one block per concurrent reader still keeps
 /// this many when the reader is serial, because a block pool of one makes
 /// eviction drain before every decode and stops pooling exactly when a caller
-/// is holding a block ("The compressed source and the cache"). That argues for two rather
-/// than four, and neither is measured against what block retention buys a
-/// seeking query: four is the replay depth above, inherited.
+/// is holding a block. That argues for a shallower floor, and neither depth is
+/// measured against what block retention buys a seeking query: this is the
+/// replay depth above, inherited.
 const POOL_DEPTH: usize = 4;
 
 /// The largest buffer worth keeping, in bytes, for a length nobody has
 /// announced as a read size.
 ///
-/// The read path's steady state is chunk-sized — 1 MiB by default, and
+/// The read path's steady state is chunk-sized — [`crate::DEFAULT_CHUNK_SIZE`], and
 /// tunable through `ScanOptions::chunk_size`. What can be far larger is
-/// `crate::map::attach_text`'s coalesced span read, which happens once per
-/// map and never again; holding one of those for the rest of a process would
-/// trade the ~6.2 MiB a scan holds resident (`docs/design/measurements.md`,
-/// "What a scan holds resident") for an allocation nothing is going to ask for
-/// twice.
+/// `crate::map::attach_text`'s coalesced span read, which happens once per map
+/// and never again; holding one of those for the rest of a process would trade
+/// what a scan holds resident (`peak-rss`) for an allocation nothing is going
+/// to ask for twice.
 ///
 /// **Size stands in for one-off-ness, and the caller is what overrides it.** A
 /// chunk buffer at the configured size is asked for once per chunk for the
@@ -1678,7 +1585,7 @@ const POOL_DEPTH: usize = 4;
 /// is about to repeat, and *becomes* the pool's slot size
 /// ([`BufferPool::slot_bytes`]), so a buffer of that length is kept however
 /// large it is and this constant governs only a pool nobody has announced to
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D9").
 const POOL_MAX_BYTES: usize = 8 << 20;
 
 /// How many read chunks a plain file's partition holds
@@ -1691,12 +1598,11 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// partition's body read a second time. The waste is therefore
 /// `chunk / partition`: a partition of exactly one chunk reads the whole file
 /// **twice**, at every worker count above one, because the waste is paid per
-/// partition
-/// (`docs/design/decisions.md`, "D52"). Eight caps it at
-/// 12.5% and is where the returns flatten — the tail is one chunk however
-/// large the partition is, so each doubling past this buys less than a
-/// percent of the read while it halves how finely a region can be cut and how
-/// many readers a stated budget affords.
+/// partition (`docs/design/decisions.md`, "D52"). This multiple caps the waste
+/// at its reciprocal, and the returns flatten here — the tail is one chunk
+/// however large the partition is, so each doubling past this buys very little
+/// of the read while it halves how finely a region can be cut and how many
+/// readers a stated budget affords (`docs/design/decisions.md`, "D9").
 ///
 /// **The product is capped at [`POOL_MAX_BYTES`].** `scan_partition` reads a
 /// plain piece [`PartitionRead::Chunked`], so nothing allocates a
@@ -1708,10 +1614,11 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// [`POOL_MAX_BYTES`] and above — the double read this constant exists to
 /// remove, returned to the caller who raised `ScanOptions::chunk_size`.
 ///
-/// **The shipped default sits exactly on the cap** — 1 MiB × 8 is
-/// [`POOL_MAX_BYTES`] — and the two constants are justified independently, so
-/// nothing but [`a_shipped_plain_partition_is_eight_whole_chunks`] stops a
-/// later change to either from silently capping the default configuration.
+/// **The shipped default sits exactly on the cap** — this multiple of
+/// [`crate::DEFAULT_CHUNK_SIZE`] is [`POOL_MAX_BYTES`] — and the two constants are
+/// justified independently, so nothing but
+/// [`a_shipped_plain_partition_is_eight_whole_chunks`] stops a later change to
+/// either from silently capping the default configuration.
 /// *Rejected:* deriving this from [`POOL_MAX_BYTES`], which would fold two
 /// independent justifications into one expression.
 const PLAIN_PARTITION_CHUNKS: usize = 8;
@@ -1719,15 +1626,13 @@ const PLAIN_PARTITION_CHUNKS: usize = 8;
 /// Read buffers, reused rather than allocated per chunk.
 ///
 /// **What this is for is not allocator throughput.** A fresh `vec![0u8; len]`
-/// per chunk is `calloc`, so the kernel or the allocator zeroes a megabyte
-/// that `read_exact_at` immediately overwrites — 23.2% of a warm `parse`'s
-/// user time on the 3.00 GiB control
-/// (`docs/design/decisions.md`, "D29"). It also hands the region
-/// back to the allocator once per chunk, which is what put `jemalloc` at 3,161
-/// `madvise` calls against glibc's 50 over the same file
-/// (`docs/design/measurements.md`, "Which allocator a figure was taken
-/// under"). Neither cost is work the problem requires: the same megabyte is
-/// wanted again a moment later.
+/// per chunk is `calloc`, so the kernel or the allocator zeroes a chunk that
+/// `read_exact_at` immediately overwrites — a measurable share of a warm
+/// `parse`'s user time (`chunk-size`). It also hands the region back to the
+/// allocator once per chunk, which is what drives an allocator's `madvise`
+/// traffic over the same file (`allocator`). Neither cost is work the problem
+/// requires: the same chunk is wanted again a moment later. See
+/// `docs/design/decisions.md`, "D10".
 ///
 /// **A pooled buffer is fully initialized and stays at its own length.** It
 /// is created once as `vec![0u8; len]` and thereafter only ever read into, so
@@ -1743,7 +1648,7 @@ const PLAIN_PARTITION_CHUNKS: usize = 8;
 /// only on what is idle — and allocates past the budget where it granted
 /// [`WaitPolicy::NeverWait`], which is what a loop pinning buffers into
 /// batches must grant, since a wait there deadlocks
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D5").
 /// [`BufferPool::take`] is the unwaiting primitive underneath both.
 #[derive(Debug)]
 struct BufferPool {
@@ -1764,9 +1669,9 @@ struct BufferPool {
     /// [`ByteRangeSource::hint_parallelism`].
     ///
     /// **The pool is bounded in bytes because a block pool cannot be bounded
-    /// in slots.** [`POOL_DEPTH`] slots of a decoded 128 MiB xz block is
-    /// 512 MiB — the whole cgroup the measurements run in — so a pool whose
-    /// slot size is free and whose count is fixed states no bound at all. The
+    /// in slots.** [`POOL_DEPTH`] slots of a decoded xz block can be the whole
+    /// of a small cgroup, so a pool whose slot size is free and whose count is
+    /// fixed states no bound at all. The
     /// byte budget makes the count the consequence ([`BufferPool::slots`]) and
     /// the memory the number a caller states, which is the currency an RSS
     /// claim is made in.
@@ -1811,7 +1716,7 @@ struct BufferPool {
     /// unit the larger buffer is dropped on release, and at the larger one the
     /// slot count collapses under the smaller reads. A source that acquires a
     /// second read unit takes a second pool rather than a second hint
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D17").
     hinted: AtomicUsize,
     /// What the read loop currently reading through this pool permits, as
     /// [`WaitPolicy`] encodes it — [`WaitPolicy::NeverWait`] until one is
@@ -1835,7 +1740,7 @@ struct PoolState {
     /// returned — the term a waiting acquisition is bounded by, and the only
     /// one of the two the library sets. What in-flight batches pin is the
     /// caller's and is deliberately not counted here
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// (`docs/design/decisions.md`, "D5").
     charged: usize,
 }
 
@@ -1976,9 +1881,9 @@ impl BufferPool {
     /// How many free buffers this pool holds: its depth where the budget
     /// affords it, fewer where a slot is large, never zero.
     ///
-    /// **This is what makes the pool block-capable.** At the 1 MiB default
-    /// chunk it is 4, exactly the fixed count it once had; at a decoded
-    /// 128 MiB xz block it is 1, where four would have been the whole cgroup.
+    /// **This is what makes the pool block-capable.** At the default chunk it
+    /// is [`POOL_DEPTH`]; at a decoded xz block large enough that the depth
+    /// would be the whole allowance, it is one.
     fn slots(&self) -> usize {
         let depth = self.depth.load(Ordering::Relaxed).max(1);
         (self.budget() / self.slot_bytes()).clamp(1, depth)
@@ -2006,7 +1911,7 @@ impl BufferPool {
     /// This is what a source with **two** read units subtracts before handing
     /// the remainder to the second pool, so that one stated budget bounds the
     /// source rather than each of its pools separately
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D17").
     ///
     /// **It bounds the two lists and not a buffer a caller is still holding.**
     /// A [`PooledBuffer`] taken by [`BufferPool::obtain`] is on neither list
@@ -2037,7 +1942,7 @@ impl BufferPool {
     /// length and this rule keeps all of them. The one two-unit source is
     /// [`XzSource`], which takes a second pool rather than a second hint, and a
     /// ceiling here would only hide a unit no pool accounts for
-    /// (`docs/design/decisions.md`, "D52").
+    /// (`docs/design/decisions.md`, "D17").
     fn keeps(&self, len: usize) -> bool {
         len <= self.slot_bytes()
     }
@@ -2048,7 +1953,7 @@ impl BufferPool {
     /// [`PooledBuffer`]s of this pool's own slot size: without the reservation
     /// the two lists are held at [`BufferPool::slots`] each with nothing
     /// shared between them, and the pool's ceiling is twice what its budget
-    /// states (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// states (`docs/design/decisions.md`, "D17").
     ///
     /// `Relaxed` for the same reason [`BufferPool::hinted`] is: the holder
     /// writes it whenever its list changes length and [`BufferPool::release`]
@@ -2138,9 +2043,9 @@ impl Drop for PooledBuffer {
     }
 }
 
-/// The only `ByteRangeSource` implementation shipped in the MVP: a local
-/// file, read via blocking positioned reads on a `spawn_blocking` task
-/// (`tokio` has no native async positioned-read).
+/// A local file, read via blocking positioned reads on a `spawn_blocking`
+/// task (`tokio` has no native async positioned-read). See
+/// `docs/design/decisions.md`, "D10".
 pub struct LocalFileSource {
     path: PathBuf,
     file: Arc<std::fs::File>,
@@ -2240,10 +2145,10 @@ impl ByteRangeSource for LocalFileSource {
     /// this source holds `POOL_DEPTH` chunks flat in the reader count while
     /// [`Partitioning::partition_bytes`] bills [`PLAIN_PARTITION_CHUNKS`] of
     /// them per reader. That over-bill is not the count bound it resembles —
-    /// `Parallelism::fit` solves rather than divides, so a budget above
-    /// `8 MiB × jobs` affords every stated reader against the same four slots
-    /// — and this source recommends no count of its own to bound them with
-    /// instead (`docs/design/decisions.md`, "D4").
+    /// `Parallelism::fit` solves rather than divides, so a budget above the
+    /// bill for every stated reader affords all of them against the same free
+    /// list — and this source recommends no count of its own to bound them
+    /// with instead (`docs/design/decisions.md`, "D4").
     // Deficiency register: `deficiency: KD25` — so plain readers are bounded
     // by a charge describing nothing the path holds: the bill grows with the
     // count while what is held is flat at `POOL_DEPTH` chunks, and above a
@@ -2264,17 +2169,14 @@ impl ByteRangeSource for LocalFileSource {
     /// worker count. Raising the ceiling with `jobs` would grow a query's
     /// resident set by `(jobs - POOL_DEPTH)` chunks the moment
     /// `crate::batch::RetainedChunks` releases the buffers a flushed batch was
-    /// pinning (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// pinning (`docs/design/decisions.md`, "D9").
     ///
     /// **What it means where the leader schedules concurrent readers over this
     /// source**: a `parse` at `--jobs n` runs `n` fused workers against
-    /// [`POOL_DEPTH`] chunk slots, so above four of them the extra workers
-    /// block for a slot rather than allocating — which is the wait doing its
-    /// job. What that ceiling costs the published rows above four workers is
-    /// not separated from anything else they pay: a probe that lifted the
-    /// depth, on an older build, found it worth 4–10% on the plain `parse` leg
-    /// above four and not the cause of the step from four to eight, and no
-    /// reading of the shipped build lifts it.
+    /// [`POOL_DEPTH`] chunk slots, so above that many the extra workers block
+    /// for a slot rather than allocating — which is the wait doing its job.
+    /// What that ceiling costs the published rows above the depth is not
+    /// separated from anything else they pay.
     fn hint_parallelism(&self, parallelism: Parallelism) {
         self.pool.set_limits(budget_bytes(parallelism), POOL_DEPTH);
     }
@@ -2305,7 +2207,7 @@ fn budget_bytes(parallelism: Parallelism) -> usize {
 /// The slot returns to its pool when the last [`Bytes`] viewing it drops
 /// together with the retention list's own reference, which is what lets a
 /// read inside this block be a zero-copy slice rather than a copy
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D15").
 struct DecodedBlock {
     /// A slot sized to the file's *largest* block, so every block fits every
     /// slot; `len` is what this block actually holds.
@@ -2336,12 +2238,12 @@ impl AsRef<[u8]> for BlockView {
 /// second unit announced into the chunk pool: [`BufferPool::hinted`] is one
 /// value driving both [`BufferPool::keeps`] and [`BufferPool::slot_bytes`], so
 /// one pool serving both units is wrong for one of them either way
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D17").
 ///
 /// **Retention is what makes per-call block decode affordable.** A read loop
-/// asks for `chunk_size` bytes at a time — 1 MiB by default — and a 24 MiB
-/// block decoded afresh per call would be 24× the decode work a live decode
-/// does for the same walk. So a decoded block is kept, and the next read
+/// asks for `chunk_size` bytes at a time, and a block decoded afresh per call
+/// would repeat the whole block's decode once per chunk inside it. So a
+/// decoded block is kept, and the next read
 /// inside it is a slice. The retained set is capped at
 /// [`BufferPool::slots`], so raising the pool's budget raises how many blocks
 /// may be in flight at once, which is what N concurrent readers need.
@@ -2364,7 +2266,7 @@ impl AsRef<[u8]> for BlockView {
 /// is open for the length of the run; and the sub-stream divisor cannot bound
 /// it from outside, because [`BufferPool::slots`] is `budget / unit` once the
 /// depth clamp is slack and so does not move with the admitted worker count
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D17").
 ///
 /// *Rejected: retaining one block on the serial path*, on the ground that one
 /// reader walking forward needs exactly one and that the cap costs a serial
@@ -2372,8 +2274,8 @@ impl AsRef<[u8]> for BlockView {
 /// things answer it. `pgdq parse` is the shape that pins **least** — it builds
 /// no batches, so `crate::batch::RetainedChunks` never runs — while on the
 /// query path a retained chunk is a zero-copy view into a whole block, so a
-/// batch bounded by `max_source_span`'s 64 MiB spans several blocks and pins
-/// every one of them; that is more than this cap holds, and it is a cost of the
+/// batch bounded by `max_source_span` can span several blocks and pins every
+/// one of them; that is more than this cap holds, and it is a cost of the
 /// query path that `parse` never pays. And a cap of one is
 /// not merely smaller: it makes [`BlockCache::slot`] keep zero and drain
 /// before every decode, so any outstanding view forces a fresh allocation of
@@ -2412,7 +2314,7 @@ impl BlockCache {
     /// What **one concurrent reader** of this file holds while it decodes
     /// whole blocks, in bytes: one block unit, the chunk buffer a straddling
     /// read is assembled into, and the decoder's own retention
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D16").
     ///
     /// **One unit, because the block a reader decodes *becomes* the block it
     /// retains.** [`BlockCache::slot`] drains the retention list to
@@ -2447,10 +2349,9 @@ impl BlockCache {
     /// bound, and the case it has to survive is [`BlockCache::retain`]
     /// replacing an entry for the same block while the reader that decoded it
     /// still views it (`KD20`'s double decode). *Rejected:* charging
-    /// `2 × workers` plus a decaying floor, which bills one unit past that at
-    /// *every* count — 130.0 MiB at one reader of 24 MiB blocks against the
-    /// 110.93 the published one-reader cell holds, and 650.0 against 526.93 at
-    /// 128 (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// `2 × workers` plus a decaying floor, which bills one unit past what the
+    /// published one-reader cells hold, at *every* count
+    /// (`docs/design/decisions.md`, "D4"; `parallel-peak-rss`).
     fn worker_memory(&self, chunk_bytes: u64, decode_bytes: u64) -> WorkerMemory {
         WorkerMemory::per_worker(self.reader_bytes(chunk_bytes, decode_bytes))
             .pooling(self.unit as u64, POOL_DEPTH)
@@ -2458,7 +2359,7 @@ impl BlockCache {
 
     /// Whether `budget` admits one such reader — the line that decides between
     /// block decode and the streaming reader
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D16").
     ///
     /// **It is asked of *one* reader and charges that reader's share of the
     /// retention list with it**, which is what makes the stated budget true
@@ -2472,11 +2373,10 @@ impl BlockCache {
     /// [`Partitioning::window_end`]'s window, so it is not bounded by
     /// [`BOUNDARIED_PARTITION_UNITS`] and a held batch can pin several units
     /// where this charges one. The
-    /// decline it draws is accepted rather than worked around — at 128 MiB
-    /// blocks the line is 522 MiB, where the per-reader charge alone would put
-    /// it at 138 — because it is the arrangement in which a large-block file's
-    /// stated number holds, the
-    /// decline is reported
+    /// decline it draws is accepted rather than worked around — the retention
+    /// list puts the line well above the per-reader charge on a large-block
+    /// file — because it is the arrangement in which such a file's stated
+    /// number holds, the decline is reported
     /// (`crate::stream::compressed_block_path_declined`), and a caller who
     /// wants the path back states a budget.
     ///
@@ -2490,18 +2390,18 @@ impl BlockCache {
     ///
     /// *Rejected: a fixed refusal line beside a fixed budget* — two unrelated
     /// numbers, of which the budget is not a bound above its own slot size: a
-    /// 128 MiB block under a 256 MiB line sits 128 MiB resident against a
-    /// 64 MiB budget, because [`BufferPool::slots`] floors at one. Reading the
-    /// line off the budget makes the stated number true: a unit the caller did not allow room for is
-    /// never decoded whole, so the floor can never be reached with a slot
-    /// bigger than the budget.
+    /// block admitted by the line but larger than the budget sits resident
+    /// anyway, because [`BufferPool::slots`] floors at one. Reading the line
+    /// off the budget makes the stated number true: a unit the caller did not
+    /// allow room for is never decoded whole, so the floor can never be
+    /// reached with a slot bigger than the budget.
     ///
     /// **What it declines is memory, not seekability.** Any file with more
     /// than one block is seekable, and decodable block-wise, for a client
     /// willing to allocate a block — so a file written with large blocks
-    /// (`xz -9 -T0`, whose blocks are ~192 MiB; `xz -T8
-    /// --block-size=512MiB`) is declined under the default budget and does
-    /// have parallelism to lose. That is the caller's to reverse, with
+    /// (`xz -9 -T0`, or an explicit `--block-size`) is declined under the
+    /// default budget and does have parallelism to lose. That is the caller's
+    /// to reverse, with
     /// `--parallel-memory` or `Parallelism::Workers`, rather than a constant's
     /// to permit.
     fn affordable(&self, chunk_bytes: u64, decode_bytes: u64, budget: u64) -> bool {
@@ -2528,7 +2428,7 @@ impl BlockCache {
     /// also the block some reader is holding a view into, so the drain frees
     /// no slot at all for the caller that is waiting on one. That is why the
     /// block pool is never granted a wait ([`XzSource::hint_wait_policy`], and
-    /// `docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// `docs/design/decisions.md`, "D5").
     ///
     /// A block evicted while a [`Bytes`] still views it stays alive until that
     /// view drops.
@@ -2562,7 +2462,7 @@ impl BlockCache {
 }
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D14", "D15").
 ///
 /// **Three file handles, deliberately.** `open` walks the file's stream
 /// footers once (`xz_seek::SeekTable::from_source`'s cost — one read per
@@ -2665,11 +2565,11 @@ impl XzSource {
 
     /// Open `path` from a seek table a previous walk of the *same* file
     /// produced, **without walking it again**
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D18").
     ///
-    /// This is what turns the table a cache persists into a saving: the
-    /// footer walk [`XzSource::open`] pays is one read per stream, which is
-    /// 85 s on the 31,150-stream koji download and is otherwise paid by every
+    /// This is what turns the table a cache persists into a saving: the footer
+    /// walk [`XzSource::open`] pays is one read per stream, which on a
+    /// many-stream file dominates a command and is otherwise paid by every
     /// command against it however complete the cache is.
     ///
     /// `xz_seek` validates the table for internal consistency and against the
@@ -2750,11 +2650,11 @@ impl XzSource {
     ///
     /// One stated number bounds the source, not each of its pools, so the
     /// block pool is given what is left after the chunk pool's own ceiling
-    /// (`BufferPool::held_bytes`) — 4 MiB at the 1 MiB default chunk, so a
-    /// 64 MiB budget leaves 60 for blocks. Chunks come first because that pool
-    /// is the one every read path uses and the one the 1.83× pool-miss reading
-    /// was measured through; the block pool is what a large budget is
-    /// *for*, and it is the term that actually grows.
+    /// (`BufferPool::held_bytes`), which is [`POOL_DEPTH`] chunk slots. Chunks
+    /// come first because that pool is the one every read path uses and the
+    /// one the pool-miss cost was measured through (`chunk-size`); the block
+    /// pool is what a large budget is *for*, and it is the term that actually
+    /// grows (`docs/design/decisions.md`, "D17").
     ///
     /// Recomputed from `self.budget` on **both** announcements rather than
     /// composed incrementally, so `hint_read_size` and `hint_parallelism` may
@@ -2768,12 +2668,13 @@ impl XzSource {
             // One retained block per concurrent reader, and never fewer than
             // the pool's own depth: a block pool of one drains before every
             // decode, so it stops pooling exactly when a caller is holding a
-            // block. That argues for two; four is `POOL_DEPTH`'s, inherited.
+            // block. That argues for a shallower floor; this is
+            // `POOL_DEPTH`'s, inherited.
             //
             // **`jobs` here is the count the caller *announced*, not the count
             // `crate::stream::worker_count` then delivers.** They agree under
             // discovery and diverge where a stated `--jobs` outruns a stated
-            // budget (`docs/design/decisions.md`, "I/O, memory and parallelism").
+            // budget (`docs/design/decisions.md`, "D17").
             //
             // Deficiency register: `deficiency: KD21` — the slot count is then
             // bounded by the pool's byte budget rather than by the delivered
@@ -2803,7 +2704,7 @@ impl XzSource {
     /// Charging the pool ceiling would put `POOL_MAX_BYTES - DEFAULT_CHUNK_SIZE`
     /// a reader into the allowance's arithmetic that the gate never charges,
     /// resolving fewer readers than the scan then admits
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// (`docs/design/decisions.md`, "D4").
     ///
     /// *Rejected:* moving the gate to the recommendation instead. The gate is
     /// compared against what a reader really holds while it reads, which is a
@@ -2973,7 +2874,7 @@ impl XzSource {
     /// **Block-decoding** — the boundaries are the block starts inside
     /// `range`, so a partition is a whole number of blocks and two workers
     /// never decode the same block twice
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). A partition
+    /// (`docs/design/decisions.md`, "D15"). A partition
     /// costs what one concurrent reader holds — [`BlockCache::reader_bytes`],
     /// the per-reader term of the [`BlockCache::worker_memory`] whose `at(1)`
     /// [`BlockCache::affordable`] compares a budget against, so the path a
@@ -3120,9 +3021,9 @@ impl ByteRangeSource for XzSource {
         })
     }
 
-    /// The compressed file's own on-disk length (D4) — a `stat` on the
-    /// second handle, never the stream-index walk [`XzSource::size`]
-    /// answers from memory.
+    /// The compressed file's own on-disk length — a `stat` on the second
+    /// handle, never the stream-index walk [`XzSource::size`] answers from
+    /// memory (`docs/design/decisions.md`, "D21").
     fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
         Box::pin(async move {
             let file = Arc::clone(&self.stat_file);
@@ -3146,7 +3047,7 @@ impl ByteRangeSource for XzSource {
     /// takes its own ceiling and the block pool takes the rest, so the number
     /// a caller states bounds this source rather than each of its pools; the
     /// worker count is the block pool's depth, one retained block per
-    /// concurrent reader (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// concurrent reader (`docs/design/decisions.md`, "D17").
     ///
     /// A budget too small for a whole block sends every read through the
     /// streaming reader ([`BlockCache::affordable`]) — the budget is honoured
@@ -3163,7 +3064,7 @@ impl ByteRangeSource for XzSource {
     /// [`BufferPool::obtain`] documents. The **block** pool's holder is
     /// [`BlockCache`], which *retains*: it is the exempt class, exactly as the
     /// replay loop is, so it is left at [`WaitPolicy::NeverWait`] whatever a
-    /// loop permits (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// loop permits (`docs/design/decisions.md`, "D5").
     ///
     /// A read that needs both takes the **chunk** slot first and the block
     /// slot inside it ([`XzSource::read_by_blocks`]), never the other way
@@ -3198,10 +3099,10 @@ impl ByteRangeSource for XzSource {
     /// already reads.
     ///
     /// **Decode is the one shape that demonstrably scales** — a compressed
-    /// `parse` reaches 5.60× at twenty-four workers and is still climbing
-    /// (`docs/design/measurements.md`, "What a second scan worker buys") — so
-    /// a small constant such as four would leave the machine's own answer
-    /// unspent on the only path that can use it. What the caller's budget
+    /// `parse`'s speedup is still climbing at the widest count measured
+    /// (`parallel-scan-throughput`) — so a small constant would leave the
+    /// machine's own answer unspent on the only path that can use it. What the
+    /// caller's budget
     /// affords still binds afterwards, through the solve every count passes
     /// (`crate::stream::worker_count`).
     ///
@@ -3248,14 +3149,14 @@ impl ByteRangeSource for XzSource {
 }
 
 /// The six bytes every `.xz` stream opens with
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D14").
 const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
 /// What a caller already knows about a file's compression layer before
 /// [`open_local`] has looked at it — normally read out of a cache written
 /// from that same file (`crate::cache::claim`), and the whole
 /// reason an `.xz` source need not re-walk its stream footers
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D18").
 ///
 /// **A bare [`xz_seek::SeekTable`], not a cache.** Recognition is the layer
 /// that decides which source to build, so it is the layer the table is handed
@@ -3291,7 +3192,7 @@ pub enum Recognized {
     /// choices — pay the walk with [`KnownCompression::Unknown`], or report
     /// the cache it came from as unusable without spending a footer walk to
     /// reach an error it was always going to reach
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D18").
     ///
     /// The claim it contradicts and the cache's span index were written by
     /// one `save` from one file, so this condemns that index too: a caller
@@ -3300,7 +3201,8 @@ pub enum Recognized {
 }
 
 /// Open `path` as a [`ByteRangeSource`], choosing between [`LocalFileSource`]
-/// and [`XzSource`] by **content**, not by name (D8): the first six bytes are
+/// and [`XzSource`] by **content**, not by name
+/// (`docs/design/decisions.md`, "D14"): the first six bytes are
 /// checked against `.xz`'s magic, whatever `path` is called. A file that
 /// really is `.xz`-compressed is recognised however it is named or
 /// extensionless; a file merely *named* `.xz` whose bytes don't match opens
@@ -3376,7 +3278,7 @@ mod tests {
 
     /// `LocalFileSource` never overrides [`ByteRangeSource::stored_size`], so
     /// its default — mirroring [`ByteRangeSource::size`] — is what a
-    /// non-decompressing source is meant to answer (D4).
+    /// non-decompressing source is meant to answer.
     #[tokio::test]
     async fn stored_size_defaults_to_size() {
         let (_file, source) = source_of(b"0123456789abcdef");
@@ -3384,7 +3286,7 @@ mod tests {
     }
 
     /// Every source implemented so far answers its addressable length
-    /// exactly (D7); nothing overrides the default yet.
+    /// exactly; nothing overrides the default yet.
     #[test]
     fn size_is_exact_defaults_true() {
         let (_file, source) = source_of(b"0123456789abcdef");
@@ -3462,9 +3364,9 @@ mod tests {
 
     /// **The free list holds no more bytes than the pool reports.** Every
     /// buffer it keeps fits a slot and every slot is counted, so
-    /// `held_bytes()` is an upper bound rather than an eightfold under-report —
-    /// which matters because that number is what divides one stated budget
-    /// between a source's two pools (`XzSource::apportion`).
+    /// `held_bytes()` is an upper bound rather than an under-report — which
+    /// matters because that number is what divides one stated budget between a
+    /// source's two pools (`XzSource::apportion`).
     ///
     /// The buffer it refuses is a whole plain partition against a pool whose
     /// slot is a chunk: a second read unit, which only a second pool could hold
@@ -3522,7 +3424,7 @@ mod tests {
     /// The library's own default is the serial path, and it is that on both
     /// option structs — an embeddable component does not spawn threads by
     /// surprise, so parallelism is opted into
-    /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// (`docs/design/decisions.md`, "D1").
     #[test]
     fn the_library_defaults_to_serial() {
         assert_eq!(Parallelism::default(), Parallelism::Serial { memory_bytes: None });
@@ -3542,7 +3444,7 @@ mod tests {
     /// two numbers are independent, so a caller asking for one worker inside
     /// a stated budget has still stated it, and every pool sized from
     /// `memory_bytes` sees it — which is the whole of that ask on the serial
-    /// path (`docs/design/decisions.md`, "I/O, memory and parallelism").
+    /// path (`docs/design/decisions.md`, "D1").
     #[test]
     fn one_worker_and_none_are_both_the_serial_state() {
         let serial_in_budget = Parallelism::Serial { memory_bytes: Some(512 << 20) };
@@ -3597,9 +3499,9 @@ mod tests {
     }
 
     /// The slot count is a consequence of the announced unit, which is what
-    /// makes a decoded xz block a slot the pool can state a bound for: four
-    /// 128 MiB slots would be the whole 512 MB cgroup the measurements run
-    /// in, so the count falls rather than the budget rising.
+    /// makes a decoded xz block a slot the pool can state a bound for:
+    /// [`POOL_DEPTH`] slots of a large block would be the whole of a small
+    /// cgroup, so the count falls rather than the budget rising.
     #[test]
     fn the_slot_count_falls_out_of_the_announced_unit() {
         let pool = BufferPool::default();
@@ -3607,11 +3509,11 @@ mod tests {
         assert_eq!(pool.slot_bytes(), POOL_MAX_BYTES);
         assert_eq!(pool.slots(), POOL_DEPTH);
 
-        // The two chunk sizes the sweep brackets keep the depth the fixed
-        // count gave; a 24 MiB block halves it and a 128 MiB block — larger
-        // than the whole budget — gets one slot rather than none, since a
-        // pool that refused to keep a block at all would hand back the fresh
-        // `calloc` it exists to remove.
+        // The two chunk sizes the sweep brackets keep the full depth; a
+        // 24 MiB block halves it and a 128 MiB block — larger than the whole
+        // budget — gets one slot rather than none, since a pool that refused
+        // to keep a block at all would hand back the fresh `calloc` it exists
+        // to remove.
         for (unit, slots) in
             [(1 << 20, POOL_DEPTH), (16 << 20, POOL_DEPTH), (24 << 20, 2), (128 << 20, 1)]
         {
@@ -3665,10 +3567,9 @@ mod tests {
     /// Two threads, because a wait has no behaviour except its interaction
     /// with another holder: with one it can only be asserted not to have
     /// blocked, which the unwaiting take already guaranteed. The one loop that
-    /// grants this permission is the leader's fused worker, which the mapping
-    /// pass now reaches — so this is the wait's *contract*, and
-    /// `crate::leader`'s scheduler tests are where it is exercised against a
-    /// real source.
+    /// grants this permission is the leader's fused worker — so this is the
+    /// wait's *contract*, and `crate::leader`'s scheduler tests are where it
+    /// is exercised against a real source.
     #[test]
     fn a_permitted_wait_takes_a_slot_rather_than_allocating() {
         let unit = 1 << 20;
@@ -3743,8 +3644,7 @@ mod tests {
 
     /// The policy reaches the pool through the trait method, which is the only
     /// way a read loop has of granting one — and the default is to permit no
-    /// wait, so a source nobody announces to allocates exactly as it did
-    /// before the policy existed.
+    /// wait, so a source nobody announces to allocates rather than blocking.
     #[test]
     fn a_source_states_the_wait_policy_to_its_pool() {
         let (_file, source) = source_of(b"0123456789abcdef");
@@ -3792,12 +3692,13 @@ mod tests {
     /// **Silence recommends the serial path**, the same convention
     /// `partitions` above answers with — and [`LocalFileSource`] inherits it
     /// rather than overriding, because on storage a plain `parse` is already
-    /// device-bound ("Execution model and API surface").
+    /// device-bound (`docs/design/decisions.md`, "D2").
     ///
-    /// **A warm speedup does not reopen it.** A plain parallel `parse` does beat
-    /// serial — 1.36× at two workers — but only warm on tmpfs, and the warm
-    /// regime is not the one a default is chosen for; what reopens this is a
-    /// parallel plain scan measured on a real device, which no figure covers.
+    /// **A warm speedup does not reopen it.** A plain parallel `parse` does
+    /// beat serial (`parallel-scan-throughput`), but only warm on tmpfs, and
+    /// the warm regime is not the one a default is chosen for; what reopens
+    /// this is a parallel plain scan measured on a real device, which no
+    /// figure covers.
     #[test]
     fn a_source_that_does_not_advise_recommends_the_serial_path() {
         assert_eq!(BareSource.default_workers(), 1);
@@ -3845,11 +3746,11 @@ mod tests {
 
     /// **The shipped configuration must sit *inside* the cap, not on it.**
     /// `DEFAULT_CHUNK_SIZE * PLAIN_PARTITION_CHUNKS` is exactly
-    /// [`POOL_MAX_BYTES`] today, and the three constants are justified
-    /// independently — the chunk by the read-chunk sweep, the multiple by
+    /// [`POOL_MAX_BYTES`], and the three constants are justified
+    /// independently — the chunk by the `chunk-size` figure, the multiple by
     /// where the tail's returns flatten, the ceiling by one-off-ness. So
     /// nothing but this assertion stops a later change to any one of them from
-    /// silently converting the default from "eight whole chunks" to "capped",
+    /// silently converting the default from whole chunks to capped,
     /// which is the case [`PLAIN_PARTITION_CHUNKS`] exists to prevent and the
     /// one no other test would notice.
     #[test]
@@ -4013,14 +3914,12 @@ mod tests {
     /// cut width a number somebody chose rather than a consequence of the
     /// memory charge.
     ///
-    /// This is the invariant three doc comments and `decisions.md` asserted
-    /// in prose while the code had stopped honouring it: `partition_bytes` was
-    /// both the memory charge and `run_region`'s cut size, so raising the
-    /// charge to `BlockCache::reader_bytes` widened the window until
-    /// `crate::stream::cut` had to thin the boundaries on offer, and a piece
-    /// became 2.08–2.42 blocks. The repair is
-    /// [`Partitioning::window_end`], which sizes the window in the source's own
-    /// units; this test is what stops the two consumers being confused again.
+    /// The failure mode it guards is `partition_bytes` serving as both the
+    /// memory charge and `run_region`'s cut size: raising the charge then
+    /// widens the window until `crate::stream::cut` has to thin the boundaries
+    /// on offer, and a piece spans more units than the cut width allows.
+    /// [`Partitioning::window_end`] sizes the window in the source's own units
+    /// instead; this test is what stops the two consumers being confused.
     ///
     /// It walks the window loop rather than one window: a frontier lands
     /// wherever the last window's final row ended, and a *mid-block* start is
@@ -4038,9 +3937,9 @@ mod tests {
         let size = blocks * 4096;
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
         let advice = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
-        // The charge is a block, a chunk and the decoder — three orders of
-        // magnitude above the 4 KiB unit here, which is what made a window
-        // sized by it swallow the whole file.
+        // The charge is a block, a chunk and the decoder — orders of
+        // magnitude above the 4 KiB unit here, so a window sized by it would
+        // swallow the whole file.
         assert!(advice.partition_bytes() > size, "the charge is not the cut size");
 
         for workers in [2usize, 3, 4, 8] {
@@ -4099,8 +3998,7 @@ mod tests {
     /// reader is charged one unit; and `BufferPool::slots` clamps this pool at
     /// `POOL_DEPTH.max(jobs)`, so a single reader leaves `(POOL_DEPTH - 1)`
     /// units of list that nothing else is there to fill. [`POOL_DEPTH`] units
-    /// is therefore the line, and it always was — what moved is which term
-    /// carries which unit.
+    /// is therefore the line.
     #[test]
     fn the_block_path_wants_room_for_one_block_and_the_retention_list() {
         let table = four_block_table();
@@ -4217,9 +4115,10 @@ mod tests {
         assert!(source.size_is_exact());
     }
 
-    /// `stored_size()` is a `stat` on the compressed file itself (D4), not
-    /// the uncompressed length `size()` answers — the two must disagree for
-    /// a payload that actually compresses.
+    /// `stored_size()` is a `stat` on the compressed file itself, not the
+    /// uncompressed length `size()` answers — the two must disagree for a
+    /// payload that actually compresses
+    /// (`docs/design/decisions.md`, "D21").
     #[tokio::test]
     async fn xz_source_stored_size_is_the_compressed_files_on_disk_length() {
         let payload = xz_test_payload();
@@ -4289,10 +4188,9 @@ mod tests {
     /// constructors go through `assembled`, so a cached table shares the same
     /// way. The **per-entry cost**: 80 B a stream and 32 B a block is what the
     /// account's megabytes are arithmetic over, and it is a property of a
-    /// vendored struct rather than of anything here — adding
-    /// `first_block_dict_size` took `StreamEntry` from 64 B to 80 without
-    /// anything here noticing. So a sync that grows either entry fails here rather
-    /// than silently moving a published number.
+    /// vendored struct rather than of anything here: a field added upstream
+    /// grows an entry with nothing here noticing. So a sync that grows either
+    /// entry fails here rather than silently moving a published number.
     ///
     /// The pointer assertion is what makes the share a checked property rather
     /// than an upstream courtesy: a re-sync that took the alias back out would
@@ -4343,10 +4241,9 @@ mod tests {
         }
     }
 
-    /// A read at an offset behind the live decode's position must restart
-    /// the covering block rather than return the wrong bytes — this is the
-    /// only path `LocalFileSource` never has, and it is D6's whole reason to
-    /// exist.
+    /// A read at an offset behind the live decode's position must restart the
+    /// covering block rather than return the wrong bytes — the one path
+    /// `LocalFileSource` never has.
     #[tokio::test]
     async fn xz_source_seeks_backward_across_a_block_boundary() {
         let payload = xz_test_payload();
@@ -4419,10 +4316,10 @@ mod tests {
     }
 
     /// **A read served from a retained block never touches the reader**,
-    /// which is the serialization point this source is losing: with the
-    /// reader's mutex held by another thread outright, the read still answers.
-    /// The lock is taken only to name a block's task, and a block already
-    /// decoded needs no task.
+    /// which is the serialization point the block path exists to avoid: with
+    /// the reader's mutex held by another thread outright, the read still
+    /// answers. The lock is taken only to name a block's task, and a block
+    /// already decoded needs no task.
     #[tokio::test]
     async fn a_retained_block_is_read_without_the_reader() {
         let payload = xz_test_payload();
@@ -4454,8 +4351,8 @@ mod tests {
     }
 
     /// Concurrent reads over different blocks all answer their own bytes —
-    /// the property `XzSource` could not have before, since every read ran
-    /// under one mutex.
+    /// the property the block path buys, a streaming read running under one
+    /// mutex instead.
     #[tokio::test]
     async fn concurrent_reads_each_answer_their_own_bytes() {
         let payload = xz_test_payload();
@@ -4510,8 +4407,7 @@ mod tests {
         // decoder's charge is stated here rather than read off a reader — a
         // synthetic table has none — and stands for what
         // `xz_seek::Reader::decode_footprint` answers on an 8 MiB-dictionary
-        // file: the dictionary, a 1 MiB input chunk and the backend's own
-        // state, 9,471,776 bytes on koji's shape.
+        // file: the dictionary, the input chunk and the backend's own state.
         const DECODE: u64 = 9_471_776;
         let affordable = |unit: u64, budget: u64| {
             let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
@@ -4519,13 +4415,11 @@ mod tests {
         };
         // **`POOL_DEPTH` units, not one.** A single reader is charged the
         // block it holds *and* the retention list beside it
-        // ([`BlockCache::worker_memory`]), so koji's 24 MiB blocks want
-        // 4 x 24 MiB plus the chunk and the decoder — 107 MiB — where the
-        // per-reader term alone is 34 and fits the default. The default
-        // budget therefore declines an ordinary compressed dump, which is the
-        // first arrangement in which that stated number is true: the pool held
-        // four units under it either way (`docs/design/decisions.md`,
-        // "I/O, memory and parallelism").
+        // ([`BlockCache::worker_memory`]), so `POOL_DEPTH` units plus the
+        // chunk and the decoder is the line where the per-reader term alone
+        // would fit the default. The default budget therefore declines an
+        // ordinary compressed dump, which is the arrangement in which the
+        // stated number is true (`docs/design/decisions.md`, "D16").
         assert!(!affordable(24 << 20, DEFAULT_MEMORY_BUDGET));
         assert!(affordable(24 << 20, 107 << 20));
         // 128 and 192 MiB blocks — `xz --block-size=128MiB`, and `xz -9 -T0`,
@@ -4592,9 +4486,9 @@ mod tests {
     /// reaches `slots()` permanently the moment a caller holds one view per
     /// slot.
     ///
-    /// The third read below is what deadlocked: it runs on a detached thread
-    /// against a bounded receive, so a pool that starts charging block slots
-    /// again fails this test rather than hanging the suite.
+    /// The third read below is the one that would block: it runs on a
+    /// detached thread against a bounded receive, so a pool that charges block
+    /// slots fails this test rather than hanging the suite.
     #[test]
     fn a_permitted_wait_never_reaches_the_block_pool() {
         let payload = xz_test_payload();
@@ -4694,7 +4588,7 @@ mod tests {
         assert_eq!(&again[..], &payload[4000..9000]);
     }
 
-    /// The non-seekable shape (D2): one stream, one block, produced by a bare
+    /// The non-seekable shape: one stream, one block, produced by a bare
     /// `xz` invocation with no `-T`/`--block-size`. Every read still decodes
     /// to the right bytes, backward ones included; a file this small has its
     /// one block decoded whole and retained, so the backward read below is a
@@ -4728,8 +4622,9 @@ mod tests {
         }
     }
 
-    /// D8: a genuinely `.xz`-compressed file is recognised whatever it is
-    /// named — the temp file `xz_compress` returns carries no `.xz` suffix at
+    /// A genuinely `.xz`-compressed file is recognised whatever it is named
+    /// (`docs/design/decisions.md`, "D14") — the temp file `xz_compress`
+    /// returns carries no `.xz` suffix at
     /// all, and `open_local` still hands back a source whose `seek_table()`
     /// answers `Some`, which only `XzSource` ever does.
     #[tokio::test]
@@ -4745,7 +4640,7 @@ mod tests {
         assert_eq!(&got[..], &payload[..]);
     }
 
-    /// D8's other direction: a file *named* `.xz` whose bytes are not — the
+    /// The other direction: a file *named* `.xz` whose bytes are not — the
     /// rejected extension-based dispatch would have handed this to
     /// `XzSource` and failed on `xz_seek::Error::NotXz`. Content sniffing
     /// opens it plain instead, correctly.
@@ -4792,7 +4687,8 @@ mod tests {
     }
 
     /// **The walk is actually skipped**, tested behaviourally rather than by
-    /// instrumentation (`docs/design/decisions.md`, "The compressed source and the cache"): the table handed in names a check algorithm this file's
+    /// instrumentation (`docs/design/decisions.md`, "D18"): the table handed
+    /// in names a check algorithm this file's
     /// streams do not use, which `validate` does not police and a walk of
     /// this file would never produce. The check's size moves the payload's
     /// end, so a decode from the handed table fails — where a source that had
@@ -5248,9 +5144,9 @@ mod tests {
     /// **The composition is not a `min`, and the difference is one `Option`.**
     /// With no limit found there is no cap from the environment at all, so a
     /// source's recommendation stands — where a `min` against the fallback
-    /// constant would have handed a compressed scan 64 MiB, which affords no
-    /// block-decoding reader at all, and made the source's own worker count unreachable on the
-    /// machine most likely to run it.
+    /// constant would have handed a compressed scan [`DEFAULT_MEMORY_BUDGET`],
+    /// which affords no block-decoding reader at all, and made the source's own
+    /// worker count unreachable on the machine most likely to run it.
     #[test]
     fn no_limit_found_leaves_the_recommendation_uncapped_but_for_memavailable() {
         let root = FakeRoot::new();
@@ -5328,8 +5224,8 @@ mod tests {
         assert_eq!(Parallelism::recommended_within(8, None, 32 << 20).jobs(), 8);
     }
 
-    /// **An unlimited environment falls back to today's constant**, which is
-    /// what keeps discovery strictly additive — and at a serial count it falls
+    /// **An unlimited environment falls back to the shipped constant**, which
+    /// is what keeps discovery strictly additive — and at a serial count it falls
     /// all the way back to [`Parallelism::default`], the state that says nobody
     /// asked for a budget at all. A `Workers` arrangement has nowhere to record
     /// that, so it carries the constant bare.
@@ -5378,9 +5274,9 @@ mod tests {
 
     /// **A source recommends what its workers hold**, so that "no limit found"
     /// cannot mean "serial": one reader of an ordinary compressed dump costs
-    /// more than the 64 MiB fallback, and a count nothing can afford is not a
-    /// recommendation. The plain source inherits the silence it inherits for
-    /// the worker count.
+    /// more than [`DEFAULT_MEMORY_BUDGET`], and a count nothing can afford is
+    /// not a recommendation. The plain source inherits the silence it inherits
+    /// for the worker count.
     ///
     /// **A shape rather than a scalar**, because the block pool's retention
     /// list is not per worker: `block_decode_bytes` is that same shape

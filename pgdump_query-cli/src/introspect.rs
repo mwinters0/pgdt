@@ -37,8 +37,7 @@
 //!   obtained from the OS), `hblkhd` (mmap-backed), `uordblks` (in use) and
 //!   `fordblks` (freed, held, still resident). The gap between `uordblks` and
 //!   `live_bytes` is allocator bookkeeping; the gap between `arena` and
-//!   `uordblks` is retention, which is the term four slices of this phase
-//!   carried with no owner.
+//!   `uordblks` is retention.
 //! * **`malloc_*`** — `malloc_info`'s document-level totals, plus the raw XML,
 //!   which carries **each arena's own `system type="max"`**. That per-arena
 //!   high-water is the one number `mallinfo2` cannot give and the one the
@@ -48,8 +47,9 @@
 //! each is: `live_scope` and `glibc_scope`, with the note between them. The
 //! counter sees what passes through Rust's `GlobalAlloc`; glibc sees the whole
 //! process, C included — and `liblzma` is the active `.xz` backend in the
-//! shipped build, so ~9.47 MB a reader of decoder working set is invisible to
-//! one and fully present in the other. Their difference is therefore not
+//! shipped build, so a reader's `XZ_DECODE_FOOTPRINT` of decoder working set
+//! is invisible to one and fully present in the other. Their difference is
+//! therefore not
 //! retention, and labelling it in the report is what stops the subtraction
 //! being made by accident.
 //!
@@ -270,7 +270,7 @@ mod enabled {
 
     /// What the two scopes mean, in the report itself rather than only in the
     /// document that explains it. The number is `XZ_DECODE_FOOTPRINT`
-    /// (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// (`docs/design/decisions.md`, "D16").
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
         "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",

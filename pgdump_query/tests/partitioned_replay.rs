@@ -46,7 +46,7 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
 
 /// What one concurrent reader costs `source` resident at the chunk size these
 /// queries read with — the first term of the sub-stream divisor
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D4").
 ///
 /// **Asked of the source rather than restated as a chunk count.** A plain
 /// file's partition is several read chunks and the multiple is the library's
@@ -221,7 +221,7 @@ async fn a_budget_bound_worker_count_announces_why() {
 /// reserve, and a serial count means `ParallelismBudgetLimited` cannot fire —
 /// `requested` is one and one is what runs — so without
 /// [`PlanNoteKind::AllocationBelowFloor`] a user in a tight allocation is told
-/// nothing at all (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// nothing at all (`docs/design/decisions.md`, "D3").
 ///
 /// **The rows are the assertion beside it.** Three floors turn a budget of
 /// zero into one reader on the streaming path, and a later change to any of
@@ -577,7 +577,7 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
 /// `.xz` retains by the *partition*: a batch holding views into a decoded
 /// block pins that block, which `partition_bytes` has already charged for, so
 /// adding `max_source_span` on top would count the same bytes twice
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// (`docs/design/decisions.md`, "D47").
 ///
 /// One budget, one span and one job count, put to both source shapes:
 ///
@@ -662,7 +662,8 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
 
 /// A source that declines to be split is not split, whatever `--jobs` says —
 /// the single-block `.xz`, whose streaming fallback would make two readers
-/// each force the other's restart (`docs/design/decisions.md`, "The compressed source and the cache"). One sub-stream, and the same rows.
+/// each force the other's restart (`docs/design/decisions.md`, "D15"). One
+/// sub-stream, and the same rows.
 #[tokio::test]
 async fn a_single_block_xz_declines_to_be_split() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
@@ -803,7 +804,7 @@ async fn a_block_path_that_was_taken_is_silent() {
 
 /// A stated byte budget caps the sub-stream count below the stated `--jobs`,
 /// which is the arithmetic a memory-bounded caller states both numbers for
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). The
+/// (`docs/design/decisions.md`, "D4"). The
 /// rows are unaffected.
 ///
 /// **The divisor is two terms, not one**: what a concurrent reader costs the

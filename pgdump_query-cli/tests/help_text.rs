@@ -3,11 +3,10 @@
 //! A flag's help *is* its doc comment here (`docs/design/decisions.md`,
 //! "D67"), so the help pages
 //! are paragraphs of prose rather than one-line captions — and the rendering of
-//! a paragraph is invisible from the source. Nothing rendered a help page until
-//! this file existed, which is how `clap`'s `wrap_help` feature stayed off
-//! through every session that wrote one of those comments: the pages printed
-//! single lines up to 748 columns wide, which a terminal hard-wraps mid-word
-//! with none of the hanging indent an option list is read by.
+//! a paragraph is invisible from the source, which is why `clap`'s `wrap_help`
+//! feature and these snapshots matter: without wrapping, a page prints single
+//! lines that a terminal hard-wraps mid-word, with none of the hanging indent
+//! an option list is read by.
 //!
 //! **The snapshots are here to make the rendered shape reviewable, not to
 //! assert that the prose is true.** A wording change is expected to move them
@@ -93,8 +92,8 @@ fn no_help_page_exceeds_the_wrap_width() {
 
 /// No flag renders with nothing beside it. A flag's help is its doc comment
 /// (`docs/design/decisions.md`, "D67"), so a flag added without one prints as a bare spec in the option
-/// list — which is invisible from the source, and is exactly what these pages
-/// caught on `info --detail`. Snapshots alone would not: a blank is as
+/// list — invisible from the source, which is exactly the failure this
+/// assertion is for. Snapshots alone would not catch it: a blank is as
 /// plausible a snapshot as a paragraph.
 ///
 /// Both of `clap`'s option layouts are accepted, because which one a page gets

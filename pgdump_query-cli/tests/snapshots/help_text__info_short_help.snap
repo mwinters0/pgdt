@@ -4,8 +4,8 @@ expression: "help_page(&[\"info\", \"-h\"])"
 ---
 Report what a dump's cache holds. **`info` never scans** — it reads the cache `pgdq parse` wrote and
 errors if there is not one, rather than starting an hours-long scan on your behalf
-(`docs/design/decisions.md`, "The CLI"). A cache from an unfinished scan is reported for as far as
-it got, with the coverage stated at the top
+(`docs/design/decisions.md`, "D61"). A cache from an unfinished scan is reported for as far as it
+got, with the coverage stated at the top
 
 Usage: pgdq info [OPTIONS]
 
@@ -29,6 +29,6 @@ Options:
                            per-`COPY`-block type resolution `--detail` renders as text. No schema
                            stability is promised — this is a raw dump of our internal
                            representation, not a supported interchange format
-                           (`docs/design/decisions.md`, "The CLI"). Incompatible with
+                           (`docs/design/decisions.md`, "D67"). Incompatible with
                            `--detail`/`--map`, which format detail this already carries in full
   -h, --help               Print help

@@ -329,10 +329,11 @@ impl BoundBy {
 /// **Silence means the announced count was dispatched, never that every worker
 /// read at once or that the arrangement was a good one.** On a plain source
 /// above `POOL_DEPTH` workers the rest wait for a chunk slot and nothing here
-/// reports it, the budget having afforded them all. A scan whose blocks are far smaller than the window each is
-/// cut from delivers the count it announced and reads orders of magnitude
-/// more than a serial scan would, reporting nothing here because nothing was
-/// cut short (`KD22`, `docs/design/decisions.md`, "D52").
+/// reports it, the budget having afforded them all. A scan whose blocks are
+/// far smaller than the window each is cut from delivers the count it
+/// announced and reads orders of magnitude more than a serial scan would,
+/// reporting nothing here because nothing was cut short
+/// (`KD22`, `docs/design/decisions.md`, "D52").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Shortfall {
     /// Readers the caller asked for — [`crate::Parallelism::jobs`], which is
@@ -626,7 +627,7 @@ async fn run_region(
 /// time, which at the shipped cut width is the piece exactly and so a
 /// zero-copy slice of a block the worker was going to decode anyway. Neither
 /// shape is a property of the leader, which is why neither is written here
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism"). Both
+/// (`docs/design/decisions.md`, "D9"). Both
 /// halves are asserted rather than asserted-in-prose:
 /// [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
 /// [`no_read_a_worker_makes_exceeds_the_stated_unit`].
@@ -634,8 +635,7 @@ async fn run_region(
 /// **`Whole` is `min(piece, unit)`, not the piece**, so a cut wider than one
 /// unit caps the body read at a unit rather than growing it with the width.
 /// That bounds the buffer; it does not make a wider cut safe, which wants a
-/// read clipped to the next boundary (`docs/design/decisions.md`,
-/// "D8").
+/// read clipped to the next boundary (`docs/design/decisions.md`, "D8").
 ///
 /// **The reads repeat until the piece has passed its limit**, which no read
 /// inside it can do: the line ending at or past `range.end` needs bytes past
@@ -993,7 +993,7 @@ mod tests {
     ///
     /// A dump fixture is kilobytes and the source's own partition is several
     /// read chunks (`crate::io::PLAIN_PARTITION_CHUNKS`), so at the shipped
-    /// 1 MiB every block here is inside one partition and the scheduler
+    /// chunk size every block here is inside one partition and the scheduler
     /// correctly declines every one of them. Announcing 8 bytes as the read
     /// size makes the source advise 64-byte partitions, which turns a 4 KiB
     /// block into tens of windows of several workers each — the shape the
@@ -1123,12 +1123,12 @@ mod tests {
     ///
     /// It is what keeps every buffer such a worker takes a *pooled* one
     /// (`crate::io::BufferPool::keeps` admits the announced length and nothing
-    /// longer). It is **not** source-agnostic and was never going to be: the
-    /// measurement that decided the read shape refused a chunk-sized body read
-    /// on the block-decoding path, where a first read of the piece exactly is
-    /// a poolable zero-copy slice and a chunked one costs 76 MiB of median
-    /// resident. The bound that binds *there* is the source's own unit —
-    /// [`no_read_a_worker_makes_exceeds_the_stated_unit`] — and pinning a read
+    /// longer). It is **not** source-agnostic: the measurement that decided the
+    /// read shape refused a chunk-sized body read on the block-decoding path,
+    /// where a first read of the piece exactly is a poolable zero-copy slice
+    /// and a chunked one costs materially more resident (`measurements.md`,
+    /// `parallel-peak-rss`). The bound that binds *there* is the source's own
+    /// unit — [`no_read_a_worker_makes_exceeds_the_stated_unit`] — and pinning a read
     /// size per shape rather than the piece width is what lets the cut width
     /// be chosen by measurement (`crate::io::BOUNDARIED_PARTITION_UNITS`)
     /// without putting either shape back at risk.
@@ -1199,7 +1199,7 @@ mod tests {
     /// unit that source stated**, however many units the piece covers.
     ///
     /// It is what bounds the body buffer on the block-decoding path. `Whole`
-    /// was the piece exactly, which is safe only while a piece is one unit —
+    /// is the piece exactly, which is safe only while a piece is one unit —
     /// `crate::io::BOUNDARIED_PARTITION_UNITS`' doing, and a number the
     /// measurement is free to raise. The test that bounds a piece at the cut
     /// width passes at every width, so nothing else here fails if it is
@@ -1282,7 +1282,7 @@ mod tests {
     /// **Two ways to be declined, and neither is a branch on the source's
     /// type.** A caller that states no parallelism keeps the serial path, and
     /// a region that cannot hold one of the source's own partitions is left
-    /// alone however many jobs were stated — which at the shipped 1 MiB chunk
+    /// alone however many jobs were stated — which at the shipped chunk size
     /// is every block any fixture has.
     #[tokio::test]
     async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {

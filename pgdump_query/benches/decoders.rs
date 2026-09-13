@@ -36,9 +36,9 @@
 //!
 //! **Two things about that bench are deliberate and both are traps
 //! otherwise.** It reports 1024 appends, not one, and its figure must be
-//! divided: the operation is a few nanoseconds, and timing it singly through
-//! `iter_batched_ref` gave ~12.6 ns against a harness floor `bool/decode` puts
-//! at ~1.1 ns — three quarters apparatus. And what it measures is a *floor* on
+//! divided: the operation is a few nanoseconds, well below the harness's own
+//! per-iteration floor, so timing it singly through `iter_batched_ref` would
+//! be measuring mostly apparatus. And what it measures is a *floor* on
 //! the borrowed arm, not the borrowed arm: `push_utf8view_field` also scans
 //! the chunk deque with `find_map` and calls `block_for`, neither reproduced
 //! here. So the ratios taken against it bound the real ones from above.

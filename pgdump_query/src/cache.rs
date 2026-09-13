@@ -15,7 +15,7 @@
 //! within the first throttled save. The three scan entry points therefore
 //! refuse ([`Error::CacheSourceMismatch`]) rather than starting cold: reading
 //! it stays unusable, and being unusable to read stops licensing a write
-//! (`docs/design/decisions.md`, "The compressed source and the cache").
+//! (`docs/design/decisions.md`, "D20").
 //! Writing is not best-effort: [`save`] propagates I/O failures rather than
 //! silently falling back to running without a cache, since a write failure
 //! (read-only mount, permissions, disk full) means something is actually
@@ -23,10 +23,10 @@
 //! same command back to a full scan.
 //!
 //! **The dump file's identity is checked, not assumed**
-//! (`docs/design/decisions.md`, "The compressed source and the cache"). Every cache records the
+//! (`docs/design/decisions.md`, "D21"). Every cache records the
 //! source's *stored* size and mtime as observed at save time — bytes on the
 //! device, not the addressable (possibly decompressed) length
-//! (`docs/design/decisions.md`, "The compressed source and the cache"); [`load`]
+//! (`docs/design/decisions.md`, "D21"); [`load`]
 //! re-observes the live source and compares. A stored-size mismatch means
 //! every byte offset in the cache could be wrong, so the cache is unusable
 //! the way a foreign or wrong-version file is — and, unlike those, it is
@@ -74,7 +74,7 @@ const FORMAT_VERSION: u32 = 17;
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.
 ///
-/// **Opaque, not a struct** (`docs/design/decisions.md`, "The compressed source and the cache"):
+/// **Opaque, not a struct** (`docs/design/decisions.md`, "D21"):
 /// a remote source has no mtime at all — an ETag is not a
 /// `SystemTime` — so a future variant carries whatever evidence its own kind
 /// of source actually has, rather than every source being forced through one
@@ -109,15 +109,14 @@ impl SourceIdentity {
 }
 
 /// What produced the indexed blocks' byte offsets. Plain-format offsets are
-/// raw file positions; a future archive format's (`docs/design/roadmap.md`,
-/// P8 Track B)
-/// are entry-relative, so the two must never be silently conflated.
+/// raw file positions; a future archive format's would be entry-relative, so
+/// the two must never be silently conflated.
 ///
 /// A compressed source's indexed offsets are *also* plain-format offsets —
 /// byte for byte what a plain scan of the same decompressed content
 /// produces — so a compressed source never sets this to anything but
 /// `Plain`; what changes is [`CompressionIndex`], a sibling field rather
-/// than a value of this one (`docs/design/decisions.md`, "The compressed source and the cache").
+/// than a value of this one (`docs/design/decisions.md`, "D21").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerKind {
     Plain,
@@ -125,14 +124,14 @@ enum ContainerKind {
 
 /// What compression sits between this cache's plain-format offsets and the
 /// bytes on disk — `None` for a source that needs no such index
-/// (`docs/design/decisions.md`, "The compressed source and the cache"). A sibling of
+/// (`docs/design/decisions.md`, "D21"). A sibling of
 /// [`ContainerKind`], not a value of it: see that type's docs.
 ///
 /// Built at [`save`] time from [`ByteRangeSource::seek_table`], which
 /// [`crate::XzSource`] answers from the table it already built while
 /// opening — persisting a cache never re-walks the file to get this — and read
 /// back by [`claim`] before any source exists, which is what
-/// spares every command after the first one that walk. P15's
+/// spares every command after the first one that walk. A future
 /// gzip index is a different *shape*, not a variant of this one — a set of
 /// decoder checkpoints for a single-member file, and for a multi-member one a
 /// member list that resembles a block list without being `xz_seek`'s type — so
@@ -155,7 +154,7 @@ enum CompressionIndex {
 /// (`crate::PlanNoteKind::CompressedBlockPathDeclined`); `blocks` is how much
 /// seeking the file offers at all; `streams` is what explains a slow first
 /// command, a concatenated file costing one seek per stream to walk
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D18").
 ///
 /// **Derived, not stored.** It is a projection of the seek table the envelope
 /// already carries, computed on load like the diagnostics beside it, so a
@@ -196,7 +195,7 @@ struct CacheFile {
     /// The addressable (decompressed, for a compressed source) length —
     /// [`ByteRangeSource::size`] as observed at save time. Its own field
     /// rather than an alias of `identity`'s stored size
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"): the two
+    /// (`docs/design/decisions.md`, "D21"): the two
     /// diverge for a compressed source, and this is the number
     /// [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`] hand out as
     /// `total_size` for the coverage arithmetic to read.
@@ -224,7 +223,7 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
 /// parsed it" even though both end in `pgdq parse`. A caller that *can* scan
 /// has the reason in hand before it does any work, which is where the decision
 /// about what to do with the file at that path belongs
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D22").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheStatus {
     /// Nothing at this path.
@@ -240,7 +239,7 @@ pub enum CacheStatus {
     /// A readable cache whose recorded *stored* size disagrees with the live
     /// source's, so every byte offset in it could be wrong — the staleness
     /// check now reads [`ByteRangeSource::stored_size`], not the addressable
-    /// length (`docs/design/decisions.md`, "The compressed source and the cache"). Both
+    /// length (`docs/design/decisions.md`, "D21"). Both
     /// stored sizes are carried because "the file changed" is the fact a
     /// reporting caller states, and the two numbers are the evidence for it.
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
@@ -266,7 +265,7 @@ pub enum CacheStatus {
     /// A usable cache whose `index.scanned_through` falls short of
     /// `total_size` — a real, not-yet-finished scan (e.g. a preamble-only
     /// scan, or a query that stopped once its target settled), not a defect
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). What "not enough"
+    /// (`docs/design/decisions.md`, "D22"). What "not enough"
     /// means is caller-specific: `pgdq info` reports whatever this holds and
     /// states the coverage (`docs/design/decisions.md`, "The CLI"),
     /// while a caller that resumes an incremental scan from wherever it left
@@ -291,7 +290,7 @@ pub enum CacheStatus {
 
 /// What [`CacheMode::load`] answered a caller that holds a live source: an
 /// index to build forward from, or the reason there is none
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D22").
 ///
 /// **The reason is not a detail of the cache file alone.** `Disabled` is a
 /// statement about the *caller* — no path was consulted, because the caller
@@ -341,7 +340,7 @@ pub enum CacheLoad {
     /// **The three scan entry points refuse on this one**, where they start
     /// cold on the other three: a cache that describes another file is data
     /// this library does not replace on its own
-    /// (`docs/design/decisions.md`, "The compressed source and the cache"). The two sizes are what
+    /// (`docs/design/decisions.md`, "D20"). The two sizes are what
     /// [`CacheMode::source_mismatch`] turns into
     /// [`Error::CacheSourceMismatch`].
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
@@ -357,8 +356,8 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
         Err(status) => return Ok(status),
     };
     let live = SourceIdentity::observe(source).await?;
-    // One variant today, so both patterns are irrefutable; a future variant
-    // (P14's `Remote`) is matched explicitly rather than through a shared
+    // One variant today, so both patterns are irrefutable; a future
+    // `Remote` variant is matched explicitly rather than through a shared
     // accessor — see `SourceIdentity`'s docs.
     let SourceIdentity::LocalFile { stored_size: cached_stored_size, mtime: cached_mtime } =
         file.identity;
@@ -394,7 +393,7 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
 }
 
 /// What the cache at a path settles about a dump file **before any source
-/// exists** — [`claim`]'s answer (`docs/design/decisions.md`, "The compressed source and the cache").
+/// exists** — [`claim`]'s answer (`docs/design/decisions.md`, "D18").
 ///
 /// **Two outcomes, because one of them is worth more than knowledge about
 /// compression.** Everything a caller can do with a cache early is decide
@@ -425,7 +424,7 @@ pub enum CacheClaim {
 
 /// What the cache at `cache_path` settles about the file at `dump_path`,
 /// answered **before any source exists**
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D18").
 ///
 /// This is the half of the cache a caller needs *early*: recognition decides
 /// which source to build, and for an `.xz` file it either walks the stream
@@ -445,8 +444,8 @@ pub enum CacheClaim {
 /// *Rejected:* leaving this answering [`KnownCompression`] alone and adding a
 /// sibling that reports the stored size. Both would decode the envelope, so
 /// the *usable* path — the one that matters, since it is the one a warm koji
-/// run takes — would decode a 31,150-entry seek table twice to spare a walk on
-/// the path that is about to fail.
+/// run takes — would decode a many-thousand-entry seek table twice to spare a
+/// walk on the path that is about to fail.
 pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
     let Ok(file) = read_cache_file(cache_path)? else {
         return Ok(CacheClaim::Compression(KnownCompression::Unknown));
@@ -587,7 +586,7 @@ impl CacheMode {
     /// exists to build forward from. Answering "no index" for `Incomplete`
     /// here would make every partial cache invisible to the next scan, which is
     /// exactly the incremental caching `docs/design/decisions.md`,
-    /// "D48" depends on. A
+    /// "D22" depends on. A
     /// caller that instead *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`],
     /// which is what `pgdq info` does.
@@ -595,7 +594,7 @@ impl CacheMode {
     /// **The four unusable statuses are not collapsed**, and neither is the
     /// caller's own opt-out: each arrives as its own [`CacheLoad`] variant, so
     /// a caller about to scan holds the reason before it does any work rather
-    /// than after (`docs/design/decisions.md`, "The compressed source and the cache").
+    /// than after (`docs/design/decisions.md`, "D22").
     pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<CacheLoad> {
         match self {
             CacheMode::Enabled(path) => Ok(match load(path, source).await? {
@@ -626,7 +625,7 @@ impl CacheMode {
 
     /// The refusal a scan entry point answers [`CacheLoad::SourceChanged`]
     /// with: this mode's path, plus the two stored sizes the load already
-    /// compared (`docs/design/decisions.md`, "The compressed source and the cache"). The path lives
+    /// compared (`docs/design/decisions.md`, "D20"). The path lives
     /// here rather than on `CacheLoad` because [`CacheMode::Disabled`] has
     /// none, and the mode is what every one of those callers holds anyway.
     ///

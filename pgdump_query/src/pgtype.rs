@@ -25,9 +25,9 @@ pub enum TypeOutcome {
     /// mapped there, not merely defaulted), paired with the [`NestedPlan`]
     /// that says which literal form fills it.
     ///
-    /// **The pair has one producer.** Nothing outside this module builds
-    /// either half of a nested column's pairing, which is what keeps the two
-    /// trees in agreement without a third structure enforcing it.
+    /// **The pair has one producer** — nothing outside this module builds
+    /// either half of a nested column's pairing
+    /// (`docs/design/decisions.md`, "D39").
     Mapped(DataType, NestedPlan),
     /// A declared type string this build has no mapping for at all — neither
     /// a built-in, nor found in the database's `CREATE TYPE`/`DOMAIN` list,
@@ -37,12 +37,12 @@ pub enum TypeOutcome {
     /// An array whose element type is opaque by construction — `box`, a
     /// C-level base type, or a shell type, through any chain of domains.
     ///
-    /// Refused rather than mapped to `List<Utf8View>` because the array
-    /// separator is the *element type's* `typdelim` (I22) and `box`'s is
-    /// `;`: splitting such a literal on `,` silently invents element
-    /// boundaries, and the elements it would recover are opaque text
-    /// anyway. Held apart from [`Self::OpaqueBaseType`] so `pgdq info` can
-    /// say which of the two happened.
+    /// Refused rather than mapped to `List<Utf8View>`: the array separator is
+    /// the *element type's* `typdelim` (I22) and `box`'s is `;`, so splitting
+    /// such a literal on `,` would invent element boundaries
+    /// (`docs/design/decisions.md`, "D41"). Held apart from
+    /// [`Self::OpaqueBaseType`] so `pgdq info` can say which of the two
+    /// happened.
     OpaqueElementType,
     /// An array whose element type is *itself* an array, through any chain of
     /// domains — `CREATE DOMAIN d AS integer[]` and a column of `d[]`, the
@@ -50,16 +50,16 @@ pub enum TypeOutcome {
     /// is a spelling of `integer[]`, whose element is `integer` (I28), and it
     /// resolves like any other array.
     ///
-    /// Refused for the same reason as [`Self::OpaqueElementType`]: the
-    /// element's own literal grammar is not what the outer split assumes.
-    /// The value is written **one brace deep** — `{"{1,2}","{3}"}`, since
-    /// `array_out` force-quotes any element whose text contains `{` (I25) —
-    /// so the literal's leading brace run and the column's resolved `List`
-    /// depth are independent for this shape alone, and
-    /// `NestedPlan::Array(Array(…))` would have to mean both *one literal,
-    /// two dimensions* and *one literal whose elements are literals*. Held
-    /// apart from `OpaqueElementType` because the label would lie:
-    /// `integer[]` is not opaque, it is understood and declined.
+    /// Refused for the same reason as [`Self::OpaqueElementType`]
+    /// (`docs/design/decisions.md`, "D41"): the element's own literal grammar
+    /// is not what the outer split assumes. The value is written **one brace
+    /// deep** — `{"{1,2}","{3}"}`, since `array_out` force-quotes any element
+    /// whose text contains `{` (I25) — so the literal's leading brace run and
+    /// the column's resolved `List` depth are independent for this shape
+    /// alone, and `NestedPlan::Array(Array(…))` would have to mean both *one
+    /// literal, two dimensions* and *one literal whose elements are
+    /// literals*. Held apart from `OpaqueElementType` because the label would
+    /// lie: `integer[]` is not opaque, it is understood and declined.
     ///
     /// Deficiency register: `deficiency: KD3` — this and the census's
     /// [`crate::resolve::ColumnResolution::VaryingArrayShape`] leave the
@@ -71,8 +71,7 @@ pub enum TypeOutcome {
     /// additive.
     NestedArrayElement,
     /// A C-level base type or a shell/undefined type — genuinely
-    /// information-free, not merely unimplemented (see the phase doc's
-    /// "`CREATE TYPE`: six emitted forms").
+    /// information-free, not merely unimplemented.
     OpaqueBaseType,
     /// A `CREATE TYPE ... AS ENUM ()` with no labels at all.
     EmptyEnum,
@@ -81,22 +80,21 @@ pub enum TypeOutcome {
 /// Which PostgreSQL literal form fills a resolved Arrow type, at every
 /// position in it.
 ///
-/// **The Arrow type alone cannot say.** `int4range[]` and `int4multirange`
-/// both resolve to `List<Struct{lower, upper, …}>`, and they are written
-/// differently — `{"[1,10)","[2,3)"}` with array quoting versus `{[1,10),
-/// [2,3)}` with none at all. A composite that happens to have the range
-/// struct's five fields is the same collision one level down. So "which of
-/// [`crate::nested`]'s codecs applies here" travels beside the `DataType`
-/// rather than being inferred from it, and it is a tree because the answer
-/// differs per nesting level.
+/// **The Arrow type alone cannot say** (`docs/design/decisions.md`, "D39"):
+/// `int4range[]` and `int4multirange` both resolve to
+/// `List<Struct{lower, upper, …}>` and are written differently —
+/// `{"[1,10)","[2,3)"}` with array quoting versus `{[1,10), [2,3)}` with none
+/// at all — and a composite that happens to have the range struct's five
+/// fields is the same collision one level down. It is a tree because the
+/// answer differs per nesting level.
 ///
 /// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
 /// included), which is where every branch bottoms out.
 /// `Serialize` so `pgdq info --json` can export a resolved schema's plans
 /// structurally rather than inventing a second spelling for them
-/// (`docs/design/decisions.md`, "The CLI"). **Not `Deserialize`, and
+/// (`docs/design/decisions.md`, "D67"). **Not `Deserialize`, and
 /// never persisted**: the cache holds what the dump said, never what we
-/// concluded (`docs/design/decisions.md`, rule 5).
+/// concluded (`docs/design/decisions.md`, "D68").
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub enum NestedPlan {
     /// Filled by `crate::decode`'s per-type decoders, or held as text.
@@ -170,10 +168,10 @@ pub enum CompareKind {
     /// and trimming it is what makes this the same comparison the server
     /// makes.
     ///
-    /// Held apart from [`Self::Text`] rather than carried as a flag on it
-    /// because it is a different comparison, not a different column: the
-    /// register has one arm per declared type and `character` is that arm.
-    /// The trim is a reverse scan for `0x20` yielding a shorter slice — no
+    /// Held apart from [`Self::Text`] rather than carried as a flag on it:
+    /// the register has one arm per declared type
+    /// (`docs/design/decisions.md`, "D40") and `character` is that arm. The
+    /// trim is a reverse scan for `0x20` yielding a shorter slice — no
     /// allocation and no decode — which is why it is admissible on the
     /// per-row path where a decode would not be.
     ///
@@ -270,8 +268,8 @@ pub enum ComparisonDivergence {
     /// server does rather than less, and "agrees with PostgreSQL" is not a
     /// question the type can be asked.
     ///
-    /// Every other text-held type now carries a comparison of its own, and
-    /// every collatable one carries one of the two collation variants below.
+    /// Every other text-held type carries a comparison of its own, and every
+    /// collatable one carries one of the two collation variants below.
     AsText,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the
@@ -578,8 +576,8 @@ impl NestedCompare {
 }
 
 /// **The comparison register's answer for one declared type**: how a column
-/// of it compares, and whether that is the order PostgreSQL itself defines.
-/// Rendered as a table in `docs/design/decisions.md`, "D55".
+/// of it compares, and whether that is the order PostgreSQL itself defines
+/// (`docs/design/decisions.md`, "D40").
 ///
 /// **One fact, not two.** "This type has no order here" and "there is no way
 /// to decode a value of it" are the same statement, so they are one variant
@@ -707,8 +705,8 @@ fn collation_is_bytewise(reference: &str) -> bool {
 ///
 /// **`kind` is the comparison in every case; only the verdict moves.** That
 /// is the whole of what reading the clause buys: `text COLLATE "C"` and a
-/// bare `name` are told they agree, where before every text column was told
-/// it diverged (`docs/design/decisions.md`, "D55").
+/// bare `name` are told they agree, where a column whose collation the file
+/// never states cannot be.
 ///
 /// `kind` exists because `character(n)` joins this rule with a comparison of
 /// its own: `bpcharcmp` trims both operands' trailing blanks and *then*
@@ -783,9 +781,8 @@ pub const RANGE_STRUCT_FIELDS: [&str; 5] =
 /// Split `declared` into its base type name and typmod contents, if any
 /// (`numeric(38,10)` -> `("numeric", Some("38,10"))`). Only `numeric` cares
 /// about the typmod's *value* — every other typed mapping below is
-/// `Microsecond`-precision or otherwise typmod-independent by design (see
-/// "Type mapping" in the phase doc), so this split is enough to let every
-/// other match ignore it entirely.
+/// `Microsecond`-precision or otherwise typmod-independent by design, so this
+/// split is enough to let every other match ignore it entirely.
 pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
     match s.find('(') {
         Some(i) if s.ends_with(')') => (s[..i].trim_end(), Some(&s[i + 1..s.len() - 1])),
@@ -823,18 +820,16 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
     }
 }
 
-/// **The built-in scalar table** — "Type mapping"'s table for everything with
-/// no `.` in its declared name (I8) that is not a range. `None` means the base
-/// name isn't a built-in this build recognises (e.g. `money`, never
-/// specified).
+/// **The built-in scalar table**: every declared type with no `.` in its name
+/// (I8) that is not a range. `None` means the base name isn't a built-in this
+/// build recognises (e.g. `money`).
 ///
 /// **Each arm answers both questions at once**: which Arrow type the column
 /// gets, and how two of its values compare. That pairing is the comparison
 /// register's exhaustiveness check — a type added here without a comparison
-/// does not compile — and it replaces the exhaustive `match` over `DataType`
-/// the register used to be, which could only ever have been keyed on a type
-/// four unrelated declared types share (`docs/design/decisions.md`,
-/// "D55").
+/// does not compile — and it is why the register is keyed on the declared
+/// type rather than on the Arrow type four unrelated declared types share
+/// (`docs/design/decisions.md`, "D40").
 ///
 /// `collation` is the column's own `COLLATE` clause, verbatim, and
 /// `collations` is what the dump's own `CREATE COLLATION` statements said
@@ -964,7 +959,7 @@ fn builtin_scalar(
 
 /// A canonical Arrow extension type one of our columns claims — the *name*
 /// half of the mapping, which the Arrow type alone cannot carry
-/// (`docs/design/decisions.md`, "Type resolution and decoders").
+/// (`docs/design/decisions.md`, "D37").
 ///
 /// Two of them exist for us, because the Arrow spec defines two whose storage
 /// type is already what we emit: `arrow.uuid` over `FixedSizeBinary(16)`, and
@@ -1051,7 +1046,7 @@ pub(crate) fn with_extension(field: Field, declared: &str, types: &[TypeDef]) ->
     }
 }
 
-/// The built-in half of "Type mapping"'s table: [`builtin_scalar`], plus
+/// The built-in half of the mapping: [`builtin_scalar`], plus
 /// PostgreSQL's twelve built-in range and multirange types. Unlike a
 /// user-defined range (`CREATE TYPE ... AS RANGE`), those never appear
 /// schema-qualified and have no `CREATE TYPE` of their own anywhere in the
@@ -1226,8 +1221,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
             let (bound, plan) = range_bound(subtype.as_deref(), types);
             TypeOutcome::Mapped(range_struct(bound), NestedPlan::Range(plan))
         }
-        // Both genuinely information-free (see the phase doc's "`CREATE
-        // TYPE`: six emitted forms") — one diagnostic bucket for both.
+        // Both genuinely information-free — one diagnostic bucket for both.
         TypeKind::Base | TypeKind::Shell => TypeOutcome::OpaqueBaseType,
     }
 }
@@ -1609,12 +1603,9 @@ fn nested_position(
 /// spelling of the same string and a domain compares as whatever it bottoms
 /// out at.
 ///
-/// **Keyed on the declared type, not on the Arrow one.** Four unrelated
-/// declared types reach `Utf8View` — a text type, a bare `numeric`, a
-/// text-held type such as `time with time zone`, and `json`, which PostgreSQL
-/// does not order at all — so the Arrow type cannot say which comparison a
-/// column wants, and the answers that will replace them are per declared type
-/// too.
+/// **Keyed on the declared type, not on the Arrow one**
+/// (`docs/design/decisions.md`, "D40"): several unrelated declared types
+/// reach `Utf8View` and compare differently.
 ///
 /// **A nested type answers [`ComparisonPlan::Nested`]**, one node per nesting
 /// level, built by the same walk: an array's element, a composite's fields
@@ -2083,8 +2074,7 @@ mod tests {
     /// only in the `[n]` form, what precedes it is a bare type name, and a
     /// malformed bound is not a bound. Every string here is a syntax error on
     /// 16.15, and the outcome that says so is the honest `Unknown` — not a
-    /// refusal, which would state something false about the column the way
-    /// `integer[][]` did before this normalization existed.
+    /// refusal, which would state something false about the column.
     #[test]
     fn a_declaration_postgresql_would_reject_is_not_read_as_an_array() {
         for declared in [
@@ -2397,8 +2387,8 @@ mod tests {
     }
 
     /// The register, row for row: every declared type this build maps to a
-    /// scalar, and how a column of it compares. This is the authority the
-    /// Markdown table in `docs/design/decisions.md`, "D55", renders for humans.
+    /// scalar, and how a column of it compares
+    /// (`docs/design/decisions.md`, "D40").
     ///
     /// **Every arm of [`builtin_scalar`] appears here**, which is what makes
     /// the list a register rather than a sample: a type added to that table
@@ -2608,8 +2598,7 @@ mod tests {
         let nd = ComparisonDivergence::NonDeterministicCollation;
         let named = ComparisonDivergence::NonBytewiseCollation;
 
-        // Nothing declared: the clause is read off its name alone, exactly as
-        // before this branch existed.
+        // Nothing declared: the clause is read off its name alone.
         assert_eq!(
             comparison_for("text", Some("public.icu_ci"), &[], &[]),
             ComparisonPlan::diverging(K::Text, named)

@@ -34,10 +34,9 @@ fn shape(census: &[(String, ArrayShape)], column: &str) -> ArrayShape {
     census.iter().find(|(name, _)| name == column).unwrap_or_else(|| panic!("no column {column}")).1
 }
 
-/// `t_array_shape` is the fixture column set 4.1 added for exactly this
-/// slice — one uniformly 2-D column, one that mixes 1-D and 2-D across rows,
-/// and one carrying `[lb:ub]=` prefixes. It is an input to the census, not to
-/// the decoder.
+/// `t_array_shape` holds one uniformly 2-D column, one that mixes 1-D and 2-D
+/// across rows, and one carrying `[lb:ub]=` prefixes. It is an input to the
+/// census, not to the decoder.
 #[tokio::test]
 async fn the_shape_fixture_records_the_dimensions_its_literals_carry() {
     for version in VERSIONS {
@@ -150,8 +149,8 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
 /// schema after mapping and before emitting, over exactly the blocks it will
 /// replay — so a cold query that stopped at its target retypes as confidently
 /// as a full scan, and the `FieldDecode` refusal a multi-dimensional value
-/// used to earn is unreachable for a top-level array column on either path
-/// (`docs/design/decisions.md`, "D35").
+/// would otherwise earn is unreachable for a top-level array column on either
+/// path (`docs/design/decisions.md`, "D35").
 #[tokio::test]
 async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
     let path = types_fixture(16, "default");

@@ -394,8 +394,8 @@ async fn the_types_schema_declares_one_deterministic_and_one_non_deterministic_c
 /// is an environment release number that moves when an image pin moves. That
 /// much is established practice here — every fixture header already carries a
 /// Debian package revision, and `fixtures/<v>/oracle/meta.tsv` commits glibc's
-/// `default_collversion` on purpose — but this was the one such byte nothing
-/// watched.
+/// `default_collversion` on purpose — and this test is what watches this
+/// byte the same way.
 ///
 /// **The assertion is agreement, never the literal**, which is what
 /// `scripts/oracle_differences.py` already demands of `default_collversion`.
@@ -408,9 +408,9 @@ async fn the_types_schema_declares_one_deterministic_and_one_non_deterministic_c
 /// change, and a check that fires on the expected event is a signal that is
 /// always on.
 ///
-/// The shape claim is the other half, and it is the one
-/// [`the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`]
-/// used to make in prose: the version is absent from `default`, absent from
+/// The shape claim is the other half, made concrete here rather than in
+/// [`the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`]'s
+/// prose: the version is absent from `default`, absent from
 /// `data-only` — which emits no `CREATE COLLATION` at all — and absent from
 /// `public.c_collation` under every flag set, a `C` libc collation having no
 /// `collversion` to record.

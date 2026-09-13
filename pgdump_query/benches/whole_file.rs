@@ -17,11 +17,9 @@
 //! **The input is regenerated when the generator changes**, not only when it
 //! is missing. A stamp beside it holds a hash of the generator's source and
 //! of `PERF_DATA_SIZE_MB`; a mismatch regenerates. Without that, a checkout
-//! holding an input from before a generator change benchmarks the old bytes
-//! indefinitely and silently — and the machines holding one are exactly the
-//! ones that would compare the new number against an old one — which is a
-//! trap this bench has already sprung once, on a generator change that moved
-//! the bytes.
+//! holding an input from before a generator change would benchmark the old
+//! bytes indefinitely and silently — and the machines holding one are exactly
+//! the ones that would compare the new number against an old one.
 
 use std::hint::black_box;
 use std::ops::ControlFlow;
@@ -32,8 +30,8 @@ use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{LocalFileSource, QueryOptions, ScanOptions, read_table};
 
-/// Fits page cache on any development machine; see the phase doc's
-/// "Synthetic performance dataset".
+/// Fits page cache on any development machine
+/// (`scripts/generate_perf_data.py --help`).
 const PERF_DATA_SIZE_MB: u32 = 256;
 
 /// What the input's bytes depend on: the generator's own source and the size

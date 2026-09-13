@@ -23,8 +23,9 @@ use pgdump_query::{
     LocalFileSource, NestedPlan, QueryOptions, ScanOptions, read_table, render_field,
 };
 
-/// Which codec a column's literals belong to. Resolution does not choose this
-/// yet — that is 4.4's job — so this file names it per column.
+/// Which codec a column's literals belong to, named here per column rather
+/// than read off `NestedPlan`: this file tests the codec resolution feeds,
+/// not resolution itself.
 #[derive(Clone, Copy)]
 enum Kind {
     Array,
@@ -228,8 +229,9 @@ async fn the_delimiter_trap_round_trips_while_splitting_on_the_wrong_character()
     }
 }
 
-/// The shapes 4.5's census exists to find, read off real values rather than
-/// asserted from the DDL — which cannot see them at all (I21).
+/// The shapes the census (`docs/design/decisions.md`, "D35") exists to find,
+/// read off real values rather than asserted from the DDL — which cannot see
+/// them at all (I21).
 #[tokio::test]
 async fn the_fixture_carries_the_array_shapes_the_census_will_have_to_report() {
     for version in [13, 16, 18] {
@@ -496,7 +498,7 @@ mod oracle {
         }
         // A floor, not a count: the walk skips a row for three good reasons,
         // and a bug in any of them would leave it asserting almost nothing
-        // while passing. 475 today.
+        // while passing.
         assert!(asserted > 350, "only {asserted} literals asserted");
     }
 }

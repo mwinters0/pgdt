@@ -224,8 +224,8 @@ async fn disabled_cache_still_resolves_types() {
 }
 
 /// The blocking `Iterator` wrapper drives the same stream to the same result
-/// with no ambient `tokio` runtime — the sync-caller path
-/// `docs/design/decisions.md` calls for.
+/// with no ambient `tokio` runtime, for a caller with no async context of its
+/// own.
 #[test]
 fn blocking_iterator_matches_async_stream() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -265,12 +265,10 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
     rows
 }
 
-/// `table_stream` used to match `COPY` blocks by qualified table name alone,
-/// with no notion of which `\connect` segment a block belongs to, and
-/// silently unioned both databases' rows for a name genuinely defined
-/// twice. The one-target-per-query rule (`docs/design/decisions.md`)
-/// closed that: the query now errors, naming both
-/// candidates, instead of returning a union of two unrelated tables.
+/// A qualified table name genuinely defined in two `\connect`ed databases is
+/// ambiguous by name alone, so the one-target-per-query rule
+/// (`docs/design/decisions.md`, "D49") errors, naming both candidates,
+/// instead of unioning two unrelated tables' rows.
 #[tokio::test]
 async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database_selector() {
     for version in [13, 16, 18] {

@@ -140,11 +140,11 @@ async fn nested_columns_round_trip_against_strings_mode() {
             // composite, an array of that domain, a composite whose field is
             // a composite, an array of a user range, a domain over a range)
             // beside the third refusal, an array whose element type is itself
-            // an array (I26). Before that refusal existed this table was a
-            // `FieldDecode` on every row of `v_nested_array`, since the
-            // literal is one brace deep and the type it resolved to was two
-            // `List`s deep; the table round-tripping is what says the column
-            // now comes back as the text it always was.
+            // an array (I26). The refusal is what keeps `v_nested_array` from
+            // a `FieldDecode` on every row: the literal is one brace deep and
+            // the type it resolves to is two `List`s deep, and the table
+            // round-tripping is what says the column comes back as the text
+            // it always was.
             "public.t_nested_array",
             // Four array-declaration spellings that reached `pg_dump` as
             // `integer[]` and are indistinguishable here (I28). The table is
@@ -165,12 +165,11 @@ async fn nested_columns_round_trip_against_strings_mode() {
 
 /// **What the census buys, end to end.** `t_array_shape` is the column set
 /// the optimistic path refuses — a uniformly 2-D column, one that mixes 1-D
-/// and 2-D across rows, and one carrying `[lb:ub]=` prefixes. A query over it
-/// used to be a `FieldDecode`; now the schema commits against what the
-/// mapping pass actually saw, so the uniform column becomes
-/// `List(List(Int32))` and the two that no Arrow list type is honest about
-/// come back as text — decided before the first batch, not at row 40 million
-/// (`docs/design/decisions.md`, "D35").
+/// and 2-D across rows, and one carrying `[lb:ub]=` prefixes. The schema
+/// commits against what the mapping pass actually saw, so the uniform column
+/// becomes `List(List(Int32))` and the two that no Arrow list type is honest
+/// about come back as text — decided before the first batch, not at row 40
+/// million (`docs/design/decisions.md`, "D35").
 ///
 /// It round-trips against `Strings` mode like every other table, which is
 /// what says the retyped column is still exact: `{{1,2},{3,4}}` in, the same
@@ -228,9 +227,8 @@ async fn the_census_retypes_an_array_column_before_the_schema_commits() {
 /// no unit test reaches: `v_2d` is declared `integer[][]` and holds uniformly
 /// 2-D values, so it must resolve to `List(Int32)` — one array level, per the
 /// normalization — and then be *deepened by the census* to `List(List(Int32))`
-/// exactly as a column spelled `integer[]` would be. Before the normalization
-/// it was refused outright as an array of arrays, which is what the refusal
-/// stating something false about a column looks like from the outside.
+/// exactly as a column spelled `integer[]` would be, rather than refused
+/// outright as an array of arrays.
 #[tokio::test]
 async fn an_array_declaration_pg_dump_never_writes_resolves_and_takes_its_census() {
     use arrow::datatypes::{DataType, Field};
@@ -390,7 +388,7 @@ async fn an_array_inside_a_composite_keeps_the_optimistic_path() {
 /// `NaN` bypasses `numeric(p,s)`'s own precision/scale check and has no
 /// `Decimal128`/`Decimal256` representation, so it's a genuine decode
 /// failure, not a bug — `public.t_numeric.v_small numeric(10,2)` carries it
-/// for exactly this reason ("Type mapping" in the phase doc). Checks the
+/// for exactly this reason (`docs/design/decisions.md`, "D42"). Checks the
 /// error names the right table/column/declared type/value rather than
 /// merely failing.
 #[tokio::test]

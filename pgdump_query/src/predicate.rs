@@ -103,10 +103,9 @@ impl PredicateOp {
 /// three-valued logic says so, and a row survives only where the root is
 /// `True`. Four operators are two-valued on a NULL field by definition, and
 /// they exist because unknown swallows everything else:
-/// `IsNull`/`IsNotNull` ask about the NULL directly
-/// (`docs/status/history/2026-08-22.md`), and
+/// `IsNull`/`IsNotNull` ask about the NULL directly, and
 /// `IsDistinctFrom`/`IsNotDistinctFrom` count it as a value
-/// (`docs/design/decisions.md`, "Predicates").
+/// (`docs/design/decisions.md`, "D53").
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
@@ -152,15 +151,15 @@ impl Truth {
 
 /// A row filter as a boolean expression tree over single-column
 /// [`Predicate`] terms — what `QueryOptions::filter` carries
-/// (`docs/design/decisions.md`, "Predicates").
+/// (`docs/design/decisions.md`, "D54").
 ///
 /// `And` and `Or` are **n-ary**, because the shape a repeated `--filter`
 /// builds is n-ary by construction and binary nesting would make the
 /// ordinary case a right-leaning chain every reader has to flatten
-/// mentally. The default — and the filter every query had before this — is
-/// the empty conjunction, [`Expr::all`] over nothing, which every row
-/// satisfies; so "no filter" is a degenerate tree rather than a case of its
-/// own, and nothing on the row path branches on whether a filter exists.
+/// mentally. The default is the empty conjunction, [`Expr::all`] over
+/// nothing, which every row satisfies; so "no filter" is a degenerate tree
+/// rather than a case of its own, and nothing on the row path branches on
+/// whether a filter exists.
 ///
 /// **Nothing here is parsed.** `Expr` is a struct an embedder fills in field
 /// by field, exactly as [`Predicate`] is; the `--where` grammar that builds
@@ -205,7 +204,7 @@ impl Default for Expr {
 /// deliberately: `DumpIndex.diagnostics` is the L1 file-level channel and
 /// `ResolvedSchema.notes` is the L2 per-column one, while this is per-column
 /// *and* conditional on a predicate — L4. Writing it into either would
-/// invert the layering (`docs/design/decisions.md`).
+/// invert the layering (`docs/design/decisions.md`, "D68").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonNote {
     pub column: String,
@@ -1737,8 +1736,7 @@ fn render_macaddr(text: &str, octets: usize) -> Option<String> {
 ///   where `*_out` is *not* injective over the values one file can hold, so
 ///   no rendering of the literal can make the comparison bytewise.
 ///
-/// **Five kinds decode, and the spec that named two was short by three.** A
-/// bare `numeric` keeps its display scale, so `1.5` and `1.50` are one value
+/// **Five kinds decode.** A bare `numeric` keeps its display scale, so `1.5` and `1.50` are one value
 /// written two ways (I33); an `interval` collapses months and days, so
 /// `1 mon`, `30 days` and `720:00:00` are one value written three ways (I40);
 /// `jsonb` prints its numbers through `numeric_out` and compares them by
@@ -2480,7 +2478,7 @@ impl ResolvedExpr {
     /// Whether `raw_row` survives this filter: its root evaluates
     /// [`Truth::True`]. `Unknown` and `False` both drop the row, which is
     /// what makes the collapse at the root sound even though it is not sound
-    /// under a `Not` (`docs/design/decisions.md`, "Predicates").
+    /// under a `Not` (`docs/design/decisions.md`, "D54").
     pub(crate) fn matches(
         &self,
         raw_row: RawRow<'_>,
@@ -4118,7 +4116,7 @@ mod tests {
 
     /// A nested column one of whose positions has no order here still
     /// answers `=` — over the container's whole text — and **says what that
-    /// costs**, where it used to say nothing.
+    /// costs**.
     ///
     /// The position is what makes it worth saying: `array_cmp` and
     /// `record_cmp` look up the position type's comparison proc and raise

@@ -24,7 +24,7 @@ use std::process::Command;
 mod common;
 use common::{run, stderr_of, stdout_of};
 
-/// The hand-written dump this phase's fixtures derive from —
+/// The hand-written dump these fixtures derive from —
 /// `pgdump_query/tests/data/edge_cases.sql`, not the generated `fixtures/`
 /// tree `common::fixture` addresses, which carries no equivalent file (xz
 /// container shape does not depend on a PostgreSQL major, so nothing here
@@ -61,7 +61,8 @@ fn seekable_xz() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Non-seekable, single block: a bare `xz` invocation with no `-T`/
-/// `--block-size` — one stream, one block, D2's diagnosed shape and the
+/// `--block-size` — one stream, one block, the shape
+/// `docs/design/decisions.md`, "D19" diagnoses, and the
 /// backward-decode-from-zero path.
 fn non_seekable_xz() -> (tempfile::TempDir, PathBuf) {
     xz_fixture(&[], "edge_cases_single_block.sql.xz")
@@ -96,7 +97,8 @@ fn info_json(path: &Path) -> serde_json::Value {
 
 /// The seekable shape's index is byte-for-byte the plain file's: same spans,
 /// same per-block resolution, same coverage — **and no diagnostics on either
-/// side**, since a seekable `.xz` earns no D2 warning.
+/// side**, since a seekable `.xz` earns no warning
+/// (`docs/design/decisions.md`, "D19").
 ///
 /// The `compression` object is the one field that legitimately differs, and
 /// it is asserted rather than merely excused: it describes the *container*,
@@ -170,8 +172,8 @@ fn info_detail_states_the_container_shape_from_the_cache_alone() {
     assert!(!plain_text.contains("compression:"), "{plain_text}");
 }
 
-/// Whether an `info --json` document's `diagnostics` array carries D2's
-/// warning.
+/// Whether an `info --json` document's `diagnostics` array carries the
+/// non-seekable warning (`docs/design/decisions.md`, "D19").
 fn has_non_seekable_warning(json: &serde_json::Value) -> bool {
     json["diagnostics"]
         .as_array()
@@ -181,7 +183,8 @@ fn has_non_seekable_warning(json: &serde_json::Value) -> bool {
 }
 
 /// The non-seekable shape agrees with the plain file on everything **but**
-/// the diagnostics: it alone carries D2's warning, which names the one block
+/// the diagnostics: it alone carries the warning
+/// (`docs/design/decisions.md`, "D19"), which names the one block
 /// a bare `xz` invocation produced.
 #[test]
 fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
@@ -209,9 +212,9 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
     xz_json.as_object_mut().unwrap().remove("compression");
     assert_eq!(plain_json, xz_json, "the warning is the only thing that may differ");
 
-    // And the warning itself is D2's, in its rendered text form — the
-    // human-readable side of the same diagnostic, naming the cause and the
-    // remedy (`docs/design/decisions.md`, "The compressed source and the cache").
+    // And the warning itself is the same diagnostic's, in its rendered text
+    // form — the human-readable side, naming the cause and the remedy
+    // (`docs/design/decisions.md`, "D19").
     let text = stdout_of(&run(&["info", "--source", xz_path.to_str().unwrap(), "--detail"]));
     assert!(text.contains("no seek structure"), "{text}");
     assert!(text.contains("xz -T0"), "{text}");
@@ -318,19 +321,17 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
 /// A cache whose compression claim the file contradicts is refused by all
 /// three commands, and refused **having read nothing**: no stream-footer walk
 /// is spent reaching an error that was always coming
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// (`docs/design/decisions.md`, "D20").
 ///
-/// `parse` used to take the other branch, deleting the cache and rescanning,
-/// because it was about to overwrite that path anyway. It refuses with the
-/// other two now: the deletion and the overwrite are the same act one step
-/// apart, and the library replaces neither on its own
-/// (`docs/design/decisions.md`, "The compressed source and the cache").
+/// `parse` refuses it exactly as the other two do rather than deleting the
+/// cache and rescanning: the deletion and the overwrite are the same act one
+/// step apart, and the library replaces neither on its own
+/// (`docs/design/decisions.md`, "D20").
 ///
-/// The sentence is this condition's own. It borrowed `Unreadable`'s —
-/// "… is not a pgdq cache — check the path, or run `pgdq parse`" — until the
-/// refusal made that advice something `parse` cannot take, being the command
-/// that just refused; and what sits at that path *is* a pgdq cache, for some
-/// other file.
+/// The sentence is this condition's own, rather than `Unreadable`'s —
+/// "… is not a pgdq cache — check the path, or run `pgdq parse`" — since that
+/// advice does not fit `parse`, the command that just refused, or a path that
+/// *does* hold a pgdq cache, just for some other file.
 #[test]
 fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     let (_dir, path) = seekable_xz();
@@ -362,7 +363,7 @@ fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
 /// The way out is the user's, not the tool's: remove the cache that does not
 /// describe this file and `parse` scans it as a cold file would. There is no
 /// override flag, which is what keeps the refusal from being set once in a
-/// script and never reconsidered (`docs/design/decisions.md`, "The compressed source and the cache").
+/// script and never reconsidered (`docs/design/decisions.md`, "D20").
 #[test]
 fn parse_scans_once_the_refused_cache_is_removed() {
     let (_dir, path) = seekable_xz();
@@ -388,7 +389,7 @@ fn parse_scans_once_the_refused_cache_is_removed() {
 /// another stored size is settled by the cache path and a `stat`, so all three
 /// commands report it without opening the source — and an `.xz` source is what
 /// makes that worth doing, its open being a walk of every stream footer in the
-/// file (`docs/design/decisions.md`, "The compressed source and the cache").
+/// file (`docs/design/decisions.md`, "D18").
 ///
 /// **Proven by a file the walk itself would fail on.** Truncating the fixture
 /// does both things at once: it changes the stored size the cache records, and

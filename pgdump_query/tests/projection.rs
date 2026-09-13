@@ -131,9 +131,9 @@ async fn a_repeated_name_is_refused_without_reading_the_file() {
 
 /// **Whether a query succeeds depends on its projection.** `t_numeric.v_small`
 /// carries a `NaN` that `Decimal128` cannot represent, so the whole table is a
-/// hard `Error::FieldDecode` today; projecting that column away is the
-/// per-column escape `--schema-mode strings` used to be the only form of, and
-/// it leaves every other column typed.
+/// hard `Error::FieldDecode`; projecting that column away is a per-column
+/// escape beside `--schema-mode strings`, and it leaves every other column
+/// typed.
 #[tokio::test]
 async fn projecting_a_column_away_escapes_its_decode_failure() {
     for version in [13, 16, 18] {

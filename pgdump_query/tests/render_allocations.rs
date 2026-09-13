@@ -122,17 +122,14 @@ fn array_row(len: usize) -> (ArrayRef, ArrayRef) {
 /// is the property worth pinning, since a reintroduced `format!` is a source
 /// change.
 ///
-/// **Every column this slice touched allocates nothing**: the three integers,
-/// all four date/time columns, the boolean and the three texts write straight
+/// **Most of the control row allocates nothing**: the three integers, all
+/// four date/time columns, the boolean and the three texts write straight
 /// into the caller's buffer, and so does a SQL NULL, which writes nothing at
-/// all. Before, each of the sixteen returned a `String` of its own, the
-/// four date/time renderers built nine more between them, and `print_batch`
-/// added a `Vec` and the `join` that copied every field again.
+/// all.
 ///
-/// **What is left is the three renderers this row put out of scope**, and
-/// they own eighteen of the twenty: `render_f32` 5, `render_f64` 7 and
-/// `render_decimal` 6. The other two are `render_uuid` and `render_bytea`,
-/// one pre-sized `String` each, which is what 7.15 left them at.
+/// **What is left is three renderers that own eighteen of the twenty**:
+/// `render_f32` 5, `render_f64` 7 and `render_decimal` 6. The other two are
+/// `render_uuid` and `render_bytea`, one pre-sized `String` each.
 #[test]
 fn the_render_path_allocation_budget_per_row() {
     let columns = control_row();
@@ -189,9 +186,7 @@ fn the_render_path_allocation_budget_per_row() {
     // where they will be read, so nothing per element is allocated. What is
     // left is `ListArray::value`'s slice, one `Arc` per array value, plus one
     // scratch `String` for a column whose elements need quoting — one for the
-    // whole value, not one per element. Before, each element cost a `String`
-    // of its own, and the collected `Vec` and the whole-array `String` grew
-    // with the element count on top of that.
+    // whole value, not one per element.
     let array_plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
     let mut counts = Vec::new();
     for len in [5usize, 50] {

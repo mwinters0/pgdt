@@ -18,7 +18,7 @@
 //! **Store what the dump said, never what we concluded.** Declared types are
 //! kept as strings exactly as written (`character varying(16)`, not a parsed
 //! `(base, typmod)` pair) — the cache is L1 and cannot hold an L2 conclusion
-//! (`docs/design/decisions.md`, rule 5). Resolving those strings into Arrow
+//! (`docs/design/decisions.md`, "D68"). Resolving those strings into Arrow
 //! types is [`crate::pgtype`]'s job.
 //!
 //! [`extract_statement_cross_refs`] is a second, independent kind
@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use crate::copy::Cursor;
 use crate::map::{Span, SpanBody};
 
-/// Everything the preamble pass recovered, per database. See "Multi-database
-/// dumps" in `docs/design/decisions.md`.
+/// Everything the preamble pass recovered, per database — see
+/// `docs/design/decisions.md`, "The file map and the preamble".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpMetadata {
     pub databases: Vec<DatabaseMetadata>,
@@ -130,8 +130,7 @@ pub struct CollationDef {
 
 /// A `CREATE EXTENSION` line. Extension *versions* are never in a regular
 /// dump — `dumpExtension()` deliberately omits them
-/// (`docs/design/postgres-invariants.md`, evidenced in
-/// `docs/status/history/2026-08-22.md`) — so there is no version field here.
+/// (`docs/design/postgres-invariants.md`) — so there is no version field here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Extension {
     pub name: String,
@@ -174,9 +173,8 @@ pub struct TypeDef {
     pub kind: TypeKind,
 }
 
-/// Which of `pg_dump`'s six type-emission shapes produced a [`TypeDef`] —
-/// see "`CREATE TYPE`: six emitted forms" in
-/// `docs/status/history/2026-08-22.md`.
+/// Which of `pg_dump`'s six type-emission shapes produced a [`TypeDef`] — see
+/// the variants below.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeKind {
     /// Fully determined by the DDL — labels in declaration order. A
@@ -743,9 +741,8 @@ fn ident_after(haystack: &str, marker: &str) -> Option<String> {
 }
 
 /// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
-/// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty
-/// (`docs/design/decisions.md`, "D31":
-/// "`PUBLIC` is a pseudo-role and is never reported as one."). Case-insensitive
+/// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty —
+/// `PUBLIC` is a pseudo-role, never reported as one. Case-insensitive
 /// because [`ident_after`]'s [`Cursor::parse_ident`] lowercases every
 /// *unquoted* identifier it parses (matching how Postgres itself folds one),
 /// so the literal keyword always arrives here as `public`, not `PUBLIC` — the
@@ -760,8 +757,8 @@ pub(crate) fn insert_role(roles: &mut BTreeSet<String>, role: String) {
 }
 
 /// Filters out `pg_default`, the reserved, uncreatable name for a database's
-/// implicit default tablespace (same design-doc section: "`pg_default` is the
-/// implicit default and is never reported"). Case-insensitive for the same
+/// implicit default tablespace — never reported as one, the same way
+/// `PUBLIC` is filtered from roles. Case-insensitive for the same
 /// reason [`insert_role`]'s `PUBLIC` check is.
 pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: String) {
     if !tablespace.eq_ignore_ascii_case("pg_default") {
@@ -899,7 +896,7 @@ pub(crate) fn parse_connect(line: &str) -> Option<String> {
 /// anywhere.** A `''`, `""` or `--` pair straddling two [`feed`](Self::feed)
 /// calls is carried across in `pending`, so a reader walking a file in chunks
 /// gets the same answer as one holding the whole statement in a buffer —
-/// which is what P8 Track A's `INSERT` row reader will need of it.
+/// which is what a future `INSERT` row reader will need of it.
 ///
 /// Tracking double quotes and comments is not decoration: without it an
 /// apostrophe inside either (`public."it's"`, `-- it's here`) would open a
@@ -1758,11 +1755,11 @@ mod tests {
 
     /// I9: every `\connect`-segment in a real `pg_dumpall`/concatenated dump
     /// carries its own version-header pair ahead of its own `\connect`, not
-    /// just the first one — see `postgres-invariants.md`. Regression test
-    /// for the gap the concatenated fixture (`fixtures/*/edge_cases/create.sql`
-    /// x2) surfaced: a second database's headers used to be
-    /// silently dropped because they land while `current` is still the
-    /// first database's already-`preamble_complete` segment.
+    /// just the first one — see `postgres-invariants.md`. Guards against a
+    /// second database's headers being silently dropped because they land
+    /// while `current` is still the first database's already-
+    /// `preamble_complete` segment, the gap the concatenated fixture
+    /// (`fixtures/*/edge_cases/create.sql` x2) surfaced.
     #[test]
     fn a_later_connect_segment_keeps_its_own_version_headers_too() {
         let meta = dump_metadata_from_spans(&[
@@ -1801,8 +1798,8 @@ mod tests {
         assert!(db.preamble_complete);
     }
 
-    /// The gap `docs/status/history/2026-08-23.md` flagged: an apostrophe in
-    /// comment prose used to open a string that never closed.
+    /// Guards against an apostrophe in comment prose opening a string that
+    /// never closes.
     #[test]
     fn statement_complete_is_not_confused_by_an_apostrophe_in_a_line_comment() {
         assert!(statement_complete("CREATE TABLE t (id integer);\n-- it's here\nSELECT 1;"));
@@ -1810,9 +1807,8 @@ mod tests {
         assert!(!statement_complete("SELECT 1\n-- it's here"));
     }
 
-    /// The gap `docs/status/history/2026-08-23.md` flagged: an apostrophe
-    /// inside a double-quoted identifier used to open a string that never
-    /// closed.
+    /// Guards against an apostrophe inside a double-quoted identifier
+    /// opening a string that never closes.
     #[test]
     fn statement_complete_is_not_confused_by_an_apostrophe_in_a_double_quoted_identifier() {
         assert!(statement_complete(r#"CREATE TABLE public."it's" (id integer);"#));

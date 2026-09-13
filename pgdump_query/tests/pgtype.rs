@@ -372,7 +372,7 @@ async fn an_oid_column_resolves_unsigned() {
 }
 
 /// The two canonical extension names, on the fields of real columns
-/// (`docs/design/decisions.md`, "Type resolution and decoders"). What a consumer reads
+/// (`docs/design/decisions.md`, "D37"). What a consumer reads
 /// is the metadata, so that is what is asserted — and `arrow.json`'s empty
 /// metadata value is part of the spelling, not an accident.
 ///
@@ -489,11 +489,9 @@ const EVERY_OUTCOME: [ColumnResolution; 8] = [
 
 /// **`roadmap.md`'s fixture rule, made mechanical.** "A shape observed to work
 /// is not covered until a fixture holds it" is a rule with nothing enforcing
-/// it, and the price of that has been paid twice — 4.1's reasoned-out array
-/// shapes and 4.4's composed `List<List<T>>` for `intarr[]`, each of which
-/// earned a follow-up slice once a real literal turned up. So: resolve every
-/// column of every `COPY` block of every generated fixture, and require each
-/// `ColumnResolution` variant to be produced by at least one of them.
+/// it, so: resolve every column of every `COPY` block of every generated
+/// fixture, and require each `ColumnResolution` variant to be produced by at
+/// least one of them.
 ///
 /// The census is the block's own, so an outcome only the census can produce
 /// (`VaryingArrayShape`) is reachable here — this walk sees the same evidence

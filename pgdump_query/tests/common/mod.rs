@@ -126,8 +126,7 @@ pub fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
 
 /// Two copies of `edge_cases/create.sql`, concatenated: a real
 /// `\connect`-delimited multi-database dump, the shape `pg_dumpall` and
-/// hand-concatenated dump files produce (`docs/design/decisions.md`,
-/// "D69"). `--create`
+/// hand-concatenated dump files produce. `--create`
 /// is the only flag combination in the fixture matrix that emits a `\connect`
 /// at all (plain `pg_dump` never
 /// does), so it is the only one two copies of can be concatenated into this
@@ -157,7 +156,7 @@ pub fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
 /// fixture with no DDL (like [`edge_cases`]) resolves every column
 /// `Utf8View` either way, so this reads identically to a hardcoded
 /// `StringViewArray` downcast there, and it also handles a real `pg_dump`
-/// fixture's typed columns (`docs/design/decisions.md`, "The CLI":
+/// fixture's typed columns (`docs/design/decisions.md`, "D66":
 /// render-back is exactly this build's own decode/render round trip).
 ///
 /// The plan is `Scalar` for every column, which is right for every

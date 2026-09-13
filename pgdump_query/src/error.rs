@@ -39,7 +39,7 @@ pub enum Error {
     CacheModeMismatch(&'static str),
     /// A scan was asked to build forward from a cache that does not describe
     /// the source it was handed, so it refuses rather than scanning and
-    /// overwriting it (`docs/design/decisions.md`, "The compressed source and the cache"). Raised by
+    /// overwriting it (`docs/design/decisions.md`, "D20"). Raised by
     /// the three scan entry points — `crate::map_file`,
     /// `crate::table_stream`, `crate::index::preamble_only` — before any byte
     /// of the dump is read, from
