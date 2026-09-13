@@ -143,4 +143,51 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "declares is scripts/measure.py."
         ),
     ),
+    Acknowledged(
+        commit="19a0985",
+        # The same twenty, and for the same reason one commit later: the `dwal`
+        # closure corrected two more `io.rs` doc comments that `2bc72f4` did not
+        # reach. `session-drift` stays red on `scripts/measure.py`, which this
+        # commit does not touch — its red is still `2bc72f4`'s.
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+        ),
+        why=(
+            "The `dwal` closure of the plain serial default. Comment-only in "
+            "io.rs: the warm re-take falsified the justification those two doc "
+            "comments state — `default_workers` and the test above "
+            "`a_source_that_does_not_advise_recommends_the_serial_path` — which "
+            "`2bc72f4` corrected in the manual and in `architecture.md`'s "
+            "parallelism section and nowhere else. All 24 changed lines are "
+            "inside a `///`. The other four files the commit touches are "
+            "documents and `scripts/test_measure.py`, and no figure declares "
+            "any of them."
+        ),
+        verified=(
+            "git show 19a0985 --unified=0 -- pgdump_query/src/io.rs | grep -E "
+            "'^[+-]' | grep -vE '^(\\+\\+\\+|---)' | grep -vE "
+            "'^[+-]\\s*///' prints nothing, against 24 changed lines in that "
+            "file; git show 19a0985 --stat shows no other path any figure "
+            "declares."
+        ),
+    ),
 )

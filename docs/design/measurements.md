@@ -795,9 +795,10 @@ judgement.** A diff whose every hunk falls inside a `///`, `//!`, `#` or `"""`
 changes nothing the compiler emits, so it moves no reading of any kind — and an
 entry claiming it records the `git diff` that shows it, which is what separates
 the claim from someone's impression of a diff. It is the widest of the three in
-practice and the least interesting: the register's live entry is of this class,
-as every entry before it was, since a wrap, a keystone and a fold-in all
-retarget citations and quoted numbers across the files the register declares.
+practice and the least interesting: both of the register's live entries are of
+this class, as every entry before them was, since a wrap, a keystone, a fold-in
+and a decision closure all retarget citations and quoted numbers across the
+files the register declares.
 
 *Rejected:* letting an acknowledgement cover library or harness changes on a
 reading of the diff. None of the three oracles above is a diff read: one
