@@ -168,4 +168,18 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
         ),
     ),
+    Acknowledged(
+        commit="5032de4",
+        figures=("preamble-prepass", "rss-attribution"),
+        why=(
+            "the comment sweep that made rustdoc state the contract; the oracle "
+            "skipped it on every other path, and `preamble.rs`'s hunks are doc "
+            "comments too, on the file that defeats it (above)"
+        ),
+        verified=(
+            "git show --format= -U0 5032de4 -- pgdump_query/src/preamble.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
+        ),
+    ),
 )
