@@ -98,4 +98,38 @@ class Acknowledged:
 #: path and `--stale` skips the commit without being told — which is what the
 #: three entries that used to stand here were doing by hand, at one extra
 #: commit apiece.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="2223f8b",
+        figures=("preamble-prepass", "rss-attribution", "allocator"),
+        why=(
+            "the deficiency register's details moved into the code; every hunk in "
+            "these two paths is a comment, which the syntactic oracle cannot say "
+            "for either — `preamble.rs` holds `\"/*\"` and `\"*/\"` beside code "
+            "(it strips block comments), which defeats the Rust scanner, and "
+            "`.toml` is a suffix the scanner does not read"
+        ),
+        verified=(
+            "git show --format= -U0 2223f8b -- pgdump_query/src/preamble.rs "
+            "pgdump_query-cli/Cargo.toml | grep -E '^[+-]' | "
+            "grep -vE '^(\\+\\+\\+|---)' | grep -vE '^[+-][[:space:]]*(///|//!|//|#)'"
+            "  # empty"
+        ),
+    ),
+    Acknowledged(
+        commit="8f61668",
+        figures=("preamble-prepass", "rss-attribution"),
+        why=(
+            "the citation retarget onto `decisions.md`; every hunk it makes in "
+            "`preamble.rs` is a doc comment, and that file defeats the syntactic "
+            "oracle for the reason above, so the claim is made by hand here "
+            "instead. Without it the entry above is inert and the two figures "
+            "stay red for a commit that only rewrote citations"
+        ),
+        verified=(
+            "git show --format= -U0 8f61668 -- pgdump_query/src/preamble.rs | "
+            "grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | "
+            "grep -vE '^[+-][[:space:]]*(///|//!|//|#)'  # empty"
+        ),
+    ),
+)
