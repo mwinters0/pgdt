@@ -37,9 +37,9 @@ parallel plain scan on one; such a reading is what would reopen it
 API surface"). `KD17`'s plain typed `query` is flat at 1.02× across the whole
 `--jobs` range.
 
-**Stale figures carry their reasons.** The twenty figures that declare
-`pgdump_query/src/io.rs` read red on commits whose every changed line in that
-file is inside a `///`, and `measure.ACKNOWLEDGED` excuses them on the
+**Stale figures carry their reasons.** The figures that declare the library's
+source files read red on commits whose every changed line in those files is
+inside a comment, and `measure.ACKNOWLEDGED` excuses them on the
 comment-only oracle, so `--stale` prints the excuse in their place
 ([`../design/measurements.md`](../design/measurements.md), "A commit can be
 acknowledged"). **`session-drift` is not excused and stays red**, on

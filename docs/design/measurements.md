@@ -815,8 +815,8 @@ judgement.** A diff whose every hunk falls inside a `///`, `//!`, `#` or `"""`
 changes nothing the compiler emits, so it moves no reading of any kind — and an
 entry claiming it records the `git diff` that shows it, which is what separates
 the claim from someone's impression of a diff. It is the widest of the three in
-practice and the least interesting: both of the register's live entries are of
-this class, as every entry before them was, since a wrap, a keystone, a fold-in
+practice and the least interesting: every entry in the register is of this
+class, since a wrap, a keystone, a fold-in
 and a decision closure all retarget citations and quoted numbers across the
 files the register declares.
 

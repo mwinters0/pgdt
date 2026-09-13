@@ -190,4 +190,53 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "declares."
         ),
     ),
+    Acknowledged(
+        commit="dd1af2f",
+        # The same twenty `io.rs`-declaring figures, plus `xz-decode-scaling`,
+        # which declares the `xz_decode` example. `session-drift` stays red on
+        # `scripts/measure.py`, which this commit changes outside comments.
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "scan-throughput-nvme",
+            "chunk-size",
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "peak-rss",
+            "map-only",
+            "preamble-prepass",
+            "projection-widths",
+            "predicate-terms",
+            "allocator",
+            "parallel-scan-throughput",
+            "parallel-peak-rss",
+            "rss-attribution",
+            "reserve",
+            "xz-decode-scaling",
+        ),
+        why=(
+            "The keystone that struck the efficient-defaults phase. "
+            "Comment-only in every declared source path: doc comments in "
+            "io.rs, stream.rs and leader.rs rewritten to what the code and the "
+            "published tables establish, and citations of the deleted phase "
+            "docs retargeted; in main.rs some of the `///` lines are flag help "
+            "text, which clap compiles into `--help` and which no timed command "
+            "prints; the example's module doc. Every other path the commit "
+            "touches is a document, a test file, a help snapshot or `scripts/`, "
+            "and no figure declares any of them except `session-drift`, which "
+            "is not excused here."
+        ),
+        verified=(
+            "for f in pgdump_query/src/io.rs pgdump_query/src/stream.rs "
+            "pgdump_query/src/leader.rs pgdump_query-cli/src/main.rs "
+            "pgdump_query/examples/xz_decode.rs: git show dd1af2f --unified=0 "
+            "-- $f | grep -E '^[+-]' | grep -vE '^(\\+\\+\\+|---)' | grep -vE "
+            "'^[+-]\\s*(//|$)' prints nothing, against 491, 41, 51, 40 and 19 "
+            "changed lines respectively."
+        ),
+    ),
 )
