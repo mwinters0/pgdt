@@ -1,18 +1,17 @@
 # Status
 
-What is built, right now. Rewritten in place as state changes. How the system
-*works* is [`../design/decisions.md`](../design/decisions.md), filed by
-subject; what is still ahead is [`../design/roadmap.md`](../design/roadmap.md),
+What is built, right now. Rewritten in place as state changes. The decisions the
+code cannot explain are [`../design/decisions.md`](../design/decisions.md);
+what is still ahead is [`../design/roadmap.md`](../design/roadmap.md),
 whose index table is the schedule; dated pickup notes and plan-changing
 discoveries are in `history/`.
 
 ## What exists
 
 P1–P5, P7, P9, P11–P13, P16, P17 and P19 are complete and were struck at keystone
-reviews; how each mechanism works is
-[`../design/decisions.md`](../design/decisions.md), filed by subject,
-which is where a session touching one meets its rejected alternatives and its
-limitations. The capability table below says what state each is in.
+reviews; the code is how each mechanism works, and
+[`../design/decisions.md`](../design/decisions.md) is where a session touching
+one meets its rejected alternatives. The capability table below says what state each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `9b35bea`
 stamp of 2026-09-13, and **no figure stands outside it**: twenty-two of its
@@ -199,7 +198,7 @@ heading — is beside the mechanism
   included: a worker count the source recommends, a memory limit discovered
   and filled under the 384 MiB reserve and the 20% margin, and a `parse` saying
   what it delivered rather than what it was asked for — is in
-  [`../design/decisions.md`](../design/decisions.md), filed by subject.
+  [`../design/decisions.md`](../design/decisions.md).
   Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
   table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
   about the order they run in. Each gets its own full grilling when it becomes

@@ -15,7 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md), by subject; git holds the specs |
+| P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -38,7 +38,7 @@ owned by a phase that is `Complete`, `Struck`, or absent from this table has no
 destination, so it drops to `(c) unowned` unless another phase absorbs it
 (`../status/STATUS.md`, "Known deficiencies").
 
-The struck phases' mechanisms are described by subject in
+The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
 centering"). **Phase numbering continues from `P19`** — nothing at or below it

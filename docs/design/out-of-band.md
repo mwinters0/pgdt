@@ -46,7 +46,7 @@ ledger is struck too").
 **M1–M104 are struck**, and nothing at or below `M104` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
-numbers are spent all the same. What each struck item did is filed by subject —
+numbers are spent all the same. What each struck item decided is in `decisions.md` —
 [`decisions.md`](decisions.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
 [`decisions.md`](decisions.md), [`../process.md`](../process.md) and

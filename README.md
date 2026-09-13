@@ -46,14 +46,13 @@ cargo run -p pgdump_query-cli -- info --source <dump.sql> --detail
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not, plus known deficiencies). [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
 - [`docs/manual/`](docs/manual/) — user manual: [type handling](docs/manual/type-handling.md), [dump inspection](docs/manual/dump-inspection.md).
-- [`docs/design/decisions.md`](docs/design/decisions.md) — how the built system works, filed by subject: the scanner, the file map, `DumpIndex`, the preamble grammar, type resolution, decoders, the zero-copy Arrow path, the query passes, the cache, fixtures, testing. The place to start.
+- [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 500 lines; how the system works is the code and its rustdoc.
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.
 - [`docs/design/out-of-band.md`](docs/design/out-of-band.md) — the ledger of one-session work belonging to no phase: the admission rule, the watermark of spent `M<k>` numbers, and the rows still outstanding.
-- [`docs/design/decisions.md`](docs/design/decisions.md) — the four-layer module constraint and the greps that enforce it.
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.
 - [`docs/design/runtime-invariants.md`](docs/design/runtime-invariants.md) — the same, for the environment the process is given: the cgroup memory and CPU interfaces, and `std`'s reading of them.
 - [`docs/design/measurements.md`](docs/design/measurements.md) — every performance figure the design relies on, each with the command that reproduces it.
 - [`docs/design/pg-dump-compatibility.md`](docs/design/pg-dump-compatibility.md) — tracked `pg_dump` option support matrix.
 - [`docs/design/historical/initial.md`](docs/design/historical/initial.md) — frozen original design handoff.
 - [`docs/process.md`](docs/process.md) — the phased development process this project follows (project-agnostic; written to be copied into other projects). Agents reach it through the `process` skill, which requires reading it in full before implementing a roadmap slice.
-- [`CLAUDE.md`](CLAUDE.md) — repo guidance for AI coding agents (full command reference, architecture detail).
+- [`CLAUDE.md`](CLAUDE.md) — repo guidance for AI coding agents: the command reference and one pointer per document with the moment to read it.

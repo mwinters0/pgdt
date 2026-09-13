@@ -58,7 +58,7 @@ crate declined the generalization deliberately rather than by oversight.
 ## The decisions the `.xz` source already made, which this phase inherits
 
 **Fact.** Four decisions bind any later decompressing source, and all four are
-built and filed by subject ([`decisions.md`](decisions.md), "The compressed source and the cache" and "The compressed source and the cache"): `stored_size()` on the trait with
+built ([`decisions.md`](decisions.md), "The compressed source and the cache" and "The compressed source and the cache"): `stored_size()` on the trait with
 `SourceIdentity` recording it, so the staleness check stays a `stat`; the seek
 table living in the cache envelope as a sibling of `ContainerKind`, which stays
 `Plain` because the span offsets genuinely are plain-format offsets; one
