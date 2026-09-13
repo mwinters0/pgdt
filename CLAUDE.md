@@ -39,11 +39,11 @@ cd scripts && uv run measure.py --render <run-dir> # rebuild a past sitting's ta
 cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table, plus what it borrows
 cd scripts && uv run measure.py --figure <id> --alone   # borrowing nothing: a diagnostic sitting, marked NOT PUBLISHABLE
-cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
+cd scripts && uv run measure.py --all             # the whole sweep: ~2 h, detach it
 cd scripts && uv run measure.py --profile-recipe  # the sampling-profile sequence, printed; minutes, not detached
 cd scripts && uv run measure.py --heaptrack-recipe # the libc-level heap-attribution sequence, printed; minutes, not detached
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
-cd scripts && uv run measure.py --figure rss-attribution  # registered and untaken: what the per-block resident growth is made of
+cd scripts && uv run measure.py --figure rss-attribution  # what the per-block resident growth is made of
 
 cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing vs. the roadmap's phase index
 cd scripts && uv run python -m unittest test_deficiencies  # that check's own tests
@@ -73,7 +73,7 @@ So, for anything expected to take more than 10 minutes:
   including all doc updates — rather than idling.
 
 A full `scripts/measure.py --all` sweep is one of these: ~18 GiB of generated
-input and roughly an hour of runs. Detach it, let it write
+input and about two hours of runs. Detach it, let it write
 `runs/measure-<stamp>/`, and let a later session read `tables.md` there.
 **Nothing else may build or test while it runs** — a `cargo` job across 24
 cores moves the very numbers it is taking, which is the same rule as
@@ -349,7 +349,7 @@ is partly unexplained, and whenever a figure subtracts one build from
 another.** Its seven rules are short and each names the failure it prevents;
 the first — *account before you fit*, an account being arithmetic from the
 source rather than a slope — is the one that would have saved three sessions of
-`P19`, and the seventh — *a comparison between two builds decays unless
+work on the budget rule, and the seventh — *a comparison between two builds decays unless
 something expires it* — is what the retired pre-throttle column cost.
 
 **Neither of those says which instrument to reach for, and that is
@@ -361,8 +361,9 @@ number.** The introspective one this repo owns is
 reporting its own live bytes and its allocator's retention
 ([`docs/design/architecture.md`](docs/design/architecture.md), "What the binary
 can report about itself"); **read that section before adding an instrument or
-reading one of its numbers**, and note that a build carrying it is refused by
-the harness and may never be timed. A reading that decides whether the shipped thing works stays
+reading one of its numbers**, and note that a build carrying it is never
+timed: the harness builds and runs it only for a figure's declared instrument
+legs, and refuses to take it as any figure's timed binary. A reading that decides whether the shipped thing works stays
 black-box, on the shipped build in the container; a reading that says *why* asks
 the process itself, and where nothing in the binary can answer, **building the
 instrument is the slice** rather than something discovered after the sitting
@@ -397,16 +398,19 @@ the half that failed twice. A declared path is coarse, so a change inside one
 that provably moves nothing still reads stale; **acknowledge that commit where
 mechanical evidence exists, and where it does not, leave the figure red with
 the reason written down** — what must never happen is red with no explanation,
-because a signal that is always on is no signal. Two oracles are mechanical:
+because a signal that is always on is no signal. Three oracles are mechanical:
 byte-identity of the regenerated inputs (`--verify-additive`, generator changes
-only) and **reachability** — a change no registered command shape executes.
-Neither a stale figure nor a phase boundary obliges a sweep: a full sweep is an
-hour of a quiet machine, and it belongs to a phase that is about performance,
+only), **reachability** — a change no registered command shape executes — and
+**comment-only**, a diff whose every hunk falls inside a comment.
+Neither a stale figure nor a phase boundary obliges a sweep: a full sweep is about
+two hours of a quiet machine, and it belongs to a phase that is about performance,
 not to every wrap.
 `--verify-additive` regenerates every published figure's inputs at two
 revisions and compares them byte for byte — that is the evidence an
-acknowledgement carries, and it settles generator changes only. Library and
-harness changes have no cheap oracle and stay stale until a sweep. Selection is
+acknowledgement of a generator change carries, and it settles generator changes
+only. A library or
+harness change outside a comment that a command shape executes has no cheap
+oracle and stays stale until a sweep. Selection is
 per figure and a figure is exactly one whole table; a full sweep replaces every
 table at once, which is what that doc's session stamp records.
 
@@ -440,9 +444,8 @@ heading**, so a heading may quote a number and be rewritten when that number
 moves; `--check` reconciles the markers against the register, reports a partial
 sitting the doc still carries, and prints each figure's consumers. **A section
 the harness does not own declares itself the same way**, with an
-`<!-- outside-register: <id> -->` marker — koji, the `cargo bench` tripwires and
-the RSS attribution, whose readings predate the harness taking it
-— which `--check` reconciles against `measure.NOT_OURS` both ways and holds to
+`<!-- outside-register: <id> -->` marker — koji and the `cargo bench`
+tripwires — which `--check` reconciles against `measure.NOT_OURS` both ways and holds to
 carrying no figure marker, since the session stamp's "every figure below" claims
 only what the register holds. **Such a section still declares what invalidates
 it**, and its marker names the commit its readings were taken at, so `--stale`
@@ -489,8 +492,9 @@ question is what a C library allocated.** `cd scripts && uv run measure.py
 artifact, never a median, an apparatus line or a `measurements.md` marker, and
 its recorded shapes are shapes the sweep times. **Read it beside
 `introspect.rs`, not instead of it** — the counting `#[global_allocator]` sees
-Rust's allocations exactly and `liblzma`'s not at all, heaptrack sees both and
-cannot tell them apart, so the pair is what separates the decoder's working set
+Rust's allocations exactly and `liblzma`'s not at all, heaptrack attributes
+every `malloc`, C and Rust alike, to a call stack and cannot see what the
+allocator kept after a `free`, so the pair is what separates the decoder's working set
 from the allocator's retention. What each can and cannot see, the five details
 that decide whether a report describes what it claims to, and the merged-frame
 peak that has already produced one unexplained number are

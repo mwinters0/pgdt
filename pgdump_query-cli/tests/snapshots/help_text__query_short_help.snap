@@ -60,5 +60,6 @@ Options:
                                    reader's worth for each worker it would run, rather than the
                                    whole allowance. Where no limit is set that same number is held
                                    under half the memory the machine reports available. A plain dump
-                                   asks for nothing of its own and stays on 64 MiB
+                                   asks for nothing of its own and gets 64 MiB, or the limit less
+                                   the reserve where that is smaller
   -h, --help                       Print help (see more with '--help')

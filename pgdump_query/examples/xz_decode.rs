@@ -1,10 +1,10 @@
 //! The `xz-decode-scaling` figure's instrument: decode one `.xz` file's whole
 //! plaintext at a declared worker count, and print what was decoded.
 //!
-//! It exists because the phase's thesis rests on a **probe** — "one core
-//! decodes ~446 MB/s of plaintext, four concurrent decodes reach ~1.48 GB/s" —
-//! taken by hand, with no harness, no `drop_caches` discipline and no
-//! repetition (`docs/design/architecture.md`, "The compressed source"). A
+//! It exists so that decode scaling is a figure and not a **probe** — "one
+//! core decodes ~446 MB/s of plaintext, four concurrent decodes reach
+//! ~1.48 GB/s" was taken by hand, with no harness, no `drop_caches` discipline
+//! and no repetition (`docs/design/architecture.md`, "The compressed source"). A
 //! number that decides how many workers a scan is worth has to be a figure,
 //! and a figure needs a command a later session can run again.
 //!
@@ -15,11 +15,12 @@
 //!
 //! # Why an example and not a `pgdq` flag
 //!
-//! Nothing in the library decodes concurrently yet — `io::XzSource` is one
-//! `xz_seek::Reader` behind a mutex, and replacing that is a later slice. This
-//! binary reaches past the library to the decoder's own bulk entry point, so
-//! the figure is a property of the decoder rather than of whatever the library
-//! currently does with it, and taking it costs no library change at all. It is
+//! The library decodes concurrently through its block path and the leader's
+//! workers, which put a budget, a pool and a scan's arrangement between the
+//! decoder and the clock. This binary reaches past the library to the
+//! decoder's own bulk entry point, so the figure is a property of the decoder
+//! rather than of what the library does with it, and taking it costs no
+//! library change at all. It is
 //! a separate target, so it is in neither the shipped CLI nor the library's
 //! own compilation.
 //!

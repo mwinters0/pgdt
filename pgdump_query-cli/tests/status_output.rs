@@ -715,16 +715,19 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
     assert!(line.contains("jobs=1"), "the delivered count: {line}");
     assert!(line.contains("asked=2"), "beside the announced one: {line}");
     assert!(line.contains("source"), "the source is what refused, not the divisor: {line}");
-    // The recourse is the whole of what one reader of the declined path holds,
-    // so it is past the two 512-byte blocks by the decoder's own retention —
-    // and it is the source's own number, which is why nothing here restates it.
+    // The recourse is the whole of what one reader of the declined path holds
+    // — four 512-byte block units with the pool's retention list, the chunk
+    // and the decoder's own retention — so it is past two blocks whatever the
+    // exact sum, and it is the source's own number, which is why nothing here
+    // restates it.
     let (_, tail) = line.split_once("would_hold_bytes=").expect(line);
     let bytes: u64 = tail.split_whitespace().next().expect(line).parse().expect(line);
     assert!(bytes > 2 * 512, "{line}");
 
     // A budget that affords a whole block corrects nothing: the source would
-    // be split, and every region of this fixture being too small to cut is a
-    // property of the blocks rather than of the arrangement.
+    // be split, and this fixture's whole file being shorter than one reader's
+    // charge is a fact about where the leader stands rather than about the
+    // arrangement.
     let out = run(&[
         "parse",
         "--source",

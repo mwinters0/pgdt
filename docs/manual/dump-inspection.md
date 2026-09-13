@@ -117,7 +117,7 @@ diagnostics:
 
 `parse` is unaffected: it only ever reads forwards, so it costs the same on
 such a file as on any other. `query` is where you would feel it, and only on a
-large one — a single-block file the budget has room to hold five times over,
+large one — a single-block file the budget has room to hold four times over,
 with room to spare for the decoder itself, is
 decoded once and read from there, so only a bigger one pays the decode again on
 every backward read. How big that is depends on the budget, and unless you set
@@ -138,7 +138,7 @@ $ pgdq info --source mydump.sql.xz --detail
 compression: xz — 5700 block(s) in 1 stream(s), largest block 134217728 bytes uncompressed
 ```
 
-`largest block` is what `--parallel-memory` has to clear **five times over**,
+`largest block` is what `--parallel-memory` has to clear **four times over**,
 with the read buffer and the decompressor's own working memory beside it —
 roughly 10 MB more, for the reasons below under "`--jobs` and
 `--parallel-memory`". The
@@ -224,11 +224,13 @@ about 9 MB all told for an ordinarily compressed file. A file whose blocks do
 not leave room for all of that is read
 through the streaming decoder instead. That is still correct and still complete; what
 it costs is that reading *backwards* means decoding forward from the start of
-the block again, which `query` does and `parse` never does.
+the block again, which `query` does routinely and `parse` does once, at the end
+of a scan, to collect the schema text it saves.
 
 Whether that happens is a question about *your* budget rather than about the
 file alone: a 24 MiB-block file needs about 106 MiB, and one written by
-`xz -9 -T0` — whose threaded blocks are about 192 MiB — needs about 778 MiB.
+`xz -9 -T0` — whose threaded blocks are about 192 MiB, beside a 64 MiB
+dictionary — needs about 834 MiB.
 **`query` tells you when the budget is short**, once, on stderr, naming the
 file's largest block beside the budget that declined it — and, where you did
 not state that budget, where it came from, since the number to change is then
@@ -255,15 +257,16 @@ command line what you already told the orchestrator.
 
 **That number is a ceiling, not the budget.** What pgdq takes inside it is what
 the *file* asks for — one reader's worth for each worker it would run, which is
-about 1.4 GiB for a 24 MiB-block `.xz` on a 24-core host, so that file in the
-3 GiB container reads at about 1.4 GiB and not at 2.75. A plain dump asks for
-nothing of its own and stays on the 64 MiB pgdq has always used, whatever the
-limit above it says. And where the ceiling affords fewer readers than the file
+about 1.3 GiB for a 24 MiB-block `.xz` on a 24-core host, so that file in the
+3 GiB container reads at about 1.3 GiB and not at 2.625. A plain dump asks for
+nothing of its own and gets the 64 MiB pgdq has always used, or the ceiling
+where that is smaller. And where the ceiling affords fewer readers than the file
 would have run, **the worker count comes down with the budget** instead of being
 asked for and left undelivered: the same compressed file in a 512 MiB container
-gets 128 MiB, which affords the 106 one block-decoding reader wants and not
-the 140 two of them do, so it reads a block at a time with a single worker —
-and the run says as much before it starts (below, "Status on stderr").
+has a 128 MiB ceiling, which affords the 106 one block-decoding reader wants and
+not the 140 two of them do, so it reads a block at a time with a single worker
+and a budget of 106 MiB — and the run says as much before it starts (below,
+"Status on stderr").
 
 **A flagless run also leaves a fifth of the limit free, and that is a second
 thing the worker count answers to.** What kills a container is one run's peak
@@ -275,8 +278,10 @@ the eleven the ceiling alone would buy. **Below about 640 MiB the fifth costs
 you nothing**, because the 384 MiB already taken off the top is the tighter of
 the two; above it, it is what stops a wider machine reading the same allocation
 with more readers and less room. It never costs you the last reader: one worker
-runs at any limit, however small, and the budget reported is always what that
-many workers actually spend. If you would rather have the readers than the
+runs at any limit, however small, and the budget reported is never more than
+that many workers would hold — though where the ceiling cannot hold even one
+block-decoding reader, the file is read through the streaming decoder and holds
+far less than the budget reported. If you would rather have the readers than the
 headroom, state `--parallel-memory` — a number you type is taken as typed,
 headroom included.
 
@@ -297,15 +302,16 @@ If that is more than you want a flagless run to take, state
 directions.
 
 **`--jobs <n>` is how many workers pgdq may ask for. Left unstated, the file
-decides.** A plain (uncompressed) dump reads serially, because on storage there
-is nothing for a second worker to take: reading such a dump already runs at the
-speed the disk delivers the bytes, so the work is the device's and not the
-CPU's. State `--jobs` if you want workers on one anyway — from a RAM disk or a
+decides.** A plain (uncompressed) dump reads serially: on every disk we have
+measured, a single worker already reads such a dump at the speed the disk
+delivers the bytes, and we have no measurement of several workers doing better
+on one. State `--jobs` if you want workers on one anyway — from a RAM disk or a
 page cache the file is already sitting in, where the disk is not the cost, a
 few of them are worth about 40%. An `.xz` dump takes the CPUs this process was
 given — the machine's cores, or fewer where a container quota says so, since
-decompression is the one part of the work that a second core reliably finishes
-sooner — and fewer still where the file itself has fewer blocks than that:
+decompression is the part of the work that more cores finish sooner, from four
+of them up: two workers read a compressed dump no faster than one — and fewer
+still where the file itself has fewer blocks than that:
 pgdq splits a compressed file at its block boundaries, so a file with six
 blocks reads with six workers on a machine of any width. **How many of those workers actually read is then bounded by
 `--parallel-memory`**: one reader of an ordinary 24 MiB-block file wants about
@@ -325,9 +331,10 @@ It states what is asked for rather than what you get: two input shapes admit no
 parallelism at all whatever you set, and a plain file gets fewer workers than
 you named. Both are below. The `scan started` line says the count that was
 resolved (below, "Status on stderr"), which is where to look if you want to know
-what a flagless run chose — and where the run then delivers fewer readers than
-that, a `scan arrangement` line beneath it says so and says what would buy them
-back.
+what a flagless run chose — and where the budget or the file then delivers fewer
+readers than that, a `scan arrangement` line beneath it says so and says what
+would buy them back. The four-worker ceiling on a plain file, below, prints no
+such line.
 
 For `query` it cuts the row reading up: the parts of the file holding the rows
 you asked for are split into at most this many pieces, read at the same time,
@@ -350,13 +357,16 @@ can.
 > the batch term alone accounts for the whole of it, so
 > `query --jobs N` on a plain file runs one piece, serially, however large `N`
 > is; two pieces need about 145 MiB. On an `.xz` file read a block at a time
-> there is no second cost: the batch holds its rows inside the block its own
-> worker already decoded, so the pieces are bounded by what one reader holds —
-> a block, a read buffer and the decompressor's own working memory, over the
-> pool's four slots. That is about 106 MiB for the first piece on a
+> no second cost is charged: the batch is counted as holding its rows inside the
+> block its worker already decoded, so the pieces are bounded by what one reader
+> holds — a block, a read buffer and the decompressor's own working memory, over
+> the pool's four slots. That is about 106 MiB for the first piece on a
 > file of 24 MiB blocks and 34 to 58 for each one after it, so a 64 MiB budget
 > affords none of them there — the file is read through the streaming decoder
-> instead — and `--parallel-memory` is what buys them back. `parse` carries no batch cost on
+> instead — and `--parallel-memory` is what buys them back. A batch whose rows
+> run across several decoded blocks keeps every one of them alive until it is
+> handed over, and that is not counted, so a parallel `query` of a compressed
+> file can hold more than `--parallel-memory` names. `parse` carries no batch cost on
 > either shape — it builds none — so its `--jobs` is bound by the decode cost
 > as described above. When `--jobs` asks for more pieces than the budget
 > affords, `query` says so on stderr, naming the terms it was charged and the
@@ -379,8 +389,9 @@ times more from the disk. The answer is identical either way; only the time
 differs. There is no line warning you about this, so if a scan of a
 small-table dump is slower than you expected, try `--jobs 1`.
 
-It also bounds how many decoded `.xz` blocks are kept at once — one per worker
-you allowed, if `--parallel-memory` leaves room for them. So on a compressed
+It also bounds how many decoded `.xz` blocks are kept at once — four, or one
+per worker you allowed where that is more, if `--parallel-memory` leaves room
+for them. So on a compressed
 file `--jobs` and `--parallel-memory` are worth raising together: more workers
 with no room to hold what they decode buys less than either number suggests.
 
@@ -388,27 +399,31 @@ with no room to hold what they decode buys less than either number suggests.
 > `--parallel-memory` names.** The budget charges every reader the block it
 > holds and the pool's own slots besides — four of them at up to four workers,
 > and one per worker above that — so what a scan holds beyond the
-> budget is the part no byte budget covers at all:
+> budget is first the part no byte budget covers at all:
 > threads, decoder state kept outside the pools, and the allocator's own
-> retention. That part is roughly a fixed margin rather than a share of the
-> budget, which is what the callout below is about. The number to raise when a
-> compressed scan is short of memory is still `--parallel-memory`, since it is
-> what decides how many readers there are, and raising `--jobs` past what it
-> affords adds workers pgdq will not use.
+> retention, which the callout below is about. **Asking for more workers than
+> the budget affords adds a second part**: the pool keeps a block for each
+> worker you asked for, not only for the ones that read, and that part grows
+> with the budget — at `--jobs 24` a compressed scan holds a few megabytes more
+> than a 128 MiB budget and a few hundred more than a 512 MiB one. The number
+> to raise when a compressed scan is short of memory is still
+> `--parallel-memory`, since it is what decides how many readers there are;
+> raising `--jobs` past what it affords adds workers pgdq will not use, and
+> blocks it will keep for them.
 
 > **Under a container memory limit, leave room for the allocator as well.**
 > glibc gives each thread that allocates its own memory arena, which it keeps
 > rather than returns. pgdq runs a thread for each piece of work it has in
 > flight, so raising `--jobs` raises the arena count with it. So size a cgroup
 > above what `--parallel-memory` names rather than at it — a few hundred
-> megabytes above it on a compressed file, which is roughly a fixed margin
-> rather than something that grows with the budget you set. A flagless run
+> megabytes above it on a compressed file, and more where `--jobs` asks for
+> more workers than that budget affords (above). A flagless run
 > already leaves that margin for itself — the 384 MiB reserve above — so this
 > is advice about a budget *you* state. `MALLOC_ARENA_MAX` bounds the arena
 > count if you want to set it, and 2 is the smallest useful value. **It gives
-> real memory back on a compressed scan.** It comes off that fixed part rather
-> than off the decoded blocks, so what it saves does not grow with the budget
-> you set and it is no substitute for sizing the cgroup above the budget. **A
+> real memory back on a compressed scan.** What it saves shows up where many
+> block-decoding readers run and grows with how many there are, and it is no
+> substitute for sizing the cgroup above the budget. **A
 > plain file is a different matter and needs nothing**: read with `--jobs` set
 > it holds a few megabytes whether you allow two workers or twenty-four, so
 > there is nothing there for the cap to take back. How much it is worth on your
@@ -430,10 +445,10 @@ A plain (uncompressed) file *is* split, but do not expect much from it, and it
 is the shape where the number you state is not the number you get. pgdq's read
 buffers are pooled four deep on such a file, and a worker needs one to read
 with, so a fifth worker waits for a fourth to finish: above `--jobs 4` you get
-four. That ceiling costs little today, because pgdq's structure scan of a plain
-file is already faster than any disk we have measured — on that shape the disk
-is what you are waiting for, and raising `--jobs` moves a number that was not
-the bottleneck.
+four. What that ceiling costs has not been measured on its own; on every disk
+we have measured, a single worker's structure scan of a plain file already
+keeps up with the disk, so on that shape the disk is what you are waiting
+for.
 
 ### Status on stderr
 
@@ -450,10 +465,10 @@ $ pgdq parse --source koji.dump.xz
 2026-07-23T14:02:11.104297118Z  INFO no memory limit found: nothing is enforcing one on this process jobs_flag=(not stated) parallel_memory_flag=(not stated)
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
-2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1460448000 (no limit found: what this source asks for)
-2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1460448000
+2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1435282176 (no limit found: what this source asks for)
+2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1435282176
 2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
-2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1460448000
+2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1435282176
 2026-07-23T14:47:52.317660814Z  INFO scan complete bytes=784019857152 reached_eof=true
 ```
 
@@ -543,10 +558,12 @@ fewer of them. Either way one line follows, once per scan:
 budget could not afford, `budget` for readers it could not afford — and
 `would_hold_bytes=` is what the arrangement that was refused would have held,
 which is the number to raise `--parallel-memory` to. **No such line means the
-count ran as announced.**
+count was started as announced.**
 
-**What no line means is that the count ran — not that it was the right
-count.** On a dump of many small tables every reader you asked for does run,
+**What no line means is that the count was started — not that every worker
+read at once, nor that it was the right count.** On a plain file above
+`--jobs 4` the workers past the fourth wait their turn for a read buffer (see
+`--jobs` above). On a dump of many small tables every reader you asked for does run,
 and reading past the end of each small block is what most of them spend their
 time on, so the scan is slower than `--jobs 1` with nothing printed to say so.
 See `--jobs` above.

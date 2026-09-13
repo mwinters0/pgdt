@@ -19,8 +19,10 @@ what it has, a best-effort structural cache, and pushdown: column projection
 and a filter that is a boolean expression — `AND`, `OR`, `NOT` and parens —
 over typed single-column comparisons. Input is plain SQL text, `.xz`-compressed
 or not — an `.xz` dump is read directly, with no decompression step; other
-codecs and remote sources are planned, not built. What is
-next — parallel scan and extraction, richer types, row-group
+codecs and remote sources are planned, not built. A scan runs in parallel where
+the input admits it, its worker count and memory budget defaulting to what the
+file and the container it runs in allow. What is
+next — faster parallel extraction, richer types, row-group
 statistics, gzip/zstd input, remote input, engine bindings, archive formats — is in
 [`docs/design/roadmap.md`](docs/design/roadmap.md). See
 [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation

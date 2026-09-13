@@ -107,18 +107,17 @@ transfer unchanged.
 
 ---
 
-## The budget rule's two constants are both xz-derived, and one of them predicts every source's resident
+## The budget rule's two constants are both xz-derived, and one of them predicts the resident of every source that states a cost
 
 **Fact.** `io::MEMORY_RESERVE` (384 MiB, the cap a discovered limit hands back)
 and `io::MEMORY_UNPOOLED_BOUND` (256 MiB, what `margin_allowance` predicts a
-count's resident with) were both read off one grid: 400 runs over `.xz` inputs
-at 24 MiB and 128 MiB block sizes ([`architecture.md`](architecture.md),
-"Execution model and API surface";
-[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md), "The margin constant, derived by arithmetic").
-The second bounds what a scan holds *outside* what `WorkerMemory::at` bills, and
-the measured remainder is not flat in the codec's parameters: 83.5–214.6 MiB at
-24 MiB blocks against 10.9–13.8 MiB at 128, i.e. **an order of magnitude
-smaller where the decode unit is larger**.
+count's resident with) were both read off `.xz` inputs alone, at 24 MiB and
+128 MiB block sizes ([`architecture.md`](architecture.md), "Execution model and
+API surface"). The second bounds what a scan holds *outside* what
+`WorkerMemory::at` bills: its worst over the 400-run grid the reserve was read
+off is 238.6 MiB at 24 MiB blocks and 142.0 MiB at 128, and the published
+`reserve` sitting reads 4.7–179.5 MiB — one codec at two decode units, and no
+reading on any other.
 
 **Why this phase cares.** A new decompressing source states its own
 `default_worker_memory`, which is the per-worker term — and nothing obliges it
@@ -132,7 +131,8 @@ it, which needs no new sitting if the phase's own resident readings cover more
 than one reader count. `scripts/measure.py`'s `charge_model_problem` is what
 would report it: its inner fault line is exactly this constant.
 
-**Origin.** `19.26`, 2026-09-12.
+**Origin.** The margin constant's derivation, 2026-09-12
+([`architecture.md`](architecture.md), "Execution model and API surface").
 
 ---
 
@@ -149,7 +149,7 @@ states a budget, so a charge carrying it could not refuse a file whose index
 does not fit — it would only subtract an already-spent allocation from the
 allowance a worker count is solved against. That buys accuracy in the account
 and no protection, at the cost of the count-independent third `WorkerMemory`
-term `KD24` priced and refused. Registered as `KD26`
+term `KD24` priced and left untaken. Registered as `KD26`
 ([`architecture.md`](architecture.md), "Billed against held: one row per buffer
 the process keeps").
 
@@ -160,10 +160,12 @@ halves of the answer: the ordering argument that says an index need not be
 billed, and the warning that the argument is only sound while the index stays
 small next to the bound, which is a property of the producer's frame size
 rather than of the codec. It also inherits a shape to insist on — `xz_seek`
-took its table **by value** and so held a second copy of it until `M102`
-widened that API, so a decoder crate written or vendored for this phase should
-hand out a shareable handle from the start.
+took its table **by value** and so held a second copy of it until that API
+was widened to share one, so a decoder crate written or vendored for this phase
+should hand out a shareable handle from the start.
 
-**Origin.** `M99`, 2026-09-12
-([`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek
+**Origin.** The seek table's account, 2026-09-12
+([`architecture.md`](architecture.md), "Billed against held: one row per buffer
+the process keeps";
+[`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek
 table is held twice, and the walk runs before the budget does").

@@ -324,8 +324,12 @@ batch span (`QueryOptions::max_source_span`, 64 MiB by default) to the
 sub-stream divisor **only** for the first. A source that says nothing gets
 `ReadChunk` and is charged the span, which is the conservative arm.
 `LocalFileSource` answers `ReadChunk`; a block-decoding `XzSource` answers
-`Partition`, because a batch holding zero-copy views into a decoded block pins
-the block `partition_bytes` already charged for.
+`Partition`, on the reasoning that a batch holding zero-copy views into a
+decoded block pins the block `partition_bytes` already charged for. That holds
+inside the leader's window and not across a query partition, which is cut over
+a whole `CopyBlock` and can pin several decoded blocks where one is billed
+(`KD23`, [`architecture.md`](architecture.md), "Billed against held: one row per
+buffer the process keeps").
 
 **Why this phase cares.** P14 writes the second `partitions` implementation,
 and the term is defaulted — so a remote source that never mentions it is
@@ -337,7 +341,7 @@ unit a batch's views sit inside, the way a decoded xz block is, or handed over
 per read the way a chunk buffer is. Answer it deliberately when the source is
 specified.
 
-**Origin.** `P19.5`, 2026-09-09; the shipped mechanism is
+**Origin.** The partition advice, 2026-09-09; the shipped mechanism is
 [`architecture.md`](architecture.md), "Execution model and API surface".
 
 ---
@@ -385,21 +389,21 @@ composition, with the crate reduced to a CPU-side decoder over buffers this
 phase hands it. If this phase does take it, `decoder_bytes()` is the divisor and
 `decode_footprint()` would over-charge by the 1 MiB chunk it never allocates.
 
-**Origin.** 2026-09-10, negotiating the re-vendor with `xz-seek` (`M77`) —
+**Origin.** 2026-09-10, negotiating the re-vendor with `xz-seek` —
 [`../status/history/2026-09-10.md`](../status/history/2026-09-10.md), "`M77`:
 the re-vendor, and the window route priced and refused". Contingent on that
 crate keeping the guarantee; it is stated in its `architecture.md`, so re-check
 there rather than trusting this entry.
 
-## The trait grew two more members a remote source must answer, and one constant predicts its resident
+## Two more members a remote source must answer, and one constant predicts its resident
 
-**Fact.** `ByteRangeSource` gained `default_worker_memory()` — returning an
-`io::WorkerMemory`, a per-worker term plus a shared pool floor, which
-`Parallelism::fit` and `stream::worker_count` both *solve against* rather than
-divide by — and `PartitionRead`, which is how a source states the shape of the
-read a partition performs rather than having it inferred. Both landed after
-this inbox's `retained_unit` entry was written, and a remote source has to
-answer all three. Separately, `io::MEMORY_UNPOOLED_BOUND` (256 MiB) is what the
+**Fact.** Beside `retained_unit`, `ByteRangeSource` has
+`default_worker_memory()` — returning an `io::WorkerMemory`, a per-worker term
+plus the block pool's shared retention list, which `Parallelism::fit` and
+`stream::worker_count` both *solve against* rather than divide by — and a
+source's `Partitioning` carries a `PartitionRead`, which is how it states the
+shape of the read a partition performs rather than having it inferred. A remote
+source has to answer all three. Separately, `io::MEMORY_UNPOOLED_BOUND` (256 MiB) is what the
 margin predicts a count's resident with, and it was bracketed off xz readings
 alone.
 
@@ -411,7 +415,7 @@ it. The gzip and zstd inboxes carry the same warning about the constant being
 xz-derived; this phase has the additional problem that its per-worker term is
 set by a network buffer nobody here has measured.
 
-**Origin.** `19.22` (the pool floor), `19.20` (the read shape) and `19.26` (the
-bound), 2026-09-12. The mechanisms are
+**Origin.** The budget rule's pool term, the chunked plain read and the unpooled
+bound, 2026-09-11 and 2026-09-12. The mechanisms are
 [`architecture.md`](architecture.md), "Execution model and API surface" and
 "The compressed source".

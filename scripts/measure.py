@@ -44,15 +44,15 @@ re-take them, not that nothing is told when they go wrong.
 
 **Not every figure times `pgdq`.** `xz-decode-scaling` times the `xz_decode`
 example instead, which reaches past the library to the decoder's own bulk entry
-point -- nothing in the library decodes concurrently yet, and the figure is
-about the decoder rather than about what the library currently does with it.
+point -- the figure is about the decoder rather than about what the library
+does with it.
 The harness builds it (an *example* target, so `target/release/pgdq` is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
 declares.
 
 One binary this cannot build for itself, by design: the **census-off** binary is
-`map::Builder::on_row`'s body preceded by a bare `return;` -- a source patch no
+`map::census_row`'s body preceded by a bare `return;` -- a source patch no
 harness should perform. Build it by hand (the recipe is in measurements.md) and
 point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it. **It carries a `.stamp` beside it
 naming the commit it was built from**, the way a generated input does, and a
@@ -1094,7 +1094,7 @@ def parse_resolution(text: str) -> dict[str, str]:
     readers is a row labelled 24 that ran three.
 
     It is the flagless legs that *need* it. Under discovery the count is
-    `ParallelArgs::resolve`'s answer to the allocation, so the reader count a
+    `Discovered::resolve`'s answer to the allocation, so the reader count a
     resident set belongs to exists nowhere else — the harness cannot compute it
     without reimplementing the rule, which is the second authority
     `QUERY_SUBSTREAM_CAP` refuses by name.
@@ -1273,7 +1273,7 @@ for _n in (500, 1000, 2000, 4000):
 # is honest. The generated leg is reproducible from committed sources on a
 # machine that has never seen koji, which is what makes the figure re-takeable;
 # the koji leg is real data at a real compression ratio, which is what the
-# phase's arithmetic is written against.
+# per-worker charge's arithmetic is written against.
 INPUTS["control_xz"] = InputSpec(
     "control_xz",
     "generate_xz_input.py",
@@ -1947,11 +1947,12 @@ DECODE_BASELINE = 1
 #: 1 is the serial path this project ships, 12 is the machine's physical cores,
 #: 24 is every hardware thread.
 #:
-#: **The range deliberately runs past where a plain source stops scaling.**
-#: `POOL_DEPTH` clamps `BufferPool::slots()` to four, so a fifth fused worker on
-#: a plain file waits; the rows above four are what puts that ceiling in the
-#: table rather than leaving a reader to infer that the scan stopped scaling
-#: (`docs/design/architecture.md`, "Execution model and API surface").
+#: **The range deliberately runs past the count a plain source delivers.**
+#: `POOL_DEPTH` clamps `BufferPool::slots()` to four and the interior split
+#: grants `MayWait`, so a fifth fused worker on a plain file waits; the rows
+#: above four keep that arrangement in the table. What the wait costs them is
+#: not separated from anything else they pay (`docs/design/architecture.md`,
+#: "What parallelism buys, and where it stops").
 PARALLEL_JOBS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 
 #: The row every other parallel row is a ratio against: `--jobs 1`, which the
@@ -1967,9 +1968,11 @@ PARALLEL_BASELINE = 1
 #:
 #: Declared as a constant because three things read it and a fourth would
 #: otherwise have to guess: `_script` dispatches on it, `command_shapes`
-#: enumerates it, and `pinned_count_problems` uses it as the *only* exemption
-#: from `SWEEP_JOBS`. A family added to `_script` and not here states a count
-#: nothing reconciles.
+#: enumerates it, and `pinned_count_problems` exempts it from `SWEEP_JOBS` —
+#: beside the decode instrument's `decode-` shapes, the reserve figure's two
+#: stated families (`RESERVE_JOBS`) and its flagless one, each by its own
+#: prefix. A family added to `_script` and not here states a count nothing
+#: reconciles.
 JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-jobs-")
 
 #: What `--parallel-memory` states on every row of both `parallel-*` figures.
@@ -1979,28 +1982,21 @@ JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-job
 #: table's ratios would be over two variables at once.
 #:
 #: **2 GiB, because it must admit the widest row's partitions on the coarsest
-#: input.** A block-decoding `XzSource` charges one partition what one reader
-#: of it holds — the block unit **twice**, the chunk buffer, and the decoder's
-#: own retention (`xz_seek::Reader::decode_footprint`, 9,471,776 B on this
-#: shape's 8 MiB dictionary) — so 24 workers over 24 MiB blocks want
-#: `24 x 58.03 MiB` = 1.36 GiB, and 24 over 128 MiB blocks want more than any
-#: budget this machine would state; the 128 MiB leg is bound by its own block
-#: size and says so, which is the whole point of taking `parallel-peak-rss` at
-#: two of them. Below this the widest rows would be silently clamped by
+#: input.** A block-decoding `XzSource` charges each reader its block unit, the
+#: chunk buffer and the decoder's own retention
+#: (`xz_seek::Reader::decode_footprint`, 9,471,776 B on this shape's 8 MiB
+#: dictionary), and the readers together the block pool's retention list,
+#: `(POOL_DEPTH.max(workers) − 1)` units (`WorkerMemory`) — so 24 workers over
+#: 24 MiB blocks want `24 x 34.03 + 23 x 24 MiB` = 1.34 GiB, and 24 over 128 MiB
+#: blocks want more than any budget this machine would state; the 128 MiB leg
+#: is bound by its own block size and says so, which is the whole point of
+#: taking `parallel-peak-rss` at two of them. Below this the widest rows would be silently clamped by
 #: `worker_count`, and a clamped row is a lower count wearing a higher label.
 #:
-#: **It was 1 GiB, sized against a charge of one block plus a chunk.** That
-#: charge was measured out by 2.4x — a sub-stream holding 59.4 MiB was billed
-#: 25 — so the constant sized against it no longer admits twenty-four workers
-#: once the divisor charges what a reader actually holds
-#: (`docs/design/architecture.md`, "The compressed source"). Both `parallel-*`
-#: figures are re-taken at this value; the readings under the old one are the
-#: `af15eac` sitting's and are stale on that library change like every other.
-#:
-#: **`--jobs 1` cannot state it at all**, `Parallelism::workers(1, _)` being
-#: `Serial` and `Serial` carrying no budget, so the baseline row runs at
-#: `DEFAULT_MEMORY_BUDGET`. That is the serial arrangement this project ships,
-#: which is what a speedup is a speedup over, and each table says so.
+#: **`--jobs 1` states it too**: `Parallelism::workers(1, _)` is `Serial`
+#: carrying the budget, so the baseline row runs one block-decoding reader at
+#: this budget rather than the streaming fallback, and a speedup is a speedup
+#: over that. Each table says so.
 #:
 #: **A budget clamp and a `POOL_DEPTH` clamp are not the same kind of thing,
 #: which is why this table annotates one and sizes around the other.** Both
@@ -2021,11 +2017,12 @@ PARALLEL_BUDGET = 2 << 30
 #: allocator's retention, none of which the stated budget covers.
 #:
 #: **It is a constant, and that is the whole principle.** What is refused is
-#: sizing this off the `--jobs` axis, because the headroom above a stated
-#: budget is largely glibc's per-CPU arenas, whose count follows the host's
-#: hardware threads (`docs/status/history/2026-09-08.md`, "The `16.14` OOM is
-#: glibc's arenas") — a number picked from an allocator artifact of the machine
-#: that took the figure rather than from anything the library asks for, and
+#: sizing this off the `--jobs` axis, because what sits above a stated budget is
+#: nothing the library states: the terms no charge bills and the allocator's
+#: retention, glibc seeding an arena for every thread that allocates
+#: (`docs/status/history/2026-09-09.md`, "`M76`: the arena cap is not the
+#: runtime's") — a number picked from the allocator on the machine that took
+#: the figure rather than from anything the library asks for, and
 #: `measurements.md`'s contract is that a figure carries the command that
 #: re-takes it. Sizing off the *budget* is the opposite case: the budget is a
 #: number the library is handed and promises to bound its pools by, so
@@ -2038,22 +2035,22 @@ PARALLEL_HEADROOM = 2 << 30
 #: so. **Derived, never typed**: it is the stated budget plus
 #: `PARALLEL_HEADROOM`, so raising the budget cannot leave the container behind.
 #:
-#: **It was a literal `3g` and that is exactly how it went wrong.** Against the
-#: old 1 GiB budget `3g` *was* this rule — budget plus 2 GiB — but written as a
-#: number nothing recomputed, so `19.14`'s rise to 2 GiB silently halved the
-#: headroom instead of moving the container. Block-pool retention is
+#: **Never a literal.** A literal `3g` is this rule against a 1 GiB budget —
+#: budget plus 2 GiB — and nothing recomputes it when the budget moves: raising
+#: the budget to 2 GiB under it halved the headroom instead of moving the
+#: container. The block pool's slot ceiling is
 #: `clamp((budget - chunk_held) / unit, 1, POOL_DEPTH.max(jobs))`, a function of
-#: the *budget* rather than of the reader count, so at `control_xz128`'s 128 MiB
-#: unit it went from seven slots to fifteen: `parallel-peak-rss`'s widest row
-#: measured 2110 MiB at 1 GiB and **3067 MiB at 2 GiB**, five megabytes under a
-#: 3072 MiB limit ([`../docs/status/history/2026-09-10.md`](../docs/status/history/2026-09-10.md),
+#: the *budget* and the announced count rather than of the readers delivered
+#: (`KD21`), so at `control_xz128`'s 128 MiB unit it went from seven slots to
+#: fifteen: `parallel-peak-rss`'s widest row measured 2110 MiB at 1 GiB and
+#: **3067 MiB at 2 GiB**, five megabytes under a 3072 MiB limit ([`../docs/status/history/2026-09-10.md`](../docs/status/history/2026-09-10.md),
 #: "The container was sized off a number that moved"). The 24 MiB leg rose
 #: 89 MiB over the same step, being depth-bound rather than budget-bound, which
 #: is why the shared constant hid it.
 PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 
 #: The sub-stream count a typed-`query` leg actually gets from `PARALLEL_BUDGET`,
-#: keyed by input — `worker_count`'s floored `budget / divisor` — **for the legs
+#: keyed by input — `worker_count`'s `WorkerMemory::affords` — **for the legs
 #: a budget clamp reaches at all**. A leg absent from this dict is one the
 #: budget never clamps inside `PARALLEL_JOBS`, and it carries no per-cell
 #: annotation, there being nothing to say.
@@ -2062,7 +2059,7 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #: held batch's `max_source_span` only where the source retains by the read
 #: chunk (`crate::io::RetainedUnit`); a block-decoding `XzSource` retains by the
 #: partition, whose decoded blocks `partition_bytes` has already charged, so its
-#: divisor is what one reader of it holds and nothing more.
+#: per-reader term is what one reader of it holds and nothing more.
 #:
 #: **The dict is empty at `PARALLEL_BUDGET`, and that is a reading rather than
 #: an omission**: neither leg's count falls inside `PARALLEL_JOBS` at 2 GiB, so
@@ -2076,13 +2073,14 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #: for `POOL_DEPTH`, is checked by hand against the source once and is exactly
 #: as good until the constants it was checked against move, at which point the
 #: figure is stale on the paths already in its `depends`.
-#:  `.xz`:   `2 x 24 MiB` block slots (`control_xz`'s block size, the one being
-#:           decoded and the one retained beside it) + `1 MiB` chunk buffer +
-#:           `9,471,776 B` of decoder (an 8 MiB dictionary, the 1 MiB input
-#:           chunk and `liblzma`'s own 34,592 B of state) = `58.03 MiB`
-#:           divisor, the span not charged;
-#:           `floor(2 GiB / 58.03 MiB) = 35`, past the top of `PARALLEL_JOBS`,
-#:           so no entry.
+#:  `.xz`:   `24 MiB` block (`control_xz`'s block size, the one being decoded
+#:           and then retained) + `1 MiB` chunk buffer + `9,471,776 B` of
+#:           decoder (an 8 MiB dictionary, the 1 MiB input chunk and
+#:           `liblzma`'s own 34,592 B of state) = `34.03 MiB` a reader, the
+#:           span not charged, plus a `24 MiB` unit of the shared retention
+#:           list for every reader past `POOL_DEPTH`;
+#:           `floor((2 GiB + 24 MiB) / 58.03 MiB) = 35`, past the top of
+#:           `PARALLEL_JOBS`, so no entry.
 #:  plain:   `8 MiB` (`POOL_MAX_BYTES`, which is also what
 #:           `LocalFileSource::partitions` applies its multiple to and is
 #:           capped straight back to) `+ 64 MiB` span = `72 MiB` divisor;
@@ -2090,7 +2088,10 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 QUERY_SUBSTREAM_CAP: dict[str, int] = {}
 
 #: The worker count every `pgdq` invocation this harness makes states, and the
-#: one every registered figure is taken at **except the two whose axis it is**.
+#: one every registered figure is taken at **except the three whose axis it is**
+#: (`parallel-scan-throughput`, `parallel-peak-rss`, `xz-decode-scaling`) **and
+#: `reserve`**, whose stated legs hold `RESERVE_JOBS` and whose flagless legs
+#: state nothing.
 #:
 #: **The exemption is by axis, and it is what `JOBS_AXIS` names.** A figure
 #: measuring what the second worker buys cannot state one count for every row —
@@ -2105,20 +2106,21 @@ QUERY_SUBSTREAM_CAP: dict[str, int] = {}
 #:
 #: **A worker count is apparatus, on the same argument the allocator is.** A
 #: shape that states nothing measures whatever the CLI's `--jobs` defaults to
-#: that day — and that default has already moved underneath nineteen figures
-#: twice, to `available_parallelism()` and back to 1, without a single shape
-#: changing, which is a figure whose apparatus nothing in the document can
-#: name. The value here is 1 because that reproduces the published sitting, not
-#: because it now agrees with the CLI; the two are free to diverge again and
-#: nothing about this constant follows the flag. So no invocation
+#: that day — and that default has moved underneath the published figures
+#: more than once and now depends on the source, one worker on a plain file and
+#: `available_parallelism()` on an `.xz` one, without a single shape changing,
+#: which is a figure whose apparatus nothing in the document can name. Nothing
+#: about this constant follows the flag. So no invocation
 #: here inherits it: `_script` states it, `profile_argv` states it, the koji
 #: recipe takes it as a parameter, and `--check` refuses a shape that pins no
 #: count (`measurements.md`, "The apparatus").
 #:
 #: **It is 1 because that is the arrangement the published sitting measured**,
-#: not because serial is preferred: every table in the document was taken when
-#: `parse` and `query` were serial paths, so a re-take at this value reproduces
-#: that apparatus rather than replacing it. Raising it is an apparatus change
+#: not because serial is preferred: every published shape outside the declared
+#: exemptions — the `JOBS_AXIS` families, the decode instrument's `decode-`
+#: shapes, the reserve's two stated families at `RESERVE_JOBS` and its flagless
+#: legs — states `--jobs 1`, so a re-take at this value reproduces that
+#: apparatus rather than replacing it. Raising it is an apparatus change
 #: and obliges a re-sweep, exactly as changing the allocator would.
 SWEEP_JOBS = 1
 
@@ -2142,28 +2144,22 @@ LIBRARY_DEFAULT_BUDGET = 64 << 20
 #: The stated budgets `reserve` reads a resident set across: its one axis.
 #:
 #: **Four, spanning an order of magnitude either side of the library's own
-#: `DEFAULT_MEMORY_BUDGET`**, because the quantity that figure publishes is a
+#: `DEFAULT_MEMORY_BUDGET`**, because the quantity this axis publishes is a
 #: *difference* from the number stated and one reading of it cannot say whether
-#: the difference is a constant or a fraction — which is exactly the question
-#: the budget rule turns on (`roadmap-P19-efficient-defaults.md`, "What is
-#: discovered, and what the default makes of it").
+#: the difference is a constant or a fraction
+#: (`docs/design/architecture.md`, "Execution model and API surface").
 #:
-#: **The axis has already earned itself.** A plain source reads flat across all
-#: four, so its reserve is a constant and the smallest budget is the
-#: conservative end; a block-decoding `.xz` reads a line in the *sub-stream
-#: count* the budget affords, so no cell of it is a constant at all
-#: (`roadmap-P19-efficient-defaults-notes.md`, "The reserve figure's first
-#: sitting"). One reading could have said
-#: neither.
+#: **What the axis shows needs all four.** A plain source reads flat across
+#: them, the budget binding almost nothing there; a block-decoding `.xz` rises
+#: with the reader count each budget affords at `RESERVE_JOBS`, since what a
+#: stated budget buys there is readers. One reading could have said neither.
 RESERVE_BUDGETS: tuple[int, ...] = (64 << 20, 128 << 20, 256 << 20, 512 << 20)
 
 #: The worker count every reserve reading states.
 #:
 #: The top of `PARALLEL_JOBS`, which is this machine's `available_parallelism()`
-#: and so the count `Parallelism::discover()` resolves here. A reserve is a
-#: reserve *for* a thread count — glibc seeds an arena per thread that allocates
-#: — so reading it at a smaller count would size the shipped constant for an
-#: arrangement the discovered default does not produce.
+#: and so the count `Parallelism::discover()` recommends here for an `.xz`
+#: source: the stated legs pin that count and vary only the budget.
 #:
 #: **This is a declared axis for `pinned_count_problems`, not an inherited
 #: count.** The family states it on every shape; what makes it exempt from
@@ -2174,23 +2170,21 @@ RESERVE_JOBS = PARALLEL_JOBS[-1]
 #: The two arena settings each budget is read at: token, `MALLOC_ARENA_MAX`
 #: value (empty = set nothing), and what the table calls the leg.
 #:
-#: **Two, and the pair is what the shipped constant is sized against.** `unset`
-#: is where the constant comes from: the default has to survive the operator who
-#: capped nothing, since that is the case that kills the process. `two` is the
-#: tightest value an operator would plausibly set — the floor the manual
-#: publishes and what the koji probes used — so it bounds how much of the
+#: **Two.** `unset` is the operator who capped nothing, which is the case that
+#: kills the process and the arrangement `MEMORY_RESERVE` was chosen under.
+#: `two` is the tightest value an operator would plausibly set — the floor the
+#: manual publishes and what the koji probes used — so it bounds how much of the
 #: resident set is arena retention at all, which the uncapped leg cannot say on
 #: its own. **Neither can be dropped**: a one-leg figure cannot report a null,
-#: and this phase has twice found an arena claim outliving the build it was
+#: and an arena claim here has more than once outlived the build it was
 #: measured on.
 #:
-#: **A third leg at the worker count plus one was registered and dropped**, and
-#: not because a reading came back flat. After the `current_thread` runtime the
-#: threads are the blocking pool's and are created on demand, so the arena count
-#: already follows the concurrency actually dispatched: a cap set at or above it
-#: cannot bind. That is a mechanism, not a measurement, so the leg was priced at
-#: an inert setting by construction
-#: (`../docs/status/history/2026-09-09.md`, "The figure keeps two arena legs").
+#: **No leg caps at the worker count plus one.** A cap at or above the arena
+#: count cannot bind, but the arena count is not the worker count: the
+#: instrument reads `readers + 2` arenas at every limit that resolved two readers
+#: or more, so a `readers + 1` cap sits below it there. At one reader it reads 2
+#: arenas, where a cap of 2 is already inert. No reading prices such a cap; the leg is left out as one not
+#: worth a sitting, not as one inert by construction.
 RESERVE_ARENAS: tuple[tuple[str, str, str], ...] = (
     ("unset", "", "arenas uncapped"),
     ("two", "2", "`MALLOC_ARENA_MAX=2`"),
@@ -2198,11 +2192,10 @@ RESERVE_ARENAS: tuple[tuple[str, str, str], ...] = (
 
 #: The two sources each leg is read over, and what the table calls each.
 #:
-#: **Both, because a reserve that is a property of the source is not a
-#: constant.** The budget binds the pools on a block-decoding `.xz` and barely
-#: binds anything on a plain source, so a rule stating one number has to be
-#: read against the shape where it is loosest as well as the one where it is
-#: tightest.
+#: **Both, because the rule states one reserve for every source.** The budget
+#: binds the pools on a block-decoding `.xz` and barely binds anything on a
+#: plain source, so that one number has to be read against the shape where it
+#: is loosest as well as the one where it is tightest.
 RESERVE_INPUTS: tuple[tuple[str, str], ...] = (
     ("control_xz", "`.xz`"),
     ("control", "plain"),
@@ -2222,20 +2215,18 @@ RESERVE_FAMILY = "parse-rss-reserve-"
 #: `worker_count_problems` and `pinned_count_problems` skip it by this prefix,
 #: and a test asserts that what it states is *neither* flag — the exemption is
 #: from stating a count, never a licence to pin one quietly. What earns it is
-#: that the count is the **reading**: under discovery `ParallelArgs::resolve`
+#: that the count is the **reading**: under discovery `Discovered::resolve`
 #: lowers the source's recommendation to what the allocation affords, so the
 #: `jobs=` a run reports is the reader count its resident set is a resident set
 #: *for*, and a shape that pinned one would measure an arrangement the shipped
-#: default never produces (`roadmap-P19-efficient-defaults.md`, "The figure
-#: states the budget and the worker count, and that is not the arrangement the
-#: default produces").
+#: default never produces.
 #:
-#: **It does not reopen the figure this spec refused.** What was refused there
-#: was publishing a *throughput* table off unpinned shapes, the throughput of
+#: **It does not reopen the figure the register refuses** (`measurements.md`,
+#: "The apparatus"): a *throughput* table off unpinned shapes, the throughput of
 #: the default being already measured at a stated count by
-#: `parallel-scan-throughput`; this is a diagnostic resident reading of an
-#: arrangement no stated shape can express, and the count it runs at is
-#: recorded per leg from the run's own report rather than assumed.
+#: `parallel-scan-throughput`. This is a resident reading of an arrangement no
+#: stated shape can express, and the count it runs at is recorded per leg from
+#: the run's own report rather than assumed.
 RESERVE_FLAGLESS = "parse-rss-discover-"
 
 #: The command-shape prefix of the **path step**: the same `parse` at a stated
@@ -2285,7 +2276,7 @@ XZ_DECODE_FOOTPRINT = 9_471_776
 #: charge it to retention. Read off a stack rather than modelled —
 #: `heaptrack_print` attributes exactly 8,388,608 bytes for one decoder through
 #: `lzma_lz_decoder_init` ← `lzma_raw_decoder` ← `PayloadDecoder::new`
-#: (`measurements.md`, "What an instrument can see"; `M86`).
+#: (`measurements.md`, "What an instrument can see").
 XZ_DICT_BYTES = 8_388_608
 
 
@@ -2307,11 +2298,11 @@ def reader_bytes(unit: int) -> int:
     no read loop has announced a length — so the charge
     `XzSource::default_worker_memory` recommends against *before* the file is
     open for reading and the charge `BlockCache::affordable` then compares a
-    budget to are the same charge. Charging the unannounced pool's
-    `POOL_MAX_BYTES` ceiling instead ran the recommendation 7 MiB a reader high
-    and cost a reader at every allocation, which `19.19` repaired (`io.rs`,
-    `charged_chunk_bytes`). A flagless run's resolved budget is **never** this
-    number times its count: the shared retention list is billed at every count,
+    budget to are the same charge. *Rejected:* charging the unannounced pool's
+    `POOL_MAX_BYTES` ceiling — it runs the recommendation 7 MiB a reader high
+    and costs a reader at every allocation (`io.rs`, `charged_chunk_bytes`).
+    A flagless run's resolved budget is **never** this number times its count:
+    the shared retention list is billed at every count,
     so a budget read off a run's own report carries `pool_bytes` besides, which
     is what `charge_bytes` states. It splits again only for a caller that states
     a `--chunk-size` other than the default, which no leg of this figure does.
@@ -2321,8 +2312,9 @@ def reader_bytes(unit: int) -> int:
     stale silently; a mirror checked by hand against the source once is exactly
     as good until one of its terms moves, at which point the figure is already
     stale on the paths its `depends` names. At 24 MiB blocks this is
-    34.03 MiB — 58.03 until `M93` found the second unit double-counted with the
-    pool's own list.
+    34.03 MiB. *Rejected:* two units a reader — the decode buffer and the
+    retained block are one buffer, and the second unit is already the pool's
+    own list (`pool_bytes`).
     """
     return unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
 
@@ -2335,8 +2327,8 @@ def reader_bytes(unit: int) -> int:
 #: `POOL_DEPTH.max(jobs)` and `BlockCache::slot` drains to one below it before
 #: obtaining the buffer `retain` then pushes back, so the pool holds
 #: `(POOL_DEPTH.max(jobs) - 1) x unit` on top of the one unit each reader has in
-#: flight. That is `pool_bytes`, which `19.22` made the library bill and `M93`
-#: restated as what the pool holds (`io.rs`, `WorkerMemory`); naming it as a
+#: flight. That is `pool_bytes`, which the library bills as what the pool
+#: holds (`io.rs`, `WorkerMemory`); naming it as a
 #: column of its own is what keeps it out of the residual, where it would read
 #: as a term nothing accounts for.
 LIBRARY_POOL_DEPTH = 4
@@ -2364,12 +2356,13 @@ LIBRARY_MEMORY_RESERVE = 384 << 20
 #: allocation. One threshold cannot tell those apart, which is why there are
 #: two, and both are registered before the sitting.
 #:
-#: Read off `19.16`'s grid under today's charge rather than fitted: the worst
-#: surviving block-path remainder there is 214.6 MiB and this is that rounded up
-#: to a 64 MiB step. What justifies the value is the slack to
-#: `MEMORY_MARGIN_PERCENT` failing — 75-89 MiB above that worst observation at
-#: the allocations the margin governs — rather than the rounding
-#: (`19.26`; `docs/design/architecture.md`, "Execution model and API surface").
+#: Read off the reserve constant's five-build grid under today's charge rather
+#: than fitted: the worst surviving block-path remainder there is 238.6 MiB at
+#: 24 MiB blocks and 142.0 MiB at 128, and this is the worst rounded up to a
+#: 64 MiB step (`rederived_unpooled_bound`), about 17 MiB above it. The
+#: published `reserve` sitting reads 4.7–179.5 MiB, which the same arithmetic
+#: rounds to 192 MiB (`docs/design/architecture.md`, "Execution model and API
+#: surface").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
 
@@ -2378,27 +2371,25 @@ def pool_bytes(unit: int, jobs: int) -> int:
     term: `(POOL_DEPTH.max(jobs) - 1) x unit`, and never zero.
 
     `WorkerMemory::pool_bytes`, mirrored — the second term of the library's
-    charge since `19.22`, where it was unbilled before, and restated by `M93`
-    as what the pool holds rather than as a floor that decays. Kept as a column
+    charge, stated as what the pool holds rather than as a floor that decays.
+    Kept as a column
     of its own rather than folded into `charge_bytes` because it is **unbounded
     in the block size** where every other term is not: at one reader 72 MiB at
     koji's 24 MiB blocks, 384 at 128, 1.5 GiB at 512, and growing by a unit a
     reader past `POOL_DEPTH`. A model that hid it inside a flat remainder would
     read as a term nothing accounts for.
 
-    **Billed at every cell**, which is what `M93` changed: the term was
-    `max(0, POOL_DEPTH - jobs) x unit` and so clamped off at four readers, and
-    the charge carried the missing unit inside a per-reader term of two. The two
-    spellings agree nowhere — the old one bills exactly one unit more at every
-    count, which is what the 2026-09-12 gate sitting read off its one-reader
-    cells (130.0 MiB billed against 111.1 held at 24 MiB blocks).
+    **Billed at every cell.** *Rejected:* `max(0, POOL_DEPTH - jobs) x unit`
+    beside a per-reader term of two units, which clamps off at four readers and
+    bills exactly one unit more than the pool holds at every count — a
+    one-reader cell reads 130.0 MiB billed against 111.1 held at 24 MiB blocks.
 
     **It has two consumers and they read it for opposite purposes.**
     `charge_bytes` adds it, because the budget rule bills it; `_depooled`
     subtracts it, because a term known before the sitting has no business in a
     fitted intercept — and the shape that makes it worth billing apart is the
     same shape that makes a straight line across it wrong, being constant below
-    `POOL_DEPTH` and per-reader above (`M95`). A change to this function moves
+    `POOL_DEPTH` and per-reader above (`_depooled`). A change to this function moves
     both a charge and a published line.
     """
     return max(LIBRARY_POOL_DEPTH, jobs, 1) * unit - unit
@@ -2423,10 +2414,10 @@ def discovered_budget(limit: int) -> int:
     `Parallelism::discover_in`, mirrored — `limit.bytes.saturating_sub(
     MEMORY_RESERVE)` (`io.rs`).
 
-    **The margin is deliberately left out**, as the recommendation is. Since
-    `19.23` the resolved *count* also answers to `MEMORY_MARGIN_PERCENT` — its
-    predicted resident, `charge + MEMORY_UNPOOLED_BOUND` since `19.26`, must
-    leave a fifth of the limit — so what a run reports is at most this and
+    **The margin is deliberately left out**, as the recommendation is. The
+    resolved *count* also answers to `MEMORY_MARGIN_PERCENT` — its predicted
+    resident, `charge + MEMORY_UNPOOLED_BOUND`, must leave a fifth of the
+    limit — so what a run reports is at most this and
     often less. That makes this an upper bound on the
     budget rather than a prediction of it, which is what the use below wants:
     a count comparison that stays an upper bound.
@@ -2449,18 +2440,15 @@ def block_path_afforded(unit: int, budget: int) -> bool:
 
     `BlockCache::affordable`, mirrored: `worker_memory(..).at(1) <= budget`,
     which is `charge_bytes(unit, 1)` — the per-reader charge **plus the
-    retention list that one reader leaves standing**. `19.22` is what put the
-    list inside it and `M93` is what stopped it being double-counted, so the
-    line has been 106.03 MiB at 24 MiB blocks and 522.03 at 128 since — against
-    34.03 and 138.03 for the per-reader term alone. So `reader_bytes <= budget`
-    is not this comparison and has not been since `19.22` (`io.rs`,
-    `BlockCache::affordable`).
+    retention list that one reader leaves standing**, so the line is
+    106.03 MiB at 24 MiB blocks and 522.03 at 128 — against 34.03 and 138.03 for
+    the per-reader term alone. So `reader_bytes <= budget` is not this
+    comparison (`io.rs`, `BlockCache::affordable`).
 
     **One function because the renderer asks the question at four places** — the
     flagless cell's own label, the fit's window, the model check's exclusion and
-    the path step's two budgets — and three of them were still asking it the
-    pre-`19.22` way while the fourth was not, which is a table whose cells
-    silently changed mechanism while reading as one series (`M88`).
+    the path step's two budgets — and four copies of it can disagree, which is
+    a table whose cells silently change mechanism while reading as one series.
 
     **Asked of a reported budget, never of a container limit.** A flagless run
     resolves `limit − MEMORY_RESERVE` and says so on its own `scan started`
@@ -2479,7 +2467,7 @@ def afforded_readers(unit: int, budget: int) -> int:
     `Parallelism::fit`, mirrored, with the recommendation **and the margin**
     left out: the count a run actually resolves is `min(recommendation,
     fit-under-margin)`, the recommendation is the machine's and the margin
-    (`MEMORY_MARGIN_PERCENT`, `19.23`) lowers the fit further at every limit,
+    (`MEMORY_MARGIN_PERCENT`) lowers the fit further at every limit,
     so this is an upper bound on the resolved count rather than a prediction of
     it. Both omissions push the same way, which is what keeps the fit-ability
     check below a necessary condition.
@@ -2512,14 +2500,13 @@ def charge_model(unit: int, jobs: int, held: float) -> tuple[int, int, float]:
       retention list accounts for — inside `billed`, reported beside it because
       it is the one term unbounded in the block size.
     - **unnamed** is `held - billed`, which is glibc's arena retention as far
-      as any reading here goes
-      (`roadmap-P19-efficient-defaults-notes.md`, "The compressed path's resident
-      account").
+      as any reading here goes (`measurements.md`, "What a scan holds above the
+      budget it was given").
 
     **This is an account and not a fit** — every term is arithmetic from the
-    source, evaluated at the cell, which is what `19.16` did by hand over
-    `readings.json` after 400 runs had been spent searching for a constant
-    (`.claude/skills/evidence/SKILL.md`, rule 1).
+    source, evaluated at the cell, where the alternative is doing it by hand
+    over a sitting's readings after the runs have been spent searching for a
+    constant (`.claude/skills/evidence/SKILL.md`, rule 1).
     """
     billed = charge_bytes(unit, jobs)
     pool = pool_bytes(unit, jobs)
@@ -2533,13 +2520,11 @@ BAND_RULE = "rule"
 BAND_BOUND = "bound"
 BAND_OVER_BILL = "over-bill"
 
-#: `19.11`'s acceptance, as the enumeration it is: which bands bar the sweep's
-#: box. **`bound` alone is released**, and the clause is written as a list
-#: rather than as a threshold because a threshold silently released the band
-#: nobody had argued about — the third amendment's "no evaluated cell above
-#: `MEMORY_RESERVE`" was counting the check's *upper* lines and let the
-#: non-negativity side out with them
-#: (`roadmap-P19-efficient-defaults.md`, `19.11`'s row, amended a fourth time).
+#: The check's own rule, as the enumeration it is: which bands refute the model.
+#: **`bound` alone is released**, and the rule is written as a list rather than
+#: as a threshold because a threshold silently releases the band nobody has
+#: argued about — "no evaluated cell above `MEMORY_RESERVE`" counts the check's
+#: *upper* lines and lets the non-negativity side out with them.
 #:
 #: **Released means the allocation is intact *and* the sitting discharges the
 #: finding**, which is the test any further band answers. A bound fault meets
@@ -2547,17 +2532,21 @@ BAND_OVER_BILL = "over-bill"
 #: re-derives `MEMORY_UNPOOLED_BOUND` from its own cells
 #: (`rederived_unpooled_bound`). An over-bill meets neither — it has to exceed
 #: the whole of the rest of the process's footprint before the arithmetic can
-#: report it at all, so it is never apparatus scatter the way a 214.6 MiB
+#: report it at all, so it is never apparatus scatter the way a 238.6 MiB
 #: remainder against a 256 MiB bound is, and it leaves nothing for the sitting
 #: to repair.
 #:
-#: A band is released by mapping to `None`; every other band bars, and its
-#: value is *why* — the verdict prints that clause beside the cells, so a band
-#: cannot be given a barring stance without the reason being written down in
-#: the same place. A band absent from the mapping bars too, so a fourth fault
-#: line added later blocks the box until somebody argues it out rather than
-#: defaulting into the released half; `charge_band_problems` is what makes that
-#: argument visible instead of silent.
+#: A band is released by mapping to `None`; every other band refutes the model,
+#: and its value is *why* — the verdict prints that clause beside the cells, so
+#: a band cannot be given a refuting stance without the reason being written
+#: down in the same place. A band absent from the mapping refutes too, so a
+#: fourth fault line added later reads as a refutation until somebody argues it
+#: out rather than defaulting into the released half; `charge_band_problems` is
+#: what makes that argument visible instead of silent.
+#:
+#: **A refutation does not bar publication** — see the verdict in
+#: `run_reserve`: every cell is a real reading, and only a killed leg
+#: (`KILL_TOLERANT`) keeps a figure out of the document.
 BAND_STANCE: dict[str, str | None] = {
     BAND_OVER_BILL: (
         "an over-bill is bytes the rule charged that nothing holds, so it admitted fewer "
@@ -2570,27 +2559,28 @@ BAND_STANCE: dict[str, str | None] = {
     ),
 }
 
-#: What an unlisted band bars for. It is a reason and not an error because the
+#: Why an unlisted band refutes. It is a reason and not an error because the
 #: verdict must still render: `--check` is where an unargued band is reported
 #: (`charge_band_problems`), and a sitting that runs before that is read should
-#: say plainly why it barred rather than raise.
-UNARGUED_BAND_BARS = "no stance is recorded for it, so it bars until somebody argues it out"
+#: say plainly why it refuted rather than raise.
+UNARGUED_BAND_REFUTES = (
+    "no stance is recorded for it, so it refutes until somebody argues it out"
+)
 
 
-def band_bars(band: str) -> str | None:
-    """Why this band bars `19.11`'s box, or `None` where the clause releases it.
+def band_refutes(band: str) -> str | None:
+    """Why this band refutes the model, or `None` where the rule releases it.
 
-    The default is to bar, which is the whole shape of the fourth amendment: a
-    fault line added later does not inherit the released half by being
-    unmentioned (`M92`).
+    The default is to refute: a fault line added later does not inherit the
+    released half by being unmentioned.
     """
-    return BAND_STANCE.get(band, UNARGUED_BAND_BARS)
+    return BAND_STANCE.get(band, UNARGUED_BAND_REFUTES)
 
 
-#: The grid `19.26` read `MEMORY_UNPOOLED_BOUND` off: the candidate constants
-#: were 64 MiB apart, so the bound is the worst observed remainder rounded up to
-#: a step of it and `rederived_unpooled_bound` re-does that arithmetic over a
-#: sitting's own cells.
+#: The step `MEMORY_UNPOOLED_BOUND` is read off in: the reserve constant's
+#: candidate builds were 64 MiB apart, so the bound is the worst observed
+#: remainder rounded up to a step of it and `rederived_unpooled_bound` re-does
+#: that arithmetic over a sitting's own cells.
 UNPOOLED_BOUND_STEP = 64 << 20
 
 
@@ -2599,40 +2589,40 @@ class ChargeFault:
     """One cell's fault: which of the model's three lines it crossed, and the
     sentence that says so.
 
-    **The band is the half `19.11` consumes.** The prose has said which line a
-    cell crossed since `19.26`, but the verdict that reads these collapsed every
-    fault into one refusal, so a cell the inner line calls *a finding about the
-    bound, the allocation intact* barred the sweep exactly as a breach of the
-    rule did. A fault carries its band so that the verdict can say which, and so
-    that the acceptance clause can read the bands by name (`M91`, `M92`).
+    **The band is the half the verdict consumes.** A verdict that collapses
+    every fault into one refutation calls a cell the inner line reads as *a
+    finding about the bound, the allocation intact* a failure of the model
+    exactly as a breach of the rule is. A fault carries its band so that the
+    verdict can say which, and so that `BAND_STANCE` can be read by name.
     """
 
     band: str
     text: str
 
     @property
-    def bars_acceptance(self) -> bool:
-        """Whether `19.11`'s gate fails on this cell.
+    def refutes(self) -> bool:
+        """Whether this cell refutes the model.
 
-        Read off `BAND_STANCE`, which is the acceptance clause written as an
-        enumeration: `bound` is released, because the remainder is still inside
+        Read off `BAND_STANCE`, which is the rule written as an enumeration:
+        `bound` is released, because the remainder is still inside
         `MEMORY_RESERVE` *and* the sitting re-derives the constant it overran.
-        Every other band bars, an unlisted one included — a band with no stance
-        recorded is one nobody has argued out, not one the gate lets through.
+        Every other band refutes, an unlisted one included — a band with no
+        stance recorded is one nobody has argued out, not one the check lets
+        through.
         """
-        return band_bars(self.band) is not None
+        return band_refutes(self.band) is not None
 
 
 def rederived_unpooled_bound(worst_unnamed: float) -> int:
     """What `MEMORY_UNPOOLED_BOUND` would be if it were read off these cells:
     the smallest 64 MiB step covering the worst unnamed remainder among them.
 
-    This is `19.26`'s own arithmetic — 214.6 MiB worst over `19.16`'s grid, the
-    next step up being 256 — re-done over whatever sitting is in hand, which is
-    why a cell above the bound publishes with its finding instead of barring the
-    sweep: the re-derivation is arithmetic over readings already taken, not a
-    re-take (`roadmap-P19-efficient-defaults-notes.md`, "The margin constant,
-    derived by arithmetic").
+    This is the arithmetic the shipped constant was read off — 238.6 MiB worst
+    over the reserve constant's five-build grid, the next step up being 256 —
+    re-done over whatever sitting is in hand, which is why a cell above the
+    bound is a finding rather than a refutation: the re-derivation is arithmetic
+    over readings already taken, not a re-take (`docs/design/architecture.md`,
+    "Execution model and API surface").
     """
     steps = (max(0, int(worst_unnamed)) + UNPOOLED_BOUND_STEP - 1) // UNPOOLED_BOUND_STEP
     return max(1, steps) * UNPOOLED_BOUND_STEP
@@ -2650,11 +2640,12 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
     - **No larger than `MEMORY_UNPOOLED_BOUND`**, the inner line: that constant
       is what `margin_allowance` predicts a count's resident with, so a cell
       above it is a leg whose headroom is smaller than the library promised —
-      a finding about the *bound*, which `19.26` read off `19.16`'s grid.
+      a finding about the *bound*, which was read off the reserve constant's
+      five-build grid.
     - **No larger than `MEMORY_RESERVE`**, the outer line: the reserve is by
       construction what covers everything the charge does not bill, so a
       remainder above it is a leg the *rule* cannot keep inside its allocation
-      — the gate failing, stated per cell instead of per sitting.
+      — the rule failing, stated per cell instead of per sitting.
 
     **Two lines rather than one, because they are different findings.** Between
     them the allocation still holds and the number the count is predicted
@@ -2664,8 +2655,8 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
     readings overran invisible until a kill.
 
     **The band travels with the sentence**, because the verdict that reads this
-    is what `19.11` accepts on, and a distinction spent before it reaches its
-    only consumer is not a distinction (`M91`).
+    names the band, and a distinction spent before it reaches its only consumer
+    is not a distinction.
 
     Asked only of a leg that took the block path and survived: the streaming
     fallback holds none of these terms, and a censored leg's reading is a bound
@@ -2709,11 +2700,9 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
 #: input, what the table calls it, and its block size.
 #:
 #: **Both block sizes, because the charge is a multiple of the unit.** A
-#: unit-shaped error in that charge is multiplied by the reader count, and
-#: `19.14` has already been wrong about the charge once; a fit taken at one
-#: block size cannot tell a term that scales with the unit from one that does
-#: not (`roadmap-P19-efficient-defaults.md`, "The grid is asymmetric,
-#: deliberately").
+#: unit-shaped error in that charge is multiplied by the reader count, and a
+#: fit taken at one block size cannot tell a term that scales with the unit
+#: from one that does not.
 #:
 #: The block size is declared here rather than read off the file because it is
 #: what `reader_bytes` and `pool_bytes` are functions of, and the renderer
@@ -2734,35 +2723,26 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: number decides both terms of the arrangement — which is why these legs carry
 #: a **per-spec** container limit where every other figure takes its own.
 #:
-#: **512 MiB is the bottom of the range.** It is where `19.15` measured 474 MiB
-#: median against 503.7 worst and the margin the gate asks for failed. The
-#: 128 MiB leg reads the streaming fallback there — 128 MiB granted against a
-#: 522.03 MiB line — and the 24 MiB leg takes the block path at one reader,
-#: which each cell says for itself (`block_path_afforded`, and `M88`). It is
-#: kept as the bottom of the axis because the rule's own worst headroom is
-#: there and a fallback leg is still a leg the allocation has to hold. 1 GiB
-#: and 1.5 GiB are where that sitting read 23.7% and 35.2% of headroom, so the
-#: fit has the whole shape of the curve in it rather than its worst end; and
-#: 2 GiB is where the 24 MiB leg's count saturates at the source's own
-#: recommendation, which is what separates "the allowance ran out" from "the
-#: recommendation did".
+#: **512 MiB is the bottom of the range**, where the rule's own worst headroom
+#: is. The 128 MiB leg reads the streaming fallback there — 128 MiB granted
+#: against a 522.03 MiB line — and the 24 MiB leg takes the block path at one
+#: reader, which each cell says for itself (`block_path_afforded`). A fallback
+#: leg is still a leg the allocation has to hold. 1 GiB and 1.5 GiB put the
+#: middle of the curve in the fit rather than only its worst end; and 2 GiB is
+#: where the 24 MiB leg's count saturates at the source's own recommendation,
+#: which is what separates "the allowance ran out" from "the recommendation
+#: did".
 #:
-#: **544 MiB and 1088 MiB were registered to reach a term that no longer
-#: decays** (`M89`, then `M93`). The term was `max(0, POOL_DEPTH − jobs) × unit`
-#: and clamped off at four readers, so a limit had to be inserted under the
-#: clamp for any cell to bill it at all; restated as the retention list the pool
-#: really holds it is billed at **every** cell, and above four readers it is the
-#: larger half of the charge.
-#:
-#: **They stay, and the reason is the regime rather than the window.** Each adds
-#: a reader count no other limit resolves — `544m` two readers of 24 MiB blocks,
-#: `1088m` two of 128 — and both of those counts are **below `POOL_DEPTH`**,
-#: which is the side of the charge where the retention list is a constant
-#: `(POOL_DEPTH − 1)` units rather than growing with the count. That regime
-#: otherwise has two points on the 24 MiB family and **one** on the 128 MiB one,
-#: where a line through it is an intercept asserted as a measurement. So the two
-#: limits are the below-depth regime's coverage, which is a reason that outlives
-#: the window they were registered for.
+#: **544 MiB and 1088 MiB are there for the side of the charge below
+#: `POOL_DEPTH`**, where the retention list is a constant `(POOL_DEPTH − 1)`
+#: units rather than growing with the count. `544m` resolves two readers of
+#: 24 MiB blocks, a below-depth count no other limit gives that family.
+#: `1088m` resolves one reader of 128 MiB blocks — the count `1g` resolves too,
+#: so it adds a second cell of that arrangement rather than a count — and
+#: eleven of 24 MiB blocks. The 128 MiB family's below-depth regime is
+#: therefore one distinct count, and a line through it alone would be an
+#: intercept asserted as a measurement; the family's fit is over all its
+#: counts, which is what `RESERVE_FIT_MIN_COUNTS` holds.
 #:
 #: **Additive, so nothing already read moves**: `512m` keeps the axis's worst
 #: headroom and the other three keep theirs. `544m` is also close to the
@@ -2773,9 +2753,7 @@ RESERVE_FLAGLESS_INPUTS: tuple[tuple[str, str, int], ...] = (
 #: **A leg may be OOM-killed, and that is a reading rather than an apparatus
 #: failure** — see `KILL_TOLERANT`, which is where that licence is granted and
 #: bounded. The rule aims resident at the limit by construction, so every
-#: flagless leg sits close to its own ceiling and the 128 MiB legs sit closest:
-#: `19.15`'s worst rep left three megabytes of 512, and a sitting was lost to a
-#: kill at `1g` before the per-file charge was repaired.
+#: flagless leg that takes the block path sits close to its own ceiling.
 RESERVE_LIMITS: tuple[tuple[str, int], ...] = (
     ("512m", 512 << 20),
     ("544m", 544 << 20),
@@ -2801,8 +2779,8 @@ RESERVE_LIMITS: tuple[tuple[str, int], ...] = (
 #: the apparatus failing, and being loud about it is what caught the one that
 #: mattered: `parallel-peak-rss` once measured 3067 MiB inside a 3072 MiB
 #: container, and a licence written across the harness would have swallowed it
-#: into a footnote. A shape outside this tuple that is killed still raises — but
-#: now says so in those words, which the exit code could not.
+#: into a footnote. A shape outside this tuple that is killed still raises, and
+#: says so in those words, which the exit code cannot.
 #:
 #: **A censored cell is not a number.** The reading is a lower bound on a peak
 #: the process never reached, so it enters neither a fit nor a headroom column;
@@ -2825,12 +2803,13 @@ def kill_tolerant(command: str) -> bool:
 #: **One limit and one block size, deliberately.** This figure is gated
 #: `warm-parallel` and crossing the mechanism leg with the limits and the
 #: block sizes buys a second cross of the expensive axis for no question
-#: anybody asked. The limit is the smallest on the axis, which is where the
-#: fixed term is the largest share of resident and therefore where a leg that
-#: moves it is visible at all. **Its flagless legs run the streaming fallback
-#: since `19.22`** (`RESERVE_LIMITS`), which is what the arena cap is measured
-#: against here; the path step beside it is the one pair that states a budget,
-#: precisely so that the block path can be reached inside this allocation.
+#: anybody asked. The limit is the smallest on the axis. **At it the 24 MiB
+#: leg resolves one reader on the block path, where the uncapped process
+#: already runs two arenas**, so `MALLOC_ARENA_MAX=2` is inert at this cell —
+#: the published leg reads it at −112 KiB — and says nothing about the arenas
+#: more readers open. The path step beside it is the one pair that states a
+#: budget, so that the block path and the streaming fallback are compared
+#: inside this one allocation.
 RESERVE_MECHANISM_LIMIT = "512m"
 RESERVE_MECHANISM_INPUT = "control_xz"
 
@@ -2872,13 +2851,12 @@ RESERVE_MECHANISM_UNIT = next(
 #: `block_path_afforded` is the comparison, so the pair straddles it and nothing
 #: else differs between the two runs — which is what makes the difference
 #: between them the whole block path against the streaming fallback rather than
-#: a budget change with a path change inside it. It is the 15.1 MiB against
-#: 474 MiB step `19.15` read across two *limits*, priced here at one byte.
+#: a budget change with a path change inside it.
 #:
-#: **It is `charge_bytes(unit, 1)` and not `reader_bytes(unit)`**: `19.22` put
-#: that one reader's share of the retention list inside `BlockCache::affordable`,
-#: so a pair straddling the per-reader term alone would have run the streaming
-#: decoder on *both* legs and published their difference as the cost of a path
+#: **It is `charge_bytes(unit, 1)` and not `reader_bytes(unit)`**:
+#: `BlockCache::affordable` charges that one reader's share of the retention
+#: list, so a pair straddling the per-reader term alone would run the streaming
+#: decoder on *both* legs and publish their difference as the cost of a path
 #: neither took.
 #:
 #: It earns its place whatever the attribution finds: it is what an operator
@@ -2901,7 +2879,7 @@ RESERVE_STEP_BUDGETS: tuple[int, ...] = (
 #: **It is a property of the model, not of one family.** Every reader of a
 #: fitted line here is reading `_least_squares`' two terms, so the guard lives
 #: at that boundary — `_fit_or_secant`, which all three call sites cross — and
-#: not in whichever renderer happened to notice it first (`M90`).
+#: not in whichever renderer happened to notice it first.
 #:
 #: **Below it the slope survives and the intercept does not.** Both traps the
 #: rule exists for (`.claude/skills/evidence/SKILL.md`, rule 2) are statements
@@ -2910,7 +2888,8 @@ RESERVE_STEP_BUDGETS: tuple[int, ...] = (
 #: distinct reader counts is a measured **secant** and carries no model claim,
 #: so it is published — named endpoints, no intercept, no residual — where
 #: refusing the whole line would withhold a number that is sound and silently
-#: withdraw `19.18`'s `98% of reader_bytes` comparison in a censored sitting.
+#: withdraw the instrument's comparison against `reader_bytes` in a censored
+#: sitting.
 #:
 #: `_least_squares` keeps its own floor of two, which is where the arithmetic
 #: stops being defined; this is the *publication* rule above it, and it is the
@@ -3088,7 +3067,7 @@ def _script(command: str) -> str:
         )
     if command.startswith(RESERVE_FLAGLESS):
         # The flagless family: the same `parse` under the same wrapper, with
-        # **neither** flag, so what runs is what `ParallelArgs::resolve`
+        # **neither** flag, so what runs is what `Discovered::resolve`
         # resolves from the container's own limit. The arena setting is still a
         # token, because the arena-cap mechanism leg is this shape with
         # `MALLOC_ARENA_MAX` set and nothing else changed.
@@ -3107,7 +3086,9 @@ def _script(command: str) -> str:
             f"--source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
-        # The path step: a stated budget either side of `reader_bytes`, one byte
+        # The path step: a stated budget either side of `charge_bytes(unit, 1)`
+        # — what `BlockCache::affordable` charges one reader, pool list
+        # included, and not `reader_bytes` alone — one byte
         # apart, so the two runs differ by whether `BlockCache::affordable`
         # admits a block-decoding reader and by nothing else.
         budget = command.removeprefix(RESERVE_STEP_FAMILY)
@@ -3233,8 +3214,8 @@ def worker_count_problems() -> list[str]:
     The mechanical half of "a worker count is apparatus" (`SWEEP_JOBS`): a
     shape that pins nothing measures whatever the CLI's `--jobs` defaults to
     that day, and no table can say which arrangement it read. That is how the
-    default moved underneath nineteen figures twice with no shape changing and
-    nothing noticing.
+    default has moved underneath the published figures with no shape changing
+    and nothing noticing.
 
     **The flagless family is exempt and declares itself** (`_NO_FLAGS`): its
     reading is the count a flagless run resolves, so a shape that pinned one
@@ -3307,28 +3288,24 @@ def pinned_count_problems() -> list[str]:
 
 
 def charge_band_problems() -> list[str]:
-    """Fault bands the code defines that `19.11`'s acceptance clause says
-    nothing about.
+    """Fault bands the code defines that `BAND_STANCE` says nothing about.
 
-    **A gate written as a threshold released a band nobody argued about.** The
-    third amendment read `charge_model_problem`'s *upper* lines and wrote
-    acceptance as "no evaluated cell above `MEMORY_RESERVE`", which is a true
-    sentence about two of the three lines and silently lets the third — the
-    over-bill side `19.24` registered before the sitting — through. The clause
-    is an enumeration now (`BAND_STANCE`), and this is what holds the
-    enumeration to the bands that exist: a fourth line added later is barring
-    by default and reported here until its stance is recorded, rather than
-    inheriting whichever half its author had in mind.
+    **A rule written as a threshold releases a band nobody argued about.** "No
+    evaluated cell above `MEMORY_RESERVE`" is a true sentence about two of
+    `charge_model_problem`'s three lines and silently lets the third — the
+    over-bill side — through. The rule is an enumeration (`BAND_STANCE`), and
+    this is what holds the enumeration to the bands that exist: a fourth line
+    added later refutes by default and is reported here until its stance is
+    recorded, rather than inheriting whichever half its author had in mind.
 
     **Asked of the constants rather than of a sitting**, so it fails at
-    `--check` time. It is the same shape as the stale `reader_bytes` mirror
-    `M88` found and the collapsed verdict `M91` found: two things that must
-    agree, with nothing reading both.
+    `--check` time: two things that must agree, with nothing else reading
+    both.
 
     The definition site it reads is the naming: every `BAND_*` string constant
     in this module is one of `charge_model_problem`'s bands, which is why the
-    unlisted band's reason is spelled `UNARGUED_BAND_BARS` rather than with the
-    prefix.
+    unlisted band's reason is spelled `UNARGUED_BAND_REFUTES` rather than with
+    the prefix.
     """
     bad = []
     for name, value in sorted(globals().items()):
@@ -3336,9 +3313,8 @@ def charge_band_problems() -> list[str]:
             continue
         if value not in BAND_STANCE:
             bad.append(
-                f"{name} ({value!r}) has no stance in `BAND_STANCE`, so it bars `19.11`'s box "
-                "by default — record it as released or barring, and amend the row's "
-                "acceptance clause to match"
+                f"{name} ({value!r}) has no stance in `BAND_STANCE`, so it refutes the model "
+                "by default — record it as released or refuting"
             )
     return bad
 
@@ -3348,26 +3324,18 @@ def reserve_axis_problems() -> list[str]:
     the registered limits cannot reach `RESERVE_FIT_MIN_COUNTS` distinct reader
     counts.
 
-    **It no longer asks whether the pool term is billed anywhere**, and that is
-    `M93` rather than a check being dropped. The term was
-    `max(0, POOL_DEPTH − jobs) × unit`, clamped to zero at four readers or more,
-    so an axis whose every block-path leg resolved more than four satisfied
-    `19.11`'s acceptance without ever evaluating the term `19.22` added — which
-    is what `544m` and `1088m` were registered to reach. Restated as what the
-    pool holds, `(POOL_DEPTH.max(jobs) − 1) × unit` is billed at **every** cell
-    and is the larger half of the charge above four readers, so there is no
-    window left to register a limit inside and no cell that evades it.
+    **It does not ask whether the pool term is billed anywhere**, because
+    `(POOL_DEPTH.max(jobs) − 1) × unit` is billed at **every** cell and is the
+    larger half of the charge above four readers: there is no window for a limit
+    to be registered inside and no cell that evades it.
 
-    **A second property was riding on that window, and it gets no successor
-    check either.** The window forced a limit *below* `POOL_DEPTH`, so it also
-    forced a cell onto the below-depth side of the charge's kink — the side
-    where the retention list is constant rather than growing with the count.
-    That coverage is real and is why `544m` and `1088m` stay (`RESERVE_LIMITS`),
-    but it is a property of what the *fit* needs, and the fit is being given the
-    charge's own two-regime model to subtract rather than a straight line to
-    find across the kink (`M95`). A check that the axis straddles `POOL_DEPTH`
-    would then be guarding a requirement nothing has; the term it would protect
-    is already held to the library's own constants by
+    **Nor does it ask that the axis straddle `POOL_DEPTH`.** Below-depth
+    coverage is real and is why `544m` and `1088m` are registered
+    (`RESERVE_LIMITS`), but it is a property of what the *fit* needs, and the
+    fit is given the charge's own two-regime model to subtract rather than a
+    straight line to find across the kink (`_depooled`). A check that the axis
+    straddles the depth would be guarding a requirement nothing has; the term it
+    would protect is already held to the library's own constants by
     `test_the_mirrored_pool_depth_and_constants_are_the_librarys_own`.
 
     **Asked of the registered limits rather than of a sitting**, which is what
@@ -3378,7 +3346,7 @@ def reserve_axis_problems() -> list[str]:
     **necessary** condition and not a sufficient one: the resolved count is
     `min(recommendation, fit)`, so a host with fewer cores than there are
     distinct fits collapses two of them onto one count. That residue is a
-    per-sitting property and is what the secant covers (`M90`); the static check
+    per-sitting property and is what the secant covers; the static check
     is not where the guarantee comes from.
     """
     bad = []
@@ -4024,7 +3992,7 @@ def census_binary_problem(
     What the stamp buys is bounded, and worth saying: it is only as honest as
     the hand that wrote it, so it cannot catch a re-stamp without a rebuild.
     What it does catch is *age*, which is the failure that actually happened
-    and the one nothing else can see. Three things stay deliberately out of
+    and the one nothing else can see. Two things stay deliberately out of
     scope: a dirty tree, which the session stamp already declares; and
     `--dry-run`, which checks no binary at all because it measures nothing and
     must run where none exists, so the refusal it would give lands seconds later
@@ -4051,7 +4019,7 @@ def census_binary_problem(
         return (
             f"{cfg.bin_nocensus} is missing. The census-off binary is a source patch no harness "
             "should perform: add a bare `return;` as the first statement of "
-            "`map::Builder::on_row`, `cargo build --release -p pgdump_query-cli`, copy the binary "
+            "`map::census_row`, `cargo build --release -p pgdump_query-cli`, copy the binary "
             f"to {cfg.bin_nocensus}, then revert. measurements.md's census section has the recipe."
         )
     want = resolve("HEAD")
@@ -5080,10 +5048,8 @@ _BLOCK_COUNTS = (500, 1000, 2000, 4000)
 #: The series, and the control that makes it readable as one: the same byte
 #: count in **one** `COPY` block. Without it the table shows a cost rising with
 #: block count and cannot say how much of the cost *is* block count — the
-#: one-block run is what puts the 4000-block figure three orders of magnitude
-#: above the scan it protects. It was a command in the doc's prose and a number
-#: nobody re-took; a control the harness does not run is a control that goes
-#: stale silently.
+#: one-block run is what the 4000-block figure is a multiple of. A control the
+#: harness does not run is a control that goes stale silently.
 _QUADRATIC_ROWS: tuple[tuple[str, str], ...] = (
     ("one_block", "1 (control)"),
     *tuple((f"blocks{n}", f"{n}") for n in _BLOCK_COUNTS),
@@ -5665,7 +5631,7 @@ def run_xz_decode_scaling(session: Session) -> str:
     **Five reps.** The spread that matters here is between adjacent worker
     counts near the top of the curve, where the increments are small; three
     reps resolved the bottom of the curve and left the top ambiguous, and the
-    whole sitting is minutes rather than the hour a sweep costs.
+    whole sitting is minutes rather than the hours a sweep costs.
     """
     ensure_xz_decode_binary(session.cfg, session.log)
     specs = _decode_specs()
@@ -5813,9 +5779,11 @@ def run_parallel_scan_throughput(session: Session) -> str:
             )
             cell = f"{fmt_median_spread(values)} · {fmt_rate(nbytes, got)} · {base / got:.2f}×"
             # A budget clamp is not `POOL_DEPTH`'s to footnote once — see
-            # `QUERY_SUBSTREAM_CAP`. Every row above four states what the two
-            # typed-`query` legs actually planned, clamped or not, so a reader
-            # never has to ask whether a given cell is the label or the ceiling.
+            # `QUERY_SUBSTREAM_CAP`. A typed-`query` leg the budget clamps
+            # inside the axis states, on every row above four, the count it
+            # actually planned, so a reader never has to ask whether a given
+            # cell is the label or the ceiling; a leg absent from that dict is
+            # never clamped and carries nothing.
             if family == "query-typed" and jobs > 4 and inp in QUERY_SUBSTREAM_CAP:
                 achieved = min(jobs, QUERY_SUBSTREAM_CAP[inp])
                 cell += f" · {achieved} sub-stream{'s' if achieved != 1 else ''}"
@@ -5836,23 +5804,20 @@ def run_parallel_scan_throughput(session: Session) -> str:
         f"Every row states `--parallel-memory {PARALLEL_BUDGET}` "
         f"({_fmt_bytes(PARALLEL_BUDGET)}) in a {PARALLEL_MEMORY} container — **not** the "
         "register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The "
-        "one-job row is the exception and is not an apparatus of its own choosing: "
-        "`--jobs 1` is `Parallelism::Serial`, which states no budget, so it runs at the "
-        "library's 64 MiB default — the serial arrangement this project ships, which is "
-        "what a speedup is a speedup over.\n\n"
+        "one-job row states the same budget: `--jobs 1` is `Parallelism::Serial` carrying "
+        "it, so an `.xz` leg's one-job row is one block-decoding reader rather than the "
+        "streaming fallback, and that serial path is what a speedup is a speedup over.\n\n"
         "**A plain leg's `--jobs` is what is asked for, not what is delivered.** "
-        "`POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused worker on a "
-        "plain source waits: the rows above four say what that ceiling costs, not that "
-        "the scan stopped scaling.\n\n"
+        "`POOL_DEPTH` clamps the chunk pool to four slots and the interior split lets a "
+        "worker wait for one, so a fifth fused worker on a plain source waits. What that "
+        "wait costs the rows above four is not separated from anything else they pay "
+        '(`docs/design/architecture.md`, "What parallelism buys, and where it stops").\n\n'
         + _substream_note()
-        + "**One constant moved to take this table.** `PARALLEL_BUDGET` rose 1 GiB → "
-        f"{_fmt_bytes(PARALLEL_BUDGET)} because a compressed sub-stream is now charged "
-        "what one reader of it holds — two block slots, the chunk buffer and the "
-        'decoder\'s own retention (`docs/design/architecture.md`, "The compressed '
-        'source") — where it used to be charged one block and a chunk. The old value '
-        "would have clamped the widest `.xz` rows to seventeen readers, so the raise is "
-        "what keeps this table's top rows the twenty-four they are labelled. "
-        f"`PARALLEL_MEMORY` stays {PARALLEL_MEMORY} and `PARALLEL_JOBS` is unchanged.\n"
+        + f"**`PARALLEL_BUDGET` is {_fmt_bytes(PARALLEL_BUDGET)} so that no row is budget-"
+        "clamped.** A compressed reader is charged its block, the chunk buffer and the "
+        "decoder's own retention, and the readers together the block pool's retention list "
+        '(`docs/design/architecture.md`, "Execution model and API surface"), so a smaller '
+        "budget would hold the widest `.xz` rows below the twenty-four they are labelled.\n"
     )
     return table + notes + "\n" + _per_rep(figure, session, specs)
 
@@ -5878,8 +5843,9 @@ def _substream_note() -> str:
             head + "**At this budget neither typed-`query` leg reaches it**, so no cell "
             "carries the annotation: the plain leg is charged `8 MiB + 64 MiB` a "
             "sub-stream and affords twenty-eight, and the `.xz` leg — which retains by "
-            "the partition, so the span is not charged — is charged `58.03 MiB` and "
-            "affords thirty-five, both past the top of the axis.\n\n"
+            "the partition, so the span is not charged — is charged `34.03 MiB` a "
+            "sub-stream plus a 24 MiB unit of the shared retention list for each past "
+            "four, and affords thirty-five, both past the top of the axis.\n\n"
         )
     clamped = ", ".join(
         f"`{count}` on {'`.xz`' if inp.endswith('_xz') else 'plain'}"
@@ -5917,16 +5883,18 @@ def run_parallel_peak_rss(session: Session) -> str:
 
     **The claim under test is that one stated number bounds the read path**, so
     the table's own witness is the column that stops rising: a leg whose peak
-    keeps climbing with `--jobs` is a budget that is not a bound. Two block
+    keeps climbing with `--jobs` is a budget that is not a bound, and a leg that
+    stops *above* its stated budget is the block pool's slot ceiling following
+    the announced count rather than the delivered one (`KD21`). Two block
     sizes because a compressed reader's per-worker footprint is one decoded
     block, so the count the budget admits is a property of the *file* — at one
     size the table would publish that file's shape as the library's ceiling.
 
-    **The 128 MiB leg's first row reads through the streaming fallback**, the
-    serial default budget being unable to hold a block that size
-    (`BlockCache::affordable`), and every row above it block-decodes. That is a
-    discontinuity between two adjacent rows rather than a defect, and it is the
-    single clearest reading of what the budget decides.
+    **Every row block-decodes, the one-job row included**: `--jobs 1` is
+    `Parallelism::Serial` carrying the stated budget, which affords one reader
+    of either block size (`BlockCache::affordable`). So the baseline each row is
+    read against is a one-reader block path, and on the 128 MiB leg it already
+    holds the pool's four slots.
 
     **Three reps**, as `peak-rss` takes: a peak is a maximum rather than a mean,
     so it is far steadier across reps than a wall clock, and the reps are here
@@ -5966,10 +5934,9 @@ def run_parallel_peak_rss(session: Session) -> str:
         f"Every row states `--parallel-memory {PARALLEL_BUDGET}` "
         f"({_fmt_bytes(PARALLEL_BUDGET)}) in a {PARALLEL_MEMORY} container — an apparatus "
         "departure from the register's 512 MB, which is smaller than the budget under "
-        "test. The one-job row states nothing the library reads: `--jobs 1` is "
-        "`Parallelism::Serial`, so it runs at the 64 MiB default, and on the 128 MiB leg "
-        "that is a block it cannot hold — that row reads through the streaming fallback "
-        "and every row above it block-decodes.\n\n"
+        "test. The one-job row states the same budget — `--jobs 1` is "
+        "`Parallelism::Serial` carrying it — so every row on both legs block-decodes, "
+        "the one-job row with one reader.\n\n"
         + "\n".join(sizes)
         + "\n\nPer-rep readings (peak RSS):\n"
         + "\n".join(
@@ -5977,17 +5944,16 @@ def run_parallel_peak_rss(session: Session) -> str:
             + ", ".join(fmt_mib(v) for v in session.get_rss(figure, spec))
             for spec in specs
         )
-        + "\n\n**Where a leg goes flat, it is the stated budget that stopped "
-        "affording another block slot — which is this table's whole claim.** A "
-        "block pool retains `clamp((budget - chunk) / unit, 1, max(POOL_DEPTH, "
-        "jobs))` decoded blocks, so above four workers the depth term is the "
-        "worker count and never binds; what binds is the budget divided by the "
-        "*file's* block size. That is why the two legs differ in kind rather "
-        "than in degree: the coarse leg is budget-bound and levels off, and the "
-        "fine leg is depth-bound, so its retention tracks `--jobs` and its curve "
-        "is still climbing at the right-hand end. Read the flat value as the "
-        "budget's answer for that block size, not as a ceiling the library "
-        "carries.\n"
+        + "\n\n**Where a leg goes flat, it is the block pool's slot ceiling that stopped "
+        "growing.** The pool's slots are `clamp((budget - chunk) / unit, 1, "
+        "max(POOL_DEPTH, jobs))`, and it holds one unit below that beside the block "
+        "each reader has in flight. Above four workers the depth term is the stated "
+        "`--jobs`, so which term binds is set by the *file's* block size: on the fine "
+        "leg the budget term is far above the axis, the depth term binds, and the curve "
+        "is still climbing at the right-hand end; on the coarse leg the budget term "
+        "binds and the leg levels off. That ceiling follows the `--jobs` announced "
+        "rather than the readers the budget affords, so the coarse leg's flat value "
+        "sits above the stated budget — `KD21`, not a bound the library keeps.\n"
     )
     return table + notes
 
@@ -6093,21 +6059,22 @@ def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
 
     **One leg, where three were registered.** The arena cap is the *same
     flagless arrangement* with one mechanism changed, and it is the only one of
-    the three that bears on the live hypothesis: glibc's dynamic mmap threshold
-    retains a block-sized buffer in the arena of every thread that ever decoded
-    one, so capping the arenas bounds how many can hold one. The two allocator
-    legs are **dropped rather than re-aimed** — jemalloc and mimalloc do not
-    have that threshold, so swapping them removes the mechanism instead of
-    measuring it, and what they report is `MALLOC_ARENA_MAX`'s sixth again
-    (`roadmap-P19-efficient-defaults.md`, "A second hypothesis, and this one has
-    a mechanism rather than a suspicion"). What replaced them is
-    `_reserve_instrument_specs`, which asks the process rather than subtracting
-    two of them.
+    the three that bears on glibc's dynamic mmap threshold, which retains a
+    block-sized buffer in the arena of every thread that ever decoded one:
+    capping the arenas bounds how many can hold one. At `RESERVE_MECHANISM_LIMIT`
+    the uncapped process already runs no more arenas than the cap allows, so the
+    leg is inert there (`RESERVE_MECHANISM_LIMIT`). The two allocator legs are
+    **dropped rather than re-aimed** — jemalloc and mimalloc do not have that
+    threshold, so swapping them removes the mechanism instead of measuring it.
+    What replaced them is `_reserve_instrument_specs`, which asks the process
+    rather than subtracting two of them.
 
     The path step is the other exception and states a budget, because the thing
     under test is a comparison the environment cannot express:
     `BlockCache::affordable` is read off the budget, so one byte either side of
-    `reader_bytes` is the only way to change the path and nothing else.
+    the one-reader charge it compares against (`charge_bytes(unit, 1)`, which is
+    `reader_bytes` plus the pool's retention list) is the only way to change the
+    path and nothing else.
     """
     arena = next(label for token, _, label in RESERVE_ARENAS if token == RESERVE_CAPPED)
     return [
@@ -6138,11 +6105,13 @@ def _reserve_instrument_specs() -> list[RunSpec]:
     **The uncapped axis, plus the capped leg the mechanism row also takes.** The
     axis is what decomposes — every limit resolves its own reader count, so the
     program's own high-water can be read against that count — and the capped leg
-    is what says *where* the arena cap's megabytes go, which the black-box delta
-    beside it can only say *whether*.
+    is what says *where* an arena cap's megabytes go, which the black-box delta
+    beside it can only say *whether*; its `Arenas` column is also what says
+    whether the cap had any arena to remove.
 
-    Diagnostic by construction: this build takes an atomic on every allocation
-    and `binary_allocator` refuses it, so no reading here is ever a figure."""
+    These legs are readings of this figure, declared here; the build is never
+    the timed binary: it takes an atomic on every allocation and
+    `binary_allocator` refuses it."""
     return [
         RunSpec(
             "introspect",
@@ -6197,7 +6166,7 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     depends on nothing but the standard library, and because three lines of
     arithmetic are easier to check than an import is to justify.
 
-    **It is never given a resident set, and that is `M95`.** The mechanism is
+    **It is never given a resident set.** The mechanism is
     piecewise linear where this model is straight: the pool holds `workers`
     blocks in flight plus `max(POOL_DEPTH, workers) − 1` retained
     (`WorkerMemory::pool_bytes`), so held memory rises by one unit a reader
@@ -6208,8 +6177,8 @@ def _least_squares(points: Sequence[tuple[float, float]]) -> tuple[float, float]
     the sitting does not know in advance.
 
     Raises on fewer than two distinct abscissae: a "fit" through one point is an
-    intercept asserted as a measurement, which is exactly the mistake `19.15`
-    found in `19.12`'s extrapolation.
+    intercept asserted as a measurement, which is the extrapolation mistake
+    `.claude/skills/evidence/SKILL.md`'s second rule names.
     """
     xs = [x for x, _ in points]
     if len(set(xs)) < 2:
@@ -6229,7 +6198,7 @@ def _depooled(
     off each ordinate, leaving the remainder a line may honestly be fitted to.
 
     **The charge is piecewise linear and a straight line across its kink is a
-    biased line** (`M95`). `pool_bytes` is `(POOL_DEPTH.max(workers) − 1) ×
+    biased line**. `pool_bytes` is `(POOL_DEPTH.max(workers) − 1) ×
     unit`: constant below `POOL_DEPTH` and growing by a unit a reader above it,
     so what a leg holds rises by one unit a reader at the bottom of the axis and
     by two at the top, and both registered families straddle the bend
@@ -6238,8 +6207,8 @@ def _depooled(
     at 24 MiB blocks and ≈421 MiB at 128, where the slope reads 1.37 units
     against a true 2.0.
 
-    **Subtracting rather than fitting a second regime is `19.24`'s principle one
-    table over**: every quantity in the term is known before the sitting and
+    **Subtracting rather than fitting a second regime is `charge_model`'s
+    principle one table over**: every quantity in the term is known before the sitting and
     already mirror-checked against the library's own constants, so taking it off
     is arithmetic and not a degree of freedom. What is left — a fixed cost and a
     per-reader cost outside the pools the charge bills — is regime-free and is
@@ -6264,9 +6233,8 @@ def _fit_or_secant(
     `RESERVE_FIT_MIN_COUNTS` says why three; what this function adds is that the
     rule is enforced once, in front of `_least_squares`, rather than in whichever
     renderer remembered it — the harness has three call sites across two
-    families and only one of them carried the guard, so the instrument account
-    published an intercept in the same sitting the flagless axis refused one
-    (`M90`).
+    families, and a guard carried by one of them lets the instrument account
+    publish an intercept in the same sitting the flagless axis refuses one.
 
     **The slope is the same number either way, which is why it survives.** With
     exactly two distinct abscissae the least-squares slope *is* the secant
@@ -6279,7 +6247,7 @@ def _fit_or_secant(
     **It is also where the pool term comes off**, for the same reason: the
     de-pooling is a property of the mechanism rather than of one table, and a
     renderer that forgot it would publish an intercept carrying the charge's own
-    bend (`_depooled`, `M95`). So both terms this returns are the remainder's —
+    bend (`_depooled`). So both terms this returns are the remainder's —
     the cost *outside* the block pool's retention list — and a caller computing
     residuals against them measures its ordinates through `_depooled` too.
 
@@ -6317,8 +6285,8 @@ def _censored_constraint(
     and the window sentence above — each fit naming the legs it covers — is
     only legible with the legs it does *not* cover adjacent to it. That
     placement is not a claim that this is a point the fit should pass near:
-    `19.16` picks the constant from a headroom criterion over surviving reps,
-    and a killed leg has no headroom to report.
+    the reserve constant is chosen from a headroom criterion over surviving
+    reps, and a killed leg has no headroom to report.
 
     **The number beside it is a floor, and says so.** `maxrss_bound_kib` is
     where the wrapper's reading had got to when the process was reaped, so it
@@ -6362,28 +6330,28 @@ def _censored_constraint(
 def run_reserve(session: Session) -> str:
     """What a scan holds resident **above** the budget it was told it could have.
 
-    The budget rule the phase ships is `limit - reserve`, and this is the one
-    number in it. Neither existing resident figure answers it: `peak-rss`
-    measures the whole against nothing, and `rss-attribution` decomposes growth
-    per `COPY` block.
+    The budget rule is `limit - reserve`, and this is the one number in it.
+    Neither other resident figure answers it: `peak-rss` measures the whole
+    against nothing, and `rss-attribution` decomposes growth per `COPY` block.
 
-    **It publishes a pair, not a total.** The quantity is the **fixed term and
-    the per-reader term**, each with its spread, because the reserve constant is
-    read off the first and `XzSource::partition_advice` off the second -- a table
-    reporting only resident would leave the decomposition unstated, which is the
-    shape the phase spent three sessions fitting lines to. This is the opposite end of `rss-attribution`, which holds block
-    count as its axis and publishes a *slope*: there the intercept is the
-    allocator's baseline and a nuisance, here the intercept is the answer.
+    **It checks a model rather than searching for a constant.**
+    `MEMORY_RESERVE` was chosen off five builds' flagless legs against a
+    headroom criterion and `MEMORY_UNPOOLED_BOUND` by arithmetic over the same
+    readings, so what a sitting can do is fault (`charge_model_problem`). The
+    fitted **fixed and per-reader terms** are published beside that check, each
+    with its spread, because a table reporting only resident leaves the
+    decomposition unstated; neither constant is read off them. This is the
+    opposite end of `rss-attribution`, which holds block count as its axis and
+    publishes a *slope* against an intercept that is the allocator's baseline.
 
     **The attribution is introspective, and the black-box legs are its check.**
-    A subtraction between whole runs cannot name a term that no leg removes,
-    which is what three sittings of this phase discovered by spending an hour
-    each on it. So the account comes from the process reporting its own live
-    bytes and its allocator's retention (`_reserve_instrument_specs`), and the
-    `getrusage` axis stays as the independent reading it has to agree with —
-    two instruments sharing no mechanism, which is the independence
-    `.claude/skills/evidence/SKILL.md`'s third rule asks for. Nothing measured
-    on that build is a figure: it takes an atomic on every allocation, and
+    A subtraction between whole runs cannot name a term that no leg removes. So
+    the account comes from the process reporting its own live bytes and its
+    allocator's retention (`_reserve_instrument_specs`), and the `getrusage` axis
+    stays as the independent reading it has to agree with — two instruments
+    sharing no mechanism, which is the independence
+    `.claude/skills/evidence/SKILL.md`'s third rule asks for. The instrument
+    build is never the timed binary: it takes an atomic on every allocation, and
     `binary_allocator` refuses it (`docs/design/roadmap.md`, "Attribution is
     introspective; only the gate is blind").
 
@@ -6396,9 +6364,9 @@ def run_reserve(session: Session) -> str:
     two axes are one axis. Dropping either leaves a figure that cannot answer
     one of the two questions asked of it.
 
-    **The shipped constant comes from the uncapped leg**, because the default
-    has to survive the operator who did not set `MALLOC_ARENA_MAX` -- that being
-    the case that kills the process.
+    **The uncapped legs are the ones the shipped default answers to**, because
+    the default has to survive the operator who did not set `MALLOC_ARENA_MAX` --
+    that being the case that kills the process.
 
     **A leg the kernel killed is a third cell state, not a missing number**
     (`KILL_TOLERANT`). Its reading is a bound on a peak the process never
@@ -6494,7 +6462,7 @@ def run_reserve(session: Session) -> str:
         """The worker count and budget this leg's own run reported.
 
         Read back rather than computed: the count a flagless run resolves is
-        `ParallelArgs::resolve`'s answer to the allocation, and a harness that
+        `Discovered::resolve`'s answer to the allocation, and a harness that
         predicted it would be a second authority on the rule under test.
 
         A leg with a surviving rep that reported nothing is an error; a leg with
@@ -6548,7 +6516,7 @@ def run_reserve(session: Session) -> str:
             # arrangements hold different things — the streaming fallback keeps
             # no block slots at all — so a column mixing them is two series
             # printed as one, and an unmarked cell cannot be told from a cell
-            # nobody checked (`M88`).
+            # nobody checked.
             block_path = block_path_afforded(unit, budget)
             cells.append(
                 f"{fmt_mib_median_spread(readings)} · {jobs}r, {_fmt_budget_bytes(budget)} · "
@@ -6571,10 +6539,10 @@ def run_reserve(session: Session) -> str:
             spec = by_flagless[(name, token)]
             readings = session.get_rss(figure, spec)
             # A censored leg is out of the fit whether or not a rep survived:
-            # the kill removes the high end of the distribution, so what is
-            # left is a biased sample and a line through it reads low. It is
-            # not out of the *figure* — `_censored_constraint` is what it still
-            # says, printed under the fits.
+            # that exclusion is the one mechanical thing between a censored
+            # sitting and a fitted number (`run_reserve`). It is not out of the
+            # *figure* — `_censored_constraint` is what it still says, printed
+            # under the fits.
             if session.kills(figure, spec):
                 censored_legs.append(token)
                 constraints.append(
@@ -6587,8 +6555,8 @@ def run_reserve(session: Session) -> str:
                 continue
             points.append((token, jobs, readings))
         censored_tail = (
-            f". `{'`, `'.join(censored_legs)}` was OOM-killed and is out of the fit — a kill "
-            "removes the high end of the distribution, so what survives it is a biased sample; "
+            f". `{'`, `'.join(censored_legs)}` was OOM-killed and is out of the fit — its "
+            "reading is a bound on a peak the process never reached, not a point on the line; "
             "what it still proves is below"
             if censored_legs
             else ""
@@ -6623,7 +6591,7 @@ def run_reserve(session: Session) -> str:
         # block pool's retention list off each ordinate first, that term being
         # known before the sitting and the reason a single straight line across
         # the axis reads its intercept ≈49 MiB high at 24 MiB blocks and
-        # ≈421 MiB high at 128 (`_depooled`, `M95`). Only block-path legs reach
+        # ≈421 MiB high at 128 (`_depooled`). Only block-path legs reach
         # here, which is what makes the subtraction well defined.
         fixed, per_reader = _fit_or_secant(
             [(j, median(r) / 1024) for _, j, r in points], unit
@@ -6677,9 +6645,8 @@ def run_reserve(session: Session) -> str:
     # The model check, per cell. Every other reading in this figure is a number
     # somebody then has to reason about; this is the arithmetic done in the
     # renderer, at the cell, against a criterion registered before the sitting
-    # (`charge_model_problem`). It is what `19.16` did by hand over
-    # `readings.json` after the sitting, and the reason it is here is that the
-    # hand version died with the session that wrote it.
+    # (`charge_model_problem`). Done by hand over a sitting's readings, it dies
+    # with the session that does it, which is why it is here.
     #
     # **It reports; it neither raises nor bars publication — two levers, not
     # one.** `KILL_TOLERANT` pulls both: the sitting survives a kill *and*
@@ -6691,12 +6658,10 @@ def run_reserve(session: Session) -> str:
     # refutation falsifies is the library's claim about those readings rather
     # than the readings. Barring publication on it would leave
     # `measurements.md` able to carry only tables that agree with the library,
-    # which is the opposite of what it is for. What gates the phase instead is
-    # `19.11`'s two-sided acceptance, which reads this verdict — and reads
-    # **one** of its fault lines, `MEMORY_RESERVE`. So the verdict is written in
-    # bands: the cells above the reserve are the ones that bar the box, and the
-    # cells between the bound and the reserve publish with their finding and
-    # re-derive the bound from the sitting's own remainders (`M91`).
+    # which is the opposite of what it is for. So the verdict is written in
+    # bands (`BAND_STANCE`): an over-bill or a cell above the reserve refutes
+    # the model and says why, and a cell between the bound and the reserve is a
+    # finding that re-derives the bound from the sitting's own remainders.
     model_rows, model_faults, model_unnamed = [], [], []
     for name, label, unit in RESERVE_FLAGLESS_INPUTS:
         for token, _limit in RESERVE_LIMITS:
@@ -6728,7 +6693,7 @@ def run_reserve(session: Session) -> str:
                     fmt_mib(held / 1024),
                     _fmt_budget_bytes(unnamed),
                     # The band, not a bare "refuted": which line a cell crossed
-                    # is what says whether it bars the box.
+                    # is what says whether it refutes the model.
                     "met" if fault is None else f"**{fault.band}**",
                 ]
             )
@@ -6745,23 +6710,22 @@ def run_reserve(session: Session) -> str:
         model_rows,
     )
     if model_faults:
-        barring = [line for fault, line in model_faults if fault.bars_acceptance]
-        inside = [line for fault, line in model_faults if not fault.bars_acceptance]
+        refuting = [line for fault, line in model_faults if fault.refutes]
+        inside = [line for fault, line in model_faults if not fault.refutes]
         bands = []
-        if barring:
+        if refuting:
             # One clause per band actually hit, rather than one sentence over
-            # the whole stanza: the bands bar for different reasons, and the
-            # single sentence this replaced asserted the `rule` band's reason
-            # over every cell in it — which stopped being true the moment the
-            # over-bill band joined the barring half (`M92`).
-            hit = sorted({fault.band for fault, _ in model_faults if fault.bars_acceptance})
+            # the whole stanza: the bands refute for different reasons, and one
+            # sentence asserts a single band's reason over every cell in it.
+            hit = sorted({fault.band for fault, _ in model_faults if fault.refutes})
             bands.append(
                 "**The model is refuted, and by these cells:**\n\n"
-                + "\n".join(barring)
-                + f"\n\n`19.11` releases the `{BAND_BOUND}` band alone, and each cell above is "
-                "in a band it does not: "
-                + "; ".join(f"`{band}`, where {band_bars(band)}" for band in hit)
-                + ". So the sweep's box does not tick on this sitting."
+                + "\n".join(refuting)
+                + f"\n\nThe `{BAND_BOUND}` band is the one a sitting discharges itself, and each "
+                "cell above is in a band it is not: "
+                + "; ".join(f"`{band}`, where {band_refutes(band)}" for band in hit)
+                + ". The table publishes all the same: a refutation is a reading of the library, "
+                "and only a killed leg keeps a figure out of the document."
             )
         if inside:
             # The re-derivation runs over every evaluated cell rather than over
@@ -6769,23 +6733,18 @@ def run_reserve(session: Session) -> str:
             # the sitting saw, and the cells under it are as much evidence of
             # that as the cells over it — but only where nothing bars.
             #
-            # Withholding it from the whole sitting rather than from the
-            # faulting family is deliberate: a sitting carrying a barring cell
-            # does not publish at all, so a number withheld from it strands
-            # nothing, and the re-derivation is a property of a publishable
-            # sitting. The narrower reason — that a barring cell's remainder
+            # Withheld from the whole sitting wherever the model is refuted,
+            # rather than from the refuting family alone: a refuted cell
             # describes an arrangement the rule did not keep inside its
-            # allocation, and so is not a reading a constant may be sized to —
-            # is true and is what invites a per-family carve-out that would buy
-            # a number nobody reads (reviewed 2026-09-12; that day's entry,
-            # "The gate names bands").
+            # allocation, or a charge nothing holds, and a bound is a term of
+            # the model that sitting has just contradicted.
             tail = ""
             if any(fault.band == BAND_BOUND for fault, _ in model_faults):
-                if barring:
+                if refuting:
                     tail = (
-                        "\n\nNo bound is re-derived from this sitting: it carries a cell above "
-                        "`MEMORY_RESERVE`, so its worst remainder is a reading of an "
-                        "arrangement the rule did not hold for."
+                        "\n\nNo bound is re-derived from this sitting: the model is refuted "
+                        "in it, so its worst remainder is not a reading a term of that model "
+                        "may be sized to."
                     )
                 else:
                     worst = max(model_unnamed)
@@ -6795,20 +6754,21 @@ def run_reserve(session: Session) -> str:
                         "these readings re-derive `MEMORY_UNPOOLED_BOUND` at "
                         f"**{_fmt_budget_bytes(rederived_unpooled_bound(worst))}** — the "
                         f"smallest {_fmt_budget_bytes(UNPOOLED_BOUND_STEP)} step that covers "
-                        "it, which is `19.26`'s own arithmetic re-done over this sitting and "
-                        "not a re-take."
+                        "it, which is the shipped bound's own arithmetic re-done over this "
+                        "sitting and not a re-take."
                     )
             bands.append(
-                "**Inside the rule, and so not a bar on the box** — `19.11` releases the "
-                f"`{BAND_BOUND}` band, and every cell here is in it:\n\n"
+                "**Inside the rule, and so a finding rather than a refutation** — the "
+                f"`{BAND_BOUND}` band is the one a sitting discharges itself, and every cell "
+                "here is in it:\n\n"
                 + "\n".join(inside)
                 + tail
             )
         model_verdict = "\n\n".join(bands)
     elif model_rows:
         model_verdict = (
-            f"**The model holds at every cell above.** `19.11` releases the `{BAND_BOUND}` band "
-            "alone, and nothing here crosses any of the model's three lines."
+            "**The model holds at every cell above**: nothing here crosses any of its three "
+            "lines."
         )
     else:
         # Not the same claim as the one above, and the difference is the whole
@@ -6894,7 +6854,7 @@ def run_reserve(session: Session) -> str:
         # The check: the same arrangement measured black-box. A term the
         # instrument names has to show up in the sum the wrapper measures, and
         # the two instruments share no mechanism — which is the independence
-        # `19.15` and `19.18` never had.
+        # two black-box sittings agreeing with each other never have.
         #
         # **The arrangement is the exact half and resident is the approximate
         # one.** Whether the instrument build resolved the same reader count and
@@ -6962,7 +6922,7 @@ def run_reserve(session: Session) -> str:
     # **outside the block pool's retention list**, which `_fit_or_secant` takes
     # off first — the counter sees those buffers like any other Rust allocation,
     # so the charge's kink at `POOL_DEPTH` is in this series exactly as it is in
-    # the resident one (`_depooled`, `M95`). Evaluated inside its own window, at
+    # the resident one (`_depooled`). Evaluated inside its own window, at
     # the smallest arrangement, because an intercept is a physical quantity only
     # where the fit still holds where the mechanism is simplest.
     #
@@ -6971,7 +6931,7 @@ def run_reserve(session: Session) -> str:
     # the other's is a property of the axis: `RESERVE_INSTRUMENT_LIMITS` is
     # derived from `RESERVE_LIMITS` and cannot be narrowed on its own, but
     # `account_points` drops every killed leg and a kill takes the high-memory
-    # end, so two kills leave two counts (`M90`).
+    # end, so two kills leave two counts.
     #
     # **A leg that declined the block path is dropped from the line by name**,
     # as the flagless family drops one: it holds no block pool, so there is no
@@ -7032,10 +6992,10 @@ def run_reserve(session: Session) -> str:
         #
         # **The two sides are commensurable only because the slope is the
         # remainder's.** `reader_bytes` is the per-worker term *without* the
-        # pool's retention list — `19.22` put that list in `charge_bytes` and
-        # `M93` restated it as what the pool holds — so a slope still carrying
-        # the list would be compared against a bill that does not, which is a
-        # unit a reader of disagreement above `POOL_DEPTH` (`M95`).
+        # pool's retention list — that list is `charge_bytes`' second term —
+        # so a slope still carrying the list would be compared against a bill
+        # that does not, which is a unit a reader of disagreement above
+        # `POOL_DEPTH` (`_depooled`).
         measured_reader = live_per_reader * MIB + XZ_DICT_BYTES
         billed = reader_bytes(RESERVE_MECHANISM_UNIT)
         live_line += (
@@ -7054,8 +7014,14 @@ def run_reserve(session: Session) -> str:
 
     # A name, or an explicit no-name with the follow-up that would supply one.
     # The criterion is stated with the answer rather than applied silently: the
-    # remainder is *named* where glibc's own freed-and-held figure covers at
-    # least half of it at every surviving leg.
+    # account's `Unattributed` column is *named* where glibc's own
+    # freed-and-held figure covers at least half of it at every surviving leg.
+    # A leg whose column is not positive has nothing to cover and counts as
+    # covered, which is why the sentence qualifies "every leg" by sign.
+    #
+    # **It names that column and no other.** The charge table's `Unnamed` is
+    # the bill subtracted from a black-box worst rep, a different subtraction on
+    # a different build, and `fordblks` is not a coverage of it.
     covered = [
         (f / u if u > 0 else 1.0) for _, _, u, f, _, _ in account_points
     ]
@@ -7063,16 +7029,18 @@ def run_reserve(session: Session) -> str:
         verdict = (
             "**The remainder has a name**: glibc's own `fordblks` — bytes the program freed, "
             "the allocator kept and the kernel still counts resident — covers at least half of "
-            f"it at every surviving leg (worst {min(covered) * 100:.0f}%). That is the dynamic "
+            "the account's `Unattributed` column at every surviving leg where that column is "
+            f"positive (worst {min(covered) * 100:.0f}%). That is the dynamic "
             "mmap threshold's signature and not program structure: a block-sized buffer stops "
             "being mmap-backed after the first one is freed, and the arena it lands in never "
             "returns it, which is why `hblkhd` reads zero on a run that decoded blocks "
-            "throughout."
+            "throughout. It is not a coverage of the charge table's `Unnamed` column, which "
+            "subtracts the bill from a black-box worst rep."
         )
     elif covered:
         verdict = (
             "**The remainder has no name here**, in those words: `fordblks` covers as little as "
-            f"{min(covered) * 100:.0f}% of it, so what is left is neither the program's own live "
+            f"{min(covered) * 100:.0f}% of the account's `Unattributed` column, so what is left is neither the program's own live "
             "bytes, the decoder's dictionaries, nor allocator retention as glibc reports it. "
             "What would name it is `cd scripts && uv run measure.py --heaptrack-recipe`, which "
             "attributes every `malloc` — C and Rust alike — to a call stack, and a `--diff` "
@@ -7170,16 +7138,17 @@ def run_reserve(session: Session) -> str:
         "which is why it is the axis.\n\n**Each cell also names the path it ran**, because the "
         "two hold different things and a column mixing them is two series printed as one: a leg "
         "takes the block path only where the budget it resolved affords one block-decoding "
-        "reader of that file — `BlockCache::affordable`, which since `19.22` charges that "
-        "reader's share of the pool's retention list with it, so the line is "
+        "reader of that file — `BlockCache::affordable`, which charges that reader's share "
+        "of the pool's retention list with it, so the line is "
         f"{_fmt_budget_bytes(charge_bytes(RESERVE_FLAGLESS_INPUTS[0][2], 1))} at "
         f"{RESERVE_FLAGLESS_INPUTS[0][1]} and "
         f"{_fmt_budget_bytes(charge_bytes(RESERVE_FLAGLESS_INPUTS[-1][2], 1))} at "
         f"{RESERVE_FLAGLESS_INPUTS[-1][1]}. A *streaming* cell is a reading of the fallback "
         "decoder and belongs to no fit and no charge below.\n\n"
         + flagless_table
-        + "\n\n**The pair the constant is read off**, least squares over the legs that took the "
-        "block path, the band being the same line over the per-rep extremes. **Both terms are "
+        + "\n\n**Resident against the reader count**, least squares over the legs that took the "
+        "block path, the band being the same line over the per-rep extremes — a check on the "
+        "charge's shape, not what either constant is read off. **Both terms are "
         "what a leg held *outside* the block pool's retention list**: that term is "
         "`(POOL_DEPTH.max(jobs) − 1) × unit`, known before the sitting and mirror-checked "
         "against the library's own constants, and it is constant below "
@@ -7219,29 +7188,30 @@ def run_reserve(session: Session) -> str:
         f"**`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), which is by "
         "construction what covers everything the charge does not bill, the **rule** is. The "
         "`Criterion` column names the band rather than saying only that a cell faulted, because "
-        f"the three are read differently and `19.11` accepts on the `{BAND_BOUND}` band alone: a "
-        "cell in it is published with its finding and re-derives the bound from these same "
-        "remainders, while a cell above the reserve is an arrangement the discovery cannot keep "
-        "inside its allocation and an over-bill is a charge nothing holds — neither of those "
-        "two is apparatus scatter, and neither leaves the sitting anything to repair, so both "
-        "bar the box. The "
+        f"the three are read differently: a cell in the `{BAND_BOUND}` band is a finding the "
+        "sitting discharges itself, re-deriving the bound from these same remainders, while a "
+        "cell above the reserve is an arrangement the discovery cannot keep inside its "
+        "allocation and an over-bill is a charge nothing holds — neither of those two is "
+        "apparatus scatter, and neither leaves the sitting anything to repair, so both refute "
+        "the model. None of the three keeps the table out of this document. The "
         "middle column is the "
         "second term of that bill, reported apart because it is the one unbounded in the block "
         "size: `BufferPool::slots` clamps the block pool at `POOL_DEPTH.max(jobs)` with "
         f"`POOL_DEPTH` = {LIBRARY_POOL_DEPTH} and `BlockCache::slot` drains to one below it "
         "before taking the buffer `retain` pushes back, so the pool holds "
         "`(POOL_DEPTH.max(jobs) − 1) × unit` on top of the block each reader has in flight — "
-        "billed at **every** count since `19.22`, and one unit less than it was before `M93` "
-        "(`io.rs`, `WorkerMemory`). What is left is glibc's arena retention, named by "
-        "the instrument legs below rather "
-        "than inferred here. A leg that declined the block path is absent, holding none of these "
+        "billed at **every** count (`io.rs`, `WorkerMemory`). What is left is what the charge "
+        "does not bill, and this column does not name it: the instrument legs below attribute "
+        "a remainder of their own, which is a different subtraction on a different build. A "
+        "leg that declined the block path is absent, holding none of these "
         "terms; a censored one is absent too, its reading being a bound:\n\n"
         + model_table
         + "\n\n"
         + model_verdict
         + "\n\n**What the process says it held**, on the introspection build running the "
-        "same flagless shape as the axis above. Nothing here is a figure: the build takes an "
-        "atomic on every allocation and `pgdq --version` names it, so it is never timed. The "
+        "same flagless shape as the axis above. These are this figure's instrument legs, "
+        "declared in its register entry; the build takes an atomic on every allocation and "
+        "`pgdq --version` names it, so it is never timed. The "
         "two families do not cover the same memory — the Rust column is what passed through "
         "`GlobalAlloc`, every glibc column is the whole process, C included — and the gap "
         "between them is decoder working set plus bookkeeping plus retention, never retention "
@@ -7278,8 +7248,10 @@ def run_reserve(session: Session) -> str:
         f"`{RESERVE_MECHANISM_INPUT}` flagless in `-m {RESERVE_MECHANISM_LIMIT}`, which resolved "
         + (f"{ref_jobs} readers" if ref_arrangement else "a count it never lived to report")
         + ". The reference is the axis row above, not a re-take. **One leg, where three were "
-        "registered**: the arena cap bounds how many arenas can hold a retained block, which "
-        "is the live hypothesis, and the two allocator legs are dropped rather than re-aimed "
+        "registered**: the arena cap bounds how many arenas can hold a retained block, and "
+        "at a cell whose uncapped process already runs no more arenas than the cap allows it "
+        "cannot move one — the instrument's `Arenas` column says which this cell is. The two "
+        "allocator legs are dropped rather than re-aimed "
         "because jemalloc and mimalloc do not have glibc's dynamic mmap threshold — swapping "
         "them removes the mechanism instead of measuring it. What replaced them is the "
         "instrument above, which reports the retention rather than differencing two runs:\n\n"
@@ -7289,20 +7261,21 @@ def run_reserve(session: Session) -> str:
         f"{fmt_rss_delta(step_medians[0] - step_medians[-1])} between the two, "
         f"{step_medians[0] / max(step_medians[-1], 1):.1f}×. `BlockCache::affordable` compares "
         "the budget against what **one** reader costs — the per-reader term plus that one "
-        "reader's share of the pool's retention list, which `19.22` put inside it — so the pair "
-        "straddles that "
+        "reader's share of the pool's retention list — so the pair straddles that "
         f"comparison at {_fmt_budget_bytes(charge_bytes(RESERVE_MECHANISM_UNIT, 1))} and differs "
         "in nothing else. It is what an operator deciding whether to set `--parallel-memory` "
         "needs, and no other figure states it:\n\n"
         + step_table
-        + f"\n\n**The stated-budget axis, which is what makes the pair decomposable.** Each cell "
+        + f"\n\n**The stated-budget axis.** Each cell "
         f"is peak resident set, then that reading **minus the budget the run stated** — the "
         f"reserve. Every row states `--jobs {RESERVE_JOBS}` in a {PARALLEL_MEMORY} container, an "
         f"apparatus departure from the register's 512 MB, which is smaller than the largest "
         f"budget under test; the flagless legs above each carry their own allocation instead.\n\n"
         + table
-        + "\n\n**The constant the budget rule takes is the uncapped leg's worst cell**, since the "
-        "default must survive an operator who set no arena cap: "
+        + f"\n\n**The worst cell of each arena leg**, which is what a `--jobs {RESERVE_JOBS}` scan "
+        "holds above a budget somebody handed it, and not the arrangement "
+        "`MEMORY_RESERVE` "
+        "governs — the flagless legs above are: "
         + ", ".join(
             f"{arena} **{fmt_rss_delta(worst_stated[token])}**"
             for token, _, arena in RESERVE_ARENAS
@@ -7503,12 +7476,10 @@ FIGURES: list[Figure] = [
         warm_inputs=tuple(name for name, _ in _QUADRATIC_ROWS),
         run=run_per_block_quadratic,
     ),
-    # The one figure here whose reading is not a time. It exists because the
-    # flat-RSS claim three design paragraphs and a doc comment rest on was a
-    # koji row: outside the register, so no `depends` edge went red when the
-    # read path moved, and it stayed a megabyte high for a whole slice with its
-    # designated correction aimed at a run that captures no memory figure at
-    # all. `depends` therefore carries the read path first — that is the
+    # A figure whose reading is not a time. It is registered rather than left a
+    # koji row because a claim outside the register has no `depends` edge to go
+    # red when the read path moves, and koji's run captures no resident figure
+    # a correction could come from. `depends` therefore carries the read path first — that is the
     # mechanism the claim is about — and the map and the cache, which are what
     # a per-block cost would accumulate in.
     Figure(
@@ -7560,7 +7531,7 @@ FIGURES: list[Figure] = [
         ),
         section="The preamble prepass is bounded by the schema, not by the dump",
         stage="warm",
-        #: Its second row is `per-block-quadratic`'s 4000-block "after" reading,
+        #: Its second row is `per-block-quadratic`'s 4000-block `parse` reading,
         #: borrowed rather than re-measured (`requires`, below) -- so this
         #: figure inherits that one's staleness edges as well as its own, or a
         #: change to the map moves a row here that reads green.
@@ -7569,7 +7540,7 @@ FIGURES: list[Figure] = [
         shares=(
             Shared(
                 "per-block-quadratic",
-                'the full-`parse` row, which is the quadratic table\'s 4000-block "after" column',
+                "the full-`parse` row, which is the quadratic table's 4000-block `parse` cell",
                 (RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", ""),),
             ),
         ),
@@ -7676,7 +7647,7 @@ FIGURES: list[Figure] = [
         memory=DECODE_MEMORY,
         run=run_xz_decode_scaling,
     ),
-    # The phase's central throughput claim, and the first figure in the register
+    # The parallel scan's throughput claim, and the first figure in the register
     # whose axis is the worker count of `pgdq` itself. `depends` is the union of
     # everything a parallel scan runs through — the scanner, the map, the read
     # path, the leader, the decoder, and the CLI where `--jobs` is parsed — plus
@@ -7707,7 +7678,7 @@ FIGURES: list[Figure] = [
         memory=PARALLEL_MEMORY,
         run=run_parallel_scan_throughput,
     ),
-    # The phase's central *memory* claim: one stated number bounds the read
+    # The parallel scan's *memory* claim: one stated number bounds the read
     # path. `depends` is narrower than its sibling's — nothing here decodes a
     # field or renders a row, the shape being `parse` — but it carries the same
     # read path, leader and decoder, which is where a resident set is decided.
@@ -7725,11 +7696,13 @@ FIGURES: list[Figure] = [
             "scripts/generate_xz_input.py",
             *GEN_PERF,
         ),
-        # STATUS.md cites this figure's `--jobs` axis going flat past the
-        # point the stated budget stops affording a worker.
+        # STATUS.md cites this figure's `--jobs` axis. Where the coarse leg
+        # levels off, it is the block pool's slot ceiling that stopped growing,
+        # and that ceiling follows the announced `--jobs` rather than the count
+        # the budget affords (`KD21`).
         #
-        # **The two-term divisor does not reach this figure.** It is in
-        # `stream::plan_partitions`, and every leg here is
+        # **The query path's sub-stream sizing does not reach this figure.** It
+        # is in `stream::plan_partitions`, and every leg here is
         # `pgdq parse`, which reaches `worker_count` through
         # `leader::scan_region` instead — so this figure is excused by
         # reachability where its sibling is not, though both declare the same
@@ -7739,9 +7712,7 @@ FIGURES: list[Figure] = [
         memory=PARALLEL_MEMORY,
         run=run_parallel_peak_rss,
     ),
-    # The attribution's instrument, folded in from the standalone
-    # `scripts/rss_attribution.py` whose readings the doc carried before this
-    # figure was taken (`M74`).
+    # The attribution's instrument.
     #
     # **It cannot be taken alone, and the `Shared` edge is what says so.** Its
     # `parse` reference row runs `peak-rss`'s `blocks500` and `blocks4000`
@@ -7806,10 +7777,12 @@ FIGURES: list[Figure] = [
     # than an omission — that figure's every leg runs over
     # `blocks500`/`blocks4000`, the two block-count shapes whose axis it is,
     # where every leg here runs over `control`, `control_xz` or `control_xz128`,
-    # so no two of their runs are the same run. What the three do share is a
-    # *sitting*: all three read resident, so one sweep takes them together, and
-    # that collapse is the closure the harness computes rather than an edge any
-    # one of them declares.
+    # so no two of their runs are the same run. *Rejected:* manufacturing an
+    # edge by adding a block-count leg here — it would re-measure the plain path
+    # on the compressed path's figure, to buy a borrow nothing reads. What the
+    # three do share is a *sitting*: all three read resident, so one sweep takes
+    # them together, and that collapse is the closure the harness computes
+    # rather than an edge any one of them declares.
     Figure(
         id="reserve",
         section="What a scan holds above the budget it was given",
@@ -7854,8 +7827,9 @@ FIGURES: list[Figure] = [
                 (_RESERVE_BASELINE,),
             ),
         ),
-        # The budget rule's constant, the `--parallel-memory` guidance and the
-        # phase's central memory claim are all read off this table.
+        # The budget rule's constants, the `--parallel-memory` guidance and the
+        # claim that a flagless scan stays inside its allocation are all read
+        # off this table.
         quoted_by=(
             "docs/design/architecture.md",
             "docs/manual/dump-inspection.md",
@@ -7888,13 +7862,10 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: marker the commit it was taken at, and a sitting run from a working tree
 #: carrying its own uncommitted apparatus has no such commit to name — so an
 #: instrument built ahead of that commit waits here rather than in `FIGURES`.
-#: Six entries have left this list so far: `projection-widths`,
-#: `xz-decode-scaling`, `parallel-scan-throughput`, `parallel-peak-rss`,
-#: `rss-attribution` and `reserve` were each taken and moved into `FIGURES`,
-#: and `composite-isolated` — which isolated one column by declaring it two
-#: ways over byte-identical rows — was deleted unpublished, because
-#: `projection-widths` makes the same isolation a subtraction between two
-#: adjacent rows of one table over one file.
+#: *Rejected:* `composite-isolated`, which isolated one column by declaring it
+#: two ways over byte-identical rows — `projection-widths` makes the same
+#: isolation a subtraction between two adjacent rows of one table over one
+#: file.
 UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
@@ -8469,7 +8440,7 @@ def markers_in(doc: Path) -> list[str]:
 #: error this mechanism exists to make impossible. It is present only where the
 #: sitting differs from the stamp -- the convention `outside-register` already
 #: uses, where declaring nothing is the ordinary case -- so the stamp's commit
-#: is never repeated eighteen times in a document it could disagree with.
+#: is never repeated once per figure in a document it could disagree with.
 SITTING_RE = re.compile(r"<!--\s*figure:\s*([a-z0-9-]+)[^>]*?taken at `([0-9a-f]{7,40})`")
 
 
@@ -9017,7 +8988,7 @@ class ReplaySession(Session):
         # The regime decides nothing here -- every renderer asks an input for
         # its size and never for its device -- but it is still resolved, so a
         # renderer naming a regime nothing declares fails under `--render` as
-        # it would under a sweep, at a second's cost instead of an hour's.
+        # it would under a sweep, at a second's cost instead of a sweep's.
         regime_spec(regime)
         if name not in self._sizes:
             raise KeyError(
@@ -9896,7 +9867,8 @@ HEAPTRACK_DEMANGLE = _env("PGDQ_HEAPTRACK_DEMANGLE", "c++filt")
 
 #: The two shapes recorded, and they are a **pair** rather than a survey.
 #:
-#: `reserve`'s path step: a stated budget either side of `reader_bytes`, one
+#: `reserve`'s path step: a stated budget either side of the one-reader charge
+#: `charge_bytes(unit, 1)` — `reader_bytes` plus the pool's retention list — one
 #: byte apart, so the two runs differ by whether `BlockCache::affordable` admits
 #: a block-decoding reader and by nothing else (`RESERVE_STEP_BUDGETS`). Read
 #: as a difference — `heaptrack_print --diff` — that pair names the whole block
@@ -10173,9 +10145,11 @@ def cmd_check(doc: Path) -> int:
         print()
     else:
         print(
-            f"Every command shape states its worker count (`--jobs {SWEEP_JOBS}`, "
-            f"`--workers` for the\ndecode instrument, and `PARALLEL_JOBS` for the "
-            f"{len(JOBS_AXIS)} families whose axis it is), so no\nfigure below inherits one.\n"
+            f"No command shape inherits a worker count: each states `--jobs {SWEEP_JOBS}`, "
+            f"or `--workers` for the\ndecode instrument, `PARALLEL_JOBS` for the "
+            f"{len(JOBS_AXIS)} families whose axis it is, or\n`--jobs {RESERVE_JOBS}` for "
+            "the reserve's stated legs; the reserve's flagless legs state none\nby "
+            "declaration, and `dd` is not a run of ours.\n"
         )
     if thin_axis:
         print(
@@ -10188,8 +10162,8 @@ def cmd_check(doc: Path) -> int:
         print()
     if unargued_band:
         print(
-            "Fault bands `19.11`'s acceptance does not name — the clause is an enumeration so\n"
-            "that a line added later bars the box until somebody argues it out, which is only\n"
+            "Fault bands `BAND_STANCE` does not name — the rule is an enumeration so that a\n"
+            "line added later refutes the model until somebody argues it out, which is only\n"
             "true while every band the code defines carries a stance:"
         )
         for line in unargued_band:

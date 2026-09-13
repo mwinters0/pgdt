@@ -28,8 +28,8 @@ class Acknowledged:
     and nothing says so, which is why the doc also carries a session stamp.
     This is the other one, and it is the one that decays the mechanism. A
     change *inside* a declared path that provably moves nothing leaves
-    `--stale` red until a sweep re-stamps the doc — and a sweep is an hour on a
-    machine that has to be quiet, so the realistic outcome is that no sweep
+    `--stale` red until a sweep re-stamps the doc — and a sweep is about two
+    hours on a machine that has to be quiet, so the realistic outcome is that no sweep
     runs and `--stale` becomes a light that is always on. A signal that is
     always on is the same thing as no signal, which is the decay the register
     was built against, arriving from the other side.
@@ -124,7 +124,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "reserve",
         ),
         why=(
-            "`19.11`'s fold-in and P19's wrap. Comment-only in io.rs: the "
+            "The closing sweep's fold-in. Comment-only in io.rs: the "
             "closing sweep moved the numbers those doc comments quote — `5.82x` "
             "-> `5.60x` on the compressed `parse` speedup, `~5.9 MiB` -> "
             "`~6.2 MiB` on what a serial scan holds, the `1.83x` pool miss "

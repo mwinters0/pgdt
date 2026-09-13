@@ -255,11 +255,10 @@ class Scripts(unittest.TestCase):
 class WorkerCount(unittest.TestCase):
     """A worker count is apparatus, so nothing here inherits the CLI's.
 
-    `pgdq --jobs`' default moved underneath every figure in the document twice
-    — to the machine's available parallelism and back to 1 — without one
-    command shape changing, which is the failure this reconciles against. That
-    it now agrees with `SWEEP_JOBS` is a coincidence of the day and not a
-    reason to inherit it. `--stale` cannot see
+    `pgdq --jobs`' default has moved underneath the published figures without
+    one command shape changing, and now depends on the source, which is the
+    failure this reconciles against. That it agrees with `SWEEP_JOBS` on some
+    source is not a reason to inherit it. `--stale` cannot see
     it either: staleness says *re-take*, never *the apparatus moved underneath
     you*."""
 
@@ -1249,16 +1248,14 @@ class RssAttribution(unittest.TestCase):
         self.assertIn("docs/manual/dump-inspection.md", self._fig().quoted_by)
 
     def test_a_taken_attribution_declares_its_borrow(self):
-        """The obligation the instrument leaves for `M74`, the sweep that publishes this.
+        """A taken attribution borrows its reference row from `peak-rss`.
 
         Its `parse` reference row runs `peak-rss`'s `blocks500` and
-        `blocks4000` shapes, so the two must share a reading rather than take
-        one each — the doc currently carries both, disagreeing. But declaring
-        the edge while this entry is untaken closes no part of that item and would
-        refuse `peak-rss`'s own standalone sitting, a figure the doc already
-        carries, with no sweep yet to cure it. So the edge is declared in the
-        change that moves this entry into `FIGURES`, and that is what this
-        asserts rather than leaves to a comment."""
+        `blocks4000` shapes, so the two share a reading rather than take one
+        each — two readings of one run put two numbers in the doc a section
+        apart. An entry in `UNTAKEN` declares no edge, since the edge would
+        entangle `peak-rss` with a figure no sweep takes; a taken one declares
+        it, and that is what this asserts rather than leaves to a comment."""
         fig = self._fig()
         if fig in measure.UNTAKEN:
             self.assertEqual(fig.shares, ())
@@ -1392,7 +1389,7 @@ class BorrowGraph(unittest.TestCase):
         self.assertNotIn("Partial sweep", note)
 
     def test_a_resident_set_crosses_the_share_with_the_wall_clock(self):
-        """The half `19.11` needs, and the half that fails as a `KeyError`.
+        """The half `reserve`'s borrow needs, and the half that fails as a `KeyError`.
 
         `has` reads `readings`, so a borrow that copied the duration alone
         would report the spec satisfied and then leave the borrowing figure's
@@ -1645,8 +1642,7 @@ class ParallelFigures(unittest.TestCase):
     """
 
     def test_both_figures_are_taken_and_no_longer_untaken(self):
-        # The sitting at `e29939c` moved both entries out of `UNTAKEN` and
-        # into `FIGURES`, where the doc-side checks start applying.
+        # Both are in `FIGURES`, where the doc-side checks apply.
         untaken = [f.id for f in measure.UNTAKEN]
         self.assertNotIn("parallel-scan-throughput", untaken)
         self.assertNotIn("parallel-peak-rss", untaken)
@@ -1696,26 +1692,28 @@ class ParallelFigures(unittest.TestCase):
                     )
 
     def test_the_budget_admits_the_widest_row_on_the_coarser_leg(self):
-        # A block-decoding source charges one partition what one reader of it
-        # holds — the block unit twice, the chunk buffer, and the decoder's own
-        # retention — and `worker_count` divides the stated bytes by that. A
-        # budget below `jobs x` that clamps the top rows silently, which is
-        # what the old 1 GiB would now do.
+        # A block-decoding source charges each reader its block, the chunk
+        # buffer and the decoder's own retention, and the readers together the
+        # block pool's retention list — `WorkerMemory::at`, which
+        # `worker_count` solves the stated bytes against. A budget below that
+        # at the widest row clamps the top rows silently, which 1 GiB would.
         block = 24 * measure.MIB
         # `xz_seek::Reader::decode_footprint` on this shape: an 8 MiB LZMA2
         # dictionary, the 1 MiB input chunk, and `liblzma`'s 34,592 B of state.
         decoder = 8 * measure.MIB + measure.CHUNK_DEFAULT + 34_592
-        want = measure.PARALLEL_JOBS[-1] * (2 * block + measure.CHUNK_DEFAULT + decoder)
+        jobs = measure.PARALLEL_JOBS[-1]
+        want = jobs * (block + measure.CHUNK_DEFAULT + decoder) + (
+            max(measure.LIBRARY_POOL_DEPTH, jobs) - 1
+        ) * block
         self.assertGreaterEqual(measure.PARALLEL_BUDGET, want)
-        self.assertLess(1 << 30, want, "the value this replaced would clamp the widest row")
+        self.assertLess(1 << 30, want, "1 GiB would clamp the widest row")
 
     def test_the_container_is_the_budget_plus_a_fixed_headroom(self):
-        # `container > budget` was the old assertion and it is why nothing
-        # caught `19.14`: raising the budget 1 GiB -> 2 GiB against a literal
-        # `3g` halved the headroom and still passed. Block-pool retention is a
-        # function of the budget, so the widest `control_xz128` row went from
-        # 2110 MiB to 3067 MiB against a 3072 MiB limit. Pin the rule, not the
-        # inequality.
+        # `container > budget` holds against a literal `3g` whatever the budget
+        # does: raising the budget 1 GiB -> 2 GiB under it halved the headroom
+        # and still passed. Block-pool retention is a function of the budget,
+        # so the widest `control_xz128` row went from 2110 MiB to 3067 MiB
+        # against a 3072 MiB limit. Pin the rule, not the inequality.
         self.assertTrue(measure.PARALLEL_MEMORY.endswith("g"))
         self.assertEqual(
             int(measure.PARALLEL_MEMORY[:-1]) * measure.GIB,
@@ -1860,10 +1858,10 @@ class Reserve(unittest.TestCase):
     "the cap buys nothing" rather than as an instrument that set nothing. A
     **budget the shape does not carry** would run at whatever was typed and be
     read as the row it is labelled with. A **worker count drifting onto
-    `SWEEP_JOBS`** would size the reserve for an arrangement the discovered
-    default never produces. And a **`Shared` edge declared while the figure is
-    untaken** entangles `peak-rss`, which the doc carries from a standalone
-    sitting, and fails `--check` with no sweep yet to cure it.
+    `SWEEP_JOBS`** would read the stated axis at a count the flagless `.xz`
+    default never recommends on this machine. And a **`Shared` edge missing
+    from the taken figure** leaves two readings of `peak-rss`'s `control` run in
+    the doc a section apart.
     """
 
     def _fig(self):
@@ -1891,18 +1889,18 @@ class Reserve(unittest.TestCase):
                     continue
                 self.assertIn(f"time MALLOC_ARENA_MAX={value} perl", script)
 
-    def test_one_leg_sets_nothing_and_it_is_the_one_the_constant_comes_from(self):
+    def test_one_leg_sets_nothing(self):
         # The shipped default has to survive the operator who followed no
         # recommendation, so an uncapped leg is not optional decoration.
         unset = [token for token, value, _ in measure.RESERVE_ARENAS if not value]
         self.assertEqual(unset, ["unset"])
 
     def test_no_leg_caps_at_or_above_the_worker_count(self):
-        # A cap at or above the concurrency actually dispatched cannot bind --
-        # after the `current_thread` runtime the arenas already follow it -- so
-        # such a leg prices a setting inert by construction and reads as "the
-        # cap buys nothing". That is a mechanism rather than a reading, which is
-        # why it is asserted here instead of being re-discovered in a sitting.
+        # A cap at or above the arena count cannot bind, and a leg pricing one
+        # reads as "the cap buys nothing". The arena count is `readers + 2`
+        # from two readers up, and 2 at one, rather than the worker count, so this bound is looser than inertness
+        # — a `readers + 1` cap is below it and unpriced — but a cap at the
+        # worker count or above is a leg no sitting needs.
         for token, value, _ in measure.RESERVE_ARENAS:
             if value:
                 with self.subTest(arena=token):
@@ -1924,9 +1922,8 @@ class Reserve(unittest.TestCase):
             measure._script(self._shape(token="sixteen"))
 
     def test_the_axis_starts_at_the_librarys_own_default(self):
-        # The smallest budget is the conservative end -- resident being roughly
-        # flat in the stated budget makes the reserve fall as the budget rises
-        # -- and it is also the number a run that states nothing gets.
+        # The smallest budget is the library's own default, which is also the
+        # number a run that states nothing gets.
         self.assertEqual(measure.RESERVE_BUDGETS[0], measure.LIBRARY_DEFAULT_BUDGET)
         self.assertEqual(sorted(measure.RESERVE_BUDGETS), list(measure.RESERVE_BUDGETS))
 
@@ -1975,11 +1972,9 @@ class Reserve(unittest.TestCase):
     def test_it_declares_no_share_while_it_is_untaken(self):
         """The same obligation `rss-attribution` carries, and for the same reason.
 
-        Declaring the edge from `UNTAKEN` entangles `peak-rss`, whose table the
-        doc carries from a standalone `41c96bb` sitting, so `--check` would
-        refuse that marker with no sweep yet to cure it. The edge is declared in
-        the change that moves this entry into `FIGURES` -- and that change owes
-        a harness change with it, `Session.borrow` copying wall clock only."""
+        An entry in `UNTAKEN` declares no edge, since the edge would entangle
+        `peak-rss` with a figure no sweep takes; a taken one borrows the
+        `control` run, which `Session.borrow` carries with its resident set."""
         fig = self._fig()
         if fig in measure.UNTAKEN:
             self.assertEqual(fig.shares, ())
@@ -1997,7 +1992,7 @@ class Reserve(unittest.TestCase):
 class CompressedAccount(unittest.TestCase):
     """The three families `reserve` grew when the compressed path got an account.
 
-    The figure's published quantity is a **pair** — a fixed term and a
+    The figure publishes a **pair** beside its model check — a fixed term and a
     per-reader term — so every assertion here is a way to get a plausible pair
     of the wrong thing. Four fail silently and are the reason this class
     exists. A **flagless leg that states a flag** measures a stated arrangement
@@ -2005,8 +2000,9 @@ class CompressedAccount(unittest.TestCase):
     see because that family is exempt from it. Two **legs differing only in
     their container limit** would share a reading, the limit not being an argv
     fact — which is `_attribution_specs`' failure with a new cause. A **fit over
-    one point** is an intercept asserted as a measurement, which is exactly
-    what `19.15` found in `19.12`'s extrapolation. And a **mechanism leg at its
+    one point** is an intercept asserted as a measurement, which is the
+    extrapolation `.claude/skills/evidence/SKILL.md`'s second rule names. And a
+    **mechanism leg at its
     own limit or block size** would read as a mechanism moving a term when what
     moved was the arrangement.
     """
@@ -2017,8 +2013,9 @@ class CompressedAccount(unittest.TestCase):
     # -- the flagless axis -------------------------------------------------
 
     def test_the_flagless_axis_runs_at_both_block_sizes(self):
-        # A compressed reader's charge bills `2 x unit`, so a unit-shaped error
-        # in it is multiplied by the reader count: a fit at one block size
+        # A compressed reader's charge bills a unit, and the pool a unit a
+        # reader past `POOL_DEPTH`, so a unit-shaped error in it is multiplied by
+        # the reader count: a fit at one block size
         # cannot tell a term that scales with the unit from one that does not.
         self.assertEqual(
             [name for name, _, _ in measure.RESERVE_FLAGLESS_INPUTS],
@@ -2123,19 +2120,20 @@ class CompressedAccount(unittest.TestCase):
                 self.assertIsNone(spec.memory)
 
     def test_the_limits_span_the_curve_rather_than_its_worst_end(self):
-        # 512 MiB is the bottom of the range and is where the gate failed; a set
-        # clustered there would fit a line through the worst end alone.
+        # 512 MiB is the bottom of the range, where the rule's own headroom is
+        # worst; a set clustered there would fit a line through the worst end
+        # alone.
         self.assertEqual(measure.RESERVE_LIMITS[0], ("512m", 512 << 20))
         byte_values = [n for _, n in measure.RESERVE_LIMITS]
         self.assertEqual(sorted(byte_values), byte_values)
         self.assertGreaterEqual(len(measure.RESERVE_LIMITS), 3)
 
     def test_the_pool_term_is_billed_at_every_reader_count(self):
-        # `M93`: the term was `max(0, POOL_DEPTH - jobs) x unit` and so clamped
-        # to zero at four readers or more, which is why `M89` had to insert two
-        # limits under the clamp for any cell to evaluate it. Restated as what
-        # the pool holds it is billed everywhere, and past `POOL_DEPTH` it is
-        # the larger half of the charge — so there is no window left to miss.
+        # *Rejected:* `max(0, POOL_DEPTH - jobs) x unit`, which clamps to zero
+        # at four readers or more, so only limits under the clamp evaluate it.
+        # Stated as what the pool holds it is billed everywhere, and past
+        # `POOL_DEPTH` it is the larger half of the charge — so there is no
+        # window to miss.
         for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
             with self.subTest(block_size=label):
                 for jobs in (1, 2, 4, 5, 24):
@@ -2153,7 +2151,7 @@ class CompressedAccount(unittest.TestCase):
                     self.assertEqual(measure.charge_bytes(unit, jobs), was - unit)
 
     def test_the_registered_axis_can_reach_three_distinct_reader_counts(self):
-        # `M90`: fit-ability is asked of the same registered limits, because an
+        # Fit-ability is asked of the same registered limits, because an
         # axis that can only ever publish a secant should fail before a sitting
         # is spent rather than after. Necessary and not sufficient — a host with
         # few cores collapses distinct fits onto one count, which is the
@@ -2183,8 +2181,8 @@ class CompressedAccount(unittest.TestCase):
 
     def test_check_fails_where_the_axis_cannot_be_fitted(self):
         # Wired into `--check`, not only available to be called: the whole point
-        # of `M90` is that an axis that can only ever publish a secant should
-        # fail before a sitting is spent rather than after.
+        # is that an axis that can only ever publish a secant should fail before
+        # a sitting is spent rather than after.
         kept = tuple(
             row for row in measure.RESERVE_LIMITS if row[0] not in ("1536m", "2g")
         )
@@ -2196,7 +2194,7 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn("distinct reader count(s)", out.getvalue())
 
     def test_check_fails_where_the_axis_cannot_be_fitted(self):
-        # The same wiring for the half `M90` added: one refusal, two questions,
+        # The same wiring for the fit-ability half: one refusal, two questions,
         # and `--check` has to carry both or the second is a function nobody
         # calls.
         kept = tuple(
@@ -2337,9 +2335,8 @@ class CompressedAccount(unittest.TestCase):
         # `block_path_afforded` is the comparison, so the pair straddles it and
         # differs in nothing else. A wider gap would be a budget change with a
         # path change inside it — and a pair straddling `reader_bytes` instead
-        # would run the streaming decoder on *both* legs, `19.22` having put one
-        # reader's share of the pool's retention list inside
-        # `BlockCache::affordable` (`M88`).
+        # would run the streaming decoder on *both* legs, one reader's share of
+        # the pool's retention list being inside `BlockCache::affordable`.
         afforded, declined = measure.RESERVE_STEP_BUDGETS
         self.assertEqual(afforded, measure.charge_bytes(measure.RESERVE_MECHANISM_UNIT, 1))
         self.assertEqual(declined, afforded - 1)
@@ -2369,7 +2366,7 @@ class CompressedAccount(unittest.TestCase):
     def test_the_reader_charge_is_the_librarys_own_three_terms(self):
         # Hand-computed on `QUERY_SUBSTREAM_CAP`'s argument, so the mirror is
         # checked here rather than trusted: one block slot — the block being
-        # decoded, which is the block then retained (`M93`) — the chunk buffer
+        # decoded, which is the block then retained — the chunk buffer
         # and the decoder's retention, which is 34.03 MiB at koji's block size.
         self.assertEqual(measure.reader_bytes(24 << 20), 35_686_176)
         self.assertEqual(
@@ -2403,11 +2400,11 @@ class CompressedAccount(unittest.TestCase):
 
     def test_the_path_line_is_the_charge_at_one_reader_not_the_reader_term(self):
         # `BlockCache::affordable` compares the budget against what one reader
-        # *costs the rule* — the per-reader term plus that one reader's pool
-        # floor, which `19.22` put inside it. The pre-`19.22` line is
-        # `reader_bytes` alone, and at both registered block sizes the two are
-        # far apart, so a stale mirror labels whole cells with the wrong
-        # mechanism rather than getting an edge case wrong (`M88`).
+        # *costs the rule* — the per-reader term plus that one reader's share of
+        # the pool's retention list. `reader_bytes` alone is a different line,
+        # and at both registered block sizes the two are far apart, so a mirror
+        # comparing against it labels whole cells with the wrong mechanism
+        # rather than getting an edge case wrong.
         for unit in (24 << 20, 128 << 20):
             with self.subTest(unit=unit):
                 line = measure.charge_bytes(unit, 1)
@@ -2432,9 +2429,8 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn(f"const POOL_DEPTH: usize = {measure.LIBRARY_POOL_DEPTH};", src)
 
     def test_the_renderer_asks_the_path_question_in_one_way_only(self):
-        # Three of four sites were still comparing against `reader_bytes` while
-        # the fourth was not, which is a table whose cells silently changed
-        # mechanism while reading as one series. A comparison of a budget
+        # Sites asking the question different ways make a table whose cells
+        # silently change mechanism while reading as one series. A comparison of a budget
         # against `reader_bytes` anywhere in the renderer is that failure
         # returning.
         source = inspect.getsource(measure.run_reserve)
@@ -2442,13 +2438,13 @@ class CompressedAccount(unittest.TestCase):
         self.assertNotIn("budget < reader_bytes", source)
         self.assertNotIn("budget >= charge_bytes", source)
         self.assertNotIn("budget < charge_bytes", source)
-        # Five since `M95`: the instrument account's line drops a declined leg
+        # Five: the instrument account's line drops a declined leg
         # by the same question, because a leg holding no block pool has no
         # retention list for `_depooled` to subtract.
         self.assertEqual(source.count("block_path_afforded("), 5)
 
     def test_the_smallest_allocation_splits_the_two_inputs_across_the_line(self):
-        # What `M88` records and `M93` moved: the CLI grants
+        # The CLI grants
         # `limit - MEMORY_RESERVE`, so a `512m` container affords 128 MiB
         # against a line of 106.03 MiB at 24 MiB blocks and 522.03 at 128. The
         # bottom row of the axis therefore carries one cell of each path, which
@@ -2464,18 +2460,17 @@ class CompressedAccount(unittest.TestCase):
 
     # -- the charge model, and the cells it was seeded from ----------------
 
-    #: `19.16`'s own readings, off `control_xz128` at a 384 MiB reserve, as its
-    #: notes doc commits them: reader count, worst rep in MiB, the budget the
-    #: run reported, and the residual that slice computed by hand after the
-    #: sitting (`roadmap-P19-efficient-defaults-notes.md`, "The charge
-    #: under-bills the pool floor", read forward through `M93`'s one-unit
-    #: restatement).
+    #: Readings from the reserve constant's five-build grid, off
+    #: `control_xz128` at a 384 MiB reserve (`docs/design/architecture.md`,
+    #: "Execution model and API surface"): reader count, worst rep in MiB, the
+    #: budget the run reported under the charge that build carried, and the
+    #: residual computed by hand against that charge.
     #:
     #: The model is *seeded* from them rather than fitted to them: every number
-    #: in the middle two columns is arithmetic the harness now does at the cell,
+    #: in the middle two columns is arithmetic the harness does at the cell,
     #: and this is the check that it reproduces what was computed by hand — up
-    #: to the one unit `M93` found double-counted, which is a statement the
-    #: seeding makes rather than a reason to re-seed.
+    #: to the one unit that build's charge double-counted, which is a statement
+    #: the seeding makes rather than a reason to re-seed.
     SEED_UNIT = 128 << 20
     SEED_CELLS = (
         (2, 802.1, 532.1, 14.0),
@@ -2491,13 +2486,12 @@ class CompressedAccount(unittest.TestCase):
                 billed, pool, unnamed = measure.charge_model(
                     self.SEED_UNIT, jobs, worst * measure.MIB
                 )
-                # The seed's budget column is what the *pre-`19.22`* rule
-                # resolved: two units a reader, with the pool unbilled. `19.22`
-                # bills the pool and `M93` took the double-counted unit back
-                # out, so today's bill is that column plus the pool less one
-                # unit — and the residual the slice computed by hand rises by
-                # exactly that unit, which is the whole of `M93` seen from the
-                # readings rather than from the source.
+                # The seed's budget column is what that build's rule resolved:
+                # two units a reader, with the pool unbilled. Today's charge
+                # bills the pool and one unit a reader, so today's bill is that
+                # column plus the pool less one unit — and the residual computed
+                # by hand rises by exactly that unit, which is the double count
+                # seen from the readings rather than from the source.
                 self.assertAlmostEqual(
                     (billed - pool + jobs * self.SEED_UNIT) / measure.MIB, budget, places=1
                 )
@@ -2510,7 +2504,7 @@ class CompressedAccount(unittest.TestCase):
                 )
 
     def test_the_pool_term_is_named_rather_than_left_in_the_remainder(self):
-        # The finding the check exists to surface, and what `19.22` bills: at
+        # The finding the check exists to surface, and what the charge bills: at
         # two readers of a 128 MiB block file the pool retains 384 MiB no
         # per-reader term carries, which is nearly three times the remainder
         # left over. Folded into that remainder it would read as a term nothing
@@ -2523,7 +2517,7 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(pool, (measure.LIBRARY_POOL_DEPTH - 1) * self.SEED_UNIT)
         # And it never goes away: past the depth the pool clamps to, every
         # further reader brings a slot of it, which is what stops it being a
-        # floor (`M93`).
+        # floor.
         self.assertEqual(
             measure.pool_bytes(self.SEED_UNIT, measure.LIBRARY_POOL_DEPTH),
             (measure.LIBRARY_POOL_DEPTH - 1) * self.SEED_UNIT,
@@ -2539,9 +2533,9 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(fault.band, measure.BAND_OVER_BILL)
         self.assertIn("over-billed", fault.text)
         self.assertIn("fewer readers than the allocation affords", fault.text)
-        # And it bars: `19.11` releases the `bound` band alone, an over-bill
-        # carrying no remedy the sitting discharges (`M92`).
-        self.assertTrue(fault.bars_acceptance)
+        # And it refutes: the `bound` band alone is released, an over-bill
+        # carrying no remedy the sitting discharges.
+        self.assertTrue(fault.refutes)
 
     def test_a_remainder_above_the_reserve_is_a_fault_and_names_the_constant(self):
         billed = measure.charge_bytes(self.SEED_UNIT, 4)
@@ -2562,12 +2556,12 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn("MEMORY_UNPOOLED_BOUND", at_reserve.text)
         self.assertNotIn("rule does not hold", at_reserve.text)
 
-    def test_the_bound_band_alone_is_released_from_the_acceptance(self):
-        # `M91` gave the fault its band so the gate could read one of them;
-        # `M92` says which. A bound fault is released — the remainder is inside
-        # `MEMORY_RESERVE` and the sitting re-derives the constant it overran —
-        # and every other band bars, the over-bill included: it cannot be
-        # apparatus scatter and it leaves the sitting nothing to repair.
+    def test_the_bound_band_alone_is_released(self):
+        # A fault carries its band so the verdict can read them by name. A bound
+        # fault is released — the remainder is inside `MEMORY_RESERVE` and the
+        # sitting re-derives the constant it overran — and every other band
+        # refutes, the over-bill included: it cannot be apparatus scatter and
+        # it leaves the sitting nothing to repair.
         billed = measure.charge_bytes(self.SEED_UNIT, 4)
         bars = {
             measure.BAND_OVER_BILL: billed - measure.MIB,
@@ -2579,15 +2573,15 @@ class CompressedAccount(unittest.TestCase):
                 fault = measure.charge_model_problem(self.SEED_UNIT, 4, held)
                 assert fault is not None
                 self.assertEqual(fault.band, band)
-                self.assertEqual(fault.bars_acceptance, band != measure.BAND_BOUND)
+                self.assertEqual(fault.refutes, band != measure.BAND_BOUND)
 
-    def test_a_band_with_no_stance_recorded_bars_and_is_reported(self):
-        # The shape of the fourth amendment: acceptance is an enumeration, so a
-        # fault line added later does not inherit the released half by being
-        # unmentioned. `bars_acceptance` defaults to barring, and `--check`
-        # names the band until somebody records a stance for it (`M92`).
-        self.assertIsNotNone(measure.band_bars("a-line-nobody-has-argued"))
-        self.assertTrue(measure.ChargeFault("a-line-nobody-has-argued", "…").bars_acceptance)
+    def test_a_band_with_no_stance_recorded_refutes_and_is_reported(self):
+        # The rule is an enumeration, so a fault line added later does not
+        # inherit the released half by being unmentioned. `refutes` defaults to
+        # refuting, and `--check` names the band until somebody records a
+        # stance for it.
+        self.assertIsNotNone(measure.band_refutes("a-line-nobody-has-argued"))
+        self.assertTrue(measure.ChargeFault("a-line-nobody-has-argued", "…").refutes)
         self.assertEqual(measure.charge_band_problems(), [])
         with unittest.mock.patch.object(measure, "BAND_INVENTED", "invented", create=True):
             reported = measure.charge_band_problems()
@@ -2595,27 +2589,27 @@ class CompressedAccount(unittest.TestCase):
         self.assertIn("BAND_INVENTED", reported[0])
         self.assertIn("BAND_STANCE", reported[0])
 
-    def test_every_barring_band_says_why_it_bars(self):
+    def test_every_refuting_band_says_why_it_refutes(self):
         # The verdict prints the band's clause beside the cells, so a stance
         # cannot be recorded without the reason being written in the same place
-        # — which is what the single sentence over the whole barring stanza,
-        # asserting the `rule` band's reason over every cell in it, got wrong.
+        # — where one sentence over the whole refuting stanza would assert a
+        # single band's reason over every cell in it.
         for band, why in measure.BAND_STANCE.items():
             with self.subTest(band=band):
                 if why is None:
-                    self.assertIsNone(measure.band_bars(band))
+                    self.assertIsNone(measure.band_refutes(band))
                 else:
                     self.assertTrue(why.strip())
-                    self.assertEqual(measure.band_bars(band), why)
+                    self.assertEqual(measure.band_refutes(band), why)
         self.assertIsNone(measure.BAND_STANCE[measure.BAND_BOUND])
 
     def test_the_bound_is_re_derived_on_the_grid_it_was_read_off(self):
-        # `19.26` read 256 MiB off `19.16`'s grid as the next 64 MiB step above
-        # a 214.6 MiB worst remainder. The re-derivation is that arithmetic over
-        # whatever sitting is in hand, which is what lets a cell above the bound
-        # publish with its finding instead of owing a re-take.
+        # The shipped 256 MiB is the next 64 MiB step above the five-build
+        # grid's 238.6 MiB worst remainder. The re-derivation is that arithmetic
+        # over whatever sitting is in hand, which is what lets a cell above the
+        # bound publish with its finding instead of owing a re-take.
         self.assertEqual(
-            measure.rederived_unpooled_bound(214.6 * measure.MIB),
+            measure.rederived_unpooled_bound(238.6 * measure.MIB),
             measure.LIBRARY_MEMORY_UNPOOLED_BOUND,
         )
         # On a step exactly, the step itself covers it; above it, the next one.
@@ -2627,7 +2621,7 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(measure.rederived_unpooled_bound(-1.0), step)
 
     def test_the_two_ceilings_are_distinguishable_at_every_cell(self):
-        # `19.26`'s reason for two lines rather than one: between them the
+        # The reason for two lines rather than one: between them the
         # allocation holds and the number the count is predicted against is
         # wrong; above the outer one the allocation does not. A single threshold
         # cannot say which, whichever of the two it is set at.
@@ -2661,18 +2655,17 @@ class CompressedAccount(unittest.TestCase):
             f"{measure.LIBRARY_MEMORY_UNPOOLED_BOUND >> 20} << 20;",
             src,
         )
-        # And the margin predicts with the second rather than the first, which
-        # is the whole of `19.26`: the two were one number, and the doubling was
-        # invisible in every reading the harness takes.
+        # And the margin predicts with the second rather than the first.
+        # *Rejected:* one number for both — the criterion is then applied twice,
+        # and the doubling is invisible in every reading the harness takes.
         self.assertIn("saturating_sub(MEMORY_UNPOOLED_BOUND)", src)
 
     def test_the_recommendation_and_the_affordability_charge_are_one_number(self):
         # What `reader_bytes`' docstring asserts, and what the model rests on:
         # the charge the rule solves an allowance against is the charge the gate
-        # then compares a budget to. They were two numbers 7 MiB apart until
-        # `19.19`, and the mirror would be a model of neither if they split
-        # again. Since `19.22` both come off one composition site, which is what
-        # is pinned here.
+        # then compares a budget to. Split, they are two numbers 7 MiB apart
+        # and the mirror is a model of neither. Both come off one composition
+        # site, which is what is pinned here.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
             "fn default_worker_memory(&self) -> Option<WorkerMemory> {\n"
@@ -2748,19 +2741,19 @@ class CompressedAccount(unittest.TestCase):
         self.assertAlmostEqual(per_reader, 10.0)
 
     def test_a_fit_through_one_reader_count_is_refused(self):
-        # An intercept asserted as a measurement is what `19.15` found in
-        # `19.12`'s extrapolation, and it is the failure this figure exists to
-        # stop repeating.
+        # An intercept asserted as a measurement is the extrapolation the
+        # evidence skill's second rule names, and the failure this figure
+        # exists to stop repeating.
         with self.assertRaises(ValueError):
             measure._least_squares([(3, 474.0), (3, 503.0)])
 
     # A block size of zero makes `pool_bytes` vanish, so the three guard tests
-    # below are about the guard alone and not about `M95`'s subtraction; the
+    # below are about the guard alone and not about `_depooled`'s subtraction; the
     # de-pooling has its own tests after them.
     NO_POOL = 0
 
     def test_the_publication_guard_sits_in_front_of_the_arithmetic(self):
-        # `M90`: every fitted line in this harness crosses `_fit_or_secant`, so
+        # Every fitted line in this harness crosses `_fit_or_secant`, so
         # a fourth call site cannot skip the rule by not remembering it.
         fixed, slope = measure._fit_or_secant(
             [(1, 110.0), (2, 120.0), (4, 140.0)], self.NO_POOL
@@ -2783,7 +2776,7 @@ class CompressedAccount(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure._fit_or_secant([(3, 474.0), (3, 503.0)], self.NO_POOL)
 
-    # -- the kink the fit must not cross (`M95`) ----------------------------
+    # -- the kink the fit must not cross (`_depooled`) ----------------------
 
     def test_the_term_taken_off_each_point_is_the_librarys_own(self):
         # Not a second spelling of the pool's arithmetic: `_depooled` subtracts
@@ -2814,13 +2807,14 @@ class CompressedAccount(unittest.TestCase):
         self.assertAlmostEqual(got_per_reader, per_reader)
         raw_fixed, raw_per_reader = measure._least_squares(held)
         # 25 MiB of it at these counts, which is the bend measured from the true
-        # fixed term; `M95`'s 49 MiB is the same bias measured from the
+        # fixed term; the published 49 MiB is the same bias measured from the
         # above-kink regime's own intercept of minus one unit.
         self.assertGreater(raw_fixed - fixed, 20.0)
         self.assertGreater(raw_per_reader, per_reader)
 
     def test_the_bias_a_straight_line_across_the_kink_carries(self):
-        # `M95`'s own arithmetic, over the charge's held-unit values alone, at
+        # The arithmetic behind the published bias, over the charge's held-unit
+        # values alone, at
         # the reader counts the registered axis resolves. It is why the
         # subtraction exists, and it is checkable without a sitting.
         for unit, counts, bias, slope_units in (
@@ -2859,7 +2853,7 @@ class CompressedAccount(unittest.TestCase):
             [ln.strip() for ln in calls],
             ["fixed, slope = _least_squares(remainder)"],
             "a fitted line that does not cross `_depooled` publishes the charge's own bend "
-            "as an intercept (`M95`)",
+            "as an intercept (`_depooled`)",
         )
 
     # -- the edges it owes --------------------------------------------------
@@ -2874,7 +2868,7 @@ class CompressedAccount(unittest.TestCase):
         `rss-attribution` carries none, and that is a reading of the leg set
         rather than an omission: its every leg runs over the two block-count
         shapes whose axis it is, where nothing here does. What the three share
-        is a *sitting*, which `M74` is for."""
+        is a *sitting*, which one sweep takes."""
         mine = {
             spec.key("")
             for spec in (
@@ -4072,11 +4066,9 @@ class OutsideInvalidation(unittest.TestCase):
                 )
 
     def test_the_attribution_is_no_longer_a_section_the_harness_disowns(self):
-        # It carried an `Outside` row whose edge was read off the figure rather
-        # than copied, for the window in which the doc published a standalone
-        # script's readings under a registered instrument's name. `M74` closed
-        # that window: the row and the section's `outside-register` marker left
-        # together, which is the reconciliation `--check` makes both ways.
+        # A registered figure carries no `Outside` row and its section no
+        # `outside-register` marker, which is the reconciliation `--check` makes
+        # both ways.
         self.assertNotIn("rss-attribution", measure.NOT_OURS)
         self.assertIn("rss-attribution", measure.FIGURES_BY_ID)
         self.assertNotIn(
@@ -5497,7 +5489,8 @@ class SubstreamAnnotation(unittest.TestCase):
         # `plan_partitions` charges the held batch's span only where the source
         # retains by the read chunk, and a block-decoding `XzSource` retains by
         # the partition — so the `.xz` leg is charged what one reader holds,
-        # `58.03 MiB`, and affords thirty-five, while the plain leg is charged
+        # `34.03 MiB`, plus a 24 MiB unit of the pool's retention list for each
+        # reader past four, and affords thirty-five, while the plain leg is charged
         # `8 + 64 MiB` and affords twenty-eight. Both are past the top of the
         # axis. An entry appearing here again means a constant moved, and the
         # table's own paragraph saying there is nothing to state has gone false
@@ -5923,11 +5916,10 @@ class CensoredCells(unittest.TestCase):
             rss[key] = [100000.0 + 1000 * i + 10 * r for r in range(total_reps)]
             reported[key] = {
                 "resolved_jobs": str(2 + i % 5),
-                # Above `charge_bytes(128 MiB, 1)` — 650.1 MiB — so every
+                # Above `charge_bytes(128 MiB, 1)` — 522.0 MiB — so every
                 # flagless leg of this fixture takes the block path and the fit
-                # below it has legs to cover. `19.22` put one reader's pool
-                # floor inside that line, which is what moved it past the
-                # 600 MiB this fixture used to state (`block_path_afforded`).
+                # below it has legs to cover. That line carries one reader's
+                # share of the pool's retention list (`block_path_afforded`).
                 "resolved_budget": str(measure.charge_bytes(128 << 20, 1) + (1 << 20)),
             }
             if spec.instrument:
@@ -5987,12 +5979,12 @@ class CensoredCells(unittest.TestCase):
     def test_a_killed_leg_is_out_of_the_fit_and_the_fit_says_so(self):
         body, _ = self._render()
         self.assertIn("out of the fit", body)
-        self.assertIn("biased sample", body)
+        self.assertIn("a bound on a peak the process never reached", body)
 
     def test_a_partly_killed_leg_keeps_its_reps_and_declares_the_kill(self):
-        # The surviving reps are the ones that stayed under the ceiling, so the
-        # cell may show them only with the kill beside it — and it still leaves
-        # the fit.
+        # A partly-censored leg's median understates, so the cell may show its
+        # surviving reps only with the kill beside it — and it still leaves the
+        # fit.
         body, _ = self._render(killed_reps=1)
         self.assertIn("1 rep(s) OOM-killed", body)
         self.assertIn("out of the fit", body)
@@ -6039,7 +6031,7 @@ class CensoredCells(unittest.TestCase):
         # survives is a fit over the legs that had room. Naming only what left
         # asks the reader to subtract from a tuple the table never prints.
         body, _ = self._render()
-        section = body.split("The pair the constant is read off")[1].split(
+        section = body.split("Resident against the reader count")[1].split(
             "What the killed legs still prove"
         )[0]
         fits = [ln for ln in section.splitlines() if ln.startswith("- **")]
@@ -6056,14 +6048,14 @@ class CensoredCells(unittest.TestCase):
             )
 
     def test_every_published_term_names_the_pool_it_excludes(self):
-        # `M95`: both terms of every line here are the **remainder** — what a
+        # Both terms of every line here are the **remainder** — what a
         # leg held outside the block pool's retention list, which is subtracted
         # before the fit because it is known in advance and bends the line at
         # `POOL_DEPTH`. A reader who takes them for the whole of what a leg held
         # is out by that term: 72 MiB at one reader of 24 MiB blocks, 384 at
         # 128, and a unit a reader more above four.
         body, _ = self._render()
-        section = body.split("The pair the constant is read off")[1].split(
+        section = body.split("Resident against the reader count")[1].split(
             "What the killed legs still prove"
         )[0]
         self.assertIn("(POOL_DEPTH.max(jobs) − 1) × unit", section)
@@ -6118,14 +6110,14 @@ class CensoredCells(unittest.TestCase):
                 return measure.run_reserve(session)
 
     def test_a_two_point_family_publishes_a_secant_and_no_intercept(self):
-        # `M89` set the guard at three distinct reader counts, because a
-        # two-term model passes exactly through two points and prints `±0 MiB`
-        # as though it were a residual. `M90` is what it withholds: the slope
+        # The guard is three distinct reader counts, because a two-term model
+        # passes exactly through two points and prints `±0 MiB` as though it
+        # were a residual. What it withholds is the intercept: the slope
         # between two counts is a difference the axis measured and carries no
         # model claim, so it is published and the intercept is not.
         self.assertEqual(measure.RESERVE_FIT_MIN_COUNTS, 3)
         body = self._two_count_body()
-        section = body.split("The pair the constant is read off")[1].split(
+        section = body.split("Resident against the reader count")[1].split(
             "What the killed legs still prove"
         )[0]
         lines = [ln for ln in section.splitlines() if ln.startswith("- **")]
@@ -6134,7 +6126,7 @@ class CensoredCells(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertIn("secant", line)
                 self.assertIn("a reader **", line)
-                # The slope is the remainder's too (`M95`).
+                # The slope is the remainder's too (`_depooled`).
                 self.assertIn("outside the pool", line)
                 self.assertIn("distinct reader count(s), under the 3", line)
                 # The two things the guard withholds, and nothing else: no
@@ -6149,9 +6141,10 @@ class CensoredCells(unittest.TestCase):
                 )
 
     def test_the_instrument_family_crosses_the_same_guard(self):
-        # `M90`: the guard is a property of the model, so it cannot live in one
-        # renderer. `live_fit` admitted an intercept at two distinct counts
-        # while the flagless axis refused one in the same sitting.
+        # The guard is a property of the model, so it cannot live in one
+        # renderer, or the instrument account admits an intercept at two
+        # distinct counts while the flagless axis refuses one in the same
+        # sitting.
         body = self._two_count_body()
         live = [ln for ln in body.splitlines() if "a reader" in ln and "secant" in ln]
         self.assertTrue(
@@ -6169,9 +6162,9 @@ class CensoredCells(unittest.TestCase):
             f"the secant names no leg: {line}",
         )
         # The comparison a censored sitting would otherwise lose silently: it
-        # reads the slope alone, so a secant keeps it (`19.18`'s 98%). Both
-        # sides exclude the pool's retention list, which is what makes them
-        # commensurable (`M95`).
+        # reads the slope alone, so a secant keeps it. Both sides exclude the
+        # pool's retention list, which is what makes them commensurable
+        # (`_depooled`).
         self.assertIn("`BlockCache::reader_bytes` bills", line)
         self.assertIn("outside the pool", line)
 
@@ -6247,9 +6240,9 @@ class CensoredCells(unittest.TestCase):
 
     def test_the_program_fit_is_evaluated_inside_its_own_window(self):
         # An intercept is a physical quantity only where the fit still holds
-        # where the mechanism is simplest, and the phase has already published
-        # one `403 MiB` intercept that nobody evaluated at its own smallest
-        # cell.
+        # where the mechanism is simplest: a `403 MiB` intercept fitted over
+        # 3–24 readers predicts 436 MiB at one reader, where the process holds
+        # 62.9 (`.claude/skills/evidence/SKILL.md`, rule 2).
         body, _ = self._render()
         line = next(ln for ln in body.splitlines() if ln.startswith("**What the program itself"))
         self.assertIn("smallest arrangement in its own window", line)
@@ -6321,13 +6314,13 @@ class CensoredCells(unittest.TestCase):
 class ChargeModelSection(unittest.TestCase):
     """The model check the reserve renderer prints, cell by cell.
 
-    What it is written against is the shape `19.16` had to do by hand: a
-    sitting that reports forty headroom percentages and leaves the account to
-    whoever reads the log afterwards. Three things fail silently here. A
-    **criterion stated after the answer** reads as a description of whatever
-    came back. A **pool term folded into the remainder** reads as a term nothing
-    accounts for and as a breach on a larger block size, which is the whole
-    reason `19.22` exists. And a **declined or censored leg
+    What it is written against is the account done by hand: a sitting that
+    reports forty headroom percentages and leaves the account to whoever reads
+    the log afterwards. Three things fail silently here. A **criterion stated
+    after the answer** reads as a description of whatever came back. A **pool
+    term folded into the remainder** reads as a term nothing accounts for and
+    as a breach on a larger block size, which is why the charge bills it. And a
+    **declined or censored leg
     left in the table** evaluates the model at a leg that ran none of it.
     """
 
@@ -6346,14 +6339,13 @@ class ChargeModelSection(unittest.TestCase):
     #: One flagless arrangement per input and limit: reader count and worst rep
     #: in MiB.
     #:
-    #: The four original limits are `19.16`'s r384 grid as it read them — the
-    #: 24 MiB rows are that sitting's headroom column inverted against its
-    #: container limit, the 128 MiB rows its pool-floor table
-    #: (`roadmap-P19-efficient-defaults-notes.md`). **`544m` and `1088m` are
-    #: constructed**, no sitting having measured them: each is a one- or
-    #: two-reader arrangement whose worst rep satisfies the criterion, chosen so
-    #: the model table carries a one-reader cell at each block size, which is the
-    #: arrangement `M89` put on the axis and which no cell of the four-limit grid
+    #: The four original limits are the reserve constant's five-build grid at
+    #: its r384 build — the 24 MiB rows are that build's headroom column
+    #: inverted against its container limit, the 128 MiB rows the same readings
+    #: `SEED_CELLS` carries. **`544m` and `1088m` are constructed**, no sitting
+    #: having measured them: each is a one- or two-reader arrangement whose worst
+    #: rep satisfies the criterion, chosen so the model table carries a
+    #: one-reader cell at each block size, which no cell of the four-limit grid
     #: reached.
     #:
     #: **The budget a cell renders under is its own arrangement's charge, not
@@ -6378,8 +6370,8 @@ class ChargeModelSection(unittest.TestCase):
     }
 
     def _seeded_body(self, bumps=None):
-        """The renderer over a fixture whose flagless legs are `19.16`'s own
-        readings, nothing killed.
+        """The renderer over a fixture whose flagless legs are the five-build
+        grid's own readings, nothing killed.
 
         `bumps` adds MiB to one leg's worst rep, which is how a cell is put in a
         chosen band of the criterion without inventing a second fixture."""
@@ -6445,13 +6437,13 @@ class ChargeModelSection(unittest.TestCase):
         self.assertIn("the **bound** is wrong", criterion)
         self.assertIn("over-bill", criterion)
         # And that the column below says which of the three a cell crossed,
-        # since that is what decides how the cell is read (`M91`).
+        # since that is what decides how the cell is read.
         self.assertIn("names the band", criterion)
         self.assertTrue(verdict, "the section states a criterion and never answers it")
 
     def test_the_seeded_readings_pass_and_the_floor_is_its_own_column(self):
         body = self._seeded_body()
-        self.assertIn("The model holds at every cell above.", body)
+        self.assertIn("The model holds at every cell above", body)
         rows = self._model_rows(body)
         # Eight flagless legs, and every one of them took the block path at the
         # budget its own reported arrangement carries.
@@ -6464,8 +6456,8 @@ class ChargeModelSection(unittest.TestCase):
     def test_the_pool_term_is_billed_at_every_cell_of_each_block_size(self):
         # The column exists to keep the pool out of the remainder, and a table
         # in which any cell reads `—` there is a cell whose bill has lost its
-        # larger half. Since `M93` the term never clamps off, so every row of
-        # every block size carries it.
+        # larger half. The term never clamps off, so every row of every block
+        # size carries it.
         rows = self._model_rows(self._seeded_body())
         for _name, label, unit in measure.RESERVE_FLAGLESS_INPUTS:
             with self.subTest(block_size=label):
@@ -6480,23 +6472,24 @@ class ChargeModelSection(unittest.TestCase):
                         row,
                     )
 
-    def test_an_over_bill_is_named_in_those_words_and_bars(self):
+    def test_an_over_bill_is_named_in_those_words_and_refutes(self):
         # The default fixture holds ~100 MiB against a charge of several
-        # hundred, which is the over-bill side of the criterion. `M92`: it bars
-        # — it is never apparatus scatter, having to exceed the whole of the
-        # rest of the process's footprint before the arithmetic reports it at
-        # all, and the sitting discharges nothing by printing it.
+        # hundred, which is the over-bill side of the criterion. It refutes —
+        # it is never apparatus scatter, having to exceed the whole of the rest
+        # of the process's footprint before the arithmetic reports it at all,
+        # and the sitting discharges nothing by printing it.
         body, _ = self._render()
         self.assertIn("over-billed", body)
         self.assertIn("The model is refuted, and by these cells:", body)
-        self.assertIn("the sweep's box does not tick", body)
-        # And the verdict says why *this* band bars rather than asserting the
+        # And the refutation does not bar publication.
+        self.assertIn("The table publishes all the same", body)
+        # And the verdict says why *this* band refutes rather than asserting the
         # rule band's reason over every cell in the stanza.
-        self.assertIn(measure.band_bars(measure.BAND_OVER_BILL), body)
-        self.assertNotIn("not a bar on the box", body)
+        self.assertIn(measure.band_refutes(measure.BAND_OVER_BILL), body)
+        self.assertNotIn("a finding rather than a refutation", body)
 
     def test_a_cell_above_the_bound_alone_publishes_with_its_finding(self):
-        # `M91`: between the two lines the allocation holds and the number the
+        # Between the two lines the allocation holds and the number the
         # count is predicted against is wrong. The verdict says which, and
         # re-derives the bound from the sitting's own remainders rather than
         # owing a re-take.
@@ -6504,10 +6497,10 @@ class ChargeModelSection(unittest.TestCase):
         bump = self._bump_to(("control_xz128", "1g"), over)
         body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
         self.assertNotIn("The model is refuted", body)
-        self.assertIn("not a bar on the box", body)
+        self.assertIn("a finding rather than a refutation", body)
         self.assertIn("MEMORY_UNPOOLED_BOUND", body)
         # The bumped cell is the sitting's worst remainder, rounded up on the
-        # 64 MiB grid `19.26` read the constant off.
+        # 64 MiB grid the constant was read off.
         rederived = measure.rederived_unpooled_bound(over)
         self.assertIn(
             f"re-derive `MEMORY_UNPOOLED_BOUND` at **{measure._fmt_budget_bytes(rederived)}**",
@@ -6515,23 +6508,22 @@ class ChargeModelSection(unittest.TestCase):
         )
         self.assertIn("| **bound** |", body)
 
-    def test_a_cell_above_the_reserve_bars_the_box_and_says_so(self):
-        # The outer line, which is the one `19.11` accepts on: a remainder the
-        # reserve cannot cover is an arrangement the discovery cannot keep
-        # inside its allocation.
+    def test_a_cell_above_the_reserve_refutes_and_says_so(self):
+        # The outer line: a remainder the reserve cannot cover is an
+        # arrangement the discovery cannot keep inside its allocation.
         bump = self._bump_to(
             ("control_xz128", "1g"), measure.LIBRARY_MEMORY_RESERVE + measure.MIB
         )
         body = self._seeded_body(bumps={("control_xz128", "1g"): bump})
         self.assertIn("The model is refuted, and by these cells:", body)
-        self.assertIn("the sweep's box does not tick", body)
-        self.assertIn(measure.band_bars(measure.BAND_RULE), body)
+        self.assertIn("The table publishes all the same", body)
+        self.assertIn(measure.band_refutes(measure.BAND_RULE), body)
         self.assertIn("| **rule** |", body)
 
     def test_the_two_bands_are_reported_apart_in_one_sitting(self):
         # The case one sentence over both cannot state: a cell of each band. The
-        # bar is named on the rule cells alone, and the bound cell is published
-        # beside it with its finding.
+        # refutation is named on the rule cells alone, and the bound cell is
+        # published beside it with its finding.
         body = self._seeded_body(
             bumps={
                 ("control_xz128", "1g"): self._bump_to(
@@ -6545,13 +6537,13 @@ class ChargeModelSection(unittest.TestCase):
             }
         )
         self.assertIn("The model is refuted, and by these cells:", body)
-        self.assertIn("not a bar on the box", body)
-        barring = body.split("The model is refuted")[1].split("Inside the rule")[0]
-        self.assertIn("128 MiB blocks** at `-m 1g`", barring)
-        self.assertNotIn("24 MiB blocks** at `-m 2g`", barring)
-        # And no bound is re-derived here: a sitting carrying a cell above the
-        # reserve has a worst remainder belonging to an arrangement the rule did
-        # not hold for, which is not a reading a constant may be sized to.
+        self.assertIn("a finding rather than a refutation", body)
+        refuting = body.split("The model is refuted")[1].split("Inside the rule")[0]
+        self.assertIn("128 MiB blocks** at `-m 1g`", refuting)
+        self.assertNotIn("24 MiB blocks** at `-m 2g`", refuting)
+        # And no bound is re-derived here: a sitting in which the model is
+        # refuted has a worst remainder that is not a reading a term of that
+        # model may be sized to.
         self.assertNotIn("re-derive `MEMORY_UNPOOLED_BOUND`", body)
         self.assertIn("No bound is re-derived from this sitting", body)
 
@@ -6621,12 +6613,12 @@ class ChargeModelSection(unittest.TestCase):
 
     def _flagless_rows(self, body):
         section = body.split("What a flagless scan resolves")[1].split(
-            "The pair the constant is read off"
+            "Resident against the reader count"
         )[0]
         return [ln for ln in section.splitlines() if ln.startswith("| `-m ")]
 
     def test_every_flagless_cell_names_the_path_it_ran(self):
-        # `M88`: the block path and the streaming fallback hold different
+        # The block path and the streaming fallback hold different
         # things, so a column mixing them is two series printed as one — and an
         # unmarked cell cannot be told from a cell nobody checked. Every cell
         # says which, including the ones that took the block path.

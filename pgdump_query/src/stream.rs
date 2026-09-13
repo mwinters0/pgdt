@@ -823,12 +823,14 @@ async fn map_forward(
 /// `scan started` names what was asked for, because the source's advice has
 /// not been read when it fires — the leader reads it standing on an open
 /// `COPY` block, and on a compressed source whose largest block the budget
-/// cannot hold the answer is one reader whatever `--jobs` said. Until this
-/// line existed a `parse` had no way at all to say so: the decline that says
-/// it on a query is a [`PlanNote`] on a `TableStream`, which a `parse` has
-/// none of (`docs/design/architecture.md`, "Status output").
+/// cannot hold the answer is one reader whatever `--jobs` said. This line is
+/// how a `parse` says so: the decline that says it on a query is a
+/// [`PlanNote`] on a `TableStream`, which a `parse` has none of
+/// (`docs/design/architecture.md`, "Status output").
 ///
-/// **Silence means the count ran as announced.** The line is a correction and
+/// **Silence means the leader dispatched the announced count**, not that every
+/// one of them read at once: on a plain source above `POOL_DEPTH` workers the
+/// rest wait for a chunk slot, and nothing reports that. The line is a correction and
 /// not a restatement, so it is emitted only where the two differ; `flag` is
 /// what keeps a dump with ten thousand `COPY` blocks from printing ten
 /// thousand copies of one scan-wide fact, which is also why
@@ -1872,7 +1874,8 @@ pub struct PlanNote {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanNoteKind {
     /// `--jobs` asked for more concurrent sub-streams than the stated memory
-    /// budget affords, once [`worker_count`]'s two divisor terms are counted:
+    /// budget affords, once both terms of the charge [`worker_count`] solves
+    /// against are counted:
     /// `footprint` is the widest touched block's decode cost
     /// (`crate::io::Partitioning::partition_bytes`) and `max_source_span` is
     /// the second term (`crate::batch::QueryOptions::max_source_span`) —
@@ -1891,17 +1894,19 @@ pub enum PlanNoteKind {
         memory_bytes: u64,
     },
     /// The `.xz` source this query reads declined the block-decode path: the
-    /// memory budget in force does not afford two whole blocks, so it reads
-    /// through the streaming decoder instead and every **backward** read
+    /// memory budget in force does not afford one block-decoding reader, so it
+    /// reads through the streaming decoder instead and every **backward** read
     /// decodes forward from its block's start rather than landing in a
     /// retained block (`docs/design/architecture.md`, "The compressed
-    /// source"). Never a reason to refuse the query — the rows are the same
-    /// and the mapping pass, which only reads forward, costs the same either
-    /// way; what it names is the number to raise and how far.
+    /// source"). Never a reason to refuse the query — the rows are the same —
+    /// though the forward mapping pass pays too, a declined source advising a
+    /// single partition and so reading serially whatever `--jobs` says; what
+    /// it names is the number to raise and how far.
     /// `max_block_uncompressed` is the file's largest block and `block_count`
     /// says how much seeking the file would otherwise offer, while
-    /// `reader_bytes` is what the budget was actually compared against: the
-    /// block unit **twice** — a block pool holding one block being the
+    /// `reader_bytes` is what the budget was actually compared against: one
+    /// reader together with the retention list the pool keeps beside it, four
+    /// block units in all — a block pool holding one block being the
     /// un-poolable shape it rejects by name ([`crate::io`], `BlockCache`) —
     /// plus the chunk buffer and the decoder's own retention. The source
     /// states that number rather than this note deriving it
@@ -2097,16 +2102,16 @@ fn compressed_block_path_declined(
 /// Never empty: a table with no blocks at all is one sub-stream that yields
 /// nothing, which is what [`table_stream`] does with the same map.
 ///
-/// **`max_source_span` is the second term the stated budget divides by, not a
-/// separate cap of its own** (`docs/design/architecture.md`, "Execution model
+/// **`max_source_span` is the second term the stated budget is solved against,
+/// not a separate cap of its own** (`docs/design/architecture.md`, "Execution model
 /// and API surface"). What one sub-stream costs the caller is its held
 /// batch's pin (`max_source_span`, rounded out to the retained unit) *on top
 /// of* what the source charges a concurrent reader for decoding
 /// (`partition_bytes`) — a discovery worker pays only the second, but a
 /// query's sub-stream is handed its batch and pays both, which is why this
-/// divisor is not `worker_count`'s own to know and is computed here rather
+/// charge is not `worker_count`'s own to know and is computed here rather
 /// than folded into that function. A caller who left the span unbounded
-/// (`None`) has already opted out of a batch-size bound, so the divisor falls
+/// (`None`) has already opted out of a batch-size bound, so the charge falls
 /// back to the decode footprint alone — the same answer a discovery worker's
 /// call gets.
 ///
@@ -2178,7 +2183,7 @@ fn plan_partitions(
     // count note below fires only where `requested` exceeds what was planned,
     // which at one worker never happens — so a budget too small for a single
     // partition would otherwise reach a user as unexplained slowness. Charged
-    // against the footprint alone rather than against the divisor: the span
+    // against the footprint alone rather than against the whole charge: the span
     // term puts an ordinary plain `query` at the default budget over the line,
     // which is that arrangement's own property and not a starved allocation
     // (`docs/design/architecture.md`, "Execution model and API surface").

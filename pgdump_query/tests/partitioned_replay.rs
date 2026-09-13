@@ -725,8 +725,9 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
         })
         .unwrap_or_else(|| panic!("{notes:?}"));
     // The recourse the note names is the source's own number, not a multiple
-    // this test re-derives: two block slots, the chunk buffer a straddling
-    // read is assembled into, and the decoder's own retention.
+    // this test re-derives: one reader's block with the retention list the
+    // pool keeps beside it, the chunk buffer a straddling read is assembled
+    // into, and the decoder's own retention. The assertion is a lower bound.
     let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
     assert!(
         reader > 2 * table.max_block_uncompressed(),

@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11–P13, P16, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P19 — efficient defaults for a parallel scan | **Complete** | [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md); notes: [`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md) |
+| P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -113,7 +112,7 @@ The guard is the other half and it is what stops the baseline becoming a
 ceiling: an optimization that helps at four and makes twenty-four slower *per
 worker* has over-fitted to the baseline. `parallel-scan-throughput`'s wide
 `--jobs` axis is kept for exactly that reading — a compressed parse scales to
-**5.93×** at twenty-four against 1.88× at four — so the wide numbers keep being
+**5.60×** at twenty-four against 1.76× at four — so the wide numbers keep being
 gathered wherever the machine can give them, and are read as a guard rather
 than as the target.
 
@@ -132,19 +131,19 @@ runs with an allocation somebody chose for it. That is why filling a discovered
 limit is the default rather than an option — and why "no limit found" is not a
 second supported mode to tune for, but a state in which nothing has said what
 pgdq may take while it shares the host with whatever else runs there. The
-status line reports which case applied, so an operator who expected a container
-and reads `(default: no limit found)` has learned their allocation is not being
-enforced.
+status output reports which case applied, so an operator who expected a
+container and reads `no memory limit found: nothing is enforcing one on this
+process` has learned their allocation is not being enforced.
 
 **An allocation stated is permission; a machine merely observed is not.** A
 cgroup limit is somebody telling pgdq what it may have, so taking it is what
 they asked for. A host with *no* limit has told us nothing — it is a shared
 machine until proved otherwise, and pgdq is not the only process on it. So the
 two cases are not symmetric and must not be written as one: **where a limit is
-discovered the default fills it, and where none is, the default stays modest**
-whatever the core count suggests. Reading physical RAM to fill an unlimited
-host is refused for the same reason it was refused going in — total memory is
-not *our* memory.
+discovered the default fills it, and where none is, the default takes what the
+source recommends, capped at half of what the machine reports available.**
+Reading physical RAM to fill an unlimited host is refused — total memory is not
+*our* memory.
 
 Four bounds, and they are what keep this from being "take everything":
 
@@ -159,8 +158,12 @@ Four bounds, and they are what keep this from being "take everything":
   on machines of *different shape* — a wide host with little memory per core
   and a narrow one with a great deal — so neither number may be chosen without
   the other. `stream::worker_count` and `BufferPool::slots`' clamp are the
-  second half in code: resident saturates at the worker count times what one
-  reader holds, so budget above that is taken by nothing. The first half is
+  second half in code: resident saturates at `WorkerMemory::at` of the
+  announced count — its readers' own terms plus the block pool's retention
+  list — and what no pool holds, so budget above that is taken by nothing.
+  Below it the bound is not the budget: where a stated `--jobs` outruns what
+  the budget affords, the block pool's slot ceiling follows the announced count
+  and resident passes the stated number (`KD21`). The first half is
   what a source's own recommendation owes — a count the file cannot supply
   work for must not be multiplied into a budget request.
 - **Unstated is not unlimited.** Absent a discovered limit the default is
@@ -409,8 +412,8 @@ ships.
 the specific mistake.** "The allocator is part of the apparatus" and "a figure
 is taken with the default glibc build" bind what may be **published**. A
 diagnostic sitting already does what a figure may not: `--alone` marks a whole
-run NOT PUBLISHABLE, and `19.2`'s account ran against a scratch build with a
-lifted `POOL_DEPTH`. So an instrumented build, a counting allocator or a
+run NOT PUBLISHABLE, and the plain path's account ran against a scratch build
+with a lifted `POOL_DEPTH`. So an instrumented build, a counting allocator or a
 profiling one has been available for attribution all along, and a spec refusing
 one *for a figure's reasons* has applied the wrong rule to it.
 
@@ -489,22 +492,6 @@ and "Execution model and API surface").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
-
-## P19 — Efficient defaults for a parallel scan
-
-**Complete**, 2026-09-13. Spec:
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), whose
-inbox was drained into it and deleted; notes:
-[`roadmap-P19-efficient-defaults-notes.md`](roadmap-P19-efficient-defaults-notes.md).
-The mechanisms are in [`architecture.md`](architecture.md), filed by subject.
-
-The parallel scan mechanism existed; this phase shipped it set correctly — a
-person who states no flag now gets a worker count the source recommends, inside
-a budget read off the cgroup limit they were actually given. **The mechanism
-existing was not parallelization being finished, and it still is not**:
-converting cores into extraction throughput on a plain source waits on
-mechanism rather than on defaults ([`architecture.md`](architecture.md), "What
-parallelism buys, and where it stops"), and `KD17` is the open question there.
 
 ## P10 — Per-row-group column statistics
 
@@ -880,10 +867,9 @@ which is what makes the difference worth minding at the moment one is found.
   may decode a block at all, which is most of a small container and is what
   sends such a scan through the streaming decoder there (`architecture.md`, "Execution model and API
   surface"). A floor that followed the count instead would charge far less at
-  one and two readers. It is not taken in P19: that phase reports the decline,
-  and reworking a pool's sizing rule needs evidence P19's account does not
-  produce. **P19 charges the pool honestly, which was a separate defect and was
-  `19.22`'s** — a reader holds one unit and the pool retains
+  one and two readers. Reworking a pool's sizing rule needs evidence the
+  charge's account does not produce. **The charge bills the pool honestly
+  already** — a reader holds one unit and the pool retains
   `(POOL_DEPTH.max(jobs) − 1) × unit` beside it, which no per-reader term
   carries ([2026-09-12](../status/history/2026-09-12.md), "The charge
   over-bills the pool floor at every count"), and `io::WorkerMemory` is the
@@ -893,16 +879,18 @@ which is what makes the difference worth minding at the moment one is found.
   count at all — and billing it is what makes the question answerable, the
   decline it widens now being the honest one. The cheap half of it — whether the
   floor buys anything at all below `POOL_DEPTH` readers — is a reading, not a
-  design. **That reading is now taken, and it says the floor buys nothing there.**
-  At a 512 MiB limit on koji's block size, a `runs/` probe swept the reader
-  count by varying the reserve alone: four readers is 1.66× the streaming
-  fallback and three is 1.31×, but **two readers is 6% slower than declining and
-  one reader is 3% slower**, holding 250 MiB and 63 MiB against the fallback's
-  15 (`docs/design/roadmap-P19-efficient-defaults-notes.md`, "The block path
-  buys nothing below three readers, on this file"). One file, one limit and a
-  probe rather than a figure — but it moves the item's shape: the cheap half is
-  answered, and what is left is whether a count-tracking floor would put a third
-  reader inside allocations that today get none.
+  design, and one probe bears on it without answering it. At a 512 MiB limit on
+  koji's block size, a `runs/` probe swept the reader count by varying the
+  reserve alone: four readers was 1.66× the streaming fallback and three 1.31×,
+  but two readers was 6% slower than declining and one reader 3% slower
+  ([2026-09-11](../status/history/2026-09-11.md), "`19.16` lands: 384 MiB").
+  **It timed an arrangement that no longer ships**: there a one-reader block path
+  held about 63 MiB, its budget leaving the block pool two slots, where the
+  shipped charge makes it hold about 111 MiB ([`measurements.md`](measurements.md),
+  "What a scan holds above the budget it was given"), and no reading times the
+  shipped arrangement. One file, one limit and a probe rather than a figure; what
+  is left is whether a count-tracking floor would put a third reader inside
+  allocations that today get none.
 
 - **A "safe mode" that deliberately under-fills a stated allocation.** The
   defaults fill a discovered cgroup limit, on the reasoning that a limit is
@@ -914,19 +902,19 @@ which is what makes the difference worth minding at the moment one is found.
   limit instead. What needs grilling before it is written is what it composes
   with rather than the number: `--parallel-memory` stated explicitly, the
   reserve, and the below-floor path, which is where a fraction of a small
-  allocation lands immediately. Raised while settling `P19`'s defaults —
+  allocation lands immediately. Reasoning:
   [2026-09-09](../status/history/2026-09-09.md), "Fast by default, and the
   no-limit cap".
 
 - **The `POOL_MAX_BYTES` cap on the plain partition product, lifted, so a
-  raised `--chunk-size` keeps its multiple.** What this item was mostly for is
-  done: `leader::scan_partition` reads a plain piece a chunk at a time now
-  (`io::PartitionRead`), so the plain source is single-unit again, every buffer
-  a worker takes is pooled, and the arena retention that came with the
-  un-pooled partition buffer is gone — 9.4 MiB at `--jobs 24` against 209.2,
-  and slightly faster ([`architecture.md`](architecture.md), "The interior
-  split"). What is left is the cap. Its reason was to bound the allocation a
-  raised `--chunk-size` would make, and there is no such allocation any more;
+  raised `--chunk-size` keeps its multiple.** `leader::scan_partition` reads a
+  plain piece a chunk at a time (`io::PartitionRead`), so the plain source is
+  single-unit, every buffer a worker takes is pooled, and no partition-length
+  buffer is allocated for an arena to retain — a probe on the build that
+  introduced the chunked read put that at 9.4 MiB at `--jobs 24` against 209.2
+  ([`architecture.md`](architecture.md), "The interior split"). What is left is
+  the cap. Its reason was to bound the allocation a raised `--chunk-size` would
+  make, and no such allocation exists;
   with the cap still in place a partition is one chunk at `--chunk-size 8m` and
   above, which hands back the 100% tail re-read `io::PLAIN_PARTITION_CHUNKS`
   exists to cap. Lifting it is one expression, and it is here rather than taken
@@ -936,9 +924,10 @@ which is what makes the difference worth minding at the moment one is found.
   question asked of the same number ([`architecture.md`](architecture.md),
   "cut-width"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
   before it lands, not a spec. **It also raises what the charge bills**, the
-  same product being `Partitioning::partition_bytes` — which since the read
-  became chunked over-bills the plain path already
-  ([`out-of-band.md`](out-of-band.md), `M97`), so whichever of the two lands
+  same product being `Partitioning::partition_bytes` — which over-bills the
+  plain path already
+  (`KD25`, [`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies"),
+  so whichever of the two lands
   first decides whether the other is arithmetic or a second decision.
 
 - **TOC attribution across an intervening statement, so `--disable-triggers`
@@ -1110,4 +1099,4 @@ which is what makes the difference worth minding at the moment one is found.
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
 
-- **pgdq caps its own glibc arenas — declined.** It was here, then moved into `P19`, which refused it: `mallopt` bounds arena *creation* only, and the count worth keying it to is resolved after source recognition, so the one shape worth having is mechanically unreachable and what is left is a constant that re-bases every registered figure. The cap is published as a deployment setting instead, and the CLI's `current_thread` runtime is what keeps the thread count — and so the arena count — following the work rather than the host ([`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "The arena cap is a deployment setting, not a mechanism this binary ships").
+- **pgdq caps its own glibc arenas — open.** pgdq does not set `M_ARENA_MAX`; `MALLOC_ARENA_MAX` is the operator's setting, and the CLI's `current_thread` runtime is what keeps the thread count — and so the arena count — following the work rather than the host ([`architecture.md`](architecture.md), "Execution model and API surface"). Whether the binary should set a cap of its own is an open decision ([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another look").

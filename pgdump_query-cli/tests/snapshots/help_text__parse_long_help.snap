@@ -49,7 +49,8 @@ Options:
           What it reaches is `query`'s row replay, cut into at most this many sub-streams read at
           once and merged back into file order; a `parse`'s structure scan, which splits the
           interior of every `COPY` block large enough to cut and folds the answers back into one
-          block list; and how many decoded `.xz` blocks the source retains, one per would-be reader.
+          block list; and how many decoded `.xz` blocks the source retains: four, or one per
+          would-be reader where that is more.
           
           **On `query`, `--parallel-memory` has to cover a second cost before this number is
           delivered at all** — see that flag's own doc.
@@ -60,11 +61,11 @@ Options:
           384 MiB reserve, and takes inside that what the file asks for: one reader's worth for each
           worker it would run, rather than the whole allowance. Where no limit is set that same
           number is held under half the memory the machine reports available. A plain dump asks for
-          nothing of its own and stays on 64 MiB.
+          nothing of its own and gets 64 MiB, or the limit less the reserve where that is smaller.
           
           It is a real bound rather than a target: a `.xz` file that does not leave room inside it
           for one reader — one of its blocks, a read buffer and the decompressor's own working
-          memory, over the four block slots the pool keeps whatever the worker count is — is read
+          memory, beside the three further blocks the pool keeps however few workers run — is read
           through the streaming decoder instead of being decoded a block at a time, which is correct
           but slower on backward reads. Raise it to buy the block path back on a file written with
           large blocks (`xz -9 -T0`, `xz --block-size=`).
@@ -78,10 +79,10 @@ Options:
           **On `query` it divides by two terms rather than one**: what a worker costs to read, plus
           the 64 MiB a sub-stream's held batch may pin (`docs/design/architecture.md`, "Execution
           model and API surface") — charged on a plain file, where a batch pins read buffers the
-          first term never counted, and not on a block-decoding `.xz`, where it pins the block that
-          term already holds. At 64 MiB — which is what a plain file gets unless a limit or a flag
-          says otherwise — the plain file's sum already exceeds the budget, so `query --jobs N` on
-          one runs serially however large `N` is; raise it past roughly 145 MiB to get a second
+          first term never counted, and not on a block-decoding `.xz`, whose first term already
+          counts a decoded block. At 64 MiB — which is what a plain file gets unless a limit or a
+          flag says otherwise — the plain file's sum already exceeds the budget, so `query --jobs N`
+          on one runs serially however large `N` is; raise it past roughly 145 MiB to get a second
           sub-stream at all. `parse` is unaffected by the second term: it builds no batches, so
           nothing on that path pins a span.
 

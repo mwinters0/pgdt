@@ -121,10 +121,8 @@ cgroup v2 is always in the format `0::$PATH`."*
 containerd v2.3.3, cgroup driver systemd, cgroup version 2 (observed).
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
-is discovered, and what the default makes of it" — `discover_memory_limit`
-begins here. When P19 wraps this retargets at the mechanism's
-`architecture.md` section.
+[`architecture.md`](architecture.md), "Execution model and API surface" — `discover_memory_limit`
+begins here.
 
 **Re-verify.**
 
@@ -177,8 +175,7 @@ containerd v2.3.3 (observed: `--memory 512m` → `536870912`, exactly 512 MiB;
 all).
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
-is discovered, and what the default makes of it".
+[`architecture.md`](architecture.md), "Execution model and API surface".
 
 **Re-verify.**
 
@@ -219,9 +216,8 @@ containerd v2.3.3 (observed: `--memory 512m --cgroup-conf
 memory.high=268435456` → `memory.max` `536870912`, `memory.high` `268435456`).
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
-is discovered, and what the default makes of it" — specifically the sentence
-that reads the minimum over every limit that binds.
+[`architecture.md`](architecture.md), "Execution model and API surface" — the discovered limit
+being the minimum over every limit that binds.
 
 **Re-verify.**
 
@@ -265,8 +261,8 @@ mounted v1 alongside. The proof is therefore source, one rung below the observed
 evidence every other entry here carries, and the `Re-verify` below is the run
 that would close that gap on a host that has one.
 
-**The half that can be checked here is our reader, not the kernel**, and slice
-19.9 checks it: a fixture tree shaped as this entry claims, driven through
+**The half that can be checked here is our reader, not the kernel**, and
+`io.rs`'s unit tests check it: a fixture tree shaped as this entry claims, driven through
 `discover_memory_limit`'s filesystem-root seam. That neither observes a kernel
 nor upgrades `Verified against` — it establishes that the code reads the shape
 `RT4` describes, which is where a bug of ours would live. `RT4` is not a
@@ -274,8 +270,7 @@ deficiency: the unobservable half is a property of this machine, and the
 observable half is a scheduled test.
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
-is discovered, and what the default makes of it" — the v1 arm of
+[`architecture.md`](architecture.md), "Execution model and API surface" — the v1 arm of
 `discover_memory_limit`.
 
 **Re-verify.** On a host booted with `systemd.unified_cgroup_hierarchy=0`:
@@ -340,9 +335,8 @@ max                      # its own memory.max
 the scratch hierarchy in the `Re-verify` below).
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
-is discovered, and what the default makes of it" — *"every ancestor cgroup
-rather than the nearest"*.
+[`architecture.md`](architecture.md), "Execution model and API surface" — every ancestor cgroup
+read rather than the nearest.
 
 **Re-verify.** The container form shows the walk; the scratch-hierarchy form
 shows that an ancestor's limit is invisible at the leaf.
@@ -420,8 +414,7 @@ named v1 hierarchy mounted in a private mount namespace produces the two-line
 file above, with the v2 line **second**).
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "What
-is discovered, and what the default makes of it" — which of the two file shapes
+[`architecture.md`](architecture.md), "Execution model and API surface" — which of the two file shapes
 `discover_memory_limit` reads.
 
 **Re-verify.** The hybrid shape, produced without touching the host:
@@ -481,7 +474,7 @@ the quota unbounded because `"max".parse::<usize>()` simply fails, and the
 result is a **quota**, not a share — `cpu.weight` and `cpuset.cpus.partition`
 are not read, though `cpuset.cpus` is, through the affinity mask.
 
-**This entry exists against what the P19 inbox filed**, which argued the
+**This entry exists against an earlier filing**, which argued the
 behaviour is `std`'s and therefore not ours. The register's trigger is a
 decision depending on external behaviour *we do not control*, and someone else's
 code is more external, not less: this project's whole CPU default rests on it,
@@ -492,10 +485,8 @@ silently.
 nerdctl 2.3.5 / containerd v2.3.3.
 
 **Relied on by:**
-[`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md), "The
-source states its own worker default" (`.xz` taking
-`available_parallelism()` clamped by the budget) and "What is settled going in"
-(*"the CPU side needs no work"*).
+[`architecture.md`](architecture.md), "Execution model and API surface" — the source's own worker default, `.xz` taking
+`available_parallelism()` clamped by the budget.
 
 **Re-verify.** Build the one-line probe and run it under a quota:
 
@@ -562,8 +553,7 @@ fill.
 **Verified against:** Linux 7.1.4-arch1-1; nerdctl 2.3.5 / containerd v2.3.3;
 `postgres:16`.
 
-**Relied on by:** [`roadmap-P19-efficient-defaults.md`](roadmap-P19-efficient-defaults.md),
-"What is discovered, and what the default makes of it" — the no-limit branch of
+**Relied on by:** [`architecture.md`](architecture.md), "Execution model and API surface" — the no-limit branch of
 the budget default, which caps at half of `MemAvailable`.
 
 **Re-verify:**

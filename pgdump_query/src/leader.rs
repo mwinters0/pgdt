@@ -327,8 +327,10 @@ impl BoundBy {
 /// what remains of the *file* is shorter than one partition, so it is an end
 /// of file condition and would fire on the last block of every file.
 ///
-/// **Silence means the announced count ran, never that the arrangement was a
-/// good one.** A scan whose blocks are far smaller than the window each is
+/// **Silence means the announced count was dispatched, never that every worker
+/// read at once or that the arrangement was a good one.** On a plain source
+/// above `POOL_DEPTH` workers the rest wait for a chunk slot and nothing here
+/// reports it, the budget having afforded them all. A scan whose blocks are far smaller than the window each is
 /// cut from delivers the count it announced and reads orders of magnitude
 /// more than a serial scan would, reporting nothing here because nothing was
 /// cut short (`KD22`, `docs/design/architecture.md`, "The interior split").
@@ -383,19 +385,19 @@ pub(crate) struct Shortfall {
 /// stops").
 ///
 /// **The one rule it does apply is a floor**, and it is derived rather than
-/// chosen: a region smaller than one `partition_bytes()` is left to the serial
-/// scanner, because cutting it would spend a whole reader's worth of the
-/// caller's budget on a piece smaller than that, and charge the scheduling
-/// anyway. The region's extent is not known here — finding it *is* the work —
-/// so the bound available is what is left of the file, which the region cannot
-/// exceed.
+/// chosen: cutting spends a whole reader's worth of the caller's budget on
+/// each piece and charges the scheduling besides, so what is cut must be worth
+/// more than one `partition_bytes()`. The region's extent is not known here —
+/// finding it *is* the work — so the bound available is what is left of the
+/// file, which the region cannot exceed: the floor leaves a file's tail
+/// shorter than one reader's charge to the serial scanner, and a small region
+/// earlier in the file is cut and over-read (`KD22`).
 ///
 /// **That floor is a memory charge and not a span**, which is visible on a
-/// block-decoding source, where the charge covers two block slots and the
-/// decoder besides: such a region is left serial until it is worth more than
-/// one reader costs. Erring towards the serial scanner is the direction this
-/// bound is wanted in — the alternative admits readers the budget was divided
-/// as if it had not.
+/// block-decoding source, where the charge covers a block unit, a chunk and the
+/// decoder: such a tail is left serial until it is worth more than one reader
+/// costs. Erring towards the serial scanner is the direction this bound is
+/// wanted in — the alternative admits readers the budget never granted.
 pub(crate) async fn scan_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
@@ -505,15 +507,15 @@ fn shortfall(
 ///
 /// **A window is `workers` partitions wide**, so the memory the region holds
 /// at its peak is the worker count times what the source said one costs —
-/// which is the number `Parallelism::memory_bytes` was divided by to reach
-/// that worker count in the first place.
+/// which is the per-worker term `Parallelism::memory_bytes` was solved against
+/// to reach that worker count in the first place.
 ///
 /// **Wide in the source's partitions, not in its charge**
 /// (`Partitioning::window_end`). On a plain file those are the same number and
 /// this is the byte arithmetic it always was; on a block-decoding one the
-/// charge covers two block slots, a chunk and a decoder for one block of
+/// charge covers a block unit, a chunk and a decoder for one block of
 /// coverage, so sizing the window by it would offer `cut` more boundaries than
-/// there are workers and every piece would span two or three blocks.
+/// there are workers and pieces would span more than one block.
 #[allow(clippy::too_many_arguments)]
 async fn run_region(
     source: &dyn ByteRangeSource,
@@ -610,8 +612,8 @@ async fn run_region(
 /// limit.
 ///
 /// **How the piece is read is the source's own statement**
-/// ([`crate::io::PartitionRead`]), because the right answer differs by source
-/// and was measured to differ by a factor of twenty-two. A plain file is read
+/// ([`crate::io::PartitionRead`]), because the right answer differs by source.
+/// A plain file is read
 /// [`crate::io::PartitionRead::Chunked`] — every read is the announced length,
 /// so [`crate::io::BufferPool`] pools every buffer a worker takes and nothing
 /// allocates a partition-length one; a block-decoding file is read
@@ -1391,12 +1393,12 @@ mod tests {
         );
     }
 
-    /// **Silence is the claim that the count ran as announced**, so the two
+    /// **Silence is the claim that the announced count was dispatched**, so the two
     /// arrangements that deliver what was asked answer no shortfall at all: a
     /// caller that asked for one reader, and a budget that affords every
     /// reader asked for. The region floor is deliberately not a shortfall
-    /// either — the second case here is a block far too small to cut, and it
-    /// still reports nothing ([`Shortfall`]).
+    /// either — the second case here is a fixture whose whole file is shorter
+    /// than one reader's charge, and it still reports nothing ([`Shortfall`]).
     #[tokio::test]
     async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         let path = fixture(16, "types", "default");
@@ -1419,8 +1421,9 @@ mod tests {
         assert_eq!(got.scan, RegionScan::Declined, "one job is the serial path");
         assert_eq!(got.shortfall, None, "one reader asked for is one reader delivered");
 
-        // A 1 MiB partition against a kilobyte block: declined for its size,
-        // which is a fact about this block and not about the arrangement.
+        // An 8 MiB partition against a file of kilobytes: declined by the
+        // floor, which is a fact about where the leader stands in the file and
+        // not about the arrangement.
         let shipped = ScanOptions {
             parallelism: Parallelism::workers(8, crate::io::DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()

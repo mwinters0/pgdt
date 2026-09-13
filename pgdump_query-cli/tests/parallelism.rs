@@ -96,9 +96,8 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
         vec![],
         // Below this fixture's 512-byte block unit, so no whole block can be
         // held: the streaming reader, on a file that has boundaries to seek
-        // by. **`--jobs 2` is load-bearing here** — at `--jobs 1` the CLI
-        // states no budget at all and the block path is taken whatever
-        // `--parallel-memory` says (`KD16`).
+        // by. `--jobs 2` beside it is incidental: a stated budget reaches the
+        // source at `--jobs 1` too.
         vec!["--jobs", "2", "--parallel-memory", "400"],
         vec!["--parallel-memory", "65536"],
         vec!["--jobs", "8", "--parallel-memory", "536870912"],

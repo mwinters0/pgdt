@@ -546,19 +546,23 @@ what a token means after an embedder holds one is not.
   so a declared count stands. `datafusion-cli` has **no parallelism flag**; the
   count comes from `DATAFUSION_EXECUTION_TARGET_PARTITIONS` or `SET`.
 
-**Why P6 cares.** `Parallelism::discover()` (`io.rs:609`) resolves a budget from
-the process's cgroup limit, or half of `MemAvailable` where none is found, and a
-count from `available_parallelism()`. Both readings are about *the process*, and
-a `TableProvider` is one tenant of it. Three providers each calling `discover()`
-on a three-file join would budget 150% of the machine and ask for three times its
+**Why P6 cares.** `Parallelism::discover_for(jobs, memory)`, given a source's
+recommendation, resolves a budget of at most the process's cgroup limit less the
+384 MiB reserve, or at most half of `MemAvailable` where no limit is found;
+`Parallelism::discover()` passes `available_parallelism()` as the count and no
+recommendation, which lands on the 64 MiB default budget instead. Both readings
+are about *the process*, and a `TableProvider` is one tenant of it. Three
+providers each calling `discover_for` with a compressed source's recommendation
+on a three-file join could budget three times the limit less the reserve, or
+150% of the memory an unlimited host reports free, and ask for three times its
 CPUs, and nothing in DataFusion would stop them: the default pool is unbounded,
 and even a bounded one neither tracks sources nor tells one what its share is.
 
 The two halves have different answers, which is the part not to re-derive:
 
 - **The count is solved and needs no new API.** `target_partitions` is what
-  DataFusion wants the provider to honour, and `discover_for(jobs, per_worker)`
-  (`io.rs:654`) already takes the count as a parameter rather than reading it. A
+  DataFusion wants the provider to honour, and `discover_for(jobs, memory)`
+  already takes the count as a parameter rather than reading it. A
   provider passes `target_partitions` in.
 - **The budget has no reading to take.** `memory_limit()` reports the whole
   session's pool, shared with every other operator and explicitly not covering
@@ -606,7 +610,7 @@ only tenant. That is written beside the mechanism as a **property with a remedy
 in hand** rather than a deficiency
 ([`architecture.md`](architecture.md), "Execution model and API surface").
 
-**Origin.** 2026-09-10, grilling `19.9`'s provenance entry under `STATUS.md`'s
+**Origin.** 2026-09-10, grilling the status line's provenance entry under `STATUS.md`'s
 "Decisions worth another look" — the maintainer asked what a three-file join would
 budget. See [`../status/history/2026-09-10.md`](../status/history/2026-09-10.md),
 "The provenance call is affirmed, and `discover()` is single-tenant".
@@ -627,10 +631,10 @@ written.
 **Why this phase cares.** P6 is the phase where an embedder — rather than one
 of our own tests — implements a source. Re-exporting `bytes::Bytes` from
 `pgdump_query` is the other answer and costs one line; the reason it was not
-taken during `P19` is that a dev-dependency was enough for a test, which is not
+taken when the source's worker default landed is that a dev-dependency was enough for a test, which is not
 the case a public trait is for. Decide it when the embeddable surface is
 specified, alongside whatever else the crate re-exports.
 
-**Origin.** `19.8`, the source's own worker default, 2026-09-09. The trait's
+**Origin.** The source's own worker default, 2026-09-09. The trait's
 current shape is [`architecture.md`](architecture.md), "Execution model and API
 surface".

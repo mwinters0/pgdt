@@ -58,7 +58,7 @@ impl From<CliSchemaMode> for SchemaMode {
 /// **An omitted `--jobs` is the source's own recommendation**, not a constant
 /// here: [`ByteRangeSource::default_workers`] answers the serial path for a
 /// plain file and this machine's core count for an `.xz` one, which is why
-/// [`ParallelArgs::resolve`] takes the open source. The library still defaults
+/// [`Discovered::resolve`] takes the open source. The library still defaults
 /// to `Parallelism::default()` — it is the *CLI* that is a program a person ran
 /// on purpose. `--jobs 1` is the serial path as a property of
 /// `Parallelism::workers` rather than of anything here.
@@ -81,7 +81,8 @@ struct ParallelArgs {
     /// sub-streams read at once and merged back into file order; a `parse`'s
     /// structure scan, which splits the interior of every `COPY` block large
     /// enough to cut and folds the answers back into one block list; and how
-    /// many decoded `.xz` blocks the source retains, one per would-be reader.
+    /// many decoded `.xz` blocks the source retains: four, or one per
+    /// would-be reader where that is more.
     ///
     /// **On `query`, `--parallel-memory` has to cover a second cost before
     /// this number is delivered at all** — see that flag's own doc.
@@ -93,12 +94,13 @@ struct ParallelArgs {
     /// inside that what the file asks for: one reader's worth for each worker
     /// it would run, rather than the whole allowance. Where no limit is set
     /// that same number is held under half the memory the machine reports
-    /// available. A plain dump asks for nothing of its own and stays on 64 MiB.
+    /// available. A plain dump asks for nothing of its own and gets 64 MiB, or
+    /// the limit less the reserve where that is smaller.
     ///
     /// It is a real bound rather than a target: a `.xz` file that does not
     /// leave room inside it for one reader — one of its blocks, a read buffer
-    /// and the decompressor's own working memory, over the four block slots
-    /// the pool keeps whatever the worker count is — is read through the
+    /// and the decompressor's own working memory, beside the three further
+    /// blocks the pool keeps however few workers run — is read through the
     /// streaming decoder instead of being decoded a block at a time, which is
     /// correct but slower on backward reads. Raise it to buy the block path
     /// back on a file written with large blocks (`xz -9 -T0`,
@@ -115,8 +117,8 @@ struct ParallelArgs {
     /// costs to read, plus the 64 MiB a sub-stream's held batch may pin
     /// (`docs/design/architecture.md`, "Execution model and API surface") —
     /// charged on a plain file, where a batch pins read buffers the first term
-    /// never counted, and not on a block-decoding `.xz`, where it pins the
-    /// block that term already holds. At 64 MiB — which is what a plain file
+    /// never counted, and not on a block-decoding `.xz`, whose first term
+    /// already counts a decoded block. At 64 MiB — which is what a plain file
     /// gets unless a limit or a flag says otherwise — the plain file's sum
     /// already exceeds the budget, so `query --jobs N` on one runs serially
     /// however large `N` is; raise it past roughly 145 MiB to get a second
@@ -251,7 +253,8 @@ impl Discovered<'_> {
     /// model and API surface"); what the *environment* allows is
     /// `Parallelism::discover_for`'s question, and it is asked only where
     /// `--parallel-memory` is absent. What the resulting budget affords still
-    /// binds afterwards, through the divisor every count passes alike.
+    /// binds afterwards, `stream::worker_count` solving every count against it
+    /// alike.
     ///
     /// **The two answers come back as a pair, and only a *recommended* count
     /// is lowered to fit.** `discover_for` is given a per-worker cost and a
@@ -697,7 +700,7 @@ fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
 
 /// The [`ScanOptions`] one scanning command runs under: the default, with
 /// `--chunk-size` applied where it was given and the already-resolved
-/// arrangement ([`ParallelArgs::resolve`]).
+/// arrangement ([`Discovered::resolve`]).
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
 /// needs the same arrangement in [`QueryOptions`] as in its mapping pass, and
@@ -1226,8 +1229,11 @@ fn init_status_output() {
 ///
 /// **Claimed as a thread-count result, not a memory one.** Fewer threads means
 /// fewer glibc arenas seeded, but an arena's retention is not proportional to
-/// how many there are — cutting a probe from 24 arenas to 8 moved anonymous
-/// resident only ~536 to ~476 MiB — so this does not on its own make the
+/// how many there are — a probe on koji's `.xz` at `--jobs 4`, on a build whose
+/// runtime still sized itself from the host, found `--cpus 4` cutting 24 arenas
+/// to 8 (and the runtime's own threads with them) and anonymous resident only
+/// ~536 to ~476 MiB, a reading in no published figure — so this does not on
+/// its own make the
 /// process smaller, and no reading here says it does. What it buys is that the
 /// process no longer sizes itself from a number nobody stated.
 ///
@@ -2299,8 +2305,9 @@ fn report(
 /// shape that most wants asking (many concatenated streams) is a walk of every
 /// footer in the file. `largest block` is the largest term of what
 /// `--parallel-memory` has to clear for a query to read this file a block at a
-/// time — **twice over**, the block path holding one block while it decodes
-/// the next, plus a read buffer and the decompressor's own working memory — so
+/// time — **four times over**, one reader's block beside the three further
+/// blocks the pool keeps however few readers run, plus a read buffer and the
+/// decompressor's own working memory — so
 /// the flag that says *raise it* is most of the way answered here, and a query
 /// that declines the block path names the whole of it
 /// (`docs/design/architecture.md`, "The compressed source").
@@ -2744,15 +2751,13 @@ mod tests {
         assert_eq!(plain.parallelism().memory_bytes(), Some(pgdump_query::DEFAULT_MEMORY_BUDGET));
     }
 
-    /// **No limit found leaves the source's recommendation standing**, capped
     /// **A shared pool lowers the recommended count at every allocation**, and
     /// hardest at the small ones. A block-decoding source's pool retains a
     /// unit for every slot but the one a reader is filling — `POOL_DEPTH - 1`
     /// of them below four readers and `jobs - 1` above — so the allowance
     /// always buys fewer than a division by the per-reader charge would say.
-    /// Pinned at both ends, because a charge that bound nowhere would be the
-    /// defect `19.22` closed and one billing two units a reader would be the
-    /// over-bill `M93` removed.
+    /// Pinned at both ends, because a charge that billed no pool would bind
+    /// nowhere and one billing two units a reader would over-bill.
     #[test]
     fn a_shared_pool_lowers_a_recommended_count_at_every_allocation() {
         let flagless = ParallelArgs { jobs: None, parallel_memory: None };
@@ -2780,6 +2785,7 @@ mod tests {
         assert_eq!(roomy.parallelism().memory_bytes(), Some(10 * BLOCK_READER + 9 * UNIT));
     }
 
+    /// **No limit found leaves the source's recommendation standing**, capped
     /// only by half of `MemAvailable` (`RT8`) — which is the branch a `min`
     /// against the fallback constant would have broken, making a flagless
     /// compressed scan serial on the machine most likely to run it.
