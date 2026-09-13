@@ -1,38 +1,27 @@
 # Handing off a long job
 
-Read this when you are about to launch a job you expect to run **more than 30
-minutes** — a `measure.py --all` sweep, a koji scan, anything at that scale.
-`CLAUDE.md`'s protocol still binds you: detached, `setsid`, stdout and stderr
-to a file under `runs/`, never waited on. This adds three obligations on top.
-
-You are the agent that designed and started the job. You are **not** the agent
-that will read its results — a fresh one does that, hours from now, with none
-of your context. Everything it needs must be in the file you write.
+Read this before launching a job you expect to run **more than 30 minutes** — a
+`measure.py --all` sweep, a koji scan, anything at that scale. `CLAUDE.md`'s
+protocol still binds: detached, `setsid`, stdout and stderr to a file under
+`runs/`, never waited on. Three obligations on top, because the agent that reads
+the results is a fresh one, hours from now, with none of your context.
 
 ## 1. Start it, then watch for five minutes
 
-Launch the job, then confirm over about five minutes that it is *making
-progress*, not merely alive. A process that started and immediately began
-failing in a loop is the case this catches. Sample twice, a few minutes
-apart, and check something that must move: the log's byte count, the output
-file's size, a row or block counter. A process that exists but whose log has
-not grown between samples has not started successfully.
-
-Five minutes is the ceiling, not a target. Stop early once progress is
-evident. If it is not evident, kill the job by process group, fix it, and
-start over — do not hand off a job you have not seen working.
+Confirm the job is *making progress*, not merely alive: sample twice, a few
+minutes apart, checking something that must move — the log's byte count, the
+output file's size, a row or block counter. Five minutes is a ceiling, not a
+target; stop early once progress is evident, and if it is not, kill the job by
+process group, fix it, and start over. Never hand off a job you have not seen
+working.
 
 ## 2. Write the handoff doc
 
-`runs/<job-name>-<YYYYMMDD-HHMM>/HANDOFF.md`, beside the log. It is a `runs/`
-artifact: gitignored, machine-specific, hardcoded paths, and nothing in the
-repo consumes it.
-
-Everything load-bearing goes in the **frontmatter**, because the reader is a
-cron fire that will read only that. Below the frontmatter, write whatever prose
-the follow-up agent needs — what the job is proving, which figures or counts
-matter, what an unexpected result would mean. The frontmatter is terse; the
-body does not have to be.
+`runs/<job-name>-<YYYYMMDD-HHMM>/HANDOFF.md`, beside the log — a gitignored
+`runs/` artifact consumed by nothing in the repo. Everything load-bearing goes in
+the **frontmatter**, the reader being a cron fire that will read only that; below
+it, write whatever prose the follow-up agent needs — what the job is proving,
+which figures or counts matter, what an unexpected result would mean.
 
 ```yaml
 ---
@@ -55,34 +44,25 @@ next: fold tables.md into docs/design/measurements.md per --check consumers, tic
 ---
 ```
 
-Rules for those keys:
-
-- `check`, `progress`, `exit`, `stop` are **single commands, runnable verbatim
-  from the repo root** — no placeholders, no shell variables the reader does
-  not have, no "adjust the path". They will be pasted, not interpreted.
-- `progress` must print a number that only ever goes up.
-- `running`, `done`, `failed`, `stuck` say how to read that output, in as few
-  words as carry the meaning. Every exit code the job can plausibly produce is
-  named. Silence about a code is the reader guessing.
-- `stop` is how to end the job safely, with what it costs. If the job is a
-  bare process, that is a process-group kill (`pkill -g <pgid>`) with the pgid
-  written out — killing the harness alone orphans its generator.
-- `started` and `expect` let the reader compute elapsed time without asking
-  anyone.
-- `volatile` names every piece of state that will be **gone or overwritten**
-  by the time someone investigates: tmpfs staging, container state a prune
-  destroys, scratch directories the next run reuses, temp files under `/tmp`.
-  You are the only agent who knows these exist. If the job fails, an agent
-  with none of your context is sent to capture them before they evaporate,
-  and it can only look where this line points.
+- `check`, `progress`, `exit` and `stop` are **single commands runnable verbatim
+  from the repo root** — no placeholders, no variables the reader lacks, no
+  "adjust the path"; they will be pasted, not interpreted. `progress` must print
+  a number that only ever goes up.
+- `running`, `done`, `failed` and `stuck` say how to read that output in as few
+  words as carry the meaning, and **name every exit code the job can plausibly
+  produce**; silence about one is the reader guessing.
+- `stop` ends the job safely and says what that costs — for a bare process, a
+  process-group kill (`pkill -g <pgid>`) with the pgid written out. `started` and
+  `expect` let the reader compute elapsed time without asking.
+- `volatile` names every piece of state **gone or overwritten** by the time
+  someone investigates: tmpfs staging, container state a prune destroys, scratch
+  the next run reuses, temp files. A diagnosis agent can look only where this
+  line points.
 - `next` is one line: what the follow-up agent does with the result. Not how.
 
 ## 3. Report the path and stop
 
-Your final report to the orchestrator is short: the handoff doc's path, the
-slice it belongs to, and the one-line summary of what you saw in the five
-minutes. Do not tick the slice's box — the job has not produced anything yet.
-Annotate the checklist entry with what remains and why it is waiting.
-
-Then you are done. The orchestrator may come back once to have you fix a
-frontmatter line it could not run. It will not ask you for anything else.
+Short: the handoff doc's path, the slice it belongs to, and one line on what you
+saw in the five minutes. **Do not tick the slice's box** — annotate the checklist
+entry with what remains and why it waits. The orchestrator may come back once to
+have you fix a frontmatter line it could not run, and nothing else.

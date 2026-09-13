@@ -3,382 +3,170 @@ name: gosub
 description: Run rounds of unattended roadmap work, each in a fresh subagent, committing between rounds and stopping the moment something needs the maintainer. Use when the user invokes /gosub, or asks for several slices to be landed autonomously in sequence.
 ---
 
-Drive `/go` in a loop. Each round is a **fresh subagent** that lands one
-slice; this session orchestrates and never implements.
+Drive `/go` in a loop. Each round is a **fresh subagent** that lands one slice;
+this session orchestrates and never implements. `/gosub [max-rounds]`, cap **5**.
 
-`/gosub [max-rounds]` — the cap defaults to **5**.
-
-## Why a subagent per round
-
-A slice is a cold-start task: read STATUS, read the spec, land the next
-unticked box. Nothing from round 1 helps round 2, and carrying it forward
-costs context for no benefit — by round 4 an inherited transcript is mostly
-irrelevant work. So each round gets a genuinely new agent.
-
-**Never** `subagent_type: "fork"` (it inherits this context, defeating the
-point) and **never** `SendMessage` to a previous round's agent (it resumes a
-spent one). Every round is a new `Agent` call with
-`subagent_type: "general-purpose"`, no `model` override.
-
-## The orchestrator does not do the work
-
-Your job is dispatch, verification, commit, and the stop decision. You do not
-read source files, do not fix the subagent's test failures, and do not finish
-a slice it left half-done. If a round comes back wrong, that is a stop
+Every round is a new `Agent` call, `subagent_type: "general-purpose"`, no `model`
+override — **never** a fork, **never** `SendMessage` to a previous round's agent.
+**The orchestrator does not do the work**: dispatch, verification, commit and the
+stop decision only. Do not read source files, fix the subagent's test failures,
+or finish a slice it left half-done — a round that comes back wrong is a stop
 condition, not a repair job.
-
-Keep your own footprint small — a handful of tool calls per round. The context
-you spend reading code is context the loop cannot spend on rounds.
 
 ## One round
 
-**1. Baseline.** Before dispatching, record:
+**1. Baseline.** Record `git rev-parse HEAD` and that the tree is clean (`git
+status --short`) — a dirty tree means the previous round did not finish, so stop;
+the current text of STATUS's **"Decisions worth another look"**; the unticked
+slice boxes in order; and the rows in `docs/design/out-of-band.md` whose Date is
+empty, noting which name the open phase in `Blocks`. A blocking row is what the
+round picks up ahead of the next slice.
 
-- `git rev-parse HEAD`, and that the tree is clean (`git status --short`).
-  A dirty tree at the start of a round means the previous round did not
-  finish — stop.
-- The current text of STATUS's **"Decisions worth another look"** section.
-- The unticked slice boxes in the active phase's checklist, in order.
-- The rows in `docs/design/out-of-band.md`, the **out-of-band ledger**, whose
-  Date is empty, and which of them name the open phase in `Blocks`. A blocking
-  row is what the round will pick up ahead of the next slice, so it is part of
-  knowing what the round was supposed to do.
+**2. Dispatch a fresh subagent**, with this prompt and nothing else:
 
-**2. Dispatch a fresh subagent.** The prompt is short, because the `go` skill
-carries the real instructions:
-
-> Invoke the `go` skill (Skill tool, `skill: "go"`) and follow it exactly.
-> Land exactly one slice — the next unticked box in the STATUS checklist.
-> Report the number of the task you've selected before proceeding to implementation.
+> Invoke the `go` skill (Skill tool, `skill: "go"`) and follow it exactly. Land
+> exactly one slice — the next unticked box in the STATUS checklist — reporting
+> the number of the task you've selected before you implement. If it requires a
+> job you expect to run over 30 minutes, read `.claude/skills/gosub/handoff.md`
+> and follow that instead of finishing the slice.
 >
-> If the slice requires launching a job you expect to run more than 30
-> minutes, read `.claude/skills/gosub/handoff.md` before you launch it and
-> follow it instead of finishing the slice.
->
-> When you are done, report: the slice number and title, or the `M<k>` if you
-> took a blocking out-of-band row instead; whether you ticked
-> its box, and if not, what remains; whether you added any entries to STATUS's
-> "Decisions worth another look", quoted in full; whether you split the slice
-> and earned a new `<N>.<M>.<K>`; the verbatim result lines from `cargo test
-> --workspace`, `cargo clippy --workspace --all-targets`, and `cargo fmt
-> --check`; and the path of any detached job you launched.
+> Then report: the slice number and title, or the `M<k>` if you took a blocking
+> out-of-band row; whether you ticked its box and what remains if not; any
+> entries you added to STATUS's "Decisions worth another look", quoted in full;
+> any split and the `<N>.<M>.<K>` it earned; the verbatim result lines from
+> `cargo test --workspace`, `cargo clippy --workspace --all-targets` and `cargo
+> fmt --check`; and the path of any detached job.
 
-**3. Verify independently.** The report is a claim, not evidence. Run
-`cargo test --workspace`, `cargo clippy --workspace --all-targets` and
-`cargo fmt --check` yourself, and re-read STATUS's checklist and its
-"Decisions worth another look" section. Where the report and the tree
-disagree, the tree wins.
+**3. Verify independently.** The report is a claim, not evidence: run the three
+checks yourself and re-read the checklist and "Decisions worth another look".
+Where the report and the tree disagree, the tree wins.
 
-**4. Commit, if the round is clean.** A round is clean when the slice's box is
-ticked, all three checks pass, and the tree actually changed. Commit it as one
-slice:
+**4. Commit, if the round is clean** — box ticked, three checks passing, tree
+actually changed. Subject `<N>.<M> <slice title>`, body two or three sentences on
+what landed and any call the notes doc flags, then `Co-Authored-By: Claude Opus 5
+<noreply@anthropic.com>`. **An out-of-band round is clean on a different signal**:
+it ticks no box, its ledger row's Date filling in instead, so read the row, check
+the Blocks column was cleared and the history entry it points at exists, and
+subject the commit `<M<k>> <what changed>` with that entry named in the body.
+Commit even when a stop condition fired for some *other* reason; the one
+exception is that you **never commit a round that failed verification or left its
+box unticked**.
 
-```
-<N>.<M> <slice title>
-
-<two or three sentences: what landed, and any call the notes doc flags>
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-```
-
-**An out-of-band round is clean on a different signal and commits in a
-different shape.** It ticks no box — its ledger row's Date is what fills in —
-so read the row rather than the checklist, and check the Blocks column was
-cleared and the history entry it points at exists:
-
-```
-<M<k>> <what changed>
-
-<one or two sentences: what changed, and the history entry that says why>
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-```
-
-Commit even when a stop condition has fired for some *other* reason — verified
-work belongs in history, and one commit per slice is what makes it reviewable.
-The one exception: **never commit a round that failed verification or left its
-box unticked.** Leave that in the tree exactly as the subagent left it, so the
-maintainer sees what the subagent saw.
-
-**5. Triage a new "Decisions worth another look" entry.** Most of what rounds
-raise there is not a design call at all — it is the loop asking where a piece of
-work goes and in what order. Those cost the maintainer a review cycle and give
-them nothing to decide, so settle them here. See "Scheduling and labelling are
-yours" below.
-
-**6. Decide.** Stop, or start the next round from step 1.
+**5. Triage a new "Decisions worth another look" entry** (below). **6. Decide.**
+Stop, or start the next round from step 1.
 
 ## Scheduling and labelling are yours
 
-An entry is yours to settle when it is **purely about where work goes and in
-what order, inside the open phase** — and the test is whether any answer to it
-changes what the phase delivers when it is done. If the deliverable is the same
-either way and only the route differs, decide it, apply it, and keep going.
+An entry is yours when it is **purely about where work goes and in what order,
+inside the open phase**; the test is whether any answer changes what the phase
+delivers. Typically a slice to be split, a blocking out-of-band row that should
+come first, a mis-set `Blocks` column, or work filed as a slice that is
+out-of-band by the admission rule and the reverse. Settle it the way `/dwal`
+would and under the same obligations — read the mechanism, check the entry's
+claims, route the work by `docs/process.md`'s "Out-of-band work" admission rule,
+file the reasoning where its "Where does this fact go?" sends it, **delete** the
+entry rather than annotating it, commit that as its own change, restart at step 1
+— and report each one, quoted as it stood, with what you decided.
 
-What that covers, typically: a slice that should be split and its remainder
-numbered; an out-of-band row that blocks the open phase and should be picked up
-first; a slice landing before another with no dependency between them; a
-mis-set `Blocks` column; work filed as a slice that is out-of-band by the
-ledger's admission rule, or the reverse.
-
-Settle one the way `/dwal` would and under the same obligations, which is what
-keeps this from becoming a shortcut past the record. Read the mechanism and
-check the entry's claims — an entry written by a spent subagent is often wrong
-about the tree. Route the work by `roadmap.md`'s admission rule rather than by
-preference. File the reasoning where `docs/process.md`'s "Where does this fact
-go?" table sends it, **delete** the entry rather than annotating it, and commit
-that as its own change, separate from the slice's. Then start the next round
-from step 1 — the baseline is re-read, so a reordering you just applied is
-picked up as the new next slice.
-
-**Hand it to the maintainer whenever the order changes the outcome.** Some
-sequencing decides what gets built, not merely when: a slice that would be taken
-on evidence a later one is meant to produce, a measurement whose apparatus a
-reordering would change, a split whose halves would ship different contracts, an
-ordering that forecloses an option the phase was holding open. Those look like
-bookkeeping and are not, and the tell is that you can name something the phase
-would deliver differently. When you can, stop — that is the entry the section
-exists for.
-
-**When in doubt, stop.** Settling one of these wrongly spends the maintainer's
-review on a plan that has already moved, which is worse than the cycle it saved.
-Two further bounds, from `docs/process.md`'s "Working unattended": anything that
-would bind **beyond** the open phase — a standing rule, an invariant, a `KD<k>`
-re-targeted onto a phase nobody has grilled, a spec *rationale* reversed — is
-never yours, whatever it looks like from inside; and amending a spec to record a
-reordering is fine, while amending one to change why a decision was made is not.
-
-Report every entry you settled this way in the final report, quoted as it stood,
-with what you decided and what you changed. The maintainer is reading it
-afterwards rather than in the loop, so it must stand on its own.
+**Hand it over whenever the order changes the outcome** — a slice taken on
+evidence a later one is meant to produce, an ordering foreclosing an option the
+phase was holding open. The tell is that you can name something the phase would
+deliver differently. **When in doubt, stop.** Anything binding **beyond** the
+open phase is never yours (`docs/process.md`, "Working unattended"); amending a
+spec to record a reordering is fine, amending one to change why a decision was
+made is not.
 
 ## Stop conditions
 
-Any one of these ends the loop. Report it plainly; do not work around it.
+Any one ends the loop. Report it plainly; do not work around it.
 
-- **A new entry under "Decisions worth another look" that step 5 did not
-  settle.** This is the primary one. That section exists for calls the
-  maintainer should weigh, so a new entry is the subagent asking for review —
-  continuing past it would stack more work on an unreviewed judgement. An entry
-  that is purely in-phase scheduling or labelling is not such a call and does
-  not stop the loop; step 5 settles it and the round continues.
-- **The slice's box is still unticked**, including when the subagent split it
-  and left an earned `<N>.<M>.<K>` behind — or, for an out-of-band round, the
-  ledger row's Date is still empty. A split is a re-plan, and the next
-  slice may no longer be the right one. The one exception is a round that
-  handed off a long job: its box is unticked *by design*, and the follow-up
-  subagent dispatched in "A round that launches a long job", step 5, is what
-  ticks it.
+- **A new "Decisions worth another look" entry that step 5 did not settle.**
+- **The slice's box is still unticked**, including after a split that earned an
+  `<N>.<M>.<K>`, or an out-of-band row whose Date is still empty — except a round
+  that handed off a long job, unticked *by design* and ticked by step 5 below.
 - **`cargo test`, `clippy`, or `fmt --check` fails**, whatever the report said.
-- **No unticked slices remain in the phase.** Do not roll into the next phase:
-  a phase needs grilling and a spec before it has slices, and grilling needs
-  the maintainer. A phase boundary is always a stop.
-- **The tree did not change**, or the round ticked nothing. Two rounds cannot
-  disagree about what is next, so this means the loop is spinning.
+- **No unticked slices remain** — a phase boundary is always a stop.
+- **The tree did not change**, or the round ticked nothing.
 - **The round cap is reached.**
-- **The subagent reports it stopped at a boundary** or says it needs the
-  maintainer, however it phrases it.
+- **The subagent reports it stopped at a boundary** or needs the maintainer.
 
-## What `/gosolo` overrides
-
-`/gosolo` runs this skill unchanged and overrides exactly two of the stop
-conditions above, so that the loop can carry a whole phase without the
-maintainer. The overrides are stated in `.claude/skills/gosolo/SKILL.md` and
-nowhere else; everything on this page — the round, the independent
-verification, the commit, the long-job protocol and every other stop — is what
-both loops run. Nothing here needs to know which one invoked it.
+`/gosolo` runs this skill unchanged and overrides exactly two of these; the
+overrides are in `.claude/skills/gosolo/SKILL.md` and nowhere else.
 
 ## A round that launches a long job
 
-A job expected to run **over 30 minutes** does not fit inside a round. The
-subagent that designed and started it has spent its context doing so, and by
-the time the job lands, that context is a liability — an agent holding half a
-day of stale reasoning reading a number it could read cold. So the job outlives
-its subagent, and a fresh one reads the result.
+A job expected to run **over 30 minutes** outlives its subagent, whose side is
+`.claude/skills/gosub/handoff.md`; a fresh one reads the result. **This overrides
+`CLAUDE.md`'s "never monitor a long job" for the orchestrator only and only in
+this shape**; do not widen the interval to "save" fires, and the subagents stay
+bound by the rule as written.
 
-The subagent's side is `.claude/skills/gosub/handoff.md`, named in the dispatch
-prompt: it starts the job, watches five minutes for real progress, writes
-`runs/<job>-<stamp>/HANDOFF.md`, and reports that path. Your side is below.
+**1. Validate the handoff doc**: read only the frontmatter and run `check`,
+`progress` and `exit` verbatim now. Each must give output readable against the
+`running`/`done`/`failed` lines without guessing; one needing a path fixed, a
+variable filled in, or a code the frontmatter never names is not validated —
+`SendMessage` that subagent once to fix the line, re-run, and if it still does
+not hold, stop the job with `stop` and stop the loop. **2. Release the subagent**
+— never message it again, for anything. **3. Arm the poll**: `CronCreate`, `*/30
+* * * *`, recurring, prompt *Long-job check for `<handoff path>`. Read its
+frontmatter. Run `check` and `progress`. Follow `.claude/skills/gosub/SKILL.md`,
+"A round that launches a long job", step 4.* Cron fires only while this session
+is idle, so end your turn, stay idle, and start no other round — `CLAUDE.md`
+forbids a `cargo` build or test while a measurement runs.
 
-**This overrides `CLAUDE.md`'s "never monitor a long job" for the orchestrator
-only, and only in this shape.** That rule exists because waiting past an hour
-expires the prompt cache and reloads the whole conversation. A 30-minute poll
-never crosses that hour, and each fire is a handful of commands against a
-context you have deliberately kept small. Do not widen the interval to "save"
-fires — an hourly poll is the expensive one. The subagents are still bound by
-the rule as written: they never wait, and none of them is alive while the job
-runs.
+**4. Each fire**, run `check` and `progress`, keeping the last `progress` value
+to compare. *Running, progress moving* — one line, end the turn. *Stuck* by the
+frontmatter's own rule — disarm the cron and dispatch the capture below **before**
+stopping the job, then stop it with `stop` and stop the loop. *Failed* — disarm,
+capture, stop the loop. *Done* — disarm (`CronDelete`), then step 5. *Over eight
+hours since `started`* — disarm and stop the loop, leaving the job running, per
+the cutoff below.
 
-**1. Validate the handoff doc.** Read only the frontmatter. Run `check`,
-`progress`, and `exit` verbatim, right now. Each must execute and produce
-output you can read against the `running`/`done`/`failed` lines without
-guessing. A command that needs a path fixed, a variable filled in, or a code
-the frontmatter never names is not validated — `SendMessage` that subagent
-once to fix the line, then re-run it. If it still does not hold up, stop the
-job with `stop`, and stop the loop.
-
-**2. Release the subagent.** Once the frontmatter validates, that agent is
-finished. Never message it again — not for a status opinion, not for the
-analysis. It is the agent this whole protocol exists to retire.
-
-**3. Arm the poll.** `CronCreate`, `*/30 * * * *`, recurring, with a prompt
-that stands on its own:
-
-> Long-job check for `<handoff path>`. Read its frontmatter. Run `check` and
-> `progress`. Follow `.claude/skills/gosub/SKILL.md`, "A round that launches a
-> long job", step 4.
-
-Cron jobs are session-only and fire only while this session is idle, so end
-your turn after arming it and stay idle. Do not start another round: `CLAUDE.md`
-forbids a `cargo` build or test while a measurement runs, and your own
-verification step is exactly that. The loop is paused, not continuing.
-
-**4. Each fire.** Run `check` and `progress`; keep the last `progress` value so
-the next fire can compare.
-
-- *Still running, progress moving* — say so in one line and end the turn.
-- *Stuck* by the frontmatter's own `stuck` rule — disarm the cron and dispatch
-  the diagnosis below **before** stopping the job: a wedged process that is
-  still alive shows more than its corpse. Stop it with `stop` once the
-  diagnosis returns, then stop the loop.
-- *Failed* — disarm the cron, dispatch the diagnosis below, then stop the
-  loop. The maintainer decides the fix; a subagent only captures what would
-  otherwise be gone by the time they look.
-- *Done* — disarm the cron (`CronDelete`), then step 5.
-- *Over eight hours since `started`* — disarm the cron and stop the loop,
-  whatever the job is doing. Leave the job running; write up status per
-  "The eight-hour cutoff" below.
-
-**5. Dispatch a fresh subagent for the result.** New `Agent` call,
-`general-purpose`, no `model`, never a fork. Its prompt:
+**5. Dispatch a fresh subagent for the result** — `general-purpose`, no `model`,
+never a fork:
 
 > The long job described in `<handoff path>` has finished. Read that file in
 > full, including the body below the frontmatter. Confirm its `done` condition
 > holds, then carry out its `next` line and whatever else slice `<N.M>`'s spec
-> row requires to be complete.
->
-> Invoke the `process` skill first and follow it — this slice's notes doc,
-> STATUS, and any figure's consumers are part of finishing it. Do not commit.
->
-> Report: whether you ticked the slice's box and what remains if not; any
-> entries you added to STATUS's "Decisions worth another look", quoted in full;
-> and the verbatim result lines from `cargo test --workspace`, `cargo clippy
-> --workspace --all-targets`, and `cargo fmt --check`.
+> row requires. Invoke the `process` skill first and follow it — the notes doc,
+> STATUS and any figure's consumers are part of finishing it. Do not commit.
+> Report: whether you ticked the box and what remains if not; any new "Decisions
+> worth another look" entries, quoted in full; and the three checks' verbatim
+> result lines.
 
-**6. Resume the loop at step 3 of "One round"** — verify independently, commit,
-decide. From here the round is an ordinary one, and every stop condition
-applies to it unchanged.
+**6. Resume at step 3 of "One round"** — verify, commit, decide, every stop
+condition applying unchanged.
 
-### When the job fails
-
-A failed job and a wedged one take the same path. Either is a stop, but
-stopping silently loses the evidence. Half of what
-explains a failed sweep is volatile — a tmpfs staging directory the next run
-evicts, a container whose state a prune destroys, partial output the next
-attempt overwrites, files under `/tmp`. By the time the maintainer reads the
-report, that is gone. So one fresh subagent captures it, and *only* captures
-it.
-
-New `Agent` call, `general-purpose`, no `model`, never a fork:
-
-> The long job described in `<handoff path>` has failed (or wedged — the
-> orchestrator says which). Read that file in full, including the body below
-> the frontmatter. If it is still running, leave it running; something else
-> will stop it.
->
-> **Diagnose and record. Change nothing else.** Do not retry the job, do not
-> fix the cause, do not clean anything up, do not touch the source tree.
-> Cleanup and correction are the maintainer's call and they need this report
-> to make it.
->
-> Capture, into `runs/<job>-<stamp>/FAILURE.md` beside the handoff doc:
-> what `check` and `exit` say now; enough of the log to show the failure, in
-> full where it is short and as the relevant span where it is long; and the
-> current state of everything the frontmatter's `volatile` line names —
-> contents, sizes, free space, container state — because that is what will not
-> survive. Add anything else the machine can still tell you and will stop
-> being able to: disk free on the volumes involved, an OOM kill in `dmesg`,
-> an orphaned process group still writing.
->
-> Then say what you believe went wrong and how confident you are, and list
-> what is left behind that someone will have to clean up — staging
-> directories, containers, partial multi-gigabyte files, orphaned processes —
-> without removing any of it.
->
-> Finally, so a fresh session finds this at all: a
-> `docs/status/history/<today>.md` entry naming the job, the failure in one or
-> two sentences, and the path to `FAILURE.md`; and slice `<N.M>`'s STATUS
-> checklist entry annotated with what remains and that it is blocked on this.
->
-> Report back: the `FAILURE.md` path, your one-line diagnosis, and the
-> cleanup list.
-
-`runs/` is gitignored, so `FAILURE.md` holds the bulk and the history entry is
-the pointer that survives into git. Verify that entry and the STATUS
-annotation exist before you stop — they are the whole reason a later session
-knows to look.
-
-Then stop the loop, and name the failure in the final report.
-
-### The eight-hour cutoff
-
-Eight hours after `started`, the session ends rather than the job. Disarm the
-cron, leave the job running, and write up status as the last thing you do:
-
-- A `docs/status/history/<today>.md` entry naming what was launched, the
-  handoff doc's path, and that a later session reads it.
-- STATUS's checklist entry for the slice, annotated with what remains.
-- The final report below, saying plainly that the loop stopped on the cutoff
-  with the job still running.
-
-The handoff doc is what a later session picks up — which is why the frontmatter
-has to hold without you.
+**When the job fails or wedges**, one fresh `Agent` (`general-purpose`, no
+`model`, never a fork) captures the volatile evidence and *only* captures it:
+read the handoff doc in full, leave a still-running job running, **change nothing
+else** — no retry, no fix, no cleanup, no source tree — and write
+`runs/<job>-<stamp>/FAILURE.md` beside it with what `check` and `exit` say now,
+enough log to show the failure, the state of everything the frontmatter's
+`volatile` line names, whatever else the machine will soon stop being able to
+tell you, a diagnosis with its confidence, and the list of what is left to clean
+up. Then a `docs/status/history/<today>.md` entry naming the job, the failure and
+that path, with slice `<N.M>`'s checklist entry annotated as blocked on it —
+`runs/` being gitignored, verify both before you stop. **At the eight-hour
+cutoff** the session ends rather than the job: disarm the cron, leave it running,
+and write the same two pointers plus a final report saying the loop stopped on
+the cutoff.
 
 ## The final report
 
-One message when the loop ends:
+One message when the loop ends: each round's slice, commit hash and one line on
+what landed; why it stopped, quoting the trigger; **every live entry under
+"Decisions worth another look", quoted in full, not only the ones this loop
+added**, saying so if the section is empty; any long job still running, with its
+handoff path, what `check` last said and how to stop it, or a failed one's
+`FAILURE.md` path, diagnosis and leftovers; what is left uncommitted and why; and
+what the maintainer should look at first. Never soften a failure into progress,
+or report a round you did not verify yourself.
 
-- Each round: slice, commit hash, one line on what landed.
-- Why the loop stopped, quoting the trigger — the new "Decisions worth another
-  look" entry in full, or the failing test's output, or "no slices remain in
-  Phase N".
-- **Every live entry under "Decisions worth another look", quoted in full — not
-  only the ones this loop added.** A standing entry is a stop condition nobody
-  re-triggers: the rule that closes one fires when the maintainer *answers*, so
-  an entry nobody surfaced is never answered and never closed, and `STATUS.md`
-  cannot tell it apart from one that was read and kept. The handback is the only
-  moment that reliably fires, so it is where the whole section gets read out. If
-  the section is empty, say so — that is information too.
-- Any long job still running: its handoff doc's path, what `check` last said,
-  and how to stop it. The maintainer inherits it. If one failed instead: the
-  `FAILURE.md` path, the one-line diagnosis, and what is left behind to clean
-  up.
-- What is left in the tree uncommitted, if anything, and why.
-- What the maintainer needs to look at first.
-
-Never soften a failure into progress, and never report a round you did not
-verify yourself.
-
-## A review does not re-arm the loop
-
-When the loop stopped on a "Decisions worth another look" entry and the
-maintainer then reviews it — with `/dwal` or otherwise — **the loop is over.**
-Closing the entries does not resume it, and neither does closing every entry. Do
-not start another round, do not offer to "pick up where the loop left off", and
-do not treat the review as the answer that unblocks the next slice. `/gosub`
-restarts only when the maintainer invokes it again.
-
-The reason is that a review is a re-plan. Reviewing entries reverses deferrals,
-admits out-of-band rows, and adds slices that did not exist — so the "next
-unticked box" the loop would have resumed on is no longer the next piece of
-work, and a blocking ledger row may now sit ahead of it. A loop that re-arms
-itself after a review runs against a roadmap that changed while the maintainer's
-attention was being spent, which is the one moment it is least safe to be
-unattended.
-
-**`/gosolo` is the exception, and it is one by construction.** There the
-grilling happens *inside* the loop: `/gm` settles the frontier, commits the
-closures, and the loop resumes at a fresh baseline precisely because it knows the
-plan may have moved. That is `/gosolo`'s Override 1, stated in its own skill. A
-review the *maintainer* ran is not that, whichever loop was running when it
-stopped.
+**A review does not re-arm the loop.** When it stopped on a "Decisions worth
+another look" entry and the maintainer then reviews it — with `/dwal` or
+otherwise — the loop is over: a review is a re-plan, so the "next unticked box"
+is no longer the next piece of work. Do not start another round or offer to pick
+up where it left off; `/gosub` restarts only when the maintainer invokes it
+again. **`/gosolo` is the exception**, its grilling happening *inside* the loop,
+which resumes at a fresh baseline.
