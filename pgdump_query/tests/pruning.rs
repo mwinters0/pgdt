@@ -217,7 +217,10 @@ struct Tally {
 /// The unpruned query reads `plain`, a cache holding no statistic, whose rows
 /// are the gathered cache's under `use_statistics: false` and which loads in a
 /// fraction of the time; that the switch alone reads every group is pinned by
-/// the hand-written tests below.
+/// the hand-written tests below. Reading both legs from the gathered cache
+/// was refused: it doubles the loading, to pin a switch that is one early
+/// return before pruning, and two independently mapped caches compare more
+/// than one would.
 async fn check(
     dump: &Path,
     (plain, gathered): (&Path, &Path),
@@ -271,6 +274,12 @@ async fn check(
 /// bytes; for every table, terms under every operator over each column
 /// carrying statistics, and seeded random `And`/`Or`/`Not` trees over them.
 /// One thread per major, each with its own seed.
+///
+/// **It runs whole, in the default suite**, though no other test here costs
+/// as much: its floors are what make it the check, and every later change to
+/// replay is what it exists to catch. Refused: lowering [`TREES_PER_TABLE`],
+/// [`LITERALS_PER_OPERATOR`] or the singles' share, and `#[ignore]` or an
+/// environment switch leaving only the hand-written tests on by default.
 #[test]
 fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
     let mut fixtures = all_fixtures();

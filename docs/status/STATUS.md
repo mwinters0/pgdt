@@ -302,26 +302,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **Every filtered query over gathered statistics prints a pruning note, a
-  skip of nothing included.** `PlanNoteKind::StatisticsPruned` is stated
-  wherever a block's statistics were consulted, and `pgdq query` prints it as
-  `note: row-group statistics rule out 0 of N group(s), …` on stderr for a
-  filter they cannot narrow; only a filter reading no field, `--statistics
-  none`, or a cache without statistics prints nothing. Made so because the
-  spec asks for the skip to be visible "out of the total", and a zero says the
-  statistics were read and did not help, which silence cannot tell from their
-  absence. Reconsidering drops the note when `skipped_groups` is zero, in
-  `stream.rs`'s `prune_blocks`, or prints it only there in the CLI.
-
-- **The pruned-equals-unpruned check is the slowest test in `pgdump_query`'s
-  debug suite**, and reads its unpruned leg from a second cache holding no
-  statistic.
-  `tests/pruning.rs`'s generated check runs every fixture at a 32-byte group on
-  one thread per major, with two literals per operator per column, an eighth of
-  its terms alone and 24 random trees per table; loading the gathered
-  `statistics` cache once per query is most of its cost, which the plain cache
-  halves for the unpruned leg — rows being a function of the file, and the
-  switch alone being pinned by the hand tests. Reconsidering trades coverage
-  for time in `TREES_PER_TABLE`, `LITERALS_PER_OPERATOR` and the singles'
-  share, or reads both legs from the gathered cache at twice the cost.

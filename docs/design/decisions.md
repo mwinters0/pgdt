@@ -60,10 +60,9 @@ caller decides. The scheduler's only refusal is a memory floor against the
 file's remainder, erring serial (`KD22`). Rejected: `Anywhere` as "stay serial".
 
 ### D8 The cut is one unit wide, sized apart from the charge
-`BOUNDARIED_PARTITION_UNITS = 1`; `window_end` sizes the cut, `partition_bytes`
-the charge. A wider cut wins at two stated readers and loses at the flagless
-default. Rejected: deriving width from the charge. Reopens: an explanation of
-the flagless collapse.
+`BOUNDARIED_PARTITION_UNITS = 1`; `window_end` sizes the cut, `partition_bytes` the charge. A wider
+cut wins at two stated readers and loses at the flagless default. Rejected: deriving width from the
+charge. Reopens: an explanation of the flagless collapse.
 
 ### D9 Pool sizing constants
 `hint_read_size` *becomes* the slot size and larger buffers are dropped on
@@ -138,10 +137,13 @@ file's magic; a contradiction is `Recognized::Mismatch` and condemns the span
 index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
-A decline is a property of the file *and this run's budget*, which no persisted
-`DiagnosticKind` can be. A one-block file opens and raises
-`NonSeekableCompressedSource` naming `xz -T0`; only the user can judge whether
-one decode-from-zero is worth waiting for.
+A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind`
+can be. A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`; only the
+user can judge whether one decode-from-zero is worth waiting for. A statistics skip is a note too,
+stated at zero wherever a block's statistics were consulted: a zero is the one answer to why a
+filter read everything, though its column may hold nothing usable, which `info --detail` shows.
+Rejected: omitting a zero, in library or CLI; counting only believed filtered columns. Reopens: a user
+puzzled by a zero, which a note naming the filter's columns lacking a usable statistic would answer.
 
 ### D20 The library never replaces cache data automatically
 A cache recording another file's stored size is `Error::CacheSourceMismatch`
@@ -390,10 +392,9 @@ row; `v=1.5` must hit a `numeric(10,2)` written `1.50`. Rejected: widening
 `timetz` and `inet` into the rendering group (I33, I38, I41).
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
-Structural key walk for both operator families; `nested_key`'s `input` flag
-stops at the container. Both sides of a range go through `make_range`, keyed on
-the range type; a user range declaring `canonical` is refused under every
-operator (I44–I47).
+Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container.
+Both sides of a range go through `make_range`, keyed on the range type; a user range declaring
+`canonical` is refused under every operator (I44–I47).
 
 ### D59 Divergence is per term and per position, on its own channel
 `ComparisonNote` carries a path and the declared type there, reported by
@@ -480,11 +481,10 @@ rule (I35) by classifying every cell that moves between adjacent majors as
 additive or not (I37, I38, I42).
 
 ### D71 Register arms are parsed out of `pgtype.rs`
-A `match` cannot be enumerated at run time; anchors turn a rewrite into a
-report. An arm is the finest closable unit, the join is existence rather than
-branch coverage, and an exemption carries `Evidence(file, needle)` the check
-resolves. The answer-to-answer test lives in `predicate.rs`'s unit tests with
-exceptions enumerated by pair.
+A `match` cannot be enumerated at run time; anchors turn a rewrite into a report. An arm is the
+finest closable unit, the join is existence rather than branch coverage, and an exemption carries
+`Evidence(file, needle)` the check resolves. The answer-to-answer test lives in `predicate.rs`'s
+unit tests with exceptions enumerated by pair.
 
 ### D72 The ADBC floor is swept from the catalog, not curated
 One row per declarable `pg_catalog` type; `status`/`extension` columns take a

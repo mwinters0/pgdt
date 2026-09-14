@@ -2102,7 +2102,14 @@ pub enum PlanNoteKind {
     /// never read out of the `bytes` of rows every matched block holds
     /// (`crate::batch::QueryOptions::use_statistics`). Stated wherever a
     /// block's statistics were consulted, a skip of nothing included; never
-    /// where none were, nor where the filter keeps every row.
+    /// where none were, nor where the filter keeps every row
+    /// (`docs/design/decisions.md`, "D19").
+    ///
+    /// **A block is consulted by holding statistics that fit it**, not by
+    /// holding a usable one for a column the filter reads: a zero also covers
+    /// a filtered column left out of the gathered selection, one whose recorded
+    /// declared type or collation no longer matches, and one holding only NULL
+    /// counts under an operator they cannot answer.
     StatisticsPruned { skipped_groups: u64, groups: u64, skipped_bytes: u64, bytes: u64 },
 }
 
