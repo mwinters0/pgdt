@@ -240,11 +240,11 @@ invariant) and the run's end is string-aware. Two cuts stay untaken until the
 `INSERT` row reader exists (`KD9`).
 
 ### D34 `DumpIndex` stores no fact twice but sortedness; whole-file facts need `is_complete`
-`blocks()` is filtered, `metadata` computed once, diagnostics never persisted; roles
-are the exception. A streamed schema commits over the blocks it replays, ungated (I2).
-Statistics sit in their block behind an `Arc`, so the save gate's clones copy a
-reference (`KD5`), and store sortedness rather than a query re-deriving it; a group is
-a byte range, no leader piece knowing a global row index. Rejected: `SparseRowIndex`.
+`blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles
+excepted; a streamed schema commits over the blocks it replays, ungated (I2). Statistics
+sit in their block behind an `Arc`, so save-gate clones copy a reference (`KD5`), and
+store sortedness; a group is a byte range, no leader piece knowing a global row index.
+Rejected: `SparseRowIndex`; padded `character` bounds, keying alike but overrunning the cap.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at

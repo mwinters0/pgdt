@@ -158,17 +158,25 @@ optional selection (tables or `schema.table.column`s) to narrow it, and
 `--statistics none` disables it. This reverses the sketch's opt-in rule, under
 this phase's premise: the parse is the price, and the default pays it.
 
+**The library's mapping pass defaults the same way**, gathering every statistic
+unless its caller states none; how many workers and how much memory it takes
+keep their conservative library defaults ([`roadmap.md`](roadmap.md), "A parse
+does all the work a later query could use"). **The request is an argument of
+the mapping pass alone**: no query entry point accepts one, so no option a
+query is handed reads as a request it ignores.
+
 **Asking for statistics a mapped block lacks re-reads that block.** `parse`
 otherwise resumes from `scanned_through`, so a complete cache would never
 acquire statistics; a block whose structure is known but whose requested
 statistics are missing is re-read on its own, saving as it goes and resumable.
-In the library this is a column selection on the mapping options plus a
-per-block back-fill entry point.
+In the library this is the mapping pass's request plus a per-block back-fill
+entry point.
 
-**A query never gathers**; it consumes what `parse` stored. The sketch's
-statistics accumulating as a side effect of any scan is not taken: a query's
-mapping pass is already the cold path, and a caller who asked for rows has not
-asked for a parse.
+**A query gathers nothing in this phase**; it consumes what `parse` stored.
+Gathering what a query already reads is P21's ([`roadmap.md`](roadmap.md), "P21
+— Statistics gathered by a query"), since a query reading part of a block needs
+a statistic to tell "not yet gathered" from "none available" per group, where a
+parse gathering whole blocks needs it only per block and column.
 
 ## One cache file
 
@@ -179,9 +187,10 @@ discardable independently, is not taken.
 ## Resident memory grows, and is optimized later
 
 **Resident memory is expected to grow in this phase and to scale with the size
-of the dump**, statistics being held per group per tracked column. That departs
-from the flat-memory goal ([`roadmap.md`](roadmap.md), "Project goals")
-knowingly. **This phase takes aggressive, coarse increases** — to
+of the dump**, statistics being held per group per tracked column. The
+flat-memory goal holds block-level structures flat and does not reach them:
+they are drawn from row values, whose widths vary ([`roadmap.md`](roadmap.md),
+"Project goals"). **This phase takes aggressive, coarse increases** — to
 `MEMORY_RESERVE` and whatever else the flagless defaults need — and spends no
 slices refining them. **The measurement harness's expectations are bumped
 coarsely too**, wherever a resident-set expectation or gate complains. Both
@@ -200,8 +209,9 @@ each get their own and merge in file order, the fold the census already takes;
 a group can straddle a cut, so a piece carries each column's first and last
 non-null value for the join.
 
-**Bounds persist as unescaped field text**, the spelling `pg_dump` wrote — L1
-vocabulary. A query re-keys a candidate group's bounds at plan time, which is
+**Bounds persist as unescaped field text**, the spelling `pg_dump` wrote but
+for a `character` value's trailing blanks, which its comparison ignores and its
+declared length restores — L1 vocabulary. A query re-keys a candidate group's bounds at plan time, which is
 two parses per group per filtered column against reading the group. *Rejected:*
 persisting binary comparison keys, an L4 conclusion `decisions.md`, "D74"
 forbids persisting.
@@ -295,7 +305,10 @@ deterministic collation — exactly the `KD7` columns bounds must skip. It answe
 entry's key, so `1.5` finds `1.50`.
 
 **More than 64 distinct texts in a group, or any value past 256 bytes, leaves
-that group and column without a dictionary**; its other statistics stand.
+that group and column without a dictionary**; its other statistics stand. A
+`character` entry is stored and measured without its trailing blanks, as its
+bounds are, so a column wider than the cap keeps a dictionary where its values
+are short ([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "`character` statistics drop their padding").
 
 **Entries are interned per block and column**, each group holding up to 64 small
 indices into that table, so a value repeated across groups is stored once. The

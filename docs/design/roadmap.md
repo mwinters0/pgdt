@@ -18,6 +18,7 @@ reused, including a struck phase's.
 | P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P10 — row-group statistics | Current | [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md); progress in [`STATUS.md`](../status/STATUS.md) |
 | P20 — statistics memory | Sketched; not grilled | this file, below |
+| P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
@@ -87,6 +88,11 @@ Two things distinguish this project from existing `pg_dump` tooling
   local-file path should stay device-bound, not CPU-bound, on hardware from
   HDD through NVMe, at flat memory. Where it currently stands, and what a scan
   spends its time on, is [`decisions.md`](decisions.md), "D29"; the figures are [`measurements.md`](measurements.md).
+
+  **Flat memory is a property of block-level structures**: resident that does
+  not grow with the rows streamed is what shows a scan streams rather than
+  retains. What is drawn from row values — statistics above all — varies with
+  their widths, so no flat check holds for it except over rows of uniform width.
 
   This targets the `COPY`-block/bulk-row path specifically. Preamble and other
   non-data DDL scanning is bounded by schema size, not file
@@ -188,6 +194,15 @@ a number that is no longer in play. Stated per worker the answer is independent
 of every count, and multiplying is the composition's — which is also what lets
 the composition hand back a *pair*, the count an allowance affords beside the
 budget that many workers spend.
+
+### A parse does all the work a later query could use
+
+**A parse carries the intent to do every piece of work that accelerates a later
+query, so its default does all of it** — `pgdq parse` and the library's mapping
+pass alike. A caller who wants less done issues cold queries instead; stating
+less is an opt-out, never the default. **What it spends doing that is a separate
+question**: workers and memory keep the defaults "A default runs as fast as the
+allocation permits" sets, the library's conservative.
 
 ### Coverage increases monotonically
 
@@ -508,10 +523,30 @@ The refinement P10 deliberately defers
 "Resident memory grows, and is optimized later"). P10 lets resident memory grow
 with the dump's statistics volume and takes coarse, aggressive increases to the
 flagless defaults' reserve and to the measurement harness's resident-set
-expectations, spending no slices on either. This phase owns bringing resident
-back toward the flat-memory goal and re-deriving the reserve and the
-expectations from readings. **Scheduled directly after P10**, since what it
+expectations, spending no slices on either. This phase owns bounding what
+statistics hold resident and re-deriving the reserve and the expectations from
+readings, over rows of uniform width wherever an expectation is to hold
+("Project goals"). **Scheduled directly after P10**, since what it
 optimizes is what P10 ships.
+
+## P21 — Statistics gathered by a query
+
+A query gathers statistics for what it already reads — the columns its filter
+evaluates — where P10 has only a parse gather. Sketched to corner-avoidance
+depth, and after P20, since P10's consumer is what makes a partial gather worth
+having. What it inherits
+([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "A parse
+gathers every statistic by default"):
+
+- **Presence per group**: a pruned or stopped query reads part of a block, so a
+  statistic must tell "not yet gathered" from "none available" — an all-NULL
+  column's bounds — per group, where P10 needs it per block and column.
+- **A term is not evaluated on every row** (`decisions.md`, "D54"), so a filter
+  column is observed completely only where every row's field is read anyway.
+- **Block sortedness and back-fill are whole-block facts** in P10; a partly
+  gathered block settles neither.
+- **The replay never saves the cache**; the mapping pass does, and a
+  partitioned replay saving meets "D20" and the save gate ("D62").
 
 ## P14 — Remote input
 
