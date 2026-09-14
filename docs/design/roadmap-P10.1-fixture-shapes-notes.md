@@ -65,22 +65,18 @@ the fixture's own account of each column is its schema,
 
 ## Negative results
 
-- **A long line is quadratic to scan serially — `KD27`.** The carry pass
-  re-searches the whole carried line for a newline at every chunk it spans. A
-  probe over single-line synthetic dumps, debug build, roughly quadrupled its
-  time per doubling of the line and fell by about the chunk ratio at a larger
-  chunk; the leader's pieces were unaffected. Not a figure; the detail is at the
-  marker in `scan.rs`.
-- **It is why the suite got slower.** `pgdump_query-cli/tests/determinism.rs`
-  runs a serial 64-byte-chunk parse of every fixture, and over this fixture's
-  long value on six majors that leg went from seconds to over a minute of the
-  debug suite. `M105` recovers it.
+- **This fixture found `KD27`, since struck by `M105`.** The serial carry pass
+  re-searched the whole carried line for a newline at every chunk it spanned,
+  quadratic in the line; `pgdump_query-cli/tests/determinism.rs`'s serial
+  64-byte-chunk leg paid it over the long value on six majors. `ChunkCarry` now
+  hands an unfinished carry over once, and `scan.rs`'s
+  `a_line_many_chunks_long_is_scanned_once` counts the bytes scanned.
 - **The long value stays past the shipped chunk on every major, reviewed.** The
   spec's empty groups, truncation and piece joins all need only a stated group
   size, the 300-byte value and a stated chunk; what the default size alone
   covers is a line past the *shipped* chunk — the shape a raised
   `--max-line-bytes` admits, and `max_line_bytes.rs`'s default-chunk legs. A
-  shorter value would have hidden `KD27` from the one test that pays it.
+  shorter value would have hidden `KD27` from the one test that paid it.
 - **Size on disk:** each major's file is about 1.1 MB in the working tree and
   tens of kilobytes compressed, the long value being a repeated pattern, so the
   repository carries little of it. Generating the schema alone takes under a

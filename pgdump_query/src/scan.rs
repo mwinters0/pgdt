@@ -366,7 +366,11 @@ pub enum ChunkPass {
 ///
 /// The degenerate case is a chunk containing no newline at all: the whole of
 /// it joins the carry and the in-place pass is empty, which is the growth
-/// [`ScanOptions::max_line_bytes`] bounds.
+/// [`ScanOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
+/// short of the end of the file, since a span holding no newline is one the
+/// scanner can neither consume nor emit anything from; handing it over anyway
+/// would search the carried line again from its first byte at every chunk it
+/// spans, quadratic in the line.
 #[derive(Debug, Default)]
 pub struct ChunkCarry {
     /// The unterminated line carried over, extended by [`absorb`](Self::absorb)
@@ -375,6 +379,10 @@ pub struct ChunkCarry {
     /// Where in the current chunk [`ChunkPass::InPlace`] begins — set by
     /// [`absorb`](Self::absorb), meaningless before the first call.
     split: usize,
+    /// Whether the carry still holds no newline after the current chunk was
+    /// absorbed — the chunk held none — so its carry pass has nothing to scan
+    /// unless the file ends here.
+    unfinished: bool,
 }
 
 impl ChunkCarry {
@@ -401,26 +409,16 @@ impl ChunkCarry {
     ///
     /// With nothing carried that is `0` — the chunk is scanned whole, where it
     /// lies. With a carry and no newline anywhere in `chunk`, it is
-    /// `chunk.len()`.
-    ///
-    /// Deficiency register: `deficiency: KD27` — a carry that chunk leaves
-    /// unfinished is searched again from its first byte by the next chunk's
-    /// carry pass, [`CopyScanner::next_event`] looking for a newline across the
-    /// whole span each time, so a line `L` bytes long costs about
-    /// `L² / (2 × chunk)` bytes of search in every serial read loop — quadratic
-    /// in the line, and worst at a small chunk. `determinism.rs`'s serial
-    /// 64-byte leg pays it over the `statistics` fixture's long value on every
-    /// major. **(c) unowned**; promoted already, a row many read chunks long
-    /// being what a raised `--max-line-bytes` exists to admit, which pays this
-    /// at the shipped chunk. Closing it means skipping the carry pass for a
-    /// chunk that held no newline short of the end of the file, which this call
-    /// already knows; the leader's growth read doubles and is not affected.
+    /// `chunk.len()`, and the carry is left unfinished.
     pub fn absorb(&mut self, chunk: &[u8]) {
         if self.buf.is_empty() {
             self.split = 0;
+            self.unfinished = false;
             return;
         }
-        self.split = memchr::memchr(b'\n', chunk).map_or(chunk.len(), |nl| nl + 1);
+        let newline = memchr::memchr(b'\n', chunk);
+        self.split = newline.map_or(chunk.len(), |nl| nl + 1);
+        self.unfinished = newline.is_none();
         self.buf.extend_from_slice(&chunk[..self.split]);
     }
 
@@ -429,6 +427,9 @@ impl ChunkCarry {
     /// left over for the in-place pass to see.
     pub fn span<'a>(&'a self, pass: ChunkPass, chunk: &'a [u8], eof: bool) -> (&'a [u8], bool) {
         match pass {
+            // Nothing in an unfinished carry is consumable before the end of
+            // the file, so it is not searched again (the type's docs).
+            ChunkPass::Carry if self.unfinished && !eof => (&[], false),
             ChunkPass::Carry => (&self.buf, eof && self.split == chunk.len()),
             ChunkPass::InPlace => {
                 // **The carry is empty here whenever this span has anything in
@@ -626,15 +627,23 @@ where
 mod tests {
     use super::*;
 
+    /// What [`drive`] saw: the events rendered as text, the high-water mark of
+    /// the carry, and the bytes handed to the scanner over every pass.
+    struct Driven {
+        events: Vec<String>,
+        high_water: usize,
+        scanned: usize,
+    }
+
     /// Drive [`CopyScanner`] over `file` in `chunk_size` pieces exactly as
-    /// the three read loops do, and report the events rendered as text
-    /// alongside the high-water mark of the carry.
-    fn drive(file: &[u8], chunk_size: usize) -> (Vec<String>, usize) {
+    /// the three read loops do.
+    fn drive(file: &[u8], chunk_size: usize) -> Driven {
         let mut scanner = CopyScanner::new();
         let mut carry = ChunkCarry::new();
         let mut events = Vec::new();
         let mut read_pos = 0usize;
         let mut high_water = 0usize;
+        let mut scanned = 0usize;
         loop {
             let want = chunk_size.min(file.len() - read_pos);
             let chunk = &file[read_pos..read_pos + want];
@@ -644,6 +653,7 @@ mod tests {
             carry.absorb(chunk);
             for pass in ChunkCarry::PASSES {
                 let (span, span_eof) = carry.span(pass, chunk, eof);
+                scanned += span.len();
                 while let Some(event) = scanner.next_event(span, span_eof).unwrap() {
                     events.push(format!("{event:?}"));
                 }
@@ -652,7 +662,7 @@ mod tests {
             high_water = high_water.max(carry.len());
 
             if eof {
-                return (events, high_water);
+                return Driven { events, high_water, scanned };
             }
         }
     }
@@ -684,7 +694,7 @@ mod tests {
         let file = control();
         let longest = file.split(|&b| b == b'\n').map(<[u8]>::len).max().unwrap();
         for chunk_size in [1usize, 2, 3, 7, 13, 64, 511, 4096] {
-            let (_, high_water) = drive(&file, chunk_size);
+            let high_water = drive(&file, chunk_size).high_water;
             assert!(
                 high_water <= longest,
                 "chunk_size {chunk_size} carried {high_water} bytes, longest line is {longest}"
@@ -698,10 +708,42 @@ mod tests {
     #[test]
     fn the_event_stream_does_not_depend_on_where_the_split_falls() {
         let file = control();
-        let (reference, _) = drive(&file, 1 << 20);
+        let reference = drive(&file, 1 << 20).events;
         for chunk_size in [1usize, 2, 3, 7, 13, 64, 511, 4096] {
-            let (got, _) = drive(&file, chunk_size);
+            let got = drive(&file, chunk_size).events;
             assert_eq!(got, reference, "chunk_size {chunk_size}");
+        }
+    }
+
+    /// A file whose lines are many chunks long: a row inside a `COPY` block,
+    /// and an unterminated last line that only the end of the file finishes.
+    fn long_lines(len: usize) -> Vec<u8> {
+        let value = "x".repeat(len);
+        let mut file = b"COPY public.t (a, b) FROM stdin;\n1\tshort\n2\t".to_vec();
+        file.extend_from_slice(value.as_bytes());
+        file.extend_from_slice(b"\n3\tshort\n\\.\n");
+        file.extend_from_slice(value.as_bytes());
+        file
+    }
+
+    /// A line many chunks long is handed to the scanner once, when the chunk
+    /// holding its newline — or the end of the file — arrives, so the bytes
+    /// scanned are linear in the file and not in the square of the line.
+    /// Counted, not timed: re-searching the carry at every chunk costs about
+    /// `len² / (2 × chunk)` bytes here, orders past the bound.
+    #[test]
+    fn a_line_many_chunks_long_is_scanned_once() {
+        let file = long_lines(1 << 16);
+        let reference = drive(&file, 1 << 20).events;
+        for chunk_size in [1usize, 7, 64, 4096] {
+            let driven = drive(&file, chunk_size);
+            assert_eq!(driven.events, reference, "chunk_size {chunk_size}");
+            assert!(
+                driven.scanned <= 2 * file.len(),
+                "chunk_size {chunk_size} scanned {} bytes of a {}-byte file",
+                driven.scanned,
+                file.len()
+            );
         }
     }
 
@@ -733,15 +775,24 @@ mod tests {
     }
 
     /// The degenerate case: a chunk with no newline in it joins the carry
-    /// whole, which is the growth `ScanOptions::max_line_bytes` bounds.
+    /// whole, which is the growth `ScanOptions::max_line_bytes` bounds, and
+    /// neither pass has anything to scan until the file ends.
     #[test]
     fn a_chunk_with_no_newline_joins_the_carry_whole() {
         let mut carry = carrying(b"abc");
 
         let chunk = b"defghi";
         carry.absorb(chunk);
-        assert_eq!(carry.span(ChunkPass::Carry, chunk, false).0, b"abcdefghi");
+        assert_eq!(carry.len(), 9);
+        assert_eq!(carry.span(ChunkPass::Carry, chunk, false).0, b"");
+        assert_eq!(carry.span(ChunkPass::Carry, chunk, true).0, b"abcdefghi");
         assert_eq!(carry.span(ChunkPass::InPlace, chunk, false).0, b"");
+
+        // The chunk that finishes the line hands the whole of it over once.
+        carry.consumed(ChunkPass::InPlace, chunk, 0);
+        let last = b"jk\nl";
+        carry.absorb(last);
+        assert_eq!(carry.span(ChunkPass::Carry, last, false).0, b"abcdefghijk\n");
     }
 
     /// The carry pass runs to the end of the file only when the chunk has

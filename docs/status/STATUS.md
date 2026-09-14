@@ -279,13 +279,6 @@ a phase nobody has sliced.
   beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
   has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
 
-- **KD27** — a line longer than a read chunk is searched for its newline
-  again from its first byte at every chunk it spans, so the serial read loops
-  are quadratic in a row's length and worst at a small chunk. **(c)
-  unowned**; its repair is admitted as `M105`, and a row many read chunks long
-  is what `--max-line-bytes` exists to admit. Detail:
-  `pgdump_query/src/scan.rs`.
-
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **44.2 MiB** against a one-block one's 6.2 MiB.
