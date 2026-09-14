@@ -76,6 +76,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores; [notes](../design/roadmap-P10.4.2-mapping-pass-request-notes.md)
 - [x] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks; [notes](../design/roadmap-P10.4.3-character-dictionary-notes.md)
 - [x] **10.5** Reporting in `info --detail` and `--json`; [notes](../design/roadmap-P10.5-reporting-notes.md)
+- [ ] **10.5.1** `info --json` exports every block's per-group statistics, compact and streamed, with no per-table rollup
 - [ ] **10.6** Parallel gathering, identical to serial over every fixture
 - [ ] **10.7** Back-fill of blocks lacking the requested statistics
 - [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check

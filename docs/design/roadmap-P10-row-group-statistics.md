@@ -353,9 +353,14 @@ filter, a dictionary under an absent literal.
 table and column whether statistics exist and over how many of its blocks, the
 **group size in both bytes and rows** — the configured `N` beside the observed
 bytes and rows per group — the sortedness tri-state, and the share of groups
-carrying bounds and carrying a dictionary; `--json` carries the same. Individual
-group values are not reported. A `parse` that back-fills states on stderr how
-many blocks lacked the requested statistics and were re-read.
+carrying bounds and carrying a dictionary. **`--json` exports what the cache
+holds instead, every group's statistics included**, compact and with no rollup:
+its reader is `jq` or a script, which sums a rollup itself, and it promises
+neither legibility nor a stable shape
+([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md),
+"`--json` exports the cache, group values included"). A `parse` that back-fills
+states on stderr how many blocks lacked the requested statistics and were
+re-read.
 
 ## Measurements
 
