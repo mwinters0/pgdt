@@ -125,11 +125,13 @@ pub struct QueryOptions {
     pub parallelism: Parallelism,
     /// Whether the replay skips the row groups whose statistics — gathered by
     /// a mapping pass ([`crate::stream::map_file`]) — prove no row satisfies
-    /// `filter`. On by default; the rows are the same either way, and `false`
-    /// reads every row of every block, which is also how a value in a group
-    /// it would skip still raises its decode failure
+    /// `filter`, and stops reading a block sorted on a column `filter` bounds
+    /// at its first row past the bound. On by default; the rows are the same
+    /// either way, and `false` reads every row of every block, which is also
+    /// how a value it would not read still raises its decode failure
     /// (`docs/design/decisions.md`, "D54"). What was skipped is a
-    /// [`crate::stream::PlanNoteKind::StatisticsPruned`].
+    /// [`crate::stream::PlanNoteKind::StatisticsPruned`]; a stop is settled
+    /// only as rows are read, and no note counts it.
     pub use_statistics: bool,
 }
 

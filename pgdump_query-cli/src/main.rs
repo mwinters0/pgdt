@@ -649,10 +649,11 @@ enum Command {
         /// Whether to use the statistics `parse` recorded: `all`, the default,
         /// skips each stretch of the table's data whose statistics prove no
         /// row in it satisfies the filter, and says on stderr how much was
-        /// skipped; `none` reads every row. The rows printed are the same
-        /// either way. A value that fails to decode is reported only where its
-        /// row is read, so `none` is also how to find one a skipped stretch
-        /// holds.
+        /// skipped, and stops reading data sorted on a column the filter
+        /// bounds at its first row past the bound; `none` reads every row. The
+        /// rows printed are the same either way. A value that fails to decode
+        /// is reported only where its row is read, so `none` is also how to
+        /// find one in data left unread.
         #[arg(long, value_name = "USE", value_enum, default_value_t)]
         statistics: QueryStatistics,
         #[command(flatten)]

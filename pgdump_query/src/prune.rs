@@ -7,17 +7,22 @@
 //! `True`**, so a pruned replay returns exactly the rows the unpruned one does;
 //! what it gives up is the error a value in a skipped group would have raised
 //! (`docs/design/decisions.md`, "D54").
+//!
+//! **A block sorted on a column a filter bounds is also read no further than
+//! its first row past the bound** ([`SortedStop`]), which settles inside a
+//! group what the statistics can settle only between groups.
 
 use std::ops::Range;
 
+use crate::copy::{RawRow, RowSplit};
 use crate::gather::declared_columns;
 use crate::index::CopyBlock;
 use crate::preamble::DumpMetadata;
-use crate::predicate::{GroupStatistics, ResolvedExpr, Truth};
-use crate::statistics::{BlockStatistics, ColumnStatistics};
+use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
+use crate::statistics::{BlockStatistics, ColumnStatistics, Sortedness};
 
 /// What one block's statistics let a filter skip.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct BlockPruning {
     /// Every run of kept groups, in file order, as a replay segment's search
     /// bounds (`crate::stream::Segment`): a run's start finds its first row
@@ -37,15 +42,41 @@ pub(crate) struct BlockPruning {
     pub(crate) skipped_groups: u64,
     /// The row bytes of the skipped groups ([`crate::statistics::RowGroup::bytes`]).
     pub(crate) skipped_bytes: u64,
+    /// Where the block's row order ends its reading early, if anywhere.
+    pub(crate) stop: Option<SortedStop>,
 }
 
-/// Which of `block`'s groups `filter` could keep a row of, or `None` where the
-/// block's statistics answer nothing: it holds none, lists no group, or holds
-/// statistics that do not fit its extent or its column list.
+/// The terms of a filter whose column a block's rows are sorted on in the
+/// direction that term's bound closes: `<` and `<=` on an ascending column,
+/// `>` and `>=` on a descending one.
 ///
-/// **A column's bounds and dictionary are believed only under the declared
-/// type and collation they were gathered under**, compared against what
-/// `metadata` declares now; its NULL counts are read off the text and
+/// **The first row making one of them `False` is past every row the filter
+/// keeps**: every non-NULL value after it is on the same side of the bound,
+/// and a NULL makes an ordering term `Unknown`, so the term — required of
+/// every kept row ([`ResolvedExpr::required_ordering_terms`]) — is `True` of
+/// no later row. A replay of the block stops there, inside a group if need
+/// be, and nothing past it is read.
+#[derive(Debug, Clone)]
+pub(crate) struct SortedStop {
+    terms: Vec<ResolvedTerm>,
+}
+
+impl SortedStop {
+    /// Whether `raw_row`, a row `filter` did **not** keep, is past the bound.
+    /// Asked only of a rejected row: a kept row made every term `True`.
+    pub(crate) fn passed(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
+        self.terms.iter().any(|term| term.is_false(raw_row, split))
+    }
+}
+
+/// Which of `block`'s groups `filter` could keep a row of, and where its row
+/// order stops a replay of it — or `None` where the block's statistics answer
+/// nothing: it holds none, lists no group, or holds statistics that do not fit
+/// its extent or its column list.
+///
+/// **A column's bounds, row order and dictionary are believed only under the
+/// declared type and collation they were gathered under**, compared against
+/// what `metadata` declares now; its NULL counts are read off the text and
 /// believed regardless. What the comparison itself believes is settled when
 /// the filter resolved ([`ResolvedExpr::truths`]).
 pub(crate) fn prune_block(
@@ -81,12 +112,31 @@ pub(crate) fn prune_block(
         })
         .collect();
 
+    let terms: Vec<ResolvedTerm> = filter
+        .required_ordering_terms()
+        .into_iter()
+        .filter(|term| {
+            let column = term.index();
+            let bounds = statistics.columns.get(column).and_then(|c| c.as_ref()?.bounds.as_ref());
+            let Some(bounds) = bounds.filter(|_| believed.get(column) == Some(&true)) else {
+                return false;
+            };
+            matches!(
+                (bounds.sortedness, term.op()),
+                (Sortedness::Ascending, PredicateOp::Lt | PredicateOp::Le)
+                    | (Sortedness::Descending, PredicateOp::Gt | PredicateOp::Ge)
+            )
+        })
+        .cloned()
+        .collect();
+
     let n = statistics.group_size;
     let mut pruning = BlockPruning {
         kept: Vec::new(),
         groups: statistics.groups.len() as u64,
         skipped_groups: 0,
         skipped_bytes: 0,
+        stop: (!terms.is_empty()).then_some(SortedStop { terms }),
     };
     for (index, group) in statistics.groups.iter().enumerate() {
         let view = Group { statistics, believed: &believed, index };

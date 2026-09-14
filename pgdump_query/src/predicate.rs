@@ -2330,6 +2330,28 @@ impl ResolvedTerm {
         }))
     }
 
+    /// The operator this term applies.
+    pub(crate) fn op(&self) -> PredicateOp {
+        self.op
+    }
+
+    /// The column this term reads, numbered by the block's unprojected
+    /// column list.
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Whether `raw_row` makes this term [`Truth::False`] — answered where
+    /// [`ResolvedExpr::matches`] may never have evaluated the term, so **it
+    /// raises nothing**: a field that does not unescape or decode answers
+    /// `false`, as a NULL or a missing field does, and the error stays where
+    /// evaluation reaches it (`docs/design/decisions.md`, "D54").
+    pub(crate) fn is_false(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
+        let Some(field) = split.field(raw_row.bytes(), self.index) else { return false };
+        let Ok(Some(value)) = raw_row.decode(field) else { return false };
+        self.eval_value(Some(&value)) == Some(Truth::False)
+    }
+
     /// Whether this term keeps the rows its comparison called equal — `Eq`
     /// and `IsNotDistinctFrom` do, `Ne` and `IsDistinctFrom` do not, and no
     /// other operator reaches it.
@@ -2435,6 +2457,33 @@ impl ResolvedExpr {
             Self::And(children) | Self::Or(children) => children.iter().any(Self::reads_fields),
             Self::Not(inner) => inner.reads_fields(),
         }
+    }
+
+    /// The ordering terms every row this tree keeps must make `True` — the
+    /// root when it is one, and each member of a conjunction at the root,
+    /// conjunctions nested in it flattened — whose column's plan orders
+    /// **exactly**, the only order a block's stored row order is gathered
+    /// under ([`BelievedStatistics::bounds`]). A term beneath an `Or` or a
+    /// `Not` is not one: a row can be kept while it is `False`.
+    pub(crate) fn required_ordering_terms(&self) -> Vec<&ResolvedTerm> {
+        let mut out = Vec::new();
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            match node {
+                Self::Term(term)
+                    if term.op.is_ordering()
+                        && term
+                            .compared
+                            .as_ref()
+                            .is_some_and(|c| c.statistics.bounds.is_some()) =>
+                {
+                    out.push(term);
+                }
+                Self::And(children) => pending.extend(children.iter().rev()),
+                Self::Term(_) | Self::Or(_) | Self::Not(_) => {}
+            }
+        }
+        out
     }
 
     fn collect_notes(&self, out: &mut Vec<ComparisonNote>) {

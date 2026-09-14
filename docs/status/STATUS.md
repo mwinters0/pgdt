@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D54, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D54, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -80,7 +80,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.6** Parallel gathering, identical to serial over every fixture; [notes](../design/roadmap-P10.6-parallel-gathering-notes.md)
 - [x] **10.7** Back-fill of blocks lacking the requested statistics; [notes](../design/roadmap-P10.7-backfill-notes.md)
 - [x] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check; [notes](../design/roadmap-P10.8-pruning-consumer-notes.md)
-- [ ] **10.9** Early stop on a column sorted over its block
+- [x] **10.9** Early stop on a column sorted over its block; [notes](../design/roadmap-P10.9-sorted-stop-notes.md)
 - [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`
 
 ## Not started
@@ -302,3 +302,14 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A sorted block's early stop is reported nowhere** (10.9). The spec makes
+  pruning visible as a `PlanNote` settled before any byte is read; the stop is
+  found only while rows are read, after a stream's plan notes are handed out,
+  so it was left out of every note, and the manual, `QueryOptions` and `pgdq
+  query --statistics`'s help say that nothing counts it. Reconsidering means a
+  second, after-the-fact report — a count on `TableStream` read once drained,
+  printed by `pgdq query` at its end — which is new API surface and a second
+  kind of note; it would also give 10.10's `statistics-pruning` range leg an
+  attribution for the bytes the stop saves, which the pruning note's skipped
+  bytes do not include.

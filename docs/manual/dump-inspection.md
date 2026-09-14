@@ -283,10 +283,17 @@ says how much was skipped:
 note: row-group statistics rule out 11 of 12 group(s), so 45092 of the 48592 byte(s) of rows this table holds are not read
 ```
 
+**Data sorted on a column the filter bounds is read no further than the
+bound.** Where the statistics record that a table's data holds a column in
+ascending order, and the filter requires `<` or `<=` of it — alone, or joined
+to other terms by `AND` — reading stops at the first row past the bound, since
+no later row can satisfy it; descending order stops `>` and `>=` the same way.
+Nothing on stderr counts what that saved.
+
 The rows are the ones `query --statistics none` prints, which reads every row.
 Two things are not the same: a value that fails to decode is reported only
-where its row is read, so one in a skipped group goes unreported until
-`--statistics none` reads it; and the statistics are trusted as the rest of the
+where its row is read, so one in a skipped group or past a stopping row goes
+unreported until `--statistics none` reads it; and the statistics are trusted as the rest of the
 cache is, by the file's size, so a file rewritten in place at the same size
 has stretches skipped by what they held before, and may lose rows it holds now
 — delete the cache and parse again.

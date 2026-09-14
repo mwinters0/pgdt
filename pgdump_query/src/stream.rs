@@ -66,7 +66,7 @@ use crate::leader::{self, RegionScan};
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
-use crate::prune::prune_block;
+use crate::prune::{SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
 use crate::statistics::{BlockObserver, BlockStatistics, StatisticsBackfill, StatisticsRequest};
@@ -1468,6 +1468,9 @@ struct ReplayPlan {
     /// ([`crate::prune::BlockPruning::kept`]); a block absent here is read
     /// whole.
     kept: BTreeMap<u64, Vec<Range<u64>>>,
+    /// Where each block sorted on a column the filter bounds stops being read,
+    /// keyed as `blocks` is ([`SortedStop`]).
+    stops: BTreeMap<u64, SortedStop>,
     /// What pruning skipped, where any block's statistics were consulted.
     pruned: Option<PlanNote>,
 }
@@ -1484,8 +1487,9 @@ impl ReplayPlan {
         census: Vec<ArrayShape>,
     ) -> Result<Self> {
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &census)?;
-        let (kept, pruned) = prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
-        Ok(Self { scan_options, query_options, metadata, census, blocks, kept, pruned })
+        let Pruned { kept, stops, note: pruned } =
+            prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
+        Ok(Self { scan_options, query_options, metadata, census, blocks, kept, stops, pruned })
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
@@ -1504,23 +1508,32 @@ impl ReplayPlan {
     }
 }
 
+/// What [`prune_blocks`] settles for a [`ReplayPlan`].
+#[derive(Default)]
+struct Pruned {
+    kept: BTreeMap<u64, Vec<Range<u64>>>,
+    stops: BTreeMap<u64, SortedStop>,
+    note: Option<PlanNote>,
+}
+
 /// Settle which row groups of `matches` the query's filter skips
-/// ([`prune_block`]), and the [`PlanNote`] saying so. Nothing is pruned where
+/// ([`prune_block`]), where a sorted block's rows stop being read, and the
+/// [`PlanNote`] saying what was skipped. Nothing is pruned or stopped where
 /// the caller turned statistics off or the filter reads no field — no
 /// statistic can rule out a row of a filter that keeps every one — nor in a
 /// block with no [`PlannedBlock`], whose field count only its first row says.
 ///
-/// **A block whose statistics keep every group is left out of the map**, so
-/// it is replayed exactly as an unpruned query replays it.
+/// **A block whose statistics keep every group is left out of `kept`**, so
+/// it is replayed exactly as an unpruned query replays it, bar its stop.
 fn prune_blocks(
     matches: &[CopyBlock],
     blocks: &BTreeMap<u64, PlannedBlock>,
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
-) -> (BTreeMap<u64, Vec<Range<u64>>>, Option<PlanNote>) {
-    let mut kept = BTreeMap::new();
+) -> Pruned {
+    let (mut kept, mut stops) = (BTreeMap::new(), BTreeMap::new());
     if !query_options.use_statistics {
-        return (kept, None);
+        return Pruned::default();
     }
     let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
     for block in matches {
@@ -1533,6 +1546,9 @@ fn prune_blocks(
         groups += pruning.groups;
         skipped_groups += pruning.skipped_groups;
         skipped_bytes += pruning.skipped_bytes;
+        if let Some(stop) = pruning.stop {
+            stops.insert(block.header_offset, stop);
+        }
         if pruning.skipped_groups > 0 {
             kept.insert(block.header_offset, pruning.kept);
         }
@@ -1541,7 +1557,7 @@ fn prune_blocks(
     let note = consulted.then_some(PlanNote {
         kind: PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes },
     });
-    (kept, note)
+    Pruned { kept, stops, note }
 }
 
 /// One block's schema, filter and projection, resolved against a query —
@@ -2504,6 +2520,7 @@ fn replay<'a>(
             let seg_limit = segment.limit;
             let seg_end = block.end_offset;
             let block_database = block.database.clone();
+            let stop = plan.stops.get(&block.header_offset);
 
             let resumes_here = paused_in.is_some_and(|(offset, header_offset)| {
                 header_offset == block.header_offset
@@ -2568,7 +2585,10 @@ fn replay<'a>(
             let mut chunks = RetainedChunks::new();
             // Set once this segment has read the line that ends at or past
             // its limit — the last it owns, and the one the next segment's
-            // search skips, so the two tile.
+            // search skips, so the two tile — or a row past its block's
+            // sorted bound, after which it owns none the filter keeps. A later
+            // segment of the same block stops at its own first row, where
+            // pruning has not already skipped it.
             let mut past_limit = false;
 
             loop {
@@ -2670,6 +2690,9 @@ fn replay<'a>(
                                             &mut split,
                                             &mut chunks,
                                         )?;
+                                    } else if stop.is_some_and(|stop| stop.passed(raw, &mut split))
+                                    {
+                                        past_limit = true;
                                     }
                                     if batcher.should_flush() {
                                         let begins_at = batcher
@@ -2711,7 +2734,7 @@ fn replay<'a>(
                         // segment's limit, so it was its last. Checked after
                         // the event, the straddling row being *this*
                         // segment's.
-                        if scanner.position() > seg_limit {
+                        if past_limit || scanner.position() > seg_limit {
                             past_limit = true;
                             break;
                         }

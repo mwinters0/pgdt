@@ -65,13 +65,12 @@ on what a skipped group raises is `decisions.md`, "D54". No figure was taken.
 
 ## For the slices after
 
-- **10.9.** The early stop reads `ColumnBounds::sortedness` and cuts inside a
-  kept run; the plan already holds each block's runs and its resolved filter,
-  and a stop inside a run is a smaller `limit`, which `resumed_at` and the
-  split's cut both take as they are.
+- **10.9.** Landed: [its notes](roadmap-P10.9-sorted-stop-notes.md). The stop
+  is found while reading, not cut into a run's `limit` at plan time.
 - **10.10.** `statistics-pruning` times `pgdq query` against `--statistics
-  none`; the note's skipped bytes are the process's own count of what pruning
-  saved, for attribution beside the timing.
+  none`; the note's skipped bytes are the process's own count of what group
+  skipping saved, for attribution beside the timing, and not of what 10.9's
+  stop saves.
 
 ## Negative results
 

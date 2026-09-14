@@ -367,13 +367,13 @@ No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or
 column-to-column. `IS [NOT] DISTINCT FROM` is what three-valued logic forces.
 
 ### D54 One tree, no planner, short-circuit defined against the root
-`filter` is one n-ary `Expr` defaulting to the empty conjunction. `And` may stop at the first
-`Unknown` except beneath `Not`, since only the root's `True` matters; a decode failure surfaces only
-where evaluation reaches it, and a row group whose statistics rule `True` out is never read, so none
-in it is raised (`prune.rs`). Schema, filter and projection refusals come from the plan before any
-row, for the first refusing block in file order, walking leaves the evaluator would skip; a block with
-no column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not skipping a group
-marked as holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
+`filter` is one n-ary `Expr` defaulting to the empty conjunction. `And` may stop at the first `Unknown`
+except beneath `Not`, since only the root's `True` matters; a decode failure surfaces only where
+evaluation reaches it, never in a row group statistics rule out or past a sorted block's required bound,
+neither being read (`prune.rs`). Schema, filter and projection refusals come from the plan before any row,
+for the first refusing block in file order, walking leaves the evaluator would skip; a block with no
+column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not skipping a group marked as
+holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is

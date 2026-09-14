@@ -1,11 +1,12 @@
 //! The pruning consumer: a query skips the row groups whose statistics prove
-//! no row satisfies its filter (`QueryOptions::use_statistics`).
+//! no row satisfies its filter, and stops reading a block sorted past the
+//! filter's bound (`QueryOptions::use_statistics`).
 //!
 //! **A pruned query returns exactly what the same query returns unpruned**,
 //! checked over every fixture with generated filters — the phase's
-//! correctness check. That skipping actually happens is pinned apart from it,
-//! by filters whose skip is known from the `statistics` fixture's shapes
-//! (`tests/statistics_fixture.rs`).
+//! correctness check. That skipping and stopping actually happen is pinned
+//! apart from it, by filters whose skip is known from the `statistics`
+//! fixture's shapes (`tests/statistics_fixture.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
@@ -598,7 +599,8 @@ async fn a_pruned_stream_resumes_across_its_gaps() {
     }
 }
 
-/// A local file that records where every read it serves starts.
+/// A local file that records where every read it serves starts, and splits
+/// as the file does.
 struct Recording {
     inner: LocalFileSource,
     starts: std::sync::Mutex<Vec<u64>>,
@@ -614,6 +616,11 @@ impl pgdump_query::ByteRangeSource for Recording {
     > {
         self.starts.lock().unwrap().push(offset);
         self.inner.read_range(offset, len)
+    }
+
+    /// The file's own advice, without which a split query is one sub-stream.
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdump_query::Partitioning {
+        self.inner.partitions(range)
     }
 
     fn size(
@@ -738,5 +745,156 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
             assert_undeep(&format!("resumed after {rows} row(s) under {:?}", options.filter));
         }
         assert_eq!(rows, expected);
+    }
+}
+
+/// Where the line of `public.ordered` whose `id` is `id` ends: the byte after
+/// its LF.
+fn ordered_line_end(dump: &Path, block: &CopyBlock, id: u32) -> u64 {
+    let bytes = std::fs::read(dump).unwrap();
+    let data = &bytes[block.data_offset as usize..block.terminator_offset as usize];
+    let mut at = block.data_offset;
+    for line in data.split_inclusive(|&b| b == b'\n') {
+        at += line.len() as u64;
+        if line.starts_with(format!("{id}\t").as_bytes()) {
+            return at;
+        }
+    }
+    panic!("no row with id {id}");
+}
+
+/// **A block sorted on a column its filter bounds is read no further than its
+/// first row past the bound**, inside the one group the shipped size makes of
+/// it — ascending under `<` and `<=`, descending under `>`, NULLs between
+/// values stopping nothing, the term inside a nested conjunction — and read to
+/// its end where the order does not close the bound, where no conjunction
+/// requires the term, or under `use_statistics: false`. Serially no read
+/// starts past the stopping row; split, each piece past it reads only as far
+/// as its own first row.
+#[tokio::test]
+async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
+    let (_dir, dump, index) =
+        gathered(&statistics_fixture(16, "default"), pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE)
+            .await;
+    let block = index.blocks_for("public.ordered").next().unwrap();
+    assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
+    let source = Recording {
+        inner: LocalFileSource::open(&dump).unwrap(),
+        starts: std::sync::Mutex::new(Vec::new()),
+    };
+    let cache = CacheMode::Enabled(cache::colocated_path(&dump));
+    let scan = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
+    let single = |column, op, value| Expr::Term(term(column, op, Some(value)));
+
+    // A filter, its row count, and the `id` of the row its stop reads last —
+    // `None` for a filter that must read the block to its end.
+    let cases = [
+        (single("id", PredicateOp::Lt, "20"), 19, Some(20)),
+        (single("stepped", PredicateOp::Le, "3"), 40, Some(41)),
+        (single("reversed", PredicateOp::Gt, "990"), 10, Some(11)),
+        (single("gappy", PredicateOp::Lt, "100"), 85, Some(100)),
+        (
+            Expr::And(vec![
+                Expr::And(vec![single("low_card", PredicateOp::Eq, "amber")]),
+                single("id", PredicateOp::Lt, "20"),
+            ]),
+            4,
+            Some(20),
+        ),
+        (single("id", PredicateOp::Gt, "980"), 20, None),
+        (single("reversed", PredicateOp::Lt, "20"), 19, None),
+        (single("unsorted", PredicateOp::Lt, "20"), 20, None),
+        (
+            Expr::Or(vec![
+                single("id", PredicateOp::Lt, "20"),
+                single("low_card", PredicateOp::Eq, "absent"),
+            ]),
+            19,
+            None,
+        ),
+        (Expr::Not(Box::new(single("id", PredicateOp::Ge, "20"))), 19, None),
+    ];
+    for (filter, expected, stops_at) in cases {
+        for (use_statistics, jobs) in [(true, 1), (true, SPLIT_JOBS), (false, 1)] {
+            let what = format!("{filter:?} at {jobs} job(s), statistics {use_statistics}");
+            let options = with(filter.clone(), use_statistics, jobs);
+            let streams = table_stream_partitions(
+                &source,
+                "public.ordered",
+                scan.clone(),
+                options,
+                cache.clone(),
+            )
+            .await
+            .unwrap();
+            let pieces = streams.len();
+            let mut rows = 0;
+            for mut stream in streams {
+                while let Some(batch) = stream.next().await {
+                    rows += batch.unwrap().num_rows();
+                }
+            }
+            assert_eq!(rows, expected, "{what}");
+            let starts = std::mem::take(&mut *source.starts.lock().unwrap());
+            let last = *starts.iter().max().unwrap();
+            match stops_at.filter(|_| use_statistics) {
+                Some(id) => {
+                    let end = ordered_line_end(&dump, block, id);
+                    let past = starts.iter().filter(|&&s| s >= end).count();
+                    if jobs == 1 {
+                        assert_eq!(past, 0, "{what}: read at {last}, past {end}");
+                    } else {
+                        assert!(pieces > 1, "{what}: not split");
+                        assert!(past <= 4 * pieces, "{what}: {past} read(s) past {end}");
+                    }
+                }
+                None => assert!(
+                    last + scan.chunk_size as u64 >= block.terminator_offset,
+                    "{what}: last read at {last}, the block ending at {}",
+                    block.terminator_offset
+                ),
+            }
+        }
+    }
+}
+
+/// **A stream resumed at any batch of a stopped block continues with exactly
+/// the rows it had not delivered**: a pause on the last row the filter keeps
+/// resumes into the stopping row, and stops there again.
+#[tokio::test]
+async fn a_stopped_stream_resumes_to_the_same_rows() {
+    let (_dir, dump, _index) =
+        gathered(&statistics_fixture(16, "default"), pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE)
+            .await;
+    let source = LocalFileSource::open(&dump).unwrap();
+    let cache = CacheMode::Enabled(cache::colocated_path(&dump));
+    let filter = Expr::Term(term("id", PredicateOp::Le, Some("19")));
+    for max_rows in [1, 7, 19, 20] {
+        let options = QueryOptions {
+            filter: filter.clone(),
+            projection: Some(vec!["id".into()]),
+            max_rows,
+            ..QueryOptions::default()
+        };
+        let mut delivered = Vec::new();
+        let mut token = None;
+        loop {
+            let mut stream = table_stream(
+                &source,
+                "public.ordered",
+                ScanOptions::default(),
+                options.clone(),
+                token.take(),
+                cache.clone(),
+            );
+            let Some(batch) = stream.next().await else { break };
+            let batch = batch.unwrap();
+            let column = arrow::array::AsArray::as_primitive::<arrow::datatypes::Int32Type>(
+                batch.column(0).as_ref(),
+            );
+            delivered.extend(column.values().iter().copied());
+            token = Some(stream.resume_token());
+        }
+        assert_eq!(delivered, (1..=19).collect::<Vec<i32>>(), "max_rows {max_rows}");
     }
 }
