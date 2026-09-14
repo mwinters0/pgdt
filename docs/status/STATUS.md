@@ -303,16 +303,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The early stop is reported per block, not as per-stream counts** (10.11).
-  The spec has a stream count "the blocks it stopped and the bytes", summed by
-  `pgdq query`; but a partitioned replay hands one block's pieces to several
-  sub-streams, each piece past the stopping row stopping at its own first row,
-  so summed block counts count a block once per sub-stream. So
-  `TableStream::early_stops` returns one `EarlyStop { header_offset,
-  unread_bytes: Option<u64> }` per block with a stop planned, and the CLI
-  merges by `header_offset`; its `unread_bytes` is a lower bound, measured to
-  a piece's `limit + 1` and short by the tail of the row straddling it.
-  Reconsidering means either counts with a documented overcount, or an exact
-  byte count, which needs each piece's owned end found by reading past its
-  limit.

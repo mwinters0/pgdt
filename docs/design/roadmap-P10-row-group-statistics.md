@@ -261,18 +261,26 @@ a new `PlanNote` kind stating the groups and bytes skipped out of the total, and
 the pruned-equals-unpruned check runs from the CLI.
 
 **An early stop is found while rows are read**, after the plan's notes are
-settled, so it is **reported after the fact**: a stream counts the blocks it
-stopped and the bytes their stopped segments left unread, readable once
-drained, and `pgdq query` sums them over its sub-streams into a `note:` printed
-only where a stop fired. Bytes, so the count adds to the pruning note's; a
-library caller can tell a block with no stop planned from one whose bound was
-never reached. Pruned, a stop saves at most the rest of the group its bound
-falls in, one per block, a group wholly past it being skipped by its bounds
+settled, so it is **reported after the fact**, per block: a stream lists each
+block it replayed with a stop planned and the bytes its stopped pieces left
+unread, readable once drained, and `pgdq query` merges the lists of its
+sub-streams by block into a `note:` printed only where a stop fired. Per block,
+since each piece of a split block past the stopping row stops at its own first
+row and a per-stream count would count the block once per sub-stream. Bytes, so
+they add to the pruning note's; exact serially, and short by at most one row's
+tail per piece boundary when split, the row straddling a piece's limit being
+its own and never read to find. A library caller can tell a block with no stop
+planned from one whose bound was never reached. Pruned, a stop saves at most the
+rest of the group its bound falls in, one per block, a group wholly past it
+being skipped by its bounds
 ([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "The
 early stop is reported after the fact"). *Rejected:* counting rows past the
 stop, which are never read and so only estimated; a zero where a stop was
 planned and not reached, the pruning note already saying statistics were
-consulted and a stop never reached having saved nothing.
+consulted and a stop never reached having saved nothing; exact split bytes by
+reading each piece past its limit. *Reopens:* an account needing exact bytes,
+which each piece reporting its first row's start alone would give a caller
+merging every sub-stream.
 
 ## Shapes the phase must hold
 
