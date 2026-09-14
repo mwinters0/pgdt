@@ -41,6 +41,20 @@ Options:
           single value of hundreds of megabytes — needs a larger limit stated here. A row is held
           whole while it is scanned, so this is also what one row may cost in memory
 
+      --statistics <SELECTION>
+          Which per-row-group column statistics to gather: `all`, the default; `none`; or a
+          comma-separated list of the tables (`schema.table`, or a bare `table` in any schema) and
+          columns (`schema.table.column`) to gather them for alone. Statistics record, for each
+          stretch of a table's data, its row count and each column's NULL count, and where a
+          column's comparison allows, its least and greatest value and its distinct values.
+          Gathering reads every value of every tracked column, and a table gathered for is read by
+          one worker whatever `--jobs` says; `none` scans as fast as the file allows
+
+      --statistics-group-size <BYTES>
+          The bytes of a table's data each row group of statistics covers. The default, 1 MiB, is
+          coarse; a smaller group records more finely where values lie and costs memory and cache
+          space in proportion
+
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count

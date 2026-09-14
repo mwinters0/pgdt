@@ -61,9 +61,19 @@ fn parse_takes_the_stated_limit_on_the_serial_scan_and_the_leader_split() {
     assert!(parse(&[]).status.success(), "the default limit holds the long value");
     assert_refused(&parse(&["--max-line-bytes", REFUSING]), "a serial parse");
     // Small enough that the long value's block is cut into pieces, so the
-    // limit is the split's to apply as well as the serial scanner's.
+    // limit is the split's to apply as well as the serial scanner's — with
+    // statistics off, since a gathered block is never split.
     assert_refused(
-        &parse(&["--max-line-bytes", REFUSING, "--jobs", "8", "--chunk-size", "512"]),
+        &parse(&[
+            "--max-line-bytes",
+            REFUSING,
+            "--jobs",
+            "8",
+            "--chunk-size",
+            "512",
+            "--statistics",
+            "none",
+        ]),
         "a split parse",
     );
 }

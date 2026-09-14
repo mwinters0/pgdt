@@ -1639,8 +1639,7 @@ mod tests {
             end_offset: 0,
             row_count: 0,
             partition_root: None,
-            sparse_index: None,
-            column_stats: None,
+            statistics: None,
             array_shapes: Vec::new(),
         })))
     }

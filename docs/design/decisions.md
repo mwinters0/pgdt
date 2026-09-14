@@ -239,11 +239,12 @@ data span absorbs its TOC comment unconditionally. `INSERT` runs fold in
 invariant) and the run's end is string-aware. Two cuts stay untaken until the
 `INSERT` row reader exists (`KD9`).
 
-### D34 `DumpIndex` stores no fact twice; whole-file facts need `is_complete`
-`blocks()` is a filtered iterator, `metadata` is computed once, diagnostics are
-never persisted; roles are the exception. A streamed schema is not gated on
-completeness: it commits over the blocks it replays (I2). `sparse_index` and
-`column_stats` are serialized `None` so populating either is additive.
+### D34 `DumpIndex` stores no fact twice but sortedness; whole-file facts need `is_complete`
+`blocks()` is filtered, `metadata` computed once, diagnostics never persisted; roles
+are the exception. A streamed schema commits over the blocks it replays, ungated (I2).
+Statistics sit in their block behind an `Arc`, so the save gate's clones copy a
+reference (`KD5`), and store sortedness rather than a query re-deriving it; a group is
+a byte range, no leader piece knowing a global row index. Rejected: `SparseRowIndex`.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at
@@ -444,22 +445,22 @@ with width and bare-flag assertions. Rejected: a `long_help` per flag.
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go
-L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`,
-`cache`, `diagnostic`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`,
-`nested`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`,
-`leader`); `error`, `lib` in none; CLI and embedders above L4. `use` points
-down or sideways; a module gets a layer before it is written (`tests/layering.rs`).
-Deviations, moved only with a `batch` rework: `read_table` (L4 work) and
-`QueryOptions::filter` naming `predicate::Expr`. Rejected: a crate split (D74).
+L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`, `cache`,
+`diagnostic`, `statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`,
+`decode`, `nested`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`,
+`leader`, `gather`); `error`, `lib` in none; CLI and embedders above L4. `use`
+points down or sideways; a module gets a layer before it is written
+(`tests/layering.rs`). Deviations, moved only with a `batch` rework: `read_table`
+(L4 work) and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a crate split (D74).
 
 ### D74 L1 is Arrow-free and L2 is pure, so a metadata-only caller compiles no Arrow
 L1 never names `arrow`; L2 names `arrow::datatypes` only, is synchronous and
 does no I/O; a decoder takes an unescaped field and returns a value, never a
 builder (L3, whose views marry array building to the read buffers, D46).
 Anything persisted is L1's vocabulary — declared type strings, never a `DataType`
-or another L2 conclusion, P10's statistics included. A cross-layer trait is
-defined below and implemented above (`ByteRangeSource::partitions`); a scan
-predicate hook and P10's parse step take that shape, `predicate.rs` staying L4.
+or another L2 conclusion, a statistic's bounds included. A cross-layer trait is
+defined below and implemented above (`ByteRangeSource::partitions`,
+`statistics::BlockObserver`); a scan predicate hook takes that shape too.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

@@ -267,6 +267,9 @@ pub(crate) enum BoundBy {
     /// The source would be split, and the caller's memory budget affords fewer
     /// readers of it than were asked for (`crate::stream::worker_count`).
     Budget,
+    /// The scan gathers statistics, and a gathered block is read by the serial
+    /// scanner rather than offered here ([`gathering_shortfall`]).
+    Statistics,
 }
 
 impl BoundBy {
@@ -276,6 +279,7 @@ impl BoundBy {
         match self {
             Self::Source => "source",
             Self::Budget => "budget",
+            Self::Statistics => "statistics",
         }
     }
 }
@@ -283,10 +287,11 @@ impl BoundBy {
 /// A count asked for and not delivered, with the bytes the arrangement it
 /// refused would have held.
 ///
-/// **It reports the two rules that answer for the arrangement, and not the one
-/// that answers for a block.** Both are read off the source's advice over *the
-/// rest of the file* and the caller's budget, so one line stands for the whole
-/// scan. [`scan_region`]'s floor is the third way to be left serial
+/// **It reports the rules that answer for the arrangement, and not the one
+/// that answers for a block.** Two are read off the source's advice over *the
+/// rest of the file* and the caller's budget, and the third off the scan's
+/// statistics request ([`gathering_shortfall`]), so one line stands for the
+/// whole scan. [`scan_region`]'s floor is the other way to be left serial
 /// and is deliberately not reported: it is an end-of-file condition and would
 /// fire on the last block of every file.
 ///
@@ -311,6 +316,21 @@ pub(crate) struct Shortfall {
     /// ([`crate::io::ByteRangeSource::block_decode_bytes`]). `None` for a
     /// source with no such path to name.
     pub(crate) would_hold_bytes: Option<u64>,
+}
+
+/// What a scan gathering statistics delivers short of `options`' count: one
+/// reader, where more were asked for. A gathered block is never offered to
+/// [`scan_region`], its pieces carrying no statistics observer, so the reason
+/// holds at every such block and one line stands for the scan. `None` where
+/// one reader was asked for.
+pub(crate) fn gathering_shortfall(options: &ScanOptions) -> Option<Shortfall> {
+    let asked = options.parallelism.jobs();
+    (asked > 1).then_some(Shortfall {
+        asked,
+        delivered: 1,
+        bound_by: BoundBy::Statistics,
+        would_hold_bytes: None,
+    })
 }
 
 /// Scan the interior of the `COPY` block that opens at `data_offset` with
@@ -653,7 +673,7 @@ mod tests {
                         columns.push(start.header.columns.len());
                         builder.on_copy_start(start);
                     }
-                    Event::Row(row) => builder.on_row(row.raw),
+                    Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => builder.on_copy_end(end),
                     Event::Line(line) => builder.feed_line(line.offset, line.raw),
                     Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),

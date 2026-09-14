@@ -53,6 +53,7 @@ use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_
 use crate::cache::{CacheLoad, CacheMode};
 use crate::copy::{CopyHeader, DELIMITER, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::gather;
 use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
     union_census,
@@ -67,6 +68,7 @@ use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
+use crate::statistics::StatisticsRequest;
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -415,12 +417,17 @@ enum MapStop {
 /// database's first `COPY` block**, which per I1 is one of the two boundaries
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
 /// stands on.
+///
+/// **`statistics` is what to gather, and only [`map_file`] passes one**: a
+/// query never gathers. A block it tracks is observed row by row on this loop
+/// and is never offered to the leader, whose pieces carry no observer.
 async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
+    statistics: Option<&StatisticsRequest>,
     size: u64,
 ) -> Result<MapStop> {
     if index.scanned_through >= size {
@@ -529,6 +536,7 @@ async fn map_forward(
                         let header_offset = start.header_offset;
                         let data_offset = start.data_offset;
                         let columns = start.header.columns.len();
+                        let header = statistics.is_some().then(|| start.header.clone());
                         builder.on_copy_start(start);
                         // **Once per database, not once per block**:
                         // recomputing at every `CopyStart` would put a third
@@ -543,7 +551,29 @@ async fn map_forward(
                                 size,
                             );
                             index.metadata = Some(dump_metadata_from_spans(&spans));
-                            metadata_covers = Some(db);
+                            metadata_covers = Some(db.clone());
+                        }
+                        // After the restatement, so the observer resolves the
+                        // block against its own database's DDL.
+                        let observer =
+                            statistics.zip(header.as_ref()).and_then(|(request, header)| {
+                                gather::observer_for(
+                                    request,
+                                    header,
+                                    index.metadata.as_ref(),
+                                    db.as_deref(),
+                                )
+                            });
+                        if let Some(observer) = observer {
+                            builder.observe_block(observer);
+                            // **The leader is not offered a gathered block**:
+                            // its pieces carry no observer, so the serial
+                            // scanner reads it.
+                            report_shortfall(
+                                &mut shortfall_reported,
+                                leader::gathering_shortfall(scan_options),
+                            );
+                            continue;
                         }
                         // **The offer, and this loop is the leader making it**
                         // (`crate::leader::scan_region`): everything from
@@ -623,7 +653,7 @@ async fn map_forward(
                     // become batches in the replay phase. Rows are read here
                     // for the array-shape census alone
                     // (`docs/design/decisions.md`, "D35").
-                    Event::Row(row) => builder.on_row(row.raw),
+                    Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => {
                         let targets = std::mem::take(&mut open_block_targets);
                         let end_offset = end.end_offset;
@@ -893,6 +923,10 @@ pub struct MapRun {
 /// — its spans *are* the prefix, so running it over a resumed map would
 /// discard one.
 ///
+/// **It gathers what [`ScanOptions::statistics`] asks for**, over the blocks
+/// this run maps; a block the cache already held keeps whatever it was mapped
+/// with.
+///
 /// **The three finishing steps are this function's, not `map_forward`'s.**
 ///
 /// - `metadata` is recomputed over the whole span list. EOF is the other
@@ -957,7 +991,8 @@ pub async fn map_file(
         cache.save(source, &index).await?;
     }
 
-    if map_forward(source, scan_options, cache, &mut index, None, size).await?
+    let statistics = scan_options.statistics.as_ref();
+    if map_forward(source, scan_options, cache, &mut index, None, statistics, size).await?
         == MapStop::Interrupted
     {
         return Ok(MapRun { index, resumed_from, interrupted: true });
@@ -1544,7 +1579,7 @@ async fn map_for_query(
     // A cancelled mapping pass is an error here rather than a short stream
     // (`docs/design/decisions.md`, "D48"). `pgdq query` never sets the flag;
     // an embedder that does gets told.
-    if map_forward(source, scan_options, cache, &mut index, target, size).await?
+    if map_forward(source, scan_options, cache, &mut index, target, None, size).await?
         == MapStop::Interrupted
     {
         return Err(Error::ScanCancelled { scanned_through: index.scanned_through });
@@ -2679,8 +2714,7 @@ mod tests {
             end_offset: 0,
             row_count: 0,
             partition_root: None,
-            sparse_index: None,
-            column_stats: None,
+            statistics: None,
             array_shapes: Vec::new(),
         };
         let piece = |start: u64, limit: u64| Segment {

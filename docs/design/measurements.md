@@ -163,6 +163,13 @@ Eighteen standing rules for reading anything below:
   the apparatus rather than replacing it; raising it
   is an apparatus change and obliges a re-sweep, exactly as changing the
   allocator would.
+- **Every `parse` states `--statistics none`, for the same reason.** `parse`
+  gathers per-row-group statistics by default, reading every value and scanning
+  a gathered table serially at any `--jobs`, so a shape inheriting that default
+  would time the gathering rather than the scan its figure names.
+  `uv run measure.py --check` fails a shape whose `parse` omits it, and the
+  profile, heaptrack and koji recipes state it too; `--preamble-only` reads no
+  row and states none. What gathering costs is its own figure.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
   measurement: the allocator, the stage's position in the session and the

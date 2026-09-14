@@ -224,6 +224,38 @@ needs rather than as far as it goes. It is checked as each read completes, so a
 line can run past the limit by up to one read chunk (`--chunk-size`) before it
 is refused.
 
+### `--statistics`: what `parse` records for later queries
+
+By default `parse` also gathers **statistics**: for every stretch of each
+table's data — a **row group**, one mebibyte of it — the number of rows, each
+column's number of NULLs, and, where pgdq compares a column's values exactly, its
+least and greatest value and its distinct values (up to 64, none longer than 256
+bytes; past either, that group records no distinct values for the column).
+They are stored in the cache beside the rest of the index, and `info --json`
+carries them per block. This version records them; no command reads them yet.
+
+Gathering reads every value of every column, so it costs a `parse` time, memory
+and cache space that grow with the dump, and **a table gathered for is read by
+one worker whatever `--jobs` says** — `scan arrangement` says so (below).
+`--statistics none` turns it off:
+
+```sh
+pgdq parse --source big.sql --statistics none                        # nothing gathered
+pgdq parse --source big.sql --statistics public.orders,public.items.sku
+pgdq parse --source big.sql --statistics-group-size 65536            # finer groups
+```
+
+A selection is a comma-separated list of tables (`schema.table`, or a bare
+`table` matching any schema) and single columns (`schema.table.column`); every
+other table gathers nothing and is read as `--statistics none` reads it. A name
+is split at its dots, so a quoted identifier containing one cannot be named.
+`--statistics-group-size` states the bytes of data each group covers: a smaller
+group records more finely where values lie and costs memory and cache space in
+proportion. Neither flag combines with `--preamble-only`, which reads no row.
+
+A resumed `parse` gathers what it is asked for over the blocks it has still to
+scan; blocks an earlier run already mapped keep what that run gathered.
+
 ### `--jobs` and `--parallel-memory`: the workers and the budget
 
 `parse` and `query` take two more numbers: how many workers to ask for, and a
@@ -563,11 +595,12 @@ asked for one, and it names its own origin the same way:
 so a log line naming a scan says what produced everything that follows it.
 
 **`scan arrangement` is what says how many readers really ran.** `scan
-started`'s `jobs=` is the count `resolved the arrangement` announced, and two
+started`'s `jobs=` is the count `resolved the arrangement` announced, and three
 things can still cut it: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
-whatever `--jobs` said**, and a budget too small for the readers asked for buys
-fewer of them. Either way one line follows, once per scan:
+whatever `--jobs` said**, a budget too small for the readers asked for buys
+fewer of them, and a table `parse` gathers statistics for is read by one worker
+(`--statistics`, above). Any of them prints one line, once per scan:
 
 ```
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=67108864
@@ -575,10 +608,11 @@ fewer of them. Either way one line follows, once per scan:
 ```
 
 `jobs=` is what is running, `asked=` is what `scan started` announced,
-`bound_by=` is which of the two cut it — `source` for a container path the
-budget could not afford, `budget` for readers it could not afford — and
-`would_hold_bytes=` is what the arrangement that was refused would have held,
-which is the number to raise `--parallel-memory` to. **No such line means the
+`bound_by=` is which of the three cut it — `source` for a container path the
+budget could not afford, `budget` for readers it could not afford, `statistics`
+for a scan gathering them — and `would_hold_bytes=` is what the arrangement that
+was refused would have held, which is the number to raise `--parallel-memory`
+to; a `statistics` line carries none, `--statistics none` being the way back. **No such line means the
 count was started as announced.**
 
 **What no line means is that the count was started — not that every worker

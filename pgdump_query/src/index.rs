@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -16,29 +17,7 @@ use crate::io::ByteRangeSource;
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, check_tiling};
 use crate::preamble::dump_metadata_from_spans;
 use crate::scan::{Event, ScanOptions, scan};
-
-/// A block's sparse row index: the byte offset of every `interval`-th data
-/// row, letting a later reader seek into the middle of a large block instead
-/// of scanning from its start. Reserved in the cache format and **not
-/// populated yet**; its interval, serialization and invalidation rules are
-/// its first reader's to define (`docs/design/roadmap.md`,
-/// `docs/design/decisions.md`, "D34").
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SparseRowIndex {
-    /// Rows between checkpoints (the default batch size).
-    pub interval: u64,
-    /// `checkpoints[i]` is the byte offset of data row `i * interval` within
-    /// the block.
-    pub checkpoints: Vec<u64>,
-}
-
-/// Per-row-group column statistics for one block, keyed to its
-/// [`SparseRowIndex`] checkpoints. Reserved in the cache format, not
-/// populated yet — `docs/design/roadmap.md`, "P10 —
-/// Per-row-group column statistics", defines its real shape (null counts,
-/// sortedness, min/max, the type each was computed as).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RowGroupStats {}
+use crate::statistics::BlockStatistics;
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
 /// list, user-defined type definitions. Populated by [`build_index`] via
@@ -168,10 +147,11 @@ pub struct CopyBlock {
     /// once the queried table's block closes or must run to EOF, those blocks
     /// not being adjacent (`docs/design/decisions.md`, "D49").
     pub partition_root: Option<String>,
-    /// Reserved — see [`SparseRowIndex`]. Always `None`.
-    pub sparse_index: Option<SparseRowIndex>,
-    /// Reserved — see [`RowGroupStats`]. Always `None`.
-    pub column_stats: Option<RowGroupStats>,
+    /// This block's per-row-group column statistics, where the mapping pass
+    /// that recorded it was asked to gather them (`crate::statistics`).
+    /// Shared, so a clone of the map copies a reference
+    /// (`docs/design/decisions.md`, "D34").
+    pub statistics: Option<Arc<BlockStatistics>>,
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order. Every mapping pass censuses
     /// (`docs/design/decisions.md`, "D35"), so a block in the map always
@@ -261,7 +241,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
     scan(source, options, |event| {
         match event {
             Event::CopyStart(start) => spans.on_copy_start(start),
-            Event::Row(row) => spans.on_row(row.raw),
+            Event::Row(row) => spans.on_row(row.offset, row.raw),
             Event::CopyEnd(end) => spans.on_copy_end(end),
             Event::Line(line) => spans.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => spans.on_dollar_quote_end(end.offset),

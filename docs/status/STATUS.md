@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `CopyBlock::sparse_index` and `column_stats` are reserved `None` | D34 |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` gathers them serially by default and persists them in the cache, and nothing reads them yet | `statistics.rs`, `gather.rs`; D34; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -72,7 +72,8 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.1** Fixture shapes — sorted, reversed, unsorted, constant and all-null columns; float specials; `numeric` `1.5`/`1.50`; `C` and default-collated text; low- and over-64-cardinality columns; a value past `N` and the read chunk — and `--max-line-bytes` on `parse` and `query`; [notes](../design/roadmap-P10.1-fixture-shapes-notes.md)
 - [x] **10.2** Row-free comparison and plan-time filter resolution, behaviour-preserving; [notes](../design/roadmap-P10.2-row-free-comparison-notes.md)
 - [x] **10.3** The truth-set evaluator, property-tested against the row evaluator; [notes](../design/roadmap-P10.3-truth-set-evaluator-notes.md)
-- [ ] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`, coarse reserve and resident bumps
+- [x] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`; [notes](../design/roadmap-P10.4-serial-gathering-notes.md)
+- [ ] **10.4.1** Coarse reserve and resident bumps for gathering on by default
 - [ ] **10.5** Reporting in `info --detail` and `--json`
 - [ ] **10.6** Parallel gathering, identical to serial over every fixture
 - [ ] **10.7** Back-fill of blocks lacking the requested statistics
@@ -293,3 +294,23 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The library gathers nothing unless asked; `pgdq parse` gathers everything
+  unless told not to.** `ScanOptions::statistics` defaults to `None`, and the
+  CLI fills it with every column. The spec states the CLI's default and puts
+  the library's selection "on the mapping options" without saying what an
+  embedder calling `map_file` gets. Taken this way because the library's other
+  costly behaviours are opt-in (`decisions.md`, "D1"), and because
+  `ScanOptions::default()` is what every existing mapping and query test runs,
+  where gathering would silently take the leader out of each parallel mapping
+  test. Reconsidering means a `Some(StatisticsRequest::default())` default and
+  a `None` stated in those tests, the CLI's `query` path unchanged.
+- **A `character` column's bounds are stored without their trailing blanks.**
+  The spec persists bounds as "the spelling `pg_dump` wrote"; a `character(n)`
+  value is written padded to `n`, and its comparison ignores the padding. Stored
+  unpadded, a bound keys exactly as the value does and a short value in a
+  `character(300)` column stays an exact bound; stored padded, every such value
+  would exceed the 256-byte cap and be truncated. Reconsidering means storing the
+  padded text where it fits and truncating otherwise (`gather.rs`,
+  `Canonical::PaddedText`), every `character` column wider than the cap then
+  bounded inexactly.

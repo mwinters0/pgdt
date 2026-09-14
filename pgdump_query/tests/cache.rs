@@ -64,18 +64,15 @@ async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::UnsupportedVersion);
 }
 
-/// A saved index round-trips exactly, including the still-reserved-and-
-/// unpopulated fields (`CopyBlock::sparse_index`/`column_stats`) — they must
-/// serialize as `None` rather than being silently dropped, which is the
-/// whole point of reserving them ahead of population. `DumpIndex::metadata`
-/// is populated by every `build_index` scan, so this also pins that a
-/// `Some(DumpMetadata { .. })` round-trips.
+/// A saved index round-trips exactly. `DumpIndex::metadata` is populated by
+/// every `build_index` scan, so this also pins that a `Some(DumpMetadata { ..
+/// })` round-trips; a block's gathered statistics are pinned by
+/// `tests/statistics.rs`.
 #[tokio::test]
 async fn saved_index_round_trips_exactly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.blocks().next().is_some());
-    assert!(index.blocks().all(|b| b.sparse_index.is_none() && b.column_stats.is_none()));
     assert!(index.metadata.is_some());
 
     let dir = tempfile::tempdir().unwrap();

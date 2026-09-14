@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -14,8 +15,9 @@ use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolv
 use pgdump_query::{
     ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
     DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
-    PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody, TypeKind,
-    open_local, preamble_only, render_field_into,
+    PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody,
+    StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open_local, preamble_only,
+    render_field_into,
 };
 
 mod alloc;
@@ -446,6 +448,33 @@ enum Command {
         /// memory.
         #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
         max_line_bytes: Option<usize>,
+        /// Which per-row-group column statistics to gather: `all`, the
+        /// default; `none`; or a comma-separated list of the tables
+        /// (`schema.table`, or a bare `table` in any schema) and columns
+        /// (`schema.table.column`) to gather them for alone. Statistics record,
+        /// for each stretch of a table's data, its row count and each column's
+        /// NULL count, and where a column's comparison allows, its least and
+        /// greatest value and its distinct values. Gathering reads every value
+        /// of every tracked column, and a table gathered for is read by one
+        /// worker whatever `--jobs` says; `none` scans as fast as the file
+        /// allows.
+        #[arg(
+            long,
+            value_name = "SELECTION",
+            value_parser = parse_statistics,
+            conflicts_with = "preamble_only"
+        )]
+        statistics: Option<StatisticsFlag>,
+        /// The bytes of a table's data each row group of statistics covers.
+        /// The default, 1 MiB, is coarse; a smaller group records more finely
+        /// where values lie and costs memory and cache space in proportion.
+        #[arg(
+            long,
+            value_name = "BYTES",
+            value_parser = parse_statistics_group_size,
+            conflicts_with = "preamble_only"
+        )]
+        statistics_group_size: Option<NonZeroU64>,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -627,6 +656,75 @@ fn parse_max_line_bytes(text: &str) -> std::result::Result<usize, String> {
         Ok(n) => Ok(n),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// A `--statistics` value: gather nothing, or gather for a selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StatisticsFlag {
+    None,
+    Gather(StatisticsSelection),
+}
+
+/// A `--statistics` value: `none`, `all`, or a comma-separated list of tables
+/// and `schema.table.column`s. A name is split at its dots, so a quoted
+/// identifier holding one cannot be named here.
+fn parse_statistics(text: &str) -> std::result::Result<StatisticsFlag, String> {
+    match text {
+        "none" => return Ok(StatisticsFlag::None),
+        "all" => return Ok(StatisticsFlag::Gather(StatisticsSelection::All)),
+        _ => {}
+    }
+    let targets = text
+        .split(',')
+        .map(|entry| {
+            let entry = entry.trim();
+            let parts: Vec<&str> = entry.split('.').collect();
+            if parts.iter().any(|part| part.is_empty()) {
+                return Err(format!("{entry:?} is not a table or a schema.table.column"));
+            }
+            match parts.as_slice() {
+                [_] | [_, _] => Ok(StatisticsTarget::Table(entry.to_string())),
+                [schema, table, column] => Ok(StatisticsTarget::Column {
+                    table: format!("{schema}.{table}"),
+                    column: (*column).to_string(),
+                }),
+                _ => Err(format!("{entry:?} has more parts than schema.table.column")),
+            }
+        })
+        .collect::<std::result::Result<Vec<_>, String>>()?;
+    Ok(StatisticsFlag::Gather(StatisticsSelection::Only(targets)))
+}
+
+/// A `--statistics-group-size` value: a byte count, and never zero, which
+/// would put every row in a group of its own past the end of the data.
+fn parse_statistics_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
+    match text.parse::<u64>() {
+        Ok(n) => NonZeroU64::new(n).ok_or_else(|| "a group size of 0 covers no bytes".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// What `parse` gathers, from its two statistics flags: `--statistics` absent
+/// is every column, and a group size beside `none` is refused rather than
+/// ignored.
+fn statistics_request(
+    flag: Option<StatisticsFlag>,
+    group_size: Option<NonZeroU64>,
+) -> Result<Option<StatisticsRequest>> {
+    let selection = match flag {
+        Some(StatisticsFlag::None) => {
+            if group_size.is_some() {
+                anyhow::bail!(
+                    "--statistics-group-size sizes the statistics `--statistics none` turns off \
+                     — drop one of them"
+                );
+            }
+            return Ok(None);
+        }
+        Some(StatisticsFlag::Gather(selection)) => selection,
+        None => StatisticsSelection::All,
+    };
+    Ok(Some(StatisticsRequest { selection, group_size }))
 }
 
 /// The two read flags every scanning command carries, as given.
@@ -1124,9 +1222,12 @@ async fn main() -> Result<()> {
             preamble_only: preamble_only_flag,
             chunk_size,
             max_line_bytes,
+            statistics,
+            statistics_group_size,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
+            let statistics = statistics_request(statistics, statistics_group_size)?;
             // `parse` is the only scanner (`docs/design/decisions.md`,
             // "D61"). Reject `--dqcache none` up front, before paying
             // for a scan we won't be allowed to persist.
@@ -1157,7 +1258,7 @@ async fn main() -> Result<()> {
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
-                ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
+                ScanOptions { cancel: Some(cancel), statistics, ..scan_options(read, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both

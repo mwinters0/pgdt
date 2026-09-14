@@ -19,14 +19,10 @@
 
 use std::cmp::Ordering;
 
-use pgdump_query::DEFAULT_CHUNK_SIZE;
+use pgdump_query::{DEFAULT_CHUNK_SIZE, DEFAULT_STATISTICS_GROUP_SIZE, STORED_VALUE_CAP};
 
 mod common;
 use common::{VERSIONS, statistics_fixture};
-
-/// The stored-value cap bounds and dictionary entries share, which the long
-/// values exist to exceed.
-const STORED_VALUE_CAP: usize = 256;
 
 /// One table's `COPY` block: its column names, and each row's fields with
 /// `\N` read as `None`.
@@ -182,13 +178,17 @@ fn the_special_values_are_present_and_ordered_as_postgresql_orders_them() {
 }
 
 #[test]
-fn a_long_value_runs_past_the_read_chunk_and_the_stored_value_cap() {
+fn a_long_value_runs_past_the_read_chunk_the_group_size_and_the_stored_value_cap() {
     for version in VERSIONS {
         let block = Block::read(version, "public.long_value");
         let lengths = block.column("v").iter().map(|v| v.unwrap().len()).collect::<Vec<_>>();
         assert!(
             lengths.iter().any(|&len| len > DEFAULT_CHUNK_SIZE),
             "a value past the read chunk on {version}: {lengths:?}"
+        );
+        assert!(
+            lengths.iter().any(|&len| len as u64 > DEFAULT_STATISTICS_GROUP_SIZE),
+            "a value past the default group size on {version}: {lengths:?}"
         );
         assert!(
             lengths.iter().any(|&len| len > STORED_VALUE_CAP && len < DEFAULT_CHUNK_SIZE),

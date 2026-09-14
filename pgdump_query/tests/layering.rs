@@ -24,6 +24,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("preamble", 1),
     ("cache", 1),
     ("diagnostic", 1),
+    ("statistics", 1),
     ("pgtype", 2),
     ("resolve", 2),
     ("decode", 2),
@@ -32,6 +33,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("stream", 4),
     ("predicate", 4),
     ("leader", 4),
+    ("gather", 4),
 ];
 
 /// The upward edges D68 records. Each must still exist — a deviation the

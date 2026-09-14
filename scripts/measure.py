@@ -1732,6 +1732,7 @@ class Stager:
                 "--source", str(path),
                 "--dqcache", str(tmp),
                 "--jobs", str(SWEEP_JOBS),
+                *NO_STATISTICS.split(),
             ],
             quiet=True,
         )
@@ -2123,6 +2124,15 @@ QUERY_SUBSTREAM_CAP: dict[str, int] = {}
 #: apparatus rather than replacing it. Raising it is an apparatus change
 #: and obliges a re-sweep, exactly as changing the allocator would.
 SWEEP_JOBS = 1
+
+#: **Every `pgdq parse` this harness runs gathers no statistics.** `parse`
+#: gathers per-row-group statistics by default, reading every value and scanning
+#: a gathered table serially whatever `--jobs` says, so a shape that inherited
+#: the default would re-time what its figure measures the day the default
+#: moved — the failure `SWEEP_JOBS` is stated against. `statistics_flag_problems`
+#: refuses a shape that runs `parse` without it; `--preamble-only` reads no row
+#: and takes no statistics flag, so it states none.
+NO_STATISTICS = "--statistics none"
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -2921,8 +2931,9 @@ def _script(command: str) -> str:
     see `SWEEP_JOBS`. `--check` refuses a shape that pins none."""
     q = "time /pgdq"
     j = f"--jobs {SWEEP_JOBS}"
+    ns = NO_STATISTICS
     if command == "parse":
-        return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {j} >/dev/null"
+        return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {j} {ns} >/dev/null"
     if command == "parse-rss":
         # The same `parse` as above, wrapped so the run reports its own peak
         # resident set as well as its wall clock. The redirection is outside
@@ -2930,7 +2941,7 @@ def _script(command: str) -> str:
         # stderr, where bash's `time` report already goes.
         return (
             f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
-            f"--dqcache /tmp/x.dqcache {j} >/dev/null"
+            f"--dqcache /tmp/x.dqcache {j} {ns} >/dev/null"
         )
     if command == "parse-preamble":
         return (
@@ -2966,7 +2977,7 @@ def _script(command: str) -> str:
         # none**: `info` takes no `--jobs` because it starts no workers, so
         # there is no default for it to inherit.
         return (
-            f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} >/dev/null; "
+            f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} {ns} >/dev/null; "
             f"time {rss_wrapper(platform.machine())} /pgdq info --dqcache /tmp/x.dqcache "
             ">/dev/null"
         )
@@ -2990,7 +3001,7 @@ def _script(command: str) -> str:
         # and the removal is outside the timer.
         return (
             "rm -f /out/measure.dqcache; "
-            f"{q} parse --source /dump.sql --dqcache /out/measure.dqcache {j} >/dev/null"
+            f"{q} parse --source /dump.sql --dqcache /out/measure.dqcache {j} {ns} >/dev/null"
         )
     if command in ("query-typed", "query-strings"):
         mode = command.split("-")[1]
@@ -3039,7 +3050,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a chunk size the figure does not carry")
         return (
             f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
-            f"--chunk-size {size} {j} >/dev/null"
+            f"--chunk-size {size} {j} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FAMILY):
         # The reserve family: one stated budget, one stated worker count, and
@@ -3061,7 +3072,7 @@ def _script(command: str) -> str:
         return (
             f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
             f"--source /dump.sql --dqcache /tmp/x.dqcache "
-            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} >/dev/null"
+            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FLAGLESS):
         # The flagless family: the same `parse` under the same wrapper, with
@@ -3081,7 +3092,7 @@ def _script(command: str) -> str:
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
             f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
-            f"--source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
+            f"--source /dump.sql --dqcache /tmp/x.dqcache {ns} >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
         # The path step: a stated budget either side of `charge_bytes(unit, 1)`
@@ -3095,7 +3106,7 @@ def _script(command: str) -> str:
         return (
             f"time {rss_wrapper(platform.machine())} /pgdq parse "
             f"--source /dump.sql --dqcache /tmp/x.dqcache "
-            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} >/dev/null"
+            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} {ns} >/dev/null"
         )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
@@ -3116,11 +3127,11 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         p = f"--jobs {jobs} --parallel-memory {PARALLEL_BUDGET}"
         if shape == "parse":
-            return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {p} >/dev/null"
+            return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {p} {ns} >/dev/null"
         if shape == "parse-rss":
             return (
                 f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
-                f"--dqcache /tmp/x.dqcache {p} >/dev/null"
+                f"--dqcache /tmp/x.dqcache {p} {ns} >/dev/null"
             )
         if shape == "query-typed":
             return (
@@ -3227,6 +3238,29 @@ def worker_count_problems() -> list[str]:
         if command not in _NO_WORKERS
         and not command.startswith(_NO_FLAGS)
         and not _WORKER_COUNT.search(_script(command))
+    ]
+
+
+#: One `pgdq parse` invocation inside a command shape's script, up to the next
+#: command separator.
+_PARSE_RUN = re.compile(r"/pgdq parse [^;]*")
+
+
+def statistics_flag_problems() -> list[str]:
+    """Command shapes running a `pgdq parse` that does not state
+    `NO_STATISTICS`.
+
+    `parse` gathers statistics unless told not to, so such a shape times the
+    gathering default rather than the scan its figure names, and at any worker
+    count reads every gathered table serially. `--preamble-only` stops before
+    any row and refuses the flag, so it is exempt."""
+    return [
+        command
+        for command in command_shapes()
+        if any(
+            NO_STATISTICS not in run and "--preamble-only" not in run
+            for run in _PARSE_RUN.findall(_script(command))
+        )
     ]
 
 
@@ -4385,7 +4419,7 @@ def count_saves(
         [
             "strace", "-f", "-e", "trace=open,openat",
             str(binary), "parse", "--source", str(dump), "--dqcache", str(cache),
-            "--jobs", str(SWEEP_JOBS),
+            "--jobs", str(SWEEP_JOBS), *NO_STATISTICS.split(),
         ],
         text=True,
         stdout=subprocess.DEVNULL,
@@ -9664,7 +9698,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             + mounts
             + f"  {cfg.image} \\\n"
             f"  sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/{cache} "
-            f"--jobs {jobs} >> /out/{log} 2>&1'"
+            f"--jobs {jobs} {NO_STATISTICS} >> /out/{log} 2>&1'"
         )
 
     out = ["cargo build --release -p pgdump_query-cli   # default target: glibc", "mkdir -p runs", ""]
@@ -9840,6 +9874,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "--source", str(source),
             "--dqcache", str(cache),
             "--jobs", str(SWEEP_JOBS),
+            *NO_STATISTICS.split(),
         ]
     if command in ("query-strings", "query-typed"):
         mode = command.split("-")[1]
@@ -9866,6 +9901,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
                 "--dqcache", str(cache),
                 "--jobs", jobs,
                 "--parallel-memory", str(PARALLEL_BUDGET),
+                *NO_STATISTICS.split(),
             ]
     raise ValueError(f"unknown profile shape {command!r}")
 
@@ -10111,6 +10147,7 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
             "--dqcache", str(cache),
             "--jobs", str(RESERVE_JOBS),
             "--parallel-memory", budget,
+            *NO_STATISTICS.split(),
         ]
     raise ValueError(f"unknown heaptrack shape {command!r}")
 
@@ -10304,6 +10341,7 @@ def cmd_check(doc: Path) -> int:
     misspinned = pinned_count_problems()
     thin_axis = reserve_axis_problems()
     unargued_band = charge_band_problems()
+    gathering = statistics_flag_problems()
     scaffolding = scaffolding_in(text)
 
     print(
@@ -10355,6 +10393,14 @@ def cmd_check(doc: Path) -> int:
             "the reserve's stated legs; the reserve's flagless legs state none\nby "
             "declaration, and `dd` is not a run of ours.\n"
         )
+    if gathering:
+        print(
+            "Command shapes running `parse` with statistics gathered — the CLI's default,\n"
+            f"which times the gathering and reads a gathered table serially. State `{NO_STATISTICS}`:"
+        )
+        for command in gathering:
+            print(f"  {command}")
+        print()
     if thin_axis:
         print(
             "Block sizes whose flagless axis is registered wrong — one whose limits cannot\n"
@@ -10526,6 +10572,7 @@ def cmd_check(doc: Path) -> int:
             or dangling
             or unpinned
             or misspinned
+            or gathering
             or thin_axis
             or unargued_band
             or undeclared

@@ -694,6 +694,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         compressed.to_str().unwrap(),
         "--dqcache",
         dir.path().join("declined.dqcache").to_str().unwrap(),
+        "--statistics",
+        "none",
         "--jobs",
         "2",
         "--parallel-memory",
@@ -732,6 +734,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         compressed.to_str().unwrap(),
         "--dqcache",
         dir.path().join("afforded.dqcache").to_str().unwrap(),
+        "--statistics",
+        "none",
         "--jobs",
         "2",
         "--parallel-memory",
@@ -748,6 +752,8 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         plain_dump().to_str().unwrap(),
         "--dqcache",
         dir.path().join("plain.dqcache").to_str().unwrap(),
+        "--statistics",
+        "none",
         "--jobs",
         "2",
         "--parallel-memory",
@@ -759,4 +765,45 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
     assert_eq!(corrections.len(), 1, "{stderr}");
     assert!(corrections[0].contains("jobs=1"), "{}", corrections[0]);
     assert!(corrections[0].contains("budget"), "{}", corrections[0]);
+}
+
+/// **A parse gathering statistics is corrected too**, by the third rule: a
+/// table gathered for is read by the serial scanner whatever `--jobs` says, so
+/// the line names `statistics` and has no budget to offer as recourse — the
+/// recourse is `--statistics none`, which the leg above it runs under and
+/// which is corrected by nothing.
+#[test]
+fn a_gathering_parse_says_it_ran_serially_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = run(&[
+        "parse",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        dir.path().join("gathered.dqcache").to_str().unwrap(),
+        "--jobs",
+        "2",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    let corrections = arrangement_lines(&stderr);
+    assert_eq!(corrections.len(), 1, "said once for the scan, not once a block: {stderr}");
+    let line = corrections[0];
+    assert!(line.contains("jobs=1") && line.contains("asked=2"), "{line}");
+    assert!(line.contains("bound_by=\"statistics\""), "{line}");
+    assert!(!line.contains("would_hold_bytes"), "no budget buys it back: {line}");
+
+    let out = run(&[
+        "parse",
+        "--source",
+        plain_dump().to_str().unwrap(),
+        "--dqcache",
+        dir.path().join("none.dqcache").to_str().unwrap(),
+        "--jobs",
+        "2",
+        "--statistics",
+        "none",
+    ]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(arrangement_lines(&stderr_of(&out)).is_empty(), "{}", stderr_of(&out));
 }

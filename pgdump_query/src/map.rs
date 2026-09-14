@@ -88,6 +88,7 @@
 
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +103,7 @@ use crate::preamble::{
     push_stmt_line, statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart, Event, ScanOptions, scan};
+use crate::statistics::BlockObserver;
 
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
 /// `[start, end)` never overlaps another span's range, and every span
@@ -553,6 +555,10 @@ pub(crate) struct Builder {
     /// reaching the map only once walked end to end
     /// (`docs/design/decisions.md`, "D35").
     pending_census: Vec<ArrayShape>,
+    /// The statistics observer for the open `COPY` block, when the mapping
+    /// pass asked for one ([`Builder::observe_block`]). Handed every row and
+    /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
+    pending_observer: Option<Box<dyn BlockObserver>>,
 }
 
 /// Fold one data row of a `COPY` block into `census`, one [`ArrayShape`] per
@@ -693,6 +699,7 @@ impl Builder {
             tablespaces: BTreeSet::new(),
             governing_toc: None,
             pending_census: Vec::new(),
+            pending_observer: None,
         }
     }
 
@@ -1157,14 +1164,29 @@ impl Builder {
             }
         };
         self.pending_census = vec![Default::default(); event.header.columns.len()];
+        self.pending_observer = None;
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
     /// Fold one data row of the open `COPY` block into its array-shape
     /// census — see [`census_row`], shared with the interior workers a split
-    /// `COPY` block is scanned by (`crate::leader`).
-    pub(crate) fn on_row(&mut self, raw: &[u8]) {
+    /// `COPY` block is scanned by (`crate::leader`) — and hand it to the
+    /// block's statistics observer, if it has one. `offset` is the row's
+    /// absolute file offset.
+    pub(crate) fn on_row(&mut self, offset: u64, raw: &[u8]) {
         census_row(&mut self.pending_census, raw);
+        if let (Some(observer), Some((_, start, ..))) =
+            (self.pending_observer.as_mut(), self.pending_data.as_ref())
+        {
+            observer.observe_row(offset - start.data_offset, raw);
+        }
+    }
+
+    /// Gather statistics for the `COPY` block [`on_copy_start`](Self::on_copy_start)
+    /// just opened: every row [`on_row`](Self::on_row) folds is handed to
+    /// `observer`, and its answer is the block's [`CopyBlock::statistics`].
+    pub(crate) fn observe_block(&mut self, observer: Box<dyn BlockObserver>) {
+        self.pending_observer = Some(observer);
     }
 
     /// Union an already-folded census into the open `COPY` block's own — what
@@ -1192,6 +1214,10 @@ impl Builder {
         let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
             return;
         };
+        // Shared (`docs/design/decisions.md`, "D34").
+        let statistics = self.pending_observer.take().map(|observer| {
+            Arc::new(observer.finish(end.terminator_offset - copy_start.data_offset))
+        });
         let block = CopyBlock {
             header: copy_start.header,
             database: self.database.clone(),
@@ -1201,8 +1227,7 @@ impl Builder {
             end_offset: end.end_offset,
             row_count: end.row_count,
             partition_root,
-            sparse_index: None,
-            column_stats: None,
+            statistics,
             array_shapes: std::mem::take(&mut self.pending_census),
         };
         let owned = toc.is_some();
@@ -1417,7 +1442,7 @@ pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> R
     scan(source, options, |event| {
         match event {
             Event::CopyStart(start) => builder.on_copy_start(start),
-            Event::Row(row) => builder.on_row(row.raw),
+            Event::Row(row) => builder.on_row(row.offset, row.raw),
             Event::CopyEnd(end) => builder.on_copy_end(end),
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),

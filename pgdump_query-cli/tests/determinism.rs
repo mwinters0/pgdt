@@ -51,9 +51,20 @@ use common::{all_fixtures, run, stderr_of};
 /// The dump is read where it lies rather than copied: the cache records the
 /// source's stored size and mtime, so every leg of a comparison has to be
 /// looking at one file. Only the cache path moves.
+///
+/// **Every leg gathers no statistics.** A table gathered for is read by the
+/// serial scanner whatever `--jobs` says, so a gathering leg would be the
+/// serial path compared to itself.
 fn cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
-    let mut args =
-        vec!["parse", "--source", dump.to_str().unwrap(), "--dqcache", out.to_str().unwrap()];
+    let mut args = vec![
+        "parse",
+        "--source",
+        dump.to_str().unwrap(),
+        "--dqcache",
+        out.to_str().unwrap(),
+        "--statistics",
+        "none",
+    ];
     args.extend_from_slice(extra);
     let output = run(&args);
     assert!(

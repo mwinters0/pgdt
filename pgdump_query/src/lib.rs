@@ -9,6 +9,7 @@ pub mod copy;
 pub mod decode;
 pub mod diagnostic;
 mod error;
+mod gather;
 pub mod index;
 mod io;
 mod leader;
@@ -19,6 +20,7 @@ pub mod preamble;
 pub mod predicate;
 pub mod resolve;
 pub mod scan;
+pub mod statistics;
 pub mod stream;
 
 pub use batch::{QueryOptions, ScanExtent, read_table, render_field, render_field_into};
@@ -26,8 +28,7 @@ pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use error::Error;
 pub use index::{
-    ArrayShape, CopyBlock, DumpIndex, MAX_ARRAY_DIMS, RowGroupStats, SparseRowIndex, build_index,
-    preamble_only, union_census,
+    ArrayShape, CopyBlock, DumpIndex, MAX_ARRAY_DIMS, build_index, preamble_only, union_census,
 };
 pub use io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, KnownCompression, LocalFileSource,
@@ -54,6 +55,11 @@ pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, reso
 pub use scan::{
     ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DEFAULT_CHUNK_SIZE,
     DEFAULT_MAX_LINE_BYTES, Event, LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
+};
+pub use statistics::{
+    BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
+    DEFAULT_STATISTICS_GROUP_SIZE, DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness,
+    StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 pub use stream::{
     BlockingTableIter, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream, map_file,

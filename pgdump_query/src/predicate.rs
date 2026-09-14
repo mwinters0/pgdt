@@ -1105,6 +1105,25 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
     }
 }
 
+/// A value's place in its column's order, opaque outside this module: the key
+/// a filter orders a row by, for a caller ordering values that meet no filter
+/// — the statistics gatherer's running bounds and sortedness.
+#[derive(Debug, Clone)]
+pub(crate) struct ValueKey(OrderKey);
+
+impl ValueKey {
+    /// The key of one unescaped value, `None` when the text is not a value of
+    /// `kind` ([`order_key`]).
+    pub(crate) fn of(kind: &CompareKind, text: &str) -> Option<Self> {
+        order_key(kind, text).map(Self)
+    }
+
+    /// [`compare_keys`]: a total order over the keys of one kind.
+    pub(crate) fn compare(&self, other: &Self) -> Ordering {
+        compare_keys(&self.0, &other.0)
+    }
+}
+
 /// One side of a **nested** comparison, decoded from a container literal per
 /// the column's [`NestedCompare`]. Both sides of any one comparison come from
 /// the same plan, so a variant mismatch is unreachable by construction.
@@ -5308,6 +5327,74 @@ mod tests {
             // Floors, not counts: the scalar kinds of six majors.
             assert!(kinds > 150, "only {kinds} declared types walked");
             assert!(triples > 50_000, "only {triples} triples asserted");
+        }
+
+        /// The persisted format version and the ordering digest it was pinned
+        /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
+        const GOLDEN_ORDER: (u32, u64) = (18, 6_241_334_826_557_786_742);
+
+        /// **Every committed oracle value, sorted under its declared type's
+        /// comparison kind, digests to the value pinned beside the cache's
+        /// `FORMAT_VERSION`.** A stored bound, sortedness or dictionary means
+        /// what this build's comparison says, so a change to how any kind
+        /// orders or equates values is a persisted reshape that bumps the
+        /// version (`docs/design/decisions.md`, "D22"); this fails until it
+        /// is bumped and the digest re-pinned. A regenerated oracle moves the
+        /// digest with no change to any comparison, and is re-pinned alone.
+        ///
+        /// The digest is FNV-1a over each major, each declared type and its
+        /// values in key order, ties broken by text, with whether each value
+        /// keys equal to the one before it — so equality moves it as well as
+        /// order.
+        #[tokio::test]
+        async fn golden_order_is_pinned_to_the_format_version() {
+            fn fnv(hash: &mut u64, bytes: &[u8]) {
+                for byte in bytes {
+                    *hash ^= u64::from(*byte);
+                    *hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+            let mut digest = 0xcbf2_9ce4_8422_2325u64;
+            let mut values_sorted = 0usize;
+            for major in MAJORS {
+                let types = types_of(major).await;
+                let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    if let (Some(declared), Some("ok"), Some(output)) =
+                        (row[0].clone(), row[2].as_deref(), row[3].clone())
+                    {
+                        outputs.entry(declared).or_default().insert(output);
+                    }
+                }
+                for (declared, values) in outputs {
+                    let ComparisonPlan::Compared { kind, .. } =
+                        comparison_for(&declared, None, &types, &[])
+                    else {
+                        continue;
+                    };
+                    let mut keyed: Vec<(ValueKey, &String)> = values
+                        .iter()
+                        .map(|v| (ValueKey::of(&kind, v).expect("the server wrote it"), v))
+                        .collect();
+                    keyed.sort_by(|(ka, a), (kb, b)| ka.compare(kb).then_with(|| a.cmp(b)));
+                    fnv(&mut digest, format!("{major}\t{declared}\n").as_bytes());
+                    let mut previous: Option<&ValueKey> = None;
+                    for (key, value) in &keyed {
+                        let tie = previous.is_some_and(|p| p.compare(key) == Ordering::Equal);
+                        fnv(&mut digest, if tie { b"=" } else { b"<" });
+                        fnv(&mut digest, value.as_bytes());
+                        previous = Some(key);
+                        values_sorted += 1;
+                    }
+                }
+            }
+            assert!(values_sorted > 800, "only {values_sorted} values sorted");
+            assert_eq!(
+                (crate::cache::FORMAT_VERSION, digest),
+                GOLDEN_ORDER,
+                "the comparison order moved, or FORMAT_VERSION did: bump FORMAT_VERSION if any \
+                 kind orders or equates differently, then re-pin both here"
+            );
         }
 
         /// A range or multirange literal is put into the form the server

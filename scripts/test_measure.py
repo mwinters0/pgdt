@@ -370,6 +370,80 @@ class WorkerCount(unittest.TestCase):
         self.assertEqual(stated, {str(measure.SWEEP_JOBS)})
 
 
+class StatisticsFlag(unittest.TestCase):
+    """Every `pgdq parse` the harness runs gathers no statistics.
+
+    `parse` gathers by default, which reads every value and scans a gathered
+    table serially whatever `--jobs` says, so a shape inheriting that default
+    would re-time the figure it belongs to the day the default moved — the
+    same failure `WorkerCount` reconciles against, for a second flag."""
+
+    def test_every_parse_shape_states_none(self):
+        self.assertEqual(measure.statistics_flag_problems(), [])
+
+    def test_a_shape_that_gathers_is_reported(self):
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 1"
+        ):
+            reported = measure.statistics_flag_problems()
+        self.assertEqual(sorted(reported), sorted(measure.command_shapes()))
+
+    def test_a_later_parse_in_the_same_script_is_checked_too(self):
+        # A builder ahead of the timed command, as `info-cache-rss` has, is a
+        # `parse` of its own.
+        script = (
+            f"/pgdq parse --source /dump.sql {measure.NO_STATISTICS} >/dev/null; "
+            "time /pgdq parse --source /dump.sql >/dev/null"
+        )
+        with unittest.mock.patch.object(measure, "_script", lambda c: script):
+            self.assertTrue(measure.statistics_flag_problems())
+
+    def test_the_preamble_shapes_are_exempt_and_state_none(self):
+        # `--preamble-only` reads no row, and the CLI refuses a statistics flag
+        # beside it.
+        for command in ("parse-preamble", "parse-preamble-rss"):
+            with self.subTest(command=command):
+                script = measure._script(command)
+                self.assertIn("--preamble-only", script)
+                self.assertNotIn("--statistics", script)
+
+    def test_check_fails_on_a_shape_that_gathers(self):
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 1"
+        ):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(code, 1)
+        self.assertIn("with statistics gathered", out.getvalue())
+
+    def test_the_argvs_outside_the_sweep_state_none_too(self):
+        # Untimed or recorded rather than timed, and each one's reading is
+        # read against a figure that states it.
+        flag = measure.NO_STATISTICS.split()
+        argvs = [
+            measure.profile_argv("parse", "/dump.sql", "/tmp/x.dqcache"),
+            measure.profile_argv(f"parse-jobs-{measure.PARALLEL_JOBS[-1]}", "/d", "/c"),
+            *(measure.heaptrack_argv(shape, "/d", "/c") for shape, _ in measure.HEAPTRACK_AXIS),
+        ]
+        for argv in argvs:
+            with self.subTest(argv=argv):
+                at = argv.index(flag[0])
+                self.assertEqual(argv[at : at + 2], flag)
+        for function in (measure.Stager.profile, measure.count_saves):
+            with self.subTest(function=function.__name__):
+                self.assertIn("*NO_STATISTICS.split()", inspect.getsource(function))
+
+    def test_the_koji_legs_state_none(self):
+        # koji's check is that a parallel scan writes the serial cache, which a
+        # gathering leg would answer with the serial scan compared to itself.
+        for wrap in (False, True):
+            recipe = measure.koji_recipe(measure.Config(), "pgdq-koji", wrap, 8)
+            legs = [line for line in recipe.splitlines() if "/pgdq parse" in line]
+            with self.subTest(wrap=wrap):
+                self.assertTrue(legs)
+                self.assertTrue(all(measure.NO_STATISTICS in leg for leg in legs), legs)
+
+
 class Allocator(unittest.TestCase):
     """The allocator figure: three binaries, three shapes, one table.
 
@@ -4942,7 +5016,8 @@ class HeaptrackRecipe(unittest.TestCase):
         differing = [i for i, (a, b) in enumerate(zip(first, second)) if a != b]
         self.assertEqual(len(differing), 1, f"{first} vs {second}")
         self.assertEqual(first[differing[0] - 1], "--parallel-memory")
-        self.assertEqual(abs(int(first[-1]) - int(second[-1])), 1)
+        at = differing[0]
+        self.assertEqual(abs(int(first[at]) - int(second[at])), 1)
 
     def test_a_recorded_shape_is_the_shape_the_sweep_times(self):
         """The reconciliation that keeps an attribution readable against the
