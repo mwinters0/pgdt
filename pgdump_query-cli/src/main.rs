@@ -21,6 +21,7 @@ use pgdump_query::{
 };
 
 mod alloc;
+mod info_statistics;
 mod introspect;
 mod where_expr;
 
@@ -499,8 +500,11 @@ enum Command {
         /// Also report each `COPY` block's byte offsets and, per column, what
         /// it became: the Arrow type it resolved to, or — for a column that
         /// came back as a string — why. Turns the `user-defined types` count
-        /// into a listing of the types themselves, and on a compressed dump
-        /// adds the container's shape.
+        /// into a listing of the types themselves, on a compressed dump adds
+        /// the container's shape, and ends with the statistics `parse`
+        /// gathered, per table and column: over how many blocks, at what group
+        /// size, and in how many groups each column keeps bounds and a
+        /// dictionary.
         #[arg(long)]
         detail: bool,
         /// List every span the map holds (`docs/design/decisions.md`,
@@ -510,8 +514,9 @@ enum Command {
         #[arg(long)]
         map: bool,
         /// Print the internal index as JSON instead of the human-readable
-        /// listing: the whole `DumpIndex`, its coverage, its diagnostics, and
-        /// the per-`COPY`-block type resolution `--detail` renders as text.
+        /// listing: the whole `DumpIndex` but its blocks' statistics, its
+        /// coverage, its diagnostics, and the per-`COPY`-block type resolution
+        /// and per-table statistics `--detail` renders as text.
         /// No schema stability is promised — this is a raw dump of our
         /// internal representation, not a supported interchange format
         /// (`docs/design/decisions.md`, "D67"). Incompatible with
@@ -2013,6 +2018,10 @@ fn block_resolutions(
 ///
 /// **Coverage is components, not a rendered percentage**: `scanned_through`
 /// and `total_size` sit side by side, so a script computes its own ratio.
+///
+/// **A block's statistics are not exported**, each growing with the dump; the
+/// per-table rollup `--detail` renders is, as counts
+/// (`docs/design/decisions.md`, "D67").
 #[derive(serde::Serialize)]
 struct IndexJson<'a> {
     #[serde(flatten)]
@@ -2024,6 +2033,7 @@ struct IndexJson<'a> {
     compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
+    statistics: Vec<info_statistics::TableStatistics<'a>>,
 }
 
 /// One `COPY` block's resolution, keyed by the block rather than rolled up per
@@ -2080,9 +2090,30 @@ fn print_index_json(
                 .collect(),
         })
         .collect();
-    let wrapped =
-        IndexJson { index, total_size, compression, diagnostics: &index.diagnostics, resolution };
-    println!("{}", serde_json::to_string_pretty(&wrapped).expect("DumpIndex is always valid JSON"));
+    let wrapped = IndexJson {
+        index,
+        total_size,
+        compression,
+        diagnostics: &index.diagnostics,
+        resolution,
+        statistics: info_statistics::table_statistics(index),
+    };
+    let mut json = serde_json::to_value(&wrapped).expect("DumpIndex is always valid JSON");
+    strip_block_statistics(&mut json);
+    println!("{}", serde_json::to_string_pretty(&json).expect("a JSON value always renders"));
+}
+
+/// Drop every `COPY` block's `statistics` from the export: `IndexJson` flattens
+/// the persisted struct, whose field the cache needs.
+fn strip_block_statistics(json: &mut serde_json::Value) {
+    let Some(spans) = json.get_mut("spans").and_then(serde_json::Value::as_array_mut) else {
+        return;
+    };
+    for span in spans {
+        if let Some(copy) = span.pointer_mut("/body/Data/Copy").and_then(|c| c.as_object_mut()) {
+            copy.remove("statistics");
+        }
+    }
 }
 
 /// How much of the file the index covers, stated **once, at the top**, with
@@ -2241,6 +2272,11 @@ fn print_index(
         }
     }
 
+    if detail {
+        println!();
+        print_statistics(index);
+    }
+
     println!();
     // No byte count here: the coverage line above owns that.
     println!("{} COPY block(s), {} row(s)", blocks.len(), index.total_rows());
@@ -2248,6 +2284,28 @@ fn print_index(
         println!(
             "{total_unmapped} of {total_columns} columns unmapped — run with --detail for details"
         );
+    }
+}
+
+/// `--detail`'s statistics section: a line per table and one beneath it per
+/// column, or one line saying no block carries any
+/// ([`info_statistics::table_statistics`]).
+fn print_statistics(index: &DumpIndex) {
+    let tables = info_statistics::table_statistics(index);
+    if tables.iter().all(|t| t.gathered_blocks == 0) {
+        println!("statistics: none gathered");
+        return;
+    }
+    println!("statistics:");
+    let mut headings = DatabaseHeadings::new(tables.iter().map(|t| t.database));
+    for table in &tables {
+        headings.before(table.database);
+        println!("    {}", table.line());
+        if table.gathered_blocks > 0 {
+            for column in &table.columns {
+                println!("        {}", column.line(table.blocks));
+            }
+        }
     }
 }
 

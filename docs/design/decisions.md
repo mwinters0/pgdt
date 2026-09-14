@@ -438,10 +438,10 @@ its type is `FieldDecode` with an offset naming `--schema-mode strings`, never
 a null. Rejected: Arrow's display formatting.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
-Keyed by block with no version field: one table spans blocks (I2) and a rollup
-needs a merge rule that does not exist. Coverage is one line at the top and
-nothing below is qualified. No `help` attributes; every page is snapshotted
-with width and bare-flag assertions. Rejected: a `long_help` per flag.
+Keyed by block, no version field: a table spans blocks (I2) and a rollup needs a merge rule that
+does not exist, but for statistics' counts, which sum, per table and column. Coverage is one
+line at the top, nothing below qualified. No `help` attributes; every page is snapshotted with
+width and bare-flag assertions. Rejected: a `long_help` per flag; group values, dump-sized.
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go

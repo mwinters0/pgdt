@@ -31,12 +31,9 @@ grilled and sliced"). No query reads a statistic yet.
 
 ## For the slices after
 
-- **10.5.** `info --json` already carries every group's statistics, being the
-  internal struct (`decisions.md`, "D67"), where the spec says individual group
-  values are not reported; 10.5 decides that shape. `columns` is positional to
-  the header, `None` untracked. An empty group (`rows == 0`) holds a zero NULL
-  count, no bounds and an empty dictionary, which a share of groups carrying
-  bounds should exclude.
+- **10.5.** Landed: [its notes](roadmap-P10.5-reporting-notes.md). `columns`
+  is positional to the header, `None` untracked. An empty group (`rows == 0`)
+  holds a zero NULL count, no bounds and an empty dictionary.
 - **10.6.** `Gatherer` assumes rows in offset order, one block at a time. A
   piece join has to carry each tracked column's open group and its previous
   value — a `Clipped` head for a bytewise kind, a `ValueKey` otherwise — and

@@ -407,12 +407,13 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 ///
 /// The type listing `--detail` prints under `user-defined types:` is indented
 /// the same way and is not per-column resolution, but it sits in the metadata
-/// header above every block line, so no block is open to collect it.
+/// header above every block line, so no block is open to collect it; the
+/// `statistics:` section below the last block closes it.
 fn detail_column_lines(text: &str) -> Vec<Vec<String>> {
     const NOT_A_COLUMN: [&str; 5] =
         ["columns:", "header offset:", "data offset:", "terminator:", "end offset:"];
     let mut blocks: Vec<Vec<String>> = Vec::new();
-    for line in text.lines() {
+    for line in text.lines().take_while(|l| !l.starts_with("statistics:")) {
         if let Some(rest) = line.strip_prefix("    ") {
             if NOT_A_COLUMN.iter().any(|k| rest.starts_with(k)) {
                 continue;

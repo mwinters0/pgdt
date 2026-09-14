@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them serially by default and persists them in the cache, and nothing reads them yet | `statistics.rs`, `gather.rs`; D34; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them serially by default and persist them in the cache, `info --detail` and `--json` report them per table and column, and no query reads them yet | `statistics.rs`, `gather.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -75,7 +75,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`; [notes](../design/roadmap-P10.4-serial-gathering-notes.md)
 - [x] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores; [notes](../design/roadmap-P10.4.2-mapping-pass-request-notes.md)
 - [x] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks; [notes](../design/roadmap-P10.4.3-character-dictionary-notes.md)
-- [ ] **10.5** Reporting in `info --detail` and `--json`
+- [x] **10.5** Reporting in `info --detail` and `--json`; [notes](../design/roadmap-P10.5-reporting-notes.md)
 - [ ] **10.6** Parallel gathering, identical to serial over every fixture
 - [ ] **10.7** Back-fill of blocks lacking the requested statistics
 - [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check
@@ -301,3 +301,19 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`info --json` drops each `COPY` block's `statistics` outright, and both
+  renderings carry one rollup per table and column instead.** The spec asks
+  for statistics per table and column "over how many of its blocks" and
+  reports no group's values, so D67 now names statistics as the one rollup,
+  its counts summing across blocks. Inside that call: a table is its database
+  and the name its blocks' `COPY` gives, so a `--load-via-partition-root`
+  dump's partitions roll up under the root; sortedness is counted per block,
+  never concluded for the table; and a group of NULLs counts as one without
+  bounds. The strip goes through `serde_json::Value`, which sorts every key in
+  the document. Reconsidering could mean a per-block summary on each block
+  record as well (its group size, group counts and each column's order), which
+  a script checking one block would want and the rollup cannot give; a share
+  that leaves out groups with no non-NULL value; or a mirror struct keeping key
+  order. Each touches `pgdump_query-cli/src/info_statistics.rs` and
+  `print_index_json` alone.

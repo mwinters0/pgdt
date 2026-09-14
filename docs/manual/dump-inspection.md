@@ -231,8 +231,9 @@ table's data — a **row group**, one mebibyte of it — the number of rows, eac
 column's number of NULLs, and, where pgdq compares a column's values exactly, its
 least and greatest value and its distinct values (up to 64, none longer than 256
 bytes; past either, that group records no distinct values for the column).
-They are stored in the cache beside the rest of the index, and `info --json`
-carries them per block. This version records them; no command reads them yet.
+They are stored in the cache beside the rest of the index, and `info --detail`
+and `info --json` report them per table and column (below). This version
+records them; no query reads them yet.
 
 Gathering reads every value of every column, so it costs a `parse` time, memory
 and cache space that grow with the dump, and **a table gathered for is read by
@@ -755,6 +756,36 @@ Labels are listed for a plain enum column and for a domain over one. An enum
 *inside* an array or a composite does not get them, and does not need them — a
 filter cannot compare against a single label there anyway.
 
+`--detail` ends with what `parse` gathered (see "`--statistics`" above), one
+line per table and one beneath it per column:
+
+```
+statistics:
+    public.ordered: statistics over 1 of 1 block(s), group size 4096 bytes; 83 rows and 4049 bytes per group over 12 group(s)
+        id: over 1 of 1 block(s), ascending, bounds in 12 of 12 group(s), dictionary in 0 of 12 group(s)
+        default_text: over 1 of 1 block(s), no bounds, dictionary in 12 of 12 group(s)
+        note: not gathered
+```
+
+- **The table line** says over how many of the table's blocks statistics were
+  gathered — every block whose `COPY` names the table, a partitioned table's
+  partitions included — the group size they were gathered at, and how many
+  rows and bytes a group actually held, on average. A group in which no row
+  starts, left by a row longer than the group size, is counted as `empty` and
+  left out of the averages and of every share below.
+- **Each column line** says over how many blocks that column was gathered,
+  then its **order**: `ascending`, `descending` or `unsorted` row by row
+  through each block (a column whose blocks differ says how many are which),
+  followed by how many groups carry a least and greatest value — or `no bounds`
+  where pgdq does not order the column's values exactly, text under a
+  collation other than `C` for one. Last, how many groups carry a list of
+  distinct values, or `no dictionary` where it does not compare them exactly.
+  A group holding only NULLs carries no bounds. `not gathered` is a column a
+  `--statistics` selection left out.
+
+A cache with no statistics at all prints `statistics: none gathered`. No
+group's own values are shown, here or in `--json`.
+
 ### When `info` says it cannot answer
 
 `info` exits non-zero rather than scanning. Five things can go wrong, and they
@@ -872,7 +903,7 @@ formatted text:
 pgdq info --source mydump.sql --json | jq '.spans | length'
 ```
 
-Alongside the file map it carries two things the text views state differently:
+Alongside the file map it carries four things the text views state differently:
 
 - **Coverage as components**, not as the rendered percentage —
   `scanned_through` and `total_size`, so you compute whatever ratio you want.
@@ -894,6 +925,14 @@ Alongside the file map it carries two things the text views state differently:
   Records are keyed by **block**, not by table — one table's data can occupy
   several `COPY` blocks, and pgdq does not yet have a rule for merging blocks
   that disagree, so grouping them is left to you.
+- **`statistics`**, one record per table, with the counts `--detail`'s
+  statistics section renders: `blocks` and `gathered_blocks`, `group_sizes`,
+  `groups`, `empty_groups`, `rows` and `bytes`, and per column
+  `gathered_blocks`, `groups_with_rows`, `groups_with_bounds`,
+  `groups_with_dictionary`, `dictionary_blocks` and a `sortedness` object
+  counting blocks per order. Unlike `resolution` these are keyed by table,
+  counts adding up across blocks. A block's per-group statistics are not in the
+  export: they grow with the dump.
 
 **This is a raw dump of pgdq's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field,

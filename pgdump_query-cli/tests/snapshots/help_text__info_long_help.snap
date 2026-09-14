@@ -20,15 +20,18 @@ Options:
       --detail             Also report each `COPY` block's byte offsets and, per column, what it
                            became: the Arrow type it resolved to, or — for a column that came back
                            as a string — why. Turns the `user-defined types` count into a listing of
-                           the types themselves, and on a compressed dump adds the container's shape
+                           the types themselves, on a compressed dump adds the container's shape,
+                           and ends with the statistics `parse` gathered, per table and column: over
+                           how many blocks, at what group size, and in how many groups each column
+                           keeps bounds and a dictionary
       --map                List every span the map holds (`docs/design/decisions.md`, "D34") — DDL
                            objects and framing included, not just `COPY` blocks — instead of the
                            per-table listing
       --json               Print the internal index as JSON instead of the human-readable listing:
-                           the whole `DumpIndex`, its coverage, its diagnostics, and the
-                           per-`COPY`-block type resolution `--detail` renders as text. No schema
-                           stability is promised — this is a raw dump of our internal
-                           representation, not a supported interchange format
-                           (`docs/design/decisions.md`, "D67"). Incompatible with
+                           the whole `DumpIndex` but its blocks' statistics, its coverage, its
+                           diagnostics, and the per-`COPY`-block type resolution and per-table
+                           statistics `--detail` renders as text. No schema stability is promised —
+                           this is a raw dump of our internal representation, not a supported
+                           interchange format (`docs/design/decisions.md`, "D67"). Incompatible with
                            `--detail`/`--map`, which format detail this already carries in full
   -h, --help               Print help
