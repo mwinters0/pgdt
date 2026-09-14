@@ -190,12 +190,15 @@ discardable independently, is not taken.
 of the dump**, statistics being held per group per tracked column. The
 flat-memory goal holds block-level structures flat and does not reach them:
 they are drawn from row values, whose widths vary ([`roadmap.md`](roadmap.md),
-"Project goals"). **This phase takes aggressive, coarse increases** — to
-`MEMORY_RESERVE` and whatever else the flagless defaults need — and spends no
-slices refining them. **The measurement harness's expectations are bumped
-coarsely too**, wherever a resident-set expectation or gate complains. Both
-refinements are P20's ([`roadmap.md`](roadmap.md), "P20 — Statistics memory
-and its measured expectations"), after this phase delivers the function.
+"Project goals"). **This phase raises no library constant for it**:
+`MEMORY_RESERVE` is a flat subtraction that bills no statistic, and until
+`statistics-gathering` no harness run gathers under a limit. **That figure's
+legs state a generous container limit of their own**, so no OOM interrupts the
+phase. Bounding what statistics hold, and the defaults and expectations that
+follow, are P20's ([`roadmap.md`](roadmap.md), "P20 — Statistics memory and its
+measured expectations"); the evidence is
+[`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "P10 is
+grilled and sliced".
 
 ## Gathering across the layers
 
@@ -358,22 +361,22 @@ many blocks lacked the requested statistics and were re-read.
 
 **Every existing figure that times `parse` passes `--statistics none`**, and
 `scripts/test_measure.py` asserts it, so the default this phase changes does not
-silently re-time what those figures measure. Resident-set expectations and
-container limits that still complain are bumped coarsely.
+silently re-time what those figures measure.
 
 Two new figures, each with its instrument:
 
 - **`statistics-gathering`** — `pgdq parse` with statistics against
   `--statistics none`, whole-file through the CLI, warm, on the existing
-  generated scan-throughput inputs. It prices the parse; resident is recorded
-  beside it and not refined.
+  generated scan-throughput inputs, in a container limit of its own chosen
+  generously. It prices the parse; resident is recorded beside it and not
+  refined.
 - **`statistics-pruning`** — `pgdq query` under a selective range filter on a
   sorted column and under an equality filter against a dictionary, each with
   and without `--statistics none`, warm, on a generated file carrying a sorted
   id column and a low-cardinality column. It prices what pruning buys.
 
 Re-taking `reserve` and deriving `MEMORY_RESERVE` from readings is P20's; this
-phase raises the constant coarsely.
+phase leaves the constant as `reserve` chose it.
 
 ## Inbox, drained
 

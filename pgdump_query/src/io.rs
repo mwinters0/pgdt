@@ -921,6 +921,13 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// reader**: [`Parallelism::fit`] keeps one worker at whatever the cap is and
 /// reports the budget that count spends, and [`BlockCache::affordable`] reads
 /// the budget the cap leaves, untouched by the margin.
+///
+/// Deficiency register: `deficiency: KD28` — the margin is left against what
+/// the charge bills plus [`MEMORY_UNPOOLED_BOUND`], and a gathering `parse`
+/// also holds statistics that grow with the dump and that no term bills, so
+/// under a discovered limit it can leave less than this. **(b) owned by P20**,
+/// which bounds what statistics hold; `--statistics none` restores the margin
+/// today.
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:

@@ -73,7 +73,6 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.2** Row-free comparison and plan-time filter resolution, behaviour-preserving; [notes](../design/roadmap-P10.2-row-free-comparison-notes.md)
 - [x] **10.3** The truth-set evaluator, property-tested against the row evaluator; [notes](../design/roadmap-P10.3-truth-set-evaluator-notes.md)
 - [x] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`; [notes](../design/roadmap-P10.4-serial-gathering-notes.md)
-- [ ] **10.4.1** Coarse reserve and resident bumps for gathering on by default
 - [ ] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores
 - [ ] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks
 - [ ] **10.5** Reporting in `info --detail` and `--json`
@@ -81,7 +80,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [ ] **10.7** Back-fill of blocks lacking the requested statistics
 - [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check
 - [ ] **10.9** Early stop on a column sorted over its block
-- [ ] **10.10** Figures `statistics-gathering` and `statistics-pruning`
+- [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`
 
 ## Not started
 
@@ -124,8 +123,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD27 -->
-**`KD1`–`KD27` are allocated, and nothing at or below `KD27` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD28 -->
+**`KD1`–`KD28` are allocated, and nothing at or below `KD28` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -287,6 +286,12 @@ a phase nobody has sliced.
   4,000-table `parse` holds **44.2 MiB** against a one-block one's 6.2 MiB.
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD28** — a gathering `parse` holds statistics that grow with the dump and
+  that no charge bills, so `MEMORY_MARGIN_PERCENT` is not left under a
+  discovered limit once they outgrow what the arrangement spares. **(b) owned
+  by P20**, which bounds what statistics hold; `--statistics none` restores the
+  margin today. Detail: `pgdump_query/src/io.rs`.
 
 ## Decisions worth another look
 

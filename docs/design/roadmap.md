@@ -521,9 +521,8 @@ consumed by the query replay to skip byte ranges no row of which can match.
 The refinement P10 deliberately defers
 ([`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md),
 "Resident memory grows, and is optimized later"). P10 lets resident memory grow
-with the dump's statistics volume and takes coarse, aggressive increases to the
-flagless defaults' reserve and to the measurement harness's resident-set
-expectations, spending no slices on either. This phase owns bounding what
+with the dump's statistics volume, moves no library constant for it, and runs
+its one gathering figure under a container limit of its own. This phase owns bounding what
 statistics hold resident and re-deriving the reserve and the expectations from
 readings, over rows of uniform width wherever an expectation is to hold
 ("Project goals"). **Scheduled directly after P10**, since what it

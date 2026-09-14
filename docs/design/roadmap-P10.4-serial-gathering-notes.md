@@ -2,7 +2,7 @@
 
 What the later P10 slices inherit from this one, and what it did not do. The
 spec is [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md).
-The row split: the coarse reserve and resident bumps are `10.4.1`
+No reserve or resident bump follows it
 ([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "P10 is
 grilled and sliced"). No query reads a statistic yet.
 
