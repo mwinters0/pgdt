@@ -47,7 +47,7 @@ fn assert_matches_eager(actual: &DumpIndex, eager: &DumpIndex, label: &str) {
 /// another route — the baseline the resumed cases below are measured against.
 #[tokio::test]
 async fn a_cold_map_file_matches_build_index() {
-    for schema_dir in ["edge_cases", "objects", "partitions", "types"] {
+    for schema_dir in ["edge_cases", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only", "schema-only"] {
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../fixtures/16")
@@ -77,7 +77,7 @@ async fn a_cold_map_file_matches_build_index() {
 /// and the index that comes out is still, span for span and census for census,
 /// what one serial eager pass gives (`docs/design/decisions.md`, "D52").
 ///
-/// **A fixture is kilobytes, so the chunk size is announced small.** The local
+/// **A fixture is small, so the chunk size is announced small.** The local
 /// source's partition is a fixed multiple of the read chunk, so at the shipped
 /// 1 MiB every block here is inside one partition and the scheduler correctly
 /// declines all of them — which would make this the serial path compared to
@@ -88,7 +88,7 @@ async fn a_cold_map_file_matches_build_index() {
 /// the one announcement only its scheduler makes.
 #[tokio::test]
 async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
-    for schema_dir in ["edge_cases", "objects", "partitions", "types"] {
+    for schema_dir in ["edge_cases", "objects", "partitions", "statistics", "types"] {
         for flag_set in ["default", "data-only"] {
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../fixtures/16")

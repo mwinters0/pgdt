@@ -69,6 +69,13 @@ pub fn partitions_fixture(version: u32, flag_set: &str) -> PathBuf {
     fixture(version, "partitions", flag_set)
 }
 
+/// Real `pg_dump` output for the `statistics` schema: the column shapes
+/// per-row-group statistics are gathered from, and a value longer than a read
+/// chunk.
+pub fn statistics_fixture(version: u32, flag_set: &str) -> PathBuf {
+    fixture(version, "statistics", flag_set)
+}
+
 /// Every major we generate fixtures for. The properties these versions are
 /// swept for are ones the dump format holds identically across all of them
 /// (I25 for the array literal shape, say) — running the same assertions on
@@ -76,8 +83,7 @@ pub fn partitions_fixture(version: u32, flag_set: &str) -> PathBuf {
 pub const VERSIONS: [u32; 6] = [13, 14, 15, 16, 17, 18];
 
 /// Every real `pg_dump` output file the fixture generator produced, across
-/// all six routine versions and all four schemas
-/// (`edge_cases`/`objects`/`partitions`/`types`) — read off the tree rather
+/// all six routine versions and every schema — read off the tree rather
 /// than listed, so a new schema or flag set is swept the moment the generator
 /// writes it. Includes the degenerate shapes the design doc calls out by
 /// name: `data-only`, `schema-only`, `inserts`/`column-inserts` (no `COPY`

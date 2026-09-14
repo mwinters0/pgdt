@@ -435,6 +435,17 @@ enum Command {
         /// `--parallel-memory`'s worth, whichever is fewer.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
         chunk_size: Option<usize>,
+        /// The longest line the scan accepts, in bytes. A longer one stops the
+        /// scan with an error naming its offset rather than being buffered
+        /// without bound; the check is made as each read completes, so a line
+        /// can overrun the limit by up to one read chunk before it is refused.
+        /// The default, 64 MiB, holds any row of ordinary
+        /// values; a dump holding larger ones — a single value of hundreds of
+        /// megabytes — needs a larger limit stated here. A row is held whole
+        /// while it is scanned, so this is also what one row may cost in
+        /// memory.
+        #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
+        max_line_bytes: Option<usize>,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -583,6 +594,10 @@ enum Command {
         /// carries, and with the same measured answer behind its default.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
         chunk_size: Option<usize>,
+        /// The longest line the scan accepts, in bytes — the same limit
+        /// `parse` carries, applied to both of a query's passes over the file.
+        #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
+        max_line_bytes: Option<usize>,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -601,15 +616,36 @@ fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
     }
 }
 
+/// A `--max-line-bytes` value: a byte count, and never zero.
+///
+/// Zero would refuse every line that crosses a read, which is every line of
+/// a file longer than one chunk — a limit nobody means, so it is refused
+/// here rather than reported as a line too long.
+fn parse_max_line_bytes(text: &str) -> std::result::Result<usize, String> {
+    match text.parse::<usize>() {
+        Ok(0) => Err("a line limit of 0 would refuse every line a read splits".to_string()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The two read flags every scanning command carries, as given.
+#[derive(Clone, Copy)]
+struct ReadFlags {
+    chunk_size: Option<usize>,
+    max_line_bytes: Option<usize>,
+}
+
 /// The [`ScanOptions`] one scanning command runs under: the default, with
-/// `--chunk-size` applied where it was given and the already-resolved
-/// arrangement ([`Discovered::resolve`]).
+/// `--chunk-size` and `--max-line-bytes` applied where they were given and the
+/// already-resolved arrangement ([`Discovered::resolve`]).
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
 /// needs the same arrangement in [`QueryOptions`] as in its mapping pass.
-fn scan_options(chunk_size: Option<usize>, parallel: &Resolved) -> ScanOptions {
+fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
     ScanOptions {
-        chunk_size: chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
+        chunk_size: read.chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
+        max_line_bytes: read.max_line_bytes.unwrap_or(pgdump_query::DEFAULT_MAX_LINE_BYTES),
         parallelism: parallel.parallelism(),
         ..ScanOptions::default()
     }
@@ -1087,8 +1123,10 @@ async fn main() -> Result<()> {
             dqcache,
             preamble_only: preamble_only_flag,
             chunk_size,
+            max_line_bytes,
             parallel,
         } => {
+            let read = ReadFlags { chunk_size, max_line_bytes };
             // `parse` is the only scanner (`docs/design/decisions.md`,
             // "D61"). Reject `--dqcache none` up front, before paying
             // for a scan we won't be allowed to persist.
@@ -1108,8 +1146,7 @@ async fn main() -> Result<()> {
             parallel.announce();
             if preamble_only_flag {
                 let (metadata, diagnostics) =
-                    preamble_only(source.as_ref(), &scan_options(chunk_size, &parallel), &mode)
-                        .await?;
+                    preamble_only(source.as_ref(), &scan_options(read, &parallel), &mode).await?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -1120,7 +1157,7 @@ async fn main() -> Result<()> {
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
-                ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size, &parallel) };
+                ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
             let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both
@@ -1220,8 +1257,10 @@ async fn main() -> Result<()> {
             database,
             schema_mode,
             chunk_size,
+            max_line_bytes,
             parallel,
         } => {
+            let read = ReadFlags { chunk_size, max_line_bytes };
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
@@ -1278,7 +1317,7 @@ async fn main() -> Result<()> {
             let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
-                scan_options(chunk_size, &parallel),
+                scan_options(read, &parallel),
                 query_options,
                 mode,
             )

@@ -69,7 +69,7 @@ instrument can see").
 
 Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-row-group-statistics.md).
 
-- [ ] **10.1** Fixture shapes — sorted, reversed, unsorted, constant and all-null columns; float specials; `numeric` `1.5`/`1.50`; `C` and default-collated text; low- and over-64-cardinality columns; a value past `N` and the read chunk — and `--max-line-bytes` on `parse` and `query`
+- [x] **10.1** Fixture shapes — sorted, reversed, unsorted, constant and all-null columns; float specials; `numeric` `1.5`/`1.50`; `C` and default-collated text; low- and over-64-cardinality columns; a value past `N` and the read chunk — and `--max-line-bytes` on `parse` and `query`; [notes](../design/roadmap-P10.1-fixture-shapes-notes.md)
 - [ ] **10.2** Row-free comparison and plan-time filter resolution, behaviour-preserving
 - [ ] **10.3** The truth-set evaluator, property-tested against the row evaluator
 - [ ] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`, coarse reserve and resident bumps
@@ -121,8 +121,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD26 -->
-**`KD1`–`KD26` are allocated, and nothing at or below `KD26` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD27 -->
+**`KD1`–`KD27` are allocated, and nothing at or below `KD27` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -279,6 +279,12 @@ a phase nobody has sliced.
   beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
   has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
 
+- **KD27** — a line longer than a read chunk is searched for its newline
+  again from its first byte at every chunk it spans, so the serial read loops
+  are quadratic in a row's length and worst at a small chunk. **(c)
+  unowned**; promoted by a dump whose rows run many read chunks long. Detail:
+  `pgdump_query/src/scan.rs`.
+
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   table, three fifths of it live structure the preamble alone pays, so a
   4,000-table `parse` holds **44.2 MiB** against a one-block one's 6.2 MiB.
@@ -309,3 +315,17 @@ beside the mechanism it governs first. Full rules:
   the manual's `MALLOC_ARENA_MAX` advice and what the `reserve` figure's arena
   legs are for. Found by the keystone review that struck P19
   ([`history/2026-09-13.md`](history/2026-09-13.md), "P19 is struck").
+
+- **Whether the `statistics` fixture's long value should exceed the shipped
+  read chunk on every major.** It does: `long_value.v` holds one value past a
+  mebibyte in all six `fixtures/<major>/statistics/default.sql`, reading the
+  spec's "larger than both `N` and the read chunk" as the defaults, so no test
+  has to state a size for the value to be long. The cost is the suite's:
+  `determinism.rs`'s serial 64-byte leg is quadratic in that line (`KD27`) and
+  took the debug suite from seconds to over a minute on that test alone. **The
+  decision to make:** keep it and let `KD27`'s repair recover the time; shrink
+  the value to exceed only a chunk and group size the tests state, which the
+  spec's wording also allows and which drops coverage of a row past the
+  defaults; or keep the value on one major only. Reconsidering it regenerates
+  the schema and edits `statistics_fixture.rs`'s long-value assertion
+  ([`../design/roadmap-P10.1-fixture-shapes-notes.md`](../design/roadmap-P10.1-fixture-shapes-notes.md)).

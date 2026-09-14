@@ -28,6 +28,14 @@ Options:
                                  raised value keeps its buffer pooling and costs memory instead: the
                                  read path holds four buffers of whatever size you ask for, or
                                  `--parallel-memory`'s worth, whichever is fewer
+      --max-line-bytes <BYTES>   The longest line the scan accepts, in bytes. A longer one stops the
+                                 scan with an error naming its offset rather than being buffered
+                                 without bound; the check is made as each read completes, so a line
+                                 can overrun the limit by up to one read chunk before it is refused.
+                                 The default, 64 MiB, holds any row of ordinary values; a dump
+                                 holding larger ones — a single value of hundreds of megabytes —
+                                 needs a larger limit stated here. A row is held whole while it is
+                                 scanned, so this is also what one row may cost in memory
       --jobs <N>                 How many workers pgdq may ask for. Left unstated, the file decides:
                                  a plain dump reads serially, and an `.xz` one takes the CPUs this
                                  process was given, or its own block count where that is smaller —

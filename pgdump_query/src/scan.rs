@@ -402,6 +402,18 @@ impl ChunkCarry {
     /// With nothing carried that is `0` — the chunk is scanned whole, where it
     /// lies. With a carry and no newline anywhere in `chunk`, it is
     /// `chunk.len()`.
+    ///
+    /// Deficiency register: `deficiency: KD27` — a carry that chunk leaves
+    /// unfinished is searched again from its first byte by the next chunk's
+    /// carry pass, [`CopyScanner::next_event`] looking for a newline across the
+    /// whole span each time, so a line `L` bytes long costs about
+    /// `L² / (2 × chunk)` bytes of search in every serial read loop — quadratic
+    /// in the line, and worst at a small chunk. `determinism.rs`'s serial
+    /// 64-byte leg pays it over the `statistics` fixture's long value on every
+    /// major. **(c) unowned**; promoted by a dump whose rows run many read
+    /// chunks long. Closing it means skipping the carry pass for a chunk that
+    /// held no newline short of the end of the file, which this call already
+    /// knows; the leader's growth read doubles and is not affected.
     pub fn absorb(&mut self, chunk: &[u8]) {
         if self.buf.is_empty() {
             self.split = 0;
@@ -467,6 +479,12 @@ impl ChunkCarry {
 /// (`docs/design/decisions.md`, "D9").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 
+/// The longest line a scan accepts unless a caller says otherwise. A row is
+/// held whole before it is emitted, so this is what one row may cost in
+/// memory; a dump holding larger values states a larger limit
+/// ([`ScanOptions::max_line_bytes`]).
+pub const DEFAULT_MAX_LINE_BYTES: usize = 64 << 20;
+
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -476,7 +494,8 @@ pub struct ScanOptions {
     /// Hard cap on a single line's length. A dump whose lines exceed this is
     /// rejected rather than buffered without bound — the scanner cannot emit
     /// a row until it has the whole line, so this is the only thing standing
-    /// between a malformed input and unbounded memory growth.
+    /// between a malformed input and unbounded memory growth. Defaults to
+    /// [`DEFAULT_MAX_LINE_BYTES`].
     pub max_line_bytes: usize,
     /// Cooperative cancellation: set this flag from another task and the
     /// mapping loop stops at the next chunk boundary, persists what it holds
@@ -508,7 +527,7 @@ impl Default for ScanOptions {
     fn default() -> Self {
         Self {
             chunk_size: DEFAULT_CHUNK_SIZE,
-            max_line_bytes: 64 << 20,
+            max_line_bytes: DEFAULT_MAX_LINE_BYTES,
             cancel: None,
             parallelism: Parallelism::default(),
         }

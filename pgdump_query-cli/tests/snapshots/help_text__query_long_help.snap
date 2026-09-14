@@ -95,6 +95,10 @@ Options:
           Bytes requested per read from the dump — the same knob `parse` carries, and with the same
           measured answer behind its default
 
+      --max-line-bytes <BYTES>
+          The longest line the scan accepts, in bytes — the same limit `parse` carries, applied to
+          both of a query's passes over the file
+
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count

@@ -7,7 +7,7 @@
 //!
 //! **Bytes, not a decoded index.** `pgdump_query/tests/map_file.rs` already
 //! compares the in-memory `DumpIndex` a parallel mapping pass builds against an
-//! eager one's, over four schemas. What only the binary can say is that the
+//! eager one's, over five schemas. What only the binary can say is that the
 //! *file* the next command reads is the same file: a field that survives the
 //! index comparison and encodes differently — a span vector accumulated in a
 //! different order, a census unioned rather than replaced — would leave `pgdq
@@ -29,7 +29,7 @@
 //! **Why the small-chunk legs state a chunk size.** `LocalFileSource`'s
 //! partition is a fixed multiple of the read chunk, and `leader::scan_region`
 //! declines a region with less than one partition left in the file — so at the
-//! shipped 1 MiB every fixture here (the largest is 66 KB) is declined whole
+//! shipped 1 MiB every fixture here (none reaching one partition) is declined whole
 //! and a `--jobs 8` leg would be the serial path compared to itself, which is
 //! the trap `map_file.rs` names. 64 bytes cuts nearly every block and 512
 //! cuts the larger ones and leaves the rest to the serial scanner, so the

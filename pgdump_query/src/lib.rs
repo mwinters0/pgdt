@@ -52,8 +52,8 @@ pub use preamble::{
 pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
-    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DEFAULT_CHUNK_SIZE, Event,
-    LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
+    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DEFAULT_CHUNK_SIZE,
+    DEFAULT_MAX_LINE_BYTES, Event, LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
 };
 pub use stream::{
     BlockingTableIter, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream, map_file,

@@ -6,7 +6,7 @@ tested/untested matrix in docs/design/pg-dump-compatibility.md, and
 same doc's fixture-tree rules. Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
 process, per this repo's CPU-heavy-machine / glibc-arena caution), loads one
-of two fixture schemas, runs pg_dump across each schema's own flag matrix, and
+fixture schema at a time, runs pg_dump across each schema's own flag matrix, and
 writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql.
 
 It also generates the **comparison oracle** -- what the server itself answers
@@ -165,6 +165,13 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
     "partitions": {
         "default": [],
         "load-via-partition-root": ["--load-via-partition-root"],
+    },
+    # The column shapes per-row-group statistics are tested against
+    # (fixture_schema_statistics.sql). Only `default`: every flag set above
+    # varies what `pg_dump` writes around a `COPY` block, and this schema's
+    # subject is what is inside one.
+    "statistics": {
+        "default": [],
     },
 }
 

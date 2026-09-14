@@ -205,6 +205,25 @@ below.
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.
 
+### `--max-line-bytes`: a dump holding very large values
+
+One row of a `COPY` block is one line of the file, and pgdq holds a line whole
+while it scans it. So that a malformed file cannot grow that without bound,
+`parse` and `query` refuse a line longer than 64 MiB, with an error naming the
+byte offset it starts at. A dump that really does hold a value that large — a
+`text` or `bytea` column of hundreds of megabytes — is read by stating a larger
+limit on both commands:
+
+```sh
+pgdq parse --source big.sql --max-line-bytes 1073741824
+pgdq query --source big.sql --table public.documents --max-line-bytes 1073741824
+```
+
+The limit is what one row may cost in memory, so raise it to what the file
+needs rather than as far as it goes. It is checked as each read completes, so a
+line can run past the limit by up to one read chunk (`--chunk-size`) before it
+is refused.
+
 ### `--jobs` and `--parallel-memory`: the workers and the budget
 
 `parse` and `query` take two more numbers: how many workers to ask for, and a
