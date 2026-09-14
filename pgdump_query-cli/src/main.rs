@@ -650,7 +650,8 @@ enum Command {
         /// skips each stretch of the table's data whose statistics prove no
         /// row in it satisfies the filter, and says on stderr how much was
         /// skipped, and stops reading data sorted on a column the filter
-        /// bounds at its first row past the bound; `none` reads every row. The
+        /// bounds at its first row past the bound, saying once the rows are
+        /// printed how much that left unread; `none` reads every row. The
         /// rows printed are the same either way. A value that fails to decode
         /// is reported only where its row is read, so `none` is also how to
         /// find one in data left unread.
@@ -1100,6 +1101,29 @@ fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolv
             }
             _ => eprintln!("warning: {}{origin}", note.message()),
         }
+    }
+}
+
+/// Say, once the query has drained and only where one fired, what the early
+/// stop on sorted data left unread. **Found while rows are read**, so unlike
+/// [`announce_plan_notes`] it is summed over every sub-stream after the fact
+/// ([`pgdump_query::TableStream::early_stops`]), a block split across
+/// sub-streams counted once. A stop planned and never reached prints nothing:
+/// the pruning note already says statistics were consulted.
+fn announce_early_stops(streams: &[pgdump_query::TableStream<'_>]) {
+    let mut unread = std::collections::BTreeMap::<u64, u64>::new();
+    for stop in streams.iter().flat_map(|stream| stream.early_stops()) {
+        if let Some(bytes) = stop.unread_bytes {
+            *unread.entry(stop.header_offset).or_default() += bytes;
+        }
+    }
+    if !unread.is_empty() {
+        eprintln!(
+            "note: reading stopped early in {} block(s) sorted past the filter's bound, so a \
+             further {} byte(s) of rows are not read",
+            unread.len(),
+            unread.values().sum::<u64>()
+        );
     }
 }
 
@@ -1594,6 +1618,7 @@ async fn main() -> Result<()> {
             if !announced {
                 announce_comparisons(&streams[0]);
             }
+            announce_early_stops(&streams);
             if any_batch {
                 eprintln!("{rows} row(s)");
             } else {

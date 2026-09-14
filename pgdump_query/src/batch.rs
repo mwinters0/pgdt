@@ -130,8 +130,9 @@ pub struct QueryOptions {
     /// either way, and `false` reads every row of every block, which is also
     /// how a value it would not read still raises its decode failure
     /// (`docs/design/decisions.md`, "D54"). What was skipped is a
-    /// [`crate::stream::PlanNoteKind::StatisticsPruned`]; a stop is settled
-    /// only as rows are read, and no note counts it.
+    /// [`crate::stream::PlanNoteKind::StatisticsPruned`]; a stop is found only
+    /// as rows are read, so what it left unread is reported after the fact
+    /// ([`crate::stream::TableStream::early_stops`]).
     pub use_statistics: bool,
 }
 

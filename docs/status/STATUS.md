@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D54, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D54, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -81,7 +81,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.7** Back-fill of blocks lacking the requested statistics; [notes](../design/roadmap-P10.7-backfill-notes.md)
 - [x] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check; [notes](../design/roadmap-P10.8-pruning-consumer-notes.md)
 - [x] **10.9** Early stop on a column sorted over its block; [notes](../design/roadmap-P10.9-sorted-stop-notes.md)
-- [ ] **10.11** The early stop reported after the fact: blocks stopped and bytes left unread, counted per stream and printed by `pgdq query` where a stop fired
+- [x] **10.11** The early stop reported after the fact: blocks stopped and bytes left unread, counted per stream and printed by `pgdq query` where a stop fired; [notes](../design/roadmap-P10.11-stop-report-notes.md)
 - [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`
 
 ## Not started
@@ -303,3 +303,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The early stop is reported per block, not as per-stream counts** (10.11).
+  The spec has a stream count "the blocks it stopped and the bytes", summed by
+  `pgdq query`; but a partitioned replay hands one block's pieces to several
+  sub-streams, each piece past the stopping row stopping at its own first row,
+  so summed block counts count a block once per sub-stream. So
+  `TableStream::early_stops` returns one `EarlyStop { header_offset,
+  unread_bytes: Option<u64> }` per block with a stop planned, and the CLI
+  merges by `header_offset`; its `unread_bytes` is a lower bound, measured to
+  a piece's `limit + 1` and short by the tail of the row straddling it.
+  Reconsidering means either counts with a documented overcount, or an exact
+  byte count, which needs each piece's owned end found by reading past its
+  limit.

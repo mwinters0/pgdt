@@ -1298,6 +1298,7 @@ pub struct TableStream<'a> {
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     batch_offset: Arc<Mutex<u64>>,
     plan_notes: Arc<Mutex<Vec<PlanNote>>>,
+    early_stops: Arc<Mutex<Vec<EarlyStop>>>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -1357,6 +1358,17 @@ impl<'a> TableStream<'a> {
     /// polled, and nothing before.
     pub fn plan_notes(&self) -> Vec<PlanNote> {
         self.plan_notes.lock().unwrap().clone()
+    }
+
+    /// What the early stop did in each block this stream replays with one
+    /// planned ([`EarlyStop`]), in file order — **found while rows are read,
+    /// so reported after the fact** where [`Self::plan_notes`] is settled
+    /// before. Complete once the stream is drained; before that it covers what
+    /// has been read, and before the first poll nothing. A block with no stop
+    /// planned has no entry: the filter requires no bound its sort order
+    /// closes, or statistics were not used.
+    pub fn early_stops(&self) -> Vec<EarlyStop> {
+        self.early_stops.lock().unwrap().clone()
     }
 
     /// Where in the source the batch [`futures::StreamExt::next`] last
@@ -1728,6 +1740,7 @@ struct StreamShared {
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     batch_offset: Arc<Mutex<u64>>,
     plan_notes: Arc<Mutex<Vec<PlanNote>>>,
+    early_stops: Arc<Mutex<Vec<EarlyStop>>>,
 }
 
 impl StreamShared {
@@ -1738,6 +1751,7 @@ impl StreamShared {
             comparison_notes: Arc::new(Mutex::new(Vec::new())),
             batch_offset: Arc::new(Mutex::new(0)),
             plan_notes: Arc::new(Mutex::new(Vec::new())),
+            early_stops: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -1759,6 +1773,7 @@ impl StreamShared {
             comparison_notes: self.comparison_notes,
             batch_offset: self.batch_offset,
             plan_notes: self.plan_notes,
+            early_stops: self.early_stops,
         }
     }
 }
@@ -2127,6 +2142,32 @@ pub enum PlanNoteKind {
     /// declared type or collation no longer matches, and one holding only NULL
     /// counts under an operator they cannot answer.
     StatisticsPruned { skipped_groups: u64, groups: u64, skipped_bytes: u64, bytes: u64 },
+}
+
+/// One block a [`TableStream`] replayed under a planned early stop — the
+/// filter requiring a bound the block's stored row order closes — and what
+/// the stop left unread ([`TableStream::early_stops`]).
+///
+/// **Per block, not a count**, because a partitioned replay can hand one
+/// block's pieces to several sub-streams and a piece past the stopping row
+/// stops at its own first row: a caller summing over sub-streams counts a
+/// block once by its `header_offset`, and adds its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EarlyStop {
+    /// The block, by its [`CopyBlock::header_offset`].
+    pub header_offset: u64,
+    /// The bytes of rows the stop left unread in the pieces of the block this
+    /// stream replayed, summed; `None` where it ended no piece before its last
+    /// row — the bound never passed, or passed only there — which saved
+    /// nothing.
+    ///
+    /// **Measured from the end of the stopping row to the piece's limit**, or
+    /// to the block's `\.` where the piece runs to it. A piece owns the row
+    /// straddling its limit, whose rest past the limit is not counted, so this
+    /// is short of the unread bytes by at most that one row's tail per piece
+    /// and never counts a byte a skipped group's
+    /// [`PlanNoteKind::StatisticsPruned`] `skipped_bytes` does: the two add.
+    pub unread_bytes: Option<u64>,
 }
 
 impl PlanNote {
@@ -2515,6 +2556,21 @@ fn replay<'a>(
         // width, so after the first it never grows again.
         let mut split = RowSplit::default();
 
+        // Every block holding a stop gets its entry up front, so a drained
+        // stream tells one whose stop never fired from one with none planned.
+        // A block's segments are adjacent, being in file order.
+        {
+            let mut early_stops = shared.early_stops.lock().unwrap();
+            for segment in &segments {
+                let header_offset = segment.block.header_offset;
+                if plan.stops.contains_key(&header_offset)
+                    && early_stops.last().is_none_or(|last| last.header_offset != header_offset)
+                {
+                    early_stops.push(EarlyStop { header_offset, unread_bytes: None });
+                }
+            }
+        }
+
         for segment in segments {
             let block = &segment.block;
             let seg_limit = segment.limit;
@@ -2590,6 +2646,8 @@ fn replay<'a>(
             // segment of the same block stops at its own first row, where
             // pruning has not already skipped it.
             let mut past_limit = false;
+            // Where the row that stopped this segment ends, if one did.
+            let mut stopped_at: Option<u64> = None;
 
             loop {
                 let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
@@ -2693,6 +2751,7 @@ fn replay<'a>(
                                     } else if stop.is_some_and(|stop| stop.passed(raw, &mut split))
                                     {
                                         past_limit = true;
+                                        stopped_at = Some(scanner.position());
                                     }
                                     if batcher.should_flush() {
                                         let begins_at = batcher
@@ -2759,6 +2818,19 @@ fn replay<'a>(
                         offset: scanner.position(),
                         limit: scan_options.max_line_bytes,
                     })?;
+                }
+            }
+
+            if let Some(stopped_at) = stopped_at {
+                let owned_end = seg_limit.saturating_add(1).min(block.terminator_offset);
+                let unread = owned_end.saturating_sub(stopped_at);
+                if unread > 0 {
+                    let mut early_stops = shared.early_stops.lock().unwrap();
+                    if let Some(entry) =
+                        early_stops.iter_mut().find(|e| e.header_offset == block.header_offset)
+                    {
+                        *entry.unread_bytes.get_or_insert(0) += unread;
+                    }
                 }
             }
 

@@ -63,7 +63,7 @@ pub use statistics::{
     StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 pub use stream::{
-    BlockingTableIter, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream,
+    BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream,
     gather_block_statistics, map_file, table_stream, table_stream_partitions,
 };
 

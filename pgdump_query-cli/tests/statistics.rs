@@ -7,8 +7,8 @@
 //! a combination the two flags cannot both mean is refused rather than
 //! half-honoured, that `info --json` exports every block's groups compact and
 //! with no rollup, that `info --detail` rolls those groups up per table and
-//! column, and that `query` skips what they rule out unless told `--statistics
-//! none`.
+//! column, that `query` skips what they rule out unless told `--statistics
+//! none`, and that it says what an early stop left unread.
 
 use std::path::Path;
 
@@ -347,6 +347,10 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
                 "id >= 990 or id < 3",
                 "--jobs",
                 jobs,
+                // Wide enough that three sub-streams are planned: the
+                // default budget affords one.
+                "--parallel-memory",
+                "1073741824",
             ];
             args.extend_from_slice(extra);
             let out = run(&args);
@@ -361,5 +365,60 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
         assert!(note.is_some(), "--jobs {jobs}: {said}");
         assert!(!note.unwrap().contains(" 0 of"), "--jobs {jobs}: {said}");
         assert!(!unsaid.contains("row-group statistics"), "--jobs {jobs}: {unsaid}");
+    }
+}
+
+/// **`query` says what an early stop left unread, once, and only where one
+/// fired**: at the shipped group size `ordered` is one group, so `id < 20`
+/// skips nothing and stops at `20` — one block, however many sub-streams its
+/// pieces went to — while `id <= 1000`, planned and never passed, and
+/// `--statistics none` print no such note.
+#[test]
+fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
+    let (_dir, dump) = sandboxed(DUMP, "stopped.sql");
+    let source = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", source]);
+    for jobs in ["1", "3"] {
+        let query = |filter: &str, extra: &[&str]| {
+            let mut args = vec![
+                "query",
+                "--source",
+                source,
+                "--table",
+                "public.ordered",
+                "--where",
+                filter,
+                "--jobs",
+                jobs,
+                // Wide enough that three sub-streams are planned: the
+                // default budget affords one.
+                "--parallel-memory",
+                "1073741824",
+            ];
+            args.extend_from_slice(extra);
+            let out = run(&args);
+            assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+            (common::stdout_of(&out), stderr_of(&out))
+        };
+        let stop_note = |said: &str| {
+            said.lines()
+                .filter(|l| l.starts_with("note: reading stopped early in"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        let (stopped, said) = query("id < 20", &[]);
+        let (unstopped, unsaid) = query("id < 20", &["--statistics", "none"]);
+        assert_eq!(stopped, unstopped, "--jobs {jobs}");
+        let notes = stop_note(&said);
+        assert_eq!(notes.len(), 1, "--jobs {jobs}: {said}");
+        assert!(notes[0].contains(" 1 block(s) "), "--jobs {jobs}: {said}");
+        assert!(!notes[0].contains(" 0 byte(s)"), "--jobs {jobs}: {said}");
+        assert!(stop_note(&unsaid).is_empty(), "--jobs {jobs}: {unsaid}");
+        let (_, whole) = query("id <= 1000", &[]);
+        assert!(stop_note(&whole).is_empty(), "--jobs {jobs}: {whole}");
+        assert!(
+            whole.contains("note: row-group statistics rule out 0 of"),
+            "--jobs {jobs}: {whole}"
+        );
     }
 }

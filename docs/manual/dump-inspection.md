@@ -288,7 +288,15 @@ bound.** Where the statistics record that a table's data holds a column in
 ascending order, and the filter requires `<` or `<=` of it — alone, or joined
 to other terms by `AND` — reading stops at the first row past the bound, since
 no later row can satisfy it; descending order stops `>` and `>=` the same way.
-Nothing on stderr counts what that saved.
+A stop is found only as rows are read, so where one ended reading early stderr
+says so after the rows, in bytes that add to the skipped groups':
+
+```
+note: reading stopped early in 1 block(s) sorted past the filter's bound, so a further 375 byte(s) of rows are not read
+```
+
+A stop that never came before a table's last row saved nothing, and prints
+nothing.
 
 The rows are the ones `query --statistics none` prints, which reads every row.
 Two things are not the same: a value that fails to decode is reported only

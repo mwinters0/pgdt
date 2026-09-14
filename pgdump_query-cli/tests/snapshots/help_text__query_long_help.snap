@@ -103,9 +103,10 @@ Options:
           Whether to use the statistics `parse` recorded: `all`, the default, skips each stretch of
           the table's data whose statistics prove no row in it satisfies the filter, and says on
           stderr how much was skipped, and stops reading data sorted on a column the filter bounds
-          at its first row past the bound; `none` reads every row. The rows printed are the same
-          either way. A value that fails to decode is reported only where its row is read, so `none`
-          is also how to find one in data left unread
+          at its first row past the bound, saying once the rows are printed how much that left
+          unread; `none` reads every row. The rows printed are the same either way. A value that
+          fails to decode is reported only where its row is read, so `none` is also how to find one
+          in data left unread
           
           [default: all]
           [possible values: all, none]
