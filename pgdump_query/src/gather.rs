@@ -156,7 +156,9 @@ impl ColumnGatherer {
         let (bounds, dictionary) = match comparison {
             ComparisonPlan::Compared { kind, divergence } if *plan == NestedPlan::Scalar => (
                 divergence.is_none().then(|| BoundsGatherer::new(kind.clone())),
-                divergence.is_none_or(|d| !d.affects_equality()).then(DictionaryGatherer::new),
+                divergence
+                    .is_none_or(|d| !d.affects_equality())
+                    .then(|| DictionaryGatherer::new(kind)),
             ),
             _ => (None, None),
         };
@@ -519,7 +521,12 @@ fn bytea_upper(text: &str) -> Option<String> {
     Some(render_bytea(&bytes))
 }
 
+/// A column's dictionary. A `character` entry is its text without the
+/// trailing blanks its comparison ignores, deduplicated and measured against
+/// [`STORED_VALUE_CAP`] as such (`docs/design/decisions.md`, "D34").
 struct DictionaryGatherer {
+    /// Whether the column is `character`, whose entries give up their padding.
+    padded: bool,
     entries: Vec<String>,
     interned: HashMap<String, u32>,
     groups: Vec<Option<Vec<u32>>>,
@@ -528,8 +535,9 @@ struct DictionaryGatherer {
 }
 
 impl DictionaryGatherer {
-    fn new() -> Self {
+    fn new(kind: &CompareKind) -> Self {
         Self {
+            padded: matches!(kind, CompareKind::PaddedText),
             entries: Vec::new(),
             interned: HashMap::new(),
             groups: Vec::new(),
@@ -539,6 +547,7 @@ impl DictionaryGatherer {
 
     fn observe(&mut self, text: &str) {
         let Some(group) = &mut self.group else { return };
+        let text = if self.padded { text.trim_end_matches(' ') } else { text };
         if group.iter().any(|seen| seen == text) {
             return;
         }

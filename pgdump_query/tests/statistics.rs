@@ -416,3 +416,38 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
         .collect();
     assert_eq!(group, vec!["000000x", "0003"]);
 }
+
+/// **A `character` dictionary entry is stored and measured without its
+/// trailing blanks**, as its bounds are: a `character(300)` column of short
+/// values keeps a dictionary, one entry per value however it is padded, where
+/// a `character varying(300)` column holding the same padded texts is past the
+/// cap. Hand-written, since no fixture declares a `character` column wider
+/// than the cap.
+#[tokio::test]
+async fn a_character_dictionary_entry_drops_its_padding() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("padded.sql");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    c character(300),\n    v character varying(300)\n);\n\n",
+    );
+    text.push_str("COPY public.t (c, v) FROM stdin;\n");
+    for value in ["ab", "cd", "ab", "\\N"] {
+        let padded = if value == "\\N" { value.to_string() } else { format!("{value:<300}") };
+        text.push_str(&format!("{padded}\t{padded}\n"));
+    }
+    text.push_str("\\.\n\n");
+    std::fs::write(&dump, &text).unwrap();
+    let index = gathered(&dump, &request(StatisticsSelection::All, 1 << 20)).await;
+    let columns = &statistics(block(&index, "public.t")).columns;
+    let c = columns[0].as_ref().unwrap();
+    let dictionary = c.dictionary.as_ref().expect("equality on `character` is exact");
+    assert_eq!(dictionary.entries, vec!["ab", "cd"]);
+    assert_eq!(dictionary.groups, vec![Some(vec![0, 1])]);
+    assert_eq!(c.null_counts, vec![1]);
+    let v = columns[1].as_ref().unwrap();
+    assert_eq!(
+        v.dictionary.as_ref().unwrap().groups,
+        vec![None],
+        "a padded `varchar` is past the cap"
+    );
+}

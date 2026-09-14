@@ -211,7 +211,8 @@ pub enum Sortedness {
 /// Every distinct text per group, interned once per block and column.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnDictionary {
-    /// Each distinct text once, in first-seen order.
+    /// Each distinct text once, in first-seen order — a `character` value's
+    /// without the trailing blanks its comparison ignores, as with [`Bounds`].
     pub entries: Vec<String>,
     /// Per group, indices into `entries`; `None` where the group held more than
     /// [`DICTIONARY_CAP`] distinct texts or a text longer than

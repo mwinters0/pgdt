@@ -74,7 +74,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.3** The truth-set evaluator, property-tested against the row evaluator; [notes](../design/roadmap-P10.3-truth-set-evaluator-notes.md)
 - [x] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`; [notes](../design/roadmap-P10.4-serial-gathering-notes.md)
 - [x] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores; [notes](../design/roadmap-P10.4.2-mapping-pass-request-notes.md)
-- [ ] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks
+- [x] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks; [notes](../design/roadmap-P10.4.3-character-dictionary-notes.md)
 - [ ] **10.5** Reporting in `info --detail` and `--json`
 - [ ] **10.6** Parallel gathering, identical to serial over every fixture
 - [ ] **10.7** Back-fill of blocks lacking the requested statistics
