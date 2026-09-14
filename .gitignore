@@ -9,3 +9,6 @@ __pycache__/
 # writes its own build state instead of the root's.
 /vendor/xz-seek/target
 /vendor/xz-seek/Cargo.lock
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
