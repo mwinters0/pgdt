@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -513,10 +514,11 @@ enum Command {
         /// per-table listing.
         #[arg(long)]
         map: bool,
-        /// Print the internal index as JSON instead of the human-readable
-        /// listing: the whole `DumpIndex` but its blocks' statistics, its
-        /// coverage, its diagnostics, and the per-`COPY`-block type resolution
-        /// and per-table statistics `--detail` renders as text.
+        /// Print the internal index as compact JSON instead of the
+        /// human-readable listing: the whole `DumpIndex`, every block's
+        /// per-group statistics included, its coverage, its diagnostics, and
+        /// the per-`COPY`-block type resolution `--detail` renders as text.
+        /// Statistics are not rolled up per table, as `--detail` rolls them.
         /// No schema stability is promised — this is a raw dump of our
         /// internal representation, not a supported interchange format
         /// (`docs/design/decisions.md`, "D67"). Incompatible with
@@ -1338,7 +1340,7 @@ async fn main() -> Result<()> {
             if mtime_changed {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
-            report(&index, total_size, compression, detail, map, json);
+            report(&index, total_size, compression, detail, map, json)?;
         }
         Command::Query {
             source: file,
@@ -1716,8 +1718,7 @@ async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Resul
         }
         unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
     };
-    report(&index, total_size, compression, detail, map, json);
-    Ok(())
+    report(&index, total_size, compression, detail, map, json)
 }
 
 /// One column's resolution outcome, in both spellings: a stable token for
@@ -2019,9 +2020,9 @@ fn block_resolutions(
 /// **Coverage is components, not a rendered percentage**: `scanned_through`
 /// and `total_size` sit side by side, so a script computes its own ratio.
 ///
-/// **A block's statistics are not exported**, each growing with the dump; the
-/// per-table rollup `--detail` renders is, as counts
-/// (`docs/design/decisions.md`, "D67").
+/// **Every block's per-group statistics are exported as the cache holds them**,
+/// with no per-table rollup, and the document is written compact and straight
+/// to stdout, never held whole (`docs/design/decisions.md`, "D67").
 #[derive(serde::Serialize)]
 struct IndexJson<'a> {
     #[serde(flatten)]
@@ -2033,7 +2034,6 @@ struct IndexJson<'a> {
     compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
-    statistics: Vec<info_statistics::TableStatistics<'a>>,
 }
 
 /// One `COPY` block's resolution, keyed by the block rather than rolled up per
@@ -2065,7 +2065,7 @@ fn print_index_json(
     total_size: u64,
     compression: Option<CompressionShape>,
     complete: bool,
-) {
+) -> Result<()> {
     let resolutions = block_resolutions(index, complete);
     let resolution = resolutions
         .iter()
@@ -2090,30 +2090,11 @@ fn print_index_json(
                 .collect(),
         })
         .collect();
-    let wrapped = IndexJson {
-        index,
-        total_size,
-        compression,
-        diagnostics: &index.diagnostics,
-        resolution,
-        statistics: info_statistics::table_statistics(index),
-    };
-    let mut json = serde_json::to_value(&wrapped).expect("DumpIndex is always valid JSON");
-    strip_block_statistics(&mut json);
-    println!("{}", serde_json::to_string_pretty(&json).expect("a JSON value always renders"));
-}
-
-/// Drop every `COPY` block's `statistics` from the export: `IndexJson` flattens
-/// the persisted struct, whose field the cache needs.
-fn strip_block_statistics(json: &mut serde_json::Value) {
-    let Some(spans) = json.get_mut("spans").and_then(serde_json::Value::as_array_mut) else {
-        return;
-    };
-    for span in spans {
-        if let Some(copy) = span.pointer_mut("/body/Data/Copy").and_then(|c| c.as_object_mut()) {
-            copy.remove("statistics");
-        }
-    }
+    let wrapped =
+        IndexJson { index, total_size, compression, diagnostics: &index.diagnostics, resolution };
+    let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+    serde_json::to_writer(&mut out, &wrapped).context("writing the JSON export")?;
+    writeln!(out).and_then(|()| out.flush()).context("writing the JSON export")
 }
 
 /// How much of the file the index covers, stated **once, at the top**, with
@@ -2138,15 +2119,15 @@ fn report(
     detail: bool,
     map: bool,
     json: bool,
-) {
+) -> Result<()> {
     let complete = index.is_complete(total_size);
     if json {
-        print_index_json(index, total_size, compression, complete);
-        return;
+        return print_index_json(index, total_size, compression, complete);
     }
     println!("{}", completion_line(index.scanned_through, total_size));
     println!();
     print_index(index, compression, detail, map, complete);
+    Ok(())
 }
 
 /// The container line `info --detail` prints above the listing, and

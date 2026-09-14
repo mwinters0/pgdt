@@ -27,11 +27,12 @@ Options:
       --map                List every span the map holds (`docs/design/decisions.md`, "D34") — DDL
                            objects and framing included, not just `COPY` blocks — instead of the
                            per-table listing
-      --json               Print the internal index as JSON instead of the human-readable listing:
-                           the whole `DumpIndex` but its blocks' statistics, its coverage, its
-                           diagnostics, and the per-`COPY`-block type resolution and per-table
-                           statistics `--detail` renders as text. No schema stability is promised —
-                           this is a raw dump of our internal representation, not a supported
-                           interchange format (`docs/design/decisions.md`, "D67"). Incompatible with
+      --json               Print the internal index as compact JSON instead of the human-readable
+                           listing: the whole `DumpIndex`, every block's per-group statistics
+                           included, its coverage, its diagnostics, and the per-`COPY`-block type
+                           resolution `--detail` renders as text. Statistics are not rolled up per
+                           table, as `--detail` rolls them. No schema stability is promised — this
+                           is a raw dump of our internal representation, not a supported interchange
+                           format (`docs/design/decisions.md`, "D67"). Incompatible with
                            `--detail`/`--map`, which format detail this already carries in full
   -h, --help               Print help

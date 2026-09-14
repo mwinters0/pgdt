@@ -231,8 +231,8 @@ table's data — a **row group**, one mebibyte of it — the number of rows, eac
 column's number of NULLs, and, where pgdq compares a column's values exactly, its
 least and greatest value and its distinct values (up to 64, none longer than 256
 bytes; past either, that group records no distinct values for the column).
-They are stored in the cache beside the rest of the index, and `info --detail`
-and `info --json` report them per table and column (below). This version
+They are stored in the cache beside the rest of the index; `info --detail`
+sums them per table and column, and `info --json` exports every group's (below). This version
 records them; no query reads them yet.
 
 Gathering reads every value of every column, so it costs a `parse` time, memory
@@ -784,7 +784,7 @@ statistics:
   `--statistics` selection left out.
 
 A cache with no statistics at all prints `statistics: none gathered`. No
-group's own values are shown, here or in `--json`.
+group's own values are shown here; `--json` carries every one of them.
 
 ### When `info` says it cannot answer
 
@@ -896,14 +896,14 @@ bytes but does not read large-object contents; see
 
 ## Scripting against the output: `--json`
 
-`pgdq info --json` prints everything as one JSON object on stdout instead of
-formatted text:
+`pgdq info --json` prints everything as one compact JSON object — a single
+line — on stdout instead of formatted text:
 
 ```sh
 pgdq info --source mydump.sql --json | jq '.spans | length'
 ```
 
-Alongside the file map it carries four things the text views state differently:
+Alongside the file map it carries three things the text views state differently:
 
 - **Coverage as components**, not as the rendered percentage —
   `scanned_through` and `total_size`, so you compute whatever ratio you want.
@@ -925,14 +925,18 @@ Alongside the file map it carries four things the text views state differently:
   Records are keyed by **block**, not by table — one table's data can occupy
   several `COPY` blocks, and pgdq does not yet have a rule for merging blocks
   that disagree, so grouping them is left to you.
-- **`statistics`**, one record per table, with the counts `--detail`'s
-  statistics section renders: `blocks` and `gathered_blocks`, `group_sizes`,
-  `groups`, `empty_groups`, `rows` and `bytes`, and per column
-  `gathered_blocks`, `groups_with_rows`, `groups_with_bounds`,
-  `groups_with_dictionary`, `dictionary_blocks` and a `sortedness` object
-  counting blocks per order. Unlike `resolution` these are keyed by table,
-  counts adding up across blocks. A block's per-group statistics are not in the
-  export: they grow with the dump.
+
+The file map's own `COPY` blocks carry **`statistics`**, exactly as the cache
+holds them — `null` for a block `parse` gathered nothing for. Each has its
+`group_size`, a `groups` array giving every group's `rows` and `bytes`, and one
+entry per column of the block's header, `null` for a column a `--statistics`
+selection left out: the column's `declared_type` and `collation`, its
+`null_counts` per group, `bounds` (a block-wide `sortedness` and per group a
+`min`, `max` and `max_exact`, or `null`), and `dictionary` (the block's
+distinct `entries` once each, and per group a list of indices into them, or
+`null`). Every per-group array is as long as `groups`. Nothing is summed per
+table the way `--detail` sums it; that is yours to do, and the export grows
+with the dump — every group of every column is in it.
 
 **This is a raw dump of pgdq's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field,

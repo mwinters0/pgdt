@@ -1,10 +1,9 @@
-//! What `pgdq info --detail` and `--json` say about gathered statistics, from
-//! the cache alone (`docs/design/decisions.md`, "D61").
+//! What `pgdq info --detail` says about gathered statistics, from the cache
+//! alone (`docs/design/decisions.md`, "D61").
 //!
-//! **Counts, rolled up per table and column; never a group's values.** A
-//! block's statistics grow with the dump, one entry per group per column, so
-//! the export carries none of them (`docs/design/decisions.md`, "D67"). What it
-//! carries instead needs no merge rule, being sums: every block whose header
+//! **Counts, rolled up per table and column; never a group's values**, which
+//! `--json` exports block by block with no rollup (`docs/design/decisions.md`,
+//! "D67"). A rollup needs no merge rule, being sums: every block whose header
 //! names the table counts toward it — a partition root's leaves included, which
 //! is what a query of the root reads — and a column is matched across blocks by
 //! name.
@@ -19,7 +18,7 @@ use std::collections::HashMap;
 use pgdump_query::{CopyBlock, DumpIndex, Sortedness};
 
 /// One table's statistics over the blocks of it the map holds.
-#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TableStatistics<'a> {
     pub database: &'a Option<String>,
     pub table: String,
@@ -43,7 +42,7 @@ pub struct TableStatistics<'a> {
 }
 
 /// One column's statistics over the table's blocks.
-#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ColumnStatisticsSummary<'a> {
     pub name: &'a str,
     /// The blocks gathering this column.
@@ -62,7 +61,7 @@ pub struct ColumnStatisticsSummary<'a> {
 }
 
 /// Blocks per [`Sortedness`] state.
-#[derive(Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SortednessCounts {
     pub ascending: u64,
     pub descending: u64,

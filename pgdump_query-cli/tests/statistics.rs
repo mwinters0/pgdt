@@ -5,10 +5,13 @@
 //! (`pgdump_query/tests/statistics.rs`). What only the binary can say is that
 //! `parse` gathers by default, that each flag reaches the cache it writes, that
 //! a combination the two flags cannot both mean is refused rather than
-//! half-honoured, and that `info --detail` and `--json` report one rollup per
-//! table and column and no group's values.
+//! half-honoured, that `info --json` exports every block's groups compact and
+//! with no rollup, and that `info --detail` rolls those groups up per table and
+//! column.
 
 use std::path::Path;
+
+use serde_json::Value;
 
 mod common;
 use common::{run, run_ok, sandboxed, stderr_of};
@@ -17,7 +20,7 @@ const DUMP: &str = "16/statistics/default.sql";
 
 /// `parse` under `extra` on a private copy, then `info --json` over the cache
 /// it wrote, and the dump's path for a further `info`.
-fn info_after(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, serde_json::Value) {
+fn info_after(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, Value) {
     let (dir, dump) = sandboxed(DUMP, "statistics.sql");
     let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
     args.extend_from_slice(extra);
@@ -27,120 +30,142 @@ fn info_after(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, serde_j
     (dir, dump, json)
 }
 
-fn info_json(dump: &Path) -> serde_json::Value {
+fn info_json(dump: &Path) -> Value {
     serde_json::from_str(&run_ok(&["info", "--source", dump.to_str().unwrap(), "--json"])).unwrap()
 }
 
-/// The export's statistics rollup, keyed by table.
-fn tables_after(extra: &[&str]) -> Vec<(String, serde_json::Value)> {
+/// Every `COPY` block the export holds, in file order, by qualified name.
+fn blocks_after(extra: &[&str]) -> Vec<(String, Value)> {
     let (_dir, _dump, json) = info_after(extra);
-    tables_of(&json)
+    blocks_of(&json)
 }
 
-fn tables_of(json: &serde_json::Value) -> Vec<(String, serde_json::Value)> {
-    json["statistics"]
+fn blocks_of(json: &Value) -> Vec<(String, Value)> {
+    json["spans"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|t| (t["table"].as_str().unwrap().to_string(), t.clone()))
+        .filter_map(|span| span.pointer("/body/Data/Copy"))
+        .map(|copy| {
+            let header = &copy["header"];
+            let table = header["table"].as_str().unwrap();
+            let name = match header["schema"].as_str() {
+                Some(schema) => format!("{schema}.{table}"),
+                None => table.to_string(),
+            };
+            (name, copy.clone())
+        })
         .collect()
 }
 
-fn column<'a>(table: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
-    table["columns"].as_array().unwrap().iter().find(|c| c["name"] == name).unwrap()
+/// A block's statistics for the column its header names `name`.
+fn column<'a>(block: &'a Value, name: &str) -> &'a Value {
+    let at = block["header"]["columns"].as_array().unwrap().iter().position(|c| c == name);
+    &block["statistics"]["columns"][at.unwrap()]
+}
+
+fn array(value: &Value) -> &Vec<Value> {
+    value.as_array().unwrap_or_else(|| panic!("an array: {value}"))
 }
 
 #[test]
 fn parse_gathers_every_table_by_default_at_a_mebibyte() {
-    let tables = tables_after(&[]);
-    assert_eq!(tables.len(), 3);
-    for (table, statistics) in &tables {
-        assert_eq!(statistics["group_sizes"], serde_json::json!([1 << 20]), "{table}");
-        assert_eq!(statistics["gathered_blocks"], 1, "{table}");
-        let columns = statistics["columns"].as_array().unwrap();
-        assert!(columns.iter().all(|c| c["gathered_blocks"] == 1), "{table}");
+    let blocks = blocks_after(&[]);
+    assert_eq!(blocks.len(), 3);
+    for (table, block) in &blocks {
+        assert_eq!(block["statistics"]["group_size"], 1 << 20, "{table}");
+        assert!(array(&block["statistics"]["columns"]).iter().all(|c| !c.is_null()), "{table}");
     }
 }
 
 #[test]
 fn none_gathers_nothing_and_a_stated_size_is_recorded() {
-    assert!(tables_after(&["--statistics", "none"]).iter().all(|(_, s)| s["gathered_blocks"] == 0));
-    for (table, statistics) in tables_after(&["--statistics-group-size", "4096"]) {
-        assert_eq!(statistics["group_sizes"], serde_json::json!([4096]), "{table}");
+    assert!(blocks_after(&["--statistics", "none"]).iter().all(|(_, b)| b["statistics"].is_null()));
+    for (table, block) in blocks_after(&["--statistics-group-size", "4096"]) {
+        assert_eq!(block["statistics"]["group_size"], 4096, "{table}");
     }
 }
 
 #[test]
 fn a_selection_gathers_its_tables_and_columns_alone() {
-    let tables = tables_after(&["--statistics", "specials,public.ordered.id"]);
-    for (table, statistics) in tables {
-        let columns = statistics["columns"].as_array().unwrap();
+    let blocks = blocks_after(&["--statistics", "specials,public.ordered.id"]);
+    for (table, block) in blocks {
+        let statistics = &block["statistics"];
         match table.as_str() {
-            "public.specials" => assert!(columns.iter().all(|c| c["gathered_blocks"] == 1)),
-            "public.ordered" => {
-                assert_eq!(columns[0]["gathered_blocks"], 1);
-                assert!(columns[1..].iter().all(|c| c["gathered_blocks"] == 0));
+            "public.specials" => {
+                assert!(array(&statistics["columns"]).iter().all(|c| !c.is_null()))
             }
-            _ => assert_eq!(statistics["gathered_blocks"], 0, "{table} was not named"),
+            "public.ordered" => {
+                let columns = array(&statistics["columns"]);
+                assert!(!columns[0].is_null());
+                assert!(columns[1..].iter().all(Value::is_null));
+            }
+            _ => assert!(statistics.is_null(), "{table} was not named"),
         }
     }
 }
 
-/// **The rollup reads what was gathered**, on columns whose shape the fixture
-/// asserts (`pgdump_query/tests/statistics_fixture.rs`): at a group size of a
-/// few KiB `ordered` spans several groups, its `id` ascends and `reversed`
-/// descends, `high_card` overflows every group's dictionary and `low_card`
-/// fills none, and text under the default collation keeps no bounds. The long
-/// value leaves groups no row starts in, outside every share.
+/// **The export is every group's statistics as the cache holds them**, on
+/// columns whose shape the fixture asserts
+/// (`pgdump_query/tests/statistics_fixture.rs`): at a group size of a few KiB
+/// `ordered` spans several groups, its `id` ascends group over group and
+/// `reversed` descends, `high_card` overflows every group's dictionary and
+/// `low_card` fills none, and text under the default collation keeps no
+/// bounds. The long value leaves groups no row starts in. The document is one
+/// compact line, with no rollup beside the blocks.
 #[test]
-fn info_reports_each_tables_statistics_as_counts() {
-    let (_dir, _dump, json) = info_after(&["--statistics-group-size", "4096"]);
-    let tables = tables_of(&json);
-    let ordered = &tables.iter().find(|(t, _)| t == "public.ordered").unwrap().1;
-    let groups = ordered["groups"].as_u64().unwrap();
-    assert!(groups > 1, "several groups at 4 KiB");
-    assert_eq!(ordered["empty_groups"], 0);
-    assert_eq!(ordered["rows"], 1000);
+fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
+    let (_dir, dump, _) = info_after(&["--statistics-group-size", "4096"]);
+    let text = run_ok(&["info", "--source", dump.to_str().unwrap(), "--json"]);
+    assert_eq!(text.lines().count(), 1, "compact: one line");
+    let json: Value = serde_json::from_str(&text).unwrap();
+    assert!(json.get("statistics").is_none(), "no rollup beside the blocks");
+    let blocks = blocks_of(&json);
 
-    let id = column(ordered, "id");
-    assert_eq!(
-        id["sortedness"],
-        serde_json::json!({"ascending": 1, "descending": 0, "unsorted": 0})
-    );
-    assert_eq!(
-        (&id["groups_with_rows"], &id["groups_with_bounds"]),
-        (&groups.into(), &groups.into())
-    );
-    assert_eq!(column(ordered, "reversed")["sortedness"]["descending"], 1);
-    assert_eq!(column(ordered, "high_card")["groups_with_dictionary"], 0);
-    assert_eq!(column(ordered, "low_card")["groups_with_dictionary"], groups);
+    let ordered = &blocks.iter().find(|(t, _)| t == "public.ordered").unwrap().1;
+    let groups = array(&ordered["statistics"]["groups"]);
+    assert!(groups.len() > 1, "several groups at 4 KiB");
+    assert!(groups.iter().all(|g| g["rows"].as_u64().unwrap() > 0));
+    assert_eq!(groups.iter().map(|g| g["rows"].as_u64().unwrap()).sum::<u64>(), 1000);
+
+    let bound = |column: &Value, k: usize, end: &str| -> i64 {
+        column["bounds"]["groups"][k][end].as_str().unwrap().parse().unwrap()
+    };
+    for (name, order) in [("id", "Ascending"), ("reversed", "Descending")] {
+        let column = column(ordered, name);
+        assert_eq!(column["bounds"]["sortedness"], order, "{name}");
+        assert_eq!(array(&column["bounds"]["groups"]).len(), groups.len(), "{name}");
+        assert_eq!(array(&column["null_counts"]).len(), groups.len(), "{name}");
+        for k in 1..groups.len() {
+            match order {
+                "Ascending" => assert!(bound(column, k - 1, "max") <= bound(column, k, "min")),
+                _ => assert!(bound(column, k - 1, "min") >= bound(column, k, "max")),
+            }
+        }
+    }
+    let high_card = &column(ordered, "high_card")["dictionary"];
+    assert!(array(&high_card["groups"]).iter().all(Value::is_null));
+    let low_card = &column(ordered, "low_card")["dictionary"];
+    let entries = array(&low_card["entries"]).len() as u64;
+    for group in array(&low_card["groups"]) {
+        assert!(array(group).iter().all(|i| i.as_u64().unwrap() < entries), "{group}");
+    }
     let default_text = column(ordered, "default_text");
-    assert_eq!(
-        default_text["sortedness"],
-        serde_json::json!({"ascending": 0, "descending": 0, "unsorted": 0})
-    );
-    assert_eq!(default_text["dictionary_blocks"], 1);
+    assert!(default_text["bounds"].is_null());
+    assert!(!default_text["dictionary"].is_null());
 
-    let long_value = &tables.iter().find(|(t, _)| t == "public.long_value").unwrap().1;
-    let empty = long_value["empty_groups"].as_u64().unwrap();
-    assert!(empty > 0, "the long value leaves empty groups at 4 KiB");
-    assert_eq!(
-        column(long_value, "id")["groups_with_rows"].as_u64().unwrap(),
-        long_value["groups"].as_u64().unwrap() - empty
-    );
-
-    for span in json["spans"].as_array().unwrap() {
-        if let Some(copy) = span["body"]["Data"]["Copy"].as_object() {
-            assert!(!copy.contains_key("statistics"), "no group's values are exported: {copy:?}");
-        }
-    }
+    let long_value = &blocks.iter().find(|(t, _)| t == "public.long_value").unwrap().1;
+    let groups = array(&long_value["statistics"]["groups"]);
+    assert!(groups.iter().any(|g| g["rows"] == 0), "the long value leaves empty groups at 4 KiB");
+    assert_eq!(array(&column(long_value, "id")["null_counts"]).len(), groups.len());
 }
 
-/// **One rollup, two renderings**: every table and column line `--detail`
-/// prints under `statistics:` is the export's record for it, and a cache with
-/// no statistics at all says so in one line.
+/// **`--detail`'s rollup is the sum of the export's groups**: each table and
+/// column line under `statistics:` is re-derived here from the groups `--json`
+/// exports, a group no row starts in outside every share, and a cache with no
+/// statistics at all says so in one line.
 #[test]
-fn the_detail_listing_renders_the_exports_rollup() {
+fn the_detail_listing_rolls_up_the_exports_groups() {
     let (_dir, dump, json) = info_after(&["--statistics-group-size", "4096"]);
     let detail = run_ok(&["info", "--source", dump.to_str().unwrap(), "--detail"]);
     let section: Vec<&str> = detail
@@ -149,43 +174,57 @@ fn the_detail_listing_renders_the_exports_rollup() {
         .skip(1)
         .take_while(|l| l.starts_with("    "))
         .collect();
-    let mut lines = section.iter();
-    for (name, table) in tables_of(&json) {
-        let line = lines.next().expect("a line per table");
-        let head = format!("    {name}: statistics over 1 of 1 block(s), group size 4096 bytes; ");
-        assert!(line.starts_with(&head), "{line}");
-        assert!(line.contains(&format!(" per group over {} group(s)", table["groups"])), "{line}");
-        for column in table["columns"].as_array().unwrap() {
-            let line = lines.next().expect("a line per column");
-            let name = column["name"].as_str().unwrap();
-            let head = format!("        {name}: over 1 of 1 block(s), ");
-            assert!(line.starts_with(&head), "{line}");
-            let rows = &column["groups_with_rows"];
-            let bounds = match &column["sortedness"] {
-                s if s["ascending"] == 1 => format!(
-                    "ascending, bounds in {} of {rows} group(s)",
-                    column["groups_with_bounds"]
+    let mean = |total: u64, count: u64| (total + count / 2).checked_div(count).unwrap_or(0);
+    let mut expected = Vec::new();
+    for (name, block) in blocks_of(&json) {
+        let statistics = &block["statistics"];
+        let groups = array(&statistics["groups"]);
+        let with_rows: Vec<bool> = groups.iter().map(|g| g["rows"] != 0).collect();
+        let occupied = with_rows.iter().filter(|&&r| r).count() as u64;
+        let sum = |key: &str| groups.iter().map(|g| g[key].as_u64().unwrap()).sum::<u64>();
+        let empty = groups.len() as u64 - occupied;
+        let mut line = format!(
+            "    {name}: statistics over 1 of 1 block(s), group size {} bytes; {} rows and {} \
+             bytes per group over {} group(s)",
+            statistics["group_size"],
+            mean(sum("rows"), occupied),
+            mean(sum("bytes"), occupied),
+            groups.len(),
+        );
+        if empty > 0 {
+            line.push_str(&format!(", {empty} empty"));
+        }
+        expected.push(line);
+        let kept = |per_group: &Value| {
+            array(per_group)
+                .iter()
+                .zip(&with_rows)
+                .filter(|(g, rows)| !g.is_null() && **rows)
+                .count()
+        };
+        for (name, column) in
+            array(&block["header"]["columns"]).iter().zip(array(&statistics["columns"]))
+        {
+            let name = name.as_str().unwrap();
+            let bounds = match &column["bounds"] {
+                Value::Null => "no bounds".to_string(),
+                bounds => format!(
+                    "{}, bounds in {} of {occupied} group(s)",
+                    bounds["sortedness"].as_str().unwrap().to_lowercase(),
+                    kept(&bounds["groups"])
                 ),
-                s if s["descending"] == 1 => format!(
-                    "descending, bounds in {} of {rows} group(s)",
-                    column["groups_with_bounds"]
-                ),
-                s if s["unsorted"] == 1 => format!(
-                    "unsorted, bounds in {} of {rows} group(s)",
-                    column["groups_with_bounds"]
-                ),
-                _ => "no bounds".to_string(),
             };
-            let dictionary = match column["dictionary_blocks"].as_u64().unwrap() {
-                0 => "no dictionary".to_string(),
-                _ => {
-                    format!("dictionary in {} of {rows} group(s)", column["groups_with_dictionary"])
+            let dictionary = match &column["dictionary"] {
+                Value::Null => "no dictionary".to_string(),
+                dictionary => {
+                    format!("dictionary in {} of {occupied} group(s)", kept(&dictionary["groups"]))
                 }
             };
-            assert_eq!(*line, format!("{head}{bounds}, {dictionary}"));
+            expected.push(format!("        {name}: over 1 of 1 block(s), {bounds}, {dictionary}"));
         }
     }
-    assert!(lines.next().is_none(), "the section is the export's rollup and nothing else");
+    assert!(expected.iter().any(|l| l.ends_with(" empty")), "an empty group is exercised");
+    assert_eq!(section, expected);
 
     let (_dir, dump, _) = info_after(&["--statistics", "none"]);
     let detail = run_ok(&["info", "--source", dump.to_str().unwrap(), "--detail"]);
