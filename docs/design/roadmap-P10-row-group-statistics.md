@@ -99,6 +99,15 @@ The tri-state is persisted with the block rather than re-derived by every query
 no fact twice"), which this phase amends. It exists only for columns that get
 bounds.
 
+**A value that does not key leaves its group without bounds on that column, and
+its block `Unsorted` there**, as a value past the cap does ("Very large
+values"): a bound or an order that omitted it would not cover its row, which the
+server may keep — a wrong answer, not a lost error. Its null count and
+dictionary stand. A hand-written test pins it; the generated check cannot hold
+such a value, the unpruned query raising on it
+([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "A skipped
+group raises nothing").
+
 ## When a statistic is believed
 
 **The identity check is mandatory, and identity is the stored size.** No
@@ -218,6 +227,15 @@ group could produce — for `col < v`, `True` needs a non-null value with
 might — and the sets combine through `And`/`Or`/`Not` as three-valued logic
 does, so `NOT` stays sound where a "may match" flag would not. Equality on a
 kind compared by decoded value uses the same key the filter does.
+
+**A skipped group raises nothing.** A decode failure surfaces only where
+evaluation reaches it (`decisions.md`, "D54", amended where the consumer
+lands), so a value this build cannot read in a skipped group goes unreported
+where the unpruned query raises it; the rows returned are the same. *Rejected:*
+never skipping a group marked as holding a value that did not key — a nested
+column is never keyed while gathering, so the mark misses `KD2`'s values — and
+never skipping where the filter names an unkeyed column, which ends pruning for
+every filter naming one.
 
 **Early stop.** Where the root is a conjunction holding an ordering term on a
 column whose block-level sortedness is known, the replay stops at the first row

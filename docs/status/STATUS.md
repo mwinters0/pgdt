@@ -293,18 +293,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A group the statistics rule out will not raise the `FieldDecode` a row in
-  it would have** (10.3). `ResolvedTerm::truths` in `predicate.rs` answers over
-  the rows the row evaluator answers without a decode failure, no statistic
-  recording that a value failed to key; so once the consumer skips such a
-  group, a value contradicting its column's type surfaces nowhere, where the
-  unpruned query raises it. Taken because a decode failure already surfaces
-  only where evaluation reaches it
-  ([`../design/decisions.md`](../design/decisions.md), "D54") and an
-  unprojected column is never decoded (`batch.rs`), so a skipped group is one
-  more place evaluation does not reach; `pg_dump` output holds such a value
-  only where a decoder here is narrower than the type's `*_out`. Reconsidering has
-  the gatherer record per group and column that a value did not key, and the
-  consumer never skip a group so marked — a field on 10.4's statistics types,
-  one check before a skip, and a fixture value contradicting its type.

@@ -48,8 +48,10 @@ a test evaluates a group yet.
 ## For the slices after
 
 - **A row whose value does not decode is outside the contract**, since no
-  statistic records one; what that costs is under STATUS's "Decisions worth
-  another look". A bound that does not key reads as no bound.
+  statistic records one: a skipped group raises nothing, and gathering leaves
+  such a value's column without bounds and `Unsorted` (spec, "Pruning" and
+  "What is gathered, and what is derived"). A stored bound that does not key
+  reads as no bound.
 - **Terms combine as if independent**: `v < 5 AND v >= 5` is not ruled out on a
   group straddling 5. Early stop on a sorted block (10.9) is not in the
   evaluator.
