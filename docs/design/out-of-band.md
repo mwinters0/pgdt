@@ -63,6 +63,7 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M105 | | The serial carry pass skips a chunk holding no newline short of the end, so a line many chunks long scans in linear time; strikes `KD27` | P10 | [2026-09-14](../status/history/2026-09-14.md), "`KD27` is repaired ahead of P10" |
 
 
 

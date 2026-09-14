@@ -137,7 +137,8 @@ Eighteen standing rules for reading anything below:
   difference an operator wants is read **inside** a sitting instead, so the
   reserve figure carries an uncapped leg and a `MALLOC_ARENA_MAX=2` leg and
   publishes both. The harness pins no CPU count, so the arena ceiling standing
-  behind every figure is `8 x ncores` of the host named in `CLAUDE.local.md`,
+  behind every figure is `8 x ncores` of the host named in `CLAUDE.local.md`
+  under the image's glibc ([`runtime-invariants.md`](runtime-invariants.md), "RT10"),
   which the blanket hardware sentence at the top of this section covers.
 - **A worker count is apparatus too, so every invocation states one.** A command
   that says nothing measures whatever `pgdq --jobs` defaults to that day rather

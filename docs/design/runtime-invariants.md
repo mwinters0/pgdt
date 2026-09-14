@@ -11,9 +11,10 @@ exists for the same reason**: a kernel release, a container runtime, or a
 toolchain bump can quietly invalidate one of these, and the resulting bug
 surfaces as a process that sized itself wrongly rather than as an error — an OOM
 kill under an orchestrator, or a scan that took a fifth of the machine it was
-given. The trigger to walk this file is therefore three-sided, and each side has
-its own entries: a **kernel major**, a **container-runtime upgrade**, and a
-**Rust toolchain bump** (`RT7` only, whose behaviour is `std`'s).
+given. The trigger to walk this file is therefore four-sided, and each side has
+its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
+toolchain bump** (`RT7` only, whose behaviour is `std`'s), and a **glibc
+release** — the host's or the figures' image's (`RT10` only).
 
 **It is named for the runtime environment rather than for Linux or for
 cgroups.** The mechanism these entries serve — a process discovering its own
@@ -31,7 +32,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md), "The
 seekable-xz crate reads its compressed bytes through a trait, on purpose").
 
-**`RT1`–`RT9` are allocated**, and nothing at or below `RT9` is reused.
+**`RT1`–`RT10` are allocated**, and nothing at or below `RT10` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -628,3 +629,57 @@ Exits **0** with `oom 0` / `oom_kill 0` and a `max` count in the thousands —
 one per time reclaim was driven — and `memory.peak` equal to the limit,
 67108864. The count scales with the bytes read and is not a fixed number: 9,249
 here over 1 GiB, 13,798 over the 3 GB file the scope limit quotes.
+
+---
+
+## RT10 — glibc gives an allocating thread an arena up to a limit, and `M_ARENA_MAX` binds only before that limit latches
+
+**Claim.** Under glibc's `malloc`, an allocation finding no free arena creates
+one while the process's arena count is below a limit, and past it reuses an
+existing one. The limit is `M_ARENA_MAX` if set; otherwise it is computed once,
+the first time an arena is wanted with at least `arena_test` (8 on 64-bit)
+already in existence — `8 × ncores` before glibc 2.44, `max(8, ncores)` from
+2.44 on. **Once computed it is latched for the life of the process**, so a
+`mallopt(M_ARENA_MAX, …)` after that changes nothing; one made before it bounds
+every arena created afterwards and removes none that exist. There is no getter.
+
+**Proof.** `malloc/arena.c`, `arena_get2`, at `glibc-2.44`:
+`static size_t narenas_limit;` then `if (narenas_limit == 0)` →
+`if (mp_.arena_max != 0) narenas_limit = mp_.arena_max;` `else if (narenas >=
+mp_.arena_test)` → `narenas_limit = __get_nprocs ();` raised to `arena_test`.
+Before `glibc-2.44` the same branch reads `NARENAS_FROM_NCORES (n)`; the change
+is commit `93e6135`, "malloc: Reduce maximum arenas". `malloc/malloc.c`,
+`do_set_arena_max`, writes `mp_.arena_max` and nothing else, which is also what
+`MALLOC_ARENA_MAX` sets at startup. Observed, not proved: the `reserve` figure's
+instrument legs read the readers plus one or two arenas from 1 to 24 readers,
+under the `postgres:16` image's glibc — below its ceiling of 192 on this host.
+
+**Scope limit.** glibc only: `jemalloc` and `mimalloc` (D13) have no such
+arenas. `ncores` is a CPU count, which a CFS quota such as `--cpus` does not
+lower. Because `mallopt` and `MALLOC_ARENA_MAX` write the same field, a binary
+that calls it overrides the operator's setting unless it reads the variable
+first. How much a retained arena holds is not part of the claim.
+
+**Verified against:** glibc 2.44+r24 (Arch, the host; source read); glibc 2.41
+(`postgres:16`, the figures' image; observed through the instrument).
+
+**Relied on by:** [`decisions.md`](decisions.md), "D13" — the in-binary cap's
+refusal, which is not mechanical because under D12's `current_thread` runtime
+fewer than `arena_test` arenas exist before the arrangement resolves;
+`io.rs`, `MEMORY_RESERVE`'s rejected sizing from the arena count; and
+[`measurements.md`](measurements.md), "The apparatus" — the ceiling standing
+behind every figure.
+
+**Re-verify:**
+
+```sh
+getconf GNU_LIBC_VERSION                                   # the host's
+docker run --rm postgres:16 getconf GNU_LIBC_VERSION       # the figures'
+curl -sfL 'https://sourceware.org/git/?p=glibc.git;a=blob_plain;f=malloc/arena.c;hb=glibc-2.44' \
+  | grep -n -A16 'static size_t narenas_limit'
+```
+
+Substitute the version either command reports for `glibc-2.44`: a branch reading
+`__get_nprocs ()` is `max(8, ncores)`, one reading `NARENAS_FROM_NCORES` is
+`8 × ncores`. The arena count a scan reaches is the `Arenas` column of
+`cd scripts && uv run measure.py --figure reserve`, on the `introspect` build.

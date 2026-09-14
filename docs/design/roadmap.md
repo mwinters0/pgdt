@@ -975,4 +975,4 @@ which is what makes the difference worth minding at the moment one is found.
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
 
-- **pgdq caps its own glibc arenas — open.** pgdq does not set `M_ARENA_MAX`; `MALLOC_ARENA_MAX` is the operator's setting, and the CLI's `current_thread` runtime is what keeps the thread count — and so the arena count — following the work rather than the host ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). Whether the binary should set a cap of its own is an open decision ([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another look").
+- **An allocator-contention figure for a capped arena count.** Parallel `.xz` throughput under `MALLOC_ARENA_MAX=2` against uncapped — the price no figure takes, and what would reopen the in-binary cap `decisions.md`, "D13" refuses.

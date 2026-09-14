@@ -442,7 +442,9 @@ with no room to hold what they decode buys less than either number suggests.
 > count if you want to set it, and 2 is the smallest useful value. **It gives
 > real memory back on a compressed scan.** What it saves shows up where many
 > block-decoding readers run and grows with how many there are, and it is no
-> substitute for sizing the cgroup above the budget. **A
+> substitute for sizing the cgroup above the budget. It is a trade rather than
+> free memory: fewer arenas than readers means those readers contend for the
+> allocator, on exactly the scans where the cap saves anything. **A
 > plain file is a different matter and needs nothing**: read with `--jobs` set
 > it holds a few megabytes whether you allow two workers or twenty-four, so
 > there is nothing there for the cap to take back. How much it is worth on your

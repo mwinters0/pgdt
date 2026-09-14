@@ -410,10 +410,11 @@ impl ChunkCarry {
     /// `L² / (2 × chunk)` bytes of search in every serial read loop — quadratic
     /// in the line, and worst at a small chunk. `determinism.rs`'s serial
     /// 64-byte leg pays it over the `statistics` fixture's long value on every
-    /// major. **(c) unowned**; promoted by a dump whose rows run many read
-    /// chunks long. Closing it means skipping the carry pass for a chunk that
-    /// held no newline short of the end of the file, which this call already
-    /// knows; the leader's growth read doubles and is not affected.
+    /// major. **(c) unowned**; promoted already, a row many read chunks long
+    /// being what a raised `--max-line-bytes` exists to admit, which pays this
+    /// at the shipped chunk. Closing it means skipping the carry pass for a
+    /// chunk that held no newline short of the end of the file, which this call
+    /// already knows; the leader's growth read doubles and is not affected.
     pub fn absorb(&mut self, chunk: &[u8]) {
         if self.buf.is_empty() {
             self.split = 0;

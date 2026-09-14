@@ -97,9 +97,10 @@ cancellation is a cooperative flag (D26).
 No `#[global_allocator]` in the library; `pgdq` links the platform allocator,
 `jemalloc`/`mimalloc` are off-by-default features, `--version` names which.
 Rejected: `mimalloc` on a few percent, making every table a figure of an
-unshipped binary. `M_ARENA_MAX` is not set (open under "Decisions worth another
-look"). The `introspect` build counts over `System`, reports to the file
-`PGDQ_INTROSPECT_OUT` names, and is never timed. Evidence: `allocator`.
+unshipped binary; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10)
+but saving only below the count arenas already follow (D12), on `.xz` alone, at
+unpriced contention, overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a
+contention figure. `introspect` reports to `PGDQ_INTROSPECT_OUT`. Evidence: `allocator`.
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content

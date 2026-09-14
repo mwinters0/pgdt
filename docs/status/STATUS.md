@@ -282,7 +282,8 @@ a phase nobody has sliced.
 - **KD27** — a line longer than a read chunk is searched for its newline
   again from its first byte at every chunk it spans, so the serial read loops
   are quadratic in a row's length and worst at a small chunk. **(c)
-  unowned**; promoted by a dump whose rows run many read chunks long. Detail:
+  unowned**; its repair is admitted as `M105`, and a row many read chunks long
+  is what `--max-line-bytes` exists to admit. Detail:
   `pgdump_query/src/scan.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
@@ -299,33 +300,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **Whether `pgdq` should cap its own glibc arenas.** It does not:
-  `MALLOC_ARENA_MAX` is the operator's setting, and nothing in the binary calls
-  `mallopt(M_ARENA_MAX, …)`. The refusal's recorded reason was mechanical — the
-  arenas exist before the resolved worker count is known, so a cap set then
-  removes none — and it assumed runtime worker threads that allocate at
-  startup. Under the CLI's `current_thread` runtime the readers are
-  blocking-pool threads spawned on demand after the arrangement is resolved, so a
-  cap set at resolution would bound the arenas of every thread that decodes, and
-  that reason no longer holds. **The decision to make:** keep the refusal on a
-  reason that survives (the `allocator` figure is taken uncapped; a cap trades
-  resident bytes for allocator contention on exactly the parallel shapes), or
-  grill an in-binary cap keyed to the resolved count. Reconsidering it changes
-  the manual's `MALLOC_ARENA_MAX` advice and what the `reserve` figure's arena
-  legs are for. Found by the keystone review that struck P19
-  ([`history/2026-09-13.md`](history/2026-09-13.md), "P19 is struck").
-
-- **Whether the `statistics` fixture's long value should exceed the shipped
-  read chunk on every major.** It does: `long_value.v` holds one value past a
-  mebibyte in all six `fixtures/<major>/statistics/default.sql`, reading the
-  spec's "larger than both `N` and the read chunk" as the defaults, so no test
-  has to state a size for the value to be long. The cost is the suite's:
-  `determinism.rs`'s serial 64-byte leg is quadratic in that line (`KD27`) and
-  took the debug suite from seconds to over a minute on that test alone. **The
-  decision to make:** keep it and let `KD27`'s repair recover the time; shrink
-  the value to exceed only a chunk and group size the tests state, which the
-  spec's wording also allows and which drops coverage of a row past the
-  defaults; or keep the value on one major only. Reconsidering it regenerates
-  the schema and edits `statistics_fixture.rs`'s long-value assertion
-  ([`../design/roadmap-P10.1-fixture-shapes-notes.md`](../design/roadmap-P10.1-fixture-shapes-notes.md)).
