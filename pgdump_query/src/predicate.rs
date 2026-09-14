@@ -1916,6 +1916,35 @@ struct ComparedTerm {
     /// different fields. Each entry carries the position's own path and
     /// declared type (`docs/design/decisions.md`, "D59").
     divergences: Vec<(Option<String>, String, ComparisonDivergence)>,
+    /// Which of a row group's statistics this term reads
+    /// ([`ResolvedTerm::truths`]).
+    statistics: BelievedStatistics,
+}
+
+/// Which of a row group's statistics a comparing term reads, settled once
+/// with the rest of the term. A statistic this term does not read is not
+/// wrong for it; it is one whose meaning the term's comparison does not
+/// share.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
+struct BelievedStatistics {
+    /// The column's kind and the term's literal read as a key, present only
+    /// where the column's plan orders **exactly** — a `Compared` plan with no
+    /// divergence, which is the only order a gathered bound is taken under.
+    /// Carried for the equality operators too, whose [`Comparison`] keeps no
+    /// kind. Boxed, as [`Comparison::Nested`] is, because every resolved
+    /// leaf carries it.
+    bounds: Option<Box<(CompareKind, OrderKey)>>,
+    /// Whether a group's dictionary answers this term: one of the four
+    /// equality operators, on a `Compared` column whose divergence, if any,
+    /// does not reach equality.
+    dictionary: bool,
+}
+
+impl BelievedStatistics {
+    /// A term no statistic but the counts answers: a nested column, and a
+    /// column compared as its text for want of a plan.
+    const NONE: Self = Self { bounds: None, dictionary: false };
 }
 
 /// One filter term resolved against one `COPY` block: the operator, the
@@ -2087,7 +2116,7 @@ pub(crate) fn resolve_term(
         }
         plan = None;
     }
-    let (comparison, divergences) = match plan {
+    let (comparison, divergences, statistics) = match plan {
         Some(ComparisonPlan::Compared { kind, divergence }) => {
             let comparison = if ordering {
                 Comparison::Ordered {
@@ -2097,14 +2126,21 @@ pub(crate) fn resolve_term(
             } else {
                 equality_comparison(kind, text).ok_or_else(|| refuse_literal(kind))?
             };
-            (
-                comparison,
-                divergence
-                    .filter(|d| ordering || d.affects_equality())
-                    .map(|d| (None, declared_type.clone(), d))
-                    .into_iter()
-                    .collect(),
-            )
+            let divergences: Vec<_> = divergence
+                .filter(|d| ordering || d.affects_equality())
+                .map(|d| (None, declared_type.clone(), d))
+                .into_iter()
+                .collect();
+            let statistics = BelievedStatistics {
+                // Every divergence reaches ordering, so exactness is its
+                // absence. A literal that does not key reads no bounds.
+                bounds: divergence
+                    .is_none()
+                    .then(|| order_key(kind, text).map(|key| Box::new((kind.clone(), key))))
+                    .flatten(),
+                dictionary: !ordering && divergences.is_empty(),
+            };
+            (comparison, divergences, statistics)
         }
         // A nested column, compared structurally: the literal is read once in
         // the `array_in`/`record_in` superset, the field per row in the strict
@@ -2125,6 +2161,7 @@ pub(crate) fn resolve_term(
                 .filter(|(_, _, d)| ordering || d.affects_equality())
                 .map(|(path, declared, d)| (Some(path), declared, d))
                 .collect(),
+            BelievedStatistics::NONE,
         ),
         // No plan at all: an ordering operator has already been refused, so
         // this is `Eq`/`Ne` on a column the register does not compare — a
@@ -2163,6 +2200,7 @@ pub(crate) fn resolve_term(
                 .into_iter()
                 .collect(),
             },
+            BelievedStatistics::NONE,
         ),
     };
     Ok(ResolvedTerm {
@@ -2173,6 +2211,7 @@ pub(crate) fn resolve_term(
             comparison,
             declared_type,
             divergences,
+            statistics,
         }),
     })
 }
@@ -2393,6 +2432,238 @@ impl ResolvedExpr {
     }
 }
 
+/// A set of [`Truth`] values — what the rows of one row group could make a
+/// term or a tree evaluate to, read off the group's statistics instead of its
+/// rows ([`ResolvedExpr::truths`]).
+///
+/// A set rather than a "may match" flag because of [`Expr::Not`]: a flag
+/// saying `True` is impossible under a `Not` says nothing about whether
+/// `False` is, which is what the negation turns into `True`. Carrying all
+/// three keeps every node's answer an over-approximation its parent can
+/// combine soundly, `Unknown` included (`docs/design/decisions.md`, "D54").
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
+pub(crate) struct TruthSet(u8);
+
+/// The members, as a set: `{True, Unknown}`.
+impl std::fmt::Debug for TruthSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_set().entries(self.members()).finish()
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
+impl TruthSet {
+    /// No value at all — the answer over a group no row starts in.
+    pub(crate) const EMPTY: Self = Self(0);
+    /// `True` and `False`: a comparison over a non-NULL value it knows
+    /// nothing more about.
+    const TWO_VALUED: Self = Self(Self::bit(Truth::True) | Self::bit(Truth::False));
+    const MEMBERS: [Truth; 3] = [Truth::True, Truth::False, Truth::Unknown];
+
+    const fn bit(truth: Truth) -> u8 {
+        match truth {
+            Truth::True => 1,
+            Truth::False => 2,
+            Truth::Unknown => 4,
+        }
+    }
+
+    pub(crate) fn of(truth: Truth) -> Self {
+        Self(Self::bit(truth))
+    }
+
+    /// Whether some row could evaluate to `truth`. A group the evaluator
+    /// answers without [`Truth::True`] holds no row a filter keeps.
+    pub(crate) fn contains(self, truth: Truth) -> bool {
+        self.0 & Self::bit(truth) != 0
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    fn members(self) -> impl Iterator<Item = Truth> {
+        Self::MEMBERS.into_iter().filter(move |t| self.contains(*t))
+    }
+
+    /// Kleene's `f` lifted to sets: every value `f` takes on a member of each.
+    fn lift(self, other: Self, f: impl Fn(Truth, Truth) -> Truth) -> Self {
+        self.members()
+            .flat_map(|a| other.members().map(move |b| (a, b)))
+            .fold(Self::EMPTY, |set, (a, b)| set.union(Self::of(f(a, b))))
+    }
+
+    fn and(self, other: Self) -> Self {
+        self.lift(other, |a, b| match (a, b) {
+            (Truth::False, _) | (_, Truth::False) => Truth::False,
+            (Truth::Unknown, _) | (_, Truth::Unknown) => Truth::Unknown,
+            _ => Truth::True,
+        })
+    }
+
+    fn or(self, other: Self) -> Self {
+        self.lift(other, |a, b| match (a, b) {
+            (Truth::True, _) | (_, Truth::True) => Truth::True,
+            (Truth::Unknown, _) | (_, Truth::Unknown) => Truth::Unknown,
+            _ => Truth::False,
+        })
+    }
+
+    fn not(self) -> Self {
+        self.members().fold(Self::EMPTY, |set, t| set.union(Self::of(t.not())))
+    }
+
+    fn from_flags(can_be_true: bool, can_be_false: bool) -> Self {
+        let pick = |on: bool, truth| if on { Self::of(truth) } else { Self::EMPTY };
+        pick(can_be_true, Truth::True).union(pick(can_be_false, Truth::False))
+    }
+}
+
+/// One row group's statistics, as the truth-set evaluator reads them. A
+/// column is numbered the way a raw row's fields are — by the block's
+/// **unprojected** column list, which is what [`ResolvedTerm`]'s index is.
+///
+/// Every statistic is optional per column: a column the group gathered
+/// nothing for answers `None` to each, and every term over it answers what
+/// any row might.
+#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
+pub(crate) trait GroupStatistics {
+    /// How many rows start in the group. Zero is a group no row starts in,
+    /// over which every term is [`TruthSet::EMPTY`].
+    fn rows(&self) -> u64;
+
+    /// How many of those rows hold NULL in `column`.
+    fn null_count(&self, column: usize) -> Option<u64>;
+
+    /// A lower and an upper bound on `column`'s non-NULL values, as unescaped
+    /// field text: no value's key is below `min`'s or above `max`'s.
+    ///
+    /// **A bound need not be a value the group holds**, and is never read as
+    /// one: a bound truncated past a storage cap is read exactly as an exact
+    /// one is, so it only has to be on the right side.
+    fn bounds(&self, column: usize) -> Option<(&str, &str)>;
+
+    /// Every distinct text among `column`'s non-NULL values, as unescaped
+    /// field text — complete, or `None`.
+    fn dictionary(&self, column: usize) -> Option<impl Iterator<Item = &str>>;
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
+impl ResolvedTerm {
+    /// Every value this term could take over a row of `group` — a superset
+    /// of what [`Self::eval`] answers over each of its rows, and exact where
+    /// the statistics are.
+    ///
+    /// **A row whose value is not of the column's type is outside it**: the
+    /// row path raises `Error::FieldDecode` there rather than answering, and
+    /// no statistic records that such a row exists.
+    pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        let rows = group.rows();
+        let (nulls, values) = match group.null_count(self.index) {
+            Some(nulls) => (nulls > 0, nulls < rows),
+            None => (rows > 0, rows > 0),
+        };
+        let mut set = TruthSet::EMPTY;
+        if nulls {
+            set = set.union(TruthSet::of(self.eval_value(None).expect("a NULL always answers")));
+        }
+        if values {
+            set = set.union(self.value_truths(group));
+        }
+        set
+    }
+
+    /// What this term could answer over a **non-NULL** value of `group`.
+    ///
+    /// The dictionary and the bounds each give a superset of the answer, so
+    /// where the term reads both it takes what they agree on.
+    fn value_truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        let Some(compared) = self.compared.as_ref() else {
+            return TruthSet::of(Truth::of(self.op == PredicateOp::IsNotNull));
+        };
+        let mut set = TruthSet::TWO_VALUED;
+        if compared.statistics.dictionary
+            && let Some(entries) = group.dictionary(self.index)
+        {
+            // Through `eval_value`, the row path's own comparison, so an
+            // entry is answered exactly as a row holding it is. An empty
+            // dictionary beside a non-NULL row contradicts itself and is
+            // read as none.
+            let answered = entries
+                .map(|entry| {
+                    self.eval_value(Some(entry)).map_or(TruthSet::TWO_VALUED, TruthSet::of)
+                })
+                .reduce(TruthSet::union);
+            if let Some(answered) = answered {
+                set = set.intersection(answered);
+            }
+        }
+        if let Some((kind, literal)) = compared.statistics.bounds.as_deref()
+            && let Some((min, max)) = group.bounds(self.index)
+        {
+            set = set.intersection(self.bounded(kind, literal, min, max));
+        }
+        set
+    }
+
+    /// What `min` and `max` allow this term to answer over a value between
+    /// them. A bound that does not key allows anything.
+    ///
+    /// The four ordering operators are monotone in the value, so each end
+    /// settles one truth. **The equality operators only ever rule out
+    /// "equal"**, when the literal lies outside the bounds: that no value is
+    /// *unequal* would need every value to be the literal, and bounds equal
+    /// to it say so of keys, where a canonicalized comparison reads spellings
+    /// — one per key only in text `*_out` wrote
+    /// (`docs/design/decisions.md`, "D57").
+    fn bounded(&self, kind: &CompareKind, literal: &OrderKey, min: &str, max: &str) -> TruthSet {
+        let (Some(low), Some(high)) = (order_key(kind, min), order_key(kind, max)) else {
+            return TruthSet::TWO_VALUED;
+        };
+        let low = compare_keys(&low, literal);
+        let high = compare_keys(&high, literal);
+        let (can_be_true, can_be_false) = match self.op {
+            PredicateOp::Lt => (low.is_lt(), high.is_ge()),
+            PredicateOp::Le => (low.is_le(), high.is_gt()),
+            PredicateOp::Gt => (high.is_gt(), low.is_le()),
+            PredicateOp::Ge => (high.is_ge(), low.is_lt()),
+            _ => {
+                let can_be_equal = low.is_le() && high.is_ge();
+                if self.wants_equal() { (can_be_equal, true) } else { (true, can_be_equal) }
+            }
+        };
+        TruthSet::from_flags(can_be_true, can_be_false)
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
+impl ResolvedExpr {
+    /// Every value this tree could take over a row of `group`, combining its
+    /// terms' sets through Kleene's tables — so a group whose answer lacks
+    /// [`Truth::True`] holds no row [`Self::matches`] keeps.
+    ///
+    /// Terms are combined as if independent, which is where the answer stops
+    /// being exact: `v < 5 AND v >= 5` cannot be true of any one row, and
+    /// each term alone can.
+    pub(crate) fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
+        match self {
+            Self::Term(term) => term.truths(group),
+            Self::And(children) => children
+                .iter()
+                .fold(TruthSet::of(Truth::True), |set, child| set.and(child.truths(group))),
+            Self::Or(children) => children
+                .iter()
+                .fold(TruthSet::of(Truth::False), |set, child| set.or(child.truths(group))),
+            Self::Not(inner) => inner.truths(group).not(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -2413,6 +2684,7 @@ mod tests {
             comparison: Comparison::Canonical(value.clone()),
             declared_type: String::new(),
             divergences: Vec::new(),
+            statistics: BelievedStatistics::NONE,
         });
         ResolvedTerm { op: p.op, index, compared: if p.op.is_ordering() { None } else { compared } }
     }
@@ -2746,6 +3018,159 @@ mod tests {
                 exact(expr).is_true(),
                 "{expr:?}"
             );
+        }
+    }
+
+    /// Every [`TruthSet`], the empty one included.
+    fn all_sets() -> impl Iterator<Item = TruthSet> {
+        (0..8).map(TruthSet)
+    }
+
+    /// **The set operations are Kleene's tables lifted**, asserted against
+    /// the row evaluator itself rather than against a second copy of the
+    /// tables: over every pair of sets, `A AND B` is exactly what `a AND b`
+    /// evaluates to over real terms for some `a` in `A` and `b` in `B`, and so
+    /// for `OR` and `NOT`.
+    #[test]
+    fn truth_sets_combine_as_their_members_do() {
+        for a in all_sets() {
+            let negated = a.members().map(|x| exact(&ResolvedExpr::Not(Box::new(leaf(x)))));
+            assert_eq!(a.not(), negated.fold(TruthSet::EMPTY, |s, t| s.union(TruthSet::of(t))));
+            for b in all_sets() {
+                let (mut and, mut or) = (TruthSet::EMPTY, TruthSet::EMPTY);
+                for x in a.members() {
+                    for y in b.members() {
+                        let pair = || vec![leaf(x), leaf(y)];
+                        and = and.union(TruthSet::of(exact(&ResolvedExpr::And(pair()))));
+                        or = or.union(TruthSet::of(exact(&ResolvedExpr::Or(pair()))));
+                    }
+                }
+                assert_eq!(a.and(b), and, "{a:?} AND {b:?}");
+                assert_eq!(a.or(b), or, "{a:?} OR {b:?}");
+            }
+        }
+    }
+
+    /// One column's statistics for one row group, stated by hand — the
+    /// shape [`GroupStatistics`] reads, with every column index answered
+    /// alike.
+    #[derive(Debug, Clone, Default)]
+    struct Group {
+        rows: u64,
+        nulls: Option<u64>,
+        bounds: Option<(String, String)>,
+        dictionary: Option<Vec<String>>,
+    }
+
+    impl GroupStatistics for Group {
+        fn rows(&self) -> u64 {
+            self.rows
+        }
+        fn null_count(&self, _: usize) -> Option<u64> {
+            self.nulls
+        }
+        fn bounds(&self, _: usize) -> Option<(&str, &str)> {
+            self.bounds.as_ref().map(|(min, max)| (min.as_str(), max.as_str()))
+        }
+        fn dictionary(&self, _: usize) -> Option<impl Iterator<Item = &str>> {
+            self.dictionary.as_ref().map(|entries| entries.iter().map(String::as_str))
+        }
+    }
+
+    fn sets(truths: &[Truth]) -> TruthSet {
+        truths.iter().fold(TruthSet::EMPTY, |set, t| set.union(TruthSet::of(*t)))
+    }
+
+    /// What a group's statistics let each kind of term say, one case per
+    /// rule, by hand: a column the statistics bound, a group with NULLs, a
+    /// `NOT` over both, the equality operators' one-sided reading of bounds,
+    /// a dictionary a decoded kind reads by key, and statistics a term's
+    /// comparison does not share.
+    #[test]
+    fn a_group_is_answered_from_its_statistics() {
+        use Truth::{False, True, Unknown};
+        let term = |declared: &str, op, literal: Option<&str>| {
+            let p = Predicate { column: "v".into(), op, value: literal.map(str::to_string) };
+            ResolvedExpr::Term(
+                resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0).unwrap(),
+            )
+        };
+        let bounded = |min: &str, max: &str, nulls: u64| Group {
+            rows: 4,
+            nulls: Some(nulls),
+            bounds: Some((min.into(), max.into())),
+            dictionary: None,
+        };
+        let listed = |entries: &[&str]| Group {
+            rows: 4,
+            nulls: Some(0),
+            bounds: None,
+            dictionary: Some(entries.iter().map(|e| e.to_string()).collect()),
+        };
+        let lt5 = term("integer", PredicateOp::Lt, Some("5"));
+        let not_lt5 = ResolvedExpr::Not(Box::new(lt5.clone()));
+        let cases: Vec<(&str, &ResolvedExpr, Group, TruthSet)> = vec![
+            ("above the literal", &lt5, bounded("6", "9", 0), sets(&[False])),
+            ("straddling it", &lt5, bounded("4", "9", 0), sets(&[True, False])),
+            ("with NULLs", &lt5, bounded("6", "9", 1), sets(&[False, Unknown])),
+            // A "may match" flag would call this group empty.
+            ("negated", &not_lt5, bounded("6", "9", 1), sets(&[True, Unknown])),
+            ("no rows", &lt5, Group { rows: 0, nulls: Some(0), ..Group::default() }, sets(&[])),
+            (
+                "no statistics",
+                &lt5,
+                Group { rows: 4, ..Group::default() },
+                sets(&[True, False, Unknown]),
+            ),
+            (
+                "only NULLs",
+                &lt5,
+                Group { rows: 4, nulls: Some(4), ..Group::default() },
+                sets(&[Unknown]),
+            ),
+        ];
+        let eq5 = term("integer", PredicateOp::Eq, Some("5"));
+        let ne5 = term("integer", PredicateOp::Ne, Some("5"));
+        let distinct = term("integer", PredicateOp::IsDistinctFrom, Some("5"));
+        let is_null = term("integer", PredicateOp::IsNull, None);
+        let decimal = term("numeric", PredicateOp::Eq, Some("1.5"));
+        let unknown_collation_lt = term("text", PredicateOp::Lt, Some("b"));
+        let unknown_collation_eq = term("text", PredicateOp::Eq, Some("b"));
+        let more: Vec<(&str, &ResolvedExpr, Group, TruthSet)> = vec![
+            ("= outside the bounds", &eq5, bounded("6", "9", 0), sets(&[False])),
+            // Bounds equal to the literal say nothing about spellings.
+            ("!= on bounds equal to it", &ne5, bounded("5", "5", 0), sets(&[True, False])),
+            ("!= on a dictionary of it", &ne5, listed(&["5"]), sets(&[False])),
+            ("a dictionary without it", &eq5, listed(&["6", "7"]), sets(&[False])),
+            (
+                "both, agreeing",
+                &eq5,
+                Group { bounds: Some(("1".into(), "9".into())), ..listed(&["6"]) },
+                sets(&[False]),
+            ),
+            (
+                "DISTINCT over NULLs",
+                &distinct,
+                Group { rows: 2, nulls: Some(2), ..Group::default() },
+                sets(&[True]),
+            ),
+            (
+                "IS NULL with none",
+                &is_null,
+                Group { rows: 2, nulls: Some(0), ..Group::default() },
+                sets(&[False]),
+            ),
+            ("a decoded kind's entry", &decimal, listed(&["1.50"]), sets(&[True])),
+            (
+                "bounds under an unknown collation",
+                &unknown_collation_lt,
+                bounded("c", "d", 0),
+                sets(&[True, False]),
+            ),
+            ("its dictionary", &unknown_collation_eq, listed(&["a"]), sets(&[False])),
+        ];
+        for (case, expr, group, want) in cases.into_iter().chain(more) {
+            assert_eq!(expr.truths(&group), want, "{case}");
         }
     }
 
@@ -4956,6 +5381,279 @@ mod tests {
             // most rows being already written the way the server stores them.
             assert!(asked > 150, "only {asked} range literals asserted");
             assert!(rewritten > 30, "only {rewritten} of them needed rewriting");
+        }
+
+        /// SplitMix64, seeded, so a failing group is the same group on every
+        /// run and on every machine.
+        struct Seeded(u64);
+
+        impl Seeded {
+            fn next(&mut self) -> u64 {
+                self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = self.0;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                z ^ (z >> 31)
+            }
+
+            fn below(&mut self, n: usize) -> usize {
+                (self.next() % n as u64) as usize
+            }
+
+            fn chance(&mut self, one_in: usize) -> bool {
+                self.below(one_in) == 0
+            }
+
+            fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+                &items[self.below(items.len())]
+            }
+        }
+
+        const OPERATORS: [PredicateOp; 10] = [
+            PredicateOp::Eq,
+            PredicateOp::Ne,
+            PredicateOp::IsNull,
+            PredicateOp::IsNotNull,
+            PredicateOp::Lt,
+            PredicateOp::Le,
+            PredicateOp::Gt,
+            PredicateOp::Ge,
+            PredicateOp::IsDistinctFrom,
+            PredicateOp::IsNotDistinctFrom,
+        ];
+
+        /// A random tree of at most `depth` levels over `terms`, `And`/`Or`
+        /// of arity zero to three.
+        fn random_tree(rng: &mut Seeded, depth: usize, terms: &[ResolvedTerm]) -> ResolvedExpr {
+            let arity = |rng: &mut Seeded| rng.below(4);
+            match if depth == 0 { 0 } else { rng.below(4) } {
+                0 => ResolvedExpr::Term(rng.pick(terms).clone()),
+                1 => ResolvedExpr::And(
+                    (0..arity(rng)).map(|_| random_tree(rng, depth - 1, terms)).collect(),
+                ),
+                2 => ResolvedExpr::Or(
+                    (0..arity(rng)).map(|_| random_tree(rng, depth - 1, terms)).collect(),
+                ),
+                _ => ResolvedExpr::Not(Box::new(random_tree(rng, depth - 1, terms))),
+            }
+        }
+
+        /// **The truth-set evaluator never rules out an answer a row gives**,
+        /// over every value the server wrote for every declared type in the
+        /// committed oracle, on six majors: seeded random row groups — NULLs,
+        /// repeats, no rows at all — with their statistics taken off the rows
+        /// and then weakened the ways a stored statistic can be (a bound
+        /// loosened to another value on its side, a count or a dictionary
+        /// missing), under random terms and random `And`/`Or`/`Not` trees.
+        /// Every row's exact answer through the row evaluator has to be in
+        /// the group's set.
+        ///
+        /// **And it rules out everything it can where the statistics are
+        /// exact**, which is what keeps the first half from passing on an
+        /// evaluator that answers every set: a single ordering term over
+        /// unloosened bounds on a column that orders exactly, and a single
+        /// equality term over a dictionary on a column that equates exactly,
+        /// each have to answer precisely the set its rows produce.
+        ///
+        /// Bounds are offered to every column they can be keyed for, exact or
+        /// not; which ones a term believes is the evaluator's to decide.
+        #[tokio::test]
+        async fn a_groups_truths_hold_every_rows_answer() {
+            let mut rng = Seeded(0x5EED_0010_0003);
+            let (mut answers, mut ruled_out, mut exact_sets) = (0usize, 0usize, 0usize);
+            for major in MAJORS {
+                let types = types_of(major).await;
+                let mut values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                let mut literals: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    let (Some(declared), Some("ok")) = (row[0].clone(), row[2].as_deref()) else {
+                        continue;
+                    };
+                    if let Some(output) = row[3].clone() {
+                        values.entry(declared.clone()).or_default().insert(output.clone());
+                        literals.entry(declared.clone()).or_default().insert(output);
+                    }
+                    if let Some(input) = row[1].clone() {
+                        literals.entry(declared).or_default().insert(input);
+                    }
+                }
+                let cases: BTreeSet<(String, Option<&str>)> =
+                    rows(&fixture(major, "oracle/comparisons.tsv"))
+                        .into_iter()
+                        .map(|row| {
+                            (row[0].clone().expect("a case names a type"), clause(row[3].as_ref()))
+                        })
+                        .collect();
+                for (declared, collation) in cases {
+                    let Some(pool) = values.get(&declared) else { continue };
+                    let pool: Vec<&str> = pool.iter().map(String::as_str).collect();
+                    let literals: Vec<&str> =
+                        literals[&declared].iter().map(String::as_str).collect();
+                    let resolved = schema(&declared, collation, &types);
+                    let (key_kind, orders_exactly) = match &resolved.comparisons[0] {
+                        ComparisonPlan::Compared { kind, divergence } => {
+                            let keys = pool.iter().all(|v| order_key(kind, v).is_some());
+                            (keys.then_some(kind.clone()), divergence.is_none())
+                        }
+                        _ => (None, false),
+                    };
+                    let mut terms = Vec::new();
+                    for _ in 0..40 {
+                        let op = *rng.pick(&OPERATORS);
+                        let value = match op {
+                            PredicateOp::IsNull | PredicateOp::IsNotNull => None,
+                            _ => Some(rng.pick(&literals).to_string()),
+                        };
+                        let p = Predicate { column: "v".into(), op, value };
+                        if let Ok(term) = resolve_term(&p, 0, &resolved, 0) {
+                            terms.push(term);
+                        }
+                    }
+                    if terms.is_empty() {
+                        continue;
+                    }
+                    for _ in 0..30 {
+                        let group_rows: Vec<Option<&str>> = (0..rng.below(6))
+                            .map(|_| (!rng.chance(4)).then(|| *rng.pick(&pool)))
+                            .collect();
+                        let present: Vec<&str> = group_rows.iter().flatten().copied().collect();
+                        let nulls = group_rows.len() - present.len();
+                        let key = |kind: &CompareKind, v: &str| order_key(kind, v).unwrap();
+                        let mut loosened = false;
+                        let bounds =
+                            key_kind.as_ref().filter(|_| !present.is_empty()).map(|kind| {
+                                let cmp =
+                                    |a: &str, b: &str| compare_keys(&key(kind, a), &key(kind, b));
+                                let mut min = present
+                                    .iter()
+                                    .copied()
+                                    .reduce(|a, b| if cmp(b, a).is_lt() { b } else { a })
+                                    .unwrap();
+                                let mut max = present
+                                    .iter()
+                                    .copied()
+                                    .reduce(|a, b| if cmp(b, a).is_gt() { b } else { a })
+                                    .unwrap();
+                                if rng.chance(3) {
+                                    let below: Vec<&str> = pool
+                                        .iter()
+                                        .copied()
+                                        .filter(|v| cmp(v, min).is_lt())
+                                        .collect();
+                                    if !below.is_empty() {
+                                        min = rng.pick(&below);
+                                        loosened = true;
+                                    }
+                                }
+                                if rng.chance(3) {
+                                    let above: Vec<&str> = pool
+                                        .iter()
+                                        .copied()
+                                        .filter(|v| cmp(v, max).is_gt())
+                                        .collect();
+                                    if !above.is_empty() {
+                                        max = rng.pick(&above);
+                                        loosened = true;
+                                    }
+                                }
+                                (min.to_string(), max.to_string())
+                            });
+                        let dictionary: Option<Vec<String>> = (!present.is_empty()).then(|| {
+                            present
+                                .iter()
+                                .map(|v| v.to_string())
+                                .collect::<BTreeSet<_>>()
+                                .into_iter()
+                                .collect()
+                        });
+                        let full = Group {
+                            rows: group_rows.len() as u64,
+                            nulls: Some(nulls as u64),
+                            bounds: bounds.clone(),
+                            dictionary: dictionary.clone(),
+                        };
+                        let weakened = Group {
+                            rows: full.rows,
+                            nulls: full.nulls.filter(|_| !rng.chance(8)),
+                            bounds: full.bounds.clone().filter(|_| !rng.chance(4)),
+                            dictionary: full.dictionary.clone().filter(|_| !rng.chance(4)),
+                        };
+                        let row_answers = |expr: &ResolvedExpr| {
+                            group_rows
+                                .iter()
+                                .map(|v| {
+                                    expr.eval(
+                                        true,
+                                        RawRow::unchecked(&encode_field(*v)),
+                                        &mut RowSplit::default(),
+                                        "public.t",
+                                        0,
+                                    )
+                                    .unwrap_or_else(|e| {
+                                        panic!("{major} {declared}: the server wrote {v:?}: {e}")
+                                    })
+                                })
+                                .fold(TruthSet::EMPTY, |set, t| set.union(TruthSet::of(t)))
+                        };
+                        let trees: Vec<ResolvedExpr> = terms
+                            .iter()
+                            .cloned()
+                            .map(ResolvedExpr::Term)
+                            .chain((0..6).map(|_| random_tree(&mut rng, 3, &terms)))
+                            .collect();
+                        for expr in &trees {
+                            let produced = row_answers(expr);
+                            for group in [&full, &weakened] {
+                                let set = expr.truths(group);
+                                assert_eq!(
+                                    set.union(produced),
+                                    set,
+                                    "{major} {declared} {collation:?}: {expr:?} over {group_rows:?} \
+                                     with {group:?} answered {set:?}"
+                                );
+                                answers += group_rows.len();
+                                if !set.contains(Truth::True) && !group_rows.is_empty() {
+                                    ruled_out += 1;
+                                }
+                            }
+                            let ResolvedExpr::Term(term) = expr else { continue };
+                            let exact = if term.op.is_ordering() {
+                                orders_exactly && !loosened && bounds.is_some()
+                            } else {
+                                !matches!(term.op, PredicateOp::IsNull | PredicateOp::IsNotNull)
+                                    && matches!(
+                                        resolved.comparisons[0],
+                                        ComparisonPlan::Compared { .. }
+                                    )
+                                    && term.comparison_notes().is_empty()
+                                    && dictionary.is_some()
+                            };
+                            if exact {
+                                let only = Group {
+                                    bounds: full.bounds.clone().filter(|_| term.op.is_ordering()),
+                                    dictionary: full
+                                        .dictionary
+                                        .clone()
+                                        .filter(|_| !term.op.is_ordering()),
+                                    ..full.clone()
+                                };
+                                assert_eq!(
+                                    expr.truths(&only),
+                                    produced,
+                                    "{major} {declared} {collation:?}: {expr:?} over {group_rows:?} is not exact"
+                                );
+                                exact_sets += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            // Floors, not counts: the first is the property's reach, the
+            // other two are what keep it from being met by answering
+            // everything.
+            assert!(answers > 1_000_000, "only {answers} row answers held");
+            assert!(ruled_out > 75_000, "only {ruled_out} groups ruled out");
+            assert!(exact_sets > 50_000, "only {exact_sets} sets asserted exact");
         }
     }
 }
