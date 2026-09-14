@@ -1007,6 +1007,11 @@ fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
 /// A special value is answered by [`special_order_key`] first: it is a legal
 /// value of the declared type that the *Arrow* type cannot hold, a separate
 /// population from text that is malformed for the column.
+///
+/// **A key is a function of the kind and the text alone**, and nothing here
+/// or in [`compare_keys`] reads a row: two values that never shared one — a
+/// field and a filter's literal, a stored bound and a literal, two neighbours
+/// being gathered — are ordered by the one key the filter uses.
 fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     if let Some(special) = special_order_key(kind, text) {
         return Some(special);
@@ -1070,6 +1075,11 @@ fn pg_float_cmp(a: f64, b: f64) -> Ordering {
 /// [`OrderKey::rank`] alone, so two of the same special are equal —
 /// `-infinity = -infinity`, `infinity = infinity`, `NaN = NaN` (I34) — and a
 /// special against a finite never has to name a number.
+///
+/// Over the keys of one kind this is a **total order** — reflexive,
+/// antisymmetric and transitive — which a running minimum, maximum or
+/// sortedness flag depends on and a single comparison does not; the oracle
+/// test `the_key_is_a_total_order_over_every_committed_value` pins it.
 fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
     let (rank_a, rank_b) = (a.rank(), b.rank());
     if rank_a != rank_b {
@@ -2191,31 +2201,48 @@ impl ResolvedTerm {
             Some(f) => raw_row.decode(f)?,
             None => None,
         };
+        self.eval_value(decoded.as_deref()).ok_or_else(|| {
+            let compared = self.compared.as_ref().expect("a NULL test decodes nothing");
+            Error::FieldDecode {
+                table: table.to_string(),
+                column: compared.column.clone(),
+                row_offset,
+                declared_type: compared.declared_type.clone(),
+                value: decoded.as_deref().unwrap_or_default().to_string(),
+            }
+        })
+    }
+
+    /// This term's answer for one **already unescaped** value of its column,
+    /// `None` being SQL NULL — the row path's whole comparison, with no row
+    /// in it. [`Self::eval`] is this after splitting and unescaping a field;
+    /// a value that did not come from a row, such as a statistic's stored
+    /// bound or dictionary entry, is answered by the same code and so cannot
+    /// be answered differently.
+    ///
+    /// `None` back is a non-NULL value that is not a value of the column's
+    /// type under this term's comparison — what the row path reports as
+    /// `Error::FieldDecode`, the only case in which it returns nothing. The
+    /// NULL tests and the three canonicalized equalities never decode, so
+    /// they always answer.
+    #[inline]
+    pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
         let Some(compared) = self.compared.as_ref() else {
-            return Ok(Truth::of(match self.op {
-                PredicateOp::IsNull => decoded.is_none(),
-                _ => decoded.is_some(),
+            return Some(Truth::of(match self.op {
+                PredicateOp::IsNull => value.is_none(),
+                _ => value.is_some(),
             }));
         };
-        let Some(text) = decoded else {
-            return Ok(match self.op {
+        let Some(text) = value else {
+            return Some(match self.op {
                 PredicateOp::IsDistinctFrom => Truth::True,
                 PredicateOp::IsNotDistinctFrom => Truth::False,
                 _ => Truth::Unknown,
             });
         };
-        let key = |kind: &CompareKind| {
-            order_key(kind, &text).ok_or_else(|| Error::FieldDecode {
-                table: table.to_string(),
-                column: compared.column.clone(),
-                row_offset,
-                declared_type: compared.declared_type.clone(),
-                value: text.to_string(),
-            })
-        };
-        Ok(Truth::of(match &compared.comparison {
+        Some(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {
-                let ord = compare_keys(&key(kind)?, bound);
+                let ord = compare_keys(&order_key(kind, text)?, bound);
                 match self.op {
                     PredicateOp::Lt => ord.is_lt(),
                     PredicateOp::Le => ord.is_le(),
@@ -2223,26 +2250,18 @@ impl ResolvedTerm {
                     _ => ord.is_ge(),
                 }
             }
-            Comparison::Canonical(bound) => (text.as_ref() == bound.as_str()) == self.wants_equal(),
+            Comparison::Canonical(bound) => (text == bound.as_str()) == self.wants_equal(),
             Comparison::Trimmed(bound) => {
                 (text.trim_end_matches(' ') == bound.as_str()) == self.wants_equal()
             }
             Comparison::Decoded { kind, bound } => {
-                compare_keys(&key(kind)?, bound).is_eq() == self.wants_equal()
+                compare_keys(&order_key(kind, text)?, bound).is_eq() == self.wants_equal()
             }
             // Two-valued throughout: a NULL *inside* the container is a value
             // of it, and only the whole field being NULL is unknown — which
             // was decided above, before any of this runs.
             Comparison::Nested(nested) => {
-                let field =
-                    nested_key(&nested.plan, &text, false).ok_or_else(|| Error::FieldDecode {
-                        table: table.to_string(),
-                        column: compared.column.clone(),
-                        row_offset,
-                        declared_type: compared.declared_type.clone(),
-                        value: text.to_string(),
-                    })?;
-                let ord = compare_nested(&field, &nested.bound);
+                let ord = compare_nested(&nested_key(&nested.plan, text, false)?, &nested.bound);
                 match self.op {
                     PredicateOp::Lt => ord.is_lt(),
                     PredicateOp::Le => ord.is_le(),
@@ -3000,6 +3019,66 @@ mod tests {
                 if column == "v" && value == "twelve"),
             "{err:?}"
         );
+    }
+
+    /// **A value is answered with no row around it, and the answer is the
+    /// row's** — every [`Comparison`] arm and both NULL-counting families,
+    /// over a NULL, values either side of the literal, and a value that is
+    /// not of the column's type. The one thing a value cannot carry is where
+    /// it came from, so the row path's `FieldDecode` is the value path's
+    /// `None`, and nothing else is.
+    #[test]
+    fn a_value_outside_any_row_is_answered_as_the_row_holding_it_is() {
+        use crate::copy::encode_field;
+        let scalar = |declared: &str, op, literal: &str| {
+            let schema = one_column(declared, DataType::Utf8View);
+            resolve_term(&order_predicate(op, literal), 0, &schema, 0).unwrap()
+        };
+        let terms = [
+            ("ordered", scalar("integer", PredicateOp::Le, "10")),
+            ("canonical", scalar("integer", PredicateOp::Eq, "10")),
+            ("trimmed", scalar("character(4)", PredicateOp::Ne, "10")),
+            ("decoded", scalar("numeric", PredicateOp::IsNotDistinctFrom, "10")),
+            ("distinct", scalar("integer", PredicateOp::IsDistinctFrom, "10")),
+            (
+                "null test",
+                resolve_term(
+                    &Predicate { column: "v".into(), op: PredicateOp::IsNull, value: None },
+                    0,
+                    &one_column("integer", DataType::Int32),
+                    0,
+                )
+                .unwrap(),
+            ),
+            (
+                "nested",
+                resolve_term(
+                    &order_predicate(PredicateOp::Lt, "{10}"),
+                    0,
+                    &nested_column("integer[]", &[]),
+                    0,
+                )
+                .unwrap(),
+            ),
+        ];
+        let values =
+            [None, Some("9"), Some("10"), Some("10.0"), Some("10  "), Some("{9}"), Some("x")];
+        let mut undecodable = 0;
+        for (arm, term) in &terms {
+            for value in values {
+                let row = encode_field(value);
+                let by_row =
+                    term.eval(RawRow::unchecked(&row), &mut RowSplit::default(), "public.t", 0);
+                match (term.eval_value(value), by_row) {
+                    (Some(answer), Ok(by_row)) => assert_eq!(answer, by_row, "{arm} {value:?}"),
+                    (None, Err(Error::FieldDecode { .. })) => undecodable += 1,
+                    (answer, by_row) => panic!("{arm} {value:?}: {answer:?} against {by_row:?}"),
+                }
+            }
+        }
+        // The two decoding arms refuse `x` and the nested one every scalar
+        // spelling, so the `None` half is reached rather than vacuous.
+        assert!(undecodable >= 3, "only {undecodable} values refused");
     }
 
     /// A literal that is not a value of the column's type is refused when the
@@ -4730,6 +4809,80 @@ mod tests {
             // reasons, and a bug in any of them would leave it asserting
             // almost nothing while passing.
             assert!(asserted > 45_000, "only {asserted} cells asserted");
+        }
+
+        /// **The key a filter compares by is a total order over every value
+        /// the server wrote**, per declared type the register compares as a
+        /// scalar: reflexive, antisymmetric and transitive over the output
+        /// spelling of every literal it accepted. A single comparison needs
+        /// none of that, and a running minimum, maximum or sortedness flag
+        /// needs all of it — two values that never meet in a filter still
+        /// have to agree with a third about where they sit.
+        ///
+        /// Whether that order is *the server's* is the cell walk above; this
+        /// is the property that walk cannot see, since it asks each pair
+        /// once against a literal.
+        #[tokio::test]
+        async fn the_key_is_a_total_order_over_every_committed_value() {
+            let mut kinds = 0usize;
+            let mut triples = 0usize;
+            for major in MAJORS {
+                let types = types_of(major).await;
+                let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    if let (Some(declared), Some("ok"), Some(output)) =
+                        (row[0].clone(), row[2].as_deref(), row[3].clone())
+                    {
+                        outputs.entry(declared).or_default().insert(output);
+                    }
+                }
+                for (declared, values) in outputs {
+                    let ComparisonPlan::Compared { kind, .. } =
+                        comparison_for(&declared, None, &types, &[])
+                    else {
+                        continue;
+                    };
+                    kinds += 1;
+                    let keys: Vec<(&String, OrderKey)> = values
+                        .iter()
+                        .map(|v| {
+                            let key = order_key(&kind, v).unwrap_or_else(|| {
+                                panic!("{major} {declared}: the server wrote {v:?}")
+                            });
+                            (v, key)
+                        })
+                        .collect();
+                    for (a, ka) in &keys {
+                        assert_eq!(compare_keys(ka, ka), Ordering::Equal, "{major} {declared} {a}");
+                        for (b, kb) in &keys {
+                            let ab = compare_keys(ka, kb);
+                            assert_eq!(
+                                ab,
+                                compare_keys(kb, ka).reverse(),
+                                "{major} {declared}: {a:?} against {b:?}"
+                            );
+                            for (c, kc) in &keys {
+                                triples += 1;
+                                let bc = compare_keys(kb, kc);
+                                if ab != Ordering::Greater && bc != Ordering::Greater {
+                                    let ac = compare_keys(ka, kc);
+                                    assert_ne!(
+                                        ac,
+                                        Ordering::Greater,
+                                        "{major} {declared}: {a:?} <= {b:?} <= {c:?}"
+                                    );
+                                    if ab == Ordering::Equal && bc == Ordering::Equal {
+                                        assert_eq!(ac, Ordering::Equal);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Floors, not counts: the scalar kinds of six majors.
+            assert!(kinds > 150, "only {kinds} declared types walked");
+            assert!(triples > 50_000, "only {triples} triples asserted");
         }
 
         /// A range or multirange literal is put into the form the server

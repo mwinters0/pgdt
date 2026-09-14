@@ -37,6 +37,7 @@
 //! ([`TableStream::resolved_schema`]). That is a preview, not what decodes a
 //! row: the `RecordBatch`es this stream yields stay all-`Utf8View`.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -73,8 +74,14 @@ use crate::{Error, Result};
 /// own schema (schemas can differ block-to-block), and the database this block
 /// is attributed to (`docs/design/decisions.md`, "D49"). Each
 /// [`ResolvedExpr`] leaf carries the field index it reads — into the block's
-/// **unprojected** column list — plus the typed comparison it makes.
-type Active = (u64, CopyHeader, RowBatcher, ResolvedExpr, Option<String>);
+/// **unprojected** column list — plus the typed comparison it makes. Shared
+/// with the block's [`PlannedBlock`], so every piece of a block evaluates one
+/// tree.
+type Active = (u64, CopyHeader, RowBatcher, Arc<ResolvedExpr>, Option<String>);
+
+/// What [`activate`] hands back: the block's state, and the schema and notes
+/// a stream publishes for it.
+type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
 
 /// Where `row` sits inside `prefix`, the UTF-8-validated leading part of the
 /// span it was scanned out of — `None` when the row runs past it, which is
@@ -107,8 +114,10 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 /// is `Error::UnorderedPredicateColumn`, and a literal that is not a value of
 /// the column's type — `=` included — is `Error::PredicateValueDecode`. All
 /// are raised for the first offending term in a left-to-right walk, before a
-/// row of this block flows, so a table whose blocks carry different schemas
-/// can refuse at the third block after rows from the first two were emitted.
+/// row of this block flows. The plan runs it for every block before any is
+/// read ([`plan_blocks`]), but a refusal is raised where the block is reached,
+/// so a table whose blocks carry different schemas can refuse at the third
+/// block after rows from the first two were emitted.
 /// It takes the whole [`ResolvedSchema`] because the ordering refusal reads
 /// `columns` and `plans` too.
 fn resolve_expr(
@@ -1118,49 +1127,19 @@ fn resolve_block(
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
 /// the scanner's row counter (so a later `CopyEnd` reports the block's true
 /// total) and a fresh [`RowBatcher`] on the original block's schema.
-fn resume_state(
-    token: &ResumeToken,
-    query_options: &QueryOptions,
-    metadata: Option<&DumpMetadata>,
-    census: &[ArrayShape],
-) -> Result<(CopyScanner, Option<Active>, Option<ResolvedSchema>)> {
+fn resume_state(token: &ResumeToken, plan: &ReplayPlan) -> Result<(CopyScanner, Option<Opened>)> {
     let scanner = CopyScanner::resume(
         token.offset,
         token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
     );
-    let mut resolved = None;
     let active = token
         .in_copy
         .as_ref()
         .map(|ic| {
-            let full = resolve_block(
-                &ic.header,
-                ic.field_count,
-                metadata,
-                ic.database.as_deref(),
-                query_options.schema_mode,
-                census,
-            )?;
-            let filter = resolve_expr(&query_options.filter, &full, ic.header_offset)?;
-            let (r, field_targets) =
-                project(&full, query_options.projection.as_deref(), ic.header_offset)?;
-            let batcher = RowBatcher::new(
-                &r,
-                ic.header.qualified_name(),
-                query_options.clone(),
-                field_targets,
-            );
-            resolved = Some(r);
-            Ok::<_, Error>((
-                ic.header_offset,
-                ic.header.clone(),
-                batcher,
-                filter,
-                ic.database.clone(),
-            ))
+            activate(ic.header.clone(), ic.header_offset, ic.field_count, ic.database.clone(), plan)
         })
         .transpose()?;
-    Ok((scanner, active, resolved))
+    Ok((scanner, active))
 }
 
 fn snapshot(
@@ -1198,6 +1177,115 @@ struct ReplayPlan {
     query_options: QueryOptions,
     metadata: Option<DumpMetadata>,
     census: Vec<ArrayShape>,
+    /// Every matched block's resolution that succeeded, keyed by the block's
+    /// `header_offset` — see [`plan_blocks`].
+    blocks: BTreeMap<u64, PlannedBlock>,
+}
+
+impl ReplayPlan {
+    /// The plan for replaying `mapped`: its DDL and census, and every one of
+    /// its blocks resolved against them before any sub-stream exists.
+    fn new(
+        scan_options: ScanOptions,
+        query_options: QueryOptions,
+        matches: &[CopyBlock],
+        metadata: Option<DumpMetadata>,
+        census: Vec<ArrayShape>,
+    ) -> Self {
+        let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &census);
+        Self { scan_options, query_options, metadata, census, blocks }
+    }
+}
+
+/// One block's schema, filter and projection, resolved against a query —
+/// everything [`activate`] builds a [`RowBatcher`] from, bar the batcher,
+/// which holds rows and so is built per activation.
+///
+/// It records the three inputs the block itself contributes, so a lookup can
+/// confirm it answers the activation asking rather than trusting the offset
+/// alone; the rest are the [`ReplayPlan`]'s, and fixed.
+#[derive(Debug)]
+struct PlannedBlock {
+    header: CopyHeader,
+    field_count: usize,
+    database: Option<String>,
+    /// The **projected** schema, which is what the batches carry.
+    resolved: ResolvedSchema,
+    field_targets: Vec<Option<usize>>,
+    filter: Arc<ResolvedExpr>,
+    notes: Vec<ComparisonNote>,
+}
+
+/// Resolve one block for a query: its schema, the filter against the
+/// unprojected schema, then the projection — in that order, which is the
+/// order their refusals are raised in.
+fn resolve_for_query(
+    header: &CopyHeader,
+    header_offset: u64,
+    field_count: usize,
+    database: Option<&str>,
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+    census: &[ArrayShape],
+) -> Result<PlannedBlock> {
+    let full =
+        resolve_block(header, field_count, metadata, database, query_options.schema_mode, census)?;
+    // Against the *unprojected* schema: a term's index numbers the raw row's
+    // fields, and a term may name a column the projection dropped.
+    let filter = resolve_expr(&query_options.filter, &full, header_offset)?;
+    let notes = filter.comparison_notes();
+    let (resolved, field_targets) =
+        project(&full, query_options.projection.as_deref(), header_offset)?;
+    Ok(PlannedBlock {
+        header: header.clone(),
+        field_count,
+        database: database.map(str::to_string),
+        resolved,
+        field_targets,
+        filter: Arc::new(filter),
+        notes,
+    })
+}
+
+/// **The filter is resolved at plan time**, once per matched block and
+/// before any byte of a block is replayed, rather than by each piece of each
+/// block as a sub-stream reaches it — so the whole plan's resolved trees are
+/// in hand before a segment is cut, and a block split into many pieces
+/// resolves once.
+///
+/// Two kinds of block are left out, and [`activate`] resolves each where it
+/// is reached, exactly as it would have:
+///
+/// - **A block whose header names no columns**, whose field count only its
+///   first row says.
+/// - **A block whose resolution refuses.** The refusal is not raised here,
+///   so a query still yields the rows of every block before the one that
+///   refuses, and raises the same error at the same point; resolution being
+///   a function of the block and the plan alone, the second attempt refuses
+///   exactly as the first did.
+fn plan_blocks(
+    matches: &[CopyBlock],
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+    census: &[ArrayShape],
+) -> BTreeMap<u64, PlannedBlock> {
+    matches
+        .iter()
+        .filter(|block| !block.header.columns.is_empty())
+        .filter_map(|block| {
+            resolve_for_query(
+                &block.header,
+                block.header_offset,
+                block.header.columns.len(),
+                block.database.as_deref(),
+                query_options,
+                metadata,
+                census,
+            )
+            .ok()
+            .map(|planned| (block.header_offset, planned))
+        })
+        .collect()
 }
 
 /// What state a [`Segment`]'s scanner starts in.
@@ -1287,41 +1375,49 @@ impl StreamShared {
     }
 }
 
-/// Resolve one block's schema against `plan`, validate the filter and the
-/// projection against it, and build the [`RowBatcher`] that will hold its
-/// rows.
+/// Take one block's resolution from `plan` — resolving it here where the
+/// plan holds none ([`plan_blocks`]) — and build the [`RowBatcher`] that will
+/// hold its rows.
 ///
-/// The three places a block becomes active — a `COPY` header the scanner
-/// read, the first row of a headerless block, and a partition that started
-/// inside a block — differ only in where the header and field count come from.
+/// The four places a block becomes active — a `COPY` header the scanner
+/// read, the first row of a headerless block, a partition that started inside
+/// a block, and a resumed token — differ only in where the header and field
+/// count come from.
 fn activate(
     header: CopyHeader,
     header_offset: u64,
     field_count: usize,
     database: Option<String>,
     plan: &ReplayPlan,
-) -> Result<(Active, ResolvedSchema, Vec<ComparisonNote>)> {
-    let full = resolve_block(
-        &header,
-        field_count,
-        plan.metadata.as_ref(),
-        database.as_deref(),
-        plan.query_options.schema_mode,
-        &plan.census,
-    )?;
-    // Against the *unprojected* schema: a term's index numbers the raw row's
-    // fields, and a term may name a column the projection dropped.
-    let filter = resolve_expr(&plan.query_options.filter, &full, header_offset)?;
-    let notes = filter.comparison_notes();
-    let (resolved, field_targets) =
-        project(&full, plan.query_options.projection.as_deref(), header_offset)?;
+) -> Result<Opened> {
+    let resolved_here;
+    let block = match plan.blocks.get(&header_offset).filter(|planned| {
+        planned.field_count == field_count
+            && planned.database == database
+            && planned.header == header
+    }) {
+        Some(planned) => planned,
+        None => {
+            resolved_here = resolve_for_query(
+                &header,
+                header_offset,
+                field_count,
+                database.as_deref(),
+                &plan.query_options,
+                plan.metadata.as_ref(),
+                &plan.census,
+            )?;
+            &resolved_here
+        }
+    };
     let batcher = RowBatcher::new(
-        &resolved,
+        &block.resolved,
         header.qualified_name(),
         plan.query_options.clone(),
-        field_targets,
+        block.field_targets.clone(),
     );
-    Ok(((header_offset, header, batcher, filter, database), resolved, notes))
+    let (resolved, notes) = (block.resolved.clone(), block.notes.clone());
+    Ok(((header_offset, header, batcher, Arc::clone(&block.filter), database), resolved, notes))
 }
 
 /// The offset of the first row boundary at or after `from`, searching no
@@ -1965,14 +2061,12 @@ fn replay<'a>(
         // are prebuilt here.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) if token.in_copy.is_some() => {
-                let (scanner, active, resolved) =
-                    resume_state(token, query_options, plan.metadata.as_ref(), &plan.census)?;
-                if let Some(r) = resolved {
-                    *shared.resolved_schema.lock().unwrap() = r;
-                }
-                if let Some((_, _, _, filter, _)) = &active {
-                    *shared.comparison_notes.lock().unwrap() = filter.comparison_notes();
-                }
+                let (scanner, opened) = resume_state(token, &plan)?;
+                let active = opened.map(|(active, resolved, notes)| {
+                    *shared.resolved_schema.lock().unwrap() = resolved;
+                    *shared.comparison_notes.lock().unwrap() = notes;
+                    active
+                });
                 (active, Some(scanner))
             }
             _ => (None, None),
@@ -2280,9 +2374,11 @@ pub fn table_stream<'a>(
         // Pass 2: replay each matching block for its rows, as one segment
         // apiece. A resumed stream picks up inside this same list, every
         // resume point being inside a mapped block by construction.
+        let MappedTable { matches, metadata, census } = mapped;
+        let plan =
+            Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census));
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
-        let segments: Vec<Segment> = mapped
-            .matches
+        let segments: Vec<Segment> = matches
             .iter()
             .filter(|b| b.end_offset > resume_offset)
             .map(|b| Segment {
@@ -2292,12 +2388,6 @@ pub fn table_stream<'a>(
                 entry: SegmentEntry::Header,
             })
             .collect();
-        let plan = Arc::new(ReplayPlan {
-            scan_options,
-            query_options,
-            metadata: mapped.metadata,
-            census: mapped.census,
-        });
         let mut rows =
             Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint));
         while let Some(batch) = rows.next().await {
@@ -2346,18 +2436,14 @@ pub async fn table_stream_partitions<'a>(
     validate_request(&query_options, None, 0)?;
     let table = table.to_string();
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
+    let MappedTable { matches, metadata, census } = mapped;
+    let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census));
     let (groups, plan_notes) = plan_partitions(
         source,
-        &mapped.matches,
-        query_options.parallelism,
-        query_options.max_source_span,
+        &matches,
+        plan.query_options.parallelism,
+        plan.query_options.max_source_span,
     );
-    let plan = Arc::new(ReplayPlan {
-        scan_options,
-        query_options,
-        metadata: mapped.metadata,
-        census: mapped.census,
-    });
     let of = groups.len();
     Ok(groups
         .into_iter()
@@ -2644,5 +2730,107 @@ mod tests {
         assert_ne!(whole, first);
         assert_ne!(first, second);
         assert_ne!(first, of_two);
+    }
+
+    /// One table in three blocks: two naming their columns differently and one
+    /// naming none, so a filter on `b` resolves against the first, refuses the
+    /// second, and cannot be tried on the third until a row is read.
+    fn three_schemas(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("three_schemas.sql");
+        std::fs::write(
+            &path,
+            "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n\\.\n\n\
+             COPY public.t (a) FROM stdin;\n3\n\\.\n\n\
+             COPY public.t FROM stdin;\n4\ty\n\\.\n",
+        )
+        .unwrap();
+        path
+    }
+
+    /// **The plan resolves every block it can before any is read, and
+    /// activation takes that resolution rather than making its own.** A block
+    /// whose resolution refuses and a block with no column list are left out,
+    /// to be resolved where they are reached.
+    #[tokio::test]
+    async fn the_filter_is_resolved_once_per_block_at_plan_time() {
+        use crate::io::LocalFileSource;
+        use crate::predicate::Predicate;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = LocalFileSource::open(three_schemas(dir.path())).unwrap();
+        let query_options = QueryOptions {
+            filter: Expr::all([Predicate {
+                column: "b".into(),
+                op: PredicateOp::IsNotNull,
+                value: None,
+            }]),
+            projection: Some(vec!["a".into()]),
+            // Past the first block, which would otherwise settle the table.
+            scan_extent: ScanExtent::Full,
+            ..QueryOptions::default()
+        };
+        let mapped = map_for_query(
+            &source,
+            "public.t",
+            &ScanOptions::default(),
+            &query_options,
+            &CacheMode::Disabled,
+        )
+        .await
+        .unwrap();
+        let [first, second, third] = &mapped.matches[..] else {
+            panic!("three blocks: {:?}", mapped.matches)
+        };
+        let plan = ReplayPlan::new(
+            ScanOptions::default(),
+            query_options.clone(),
+            &mapped.matches,
+            mapped.metadata.clone(),
+            mapped.census.clone(),
+        );
+        assert_eq!(plan.blocks.keys().copied().collect::<Vec<_>>(), [first.header_offset]);
+
+        // The planned entry is what resolving the block where it is reached
+        // would have produced.
+        let live = |block: &CopyBlock, field_count| {
+            resolve_for_query(
+                &block.header,
+                block.header_offset,
+                field_count,
+                block.database.as_deref(),
+                &query_options,
+                mapped.metadata.as_ref(),
+                &mapped.census,
+            )
+        };
+        let planned = &plan.blocks[&first.header_offset];
+        assert_eq!(format!("{planned:?}"), format!("{:?}", live(first, 2).unwrap()));
+
+        // Activating the planned block hands out the plan's own tree.
+        let open = |block: &CopyBlock, field_count| {
+            activate(
+                block.header.clone(),
+                block.header_offset,
+                field_count,
+                block.database.clone(),
+                &plan,
+            )
+        };
+        let ((_, _, _, filter, _), resolved, notes) = open(first, 2).unwrap();
+        assert!(Arc::ptr_eq(&filter, &planned.filter));
+        assert_eq!((resolved, notes), (planned.resolved.clone(), planned.notes.clone()));
+
+        // An activation the entry does not describe resolves for itself.
+        let ((_, _, _, other, _), _, _) = open(first, 3).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!Arc::ptr_eq(&other, &planned.filter));
+
+        // The refusing block raises its refusal when it is activated.
+        assert!(matches!(
+            open(second, 1).map(|_| ()),
+            Err(Error::UnknownPredicateColumn { header_offset, .. })
+                if header_offset == second.header_offset
+        ));
+        assert!(live(second, 1).is_err());
+        assert!(third.header.columns.is_empty());
     }
 }
