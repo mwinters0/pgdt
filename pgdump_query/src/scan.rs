@@ -27,7 +27,6 @@ use bytes::Bytes;
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
 use crate::io::{ByteRangeSource, Parallelism, WaitPolicy, memory_budget_display};
-use crate::statistics::StatisticsRequest;
 use crate::{Error, Result};
 
 /// The start of a COPY data block.
@@ -524,12 +523,6 @@ pub struct ScanOptions {
     /// the ceiling on the workers [`crate::leader::scan_region`] runs over an
     /// open `COPY` block's interior, which is what a `parse` splits by.
     pub parallelism: Parallelism,
-    /// Which per-row-group column statistics to gather for each `COPY` block
-    /// the scan maps — `None`, the default, gathering none. Read by
-    /// [`crate::stream::map_file`] alone: a query's mapping pass and the eager
-    /// producers never gather. A block gathered for is scanned serially,
-    /// whatever `parallelism` allows.
-    pub statistics: Option<StatisticsRequest>,
 }
 
 impl Default for ScanOptions {
@@ -539,7 +532,6 @@ impl Default for ScanOptions {
             max_line_bytes: DEFAULT_MAX_LINE_BYTES,
             cancel: None,
             parallelism: Parallelism::default(),
-            statistics: None,
         }
     }
 }

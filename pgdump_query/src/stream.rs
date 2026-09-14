@@ -418,16 +418,17 @@ enum MapStop {
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
 /// stands on.
 ///
-/// **`statistics` is what to gather, and only [`map_file`] passes one**: a
-/// query never gathers. A block it tracks is observed row by row on this loop
-/// and is never offered to the leader, whose pieces carry no observer.
+/// **`statistics` is what to gather, and only [`map_file`] passes one that
+/// gathers**: a query's pass is [`StatisticsRequest::NONE`]. A block it tracks
+/// is observed row by row on this loop and is never offered to the leader,
+/// whose pieces carry no observer.
 async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
-    statistics: Option<&StatisticsRequest>,
+    statistics: &StatisticsRequest,
     size: u64,
 ) -> Result<MapStop> {
     if index.scanned_through >= size {
@@ -536,7 +537,7 @@ async fn map_forward(
                         let header_offset = start.header_offset;
                         let data_offset = start.data_offset;
                         let columns = start.header.columns.len();
-                        let header = statistics.is_some().then(|| start.header.clone());
+                        let header = statistics.gathers().then(|| start.header.clone());
                         builder.on_copy_start(start);
                         // **Once per database, not once per block**:
                         // recomputing at every `CopyStart` would put a third
@@ -555,15 +556,14 @@ async fn map_forward(
                         }
                         // After the restatement, so the observer resolves the
                         // block against its own database's DDL.
-                        let observer =
-                            statistics.zip(header.as_ref()).and_then(|(request, header)| {
-                                gather::observer_for(
-                                    request,
-                                    header,
-                                    index.metadata.as_ref(),
-                                    db.as_deref(),
-                                )
-                            });
+                        let observer = header.as_ref().and_then(|header| {
+                            gather::observer_for(
+                                statistics,
+                                header,
+                                index.metadata.as_ref(),
+                                db.as_deref(),
+                            )
+                        });
                         if let Some(observer) = observer {
                             builder.observe_block(observer);
                             // **The leader is not offered a gathered block**:
@@ -923,9 +923,10 @@ pub struct MapRun {
 /// — its spans *are* the prefix, so running it over a resumed map would
 /// discard one.
 ///
-/// **It gathers what [`ScanOptions::statistics`] asks for**, over the blocks
-/// this run maps; a block the cache already held keeps whatever it was mapped
-/// with.
+/// **It gathers what `statistics` asks for**, over the blocks this run maps;
+/// a block the cache already held keeps whatever it was mapped with.
+/// [`StatisticsRequest::default`] gathers every statistic, and a gathered
+/// block is scanned serially whatever `scan_options` allows.
 ///
 /// **The three finishing steps are this function's, not `map_forward`'s.**
 ///
@@ -946,6 +947,7 @@ pub async fn map_file(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
+    statistics: &StatisticsRequest,
 ) -> Result<MapRun> {
     let size = source.size().await?;
     let mut index = match cache.load(source).await? {
@@ -991,7 +993,6 @@ pub async fn map_file(
         cache.save(source, &index).await?;
     }
 
-    let statistics = scan_options.statistics.as_ref();
     if map_forward(source, scan_options, cache, &mut index, None, statistics, size).await?
         == MapStop::Interrupted
     {
@@ -1579,7 +1580,8 @@ async fn map_for_query(
     // A cancelled mapping pass is an error here rather than a short stream
     // (`docs/design/decisions.md`, "D48"). `pgdq query` never sets the flag;
     // an embedder that does gets told.
-    if map_forward(source, scan_options, cache, &mut index, target, None, size).await?
+    if map_forward(source, scan_options, cache, &mut index, target, &StatisticsRequest::NONE, size)
+        .await?
         == MapStop::Interrupted
     {
         return Err(Error::ScanCancelled { scanned_through: index.scanned_through });

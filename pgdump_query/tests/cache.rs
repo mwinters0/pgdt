@@ -10,8 +10,8 @@ use pgdump_query::cache::{CacheClaim, CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
     ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, QueryOptions,
-    Recognized, ScanOptions, XzSource, build_index, cache, check_tiling, map_file, open_local,
-    preamble_only, table_stream,
+    Recognized, ScanOptions, StatisticsRequest, XzSource, build_index, cache, check_tiling,
+    map_file, open_local, preamble_only, table_stream,
 };
 
 mod common;
@@ -255,7 +255,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     let cached_stored_size = source.stored_size().await.unwrap();
     let path = cache::colocated_path(&dump);
     let mode = CacheMode::Enabled(path.clone());
-    map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
     let before = std::fs::read(&path).unwrap();
 
     // Grow the dump under its own cache: the file at `path` is now a valid
@@ -281,7 +281,12 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
         other => panic!("{what}: expected a source mismatch, got {other:?}"),
     };
 
-    expected("map_file", map_file(&source, &ScanOptions::default(), &mode).await.unwrap_err());
+    expected(
+        "map_file",
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default())
+            .await
+            .unwrap_err(),
+    );
     expected(
         "preamble_only",
         preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap_err(),

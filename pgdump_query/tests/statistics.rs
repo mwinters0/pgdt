@@ -29,19 +29,21 @@ use common::{VERSIONS, sandboxed, statistics_fixture};
 /// rows each.
 const SMALL_GROUP: u64 = 4096;
 
-fn request(selection: StatisticsSelection, group_size: u64) -> ScanOptions {
-    ScanOptions {
-        statistics: Some(StatisticsRequest {
-            selection,
-            group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        }),
-        ..ScanOptions::default()
-    }
+fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
+    StatisticsRequest { selection, group_size: Some(NonZeroU64::new(group_size).unwrap()) }
 }
 
-async fn gathered(dump: &Path, options: &ScanOptions) -> DumpIndex {
+async fn gathered(dump: &Path, statistics: &StatisticsRequest) -> DumpIndex {
+    gathered_with(dump, &ScanOptions::default(), statistics).await
+}
+
+async fn gathered_with(
+    dump: &Path,
+    options: &ScanOptions,
+    statistics: &StatisticsRequest,
+) -> DumpIndex {
     let source = LocalFileSource::open(dump).unwrap();
-    let run = map_file(&source, options, &CacheMode::Disabled).await.unwrap();
+    let run = map_file(&source, options, &CacheMode::Disabled, statistics).await.unwrap();
     assert!(!run.interrupted);
     run.index
 }
@@ -283,17 +285,20 @@ async fn a_long_value_is_bounded_by_truncated_texts() {
     }
 }
 
-/// The group size is stated per request and recorded per block; an unstated
-/// one is the mebibyte default, at which each fixture block but the one holding
-/// the megabyte row is a single group.
+/// **The default request gathers every statistic**: every column of every
+/// block, at the mebibyte default group size, at which each fixture block but
+/// the one holding the megabyte row is a single group. The group size is
+/// stated per request and recorded per block.
 #[tokio::test]
-async fn the_default_group_size_is_a_mebibyte() {
+async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let dump = statistics_fixture(16, "default");
-    let options =
-        ScanOptions { statistics: Some(StatisticsRequest::default()), ..Default::default() };
-    let index = gathered(&dump, &options).await;
+    assert_eq!(StatisticsRequest::default(), StatisticsRequest::ALL);
+    let index = gathered(&dump, &StatisticsRequest::default()).await;
     for block in index.blocks() {
-        assert_eq!(statistics(block).group_size, pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
+        let statistics = statistics(block);
+        assert_eq!(statistics.group_size, pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
+        assert_eq!(statistics.columns.len(), block.header.columns.len());
+        assert!(statistics.columns.iter().all(Option::is_some), "{}", block.header.table);
     }
     assert_eq!(statistics(block(&index, "public.ordered")).groups.len(), 1);
     assert!(statistics(block(&index, "public.long_value")).groups.len() > 1);
@@ -317,11 +322,11 @@ async fn a_selection_gathers_only_what_it_names() {
     assert!(block(&index, "public.long_value").statistics.is_none());
 }
 
-/// No statistics requested is none gathered — the library's default, and
-/// what a query's mapping pass always is.
+/// A request stating none gathers none — what a query's mapping pass always
+/// asks.
 #[tokio::test]
-async fn nothing_requested_gathers_nothing() {
-    let index = gathered(&statistics_fixture(16, "default"), &ScanOptions::default()).await;
+async fn a_request_stating_none_gathers_nothing() {
+    let index = gathered(&statistics_fixture(16, "default"), &StatisticsRequest::NONE).await;
     assert!(index.blocks().all(|b| b.statistics.is_none()));
 }
 
@@ -332,8 +337,8 @@ async fn statistics_round_trip_through_the_cache() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "statistics.sql");
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
-    let options = request(StatisticsSelection::All, SMALL_GROUP);
-    let index = map_file(&source, &options, &mode).await.unwrap().index;
+    let wanted = request(StatisticsSelection::All, SMALL_GROUP);
+    let index = map_file(&source, &ScanOptions::default(), &mode, &wanted).await.unwrap().index;
     let clone = index.clone();
     for (a, b) in index.blocks().zip(clone.blocks()) {
         assert!(Arc::ptr_eq(a.statistics.as_ref().unwrap(), b.statistics.as_ref().unwrap()));
@@ -362,17 +367,18 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     }
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
-    let serial = ScanOptions { chunk_size: 64, ..request(StatisticsSelection::All, 256) };
+    let wanted = request(StatisticsSelection::All, 256);
+    let serial = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
     let parallel = ScanOptions {
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
         ..serial.clone()
     };
-    let index = gathered(&dump, &parallel).await;
+    let index = gathered_with(&dump, &parallel, &wanted).await;
     assert_eq!(
         statistics(block(&index, "public.t")).groups.iter().map(|g| g.rows).sum::<u64>(),
         2000
     );
-    assert_eq!(index.spans, gathered(&dump, &serial).await.spans);
+    assert_eq!(index.spans, gathered_with(&dump, &serial, &wanted).await.spans);
 }
 
 /// **A value that does not key leaves its group without bounds on that

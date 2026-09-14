@@ -10,13 +10,13 @@ grilled and sliced"). No query reads a statistic yet.
 
 - **`statistics.rs` (L1)** holds the persisted types — `BlockStatistics`,
   `RowGroup`, `ColumnStatistics`, `ColumnBounds`, `Bounds`, `Sortedness`,
-  `ColumnDictionary` — the request (`StatisticsRequest`, on
-  `ScanOptions::statistics`, `None` by default), the three constants, and the
+  `ColumnDictionary` — the request (`StatisticsRequest`, `map_file`'s
+  argument), the three constants, and the
   `BlockObserver` trait. `CopyBlock::statistics` is
   `Option<Arc<BlockStatistics>>`; `sparse_index` and `column_stats` are gone.
 - **`gather.rs` (L4)** implements the observer. `map_forward` installs one per
-  `CopyStart` through `Builder::observe_block`, only when `map_file` passed a
-  request, after the metadata restatement so the block resolves against its own
+  `CopyStart` through `Builder::observe_block`, only when `map_file`'s request
+  tracks the block, after the metadata restatement so the block resolves against its own
   database; `Builder::on_row` now takes the row's absolute offset.
 - **The leader is never offered a gathered block**: `map_forward` skips the
   offer and reports `leader::gathering_shortfall`, a `scan arrangement` line

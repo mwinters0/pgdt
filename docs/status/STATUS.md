@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` gathers them serially by default and persists them in the cache, and nothing reads them yet | `statistics.rs`, `gather.rs`; D34; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them serially by default and persists them in the cache, and nothing reads them yet | `statistics.rs`, `gather.rs`; D34; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -73,7 +73,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.2** Row-free comparison and plan-time filter resolution, behaviour-preserving; [notes](../design/roadmap-P10.2-row-free-comparison-notes.md)
 - [x] **10.3** The truth-set evaluator, property-tested against the row evaluator; [notes](../design/roadmap-P10.3-truth-set-evaluator-notes.md)
 - [x] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`; [notes](../design/roadmap-P10.4-serial-gathering-notes.md)
-- [ ] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores
+- [x] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores; [notes](../design/roadmap-P10.4.2-mapping-pass-request-notes.md)
 - [ ] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks
 - [ ] **10.5** Reporting in `info --detail` and `--json`
 - [ ] **10.6** Parallel gathering, identical to serial over every fixture
@@ -301,3 +301,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`map_file` takes a required `&StatisticsRequest`, and "gather nothing" is
+  `StatisticsSelection::None` rather than `Option<StatisticsRequest>`.** The
+  spec says the library defaults to gathering everything unless the caller
+  states none. Rust has no default arguments, so "default" here means what
+  `Default::default()` returns, and `Option`'s default is `None`, the opposite.
+  The cost: a request can now hold `NONE` together with a group size, which
+  the library ignores and only the CLI refuses. Reconsidering means one of
+  two things. Either `Option<&StatisticsRequest>`, where every caller writes
+  `Some(&StatisticsRequest::default())` to get the spec's default. Or two
+  entry points, a `map_file` that always gathers and a variant that takes the
+  request. Either way the call sites in `tests/` and `main.rs` change, and
+  nothing else does.

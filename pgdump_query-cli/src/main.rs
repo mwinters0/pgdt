@@ -464,7 +464,7 @@ enum Command {
             value_parser = parse_statistics,
             conflicts_with = "preamble_only"
         )]
-        statistics: Option<StatisticsFlag>,
+        statistics: Option<StatisticsSelection>,
         /// The bytes of a table's data each row group of statistics covers.
         /// The default, 1 MiB, is coarse; a smaller group records more finely
         /// where values lie and costs memory and cache space in proportion.
@@ -658,20 +658,13 @@ fn parse_max_line_bytes(text: &str) -> std::result::Result<usize, String> {
     }
 }
 
-/// A `--statistics` value: gather nothing, or gather for a selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum StatisticsFlag {
-    None,
-    Gather(StatisticsSelection),
-}
-
 /// A `--statistics` value: `none`, `all`, or a comma-separated list of tables
 /// and `schema.table.column`s. A name is split at its dots, so a quoted
 /// identifier holding one cannot be named here.
-fn parse_statistics(text: &str) -> std::result::Result<StatisticsFlag, String> {
+fn parse_statistics(text: &str) -> std::result::Result<StatisticsSelection, String> {
     match text {
-        "none" => return Ok(StatisticsFlag::None),
-        "all" => return Ok(StatisticsFlag::Gather(StatisticsSelection::All)),
+        "none" => return Ok(StatisticsSelection::None),
+        "all" => return Ok(StatisticsSelection::All),
         _ => {}
     }
     let targets = text
@@ -692,7 +685,7 @@ fn parse_statistics(text: &str) -> std::result::Result<StatisticsFlag, String> {
             }
         })
         .collect::<std::result::Result<Vec<_>, String>>()?;
-    Ok(StatisticsFlag::Gather(StatisticsSelection::Only(targets)))
+    Ok(StatisticsSelection::Only(targets))
 }
 
 /// A `--statistics-group-size` value: a byte count, and never zero, which
@@ -708,23 +701,17 @@ fn parse_statistics_group_size(text: &str) -> std::result::Result<NonZeroU64, St
 /// is every column, and a group size beside `none` is refused rather than
 /// ignored.
 fn statistics_request(
-    flag: Option<StatisticsFlag>,
+    selection: Option<StatisticsSelection>,
     group_size: Option<NonZeroU64>,
-) -> Result<Option<StatisticsRequest>> {
-    let selection = match flag {
-        Some(StatisticsFlag::None) => {
-            if group_size.is_some() {
-                anyhow::bail!(
-                    "--statistics-group-size sizes the statistics `--statistics none` turns off \
-                     — drop one of them"
-                );
-            }
-            return Ok(None);
-        }
-        Some(StatisticsFlag::Gather(selection)) => selection,
-        None => StatisticsSelection::All,
-    };
-    Ok(Some(StatisticsRequest { selection, group_size }))
+) -> Result<StatisticsRequest> {
+    let selection = selection.unwrap_or_default();
+    if selection == StatisticsSelection::None && group_size.is_some() {
+        anyhow::bail!(
+            "--statistics-group-size sizes the statistics `--statistics none` turns off \
+             — drop one of them"
+        );
+    }
+    Ok(StatisticsRequest { selection, group_size })
 }
 
 /// The two read flags every scanning command carries, as given.
@@ -1258,8 +1245,9 @@ async fn main() -> Result<()> {
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
-                ScanOptions { cancel: Some(cancel), statistics, ..scan_options(read, &parallel) };
-            let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
+                ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
+            let run =
+                pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics).await?;
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both
                 // lines go to stderr, so a caller redirecting stdout gets an

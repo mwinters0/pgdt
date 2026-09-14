@@ -28,7 +28,7 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, QueryOptions,
-    ScanOptions, WaitPolicy, build_index, map_file, table_stream,
+    ScanOptions, StatisticsRequest, WaitPolicy, build_index, map_file, table_stream,
 };
 
 mod common;
@@ -129,7 +129,8 @@ async fn a_structural_scan_grants_no_wait() {
 /// small chunk is what makes a fixture's regions several partitions each — the
 /// local source's partition is a fixed multiple of its read chunk, so at the
 /// shipped 1 MiB every fixture region is inside one partition and every one of
-/// them is declined.
+/// them is declined. Both scans gather nothing, a gathered block never reaching
+/// the scheduler.
 #[tokio::test]
 async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_back() {
     let dir = tempfile::tempdir().unwrap();
@@ -141,7 +142,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    map_file(&source, &options, &CacheMode::Disabled).await.unwrap();
+    map_file(&source, &options, &CacheMode::Disabled, &StatisticsRequest::NONE).await.unwrap();
     // `policies()` collapses consecutive repeats, so the sequence alternates by
     // construction and what is left to check is its ends and its length.
     let policies = source.policies();
@@ -157,7 +158,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    map_file(&source, &options, &CacheMode::Disabled).await.unwrap();
+    map_file(&source, &options, &CacheMode::Disabled, &StatisticsRequest::NONE).await.unwrap();
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait], "every region was declined");
 }
 

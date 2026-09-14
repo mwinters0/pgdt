@@ -31,7 +31,12 @@ pub const STORED_VALUE_CAP: usize = 256;
 pub const DICTIONARY_CAP: usize = 64;
 
 /// What a mapping pass is asked to gather: which columns, at what group size.
-/// Read by [`crate::stream::map_file`] alone — a query never gathers.
+/// An argument of [`crate::stream::map_file`] alone — a query never gathers.
+///
+/// **The default gathers every statistic** ([`Self::ALL`]), a parse carrying
+/// the intent to do all work a later query could use; gathering less is stated,
+/// [`Self::NONE`] gathering nothing (`docs/design/roadmap.md`, "A parse does
+/// all the work a later query could use").
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StatisticsRequest {
     /// The columns statistics are gathered for.
@@ -44,6 +49,18 @@ pub struct StatisticsRequest {
 }
 
 impl StatisticsRequest {
+    /// Every column of every table, at the default group size — the default.
+    pub const ALL: Self = Self { selection: StatisticsSelection::All, group_size: None };
+
+    /// Nothing gathered: what a query's mapping pass always asks.
+    pub const NONE: Self = Self { selection: StatisticsSelection::None, group_size: None };
+
+    /// Whether this request may track a column at all — false for
+    /// [`StatisticsSelection::None`] alone.
+    pub fn gathers(&self) -> bool {
+        self.selection != StatisticsSelection::None
+    }
+
     /// The group size this request gathers at.
     pub fn group_size(&self) -> u64 {
         self.group_size.map_or(DEFAULT_STATISTICS_GROUP_SIZE, NonZeroU64::get)
@@ -56,6 +73,7 @@ impl StatisticsRequest {
     pub fn tracked_columns(&self, header: &CopyHeader) -> Option<Vec<bool>> {
         let targets = match &self.selection {
             StatisticsSelection::All => return Some(vec![true; header.columns.len()]),
+            StatisticsSelection::None => return None,
             StatisticsSelection::Only(targets) => targets,
         };
         let mut whole_table = false;
@@ -86,6 +104,8 @@ pub enum StatisticsSelection {
     All,
     /// Only these tables and columns.
     Only(Vec<StatisticsTarget>),
+    /// No column of any table; a group size beside it sizes nothing.
+    None,
 }
 
 /// One entry of a narrowed selection. A table is named as
