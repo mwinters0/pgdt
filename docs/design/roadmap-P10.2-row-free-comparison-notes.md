@@ -56,10 +56,10 @@ suite passed unedited apart from the tests added.
 
 ## Negative results
 
-- **A refusal is not raised from the plan**, which would stop a table whose
-  blocks carry different schemas before its first rows rather than after them.
-  The slice is behaviour-preserving; the call is under STATUS's "Decisions worth
-  another look".
+- **A refusal is not raised from the plan** here, the slice being
+  behaviour-preserving; reviewed, it moves there under `M106`, ahead of the
+  slices that extend `PlannedBlock`, so 10.3 inherits a plan that resolved every
+  block with a column list or refused.
 - **`Error` is not `Clone`**, so the plan cannot hold a refusal to hand out on
   activation; a refusing block is resolved a second time instead, resolution
   being a function of the block and the plan alone.

@@ -293,15 +293,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A filter a block refuses is still refused where that block is reached,
-  though the plan now resolves every block first** (10.2). `plan_blocks` in
-  `stream.rs` drops a refusing block from the plan instead of raising, so
-  `activate` resolves it again and refuses in place: a table whose blocks carry
-  different schemas yields the earlier blocks' rows and then the error, serial
-  and partitioned alike (`tests/stream.rs`,
-  `a_later_blocks_refusal_follows_the_rows_before_it`). Taken because the slice
-  row says behaviour-preserving. Reconsidering raises the first refusal from
-  the plan — before any row, and from `table_stream_partitions` itself rather
-  than a sub-stream — which is one change to `plan_blocks`, that test inverted,
-  and `resolve_expr`'s rustdoc restated.
