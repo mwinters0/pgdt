@@ -260,6 +260,20 @@ a new `PlanNote` kind stating the groups and bytes skipped out of the total, and
 --statistics none`, and its library option, runs unpruned — which is also how
 the pruned-equals-unpruned check runs from the CLI.
 
+**An early stop is found while rows are read**, after the plan's notes are
+settled, so it is **reported after the fact**: a stream counts the blocks it
+stopped and the bytes their stopped segments left unread, readable once
+drained, and `pgdq query` sums them over its sub-streams into a `note:` printed
+only where a stop fired. Bytes, so the count adds to the pruning note's; a
+library caller can tell a block with no stop planned from one whose bound was
+never reached. Pruned, a stop saves at most the rest of the group its bound
+falls in, one per block, a group wholly past it being skipped by its bounds
+([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "The
+early stop is reported after the fact"). *Rejected:* counting rows past the
+stop, which are never read and so only estimated; a zero where a stop was
+planned and not reached, the pruning note already saying statistics were
+consulted and a stop never reached having saved nothing.
+
 ## Shapes the phase must hold
 
 Stated by the maintainer as datasets this phase serves, not as one dump's

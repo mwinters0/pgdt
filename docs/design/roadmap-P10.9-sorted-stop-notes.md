@@ -49,7 +49,7 @@ What the later P10 slices inherit from this one. The spec is
 - **10.10.** `statistics-pruning`'s range filter on a sorted id column is
   stopped as well as pruned, and the note's skipped bytes count only the
   groups skipped: what the stop saved inside the straddling group of each block
-  is in no count the process reports.
+  is in no count the process reports until 10.11's after-the-fact report.
 
 ## Negative results
 
