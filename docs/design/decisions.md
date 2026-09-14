@@ -76,11 +76,10 @@ not derived from `POOL_MAX_BYTES`. Evidence: `chunk-size`.
 Positioned reads via `spawn_blocking`, one chunk at a time: no overlap scheme
 puts a cold scan below the device's delivery time, which the scan already sits
 within a few percent of. mmap also bypasses the trait, faults uninterruptibly
-and errors as `SIGBUS`. Buffers are pooled and the `Bytes` sliced, since
-`vec![0; len]` is `calloc`. `DEFAULT_CHUNK_SIZE` is shipped, not probed
-(rotational detection is masked in containers and undefined over LVM/NFS), and
-`--chunk-size` is the figure's regeneration command. Reopens: parse CPU
-exceeding read time. Evidence: `scan-throughput-*`, `chunk-size`, `allocator`.
+and errors as `SIGBUS`. Buffers are pooled and the `Bytes` sliced (`vec![0;
+len]` is `calloc`). `DEFAULT_CHUNK_SIZE` is shipped, not probed: rotational
+detection is masked in containers and undefined over LVM/NFS. Reopens: parse
+CPU exceeding read time. Evidence: `scan-throughput-*`, `chunk-size`, `allocator`.
 
 ### D11 Limit discovery is a public primitive taking a root
 `discover_memory_limit_in` reads the least of `memory.max` and `memory.high`
@@ -214,12 +213,11 @@ proposal is sized against the per-row profile. Evidence: `nested-decode-micro`,
 ### D30 The statement grammar is primary; the TOC is enrichment
 TOC-driven segmentation is unsound on non-`pg_dump` input, and a dollar-quoted
 body can hold a TOC-shaped line (I3). A tiling hole is `TilingBroken`, never a
-refusal. A span's `end` is fixed at push time, which is what makes
-`Builder::snapshot` possible. The preamble prepass (byte 0 to the first `COPY`
-header, I1) runs up front in both mapping entry points, or an interrupted
-`parse` banks blocks with no DDL. `attach_text` slices span text after
-building; `Data` spans store none, which is why `query` cannot run cache-only.
-Evidence: `preamble-prepass`.
+refusal. A span's `end` is fixed at push time, so `Builder::snapshot` is
+possible. The preamble prepass (byte 0 to the first `COPY` header, I1) runs up
+front in both mapping entry points, or an interrupted `parse` banks blocks with
+no DDL. `attach_text` slices span text after building and `Data` spans store
+none, which is why `query` cannot run cache-only. Evidence: `preamble-prepass`.
 
 ### D31 `Span::toc` is "belongs to", vetoed after classification
 Follow-ons inherit `governing_toc` (else coverage reads half on healthy input)
@@ -446,21 +444,19 @@ with width and bare-flag assertions. Rejected: a `long_help` per flag.
 L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`,
 `cache`, `diagnostic`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`,
 `nested`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`,
-`leader`); `error` and `lib` are in none; the CLI and embedders sit above L4.
-`use` points down or sideways, a module in two layers is two, and a new module
-is assigned a layer before it is written (`tests/layering.rs`). Deviations,
-moved only with a rework of `batch`: `read_table` (L4 work) and `filter` on
-`QueryOptions` naming `predicate::Expr`. Rejected: a crate split; D74 buys it.
+`leader`); `error`, `lib` in none; CLI and embedders above L4. `use` points
+down or sideways; a module gets a layer before it is written (`tests/layering.rs`).
+Deviations, moved only with a `batch` rework: `read_table` (L4 work) and
+`QueryOptions::filter` naming `predicate::Expr`. Rejected: a crate split (D74).
 
 ### D74 L1 is Arrow-free and L2 is pure, so a metadata-only caller compiles no Arrow
 L1 never names `arrow`; L2 names `arrow::datatypes` only, is synchronous and
 does no I/O; a decoder takes an unescaped field and returns a value, never a
 builder (L3, whose views marry array building to the read buffers, D46).
-Anything persisted is L1's vocabulary: declared type strings, never a
-`DataType` or any other L2 conclusion, for whatever the cache grows (P10's
-statistics record the declared type). A cross-layer trait is defined below and
-implemented above (`ByteRangeSource::partitions`); a predicate hook in the scan
-and P10's parse step take that shape, `predicate.rs` staying L4.
+Anything persisted is L1's vocabulary — declared type strings, never a `DataType`
+or another L2 conclusion, P10's statistics included. A cross-layer trait is
+defined below and implemented above (`ByteRangeSource::partitions`); a scan
+predicate hook and P10's parse step take that shape, `predicate.rs` staying L4.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

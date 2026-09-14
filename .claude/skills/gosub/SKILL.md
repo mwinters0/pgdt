@@ -34,15 +34,17 @@ round picks up ahead of the next slice.
 > out-of-band row; whether you ticked its box and what remains if not; any
 > entries you added to STATUS's "Decisions worth another look", quoted in full;
 > any split and the `<N>.<M>.<K>` it earned; the verbatim result lines from
-> `cargo test --workspace`, `cargo clippy --workspace --all-targets` and `cargo
-> fmt --check`; and the path of any detached job.
+> `cargo test --workspace`, `cargo clippy --workspace --all-targets`, `cargo
+> fmt --check` and `cd scripts && uv run repoint.py`; and the path of any
+> detached job.
 
-**3. Verify independently.** The report is a claim, not evidence: run the three
+**3. Verify independently.** The report is a claim, not evidence: run the four
 checks yourself and re-read the checklist and "Decisions worth another look".
 Where the report and the tree disagree, the tree wins.
 
-**4. Commit, if the round is clean** — box ticked, three checks passing, tree
-actually changed. Subject `<N>.<M> <slice title>`, body two or three sentences on
+**4. Commit, if the round is clean** — box ticked, the cargo checks passing,
+`repoint.py` green on its caps (its meter is a stop condition, not a defect of
+the round), tree actually changed. Subject `<N>.<M> <slice title>`, body two or three sentences on
 what landed and any call the notes doc flags, then `Co-Authored-By: Claude Opus 5
 <noreply@anthropic.com>`. **An out-of-band round is clean on a different signal**:
 it ticks no box, its ledger row's Date filling in instead, so read the row, check
@@ -89,8 +91,15 @@ Any one ends the loop. Report it plainly; do not work around it.
 - **The tree did not change**, or the round ticked nothing.
 - **The round cap is reached.**
 - **The subagent reports it stopped at a boundary** or needs the maintainer.
+- **`repoint.py`'s meter is red.** The live record has outgrown its last blind
+  read; a repoint is a round of its own (`.claude/skills/repoint/SKILL.md`),
+  never something a slice round does on the way.
+- **A third consecutive round amends the same spec row, constant, rule or
+  acceptance clause.** The loop is fitting one term a round against an account
+  nobody has finished (`evidence` skill, rule 1); the next thing written is the
+  whole account, and that is a grilling's job, not the next round's.
 
-`/gosolo` runs this skill unchanged and overrides exactly two of these; the
+`/gosolo` runs this skill unchanged and overrides exactly four of these; the
 overrides are in `.claude/skills/gosolo/SKILL.md` and nowhere else.
 
 ## A round that launches a long job
@@ -131,7 +140,7 @@ never a fork:
 > row requires. Invoke the `process` skill first and follow it — the notes doc,
 > STATUS and any figure's consumers are part of finishing it. Do not commit.
 > Report: whether you ticked the box and what remains if not; any new "Decisions
-> worth another look" entries, quoted in full; and the three checks' verbatim
+> worth another look" entries, quoted in full; and the four checks' verbatim
 > result lines.
 
 **6. Resume at step 3 of "One round"** — verify, commit, decide, every stop

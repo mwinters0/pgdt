@@ -65,8 +65,12 @@ in, clear its Blocks column, and write that entry.
 
 ## Before you finish
 
-Run `cargo test --workspace`, `cargo clippy --workspace` and `cargo fmt --check`,
-and report the real result — a failing test named as failing. Then check the
-change carries everything the `process` skill lists: the notes doc, the `D<k>`
+Hunt every copy of any fact the change moved, by handle and by wording
+(`docs/process.md`, "Repointing": subtract as you add). Run `cargo test
+--workspace`, `cargo clippy --workspace`, `cargo fmt --check` and `cd scripts &&
+uv run repoint.py`, and report the real result — a failing test named as
+failing. A cap `repoint.py` names is this change's to fix; a red *meter* is
+not — a repoint is a round of its own — so report it and stop there. Then
+check the change carries everything the `process` skill lists: the notes doc, the `D<k>`
 entries, the checklist ticked or honestly annotated, the spec untouched, and a
 history entry only if a future session needs a pickup point or the plan changed.

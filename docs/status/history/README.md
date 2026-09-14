@@ -11,7 +11,7 @@ Dated notes, for two purposes only:
   those. It is not where reasoning lives.
 
 **A day's entry is short** — pointers and settled facts, about a hundred lines
-at most. Reasoning that must outlive the day goes beside its mechanism.
+at most; `scripts/repoint.py` holds entries dated after 2026-09-13 to it. Reasoning that must outlive the day goes beside its mechanism.
 
 **Entries are deleted at each keystone** once nothing outside this directory
 cites them; git holds them. A live document that needs a fact from an entry

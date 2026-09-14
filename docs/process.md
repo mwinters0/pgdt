@@ -53,7 +53,8 @@ in the same change and point it at the notes.
 
 **5. Wrap the phase.** Consolidate the slice notes into one
 `roadmap-P<N>-<slug>-notes.md`, delete the per-slice files, and delete the
-checklist while setting the index row to `Complete` — one edit. **After a
+checklist while setting the index row to `Complete` — one edit. **A wrap
+opens with a repoint** over the phase's mechanisms (below). **After a
 keystone the wrap is an audit, not a transcription**: mechanism decisions belong
 in the register, so the wrap moves in whatever the slices decided that has not
 reached it, and the notes doc keeps only the negative results and facts aimed at
@@ -211,6 +212,63 @@ phase goes in that phase's inbox.
   record, so an unread tail is unstarted work — which is why the ledger stays
   **an index, not an account**, one line to a row, and moves out of the roadmap
   into its own file once reading it whole stops being automatic.
+
+## Repointing: the record read against the code
+
+Masonry outlives its centering by being repointed: failed mortar is raked out
+and renewed, and no stone is touched. The stones here are the code; the mortar
+is everything that says *why* — the register, the standing rules, the
+invariants, the comments, `STATUS.md`. Mortar fails quietly: a claim is written
+while true, the mechanism moves, and the copy that was not in the diff stays.
+The wrap consolidates one phase's notes and the keystone strikes the
+centering; neither reads the standing record against the code, and between
+keystones nothing did. Repointing is that read, on a cadence set by how much
+the record has grown rather than by phase boundaries.
+
+**Three rules prevent most of what a repoint would otherwise find.**
+
+- **A cap is a check.** Everything that accretes has a ceiling asserted by
+  `scripts/repoint.py`: the register's line and entry caps, a dated entry at
+  about a hundred lines, `CLAUDE.md`, this document and each skill at the
+  sizes that keep orientation cheap, no measured number in the register or in
+  `STATUS.md`'s capability table, no phase provenance in a source comment.
+  Adding under a full cap means striking; a cap is never raised to fit.
+- **An argument is written once, where it will be struck.** A decision's
+  reasoning lives in its `D<k>` entry, or in the dated entry while it is still
+  moving. A standing document, a comment and the manual carry the conclusion
+  and a citation. Reasoning written into a standing document is the copy nobody
+  finds when the decision changes.
+- **Subtract as you add.** The change that moves a fact hunts every copy before
+  it lands: by handle where there is one (`D<k>`, `KD<k>`, a figure id,
+  `I<n>`), by wording where there is not — and a claim with no handle is given
+  one or deleted. A change that changed no decision and grew the record has
+  usually restated something.
+
+**When.** `scripts/repoint.py` reads a stamp in `STATUS.md` naming the commit
+the record was last read against, and goes red once the live record — the
+standing docs, the skills and the source comments; not the centering, not
+history — has grown past its budget since. Red is the trigger; so is a wrap,
+before its consolidation; a keystone includes one. It is never deferred to the
+next keystone, which is how the record went unread for the life of a phase.
+
+**What it does** (`.claude/skills/repoint/SKILL.md` is the procedure):
+
+1. **Read blind.** For each module the record touched since the stamp, a
+   reader given only the code and the record lines that name it returns every
+   claim the code does not bear out. A reader who already knows what the
+   record says will read it as true.
+2. **Correct or strike.** A false claim is corrected where the code is right,
+   or becomes a `KD<k>` where the record states the intent and the code falls
+   short. An entry that no longer binds is struck, and a rejected alternative
+   nobody would propose again goes with it.
+3. **Trim to the caps**, and run every consistency check.
+4. **Re-stamp**, and commit as one change.
+
+It never changes what the code does, raises a cap, rewrites a dated entry, or
+distils struck material into a subject-filed document. Unattended, a
+correction stays inside "the record is refuted"'s three conditions and its
+phase-local scope; what cannot be corrected there is listed in the day's entry
+for the maintainer.
 
 ## The keystone: striking the centering
 

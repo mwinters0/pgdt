@@ -6,6 +6,10 @@ what is still ahead is [`../design/roadmap.md`](../design/roadmap.md),
 whose index table is the schedule; dated pickup notes and plan-changing
 discoveries are in `history/`.
 
+<!-- repointed: 70d479f --> The marker names the commit `scripts/repoint.py`
+measures the record's growth from; red means a repoint is due
+([`../process.md`](../process.md), "Repointing").
+
 ## What exists
 
 P1–P5, P7, P9, P11–P13, P16, P17 and P19 are complete and were struck at keystone

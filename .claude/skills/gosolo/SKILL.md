@@ -6,7 +6,7 @@ description: Carry a whole phase unattended — land slices with gosub, and when
 `/gosub` stops the moment a round raises something the maintainer should weigh;
 `/gosolo` answers it with `/gm` and keeps going, so a phase runs from its first
 unticked box to its last. `/gosolo [max-rounds]` — cap **10**, counting
-implementation rounds, not grilling rounds. Which loop to run is the maintainer's
+implementation rounds, not grilling or repoint rounds. Which loop to run is the maintainer's
 call at invocation and the only difference between them, so **say which one you
 are in at the start of the final report**.
 
@@ -15,7 +15,7 @@ are in at the start of the final report**.
 **Invoke the `gosub` skill (Skill tool, `skill: "gosub"`) and follow it as
 written** — the round, the dispatch prompt, the verification, the commit shapes,
 the long-job protocol and every stop condition. Do not restate it and do not
-diverge. Two of its stop conditions become transitions; nothing else changes.
+diverge. Four of its stop conditions become transitions; nothing else changes.
 
 **Override 1 — a new entry under "Decisions worth another look" is a transition,
 not a stop.** Commit the round if it is clean, then dispatch a grillmaster to
@@ -42,11 +42,23 @@ is unfinished.**
 
 **Override 2 — a split is a transition too, and `/gm` grills it whether or not
 the round filed an entry.** Commit the landed half if the checklist reflects the
-split, its box is ticked and all three checks pass, then dispatch a grillmaster
+split, its box is ticked and all four checks pass, then dispatch a grillmaster
 with the split appended to its prompt as an agenda item, stating the original
-slice, the earned `<N>.<M>.<K>` and the seam the subagent named — the one thing a
-grillmaster's prompt ever carries beyond the skill invocation. If no box was
+slice, the earned `<N>.<M>.<K>` and the seam the subagent named. If no box was
 ticked at all, that is not a split but `gosub`'s ordinary unticked-box stop.
+
+**Override 3 — a red `repoint.py` meter is a transition.** Commit the round if
+it is clean, then dispatch a fresh `general-purpose` agent, no `model`, never a
+fork, with this prompt and nothing else: *Invoke the `repoint` skill (Skill
+tool, `skill: "repoint"`) and follow it exactly, including "Driven
+unattended".* When it returns having committed, resume at step 1.
+
+**Override 4 — the amendment-chain stop is a transition to `/gm`**, with one
+agenda item appended to the grillmaster's prompt: *enumerate the whole account
+behind `<the row, constant or clause>` before it is amended again* — the
+`evidence` skill's first rule applied to a gate. An agenda item under override
+2 or 4 is the only thing a grillmaster's prompt ever carries beyond the skill
+invocation.
 
 Everything else in `gosub` stands unchanged, **including that a phase boundary is
 a stop**: the next phase needs grilling and a spec, which are the maintainer's.

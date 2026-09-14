@@ -27,6 +27,10 @@ Reach for a new measurement only when the model is built and two of its terms
 are indistinguishable in it. **A measurement can rank candidates; only the code
 can name them.**
 
+**A gate is a fit too.** An acceptance criterion amended one term a round,
+against an account nobody has completed, is this failure one level up: enumerate
+the whole account before the next amendment, not after the fourth.
+
 > When this was skipped, three sessions measured the consequences of a defect
 > and attributed them to a pool floor that the pool's own slot arithmetic ruled
 > out. The refutation, when it finally came, needed no run at all.

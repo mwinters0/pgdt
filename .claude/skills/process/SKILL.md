@@ -1,6 +1,6 @@
 ---
 name: process
-description: The phased development process this project runs on — the doc set, where each fact goes, and the obligations that come with landing work. Use whenever implementing a roadmap phase or slice, wrapping one up, writing or revising a phase spec or notes doc, or updating STATUS. Not needed for planning, grilling, or ad-hoc exploration.
+description: The phased development process this project runs on — the doc set, where each fact goes, and the obligations that come with landing work. Use whenever implementing a roadmap phase or slice, wrapping one up, repointing the record, writing or revising a phase spec or notes doc, or updating STATUS. Not needed for planning, grilling, or ad-hoc exploration.
 ---
 
 **Read `docs/process.md` in full before doing anything else** — with `Read`, no
@@ -65,6 +65,14 @@ checklist what landed and what did not, and record the reasoning where
 `docs/process.md`'s "Where does this fact go?" sends it. A slice that shipped the
 wrong contract earns an `<N>.<M>.<K>` follow-up; one that shipped part of its
 contract is still that slice, unfinished.
+
+## Repointing
+
+`docs/process.md`, "Repointing" is the third hygiene beside the wrap and the
+keystone, and the `repoint` skill is its procedure. What it obliges of *every*
+landing is its middle: **subtract as you add** — hunt every copy of a fact the
+change moves, by handle or by wording — and land under the caps
+`scripts/repoint.py` asserts, never raising one.
 
 ## Working unattended
 

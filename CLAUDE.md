@@ -21,6 +21,7 @@ cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--ren
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
+cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py
 cd scripts && uv run python -m unittest   # every script's own tests
 ```
@@ -76,9 +77,9 @@ Never edit a `runs/` orchestration script while it is running.
 - `docs/manual/` — user-facing; no design rationale.
 - `docs/process.md` — the development process. **Don't read it directly:
   invoke the `process` skill** before implementing or wrapping a phase or
-  slice, writing a spec, or updating `STATUS.md`. It holds the rules for
-  `STATUS.md`'s deficiency register (`KD<k>`), "Decisions worth another
-  look", inboxes, and the keystone.
+  slice, writing a spec, repointing, or updating `STATUS.md`. It holds the
+  rules for `STATUS.md`'s deficiency register (`KD<k>`), "Decisions worth
+  another look", inboxes, repointing, and the keystone.
 - `docs/status/STATUS.md` — what is built. `docs/status/history/YYYY-MM-DD.md`
   — only what a future session must pick up and discoveries that changed the
   plan, written as settled facts; rules in `docs/status/history/README.md`.
