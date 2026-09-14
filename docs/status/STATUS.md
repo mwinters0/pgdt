@@ -293,3 +293,14 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A projection refusal on a later block still follows the rows before it**
+  (`M106`). The call: `plan_blocks` raises only a *filter* refusal from the
+  plan, as the row admitted, and leaves a block whose projection refuses to be
+  resolved where reached, so `UnknownProjectionColumn` on a mixed-schema
+  table's second block still arrives after the first block's rows. Why: the
+  row named the filter alone, and moving the projection's refusal too is a
+  second behaviour change nobody reviewed. It is plan-knowable by the same
+  argument — header and query alone — so reconsidering means raising every
+  resolution refusal from `plan_blocks` in file order, a projection's
+  included, and a test beside `a_later_blocks_refusal_is_raised_before_any_row`.

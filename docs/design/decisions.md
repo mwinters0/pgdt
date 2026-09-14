@@ -356,7 +356,8 @@ Rejected: decode and parse pools over a channel (the ratio is a property of
 the command); speculative splitting; cross-block pipelining. Pieces drain in
 file order so the same truncated file names the same byte. `close_copy_block`
 has one body and two callers, or a parallel cache stops matching a serial one's.
-`query` raises the lowest-indexed failed sub-stream after the rows before it.
+A failure only reading finds is the lowest-indexed failed sub-stream's, after
+the rows before it; a filter refusal comes from the plan (D54).
 
 ## Predicates (`predicate.rs`, `where_expr.rs`)
 ### D53 The operator set is closed
@@ -366,9 +367,10 @@ column-to-column. `IS [NOT] DISTINCT FROM` is what three-valued logic forces.
 ### D54 One tree, no planner, short-circuit defined against the root
 `filter` is one n-ary `Expr` defaulting to the empty conjunction. `And` may
 stop at the first `Unknown` except beneath `Not`, since only the root's `True`
-matters; a decode failure surfaces only where evaluation reaches it. Every
-refusal is raised in `resolve_term` before a row flows, walking leaves the
-evaluator would skip. Rejected: DNF; exact Kleene everywhere.
+matters; a decode failure surfaces only where evaluation reaches it. Refusals
+come from the plan: the first block in file order whose terms refuse, before
+any row of the table, walking leaves the evaluator would skip; only a block
+with no column list refuses where reached. Rejected: DNF; exact Kleene everywhere.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is

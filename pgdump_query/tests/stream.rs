@@ -618,13 +618,13 @@ async fn a_non_utf8_field_is_refused_only_where_it_is_read() {
     }
 }
 
-/// **A filter one block of a table refuses is refused where that block is
-/// reached, after the rows of the blocks before it** — on the serial replay
-/// and on a partitioned one alike, though both resolve every block's filter
-/// before reading any (`docs/design/decisions.md`, "D54"). The second block
-/// has no column `b`.
+/// **A filter one block of a table refuses is refused before any row**, even
+/// where the blocks before it would have answered: the refusal is a fact of
+/// the plan, on the serial replay as its first item and on a partitioned one
+/// before any sub-stream exists (`docs/design/decisions.md`, "D54"). The second
+/// block has no column `b`.
 #[tokio::test]
-async fn a_later_blocks_refusal_follows_the_rows_before_it() {
+async fn a_later_blocks_refusal_is_raised_before_any_row() {
     use pgdump_query::{
         Error, Expr, Parallelism, Predicate, PredicateOp, ScanExtent, table_stream_partitions,
     };
@@ -647,8 +647,6 @@ async fn a_later_blocks_refusal_follows_the_rows_before_it() {
         scan_extent: ScanExtent::Full,
         ..QueryOptions::default()
     };
-    let expected: Vec<Vec<Option<String>>> =
-        vec![vec![Some("1".into()), Some("x".into())], vec![Some("3".into()), Some("y".into())]];
     let refused = |err: &Error| {
         matches!(err, Error::UnknownPredicateColumn { column, header_offset }
             if column == "b" && *header_offset > 0)
@@ -662,18 +660,13 @@ async fn a_later_blocks_refusal_follows_the_rows_before_it() {
         None,
         CacheMode::Disabled,
     );
-    let mut rows = Vec::new();
-    let err = loop {
-        match stream.next().await.expect("the stream ends in the refusal") {
-            Ok(batch) => rows.extend(rows_of(&batch)),
-            Err(err) => break err,
-        }
-    };
-    assert_eq!(rows, expected);
-    assert!(refused(&err), "{err}");
+    match stream.next().await.expect("the stream opens with the refusal") {
+        Ok(batch) => panic!("a row before the refusal: {:?}", rows_of(&batch)),
+        Err(err) => assert!(refused(&err), "{err}"),
+    }
 
     let partitioned = QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..options };
-    let streams = table_stream_partitions(
+    let err = table_stream_partitions(
         &source,
         "public.t",
         ScanOptions::default(),
@@ -681,20 +674,7 @@ async fn a_later_blocks_refusal_follows_the_rows_before_it() {
         CacheMode::Disabled,
     )
     .await
-    .expect("the plan does not raise a block's refusal");
-    let mut rows = Vec::new();
-    let mut errors = Vec::new();
-    for mut sub in streams {
-        while let Some(batch) = sub.next().await {
-            match batch {
-                Ok(batch) => rows.extend(rows_of(&batch)),
-                Err(err) => {
-                    errors.push(err);
-                    break;
-                }
-            }
-        }
-    }
-    assert_eq!(rows, expected);
-    assert!(!errors.is_empty() && errors.iter().all(refused), "{errors:?}");
+    .err()
+    .expect("the plan raises the block's refusal");
+    assert!(refused(&err), "{err}");
 }

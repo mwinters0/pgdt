@@ -44,15 +44,17 @@ suite passed unedited apart from the tests added.
   otherwise; the entry's filter is an `Arc` shared by every piece of the block.
 - **Two kinds of block have no entry, and neither may be pruned**: a block
   whose header names no columns, whose field count only a row says; and a block
-  whose resolution refuses, whose refusal is raised where the block is reached.
-  Reading such a block is what learns its field count or raises its error in
-  place.
+  whose projection refuses, raised where the block is reached. Reading such a
+  block is what learns its field count or raises its error in place. A block's
+  *filter* refusal refuses the whole plan instead, since `M106`
+  ([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "A
+  block's filter refusal moves to the plan").
 - **A `PlannedBlock` holds the projected schema only.** The truth-set evaluator
   needs each term's column comparison from the unprojected one, so it adds that
   field (or the kind per term) rather than re-resolving.
 - Pinned by `stream.rs`'s `the_filter_is_resolved_once_per_block_at_plan_time`
   (the entries, the shared `Arc`, the fallback) and `tests/stream.rs`'s
-  `a_later_blocks_refusal_follows_the_rows_before_it` (serial and partitioned).
+  `a_later_blocks_refusal_is_raised_before_any_row` (serial and partitioned).
 
 ## Negative results
 

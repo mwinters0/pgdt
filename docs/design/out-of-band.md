@@ -64,7 +64,7 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | M105 | 2026-09-14 | The serial carry pass skips a chunk holding no newline short of the end, so a line many chunks long scans in linear time; strikes `KD27` | | [2026-09-14](../status/history/2026-09-14.md), "`KD27` is repaired ahead of P10" |
-| M106 | | `plan_blocks` raises the first refusing block's filter refusal in file order before any row; the rows-then-refusal test inverts, and D52/D54 are restated | P10 | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
+| M106 | 2026-09-14 | `plan_blocks` raises the first refusing block's filter refusal in file order before any row; the rows-then-refusal test inverts, and D52/D54 are restated | | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
 
 
 

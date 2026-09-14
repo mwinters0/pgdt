@@ -113,12 +113,11 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 /// operator on a column that is not `Mapped` with a `NestedPlan::Scalar` plan
 /// is `Error::UnorderedPredicateColumn`, and a literal that is not a value of
 /// the column's type — `=` included — is `Error::PredicateValueDecode`. All
-/// are raised for the first offending term in a left-to-right walk, before a
-/// row of this block flows. The plan runs it for every block before any is
-/// read ([`plan_blocks`]), but a refusal is raised where the block is reached,
-/// so a table whose blocks carry different schemas can refuse at the third
-/// block after rows from the first two were emitted.
-/// It takes the whole [`ResolvedSchema`] because the ordering refusal reads
+/// are raised for the first offending term in a left-to-right walk. The plan
+/// runs it for every block with a column list before any is read, and raises
+/// the first block's refusal in file order before any row of the table
+/// ([`plan_blocks`]); only a block with no column list refuses where it is
+/// reached. It takes the whole [`ResolvedSchema`] because the ordering refusal reads
 /// `columns` and `plans` too.
 fn resolve_expr(
     filter: &Expr,
@@ -1178,22 +1177,24 @@ struct ReplayPlan {
     metadata: Option<DumpMetadata>,
     census: Vec<ArrayShape>,
     /// Every matched block's resolution that succeeded, keyed by the block's
-    /// `header_offset` — see [`plan_blocks`].
+    /// `header_offset` — see [`plan_blocks`], which refuses the whole plan on
+    /// a block's filter refusal.
     blocks: BTreeMap<u64, PlannedBlock>,
 }
 
 impl ReplayPlan {
     /// The plan for replaying `mapped`: its DDL and census, and every one of
-    /// its blocks resolved against them before any sub-stream exists.
+    /// its blocks resolved against them before any sub-stream exists — or
+    /// the first block's filter refusal ([`plan_blocks`]).
     fn new(
         scan_options: ScanOptions,
         query_options: QueryOptions,
         matches: &[CopyBlock],
         metadata: Option<DumpMetadata>,
         census: Vec<ArrayShape>,
-    ) -> Self {
-        let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &census);
-        Self { scan_options, query_options, metadata, census, blocks }
+    ) -> Result<Self> {
+        let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &census)?;
+        Ok(Self { scan_options, query_options, metadata, census, blocks })
     }
 }
 
@@ -1233,9 +1234,23 @@ fn resolve_for_query(
     // Against the *unprojected* schema: a term's index numbers the raw row's
     // fields, and a term may name a column the projection dropped.
     let filter = resolve_expr(&query_options.filter, &full, header_offset)?;
+    planned_block(header, header_offset, field_count, database, query_options, &full, filter)
+}
+
+/// The last step of [`resolve_for_query`]: cut `full` to the query's
+/// projection and assemble the entry around the already-resolved `filter`.
+fn planned_block(
+    header: &CopyHeader,
+    header_offset: u64,
+    field_count: usize,
+    database: Option<&str>,
+    query_options: &QueryOptions,
+    full: &ResolvedSchema,
+    filter: ResolvedExpr,
+) -> Result<PlannedBlock> {
     let notes = filter.comparison_notes();
     let (resolved, field_targets) =
-        project(&full, query_options.projection.as_deref(), header_offset)?;
+        project(full, query_options.projection.as_deref(), header_offset)?;
     Ok(PlannedBlock {
         header: header.clone(),
         field_count,
@@ -1253,39 +1268,52 @@ fn resolve_for_query(
 /// in hand before a segment is cut, and a block split into many pieces
 /// resolves once.
 ///
-/// Two kinds of block are left out, and [`activate`] resolves each where it
-/// is reached, exactly as it would have:
+/// **A filter refusal is a plan fact**: the first block in file order whose
+/// filter [`resolve_expr`] refuses is the error, before any row of any block
+/// (`docs/design/decisions.md`, "D54").
+///
+/// Two kinds of block are left out of the map without refusing the plan, and
+/// [`activate`] resolves each where it is reached:
 ///
 /// - **A block whose header names no columns**, whose field count only its
-///   first row says.
-/// - **A block whose resolution refuses.** The refusal is not raised here,
-///   so a query still yields the rows of every block before the one that
-///   refuses, and raises the same error at the same point; resolution being
-///   a function of the block and the plan alone, the second attempt refuses
+///   first row says — so its filter refusal is raised where it is reached.
+/// - **A block whose schema or projection refuses.** Resolution being a
+///   function of the block and the plan alone, the second attempt refuses
 ///   exactly as the first did.
 fn plan_blocks(
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
     census: &[ArrayShape],
-) -> BTreeMap<u64, PlannedBlock> {
-    matches
-        .iter()
-        .filter(|block| !block.header.columns.is_empty())
-        .filter_map(|block| {
-            resolve_for_query(
-                &block.header,
-                block.header_offset,
-                block.header.columns.len(),
-                block.database.as_deref(),
-                query_options,
-                metadata,
-                census,
-            )
-            .ok()
-            .map(|planned| (block.header_offset, planned))
-        })
-        .collect()
+) -> Result<BTreeMap<u64, PlannedBlock>> {
+    let mut blocks = BTreeMap::new();
+    for block in matches.iter().filter(|block| !block.header.columns.is_empty()) {
+        let (header, header_offset) = (&block.header, block.header_offset);
+        let (field_count, database) = (header.columns.len(), block.database.as_deref());
+        let Ok(full) = resolve_block(
+            header,
+            field_count,
+            metadata,
+            database,
+            query_options.schema_mode,
+            census,
+        ) else {
+            continue;
+        };
+        let filter = resolve_expr(&query_options.filter, &full, header_offset)?;
+        if let Ok(planned) = planned_block(
+            header,
+            header_offset,
+            field_count,
+            database,
+            query_options,
+            &full,
+            filter,
+        ) {
+            blocks.insert(header_offset, planned);
+        }
+    }
+    Ok(blocks)
 }
 
 /// What state a [`Segment`]'s scanner starts in.
@@ -2337,7 +2365,8 @@ fn replay<'a>(
 /// (`docs/design/decisions.md`, "D54"): an empty list yields every row, and
 /// otherwise a row is kept only if **every** term matches, tested after that
 /// row has been fully unescaped. A term referencing a column absent from a
-/// matching block's own schema is `Error::UnknownPredicateColumn`.
+/// matching block's own schema is `Error::UnknownPredicateColumn`, yielded
+/// before any row of the table.
 ///
 /// `query_options.projection` decides which columns are materialized
 /// (`docs/design/decisions.md`, "D28"). It cuts the schema
@@ -2376,7 +2405,7 @@ pub fn table_stream<'a>(
         // resume point being inside a mapped block by construction.
         let MappedTable { matches, metadata, census } = mapped;
         let plan =
-            Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census));
+            Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?);
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = matches
             .iter()
@@ -2402,7 +2431,9 @@ pub fn table_stream<'a>(
 /// map** — the partitioned replay
 /// (`docs/design/decisions.md`, "D51").
 ///
-/// The mapping pass runs once, here, before any sub-stream exists; each
+/// The mapping pass runs once, here, before any sub-stream exists, and so
+/// does the plan, whose filter refusal this returns rather than a sub-stream
+/// ([`table_stream`]'s filter paragraph); each
 /// sub-stream then replays a contiguous run of the blocks that pass settled,
 /// cut where the source said it was willing to be cut
 /// ([`ByteRangeSource::partitions`]) and no finer than
@@ -2437,7 +2468,7 @@ pub async fn table_stream_partitions<'a>(
     let table = table.to_string();
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
     let MappedTable { matches, metadata, census } = mapped;
-    let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census));
+    let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?);
     let (groups, plan_notes) = plan_partitions(
         source,
         &matches,
@@ -2733,7 +2764,7 @@ mod tests {
     }
 
     /// One table in three blocks: two naming their columns differently and one
-    /// naming none, so a filter on `b` resolves against the first, refuses the
+    /// naming none, so a term on `b` resolves against the first, refuses the
     /// second, and cannot be tried on the third until a row is read.
     fn three_schemas(dir: &std::path::Path) -> std::path::PathBuf {
         let path = dir.join("three_schemas.sql");
@@ -2748,9 +2779,10 @@ mod tests {
     }
 
     /// **The plan resolves every block it can before any is read, and
-    /// activation takes that resolution rather than making its own.** A block
-    /// whose resolution refuses and a block with no column list are left out,
-    /// to be resolved where they are reached.
+    /// activation takes that resolution rather than making its own.** A
+    /// block's filter refusal refuses the plan; a block whose projection
+    /// refuses and a block with no column list are left out, to be resolved
+    /// where they are reached.
     #[tokio::test]
     async fn the_filter_is_resolved_once_per_block_at_plan_time() {
         use crate::io::LocalFileSource;
@@ -2760,11 +2792,11 @@ mod tests {
         let source = LocalFileSource::open(three_schemas(dir.path())).unwrap();
         let query_options = QueryOptions {
             filter: Expr::all([Predicate {
-                column: "b".into(),
+                column: "a".into(),
                 op: PredicateOp::IsNotNull,
                 value: None,
             }]),
-            projection: Some(vec!["a".into()]),
+            projection: Some(vec!["b".into()]),
             // Past the first block, which would otherwise settle the table.
             scan_extent: ScanExtent::Full,
             ..QueryOptions::default()
@@ -2781,13 +2813,33 @@ mod tests {
         let [first, second, third] = &mapped.matches[..] else {
             panic!("three blocks: {:?}", mapped.matches)
         };
-        let plan = ReplayPlan::new(
-            ScanOptions::default(),
-            query_options.clone(),
-            &mapped.matches,
-            mapped.metadata.clone(),
-            mapped.census.clone(),
-        );
+        let plan_for = |query_options: &QueryOptions| {
+            ReplayPlan::new(
+                ScanOptions::default(),
+                query_options.clone(),
+                &mapped.matches,
+                mapped.metadata.clone(),
+                mapped.census.clone(),
+            )
+        };
+
+        // A filter the second block refuses refuses the plan, naming it.
+        let refusing = QueryOptions {
+            filter: Expr::all([Predicate {
+                column: "b".into(),
+                op: PredicateOp::IsNotNull,
+                value: None,
+            }]),
+            projection: None,
+            ..query_options.clone()
+        };
+        assert!(matches!(
+            plan_for(&refusing).map(|_| ()),
+            Err(Error::UnknownPredicateColumn { header_offset, .. })
+                if header_offset == second.header_offset
+        ));
+
+        let plan = plan_for(&query_options).unwrap();
         assert_eq!(plan.blocks.keys().copied().collect::<Vec<_>>(), [first.header_offset]);
 
         // The planned entry is what resolving the block where it is reached
@@ -2824,10 +2876,10 @@ mod tests {
         let ((_, _, _, other, _), _, _) = open(first, 3).unwrap_or_else(|e| panic!("{e}"));
         assert!(!Arc::ptr_eq(&other, &planned.filter));
 
-        // The refusing block raises its refusal when it is activated.
+        // The block whose projection refuses raises it when it is activated.
         assert!(matches!(
             open(second, 1).map(|_| ()),
-            Err(Error::UnknownPredicateColumn { header_offset, .. })
+            Err(Error::UnknownProjectionColumn { header_offset, .. })
                 if header_offset == second.header_offset
         ));
         assert!(live(second, 1).is_err());
