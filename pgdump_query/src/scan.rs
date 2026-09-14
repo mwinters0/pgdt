@@ -505,10 +505,10 @@ pub struct ScanOptions {
     /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
     ///
     /// Chunk granularity, not `CopyEnd` granularity, and read by
-    /// [`crate::stream::map_forward`] alone — the one driver with somewhere
-    /// to put a partial result and a way to report the stop. [`scan`] and the
-    /// eager producers built on it ignore it
-    /// (`docs/design/decisions.md`, "D26").
+    /// [`crate::stream::map_file`]'s two passes alone — the mapping loop and
+    /// the statistics back-fill, the drivers with somewhere to put a partial
+    /// result and a way to report the stop. [`scan`] and the eager producers
+    /// built on it ignore it (`docs/design/decisions.md`, "D26").
     pub cancel: Option<Arc<AtomicBool>>,
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code

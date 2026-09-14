@@ -59,11 +59,11 @@ pub use scan::{
 pub use statistics::{
     BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
     DEFAULT_STATISTICS_GROUP_SIZE, DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness,
-    StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 pub use stream::{
-    BlockingTableIter, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream, map_file,
-    table_stream, table_stream_partitions,
+    BlockingTableIter, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream,
+    gather_block_statistics, map_file, table_stream, table_stream_partitions,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;

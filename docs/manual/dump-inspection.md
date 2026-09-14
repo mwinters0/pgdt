@@ -42,7 +42,9 @@ resumed a previous scan at byte 612000104448 of 784019857152
 
 Resuming is the default, and there is no flag for the opposite: **delete the
 cache file** if you want a scan from byte 0. Running `parse` against a file
-that is already fully cached costs nothing and says so.
+that is already fully cached costs nothing and says so — unless it asks for
+statistics the cache does not hold, which re-reads only the tables lacking them
+(see "`--statistics`" below).
 
 The finished result is identical either way — a resumed scan and a
 straight-through one produce the same index, byte for byte.
@@ -254,8 +256,24 @@ is split at its dots, so a quoted identifier containing one cannot be named.
 group records more finely where values lie and costs memory and cache space in
 proportion. Neither flag combines with `--preamble-only`, which reads no row.
 
-A resumed `parse` gathers what it is asked for over the blocks it has still to
-scan; blocks an earlier run already mapped keep what that run gathered.
+**Asking for statistics the cache lacks re-reads what lacks them.** Once the
+rest of the file is scanned, `parse` re-reads each table's data an earlier run
+mapped without the statistics this one asks for — gathered with `--statistics
+none`, left out of a selection, or at a group size other than a
+`--statistics-group-size` stated now — one `COPY` block at a time, banking
+each as it goes, so an interrupted re-read continues where it stopped. A
+re-read keeps every column the block already had, and an unstated group size
+keeps the size it was gathered at, so a flagless `parse` over a cache
+gathered at 65536 re-reads nothing. It prints its count to stderr:
+
+```
+2026-07-23T15:10:02.114820317Z  INFO statistics back-fill started blocks=12
+2026-07-23T15:10:09.570016894Z  INFO statistics back-fill complete blocks=12
+```
+
+A file rewritten in place at the same size since it was scanned is refused
+here, with a message naming the block, if a re-read table's data no longer ends
+where the cache says it does: delete the cache and parse again.
 
 ### `--jobs` and `--parallel-memory`: the workers and the budget
 
@@ -625,7 +643,8 @@ See `--jobs` above.
 A query's mapping pass may print `scan complete` at the offset it stopped
 rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file
 that is already fully cached is not a scan and prints neither pass, matching
-"costs nothing and says so" above.
+"costs nothing and says so" above; one re-reading blocks for statistics they
+lack prints the two `statistics back-fill` lines shown under "`--statistics`".
 
 **These times are diagnostics, never figures.** This project admits a
 performance number only as a measurement taken under its own stated apparatus

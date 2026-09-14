@@ -164,6 +164,33 @@ fn every_fixture_gathers_the_same_statistics_at_every_stated_parallelism() {
     }
 }
 
+/// **A cache back-filled with statistics is the cache one gathering `parse`
+/// writes, byte for byte.** Each fixture is parsed without them, or at the
+/// default group size, and then parsed again asking for every statistic at
+/// [`TINY_GROUP`] bytes into the same cache, which re-reads every block —
+/// serially, and split by workers at a chunk the leader cuts at.
+#[test]
+fn every_fixture_backfills_to_the_cache_one_gathering_parse_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let legs: [(&[&str], &[&str]); 2] = [
+        (&["--statistics", "none"], &["--jobs", "1"]),
+        (&[], &["--jobs", "8", "--chunk-size", "64"]),
+    ];
+    for (n, fixture) in all_fixtures().iter().enumerate() {
+        let reference = gathered_cache_of(
+            fixture,
+            &dir.path().join(format!("{n}-gathered.dqcache")),
+            &["--jobs", "1"],
+        );
+        for (l, (first, second)) in legs.iter().enumerate() {
+            let out = dir.path().join(format!("{n}-{l}-backfilled.dqcache"));
+            parse_cache(fixture, &out, first, &["--jobs", "1"]);
+            let got = gathered_cache_of(fixture, &out, second);
+            assert_same_cache(&got, &reference, fixture, second);
+        }
+    }
+}
+
 /// What one partition costs a plain source at the shipped chunk size — the
 /// floor `leader::scan_region` applies.
 ///

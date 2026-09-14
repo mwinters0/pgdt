@@ -51,6 +51,16 @@ pub enum Error {
         path.display()
     )]
     CacheSourceMismatch { path: PathBuf, cached_stored_size: u64, live_stored_size: u64 },
+    /// A block re-read for the statistics it lacks did not end where the
+    /// map records it ending, so the source was rewritten at the same stored
+    /// size — which the cache's identity check cannot see
+    /// (`docs/design/decisions.md`, "D21") — and statistics gathered from it
+    /// would describe other bytes than the map does. Raised before they are
+    /// stored (`crate::stream::gather_block_statistics`).
+    #[error(
+        "the COPY block the cache records at offset {header_offset} no longer ends where the cache says, so the file changed since it was scanned — remove the cache and parse again"
+    )]
+    CachedBlockChanged { header_offset: u64 },
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
     #[error(

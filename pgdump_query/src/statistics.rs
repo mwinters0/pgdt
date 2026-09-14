@@ -18,6 +18,7 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 use crate::copy::CopyHeader;
+use crate::index::CopyBlock;
 
 /// The group size a request that states none gathers at: one mebibyte of a
 /// block's data per group.
@@ -96,6 +97,50 @@ impl StatisticsRequest {
         }
         tracked.contains(&true).then_some(tracked)
     }
+
+    /// What re-reading `block`, already mapped, must gather for it to hold
+    /// what this request asks of it — `None` when it holds that already, or
+    /// when the request tracks nothing in it.
+    ///
+    /// **A block lacks the requested statistics** where it holds none, where a
+    /// column the request tracks was not gathered, or where the request
+    /// **states** a group size other than the one the block was gathered at;
+    /// an unstated size lacks nothing a gathered block holds
+    /// (`docs/design/decisions.md`, "D34").
+    pub fn backfill(&self, block: &CopyBlock) -> Option<StatisticsBackfill> {
+        let requested = self.tracked_columns(&block.header)?;
+        let Some(held) = block.statistics.as_deref() else {
+            return Some(StatisticsBackfill { columns: requested, group_size: self.group_size() });
+        };
+        let resized = self.group_size.is_some_and(|size| size.get() != held.group_size);
+        let missing = requested
+            .iter()
+            .enumerate()
+            .any(|(i, &wanted)| wanted && held.columns.get(i).is_none_or(Option::is_none));
+        if !resized && !missing {
+            return None;
+        }
+        let columns = requested
+            .iter()
+            .enumerate()
+            .map(|(i, &wanted)| wanted || held.columns.get(i).is_some_and(Option::is_some))
+            .collect();
+        let group_size = self.group_size.map_or(held.group_size, NonZeroU64::get);
+        Some(StatisticsBackfill { columns, group_size })
+    }
+}
+
+/// What one mapped block is re-read to gather, from
+/// [`StatisticsRequest::backfill`]: **everything the block already held as
+/// well as everything asked for**, so a back-fill never loses a statistic an
+/// earlier pass gathered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatisticsBackfill {
+    /// The columns gathered, positionally to the block's header.
+    pub columns: Vec<bool>,
+    /// The group size gathered at: the request's stated size, or else the
+    /// size the block already held, or else [`DEFAULT_STATISTICS_GROUP_SIZE`].
+    pub group_size: u64,
 }
 
 /// The columns a [`StatisticsRequest`] names.

@@ -48,12 +48,15 @@ Options:
           stretch of a table's data, its row count and each column's NULL count, and where a
           column's comparison allows, its least and greatest value and its distinct values.
           Gathering reads every value of every tracked column, which costs the scan time and memory;
-          `none` scans as fast as the file allows
+          `none` scans as fast as the file allows. A block an earlier `parse` mapped without the
+          statistics asked for here is re-read for them once the rest of the file is scanned,
+          keeping any it already had
 
       --statistics-group-size <BYTES>
           The bytes of a table's data each row group of statistics covers. The default, 1 MiB, is
           coarse; a smaller group records more finely where values lie and costs memory and cache
-          space in proportion
+          space in proportion. Stated, it also re-reads every block gathered at another size; left
+          unstated, a block keeps the size it was gathered at
 
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads

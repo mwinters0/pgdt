@@ -17,8 +17,8 @@ use std::sync::Arc;
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET, DICTIONARY_CAP, DumpIndex, LocalFileSource,
-    Parallelism, STORED_VALUE_CAP, ScanOptions, Sortedness, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, map_file,
+    MapRun, Parallelism, STORED_VALUE_CAP, ScanOptions, Sortedness, StatisticsRequest,
+    StatisticsSelection, StatisticsTarget, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -457,5 +457,248 @@ async fn a_character_dictionary_entry_drops_its_padding() {
         v.dictionary.as_ref().unwrap().groups,
         vec![None],
         "a padded `varchar` is past the cap"
+    );
+}
+
+/// `map_file` over a cache at `dump`'s colocated path, and the run.
+async fn mapped_into_cache(
+    dump: &Path,
+    options: &ScanOptions,
+    statistics: &StatisticsRequest,
+) -> MapRun {
+    let source = LocalFileSource::open(dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(dump));
+    let run = map_file(&source, options, &mode, statistics).await.unwrap();
+    assert!(!run.interrupted);
+    run
+}
+
+/// **A block mapped without the statistics asked for is re-read for them, into
+/// exactly what one gathering pass stores**: from no statistics, from the
+/// default size re-asked at a stated one, from a table selection and from a
+/// single column, on every major — and once it holds them, asking again re-reads
+/// nothing.
+#[tokio::test]
+async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_gathers() {
+    let wanted = request(StatisticsSelection::All, SMALL_GROUP);
+    let ordered = || "public.ordered".to_string();
+    let earlier = [
+        (StatisticsRequest::NONE, 3),
+        (StatisticsRequest::ALL, 3),
+        (
+            request(
+                StatisticsSelection::Only(vec![StatisticsTarget::Table(ordered())]),
+                SMALL_GROUP,
+            ),
+            2,
+        ),
+        (
+            request(
+                StatisticsSelection::Only(vec![StatisticsTarget::Column {
+                    table: ordered(),
+                    column: "id".to_string(),
+                }]),
+                SMALL_GROUP,
+            ),
+            3,
+        ),
+    ];
+    for version in VERSIONS {
+        let reference = gathered(&statistics_fixture(version, "default"), &wanted).await;
+        for (first, lacking) in &earlier {
+            let label = format!("{first:?} then all at {SMALL_GROUP} on {version}");
+            let (_dir, dump) = sandboxed(&statistics_fixture(version, "default"), "s.sql");
+            let options = ScanOptions::default();
+            let mapped = mapped_into_cache(&dump, &options, first).await;
+            assert_eq!((mapped.lacking_statistics, mapped.backfilled), (0, 0), "{label}");
+
+            let run = mapped_into_cache(&dump, &options, &wanted).await;
+            assert_eq!((run.lacking_statistics, run.backfilled), (*lacking, *lacking), "{label}");
+            assert_eq!(run.index.spans, reference.spans, "{label}");
+            let source = LocalFileSource::open(&dump).unwrap();
+            let CacheStatus::Valid { index: loaded, .. } =
+                cache::load(&cache::colocated_path(&dump), &source).await.unwrap()
+            else {
+                panic!("{label}: a back-filled parse leaves a valid cache");
+            };
+            assert_eq!(loaded.spans, reference.spans, "{label}: the cache holds the back-fill");
+
+            let again = mapped_into_cache(&dump, &options, &wanted).await;
+            assert_eq!((again.lacking_statistics, again.backfilled), (0, 0), "{label}");
+        }
+    }
+}
+
+/// **An unstated group size re-reads only a missing column, at the size the
+/// block already holds**, and keeps every column the block had; a block
+/// holding no statistics is gathered at the default. A block gathered at any
+/// size lacks nothing an unstated request asks.
+#[tokio::test]
+async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
+    let dump_of = || statistics_fixture(16, "default");
+    let one_column = request(
+        StatisticsSelection::Only(vec![StatisticsTarget::Column {
+            table: "public.ordered".to_string(),
+            column: "id".to_string(),
+        }]),
+        SMALL_GROUP,
+    );
+    let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
+    mapped_into_cache(&dump, &ScanOptions::default(), &one_column).await;
+    let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::ALL).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (3, 3));
+    let small = gathered(&dump_of(), &request(StatisticsSelection::All, SMALL_GROUP)).await;
+    let default = gathered(&dump_of(), &StatisticsRequest::ALL).await;
+    for table in ["public.long_value", "public.ordered", "public.specials"] {
+        let expected = if table == "public.ordered" { &small } else { &default };
+        assert_eq!(
+            block(&run.index, table).statistics,
+            block(expected, table).statistics,
+            "{table}"
+        );
+    }
+
+    let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
+    mapped_into_cache(&dump, &ScanOptions::default(), &request(StatisticsSelection::All, 64)).await;
+    let run = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::ALL).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (0, 0));
+}
+
+/// **A back-fill keeps every column the block already held**: a block
+/// gathered whole and then asked for one column at another size is re-read
+/// whole at that size, not narrowed to the column.
+#[tokio::test]
+async fn a_backfill_never_drops_a_column_the_block_held() {
+    let dump_of = || statistics_fixture(16, "default");
+    let (_dir, dump) = sandboxed(&dump_of(), "s.sql");
+    let options = ScanOptions::default();
+    mapped_into_cache(&dump, &options, &request(StatisticsSelection::All, SMALL_GROUP)).await;
+    let one_column = request(
+        StatisticsSelection::Only(vec![StatisticsTarget::Column {
+            table: "public.ordered".to_string(),
+            column: "id".to_string(),
+        }]),
+        64,
+    );
+    let run = mapped_into_cache(&dump, &options, &one_column).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
+    let whole_at_64 = gathered(&dump_of(), &request(StatisticsSelection::All, 64)).await;
+    let small = gathered(&dump_of(), &request(StatisticsSelection::All, SMALL_GROUP)).await;
+    for table in ["public.long_value", "public.ordered", "public.specials"] {
+        let expected = if table == "public.ordered" { &whole_at_64 } else { &small };
+        assert_eq!(
+            block(&run.index, table).statistics,
+            block(expected, table).statistics,
+            "{table}"
+        );
+    }
+}
+
+/// A request naming one table re-reads that table's block alone; a request
+/// gathering nothing re-reads nothing and keeps what the blocks hold.
+#[tokio::test]
+async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
+    let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "s.sql");
+    let options = ScanOptions::default();
+    mapped_into_cache(&dump, &options, &StatisticsRequest::NONE).await;
+    let specials = StatisticsRequest {
+        selection: StatisticsSelection::Only(vec![StatisticsTarget::Table("specials".to_string())]),
+        group_size: None,
+    };
+    let run = mapped_into_cache(&dump, &options, &specials).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
+    assert!(block(&run.index, "public.specials").statistics.is_some());
+    assert!(block(&run.index, "public.ordered").statistics.is_none());
+
+    let none = mapped_into_cache(&dump, &options, &StatisticsRequest::NONE).await;
+    assert_eq!((none.lacking_statistics, none.backfilled), (0, 0));
+    assert_eq!(none.index.spans, run.index.spans);
+}
+
+/// **The per-block entry point is the back-fill**: one block of a map holding
+/// no statistics, re-read through `gather_block_statistics` under what its
+/// request answers for it, holds what a gathering pass stores for it.
+#[tokio::test]
+async fn one_block_is_gathered_on_its_own() {
+    let dump = statistics_fixture(16, "default");
+    let wanted = request(StatisticsSelection::All, SMALL_GROUP);
+    let bare = gathered(&dump, &StatisticsRequest::NONE).await;
+    let reference = gathered(&dump, &wanted).await;
+    let source = LocalFileSource::open(&dump).unwrap();
+    let ordered = block(&bare, "public.ordered");
+    let backfill = wanted.backfill(ordered).expect("a block with no statistics lacks them");
+    let gathered = gather_block_statistics(
+        &source,
+        &ScanOptions::default(),
+        bare.metadata.as_ref(),
+        ordered,
+        &backfill,
+    )
+    .await
+    .unwrap()
+    .expect("nothing cancelled it");
+    assert_eq!(Some(&gathered), block(&reference, "public.ordered").statistics.as_deref());
+    assert_eq!(wanted.backfill(block(&reference, "public.ordered")), None);
+}
+
+/// **A back-fill the leader splits gathers what the serial pass gathers**, at
+/// the chunk and counts [`a_gathering_scan_is_the_serial_scan_whatever_the_worker_count`]
+/// splits the same block at.
+#[tokio::test]
+async fn a_backfill_the_leader_splits_is_the_serial_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("long_block.sql");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    a integer,\n    b text COLLATE pg_catalog.\"C\",\n    c text\n);\n\n",
+    );
+    text.push_str("COPY public.t (a, b, c) FROM stdin;\n");
+    for i in 0..2000 {
+        text.push_str(&format!("{i}\t{:05}\tv{}\n", 2000 - i, i % 3));
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    let wanted = request(StatisticsSelection::All, 256);
+    let serial = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
+    let reference = gathered_with(&dump, &serial, &wanted).await;
+    for jobs in [2, 4, 8] {
+        let _ = std::fs::remove_file(cache::colocated_path(&dump));
+        mapped_into_cache(&dump, &serial, &StatisticsRequest::NONE).await;
+        let parallel = ScanOptions {
+            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
+            ..serial.clone()
+        };
+        let run = mapped_into_cache(&dump, &parallel, &wanted).await;
+        assert_eq!(run.backfilled, 1, "{jobs} jobs");
+        assert_eq!(run.index.spans, reference.spans, "{jobs} jobs");
+    }
+}
+
+/// **A block that no longer ends where the map says is refused**, rather than
+/// given statistics of other bytes: the file is rewritten at its own size with
+/// the block's terminator moved, which the cache's identity check cannot see.
+#[tokio::test]
+async fn a_block_rewritten_at_the_same_size_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("rewritten.sql");
+    let before = "COPY public.t (a) FROM stdin;\n11\n2\n\\.\nSELECT 1;\n";
+    let after = "COPY public.t (a) FROM stdin;\n1\n\\.\n22\nSELECT 1;\n";
+    assert_eq!(before.len(), after.len());
+    std::fs::write(&dump, before).unwrap();
+    let header_offset = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::NONE)
+        .await
+        .index
+        .blocks()
+        .next()
+        .unwrap()
+        .header_offset;
+    std::fs::write(&dump, after).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let err = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::ALL)
+        .await
+        .expect_err("the block moved");
+    assert!(
+        matches!(err, pgdump_query::Error::CachedBlockChanged { header_offset: at } if at == header_offset),
+        "{err}"
     );
 }

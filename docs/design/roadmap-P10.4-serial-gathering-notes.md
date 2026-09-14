@@ -31,7 +31,7 @@ grilled and sliced"). No query reads a statistic yet.
   is positional to the header, `None` untracked. An empty group (`rows == 0`)
   holds a zero NULL count, no bounds and an empty dictionary.
 - **10.6.** Landed: [its notes](roadmap-P10.6-parallel-gathering-notes.md).
-- **10.7.** `StatisticsRequest::group_size` is `None` when unstated, and each
+- **10.7.** Landed: [its notes](roadmap-P10.7-backfill-notes.md). `StatisticsRequest::group_size` is `None` when unstated, and each
   block records the size it was gathered at. A resumed `parse` gathers only the
   blocks it maps; a block mapped under `--statistics none`, or outside a
   selection, holds `None`.

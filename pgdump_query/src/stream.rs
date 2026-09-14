@@ -63,12 +63,12 @@ use crate::io::{
     RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
 };
 use crate::leader::{self, RegionScan};
-use crate::map::{Builder, Span, SpanBody, attach_text};
+use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
-use crate::statistics::StatisticsRequest;
+use crate::statistics::{BlockObserver, BlockStatistics, StatisticsBackfill, StatisticsRequest};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -900,10 +900,19 @@ pub struct MapRun {
     pub index: DumpIndex,
     /// The frontier this run started from.
     pub resumed_from: u64,
-    /// Whether [`ScanOptions::cancel`] stopped the run short of EOF. The index
-    /// and the cache agree either way; what differs is whether the index
-    /// describes the whole file.
+    /// Whether [`ScanOptions::cancel`] stopped the run short of EOF, or short
+    /// of re-reading every block that lacked the requested statistics. The
+    /// index and the cache agree either way; what differs is whether the
+    /// index describes the whole file, which [`DumpIndex::is_complete`] tells
+    /// apart from a stop inside the back-fill.
     pub interrupted: bool,
+    /// How many blocks the scan had already mapped lacked the statistics this
+    /// run asked for ([`StatisticsRequest::backfill`]) — zero for a run
+    /// interrupted before its map reached EOF, which is where the count is
+    /// taken.
+    pub lacking_statistics: usize,
+    /// How many of those were re-read and now hold them.
+    pub backfilled: usize,
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
@@ -919,10 +928,14 @@ pub struct MapRun {
 /// — its spans *are* the prefix, so running it over a resumed map would
 /// discard one.
 ///
-/// **It gathers what `statistics` asks for**, over the blocks this run maps;
-/// a block the cache already held keeps whatever it was mapped with.
-/// [`StatisticsRequest::default`] gathers every statistic, and a gathered
-/// block is scanned serially whatever `scan_options` allows.
+/// **It gathers what `statistics` asks for**, over the blocks this run maps,
+/// and then **re-reads every block the cache already held that lacks it**
+/// ([`StatisticsRequest::backfill`]), one at a time in file order through
+/// [`gather_block_statistics`], saving as it goes. The back-fill runs once the
+/// map has reached EOF, so each block resolves against whole-file metadata,
+/// and a run interrupted inside it resumes into it, the blocks still lacking
+/// being counted afresh. [`StatisticsRequest::default`] gathers every
+/// statistic.
 ///
 /// **The three finishing steps are this function's, not `map_forward`'s.**
 ///
@@ -936,7 +949,7 @@ pub struct MapRun {
 /// - The cache is saved once more at the end, persisting the finished index;
 ///   it is also the only save when nothing was scanned at all.
 ///
-/// **An interrupted run states none of the three**, and returns
+/// **A run interrupted before EOF states none of the three**, and returns
 /// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a
 /// boundary `dump_metadata_from_spans` may be called at.
 pub async fn map_file(
@@ -992,7 +1005,13 @@ pub async fn map_file(
     if map_forward(source, scan_options, cache, &mut index, None, statistics, size).await?
         == MapStop::Interrupted
     {
-        return Ok(MapRun { index, resumed_from, interrupted: true });
+        return Ok(MapRun {
+            index,
+            resumed_from,
+            interrupted: true,
+            lacking_statistics: 0,
+            backfilled: 0,
+        });
     }
 
     index.metadata = Some(dump_metadata_from_spans(&index.spans));
@@ -1000,8 +1019,238 @@ pub async fn map_file(
     diagnostics.extend(tiling_diagnostics(&index.spans, size));
     diagnostics.push(toc_coverage_diagnostic(&index.spans));
     index.diagnostics = diagnostics;
-    cache.save(source, &index).await?;
-    Ok(MapRun { index, resumed_from, interrupted: false })
+    let backfill =
+        backfill_statistics(source, scan_options, cache, &mut index, statistics, size).await?;
+    if !backfill.interrupted {
+        cache.save(source, &index).await?;
+    }
+    Ok(MapRun {
+        index,
+        resumed_from,
+        interrupted: backfill.interrupted,
+        lacking_statistics: backfill.lacking,
+        backfilled: backfill.reread,
+    })
+}
+
+/// What [`backfill_statistics`] did.
+struct BackfillRun {
+    lacking: usize,
+    reread: usize,
+    interrupted: bool,
+}
+
+/// Re-read every block of a map that has reached EOF which lacks what
+/// `statistics` asks for, in file order, storing each block's statistics as it
+/// closes and saving through a [`SaveThrottle`] as [`map_forward`] does; an
+/// interrupt saves and stops. Announces how many blocks lacked them and, once
+/// every one is re-read, how many were — and nothing at all when none did.
+async fn backfill_statistics(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    cache: &CacheMode,
+    index: &mut DumpIndex,
+    statistics: &StatisticsRequest,
+    size: u64,
+) -> Result<BackfillRun> {
+    // Positions into `index.spans`, which nothing below adds to or reorders.
+    let lacking: Vec<(usize, StatisticsBackfill)> = if statistics.gathers() {
+        index
+            .spans
+            .iter()
+            .enumerate()
+            .filter_map(|(at, span)| match &span.body {
+                SpanBody::Data(DataBlock::Copy(block)) => {
+                    statistics.backfill(block).map(|backfill| (at, backfill))
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut run = BackfillRun { lacking: lacking.len(), reread: 0, interrupted: false };
+    if lacking.is_empty() {
+        return Ok(run);
+    }
+    tracing::info!(blocks = run.lacking, "statistics back-fill started");
+    announce_read_loop(source, scan_options);
+    let mut throttle = SaveThrottle::new();
+    let mut shortfall_reported = false;
+    for (at, backfill) in lacking {
+        let SpanBody::Data(DataBlock::Copy(block)) = &index.spans[at].body else {
+            unreachable!("the positions were read off copy blocks of this span list");
+        };
+        let gathered = reread_block(
+            source,
+            scan_options,
+            index.metadata.as_ref(),
+            block,
+            &backfill,
+            size,
+            &mut shortfall_reported,
+        )
+        .await?;
+        let Some(gathered) = gathered else {
+            cache.save(source, index).await?;
+            run.interrupted = true;
+            return Ok(run);
+        };
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
+            block.statistics = Some(Arc::new(gathered));
+        }
+        run.reread += 1;
+        // Both of `map_forward`'s check points, a block's close being the
+        // second (`docs/design/decisions.md`, "D63").
+        if scan_options.cancelled() && run.reread < run.lacking {
+            cache.save(source, index).await?;
+            run.interrupted = true;
+            return Ok(run);
+        }
+        if throttle.due() {
+            throttle.save(cache, source, index).await?;
+        }
+    }
+    tracing::info!(blocks = run.reread, "statistics back-fill complete");
+    Ok(run)
+}
+
+/// The three hints every top-level read loop announces before its first read
+/// (`crate::scan::scan`, [`map_forward`]).
+fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
+    source.hint_read_size(scan_options.chunk_size);
+    source.hint_parallelism(scan_options.parallelism);
+    source.hint_wait_policy(WaitPolicy::NeverWait);
+}
+
+/// Re-read one block the map already holds and gather what `backfill` names —
+/// the library's per-block back-fill, which [`map_file`] runs over every block
+/// lacking what its request asks for. `metadata` is the map's, whole-file where
+/// it can be, which the block's columns are resolved against as a mapping pass
+/// resolves them; `backfill` is [`StatisticsRequest::backfill`]'s answer for
+/// `block`. The caller stores the result in [`CopyBlock::statistics`].
+///
+/// **The block is scanned as a mapping pass scans it**: offered to the leader
+/// under `scan_options`' parallelism, and read serially where it declines, so
+/// what is gathered is what a straight-through pass would have gathered.
+/// `Ok(None)` is [`ScanOptions::cancel`] stopping it before the block closed.
+///
+/// **A block that no longer ends where the map says is refused**,
+/// [`Error::CachedBlockChanged`], rather than given statistics describing other
+/// bytes than its map does.
+pub async fn gather_block_statistics(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    metadata: Option<&DumpMetadata>,
+    block: &CopyBlock,
+    backfill: &StatisticsBackfill,
+) -> Result<Option<BlockStatistics>> {
+    let size = source.size().await?;
+    announce_read_loop(source, scan_options);
+    let mut shortfall_reported = false;
+    reread_block(source, scan_options, metadata, block, backfill, size, &mut shortfall_reported)
+        .await
+}
+
+/// [`gather_block_statistics`] once the source is announced, `size` known, and
+/// with the flag [`report_shortfall`] keeps once per pass.
+async fn reread_block(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    metadata: Option<&DumpMetadata>,
+    block: &CopyBlock,
+    backfill: &StatisticsBackfill,
+    size: u64,
+    shortfall_reported: &mut bool,
+) -> Result<Option<BlockStatistics>> {
+    let mut observer = gather::observer_tracking(
+        &backfill.columns,
+        backfill.group_size,
+        &block.header,
+        metadata,
+        block.database.as_deref(),
+    );
+    let outcome = leader::scan_region(
+        source,
+        scan_options,
+        block.header_offset,
+        block.data_offset,
+        block.header.columns.len(),
+        size,
+        Some(observer.as_mut()),
+    )
+    .await?;
+    report_shortfall(shortfall_reported, outcome.shortfall);
+    let end = match outcome.scan {
+        RegionScan::Closed(interior) => interior.end,
+        RegionScan::Cancelled => return Ok(None),
+        RegionScan::Declined => {
+            match observe_rows(source, scan_options, block, size, observer.as_mut()).await? {
+                Some(end) => end,
+                None => return Ok(None),
+            }
+        }
+    };
+    let recorded = (block.terminator_offset, block.end_offset, block.row_count);
+    if (end.terminator_offset, end.end_offset, end.row_count) != recorded {
+        return Err(Error::CachedBlockChanged { header_offset: block.header_offset });
+    }
+    Ok(Some(observer.finish(block.terminator_offset - block.data_offset)))
+}
+
+/// Hand `observer` every row of `block`, read serially from its first data
+/// byte to its terminator, and answer the `CopyEnd` the scanner met — `None`
+/// where [`ScanOptions::cancel`] was set first, read once per chunk as
+/// [`map_forward`] reads it.
+async fn observe_rows(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    block: &CopyBlock,
+    size: u64,
+    observer: &mut dyn BlockObserver,
+) -> Result<Option<CopyEnd>> {
+    let mut scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
+    let mut carry = ChunkCarry::new();
+    let mut read_pos = block.data_offset;
+    loop {
+        if scan_options.cancelled() {
+            return Ok(None);
+        }
+        let want = scan_options.chunk_size.min((size - read_pos) as usize);
+        let chunk = if want > 0 {
+            let bytes = source.read_range(read_pos, want).await?;
+            read_pos += bytes.len() as u64;
+            bytes
+        } else {
+            Bytes::new()
+        };
+        let eof = read_pos >= size;
+        carry.absorb(&chunk);
+        for pass in ChunkCarry::PASSES {
+            let (span, span_eof) = carry.span(pass, &chunk, eof);
+            while let Some(event) = scanner.next_event(span, span_eof)? {
+                match event {
+                    Event::Row(row) => {
+                        observer.observe_row(row.offset - block.data_offset, row.raw)
+                    }
+                    Event::CopyEnd(end) => return Ok(Some(end)),
+                    // A scanner inside a block's rows emits nothing else
+                    // before its `CopyEnd`.
+                    _ => {}
+                }
+            }
+            carry.consumed(pass, &chunk, scanner.take_consumed());
+        }
+        if eof {
+            return Err(Error::UnterminatedCopyBlock { header_offset: block.header_offset });
+        }
+        if carry.len() > scan_options.max_line_bytes {
+            return Err(Error::LineTooLong {
+                offset: scanner.position(),
+                limit: scan_options.max_line_bytes,
+            });
+        }
+    }
 }
 
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]

@@ -46,7 +46,7 @@ taken.
 
 ## For the slices after
 
-- **10.7.** A back-fill re-reads a block whole; offering it to `scan_region`
+- **10.7.** Landed: [its notes](roadmap-P10.7-backfill-notes.md). A back-fill re-reads a block whole; offering it to `scan_region`
   with the block's observer is the parallel path, nothing else being needed.
 - **10.10.** `statistics-gathering` can run a gathering `parse` at a stated
   `--jobs`; the harness's shapes still state `--jobs 1`.

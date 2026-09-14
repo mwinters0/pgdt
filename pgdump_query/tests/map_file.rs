@@ -11,7 +11,9 @@
 //! **Every scan here gathers nothing** (`StatisticsRequest::NONE`): the eager
 //! producer gathers no statistics to compare against. A gathering scan's
 //! parallel map is compared against a serial one instead, by
-//! `tests/statistics.rs` and `pgdump_query-cli/tests/determinism.rs`.
+//! `tests/statistics.rs` and `pgdump_query-cli/tests/determinism.rs`. The one
+//! exception is the interrupted statistics back-fill, here for the cancelling
+//! source, whose resumed map is compared against a gathering `map_file`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -690,6 +692,52 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     assert!(!resumed.interrupted);
     assert_eq!(resumed.resumed_from, first_block_end);
     assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled scan");
+}
+
+/// **An interrupted back-fill banks the blocks it re-read and resumes into
+/// the rest.** A map holding no statistics is asked for them, and the flag
+/// trips on the first read of the second block's data — one-byte reads again,
+/// so the first block has closed and been banked, the throttle starting due.
+/// The cache is complete and holds the first block's statistics alone; a
+/// second run re-reads only the blocks still lacking them, into the map one
+/// gathering pass builds.
+#[tokio::test]
+async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
+    let (_dir, dump) = sandboxed();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Enabled(cache_path.clone());
+    let bare =
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+    let blocks = bare.index.blocks().count();
+    assert!(blocks > 2, "sanity: blocks are left after the second");
+    let second = bare.index.blocks().nth(1).unwrap().data_offset;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let tripping = CancelsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
+    let options =
+        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let run = map_file(&tripping, &options, &mode, &StatisticsRequest::ALL).await.unwrap();
+    assert!(run.interrupted, "a cancelled back-fill says so");
+    assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
+
+    let status = cache::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Valid { index, .. } = status else {
+        panic!("a back-fill leaves the map complete, got {status:?}");
+    };
+    let gathered: Vec<bool> = index.blocks().map(|b| b.statistics.is_some()).collect();
+    assert_eq!(gathered.iter().filter(|g| **g).count(), 1, "{gathered:?}");
+    assert!(gathered[0], "the first block is the one banked: {gathered:?}");
+
+    let resumed =
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::ALL).await.unwrap();
+    assert!(!resumed.interrupted);
+    assert_eq!((resumed.lacking_statistics, resumed.backfilled), (blocks - 1, blocks - 1));
+    let straight =
+        map_file(&source, &ScanOptions::default(), &CacheMode::Disabled, &StatisticsRequest::ALL)
+            .await
+            .unwrap();
+    assert_eq!(resumed.index.spans, straight.index.spans);
 }
 
 /// A flag set before the scan starts stops it at the first thing it can stop

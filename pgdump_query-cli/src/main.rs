@@ -458,7 +458,9 @@ enum Command {
         /// NULL count, and where a column's comparison allows, its least and
         /// greatest value and its distinct values. Gathering reads every value
         /// of every tracked column, which costs the scan time and memory;
-        /// `none` scans as fast as the file allows.
+        /// `none` scans as fast as the file allows. A block an earlier `parse`
+        /// mapped without the statistics asked for here is re-read for them
+        /// once the rest of the file is scanned, keeping any it already had.
         #[arg(
             long,
             value_name = "SELECTION",
@@ -469,6 +471,8 @@ enum Command {
         /// The bytes of a table's data each row group of statistics covers.
         /// The default, 1 MiB, is coarse; a smaller group records more finely
         /// where values lie and costs memory and cache space in proportion.
+        /// Stated, it also re-reads every block gathered at another size;
+        /// left unstated, a block keeps the size it was gathered at.
         #[arg(
             long,
             value_name = "BYTES",
@@ -1087,10 +1091,16 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 ///
 /// A run that found the cache already complete scanned nothing at all and
 /// says so, rather than reporting a resume point equal to the file's size —
-/// two different facts to a user checking whether a scan finished.
-fn resume_notice(resumed_from: u64, size: u64) -> Option<String> {
+/// two different facts to a user checking whether a scan finished — unless it
+/// re-read blocks for statistics they lacked (`backfilled`), which stderr
+/// counts.
+fn resume_notice(resumed_from: u64, size: u64, backfilled: usize) -> Option<String> {
     match resumed_from {
         0 => None,
+        n if n >= size && backfilled > 0 => Some(format!(
+            "the cache already covers all {size} byte(s); only blocks lacking the requested \
+             statistics were re-read"
+        )),
         n if n >= size => {
             Some(format!("nothing to scan: the cache already covers all {size} byte(s)"))
         }
@@ -1258,12 +1268,28 @@ async fn main() -> Result<()> {
                 // No listing: `pgdq info` is the command that reports. Both
                 // lines go to stderr, so a caller redirecting stdout gets an
                 // empty report rather than a truncated one.
-                eprintln!(
-                    "interrupted at byte {} of {size} — the cache at {} holds the scan so far",
-                    run.index.scanned_through,
-                    path.display()
-                );
-                eprintln!("re-run `pgdq parse --source {}` to continue", file.display());
+                // A stop inside the statistics back-fill leaves the map
+                // whole, and only the same statistics flags pick it up again.
+                if run.index.is_complete(size) {
+                    eprintln!(
+                        "interrupted after re-reading {} of the {} block(s) lacking the requested \
+                         statistics — the cache at {} holds those re-read so far",
+                        run.backfilled,
+                        run.lacking_statistics,
+                        path.display()
+                    );
+                    eprintln!(
+                        "re-run `pgdq parse --source {}` with the same statistics flags to continue",
+                        file.display()
+                    );
+                } else {
+                    eprintln!(
+                        "interrupted at byte {} of {size} — the cache at {} holds the scan so far",
+                        run.index.scanned_through,
+                        path.display()
+                    );
+                    eprintln!("re-run `pgdq parse --source {}` to continue", file.display());
+                }
                 // Exit by signal (130/143), so a script can tell an
                 // interrupt from a failure; `SIGINT` is the fallback.
                 // `std::process::exit` runs no destructors, so the instrument
@@ -1275,7 +1301,7 @@ async fn main() -> Result<()> {
             // The listing describes the file's state after this run, not
             // this invocation's diff, so the one line that *is* about the
             // invocation goes above it.
-            if let Some(notice) = resume_notice(run.resumed_from, size) {
+            if let Some(notice) = resume_notice(run.resumed_from, size, run.backfilled) {
                 println!("{notice}");
                 println!();
             }

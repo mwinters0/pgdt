@@ -24,7 +24,7 @@ changed.
 
 ## For the slices after
 
-- **10.7.** A block lacking statistics shows in `--detail` as `statistics over
+- **10.7.** Landed: [its notes](roadmap-P10.7-backfill-notes.md). A block lacking statistics shows in `--detail` as `statistics over
   k of n block(s)` with `k` short, and one gathered at another size as a second
   size in the table line; that is what a back-fill's result is visible as. The stderr
   count of re-read blocks the spec asks of a back-filling `parse` is 10.7's,

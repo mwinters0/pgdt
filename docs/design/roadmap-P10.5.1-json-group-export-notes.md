@@ -32,7 +32,7 @@ What the later P10 slices inherit from this one. The spec is
 
 - **10.6.** Landed: [its notes](roadmap-P10.6-parallel-gathering-notes.md),
   comparing the cache's bytes rather than two exports.
-- **10.7.** A block lacking statistics is `"statistics": null` in the export.
+- **10.7.** Landed: [its notes](roadmap-P10.7-backfill-notes.md). A block lacking statistics is `"statistics": null` in the export.
 - **P20.** The export grows with group count times tracked columns, like the
   cache, and most at the tiny group size the correctness check gathers at.
   Nothing about its size is measured.

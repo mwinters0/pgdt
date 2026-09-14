@@ -43,6 +43,20 @@ pub(crate) fn observer_for(
     database: Option<&str>,
 ) -> Option<Box<dyn BlockObserver>> {
     let tracked = request.tracked_columns(header)?;
+    Some(observer_tracking(&tracked, request.group_size(), header, metadata, database))
+}
+
+/// The observer for one block gathering `tracked`'s columns — positional to
+/// `header` — at `group_size`: what [`observer_for`] builds from a request,
+/// and what a back-fill builds from a
+/// [`crate::statistics::StatisticsBackfill`].
+pub(crate) fn observer_tracking(
+    tracked: &[bool],
+    group_size: u64,
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> Box<dyn BlockObserver> {
     let qualified = header.qualified_name();
     let resolved =
         resolve_columns(&qualified, &header.columns, metadata, database, SchemaMode::Typed, &[]);
@@ -54,7 +68,7 @@ pub(crate) fn observer_for(
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            tracked[i].then(|| {
+            tracked.get(i).is_some_and(|&t| t).then(|| {
                 let def = declared.and_then(|cols| cols.iter().find(|c| &c.name == name));
                 ColumnGatherer::new(
                     def.map(|d| d.declared_type.clone()),
@@ -65,7 +79,7 @@ pub(crate) fn observer_for(
             })
         })
         .collect();
-    Some(Box::new(Gatherer::block(request.group_size(), columns)))
+    Box::new(Gatherer::block(group_size, columns))
 }
 
 /// The group a row is being added to.

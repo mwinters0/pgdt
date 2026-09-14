@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, `info --detail` reports them per table and column and `--json` exports every group's, and no query reads them yet | `statistics.rs`, `gather.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and no query reads them yet | `statistics.rs`, `gather.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -78,7 +78,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.5** Reporting in `info --detail` and `--json`; [notes](../design/roadmap-P10.5-reporting-notes.md)
 - [x] **10.5.1** `info --json` exports every block's per-group statistics, compact and streamed, with no per-table rollup; [notes](../design/roadmap-P10.5.1-json-group-export-notes.md)
 - [x] **10.6** Parallel gathering, identical to serial over every fixture; [notes](../design/roadmap-P10.6-parallel-gathering-notes.md)
-- [ ] **10.7** Back-fill of blocks lacking the requested statistics
+- [x] **10.7** Back-fill of blocks lacking the requested statistics; [notes](../design/roadmap-P10.7-backfill-notes.md)
 - [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check
 - [ ] **10.9** Early stop on a column sorted over its block
 - [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`
@@ -302,3 +302,22 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A statistics back-fill never narrows a block.** A block re-read for
+  statistics it lacks gathers every column it already held as well as the
+  request's, at a stated group size or else its own
+  (`StatisticsRequest::backfill`; `decisions.md`, "D34"), so `parse
+  --statistics <one column> --statistics-group-size <other>` re-reads a
+  table whole at the new size and nothing short of deleting the cache drops a
+  statistic. Made so because the spec says only that missing statistics are
+  re-read, and "D20" keeps the library from discarding cache data unasked.
+  Reconsidering makes a selection also the way to shrink a cache: `backfill`'s
+  column union and D34's `Rejected` clause go.
+
+- **A re-read block that no longer ends where the map says is refused**, as
+  the new `Error::CachedBlockChanged`, before its statistics are stored
+  (`stream.rs`, `reread_block`). The spec accepts *pruning* a same-size
+  rewrite on stale statistics; a back-fill *writes* them, and a row count the
+  map contradicts would leave the cache disagreeing with itself. Reconsidering
+  chooses between storing what was read anyway and this refusal, whose
+  message sends the user to delete the cache.

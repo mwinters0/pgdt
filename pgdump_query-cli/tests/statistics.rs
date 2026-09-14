@@ -262,6 +262,49 @@ fn a_rollup_keys_a_table_by_database_and_the_name_its_blocks_copy_into() {
     }
 }
 
+/// **A `parse` that re-reads blocks for statistics they lack says how many on
+/// stderr**, once when it starts and once when every one is re-read, and its
+/// resume line no longer claims there was nothing to scan; a `parse` whose
+/// blocks lack nothing prints neither line and says so.
+#[test]
+fn a_backfilling_parse_counts_the_blocks_it_rereads() {
+    let (_dir, dump) = sandboxed(DUMP, "statistics.sql");
+    let parse = |extra: &[&str]| {
+        let mut args = vec!["parse", "--source", dump.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        let out = run(&args);
+        assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
+        (common::stdout_of(&out), stderr_of(&out))
+    };
+    let backfill_lines = |stderr: &str| stderr.lines().filter(|l| l.contains("back-fill")).count();
+
+    let (_, stderr) = parse(&["--statistics", "none"]);
+    assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
+
+    let (stdout, stderr) = parse(&["--statistics", "specials,public.ordered"]);
+    assert!(stderr.contains("statistics back-fill started blocks=2"), "{stderr}");
+    assert!(stderr.contains("statistics back-fill complete blocks=2"), "{stderr}");
+    assert!(!stdout.contains("nothing to scan"), "{stdout}");
+    assert!(
+        stdout.contains("only blocks lacking the requested statistics were re-read"),
+        "{stdout}"
+    );
+
+    let (stdout, stderr) = parse(&["--statistics-group-size", "4096"]);
+    assert!(stderr.contains("statistics back-fill started blocks=3"), "{stderr}");
+    assert!(stderr.contains("statistics back-fill complete blocks=3"), "{stderr}");
+    let sizes: Vec<u64> = blocks_of(&info_json(&dump))
+        .iter()
+        .map(|(_, block)| block["statistics"]["group_size"].as_u64().unwrap())
+        .collect();
+    assert_eq!(sizes, vec![4096; 3]);
+
+    let (stdout_again, stderr) = parse(&[]);
+    assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
+    assert!(stdout_again.starts_with("nothing to scan"), "{stdout_again}");
+    assert_ne!(stdout, stdout_again);
+}
+
 #[test]
 fn contradictory_or_empty_statistics_flags_are_refused() {
     let (_dir, dump) = sandboxed(DUMP, "refused.sql");

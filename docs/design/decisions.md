@@ -185,7 +185,7 @@ decides each; readings that disagree reopen it. Evidence: `xz-decode-scaling`,
 
 ### D26 Cancellation is per chunk, honoured by the mapping loop alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang;
-`map_forward` is the one driver with somewhere to put a partial result. The
+`map_file`'s scan and back-fill are the drivers with somewhere to put a partial result. The
 preamble scan ignores the flag: a stop there is indistinguishable from reaching
 the first `COPY` header and would be cached as complete.
 
@@ -240,11 +240,12 @@ invariant) and the run's end is string-aware. Two cuts stay untaken until the
 `INSERT` row reader exists (`KD9`).
 
 ### D34 `DumpIndex` stores no fact twice but sortedness; whole-file facts need `is_complete`
-`blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles
-excepted; a streamed schema commits over the blocks it replays, ungated (I2). Statistics
-sit in their block behind an `Arc`, so save-gate clones copy a reference (`KD5`), and
-store sortedness; a group is a byte range, no leader piece knowing a global row index.
-Rejected: `SparseRowIndex`; padded `character` bounds and entries, keyed alike but past the cap.
+`blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a
+streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
+behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
+byte range, no leader piece knowing a global row index. A back-fill keeps every column a block
+held, and its size unless one is stated. Rejected: `SparseRowIndex`; padded `character` bounds
+and entries, keyed alike but past the cap; a back-fill narrowed to its request, losing statistics.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at
@@ -323,8 +324,7 @@ runs on every flush; any new flush trigger must honour it.
 ### D47 `max_source_span` is the only trigger that bounds pinned bytes
 `max_rows` and `max_bytes` count selected rows, which a filter makes sparse.
 The span term is charged only where the source retains by chunk (`KD23`).
-Rejected: compacting views past a selectivity threshold. Evidence:
-`parallel-peak-rss`.
+Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped
