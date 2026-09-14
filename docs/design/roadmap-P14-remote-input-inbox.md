@@ -415,3 +415,24 @@ set by a network buffer nobody here has measured.
 bound, 2026-09-11 and 2026-09-12. The mechanisms are
 [`decisions.md`](decisions.md), "I/O, memory and parallelism" and
 "The compressed source and the cache".
+
+---
+
+## This phase is the remaining consumer gating `xz-seek`'s publication
+
+**Fact.** The `.xz` addressing layer is `xz-seek`, still a frozen vendored copy
+under `vendor/xz-seek/` rather than a published version
+([`decisions.md`](decisions.md), "D14"). Publication was gated on two real
+consumers vetting its interface: the compressed source, which has landed, and
+the row-group statistics phase, which turned out to add no call into the crate
+— statistics sit on the plain-format offsets the cache already holds.
+
+**Why P14 cares.** A remote `.xz` exercises the interface in a way nothing yet
+has — ranged reads of compressed bytes, a footer walk costing one GET per
+stream — so this phase is where an awkward signature is still cheap to fix at
+its source, and where the call between publishing a version and keeping the
+vendored copy is made.
+
+**Origin.** Filed to P10's inbox at the compressed-input work's keystone,
+2026-09-06; moved here by P10's grilling, 2026-09-14. **Contingent on**
+`pgdump_query/Cargo.toml` still naming a path dependency.

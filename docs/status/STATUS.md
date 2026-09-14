@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics, sparse row index | not started; both are P10's, with `CopyBlock::sparse_index` and `column_stats` reserved `None` | D34 |
+| Per-row-group column statistics | in progress (P10); `CopyBlock::sparse_index` and `column_stats` are reserved `None` | D34 |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -65,17 +65,32 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
+## P10 progress
+
+Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-row-group-statistics.md).
+
+- [ ] **10.1** Fixture shapes — sorted, reversed, unsorted, constant and all-null columns; float specials; `numeric` `1.5`/`1.50`; `C` and default-collated text; low- and over-64-cardinality columns; a value past `N` and the read chunk — and `--max-line-bytes` on `parse` and `query`
+- [ ] **10.2** Row-free comparison and plan-time filter resolution, behaviour-preserving
+- [ ] **10.3** The truth-set evaluator, property-tested against the row evaluator
+- [ ] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`, coarse reserve and resident bumps
+- [ ] **10.5** Reporting in `info --detail` and `--json`
+- [ ] **10.6** Parallel gathering, identical to serial over every fixture
+- [ ] **10.7** Back-fill of blocks lacking the requested statistics
+- [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check
+- [ ] **10.9** Early stop on a column sorted over its block
+- [ ] **10.10** Figures `statistics-gathering` and `statistics-pruning`
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** Every built mechanism — the parallel scan's defaults
-  included: a worker count the source recommends, a memory limit discovered
+- **P10 is open**; see "P10 progress" above. Every built mechanism — the
+  parallel scan's defaults included: a worker count the source recommends, a memory limit discovered
   and filled under the reserve and the margin, and a `parse` saying
   what it delivered rather than what it was asked for — is in
   [`../design/decisions.md`](../design/decisions.md).
-  Six phases remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap
+  Six phases remain sketched — P20, P14, P6, P15, P18, P8, in the roadmap
   table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
   about the order they run in. Each gets its own full grilling when it becomes
   current, and every one that carries an inbox must have it drained as part of

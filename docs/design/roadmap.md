@@ -16,7 +16,8 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
+| P10 — row-group statistics | Current | [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md); progress in [`STATUS.md`](../status/STATUS.md) |
+| P20 — statistics memory | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
@@ -41,7 +42,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P19`** — nothing at or below it
+centering"). **Phase numbering continues from `P20`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -494,144 +495,23 @@ item; see below.
 
 ## P10 — Per-row-group column statistics
 
-**Inbox:** [`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
+**Current.** Specified in
+[`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md);
+its slices are [`../status/STATUS.md`](../status/STATUS.md), "P10 progress".
+Per-row-group statistics gathered by `pgdq parse` and persisted in the cache,
+consumed by the query replay to skip byte ranges no row of which can match.
 
-Sketched as pushdown's companion until that grilling separated them. Three
-things make it a phase rather than a companion, and the last one also fixes
-where it sits in the table above:
+## P20 — Statistics memory and its measured expectations
 
-- It is the only work here that spans **all four layers**: gathered in L1's
-  scan, needing L2 to parse a value, persisted in L1's cache. So `RowGroupStats`
-  records the **declared PostgreSQL type** a statistic was computed as, never
-  an Arrow `DataType`, and the parse function is injected downward rather than
-  imported upward ([`decisions.md`](decisions.md), "D74").
-- It is the only work here whose bug is a **wrong answer** rather than a slow
-  one — see "The correctness asymmetry" below — so it cannot share a review
-  cycle with a self-contained query-API change (`../process.md`, "Size a slice
-  by its review, not by its scope").
-- **It owns the addressing scheme outright, and it is the only consumer left.**
-  Statistics attach to row groups, the row group is the sparse row index's
-  checkpoint interval, and `CopyBlock::sparse_index` is a reserved `None`. That
-  field was expected to be filled for the sake of parallel splits, and the
-  parallel scan turned out not to need one — an open `COPY` block's interior
-  splits at LF boundaries for a single row's resync, which is what `memchr`
-  already gives. So the interval is settled here, against statistics'
-  needs, with no second phase to reconcile against. It is not only an
-  addressing question: this phase's best outcome — sortedness plus the sparse
-  index turning a range predicate into a binary search for a byte range, below
-  — is *unreachable* without that index.
-
-Reasoning for the split:
-[`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Statistics
-are a phase, not a companion".
-
-Parquet-style statistics, gathered during a scan and persisted in the cache, so
-a later query can skip data instead of reading it. Needs typed columns (a
-min/max needs a parsed value), pays off in this phase (the pruning consumer),
-and already has its cache slot reserved (`CopyBlock::column_stats`, always
-`None`).
-
-Starting set, cheapest and most useful first:
-
-- **`null_count`** — nearly free, and directly answers `IS NULL` / `IS NOT NULL`.
-- **Sortedness** — a tri-state (`ascending` / `descending` / `unordered`) plus
-  NULL placement. One comparison per value, two bits stored.
-- **`min_value` / `max_value`** — for collation-independent orderable types only;
-  see the trap below.
-- **Distinct count** — deliberately *not* in the starting set. It needs a hash set
-  or an HLL sketch, which is a different cost class from everything above.
-
-**Attach these to row groups, not to whole `COPY` blocks.** Per-block is the
-granularity that suggests itself, but it is close to useless on exactly the
-tables big enough to matter: koji's blocks run to billions of rows, and the
-min/max of a monotonic `id` column over a whole block spans the entire domain, so
-it prunes nothing. Parquet's win comes from row-group granularity, and there is
-already a natural unit to reuse — the sparse row index checkpoints every 8192
-rows. Statistics attach to
-those checkpoints; block-level statistics are then just the roll-up, free to
-compute and still worth storing for the coarse first pass.
-
-**Sortedness is worth more here than min/max, and costs less.** `pg_dump` emits
-rows in physical heap order, and for an append-only table that is very often
-ascending by surrogate key — much of koji (build, task and RPM id columns) should
-qualify. A column confirmed ascending, combined with the sparse index, turns a
-range predicate into a **binary search for a byte range** rather than a
-scan-and-prune over row groups. That is a qualitatively better outcome than page
-pruning, and it is the reason to put sortedness ahead of min/max rather than
-treating it as a nice extra.
-
-Two conditions on it. Sortedness is only a guarantee over a **fully scanned**
-block — an incremental scan that stopped partway can honestly say "ascending so
-far," which is not something a query may rely on, so the flag has to be tied to
-the block's scan watermark rather than set optimistically. And NULL placement
-must be recorded, not assumed.
-
-**The correctness asymmetry is the thing to get right.** The standing rule is
-that the cache is a best-effort accelerator, never required for correctness: a
-stale structural index costs a rescan and nothing else. **Statistics break that
-symmetry.** A stale or wrong statistic causes a wrong *answer* — pruning a row
-group that does in fact contain matching rows silently drops data, with no error
-to notice. So statistics cannot inherit the structural index's relaxed
-validation:
-
-- The dump-file identity check (size/mtime) that the structural cache treats as
-  advisory — a mismatch is a diagnostic, not a hard failure
-  ([`decisions.md`](decisions.md), "The compressed source and the cache") — is **mandatory** before
-  any statistic is trusted.
-- Statistics must be **discardable independently** of the structural index, so a
-  cache written by a version with a stats bug can be downgraded to "structure
-  only" rather than thrown away.
-- Each entry records the **type it was computed as**. The type mapping will
-  keep changing; a min/max computed under an older mapping must not be silently
-  reused under a newer one.
-
-**Trap: string min/max is a correctness bug, not an optimization.** PostgreSQL
-orders `text` by collation — koji's own header records `LOCALE = 'en_US.UTF-8'` —
-while Arrow and DataFusion compare byte-wise. A byte-wise min/max used to prune a
-collation-ordered predicate can exclude rows that actually match. So restrict
-min/max to types whose ordering is collation-independent: integers, `numeric`,
-dates/timestamps, `boolean`, `uuid`. This is what makes the "basic orderable types
-such as int" instinct the right starting point rather than merely the easy one.
-Floats need an explicit NaN and `-0.0` policy before they join the list — this is
-the same footgun that forced Parquet to rework its own float column ordering.
-Text min/max stays open only if the collation is recorded and matched.
-
-**Cost: this converts the index pass into a full parse.** `build_index()` today
-finds block boundaries and counts rows without ever splitting a field. Statistics
-require splitting every field of every row and parsing the tracked ones. koji
-measured 243 MB/s at ~33% of one core, so an HDD scan has headroom to absorb it,
-but the same scan is CPU-bound on NVMe and there the tax is real. Statistics
-gathering should therefore be **opt-in and column-selectable**, not something
-`pgdq parse` does by default.
-
-**Cost: the sizing is not negligible.** At 8192-row groups, koji's 19.58B rows
-give ~2.4M row groups; at roughly 24 bytes per column per group (min, max,
-null_count, flags) and ~10 tracked columns, that is on the order of **half a
-gigabyte** of statistics. That is ~0.07% of the 784 GB file — a defensible ratio,
-comparable to Parquet's own footer overhead — but it is ~30x the sparse index it
-rides on. So the statistics row-group interval should be tunable *independently*
-of the sparse index interval; coarsening it to every 64k rows cuts the volume 8x
-while still pruning far better than per-block would.
-
-Finally, in incremental mode statistics accumulate as a side effect of scans the
-caller asked for anyway, so coverage is naturally partial. The cache must record
-which row groups actually have statistics — absent is a normal state, not a
-defect.
-
-**A statistic never helps the scan that gathered it, and that is the whole
-shape of the payoff.** A query is two passes: the mapping pass walks every row
-between `scanned_through` and the target, and only then does replay read the
-target block. Statistics are written by the first pass and read by a *later*
-query's planning — so the run that pays the parse tax gets nothing back, and
-every benefit lands on a subsequent query against a cache that survived. That
-puts two things in the frame together whenever this phase's value is argued:
-the cache's own lifetime, which pre-1.0 ends at the next format bump
-(`decisions.md`, "The compressed source and the cache" — koji's cache was unreadable within days), and
-the opt-in-and-column-selectable rule above, which is what keeps a caller who
-will never benefit from paying. Reasoning:
-[`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Pushdown
-cannot touch the mapping pass".
+The refinement P10 deliberately defers
+([`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md),
+"Resident memory grows, and is optimized later"). P10 lets resident memory grow
+with the dump's statistics volume and takes coarse, aggressive increases to the
+flagless defaults' reserve and to the measurement harness's resident-set
+expectations, spending no slices on either. This phase owns bringing resident
+back toward the flat-memory goal and re-deriving the reserve and the
+expectations from readings. **Scheduled directly after P10**, since what it
+optimizes is what P10 ships.
 
 ## P14 — Remote input
 
