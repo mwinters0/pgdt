@@ -236,9 +236,9 @@ sums them per table and column, and `info --json` exports every group's (below).
 records them; no query reads them yet.
 
 Gathering reads every value of every column, so it costs a `parse` time, memory
-and cache space that grow with the dump, and **a table gathered for is read by
-one worker whatever `--jobs` says** — `scan arrangement` says so (below).
-`--statistics none` turns it off:
+and cache space that grow with the dump; the workers `--jobs` asks for gather
+as they read, and record exactly what one worker would. `--statistics none`
+turns it off:
 
 ```sh
 pgdq parse --source big.sql --statistics none                        # nothing gathered
@@ -596,12 +596,11 @@ asked for one, and it names its own origin the same way:
 so a log line naming a scan says what produced everything that follows it.
 
 **`scan arrangement` is what says how many readers really ran.** `scan
-started`'s `jobs=` is the count `resolved the arrangement` announced, and three
+started`'s `jobs=` is the count `resolved the arrangement` announced, and two
 things can still cut it: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
-whatever `--jobs` said**, a budget too small for the readers asked for buys
-fewer of them, and a table `parse` gathers statistics for is read by one worker
-(`--statistics`, above). Any of them prints one line, once per scan:
+whatever `--jobs` said**, and a budget too small for the readers asked for buys
+fewer of them. Either prints one line, once per scan:
 
 ```
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=67108864
@@ -609,11 +608,10 @@ fewer of them, and a table `parse` gathers statistics for is read by one worker
 ```
 
 `jobs=` is what is running, `asked=` is what `scan started` announced,
-`bound_by=` is which of the three cut it — `source` for a container path the
-budget could not afford, `budget` for readers it could not afford, `statistics`
-for a scan gathering them — and `would_hold_bytes=` is what the arrangement that
-was refused would have held, which is the number to raise `--parallel-memory`
-to; a `statistics` line carries none, `--statistics none` being the way back. **No such line means the
+`bound_by=` is which of the two cut it — `source` for a container path the
+budget could not afford, `budget` for readers it could not afford — and
+`would_hold_bytes=` is what the arrangement that was refused would have held,
+which is the number to raise `--parallel-memory` to. **No such line means the
 count was started as announced.**
 
 **What no line means is that the count was started — not that every worker

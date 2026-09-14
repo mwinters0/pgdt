@@ -1189,6 +1189,13 @@ impl Builder {
         self.pending_observer = Some(observer);
     }
 
+    /// The open `COPY` block's statistics observer, for the interior workers
+    /// that observe its rows in pieces instead of [`on_row`](Self::on_row)
+    /// (`crate::leader::scan_region`).
+    pub(crate) fn block_observer(&mut self) -> Option<&mut (dyn BlockObserver + 'static)> {
+        self.pending_observer.as_deref_mut()
+    }
+
     /// Union an already-folded census into the open `COPY` block's own — what
     /// a block whose rows were counted by interior workers states instead of
     /// the [`on_row`](Self::on_row) calls it never made

@@ -17,7 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P10 — row-group statistics | Current | [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md); progress in [`STATUS.md`](../status/STATUS.md) |
-| P20 — statistics memory | Sketched; not grilled | this file, below |
+| P20 — statistics memory | Sketched; not grilled | this file, below; [inbox](roadmap-P20-statistics-memory-inbox.md) |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -527,6 +527,8 @@ statistics hold resident and re-deriving the reserve and the expectations from
 readings, over rows of uniform width wherever an expectation is to hold
 ("Project goals"). **Scheduled directly after P10**, since what it
 optimizes is what P10 ships.
+
+**Inbox:** [`roadmap-P20-statistics-memory-inbox.md`](roadmap-P20-statistics-memory-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
 ## P21 — Statistics gathered by a query
 

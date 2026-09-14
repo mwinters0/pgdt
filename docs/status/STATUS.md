@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them serially by default and persist them in the cache, `info --detail` reports them per table and column and `--json` exports every group's, and no query reads them yet | `statistics.rs`, `gather.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, `info --detail` reports them per table and column and `--json` exports every group's, and no query reads them yet | `statistics.rs`, `gather.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -77,7 +77,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks; [notes](../design/roadmap-P10.4.3-character-dictionary-notes.md)
 - [x] **10.5** Reporting in `info --detail` and `--json`; [notes](../design/roadmap-P10.5-reporting-notes.md)
 - [x] **10.5.1** `info --json` exports every block's per-group statistics, compact and streamed, with no per-table rollup; [notes](../design/roadmap-P10.5.1-json-group-export-notes.md)
-- [ ] **10.6** Parallel gathering, identical to serial over every fixture
+- [x] **10.6** Parallel gathering, identical to serial over every fixture; [notes](../design/roadmap-P10.6-parallel-gathering-notes.md)
 - [ ] **10.7** Back-fill of blocks lacking the requested statistics
 - [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check
 - [ ] **10.9** Early stop on a column sorted over its block

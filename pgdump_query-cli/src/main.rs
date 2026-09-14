@@ -457,9 +457,8 @@ enum Command {
         /// for each stretch of a table's data, its row count and each column's
         /// NULL count, and where a column's comparison allows, its least and
         /// greatest value and its distinct values. Gathering reads every value
-        /// of every tracked column, and a table gathered for is read by one
-        /// worker whatever `--jobs` says; `none` scans as fast as the file
-        /// allows.
+        /// of every tracked column, which costs the scan time and memory;
+        /// `none` scans as fast as the file allows.
         #[arg(
             long,
             value_name = "SELECTION",

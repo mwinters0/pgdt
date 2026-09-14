@@ -373,10 +373,10 @@ class WorkerCount(unittest.TestCase):
 class StatisticsFlag(unittest.TestCase):
     """Every `pgdq parse` the harness runs gathers no statistics.
 
-    `parse` gathers by default, which reads every value and scans a gathered
-    table serially whatever `--jobs` says, so a shape inheriting that default
-    would re-time the figure it belongs to the day the default moved — the
-    same failure `WorkerCount` reconciles against, for a second flag."""
+    `parse` gathers by default, which reads every value of every column, so a
+    shape inheriting that default would re-time the figure it belongs to the
+    day the default moved — the same failure `WorkerCount` reconciles against,
+    for a second flag."""
 
     def test_every_parse_shape_states_none(self):
         self.assertEqual(measure.statistics_flag_problems(), [])

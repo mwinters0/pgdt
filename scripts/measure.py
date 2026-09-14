@@ -2126,12 +2126,12 @@ QUERY_SUBSTREAM_CAP: dict[str, int] = {}
 SWEEP_JOBS = 1
 
 #: **Every `pgdq parse` this harness runs gathers no statistics.** `parse`
-#: gathers per-row-group statistics by default, reading every value and scanning
-#: a gathered table serially whatever `--jobs` says, so a shape that inherited
-#: the default would re-time what its figure measures the day the default
-#: moved — the failure `SWEEP_JOBS` is stated against. `statistics_flag_problems`
-#: refuses a shape that runs `parse` without it; `--preamble-only` reads no row
-#: and takes no statistics flag, so it states none.
+#: gathers per-row-group statistics by default, reading every value of every
+#: column, so a shape that inherited the default would re-time what its figure
+#: measures the day the default moved — the failure `SWEEP_JOBS` is stated
+#: against. `statistics_flag_problems` refuses a shape that runs `parse`
+#: without it; `--preamble-only` reads no row and takes no statistics flag, so
+#: it states none.
 NO_STATISTICS = "--statistics none"
 
 #: What the decode figure's container is given, against the register's 512 MB.
@@ -3251,9 +3251,8 @@ def statistics_flag_problems() -> list[str]:
     `NO_STATISTICS`.
 
     `parse` gathers statistics unless told not to, so such a shape times the
-    gathering default rather than the scan its figure names, and at any worker
-    count reads every gathered table serially. `--preamble-only` stops before
-    any row and refuses the flag, so it is exempt."""
+    gathering default rather than the scan its figure names. `--preamble-only`
+    stops before any row and refuses the flag, so it is exempt."""
     return [
         command
         for command in command_shapes()
@@ -10396,7 +10395,7 @@ def cmd_check(doc: Path) -> int:
     if gathering:
         print(
             "Command shapes running `parse` with statistics gathered — the CLI's default,\n"
-            f"which times the gathering and reads a gathered table serially. State `{NO_STATISTICS}`:"
+            f"which times the gathering rather than the scan. State `{NO_STATISTICS}`:"
         )
         for command in gathering:
             print(f"  {command}")

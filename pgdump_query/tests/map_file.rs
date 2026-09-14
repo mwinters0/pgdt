@@ -9,8 +9,9 @@
 //! listing.
 //!
 //! **Every scan here gathers nothing** (`StatisticsRequest::NONE`): the eager
-//! producer gathers no statistics to compare against, and a gathered block is
-//! never offered to the leader, which the parallel cases exist to reach.
+//! producer gathers no statistics to compare against. A gathering scan's
+//! parallel map is compared against a serial one instead, by
+//! `tests/statistics.rs` and `pgdump_query-cli/tests/determinism.rs`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

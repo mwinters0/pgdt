@@ -123,6 +123,11 @@ pub enum StatisticsTarget {
 /// Receives every row of one `COPY` block from the mapping pass and answers
 /// the block's statistics once it closes. Defined here and implemented at L4,
 /// the shape `docs/design/decisions.md`, "D74" gives a cross-layer trait.
+///
+/// **A block the leader splits is observed piece by piece**: each piece's rows
+/// go to an observer [`Self::piece`] made, and the pieces are handed back in
+/// file order to [`Self::absorb`], after which the block's observer answers
+/// what it would have had it been handed every row itself.
 pub(crate) trait BlockObserver: Send {
     /// One row, `offset` being where its first byte sits relative to the
     /// block's first data byte, and `raw` the still-escaped line without its
@@ -132,6 +137,19 @@ pub(crate) trait BlockObserver: Send {
     /// The block's statistics. `end` is the terminator line's offset relative
     /// to the block's first data byte — where the last row's line ends.
     fn finish(self: Box<Self>, end: u64) -> BlockStatistics;
+
+    /// An observer for a piece of this block: rows starting anywhere after the
+    /// ones this observer has been handed, to be given back to
+    /// [`Self::absorb`] rather than finished.
+    fn piece(&self) -> Box<dyn BlockObserver>;
+
+    /// Fold `later`, made by [`Self::piece`] and handed rows that all follow
+    /// every row this observer has seen, into this one.
+    fn absorb(&mut self, later: Box<dyn BlockObserver>);
+
+    /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
+    /// recovers the concrete piece it made.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
 
 /// One block's statistics, held by [`crate::index::CopyBlock::statistics`].

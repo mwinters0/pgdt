@@ -8,9 +8,18 @@
 //! keeps per-group bounds and the block's row order, under the key a filter
 //! orders by ([`ValueKey`]); and a column its comparison equates exactly keeps
 //! a dictionary per group.
+//!
+//! **A leader piece gathers into an observer of its own, and the pieces join
+//! in file order into exactly what one observer handed every row gathers**
+//! ([`Gatherer::join`]). Two things cross a join: the group a cut falls
+//! inside, which a piece holds open rather than closing ([`Gatherer::head`]),
+//! and each ordered column's first value, which the rows before the piece
+//! place their last value against ([`RowOrder`]).
 
+use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::mem;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{decode_bytea, render_bytea};
@@ -56,13 +65,7 @@ pub(crate) fn observer_for(
             })
         })
         .collect();
-    Some(Box::new(Gatherer {
-        group_size: request.group_size(),
-        groups: Vec::new(),
-        open: None,
-        splits: columns.iter().any(Option::is_some),
-        columns,
-    }))
+    Some(Box::new(Gatherer::block(request.group_size(), columns)))
 }
 
 /// The group a row is being added to.
@@ -74,7 +77,18 @@ struct OpenGroup {
 
 struct Gatherer {
     group_size: u64,
+    /// Whether this observes a piece of its block rather than the whole of it:
+    /// a piece lists no group ahead of its first row's, holds that group open
+    /// once a row moves past it, and is joined rather than finished.
+    piece: bool,
+    /// Every closed group in order, from the block's first — or, in a piece,
+    /// from the one after [`Self::head`].
     groups: Vec<RowGroup>,
+    /// A piece's first group once a later row has moved past it, with where
+    /// its last row ends. **Held open, not closed**: the rows before the piece
+    /// may have begun it, and only [`Gatherer::join`] knows. Each column's
+    /// state over it is [`ColumnGatherer::head`].
+    head: Option<(OpenGroup, u64)>,
     open: Option<OpenGroup>,
     /// Whether any column is tracked, so a row is worth splitting.
     splits: bool,
@@ -82,23 +96,102 @@ struct Gatherer {
 }
 
 impl Gatherer {
+    fn block(group_size: u64, columns: Vec<Option<ColumnGatherer>>) -> Self {
+        Self {
+            group_size,
+            piece: false,
+            groups: Vec::new(),
+            head: None,
+            open: None,
+            splits: columns.iter().any(Option::is_some),
+            columns,
+        }
+    }
+
     /// Close the open group, its last row's line ending at `end`, and list an
     /// empty group for every index short of `next`.
     fn close_through(&mut self, end: u64, next: u64) {
         let first = match self.open.take() {
             Some(group) => {
-                self.groups.push(RowGroup { rows: group.rows, bytes: end - group.first_start });
-                for column in self.columns.iter_mut().flatten() {
-                    column.close_group();
+                let after = group.index + 1;
+                if self.piece && self.head.is_none() {
+                    for column in self.columns.iter_mut().flatten() {
+                        column.hold_head();
+                    }
+                    self.head = Some((group, end));
+                } else {
+                    self.push_closed(group, end);
                 }
-                group.index + 1
+                after
             }
+            // A piece before its first row lists nothing ahead of it.
+            None if self.piece => next,
             None => 0,
         };
         for _ in first..next {
             self.groups.push(RowGroup { rows: 0, bytes: 0 });
             for column in self.columns.iter_mut().flatten() {
                 column.close_group();
+            }
+        }
+    }
+
+    fn push_closed(&mut self, group: OpenGroup, end: u64) {
+        self.groups.push(RowGroup { rows: group.rows, bytes: end - group.first_start });
+        for column in self.columns.iter_mut().flatten() {
+            column.close_group();
+        }
+    }
+
+    /// Fold `later`, a piece whose rows all follow this observer's in file
+    /// order, into it — leaving it as it would be had it observed those rows
+    /// itself. Its first group continues this one's open group where both hold
+    /// the same index, and each ordered column steps from this observer's last
+    /// value to the piece's first.
+    fn join(&mut self, mut later: Gatherer) {
+        debug_assert!(!self.piece && later.piece, "a block observer joins its pieces");
+        let (first, first_end) = match (later.head.take(), later.open.take()) {
+            (Some((group, end)), open) => {
+                later.open = open;
+                (group, Some(end))
+            }
+            (None, Some(group)) => (group, None),
+            // The piece held no row.
+            (None, None) => return,
+        };
+        let continues = self.open.as_ref().is_some_and(|open| open.index == first.index);
+        match &mut self.open {
+            Some(open) if continues => open.rows += first.rows,
+            _ => {
+                self.close_through(first.first_start, first.index);
+                self.open = Some(first);
+            }
+        }
+        for (mine, theirs) in self.columns.iter_mut().zip(&mut later.columns) {
+            let (Some(mine), Some(theirs)) = (mine, theirs) else { continue };
+            let state = match first_end {
+                Some(_) => theirs.head.take().expect("a piece past its first group holds it"),
+                None => theirs.take_group(),
+            };
+            if continues {
+                mine.group.absorb(state);
+            } else {
+                mine.group = state;
+            }
+            if let (Some(mine), Some(theirs)) = (&mut mine.bounds, &mut theirs.bounds) {
+                mine.rows.absorb(mem::take(&mut theirs.rows));
+            }
+        }
+        // The piece moved past its first group, so the group closes where the
+        // piece's next row starts and the piece's own closed groups follow.
+        let Some(end) = first_end else { return };
+        let open = self.open.take().expect("the joined group is open");
+        self.push_closed(open, end);
+        self.groups.append(&mut later.groups);
+        self.open = later.open;
+        for (mine, theirs) in self.columns.iter_mut().zip(later.columns) {
+            if let (Some(mine), Some(theirs)) = (mine, theirs) {
+                mine.append(theirs);
             }
         }
     }
@@ -125,6 +218,7 @@ impl BlockObserver for Gatherer {
     }
 
     fn finish(mut self: Box<Self>, end: u64) -> BlockStatistics {
+        debug_assert!(!self.piece, "a piece is joined, never finished");
         if let Some(group) = &self.open {
             let next = group.index + 1;
             self.close_through(end, next);
@@ -135,15 +229,32 @@ impl BlockObserver for Gatherer {
             columns: self.columns.into_iter().map(|c| c.map(ColumnGatherer::finish)).collect(),
         }
     }
+
+    fn piece(&self) -> Box<dyn BlockObserver> {
+        let columns = self.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh)).collect();
+        Box::new(Gatherer { piece: true, ..Gatherer::block(self.group_size, columns) })
+    }
+
+    fn absorb(&mut self, later: Box<dyn BlockObserver>) {
+        let later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
+        self.join(*later);
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
 }
 
 struct ColumnGatherer {
     declared_type: Option<String>,
     collation: Option<String>,
     null_counts: Vec<u64>,
-    group_nulls: u64,
     bounds: Option<BoundsGatherer>,
     dictionary: Option<DictionaryGatherer>,
+    /// The column over the open group.
+    group: GroupState,
+    /// The column over a piece's held first group ([`Gatherer::head`]).
+    head: Option<GroupState>,
 }
 
 impl ColumnGatherer {
@@ -162,48 +273,92 @@ impl ColumnGatherer {
             ),
             _ => (None, None),
         };
+        Self::with(declared_type, collation, bounds, dictionary)
+    }
+
+    fn with(
+        declared_type: Option<String>,
+        collation: Option<String>,
+        bounds: Option<BoundsGatherer>,
+        dictionary: Option<DictionaryGatherer>,
+    ) -> Self {
+        let group = GroupState::fresh(bounds.as_ref());
         Self {
             declared_type,
             collation,
             null_counts: Vec::new(),
-            group_nulls: 0,
             bounds,
             dictionary,
+            group,
+            head: None,
         }
+    }
+
+    /// A column of this one's kind that has gathered nothing: what a piece
+    /// starts from.
+    fn fresh(&self) -> Self {
+        Self::with(
+            self.declared_type.clone(),
+            self.collation.clone(),
+            self.bounds.as_ref().map(BoundsGatherer::fresh),
+            self.dictionary.as_ref().map(DictionaryGatherer::fresh),
+        )
+    }
+
+    /// The open group's state, leaving a fresh one open.
+    fn take_group(&mut self) -> GroupState {
+        let fresh = GroupState::fresh(self.bounds.as_ref());
+        mem::replace(&mut self.group, fresh)
+    }
+
+    fn hold_head(&mut self) {
+        self.head = Some(self.take_group());
     }
 
     fn observe(&mut self, field: &[u8]) {
         match decode_field(field) {
-            Ok(None) => self.group_nulls += 1,
+            Ok(None) => self.group.nulls += 1,
             Ok(Some(text)) => {
-                if let Some(bounds) = &mut self.bounds {
-                    bounds.observe(&text);
+                if let (Some(bounds), Some(group)) = (&mut self.bounds, &mut self.group.bounds) {
+                    bounds.observe(group, &text);
                 }
-                if let Some(dictionary) = &mut self.dictionary {
-                    dictionary.observe(&text);
+                if let Some(dictionary) = &self.dictionary {
+                    dictionary.observe(&mut self.group.texts, &text);
                 }
             }
             // Not text at all, so neither a key nor an entry: the group can
             // cover the row with neither, and the block's order is lost.
             Err(_) => {
-                if let Some(bounds) = &mut self.bounds {
-                    bounds.lose_value();
+                if let (Some(bounds), Some(group)) = (&mut self.bounds, &mut self.group.bounds) {
+                    bounds.lose_value(group);
                 }
-                if let Some(dictionary) = &mut self.dictionary {
-                    dictionary.group = None;
-                }
+                self.group.texts = None;
             }
         }
     }
 
     fn close_group(&mut self) {
-        self.null_counts.push(std::mem::take(&mut self.group_nulls));
-        if let Some(bounds) = &mut self.bounds {
-            bounds.close_group();
+        let group = self.take_group();
+        self.null_counts.push(group.nulls);
+        if let (Some(bounds), Some(group)) = (&mut self.bounds, group.bounds) {
+            bounds.close_group(group);
         }
         if let Some(dictionary) = &mut self.dictionary {
-            dictionary.close_group();
+            dictionary.close_group(group.texts);
         }
+    }
+
+    /// Append `later`'s closed groups, which follow this column's, and take
+    /// its open group as this one's.
+    fn append(&mut self, later: ColumnGatherer) {
+        self.null_counts.extend(later.null_counts);
+        if let (Some(mine), Some(theirs)) = (&mut self.bounds, later.bounds) {
+            mine.groups.extend(theirs.groups);
+        }
+        if let (Some(mine), Some(theirs)) = (&mut self.dictionary, later.dictionary) {
+            mine.append(theirs);
+        }
+        self.group = later.group;
     }
 
     fn finish(self) -> ColumnStatistics {
@@ -217,7 +372,49 @@ impl ColumnGatherer {
     }
 }
 
+/// One column over one group while the group is open.
+struct GroupState {
+    nulls: u64,
+    /// `None` for a column keeping no bounds.
+    bounds: Option<GroupBounds>,
+    /// The group's distinct texts in first-seen order, `None` once past a cap;
+    /// read only for a column keeping a dictionary.
+    texts: Option<Vec<String>>,
+}
+
+impl GroupState {
+    fn fresh(bounds: Option<&BoundsGatherer>) -> Self {
+        Self { nulls: 0, bounds: bounds.map(BoundsGatherer::fresh_group), texts: Some(Vec::new()) }
+    }
+
+    /// Fold `later`, the same column over the same group's following rows.
+    /// The texts fold as the rows would have: each new one appended until a
+    /// cap is passed.
+    fn absorb(&mut self, later: GroupState) {
+        self.nulls += later.nulls;
+        if let (Some(mine), Some(theirs)) = (&mut self.bounds, later.bounds) {
+            mine.absorb(theirs);
+        }
+        let Some(theirs) = later.texts else {
+            self.texts = None;
+            return;
+        };
+        let Some(mine) = &mut self.texts else { return };
+        for text in theirs {
+            if mine.contains(&text) {
+                continue;
+            }
+            if mine.len() == DICTIONARY_CAP {
+                self.texts = None;
+                return;
+            }
+            mine.push(text);
+        }
+    }
+}
+
 /// How a column's values are ordered while gathering.
+#[derive(Clone)]
 enum Order {
     /// By the text itself, bytewise, once put in [`Canonical`] form: never
     /// keyed, since a key copies the whole value and a value may be hundreds
@@ -266,6 +463,15 @@ const CLIP_BYTES: usize = STORED_VALUE_CAP + char::MAX.len_utf8();
 
 /// A bytewise value's first [`CLIP_BYTES`], which is all a stored bound is
 /// taken from.
+///
+/// **Two values whose heads cannot be told apart store the same bound.** A
+/// head that is not its whole value is at least `CLIP_BYTES` less one
+/// character long, so two values it cannot place against each other share
+/// more bytes than [`clipped_bounds`] reads of either. That is what lets a
+/// group's bounds be joined from two halves' heads ([`GroupBounds::absorb`])
+/// and still store what one pass over the group's values stores: each keeps a
+/// value no other value in its half is certainly beyond, and that value can
+/// differ from the true extreme only by bytes no stored bound holds.
 struct Clipped {
     head: String,
     /// Whether `head` is the whole value.
@@ -283,13 +489,42 @@ impl Clipped {
     /// values share every byte a stored bound reads, so either stands for
     /// the other in the group's bounds; only their row order is unknown.
     fn locate(&self, text: &str) -> Option<Ordering> {
-        let (head, text) = (self.head.as_bytes(), text.as_bytes());
-        let shared = head.len().min(text.len());
-        match text[..shared].cmp(&head[..shared]) {
-            Ordering::Equal if text.len() > head.len() => self.whole.then_some(Ordering::Greater),
-            Ordering::Equal if text.len() == head.len() && self.whole => Some(Ordering::Equal),
+        self.locate_bytes(text.as_bytes(), text.len())
+    }
+
+    /// [`Self::locate`] for a text known by its length and its first
+    /// [`CLIP_BYTES`] bytes (all of them, if it is shorter) — as much as the
+    /// answer reads — so a piece's first value is placed exactly as a row is.
+    fn locate_bytes(&self, prefix: &[u8], len: usize) -> Option<Ordering> {
+        let head = self.head.as_bytes();
+        let shared = head.len().min(len);
+        match prefix[..shared].cmp(&head[..shared]) {
+            Ordering::Equal if len > head.len() => self.whole.then_some(Ordering::Greater),
+            Ordering::Equal if len == head.len() && self.whole => Some(Ordering::Equal),
             Ordering::Equal => Some(Ordering::Less),
             unequal => Some(unequal),
+        }
+    }
+
+    /// Where `other`'s value orders against this one's, known only by their
+    /// heads: `None` exactly where the shorter head agrees with the longer and
+    /// is not its whole value, which [`Clipped`] says stores the same bound.
+    fn order(&self, other: &Clipped) -> Option<Ordering> {
+        let (mine, theirs) = (self.head.as_bytes(), other.head.as_bytes());
+        let shared = mine.len().min(theirs.len());
+        match theirs[..shared].cmp(&mine[..shared]) {
+            Ordering::Equal => {}
+            unequal => return Some(unequal),
+        }
+        match theirs.len().cmp(&mine.len()) {
+            Ordering::Less => other.whole.then_some(Ordering::Less),
+            Ordering::Greater => self.whole.then_some(Ordering::Greater),
+            Ordering::Equal => match (self.whole, other.whole) {
+                (true, true) => Some(Ordering::Equal),
+                (true, false) => Some(Ordering::Greater),
+                (false, true) => Some(Ordering::Less),
+                (false, false) => None,
+            },
         }
     }
 }
@@ -297,27 +532,137 @@ impl Clipped {
 struct BoundsGatherer {
     order: Order,
     groups: Vec<Option<Bounds>>,
-    group: GroupBounds,
-    never_decreased: bool,
-    never_increased: bool,
-    /// A value the block's order cannot place was seen.
-    order_lost: bool,
+    rows: RowOrder,
 }
 
-/// One group's running bounds, and the previous value for the block's order.
+/// One group's running bounds.
 enum GroupBounds {
+    Bytewise { min: Option<Clipped>, max: Option<Clipped>, lost: bool },
+    Keyed { min: Option<(ValueKey, String)>, max: Option<(ValueKey, String)>, lost: bool },
+}
+
+impl GroupBounds {
+    /// Fold `later`, the same group's bounds over its following rows. Keyed
+    /// extremes keep the earliest of equal keys, as a pass does; bytewise ones
+    /// are placed by their heads alone ([`Clipped`]).
+    fn absorb(&mut self, later: GroupBounds) {
+        match (self, later) {
+            (
+                Self::Bytewise { min, max, lost },
+                Self::Bytewise { min: later_min, max: later_max, lost: later_lost },
+            ) => {
+                *lost |= later_lost;
+                if let Some(value) = later_min
+                    && min.as_ref().is_none_or(|m| m.order(&value) == Some(Ordering::Less))
+                {
+                    *min = Some(value);
+                }
+                if let Some(value) = later_max
+                    && max.as_ref().is_none_or(|m| m.order(&value) == Some(Ordering::Greater))
+                {
+                    *max = Some(value);
+                }
+            }
+            (
+                Self::Keyed { min, max, lost },
+                Self::Keyed { min: later_min, max: later_max, lost: later_lost },
+            ) => {
+                *lost |= later_lost;
+                if let Some(value) = later_min
+                    && min.as_ref().is_none_or(|(m, _)| value.0.compare(m) == Ordering::Less)
+                {
+                    *min = Some(value);
+                }
+                if let Some(value) = later_max
+                    && max.as_ref().is_none_or(|(m, _)| value.0.compare(m) == Ordering::Greater)
+                {
+                    *max = Some(value);
+                }
+            }
+            _ => unreachable!("one column's groups keep one kind of bounds"),
+        }
+    }
+}
+
+/// A column's row order over the rows observed so far: the block's
+/// [`Sortedness`] once every row is in.
+struct RowOrder {
+    /// The first value placed, carried to a join as much as places it against
+    /// the value before it.
+    first: Option<FirstValue>,
+    /// The last value placed.
+    previous: Option<Previous>,
+    never_decreased: bool,
+    never_increased: bool,
+    /// A value the order cannot place was seen.
+    lost: bool,
+}
+
+/// A column's first value, kept for the join.
+enum FirstValue {
+    /// Its length and its first [`CLIP_BYTES`] bytes, cut at a byte rather
+    /// than a character: [`Clipped::locate_bytes`] reads no more.
     Bytewise {
-        min: Option<Clipped>,
-        max: Option<Clipped>,
-        previous: Option<Clipped>,
-        lost: bool,
+        prefix: Vec<u8>,
+        len: usize,
     },
-    Keyed {
-        min: Option<(ValueKey, String)>,
-        max: Option<(ValueKey, String)>,
-        previous: Option<ValueKey>,
-        lost: bool,
-    },
+    Keyed(ValueKey),
+}
+
+enum Previous {
+    Bytewise(Clipped),
+    Keyed(ValueKey),
+}
+
+impl Default for RowOrder {
+    fn default() -> Self {
+        Self {
+            first: None,
+            previous: None,
+            never_decreased: true,
+            never_increased: true,
+            lost: false,
+        }
+    }
+}
+
+impl RowOrder {
+    /// Fold one step of the row order: `step` is where the value orders
+    /// against the previous one, `None` where that is unknown.
+    fn step(&mut self, step: Option<Ordering>) {
+        match step {
+            Some(Ordering::Less) => self.never_decreased = false,
+            Some(Ordering::Greater) => self.never_increased = false,
+            Some(Ordering::Equal) => {}
+            None => self.lost = true,
+        }
+    }
+
+    /// Fold `later`, the order over the rows following these: one step across
+    /// the join, then its own.
+    fn absorb(&mut self, later: RowOrder) {
+        if let (Some(previous), Some(first)) = (&self.previous, &later.first) {
+            let step = match (previous, first) {
+                (Previous::Bytewise(previous), FirstValue::Bytewise { prefix, len }) => {
+                    previous.locate_bytes(prefix, *len)
+                }
+                (Previous::Keyed(previous), FirstValue::Keyed(first)) => {
+                    Some(first.compare(previous))
+                }
+                _ => unreachable!("one column's values are ordered one way"),
+            };
+            self.step(step);
+        }
+        self.never_decreased &= later.never_decreased;
+        self.never_increased &= later.never_increased;
+        self.lost |= later.lost;
+        if self.first.is_none() {
+            self.first = later.first;
+        }
+        if later.previous.is_some() {
+            self.previous = later.previous;
+        }
+    }
 }
 
 impl BoundsGatherer {
@@ -328,49 +673,34 @@ impl BoundsGatherer {
             CompareKind::Bytea => Order::Bytewise(Canonical::Bytea),
             kind => Order::Keyed(kind),
         };
-        let group = match order {
-            Order::Bytewise(_) => {
-                GroupBounds::Bytewise { min: None, max: None, previous: None, lost: false }
-            }
-            Order::Keyed(_) => {
-                GroupBounds::Keyed { min: None, max: None, previous: None, lost: false }
-            }
-        };
-        Self {
-            order,
-            groups: Vec::new(),
-            group,
-            never_decreased: true,
-            never_increased: true,
-            order_lost: false,
+        Self { order, groups: Vec::new(), rows: RowOrder::default() }
+    }
+
+    fn fresh(&self) -> Self {
+        Self { order: self.order.clone(), groups: Vec::new(), rows: RowOrder::default() }
+    }
+
+    fn fresh_group(&self) -> GroupBounds {
+        match self.order {
+            Order::Bytewise(_) => GroupBounds::Bytewise { min: None, max: None, lost: false },
+            Order::Keyed(_) => GroupBounds::Keyed { min: None, max: None, lost: false },
         }
     }
 
     /// A value that does not key, or that no stored bound could cover: no
     /// bounds for its group, and no order for its block.
-    fn lose_value(&mut self) {
-        match &mut self.group {
+    fn lose_value(&mut self, group: &mut GroupBounds) {
+        match group {
             GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => *lost = true,
         }
-        self.order_lost = true;
+        self.rows.lost = true;
     }
 
-    /// Fold one step of the block's row order: `step` is where the value
-    /// orders against the previous one, `None` where that is unknown.
-    fn step(&mut self, step: Option<Ordering>) {
-        match step {
-            Some(Ordering::Less) => self.never_decreased = false,
-            Some(Ordering::Greater) => self.never_increased = false,
-            Some(Ordering::Equal) => {}
-            None => self.order_lost = true,
-        }
-    }
-
-    fn observe(&mut self, text: &str) {
+    fn observe(&mut self, group: &mut GroupBounds, text: &str) {
         match &self.order {
             Order::Bytewise(canonical) => {
-                let Some(text) = canonical.of(text) else { return self.lose_value() };
-                let GroupBounds::Bytewise { min, max, previous, .. } = &mut self.group else {
+                let Some(text) = canonical.of(text) else { return self.lose_value(group) };
+                let GroupBounds::Bytewise { min, max, .. } = group else {
                     unreachable!("a bytewise order keeps bytewise bounds")
                 };
                 if min.as_ref().is_none_or(|m| m.locate(text) == Some(Ordering::Less)) {
@@ -379,18 +709,26 @@ impl BoundsGatherer {
                 if max.as_ref().is_none_or(|m| m.locate(text) == Some(Ordering::Greater)) {
                     *max = Some(Clipped::of(text));
                 }
-                let step = previous.as_ref().map(|p| p.locate(text));
-                *previous = Some(Clipped::of(text));
+                let step = match &self.rows.previous {
+                    Some(Previous::Bytewise(previous)) => Some(previous.locate(text)),
+                    Some(Previous::Keyed(_)) => unreachable!("a bytewise order places no key"),
+                    None => {
+                        let prefix = text.as_bytes()[..text.len().min(CLIP_BYTES)].to_vec();
+                        self.rows.first = Some(FirstValue::Bytewise { prefix, len: text.len() });
+                        None
+                    }
+                };
+                self.rows.previous = Some(Previous::Bytewise(Clipped::of(text)));
                 if let Some(step) = step {
-                    self.step(step);
+                    self.rows.step(step);
                 }
             }
             Order::Keyed(kind) => {
                 if text.len() > STORED_VALUE_CAP {
-                    return self.lose_value();
+                    return self.lose_value(group);
                 }
-                let Some(key) = ValueKey::of(kind, text) else { return self.lose_value() };
-                let GroupBounds::Keyed { min, max, previous, .. } = &mut self.group else {
+                let Some(key) = ValueKey::of(kind, text) else { return self.lose_value(group) };
+                let GroupBounds::Keyed { min, max, .. } = group else {
                     unreachable!("a keyed order keeps keyed bounds")
                 };
                 if min.as_ref().is_none_or(|(m, _)| key.compare(m) == Ordering::Less) {
@@ -399,44 +737,42 @@ impl BoundsGatherer {
                 if max.as_ref().is_none_or(|(m, _)| key.compare(m) == Ordering::Greater) {
                     *max = Some((key.clone(), text.to_owned()));
                 }
-                let step = previous.as_ref().map(|p| key.compare(p));
-                *previous = Some(key);
+                let step = match &self.rows.previous {
+                    Some(Previous::Keyed(previous)) => Some(key.compare(previous)),
+                    Some(Previous::Bytewise(_)) => unreachable!("a keyed order places no head"),
+                    None => {
+                        self.rows.first = Some(FirstValue::Keyed(key.clone()));
+                        None
+                    }
+                };
+                self.rows.previous = Some(Previous::Keyed(key));
                 if let Some(step) = step {
-                    self.step(Some(step));
+                    self.rows.step(Some(step));
                 }
             }
         }
     }
 
-    fn close_group(&mut self) {
-        let bounds = match &mut self.group {
-            GroupBounds::Bytewise { min, max, lost, .. } => {
-                match (std::mem::take(lost), min.take(), max.take()) {
-                    (false, Some(min), Some(max)) => {
-                        let Order::Bytewise(canonical) = self.order else { unreachable!() };
-                        clipped_bounds(canonical, &min, &max)
-                    }
-                    _ => None,
-                }
+    fn close_group(&mut self, group: GroupBounds) {
+        let bounds = match group {
+            GroupBounds::Bytewise { lost: false, min: Some(min), max: Some(max) } => {
+                let Order::Bytewise(canonical) = self.order else { unreachable!() };
+                clipped_bounds(canonical, &min, &max)
             }
-            GroupBounds::Keyed { min, max, lost, .. } => {
-                match (std::mem::take(lost), min.take(), max.take()) {
-                    (false, Some((_, min)), Some((_, max))) => {
-                        Some(Bounds { min, max, max_exact: true })
-                    }
-                    _ => None,
-                }
+            GroupBounds::Keyed { lost: false, min: Some((_, min)), max: Some((_, max)) } => {
+                Some(Bounds { min, max, max_exact: true })
             }
+            _ => None,
         };
         self.groups.push(bounds);
     }
 
     fn finish(self) -> ColumnBounds {
-        let sortedness = if self.order_lost {
+        let sortedness = if self.rows.lost {
             Sortedness::Unsorted
-        } else if self.never_decreased {
+        } else if self.rows.never_decreased {
             Sortedness::Ascending
-        } else if self.never_increased {
+        } else if self.rows.never_increased {
             Sortedness::Descending
         } else {
             Sortedness::Unsorted
@@ -530,8 +866,6 @@ struct DictionaryGatherer {
     entries: Vec<String>,
     interned: HashMap<String, u32>,
     groups: Vec<Option<Vec<u32>>>,
-    /// The group's distinct texts in first-seen order; `None` once past a cap.
-    group: Option<Vec<String>>,
 }
 
 impl DictionaryGatherer {
@@ -541,40 +875,57 @@ impl DictionaryGatherer {
             entries: Vec::new(),
             interned: HashMap::new(),
             groups: Vec::new(),
-            group: Some(Vec::new()),
         }
     }
 
-    fn observe(&mut self, text: &str) {
-        let Some(group) = &mut self.group else { return };
+    fn fresh(&self) -> Self {
+        Self {
+            padded: self.padded,
+            entries: Vec::new(),
+            interned: HashMap::new(),
+            groups: Vec::new(),
+        }
+    }
+
+    /// Add `text` to a group's distinct `texts`, which a cap passed leaves
+    /// `None`.
+    fn observe(&self, texts: &mut Option<Vec<String>>, text: &str) {
+        let Some(group) = texts else { return };
         let text = if self.padded { text.trim_end_matches(' ') } else { text };
         if group.iter().any(|seen| seen == text) {
             return;
         }
         if text.len() > STORED_VALUE_CAP || group.len() == DICTIONARY_CAP {
-            self.group = None;
+            *texts = None;
             return;
         }
         group.push(text.to_owned());
     }
 
-    fn close_group(&mut self) {
-        let group = self.group.replace(Vec::new());
-        let indices = group.map(|texts| {
-            texts
-                .into_iter()
-                .map(|text| match self.interned.get(&text) {
-                    Some(&id) => id,
-                    None => {
-                        let id = self.entries.len() as u32;
-                        self.entries.push(text.clone());
-                        self.interned.insert(text, id);
-                        id
-                    }
-                })
-                .collect()
-        });
+    fn intern(&mut self, text: &str) -> u32 {
+        if let Some(&id) = self.interned.get(text) {
+            return id;
+        }
+        let id = self.entries.len() as u32;
+        self.entries.push(text.to_owned());
+        self.interned.insert(text.to_owned(), id);
+        id
+    }
+
+    fn close_group(&mut self, texts: Option<Vec<String>>) {
+        let indices = texts.map(|texts| texts.iter().map(|text| self.intern(text)).collect());
         self.groups.push(indices);
+    }
+
+    /// Append `later`'s groups, which follow this dictionary's, interning
+    /// their entries here in the order a pass closing them would have.
+    fn append(&mut self, later: DictionaryGatherer) {
+        let DictionaryGatherer { entries, groups, .. } = later;
+        for group in groups {
+            let indices =
+                group.map(|ids| ids.iter().map(|&id| self.intern(&entries[id as usize])).collect());
+            self.groups.push(indices);
+        }
     }
 
     fn finish(self) -> ColumnDictionary {
@@ -667,19 +1018,21 @@ mod tests {
                 all.sort_by(|a, b| {
                     ValueKey::of(kind, a).unwrap().compare(&ValueKey::of(kind, b).unwrap())
                 });
+                let mut state = gatherer.fresh_group();
                 for v in &all {
-                    gatherer.observe(v);
+                    gatherer.observe(&mut state, v);
                 }
-                gatherer.close_group();
+                gatherer.close_group(state);
                 let column = gatherer.finish();
                 assert_ne!(column.sortedness, Sortedness::Descending, "{kind:?}: sorted input");
                 continue;
             }
             for group in &groups {
+                let mut state = gatherer.fresh_group();
                 for v in group {
-                    gatherer.observe(v);
+                    gatherer.observe(&mut state, v);
                 }
-                gatherer.close_group();
+                gatherer.close_group(state);
             }
             let all: Vec<&String> = groups.iter().flatten().collect();
             let column = gatherer.finish();
@@ -736,6 +1089,159 @@ mod tests {
         }
         assert!(bounded > 300, "only {bounded} groups bounded");
         assert!(ordered > 50, "only {ordered} blocks ordered");
+    }
+
+    /// The kinds the join test's columns are compared by, a bytewise kind of
+    /// each canonical form and a keyed one.
+    const JOIN_KINDS: [CompareKind; 4] =
+        [CompareKind::Text, CompareKind::PaddedText, CompareKind::Bytea, CompareKind::Int];
+
+    /// A block's columns: one per [`JOIN_KINDS`], each keeping bounds and a
+    /// dictionary, and an untracked one.
+    fn join_columns() -> Vec<Option<ColumnGatherer>> {
+        let plan =
+            |kind: &CompareKind| ComparisonPlan::Compared { kind: kind.clone(), divergence: None };
+        JOIN_KINDS
+            .iter()
+            .map(|kind| Some(ColumnGatherer::new(None, None, &plan(kind), &NestedPlan::Scalar)))
+            .chain([None])
+            .collect()
+    }
+
+    /// One field as `COPY` writes it: a backslash doubled.
+    fn escaped(text: &str) -> Vec<u8> {
+        text.replace('\\', "\\\\").into_bytes()
+    }
+
+    /// **A block observed in pieces, joined in file order, gathers exactly what
+    /// one observer handed every row gathers** — over random blocks whose
+    /// groups straddle the cuts, whose bytewise values share heads past the
+    /// cap, and which hold NULLs, values that do not key or are not text,
+    /// dictionaries on both sides of their cap, and sorted columns a cut
+    /// falls inside.
+    #[test]
+    fn pieces_joined_in_file_order_gather_what_one_pass_gathers() {
+        let mut rng = Rng(0x0001_0105);
+        let (mut straddles, mut ordered, mut inexact, mut dictionaries, mut overflowed) =
+            (0, 0, 0, 0, 0);
+        for round in 0..600 {
+            // Every fourth round is short values in wide groups, so a
+            // dictionary on each side of a cut can pass the count cap between them.
+            let short = round % 4 == 1;
+            let group_size =
+                if short { 4096 } else { [16u64, 64, 256, 700, 4096][rng.below(5) as usize] };
+            let sorted = round % 3 == 0;
+            let rows = if short { 60 + rng.below(140) } else { rng.below(120) } as usize;
+            // A small pool per column for some rounds, so dictionaries fit.
+            let pool = 2 + rng.below(if round % 2 == 0 { 6 } else { 200 });
+            let columns: Vec<Vec<Option<Vec<u8>>>> = JOIN_KINDS
+                .iter()
+                .map(|kind| {
+                    let base = value(&mut rng, kind);
+                    let values: Vec<String> = (0..pool)
+                        .map(|_| {
+                            let v = match kind {
+                                CompareKind::Bytea if short => {
+                                    render_bytea(&(rng.below(1 << 16) as u16).to_be_bytes())
+                                }
+                                _ if short => rng.below(1000).to_string(),
+                                _ => value(&mut rng, kind),
+                            };
+                            match kind {
+                                CompareKind::Text | CompareKind::PaddedText
+                                    if rng.below(2) == 0 =>
+                                {
+                                    format!("{base}{v}")
+                                }
+                                _ => v,
+                            }
+                        })
+                        .collect();
+                    let mut drawn: Vec<String> =
+                        (0..rows).map(|_| values[rng.below(pool) as usize].clone()).collect();
+                    if sorted {
+                        let key = |v: &String| ValueKey::of(kind, v).unwrap();
+                        drawn.sort_by(|a, b| key(a).compare(&key(b)));
+                        if rng.below(2) == 0 {
+                            drawn.reverse();
+                        }
+                    }
+                    drawn
+                        .into_iter()
+                        .map(|v| match rng.below(40) {
+                            0..=4 => None,
+                            5 if !sorted && !short => Some(vec![0xff, b'a']),
+                            6 if !sorted && matches!(kind, CompareKind::Int) => Some(b"x".to_vec()),
+                            6 if !sorted && matches!(kind, CompareKind::Bytea) => {
+                                Some(escaped("\\xABC"))
+                            }
+                            _ => Some(escaped(&v)),
+                        })
+                        .collect()
+                })
+                .collect();
+            let lines: Vec<Vec<u8>> = (0..rows)
+                .map(|r| {
+                    let mut line = Vec::new();
+                    for column in &columns {
+                        line.extend(column[r].clone().unwrap_or_else(|| b"\\N".to_vec()));
+                        line.push(b'\t');
+                    }
+                    line.extend(b"untracked");
+                    line
+                })
+                .collect();
+            let mut offsets = Vec::with_capacity(rows);
+            let mut end = 0u64;
+            for line in &lines {
+                offsets.push(end);
+                end += line.len() as u64 + 1;
+            }
+
+            let mut serial = Gatherer::block(group_size, join_columns());
+            for (line, &offset) in lines.iter().zip(&offsets) {
+                serial.observe_row(offset, line);
+            }
+            let serial = Box::new(serial).finish(end);
+
+            let cut_odds = 1 + rng.below(30);
+            let mut block: Box<dyn BlockObserver> =
+                Box::new(Gatherer::block(group_size, join_columns()));
+            let mut piece = block.piece();
+            for (r, (line, &offset)) in lines.iter().zip(&offsets).enumerate() {
+                if r > 0 && rng.below(cut_odds) == 0 {
+                    block.absorb(mem::replace(&mut piece, block.piece()));
+                    if rng.below(4) == 0 {
+                        block.absorb(block.piece());
+                    }
+                    if offsets[r - 1] / group_size == offset / group_size {
+                        straddles += 1;
+                    }
+                }
+                piece.observe_row(offset, line);
+            }
+            block.absorb(piece);
+            let joined = block.finish(end);
+            assert_eq!(joined, serial, "round {round}");
+
+            for column in joined.columns.iter().flatten() {
+                let bounds = column.bounds.as_ref().unwrap();
+                if bounds.sortedness != Sortedness::Unsorted && rows > 10 {
+                    ordered += 1;
+                }
+                inexact += bounds.groups.iter().flatten().filter(|b| !b.max_exact).count();
+                let dictionary = column.dictionary.as_ref().unwrap();
+                dictionaries += dictionary.groups.iter().flatten().filter(|g| g.len() > 1).count();
+                if short {
+                    overflowed += dictionary.groups.iter().filter(|g| g.is_none()).count();
+                }
+            }
+        }
+        assert!(straddles > 500, "only {straddles} cuts fell inside a group");
+        assert!(ordered > 200, "only {ordered} columns ordered");
+        assert!(inexact > 500, "only {inexact} truncated upper bounds");
+        assert!(dictionaries > 500, "only {dictionaries} dictionaries of several entries");
+        assert!(overflowed > 50, "only {overflowed} dictionaries past their count cap");
     }
 
     fn cmp_text(a: &str, b: &str) -> Ordering {

@@ -52,19 +52,27 @@ use common::{all_fixtures, run, stderr_of};
 /// source's stored size and mtime, so every leg of a comparison has to be
 /// looking at one file. Only the cache path moves.
 ///
-/// **Every leg gathers no statistics.** A table gathered for is read by the
-/// serial scanner whatever `--jobs` says, so a gathering leg would be the
-/// serial path compared to itself.
+/// **These legs gather no statistics**, so a difference in the map is not
+/// hidden among them; [`gathered_cache_of`] is the same run gathering.
 fn cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
-    let mut args = vec![
-        "parse",
-        "--source",
-        dump.to_str().unwrap(),
-        "--dqcache",
-        out.to_str().unwrap(),
-        "--statistics",
-        "none",
-    ];
+    parse_cache(dump, out, &["--statistics", "none"], extra)
+}
+
+/// `pgdq parse` gathering every statistic at [`TINY_GROUP`] bytes a group, so
+/// every fixture block holds many groups and nearly every cut falls inside one.
+fn gathered_cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
+    parse_cache(dump, out, &["--statistics-group-size", TINY_GROUP], extra)
+}
+
+/// The group size the gathering legs state: tens of bytes, where the shipped
+/// mebibyte makes every fixture block one group and a join has nothing to
+/// cross.
+const TINY_GROUP: &str = "32";
+
+fn parse_cache(dump: &Path, out: &Path, statistics: &[&str], extra: &[&str]) -> Vec<u8> {
+    let mut args = vec!["parse", "--source", dump.to_str().unwrap(), "--dqcache"];
+    args.push(out.to_str().unwrap());
+    args.extend_from_slice(statistics);
     args.extend_from_slice(extra);
     let output = run(&args);
     assert!(
@@ -125,6 +133,32 @@ fn every_fixture_parses_to_the_same_cache_at_every_stated_parallelism() {
             cache_of(fixture, &dir.path().join(format!("{n}-serial.dqcache")), &["--jobs", "1"]);
         for (l, leg) in legs.iter().enumerate() {
             let got = cache_of(fixture, &dir.path().join(format!("{n}-{l}.dqcache")), leg);
+            assert_same_cache(&got, &reference, fixture, leg);
+        }
+    }
+}
+
+/// **Statistics gathered by workers are the serial pass's, byte for byte.**
+/// The same sweep with every statistic gathered at a group size of tens of
+/// bytes: a cut the leader makes inside a group joins the two halves' bounds,
+/// dictionaries and row order, and a mistake there is a different cache.
+#[test]
+fn every_fixture_gathers_the_same_statistics_at_every_stated_parallelism() {
+    let dir = tempfile::tempdir().unwrap();
+    let legs: [&[&str]; 4] = [
+        &["--jobs", "1", "--chunk-size", "64"],
+        &["--jobs", "8", "--chunk-size", "64"],
+        &["--jobs", "3", "--chunk-size", "64"],
+        &["--jobs", "8", "--chunk-size", "512"],
+    ];
+    for (n, fixture) in all_fixtures().iter().enumerate() {
+        let reference = gathered_cache_of(
+            fixture,
+            &dir.path().join(format!("{n}-serial.dqcache")),
+            &["--jobs", "1"],
+        );
+        for (l, leg) in legs.iter().enumerate() {
+            let got = gathered_cache_of(fixture, &dir.path().join(format!("{n}-{l}.dqcache")), leg);
             assert_same_cache(&got, &reference, fixture, leg);
         }
     }

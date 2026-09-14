@@ -18,10 +18,6 @@ grilled and sliced"). No query reads a statistic yet.
   `CopyStart` through `Builder::observe_block`, only when `map_file`'s request
   tracks the block, after the metadata restatement so the block resolves against its own
   database; `Builder::on_row` now takes the row's absolute offset.
-- **The leader is never offered a gathered block**: `map_forward` skips the
-  offer and reports `leader::gathering_shortfall`, a `scan arrangement` line
-  with `bound_by="statistics"`. An untracked block (a selection naming other
-  tables) is still split.
 - **`FORMAT_VERSION` is 18**, and `predicate.rs`'s
   `golden_order_is_pinned_to_the_format_version` pins `GOLDEN_ORDER` beside it.
 - **`pgdq parse --statistics <all|none|list>` and `--statistics-group-size`**;
@@ -34,13 +30,7 @@ grilled and sliced"). No query reads a statistic yet.
 - **10.5.** Landed: [its notes](roadmap-P10.5-reporting-notes.md). `columns`
   is positional to the header, `None` untracked. An empty group (`rows == 0`)
   holds a zero NULL count, no bounds and an empty dictionary.
-- **10.6.** `Gatherer` assumes rows in offset order, one block at a time. A
-  piece join has to carry each tracked column's open group and its previous
-  value — a `Clipped` head for a bytewise kind, a `ValueKey` otherwise — and
-  answer the join's step through `Clipped::locate`, whose `None` is `Unsorted`.
-  Deleting the `continue` after `observe_block` is what re-offers the leader;
-  `tests/statistics.rs`'s `a_gathering_scan_is_the_serial_scan_whatever_the_worker_count`
-  fails without it and is the test to turn into serial-equals-parallel.
+- **10.6.** Landed: [its notes](roadmap-P10.6-parallel-gathering-notes.md).
 - **10.7.** `StatisticsRequest::group_size` is `None` when unstated, and each
   block records the size it was gathered at. A resumed `parse` gathers only the
   blocks it maps; a block mapped under `--statistics none`, or outside a

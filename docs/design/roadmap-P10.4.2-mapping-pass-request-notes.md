@@ -39,9 +39,9 @@ What the later P10 slices inherit from this one. The spec is
 - **10.8.** The spec's "`pgdq query --statistics none`, and its library option"
   is a switch on *pruning*, a query option; it is not a `StatisticsRequest`,
   which no query entry point accepts.
-- **10.6.** Every `tests/map_file.rs` scan and both `tests/wait_policy.rs`
-  scans state `NONE`, since a gathered block is never offered to the leader.
-  When 10.6 re-offers it, those are the tests to widen to the default request.
+- **10.6.** Landed: [its notes](roadmap-P10.6-parallel-gathering-notes.md).
+  `tests/wait_policy.rs` gathers; `tests/map_file.rs` still states `NONE`, its
+  eager reference gathering nothing.
 
 ## Negative results
 

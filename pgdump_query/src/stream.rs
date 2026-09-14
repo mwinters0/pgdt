@@ -420,8 +420,8 @@ enum MapStop {
 ///
 /// **`statistics` is what to gather, and only [`map_file`] passes one that
 /// gathers**: a query's pass is [`StatisticsRequest::NONE`]. A block it tracks
-/// is observed row by row on this loop and is never offered to the leader,
-/// whose pieces carry no observer.
+/// is observed row by row on this loop, or piece by piece where the leader
+/// takes it.
 async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -566,21 +566,16 @@ async fn map_forward(
                         });
                         if let Some(observer) = observer {
                             builder.observe_block(observer);
-                            // **The leader is not offered a gathered block**:
-                            // its pieces carry no observer, so the serial
-                            // scanner reads it.
-                            report_shortfall(
-                                &mut shortfall_reported,
-                                leader::gathering_shortfall(scan_options),
-                            );
-                            continue;
                         }
                         // **The offer, and this loop is the leader making it**
                         // (`crate::leader::scan_region`): everything from
                         // `data_offset` until `\.` is line-structured rows, so
                         // the region may be handed to workers that never parse
                         // structure. It answers the block's totals as the
-                        // serial scanner would have, or declines.
+                        // serial scanner would have, or declines — and a
+                        // block it closes holds the statistics its pieces
+                        // observed, as a declined one does the rows this loop
+                        // hands on.
                         let outcome = leader::scan_region(
                             source,
                             scan_options,
@@ -588,6 +583,7 @@ async fn map_forward(
                             data_offset,
                             columns,
                             size,
+                            builder.block_observer(),
                         )
                         .await?;
                         report_shortfall(&mut shortfall_reported, outcome.shortfall);

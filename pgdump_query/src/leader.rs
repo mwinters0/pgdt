@@ -34,6 +34,7 @@ use crate::index::ArrayShape;
 use crate::io::{ByteRangeSource, PartitionRead, Partitioning, WaitPolicy};
 use crate::map::census_row;
 use crate::scan::{CopyEnd, CopyScanner, Event, ScanOptions};
+use crate::statistics::BlockObserver;
 use crate::stream::{cut, worker_count};
 use crate::{Error, Result};
 
@@ -91,6 +92,13 @@ pub(crate) struct Interior {
     pub end: CopyEnd,
 }
 
+/// A piece's statistics observer ([`BlockObserver::piece`]), and the block's
+/// first data byte, which the rows it is handed are placed against.
+pub(crate) struct PieceObserver {
+    observer: Box<dyn BlockObserver>,
+    data_offset: u64,
+}
+
 /// Scan one piece of an open `COPY` block's interior.
 ///
 /// `bytes` are the file's bytes starting at absolute offset `base`, and they
@@ -100,8 +108,9 @@ pub(crate) struct Interior {
 ///
 /// `columns` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list; a header-less block states zero and the rows grow
-/// it. **Pure and synchronous**: this is the body a `spawn_blocking` worker
-/// runs, so it takes a slice rather than a source
+/// it. Every row the piece owns is handed to `observer`, where the block
+/// gathers statistics. **Pure and synchronous**: this is the body a
+/// `spawn_blocking` worker runs, so it takes a slice rather than a source
 /// (`docs/design/decisions.md`, "D52").
 pub(crate) fn scan_piece(
     bytes: &[u8],
@@ -109,6 +118,7 @@ pub(crate) fn scan_piece(
     entry: PieceEntry,
     limit: u64,
     columns: usize,
+    mut observer: Option<&mut PieceObserver>,
 ) -> Result<PieceScan> {
     let empty = |through: u64, next: PieceEntry| PieceScan {
         rows: 0,
@@ -152,6 +162,9 @@ pub(crate) fn scan_piece(
             Event::Row(row) => {
                 rows += 1;
                 census_row(&mut census, row.raw);
+                if let Some(piece) = &mut observer {
+                    piece.observer.observe_row(row.offset - piece.data_offset, row.raw);
+                }
             }
             Event::CopyEnd(end) => {
                 terminator = Some((end.terminator_offset, end.end_offset));
@@ -267,9 +280,6 @@ pub(crate) enum BoundBy {
     /// The source would be split, and the caller's memory budget affords fewer
     /// readers of it than were asked for (`crate::stream::worker_count`).
     Budget,
-    /// The scan gathers statistics, and a gathered block is read by the serial
-    /// scanner rather than offered here ([`gathering_shortfall`]).
-    Statistics,
 }
 
 impl BoundBy {
@@ -279,7 +289,6 @@ impl BoundBy {
         match self {
             Self::Source => "source",
             Self::Budget => "budget",
-            Self::Statistics => "statistics",
         }
     }
 }
@@ -288,10 +297,9 @@ impl BoundBy {
 /// refused would have held.
 ///
 /// **It reports the rules that answer for the arrangement, and not the one
-/// that answers for a block.** Two are read off the source's advice over *the
-/// rest of the file* and the caller's budget, and the third off the scan's
-/// statistics request ([`gathering_shortfall`]), so one line stands for the
-/// whole scan. [`scan_region`]'s floor is the other way to be left serial
+/// that answers for a block.** Both are read off the source's advice over *the
+/// rest of the file* and the caller's budget, so one line stands for the whole
+/// scan. [`scan_region`]'s floor is the other way to be left serial
 /// and is deliberately not reported: it is an end-of-file condition and would
 /// fire on the last block of every file.
 ///
@@ -318,21 +326,6 @@ pub(crate) struct Shortfall {
     pub(crate) would_hold_bytes: Option<u64>,
 }
 
-/// What a scan gathering statistics delivers short of `options`' count: one
-/// reader, where more were asked for. A gathered block is never offered to
-/// [`scan_region`], its pieces carrying no statistics observer, so the reason
-/// holds at every such block and one line stands for the scan. `None` where
-/// one reader was asked for.
-pub(crate) fn gathering_shortfall(options: &ScanOptions) -> Option<Shortfall> {
-    let asked = options.parallelism.jobs();
-    (asked > 1).then_some(Shortfall {
-        asked,
-        delivered: 1,
-        bound_by: BoundBy::Statistics,
-        would_hold_bytes: None,
-    })
-}
-
 /// Scan the interior of the `COPY` block that opens at `data_offset` with
 /// concurrent fused workers, and answer the block's totals.
 ///
@@ -346,6 +339,12 @@ pub(crate) fn gathering_shortfall(options: &ScanOptions) -> Option<Shortfall> {
 /// [`Error::UnterminatedCopyBlock`], which is this function's to raise: a
 /// [`scan_piece`] never claims end of file, and the leader is the only party
 /// that knows there is none left.
+///
+/// **`observer` is the block's statistics observer, where it gathers any.**
+/// Each partition observes its rows into one [`BlockObserver::piece`] made,
+/// and every partition up to the one holding the terminator is absorbed back
+/// into it in file order, so a block closed here has observed what the serial
+/// scanner would have handed it. A declined region leaves it untouched.
 ///
 /// **It reads `partitions()` for the shape of the cut and never for whether to
 /// make one.** Whether cutting pays is the caller's economics, stated as
@@ -385,6 +384,7 @@ pub(crate) async fn scan_region(
     data_offset: u64,
     columns: usize,
     size: u64,
+    observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<RegionOutcome> {
     let advice = source.partitions(data_offset..size);
     let partition_bytes = advice.partition_bytes();
@@ -405,7 +405,8 @@ pub(crate) async fn scan_region(
     // inside a top-level one and must leave the source as it found it.
     source.hint_parallelism(options.parallelism);
     source.hint_wait_policy(WaitPolicy::MayWait);
-    let scanned = run_region(source, options, &advice, workers, data_offset, columns, size).await;
+    let scanned =
+        run_region(source, options, &advice, workers, data_offset, columns, size, observer).await;
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
     let scan = match scanned? {
@@ -479,6 +480,7 @@ async fn run_region(
     data_offset: u64,
     columns: usize,
     size: u64,
+    mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<Interior>> {
     let mut rows = 0u64;
     let mut census: Vec<ArrayShape> = vec![ArrayShape::default(); columns];
@@ -502,6 +504,9 @@ async fn run_region(
             .enumerate()
             .map(|(i, range)| {
                 let entry = if i == 0 { entry } else { PieceEntry::Resync };
+                let piece = observer
+                    .as_deref()
+                    .map(|block| PieceObserver { observer: block.piece(), data_offset });
                 scan_partition(
                     source,
                     options,
@@ -510,17 +515,36 @@ async fn run_region(
                     range,
                     columns,
                     size,
+                    piece,
                 )
             })
             .collect();
+        // Each partition's observer, and whether it read a terminator.
+        let mut pieces: Vec<(Option<PieceObserver>, bool)> = Vec::with_capacity(workers);
         // **The lowest-offset error is the one raised, and this is what
         // arranges it** (`docs/design/decisions.md`, "D52"). A window's pieces
         // tile the region in ascending order, so partition order *is* file
         // order and [`futures::stream::FuturesOrdered`] hands the results back
         // in it: the `?` below fires on the earliest failing piece, where
         // `try_join_all` would return the first error it *observes*.
-        while let Some(piece) = futures::StreamExt::next(&mut dispatched).await {
-            scans.extend(piece?);
+        while let Some(partition) = futures::StreamExt::next(&mut dispatched).await {
+            let (partition_scans, piece) = partition?;
+            let terminates = partition_scans.iter().any(|scan| scan.terminator.is_some());
+            scans.extend(partition_scans);
+            pieces.push((piece, terminates));
+        }
+        // **Statistics fold as [`merge`] does, and stop where it stops**: the
+        // partition holding the earliest terminator is the last in the block,
+        // and what a later one observed is past the block's end.
+        if let Some(block) = observer.as_deref_mut() {
+            for (piece, terminates) in pieces {
+                if let Some(piece) = piece {
+                    block.absorb(piece.observer);
+                }
+                if terminates {
+                    break;
+                }
+            }
         }
 
         if let Some(interior) = merge(&scans) {
@@ -587,7 +611,8 @@ async fn scan_partition(
     range: Range<u64>,
     columns: usize,
     size: u64,
-) -> Result<Vec<PieceScan>> {
+    mut piece: Option<PieceObserver>,
+) -> Result<(Vec<PieceScan>, Option<PieceObserver>)> {
     let limit = range.end;
     let mut out = Vec::new();
     let mut entry = entry;
@@ -601,9 +626,15 @@ async fn scan_partition(
         let end = (start + want).min(size);
         let len = usize::try_from(end - start).unwrap_or(usize::MAX);
         let bytes = source.read_range(start, len).await?;
-        let scan =
-            tokio::task::spawn_blocking(move || scan_piece(&bytes, start, entry, limit, columns))
-                .await??;
+        // The observer goes to the blocking pool with the bytes and comes back
+        // with the scan, one read of the piece at a time.
+        let (scan, returned) = tokio::task::spawn_blocking(move || {
+            let scan = scan_piece(&bytes, start, entry, limit, columns, piece.as_mut());
+            (scan, piece)
+        })
+        .await?;
+        piece = returned;
+        let scan = scan?;
         // Finished when it has read the line ending at or past its limit,
         // found the terminator, or run out of file — the last being the
         // leader's to turn into an error.
@@ -630,7 +661,7 @@ async fn scan_partition(
             want = (want * 2).min(options.max_line_bytes as u64);
         }
     }
-    Ok(out)
+    Ok((out, piece))
 }
 
 #[cfg(test)]
@@ -726,7 +757,7 @@ mod tests {
             let limit = block.data_offset + len * (i + 1) / pieces as u64;
             let entry = if i == 0 { PieceEntry::RowStart } else { PieceEntry::Resync };
             scans.push(
-                scan_piece(&file[start as usize..], start, entry, limit, block.columns)
+                scan_piece(&file[start as usize..], start, entry, limit, block.columns, None)
                     .expect("a piece of a scannable file"),
             );
         }
@@ -813,6 +844,7 @@ mod tests {
             PieceEntry::RowStart,
             block.data_offset + 1,
             block.columns,
+            None,
         )
         .unwrap();
         assert_eq!(piece.terminator, None);
@@ -834,6 +866,7 @@ mod tests {
             PieceEntry::RowStart,
             block.end_offset,
             block.columns,
+            None,
         )
         .unwrap();
         // The piece after the block reads the trailing `\.` as a terminator.
@@ -843,6 +876,7 @@ mod tests {
             PieceEntry::RowStart,
             file.len() as u64,
             block.columns,
+            None,
         )
         .unwrap();
         assert!(after.terminator.is_some(), "the fixture must offer a false terminator");
@@ -879,8 +913,9 @@ mod tests {
         let cut = block.data_offset + 2;
         assert_eq!(&file[cut as usize..cut as usize + 3], b"\\.\n");
 
-        let piece = scan_piece(&file[cut as usize..], cut, PieceEntry::Resync, block.end_offset, 1)
-            .unwrap();
+        let piece =
+            scan_piece(&file[cut as usize..], cut, PieceEntry::Resync, block.end_offset, 1, None)
+                .unwrap();
         assert_eq!(
             piece.terminator,
             Some((block.interior.end.terminator_offset, block.end_offset)),
@@ -944,6 +979,7 @@ mod tests {
                         block.data_offset,
                         block.columns,
                         size,
+                        None,
                     )
                     .await
                     .unwrap();
@@ -1040,6 +1076,7 @@ mod tests {
                     block.data_offset,
                     block.columns,
                     size,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1111,6 +1148,7 @@ mod tests {
                     block.data_offset,
                     block.columns,
                     size,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1170,6 +1208,7 @@ mod tests {
             block.data_offset,
             block.columns,
             size,
+            None,
         )
         .await
         .unwrap();
@@ -1187,6 +1226,7 @@ mod tests {
             block.data_offset,
             block.columns,
             size,
+            None,
         )
         .await
         .unwrap();
@@ -1211,6 +1251,7 @@ mod tests {
             block.data_offset,
             block.columns,
             size,
+            None,
         )
         .await
         .unwrap();
@@ -1243,6 +1284,7 @@ mod tests {
             block.data_offset,
             block.columns,
             size,
+            None,
         )
         .await
         .unwrap();
@@ -1280,6 +1322,7 @@ mod tests {
             block.data_offset,
             block.columns,
             size,
+            None,
         )
         .await
         .unwrap();
@@ -1301,6 +1344,7 @@ mod tests {
             block.data_offset,
             block.columns,
             size,
+            None,
         )
         .await
         .unwrap();
@@ -1324,7 +1368,7 @@ mod tests {
 
         let source = LocalFileSource::open(&path).unwrap();
         let options = scheduled(&source, 4);
-        let err = scan_region(&source, &options, 0, data_offset, 1, file.len() as u64)
+        let err = scan_region(&source, &options, 0, data_offset, 1, file.len() as u64, None)
             .await
             .expect_err("a COPY block with no terminator");
         assert!(
@@ -1357,6 +1401,7 @@ mod tests {
                 block.data_offset,
                 block.columns,
                 file.len() as u64,
+                None,
             )
             .await
             .unwrap();

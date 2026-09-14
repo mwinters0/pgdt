@@ -351,34 +351,42 @@ async fn statistics_round_trip_through_the_cache() {
     assert_eq!(loaded.spans, index.spans);
 }
 
-/// A scan asked for several workers reads a gathered block serially, so its
-/// map is the serial scan's, statistics and all. The block is one the leader
-/// splits at this chunk and count when nothing is gathered
-/// (`tests/map_file.rs`, `a_cancelled_parallel_region_banks_nothing_and_stays_resumable`);
-/// taken by the leader, it would close with no row observed.
+/// **A gathered block the leader splits holds the serial scan's statistics.**
+/// The block is one the leader splits at this chunk and count
+/// (`tests/map_file.rs`, `a_cancelled_parallel_region_banks_nothing_and_stays_resumable`;
+/// `tests/wait_policy.rs` shows a gathering scan reaching the scheduler), and
+/// at 256 bytes a group nearly every cut falls inside a group: the joined
+/// bounds, dictionaries and row order — an ascending column and a descending
+/// one — are the serial pass's. Every fixture is swept the same way by
+/// `pgdump_query-cli/tests/determinism.rs`, byte for byte.
 #[tokio::test]
 async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("long_block.sql");
-    let mut text = String::from("CREATE TABLE public.t (\n    a integer\n);\n\n");
-    text.push_str("COPY public.t (a) FROM stdin;\n");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    a integer,\n    b text COLLATE pg_catalog.\"C\",\n    c text\n);\n\n",
+    );
+    text.push_str("COPY public.t (a, b, c) FROM stdin;\n");
     for i in 0..2000 {
-        text.push_str(&format!("{i}\n"));
+        text.push_str(&format!("{i}\t{:05}\tv{}\n", 2000 - i, i % 3));
     }
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::All, 256);
     let serial = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
-    let parallel = ScanOptions {
-        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-        ..serial.clone()
-    };
-    let index = gathered_with(&dump, &parallel, &wanted).await;
-    assert_eq!(
-        statistics(block(&index, "public.t")).groups.iter().map(|g| g.rows).sum::<u64>(),
-        2000
-    );
-    assert_eq!(index.spans, gathered_with(&dump, &serial, &wanted).await.spans);
+    let serial_index = gathered_with(&dump, &serial, &wanted).await;
+    for jobs in [2, 4, 8] {
+        let parallel = ScanOptions {
+            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
+            ..serial.clone()
+        };
+        let index = gathered_with(&dump, &parallel, &wanted).await;
+        let t = block(&index, "public.t");
+        assert_eq!(statistics(t).groups.iter().map(|g| g.rows).sum::<u64>(), 2000);
+        assert_eq!(sortedness(t, "a"), Some(Sortedness::Ascending), "{jobs} jobs");
+        assert_eq!(sortedness(t, "b"), Some(Sortedness::Descending), "{jobs} jobs");
+        assert_eq!(index.spans, serial_index.spans, "{jobs} jobs");
+    }
 }
 
 /// **A value that does not key leaves its group without bounds on that

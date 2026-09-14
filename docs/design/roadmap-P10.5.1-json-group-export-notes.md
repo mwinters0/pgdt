@@ -30,9 +30,8 @@ What the later P10 slices inherit from this one. The spec is
 
 ## For the slices after
 
-- **10.6.** Two `info --json` exports' `spans` compared whole is a CLI-level
-  serial-against-parallel check, as `xz_source.rs` already compares plain
-  against compressed.
+- **10.6.** Landed: [its notes](roadmap-P10.6-parallel-gathering-notes.md),
+  comparing the cache's bytes rather than two exports.
 - **10.7.** A block lacking statistics is `"statistics": null` in the export.
 - **P20.** The export grows with group count times tracked columns, like the
   cache, and most at the tiny group size the correctness check gathers at.
