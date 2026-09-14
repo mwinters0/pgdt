@@ -36,7 +36,7 @@ What the later P10 slices inherit from this one. The spec is
 - **10.7.** Landed: [its notes](roadmap-P10.7-backfill-notes.md). The back-fill entry point takes a `&StatisticsRequest` as
   `map_file` does, and `gathers()` is the one test that it asks for anything.
   A block mapped under `NONE` holds `None` exactly as before.
-- **10.8.** The spec's "`pgdq query --statistics none`, and its library option"
+- **10.8.** Landed: [its notes](roadmap-P10.8-pruning-consumer-notes.md). The spec's "`pgdq query --statistics none`, and its library option"
   is a switch on *pruning*, a query option; it is not a `StatisticsRequest`,
   which no query entry point accepts.
 - **10.6.** Landed: [its notes](roadmap-P10.6-parallel-gathering-notes.md).

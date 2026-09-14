@@ -35,10 +35,9 @@ grilled and sliced"). No query reads a statistic yet.
   block records the size it was gathered at. A resumed `parse` gathers only the
   blocks it maps; a block mapped under `--statistics none`, or outside a
   selection, holds `None`.
-- **10.8.** A `GroupStatistics` over `BlockStatistics` is a lookup: column `i`
+- **10.8.** Landed: [its notes](roadmap-P10.8-pruning-consumer-notes.md). A `GroupStatistics` over `BlockStatistics` is a lookup: column `i`
   is header column `i`, which is a term's unprojected index. `ColumnStatistics`
   carries `declared_type` and `collation` to compare against the current plan.
-  The six `expect(dead_code)` items in `predicate.rs` still stand, and
   `ValueKey` is the `pub(crate)` wrapper over `OrderKey`.
 
 ## Decided here, inside the spec

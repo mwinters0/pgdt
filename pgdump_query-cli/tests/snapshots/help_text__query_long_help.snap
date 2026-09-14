@@ -99,6 +99,16 @@ Options:
           The longest line the scan accepts, in bytes — the same limit `parse` carries, applied to
           both of a query's passes over the file
 
+      --statistics <USE>
+          Whether to use the statistics `parse` recorded: `all`, the default, skips each stretch of
+          the table's data whose statistics prove no row in it satisfies the filter, and says on
+          stderr how much was skipped; `none` reads every row. The rows printed are the same either
+          way. A value that fails to decode is reported only where its row is read, so `none` is
+          also how to find one a skipped stretch holds
+          
+          [default: all]
+          [possible values: all, none]
+
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count

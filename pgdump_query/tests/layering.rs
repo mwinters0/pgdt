@@ -34,6 +34,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("predicate", 4),
     ("leader", 4),
     ("gather", 4),
+    ("prune", 4),
 ];
 
 /// The upward edges D68 records. Each must still exist — a deviation the

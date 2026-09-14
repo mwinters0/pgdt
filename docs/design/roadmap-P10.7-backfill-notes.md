@@ -47,7 +47,7 @@ figure was taken.
 
 ## For the slices after
 
-- **10.8.** Every block a gathering `parse` leaves holds what its request
+- **10.8.** Landed: [its notes](roadmap-P10.8-pruning-consumer-notes.md). Every block a gathering `parse` leaves holds what its request
   asked, so a query meeting a block with `statistics: None` under a whole-file
   `parse` meets one gathered under `none` or outside a selection. Statistics
   of mixed group sizes across a table's blocks are ordinary.

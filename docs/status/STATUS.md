@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and no query reads them yet | `statistics.rs`, `gather.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D54, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -79,7 +79,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.5.1** `info --json` exports every block's per-group statistics, compact and streamed, with no per-table rollup; [notes](../design/roadmap-P10.5.1-json-group-export-notes.md)
 - [x] **10.6** Parallel gathering, identical to serial over every fixture; [notes](../design/roadmap-P10.6-parallel-gathering-notes.md)
 - [x] **10.7** Back-fill of blocks lacking the requested statistics; [notes](../design/roadmap-P10.7-backfill-notes.md)
-- [ ] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check
+- [x] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check; [notes](../design/roadmap-P10.8-pruning-consumer-notes.md)
 - [ ] **10.9** Early stop on a column sorted over its block
 - [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`
 
@@ -302,3 +302,26 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **Every filtered query over gathered statistics prints a pruning note, a
+  skip of nothing included.** `PlanNoteKind::StatisticsPruned` is stated
+  wherever a block's statistics were consulted, and `pgdq query` prints it as
+  `note: row-group statistics rule out 0 of N group(s), …` on stderr for a
+  filter they cannot narrow; only a filter reading no field, `--statistics
+  none`, or a cache without statistics prints nothing. Made so because the
+  spec asks for the skip to be visible "out of the total", and a zero says the
+  statistics were read and did not help, which silence cannot tell from their
+  absence. Reconsidering drops the note when `skipped_groups` is zero, in
+  `stream.rs`'s `prune_blocks`, or prints it only there in the CLI.
+
+- **The pruned-equals-unpruned check is the slowest test in `pgdump_query`'s
+  debug suite**, and reads its unpruned leg from a second cache holding no
+  statistic.
+  `tests/pruning.rs`'s generated check runs every fixture at a 32-byte group on
+  one thread per major, with two literals per operator per column, an eighth of
+  its terms alone and 24 random trees per table; loading the gathered
+  `statistics` cache once per query is most of its cost, which the plain cache
+  halves for the unpruned leg — rows being a function of the file, and the
+  switch alone being pinned by the hand tests. Reconsidering trades coverage
+  for time in `TREES_PER_TABLE`, `LITERALS_PER_OPERATOR` and the singles'
+  share, or reads both legs from the gathered cache at twice the cost.

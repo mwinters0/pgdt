@@ -54,6 +54,15 @@ impl From<CliSchemaMode> for SchemaMode {
     }
 }
 
+/// What `query` does with the statistics `parse` stored: the CLI spelling of
+/// [`QueryOptions::use_statistics`].
+#[derive(Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+enum QueryStatistics {
+    #[default]
+    All,
+    None,
+}
+
 /// The two numbers a caller states its parallelism in, shared by the two
 /// scanning commands (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
@@ -637,6 +646,15 @@ enum Command {
         /// `parse` carries, applied to both of a query's passes over the file.
         #[arg(long, value_name = "BYTES", value_parser = parse_max_line_bytes)]
         max_line_bytes: Option<usize>,
+        /// Whether to use the statistics `parse` recorded: `all`, the default,
+        /// skips each stretch of the table's data whose statistics prove no
+        /// row in it satisfies the filter, and says on stderr how much was
+        /// skipped; `none` reads every row. The rows printed are the same
+        /// either way. A value that fails to decode is reported only where its
+        /// row is read, so `none` is also how to find one a skipped stretch
+        /// holds.
+        #[arg(long, value_name = "USE", value_enum, default_value_t)]
+        statistics: QueryStatistics,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -1064,16 +1082,23 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
 }
 
 /// Say, once per query and on stderr, when the memory budget in force cut the
-/// plan short. Every sub-stream of a partitioned replay carries the same
+/// plan short, and what statistics let it skip. Every sub-stream of a
+/// partitioned replay carries the same
 /// [`pgdump_query::TableStream::plan_notes`], settled before any of them runs,
 /// so reading it off the first is reading the whole query's answer — unlike
-/// [`announce_comparisons`], this needs no block to have resolved first. Each
-/// note is followed by where its budget came from
-/// ([`Resolved::plan_note_origin`]), which only this layer knows.
+/// [`announce_comparisons`], this needs no block to have resolved first. A
+/// budget's note is followed by where its budget came from
+/// ([`Resolved::plan_note_origin`]), which only this layer knows; a skip is
+/// no fault, and is a `note:`.
 fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolved) {
     let origin = parallel.plan_note_origin();
     for note in stream.plan_notes() {
-        eprintln!("warning: {}{origin}", note.message());
+        match note.kind {
+            pgdump_query::PlanNoteKind::StatisticsPruned { .. } => {
+                eprintln!("note: {}", note.message());
+            }
+            _ => eprintln!("warning: {}{origin}", note.message()),
+        }
     }
 }
 
@@ -1379,6 +1404,7 @@ async fn main() -> Result<()> {
             schema_mode,
             chunk_size,
             max_line_bytes,
+            statistics,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
@@ -1423,6 +1449,7 @@ async fn main() -> Result<()> {
                 // The same flags on both passes: one mapping scan and one
                 // replay over one source.
                 parallelism: parallel.parallelism(),
+                use_statistics: statistics == QueryStatistics::All,
                 ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to

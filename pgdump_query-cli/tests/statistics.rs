@@ -6,8 +6,9 @@
 //! `parse` gathers by default, that each flag reaches the cache it writes, that
 //! a combination the two flags cannot both mean is refused rather than
 //! half-honoured, that `info --json` exports every block's groups compact and
-//! with no rollup, and that `info --detail` rolls those groups up per table and
-//! column.
+//! with no rollup, that `info --detail` rolls those groups up per table and
+//! column, and that `query` skips what they rule out unless told `--statistics
+//! none`.
 
 use std::path::Path;
 
@@ -323,4 +324,42 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
         assert!(stderr_of(&out).contains(says), "{extra:?}: {}", stderr_of(&out));
     }
     assert!(!dump.with_extension("sql.dqcache").exists(), "a refusal scans nothing");
+}
+
+/// **`query` skips what the statistics rule out, says so, and prints what
+/// `--statistics none` prints**, serially and split: `id` ascends, so a range
+/// near its top reads a few of the groups a 1024-byte size cuts the table
+/// into.
+#[test]
+fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
+    let (_dir, dump) = sandboxed(DUMP, "pruned.sql");
+    let source = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", source, "--statistics-group-size", "1024"]);
+    for jobs in ["1", "3"] {
+        let query = |extra: &[&str]| {
+            let mut args = vec![
+                "query",
+                "--source",
+                source,
+                "--table",
+                "public.ordered",
+                "--where",
+                "id >= 990 or id < 3",
+                "--jobs",
+                jobs,
+            ];
+            args.extend_from_slice(extra);
+            let out = run(&args);
+            assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+            (common::stdout_of(&out), stderr_of(&out))
+        };
+        let (pruned, said) = query(&[]);
+        let (unpruned, unsaid) = query(&["--statistics", "none"]);
+        assert_eq!(pruned, unpruned, "--jobs {jobs}");
+        assert_eq!(pruned.lines().count(), 1 + 13, "--jobs {jobs}: {pruned}");
+        let note = said.lines().find(|l| l.starts_with("note: row-group statistics rule out"));
+        assert!(note.is_some(), "--jobs {jobs}: {said}");
+        assert!(!note.unwrap().contains(" 0 of"), "--jobs {jobs}: {said}");
+        assert!(!unsaid.contains("row-group statistics"), "--jobs {jobs}: {unsaid}");
+    }
 }

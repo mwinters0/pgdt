@@ -29,7 +29,7 @@ changed.
   size in the table line; that is what a back-fill's result is visible as. The stderr
   count of re-read blocks the spec asks of a back-filling `parse` is 10.7's,
   not here.
-- **10.8.** Nothing here reads `declared_type` or `collation`; a statistic a
+- **10.8.** Landed: [its notes](roadmap-P10.8-pruning-consumer-notes.md). Nothing here reads `declared_type` or `collation`; a statistic a
   query would not believe under the current comparison is still reported.
 - **Any new persisted statistic** reaches `--json` with no change, and
   `--detail` only through `TableStatistics::add`.

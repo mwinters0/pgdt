@@ -1945,7 +1945,6 @@ struct ComparedTerm {
 /// wrong for it; it is one whose meaning the term's comparison does not
 /// share.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
 struct BelievedStatistics {
     /// The column's kind and the term's literal read as a key, present only
     /// where the column's plan orders **exactly** — a `Compared` plan with no
@@ -2461,7 +2460,6 @@ impl ResolvedExpr {
 /// three keeps every node's answer an over-approximation its parent can
 /// combine soundly, `Unknown` included (`docs/design/decisions.md`, "D54").
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
 pub(crate) struct TruthSet(u8);
 
 /// The members, as a set: `{True, Unknown}`.
@@ -2471,7 +2469,6 @@ impl std::fmt::Debug for TruthSet {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
 impl TruthSet {
     /// No value at all — the answer over a group no row starts in.
     pub(crate) const EMPTY: Self = Self(0);
@@ -2550,7 +2547,6 @@ impl TruthSet {
 /// Every statistic is optional per column: a column the group gathered
 /// nothing for answers `None` to each, and every term over it answers what
 /// any row might.
-#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
 pub(crate) trait GroupStatistics {
     /// How many rows start in the group. Zero is a group no row starts in,
     /// over which every term is [`TruthSet::EMPTY`].
@@ -2572,7 +2568,6 @@ pub(crate) trait GroupStatistics {
     fn dictionary(&self, column: usize) -> Option<impl Iterator<Item = &str>>;
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
 impl ResolvedTerm {
     /// Every value this term could take over a row of `group` — a superset
     /// of what [`Self::eval`] answers over each of its rows, and exact where
@@ -2660,7 +2655,6 @@ impl ResolvedTerm {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no pruning consumer reads a group yet"))]
 impl ResolvedExpr {
     /// Every value this tree could take over a row of `group`, combining its
     /// terms' sets through Kleene's tables — so a group whose answer lacks

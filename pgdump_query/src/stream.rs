@@ -66,6 +66,7 @@ use crate::leader::{self, RegionScan};
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
+use crate::prune::prune_block;
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
 use crate::statistics::{BlockObserver, BlockStatistics, StatisticsBackfill, StatisticsRequest};
@@ -1296,7 +1297,7 @@ pub struct TableStream<'a> {
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     batch_offset: Arc<Mutex<u64>>,
-    plan_notes: Vec<PlanNote>,
+    plan_notes: Arc<Mutex<Vec<PlanNote>>>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -1344,16 +1345,18 @@ impl<'a> TableStream<'a> {
     }
 
     /// Facts about *this query's plan* rather than about a column or a
-    /// predicate — today three, all of them the memory budget in force
-    /// declining something ([`PlanNoteKind`]). A fourth channel beside
-    /// `DumpIndex.diagnostics` (L1), `ResolvedSchema.notes` (L2) and
-    /// [`Self::comparison_notes`] (L4).
+    /// predicate ([`PlanNoteKind`]): the memory budget in force declining
+    /// something, and the row groups statistics let the replay skip. A fourth
+    /// channel beside `DumpIndex.diagnostics` (L1), `ResolvedSchema.notes`
+    /// (L2) and [`Self::comparison_notes`] (L4).
     ///
-    /// **Settled before any block is read**, because [`plan_partitions`]
-    /// decides it from the map alone. Empty for [`table_stream`]'s serial
-    /// replay, which never calls [`plan_partitions`].
-    pub fn plan_notes(&self) -> &[PlanNote] {
-        &self.plan_notes
+    /// **Settled before any block is read**, from the map alone. A
+    /// [`table_stream_partitions`] sub-stream holds them when it is handed
+    /// back; [`table_stream`]'s serial replay, which plans no partitions and
+    /// so never notes a budget, holds its pruning note once its first item is
+    /// polled, and nothing before.
+    pub fn plan_notes(&self) -> Vec<PlanNote> {
+        self.plan_notes.lock().unwrap().clone()
     }
 
     /// Where in the source the batch [`futures::StreamExt::next`] last
@@ -1461,6 +1464,12 @@ struct ReplayPlan {
     /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
     /// plan on any block's resolution refusal.
     blocks: BTreeMap<u64, PlannedBlock>,
+    /// The runs of row groups each pruned block keeps, keyed as `blocks` is
+    /// ([`crate::prune::BlockPruning::kept`]); a block absent here is read
+    /// whole.
+    kept: BTreeMap<u64, Vec<Range<u64>>>,
+    /// What pruning skipped, where any block's statistics were consulted.
+    pruned: Option<PlanNote>,
 }
 
 impl ReplayPlan {
@@ -1475,8 +1484,64 @@ impl ReplayPlan {
         census: Vec<ArrayShape>,
     ) -> Result<Self> {
         let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &census)?;
-        Ok(Self { scan_options, query_options, metadata, census, blocks })
+        let (kept, pruned) = prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
+        Ok(Self { scan_options, query_options, metadata, census, blocks, kept, pruned })
     }
+
+    /// The segments that replay `block` whole, or the runs of groups its
+    /// statistics keep: the run holding group 0 starts at the block's header,
+    /// as a whole block does, and every other starts inside its data.
+    fn segments(&self, block: &CopyBlock) -> Vec<Segment> {
+        let Some(kept) = self.kept.get(&block.header_offset) else {
+            return vec![Segment {
+                block: block.clone(),
+                start: block.header_offset,
+                limit: block.end_offset,
+                entry: SegmentEntry::Header,
+            }];
+        };
+        kept.iter().map(|run| Segment::over(block, run.clone())).collect()
+    }
+}
+
+/// Settle which row groups of `matches` the query's filter skips
+/// ([`prune_block`]), and the [`PlanNote`] saying so. Nothing is pruned where
+/// the caller turned statistics off or the filter reads no field — no
+/// statistic can rule out a row of a filter that keeps every one — nor in a
+/// block with no [`PlannedBlock`], whose field count only its first row says.
+///
+/// **A block whose statistics keep every group is left out of the map**, so
+/// it is replayed exactly as an unpruned query replays it.
+fn prune_blocks(
+    matches: &[CopyBlock],
+    blocks: &BTreeMap<u64, PlannedBlock>,
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+) -> (BTreeMap<u64, Vec<Range<u64>>>, Option<PlanNote>) {
+    let mut kept = BTreeMap::new();
+    if !query_options.use_statistics {
+        return (kept, None);
+    }
+    let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
+    for block in matches {
+        let Some(planned) = blocks.get(&block.header_offset) else { continue };
+        if !planned.filter.reads_fields() {
+            continue;
+        }
+        let Some(pruning) = prune_block(block, &planned.filter, metadata) else { continue };
+        consulted = true;
+        groups += pruning.groups;
+        skipped_groups += pruning.skipped_groups;
+        skipped_bytes += pruning.skipped_bytes;
+        if pruning.skipped_groups > 0 {
+            kept.insert(block.header_offset, pruning.kept);
+        }
+    }
+    let bytes = matches.iter().map(|b| b.terminator_offset.saturating_sub(b.data_offset)).sum();
+    let note = consulted.then_some(PlanNote {
+        kind: PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes },
+    });
+    (kept, note)
 }
 
 /// One block's schema, filter and projection, resolved against a query —
@@ -1599,6 +1664,34 @@ struct Segment {
 }
 
 impl Segment {
+    /// The piece of `block` replaying `run`, a range in segment terms: the
+    /// run that begins before the block's first row starts at its header, as
+    /// a whole block's first piece does, and any other inside its data.
+    fn over(block: &CopyBlock, run: Range<u64>) -> Self {
+        let (start, entry) = if run.start < block.data_offset {
+            (block.header_offset, SegmentEntry::Header)
+        } else {
+            (run.start, SegmentEntry::Interior)
+        };
+        Segment { block: block.clone(), start, limit: run.end, entry }
+    }
+
+    /// This piece as a stream resuming at `offset` — a row's start, or 0 —
+    /// replays it: `None` where every row it owns lies before `offset`, and
+    /// starting at `offset`'s row where the piece began before it. A piece
+    /// begun at its block's header is then entered inside the data.
+    fn resumed_at(mut self, offset: u64) -> Option<Self> {
+        let Some(search) = offset.checked_sub(1) else { return Some(self) };
+        if self.limit < offset {
+            return None;
+        }
+        if self.start < search {
+            self.start = search;
+            self.entry = SegmentEntry::Interior;
+        }
+        Some(self)
+    }
+
     /// The bytes this piece is responsible for, for balancing sub-streams
     /// against each other. Approximate at both ends by exactly one row, which
     /// is why nothing reads it as an extent. Measured from the block's
@@ -1610,14 +1703,15 @@ impl Segment {
 }
 
 /// The values a [`TableStream`] publishes to its owner while it runs, plus
-/// `plan_notes` — settled once, before the stream is built, unlike the rest.
+/// `plan_notes` — settled once, with the plan and before any row, unlike the
+/// rest.
 #[derive(Clone)]
 struct StreamShared {
     position: Arc<Mutex<ResumeToken>>,
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
     batch_offset: Arc<Mutex<u64>>,
-    plan_notes: Vec<PlanNote>,
+    plan_notes: Arc<Mutex<Vec<PlanNote>>>,
 }
 
 impl StreamShared {
@@ -1627,15 +1721,14 @@ impl StreamShared {
             resolved_schema: Arc::new(Mutex::new(ResolvedSchema::default())),
             comparison_notes: Arc::new(Mutex::new(Vec::new())),
             batch_offset: Arc::new(Mutex::new(0)),
-            plan_notes: Vec::new(),
+            plan_notes: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    /// Attach the plan-level notes [`plan_partitions`] returned — a plain
-    /// `Vec`, not a `Mutex` slot, because they are known in full before any
-    /// sub-stream is built and never change after.
-    fn with_plan_notes(mut self, plan_notes: Vec<PlanNote>) -> Self {
-        self.plan_notes = plan_notes;
+    /// Attach the plan-level notes, known in full before any row is read and
+    /// never changed after.
+    fn with_plan_notes(self, plan_notes: Vec<PlanNote>) -> Self {
+        *self.plan_notes.lock().unwrap() = plan_notes;
         self
     }
 
@@ -2003,6 +2096,14 @@ pub enum PlanNoteKind {
     /// exceeds it once a batch's pin is counted. Never a reason to refuse
     /// anything.
     AllocationBelowFloor { unit_bytes: u64, memory_bytes: u64 },
+    /// The row-group statistics a mapping pass stored proved that
+    /// `skipped_groups` of the `groups` listed by the blocks carrying them
+    /// hold no row the filter keeps, so their `skipped_bytes` of rows are
+    /// never read out of the `bytes` of rows every matched block holds
+    /// (`crate::batch::QueryOptions::use_statistics`). Stated wherever a
+    /// block's statistics were consulted, a skip of nothing included; never
+    /// where none were, nor where the filter keeps every row.
+    StatisticsPruned { skipped_groups: u64, groups: u64, skipped_bytes: u64, bytes: u64 },
 }
 
 impl PlanNote {
@@ -2086,6 +2187,12 @@ impl PlanNote {
                  concurrency is asked for — the budget in force is what bound it, and where \
                  nothing stated one it is the memory limit this process is running under"
             ),
+            PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes } => {
+                format!(
+                    "row-group statistics rule out {skipped_groups} of {groups} group(s), so \
+                     {skipped_bytes} of the {bytes} byte(s) of rows this table holds are not read"
+                )
+            }
         }
     }
 }
@@ -2189,6 +2296,7 @@ fn compressed_block_path_declined(
 fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
+    kept: &BTreeMap<u64, Vec<Range<u64>>>,
     parallelism: Parallelism,
     max_source_span: Option<usize>,
 ) -> (Vec<Vec<Segment>>, Vec<PlanNote>) {
@@ -2254,18 +2362,37 @@ fn plan_partitions(
             Some(max) => workers.min(max),
             None => workers,
         };
-        // The **data** range is what is cut, not `[header_offset, …)`: a cut
-        // inside the header line would give the first piece no rows. The first
-        // piece is then extended back over the header, its schema's source.
-        for (i, piece) in
-            cut(block.data_offset..block.end_offset, advice, want).into_iter().enumerate()
-        {
-            let (start, entry) = if i == 0 {
-                (block.header_offset, SegmentEntry::Header)
-            } else {
-                (piece.start, SegmentEntry::Interior)
-            };
-            segments.push(Segment { block: block.clone(), start, limit: piece.end, entry });
+        // A pruned block's runs are cut instead of its data, each into a
+        // share of `want` proportional to its bytes, so the readers are
+        // balanced over what remains to be read.
+        let Some(runs) = kept.get(&block.header_offset) else {
+            // The **data** range is what is cut, not `[header_offset, …)`: a
+            // cut inside the header line would give the first piece no rows.
+            // The first piece is then extended back over the header, its
+            // schema's source.
+            for (i, piece) in
+                cut(block.data_offset..block.end_offset, advice, want).into_iter().enumerate()
+            {
+                let (start, entry) = if i == 0 {
+                    (block.header_offset, SegmentEntry::Header)
+                } else {
+                    (piece.start, SegmentEntry::Interior)
+                };
+                segments.push(Segment { block: block.clone(), start, limit: piece.end, entry });
+            }
+            continue;
+        };
+        let remaining: u64 = runs.iter().map(|run| run.end - run.start).sum();
+        for run in runs {
+            let share = (want as u64 * (run.end - run.start)).div_ceil(remaining.max(1));
+            let share = usize::try_from(share).unwrap_or(want).clamp(1, want);
+            // A run starting on the header's LF is cut from the first data
+            // byte, for the reason the whole block's data range is.
+            let from = run.start.max(block.data_offset);
+            for piece in cut(from..run.end, advice, share) {
+                let start = if piece.start == from { run.start } else { piece.start };
+                segments.push(Segment::over(block, start..piece.end));
+            }
         }
     }
     (distribute(segments, workers), notes)
@@ -2335,6 +2462,11 @@ fn replay<'a>(
         source.hint_wait_policy(WaitPolicy::NeverWait);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
+        // Where a token paused inside a block, and which block: its scanner
+        // resumes the first segment only where that segment holds the pause.
+        let paused_in = resume
+            .as_ref()
+            .and_then(|t| t.in_copy.as_ref().map(|in_copy| (t.offset, in_copy.header_offset)));
 
         // Only the first segment can start mid-row (a resumed stream paused
         // between two of one block's rows); its scanner and in-flight batcher
@@ -2366,7 +2498,19 @@ fn replay<'a>(
             let seg_end = block.end_offset;
             let block_database = block.database.clone();
 
-            let mut scanner = match first_scanner.take() {
+            let resumes_here = paused_in.is_some_and(|(offset, header_offset)| {
+                header_offset == block.header_offset
+                    && segment.start < offset
+                    && offset <= seg_limit
+            });
+            let resumed = first_scanner.take();
+            if resumed.is_some() && !resumes_here {
+                // The pause lies before this segment, and every row between
+                // the two is in a group pruning skipped: the paused block
+                // state holds nothing and is dropped.
+                active = None;
+            }
+            let mut scanner = match resumed.filter(|_| resumes_here) {
                 Some(scanner) => scanner,
                 None => match segment.entry {
                     SegmentEntry::Header => CopyScanner::resume(segment.start, None),
@@ -2375,24 +2519,22 @@ fn replay<'a>(
                         // it has one at all. A piece whose search lands past
                         // its own limit had two cuts fall inside one row: the
                         // row belongs to the piece before it.
-                        let Some(row_start) =
-                            first_row_start(source, segment.start, seg_end, scan_options).await?
-                        else {
-                            continue;
-                        };
-                        if row_start > seg_limit || row_start >= seg_end {
-                            continue;
-                        }
+                        let row_start =
+                            first_row_start(source, segment.start, seg_end, scan_options)
+                                .await?
+                                .filter(|&start| start <= seg_limit && start < seg_end);
                         // No header line is in range, so the schema comes off
                         // the map's own copy of it — resolved now when the
                         // header named its columns, deferred to the first row
                         // when it did not, as the live paths below do.
                         if block.header.columns.is_empty() {
+                            let Some(row_start) = row_start else { continue };
                             pending = Some((
                                 block.header.clone(),
                                 block.header_offset,
                                 block_database.clone(),
                             ));
+                            CopyScanner::resume(row_start, Some((block.header_offset, 0)))
                         } else {
                             let (opened, resolved, notes) = activate(
                                 block.header.clone(),
@@ -2401,11 +2543,16 @@ fn replay<'a>(
                                 block_database.clone(),
                                 &plan,
                             )?;
+                            // Published even for a piece holding no row, so a
+                            // sub-stream handed only such pieces — cuts inside
+                            // one row, or the runs pruning left — reports the
+                            // block's schema as one entered at its header does.
                             *shared.comparison_notes.lock().unwrap() = notes;
                             *shared.resolved_schema.lock().unwrap() = resolved;
+                            let Some(row_start) = row_start else { continue };
                             active = Some(opened);
+                            CopyScanner::resume(row_start, Some((block.header_offset, 0)))
                         }
-                        CopyScanner::resume(row_start, Some((block.header_offset, 0)))
                     }
                 },
             };
@@ -2660,16 +2807,13 @@ pub fn table_stream<'a>(
         let MappedTable { matches, metadata, census } = mapped;
         let plan =
             Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?);
+        *shared_for_stream.plan_notes.lock().unwrap() = plan.pruned.iter().cloned().collect();
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = matches
             .iter()
             .filter(|b| b.end_offset > resume_offset)
-            .map(|b| Segment {
-                block: b.clone(),
-                start: b.header_offset.max(resume_offset),
-                limit: b.end_offset,
-                entry: SegmentEntry::Header,
-            })
+            .flat_map(|b| plan.segments(b))
+            .filter_map(|segment| segment.resumed_at(resume_offset))
             .collect();
         let mut rows =
             Box::pin(replay(source, plan, segments, shared_for_stream, resume, fingerprint));
@@ -2701,7 +2845,8 @@ pub fn table_stream<'a>(
 /// [`TableStream::resolved_schema`] is empty on a sub-stream until that
 /// sub-stream's first block resolves, so a caller wanting the schema before
 /// consuming anything reads it off the *first* sub-stream, whose first segment
-/// starts at a `COPY` header. [`TableStream::resume_token`] is stamped with the
+/// is the first block's and publishes its schema on entry, holding a row or
+/// not. [`TableStream::resume_token`] is stamped with the
 /// partition it came from, so feeding one back to [`table_stream`] is
 /// `Error::ResumeQueryMismatch`: resuming a partitioned replay is not
 /// supported.
@@ -2723,12 +2868,14 @@ pub async fn table_stream_partitions<'a>(
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
     let MappedTable { matches, metadata, census } = mapped;
     let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?);
-    let (groups, plan_notes) = plan_partitions(
+    let (groups, mut plan_notes) = plan_partitions(
         source,
         &matches,
+        &plan.kept,
         plan.query_options.parallelism,
         plan.query_options.max_source_span,
     );
+    plan_notes.extend(plan.pruned.iter().cloned());
     let of = groups.len();
     Ok(groups
         .into_iter()
@@ -2990,6 +3137,41 @@ mod tests {
         let lopsided = vec![piece(0, 1), piece(1, 2), piece(2, 1002), piece(1002, 1003)];
         let groups = distribute(lopsided, 2);
         assert_eq!(groups.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2]);
+    }
+
+    /// A resumed stream keeps a segment while it owns a row at or past the
+    /// pause — the row starting exactly at its limit included — and enters
+    /// one begun before the pause on the LF ending the paused row.
+    #[test]
+    fn a_segment_resumes_from_the_row_its_pause_left() {
+        let block = CopyBlock {
+            header: crate::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
+            database: None,
+            header_offset: 10,
+            data_offset: 40,
+            terminator_offset: 400,
+            end_offset: 403,
+            row_count: 0,
+            partition_root: None,
+            statistics: None,
+            array_shapes: Vec::new(),
+        };
+        let whole = Segment::over(&block, 39..403);
+        assert_eq!((whole.start, whole.entry), (10, SegmentEntry::Header));
+        let run = Segment::over(&block, 99..199);
+        assert_eq!((run.start, run.entry), (99, SegmentEntry::Interior));
+        let at = |segment: &Segment, offset| {
+            segment.clone().resumed_at(offset).map(|s| (s.start, s.limit, s.entry))
+        };
+
+        assert_eq!(at(&run, 0), Some((99, 199, SegmentEntry::Interior)));
+        assert_eq!(at(&run, 60), Some((99, 199, SegmentEntry::Interior)));
+        assert_eq!(at(&run, 100), Some((99, 199, SegmentEntry::Interior)));
+        assert_eq!(at(&run, 150), Some((149, 199, SegmentEntry::Interior)));
+        assert_eq!(at(&run, 199), Some((198, 199, SegmentEntry::Interior)));
+        assert_eq!(at(&run, 200), None);
+        assert_eq!(at(&whole, 10), Some((10, 403, SegmentEntry::Header)));
+        assert_eq!(at(&whole, 120), Some((119, 403, SegmentEntry::Interior)));
     }
 
     /// No blocks at all is one sub-stream that yields nothing, so a caller

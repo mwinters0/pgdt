@@ -18,6 +18,7 @@ pub mod nested;
 pub mod pgtype;
 pub mod preamble;
 pub mod predicate;
+mod prune;
 pub mod resolve;
 pub mod scan;
 pub mod statistics;

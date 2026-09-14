@@ -327,12 +327,11 @@ The span term is charged only where the source retains by chunk (`KD23`).
 Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
-The map is never behind the rows, so a `ResumeToken` points inside mapped
-territory. A segment is spliced by extending the *preceding* span; a start
-floor on `Builder` made assembly visible in the map. A cancelled mapping pass
-fails a query rather than shortening it (I1). Cached replay and the cold
-interior split share `worker_count` and `cut` and differ only in what they cut;
-plan facts are a `PlanNote`, L4, settled before a block is read.
+The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
+spliced by extending the *preceding* span; a start floor on `Builder` made assembly visible in the
+map. A cancelled mapping pass fails a query rather than shortening it (I1). Cached replay and the
+cold interior split share `worker_count` and `cut` and differ only in what they cut; plan facts are
+a `PlanNote`, L4, settled before a block is read.
 
 ### D49 One target per query, and the early stop is conservative
 Name matches narrow to one `(database, table)` before replay or
@@ -340,15 +339,15 @@ Name matches narrow to one `(database, table)` before replay or
 any `\connect`. A conflict past the stop is unseen (`KD6`).
 
 ### D50 `ResumeToken` is opaque and fingerprints the query
-Table, projection, filter tree, schema mode and partition, hashed by explicit
-match (a derived `Hash` silently stops covering a new operator). `database`,
-`scan_extent` and the batching knobs are outside it.
+Table, projection, filter tree, schema mode and partition, hashed by explicit match (a derived `Hash`
+silently stops covering a new operator). `database`, `scan_extent`, the batching knobs and
+`use_statistics` are outside it, a skipped group holding no row a token resumes past.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 The first row is past the first LF at or after `start`; the piece runs to the
 first LF at or after `limit`; no cut lands on a row boundary. The scanner is
 never started mid-row, since a value can end in `\.` (I7 covers line starts).
-The first piece reaches back over the header. Sub-streams are contiguous
+The first piece reaches back over the header, as a pruned block's run of group 0 does. Sub-streams are contiguous
 byte-balanced runs in file order, so concatenating them *is* the serial replay.
 
 ### D52 The worker is fused, and the earliest failing piece is the error
@@ -366,12 +365,13 @@ No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or
 column-to-column. `IS [NOT] DISTINCT FROM` is what three-valued logic forces.
 
 ### D54 One tree, no planner, short-circuit defined against the root
-`filter` is one n-ary `Expr` defaulting to the empty conjunction. `And` may
-stop at the first `Unknown` except beneath `Not`, since only the root's `True`
-matters; a decode failure surfaces only where evaluation reaches it. Schema,
-filter and projection refusals come from the plan before any row, for the first
-refusing block in file order, walking leaves the evaluator would skip; a block
-with no column list refuses where reached. Rejected: DNF; exact Kleene everywhere.
+`filter` is one n-ary `Expr` defaulting to the empty conjunction. `And` may stop at the first
+`Unknown` except beneath `Not`, since only the root's `True` matters; a decode failure surfaces only
+where evaluation reaches it, and a row group whose statistics rule `True` out is never read, so none
+in it is raised (`prune.rs`). Schema, filter and projection refusals come from the plan before any
+row, for the first refusing block in file order, walking leaves the evaluator would skip; a block with
+no column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not skipping a group
+marked as holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is
@@ -448,7 +448,7 @@ snapshotted with width and bare-flag assertions. Rejected: `long_help` per flag;
 L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`, `cache`,
 `diagnostic`, `statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`,
 `decode`, `nested`), L3 Arrow assembly (`batch`), L4 query (`stream`, `predicate`,
-`leader`, `gather`); `error`, `lib` in none; CLI and embedders above L4. `use`
+`leader`, `gather`, `prune`); `error`, `lib` in none; CLI and embedders above L4. `use`
 points down or sideways; a module gets a layer before it is written
 (`tests/layering.rs`). Deviations, moved only with a `batch` rework: `read_table`
 (L4 work) and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a crate split (D74).

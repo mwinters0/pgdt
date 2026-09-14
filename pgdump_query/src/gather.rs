@@ -24,7 +24,7 @@ use std::mem;
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{decode_bytea, render_bytea};
 use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan};
-use crate::preamble::DumpMetadata;
+use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
@@ -60,9 +60,7 @@ pub(crate) fn observer_tracking(
     let qualified = header.qualified_name();
     let resolved =
         resolve_columns(&qualified, &header.columns, metadata, database, SchemaMode::Typed, &[]);
-    let declared = metadata
-        .and_then(|m| m.databases.iter().find(|db| db.name.as_deref() == database))
-        .and_then(|db| db.tables.get(&qualified));
+    let declared = declared_columns(metadata, database, &qualified);
     let columns: Vec<Option<ColumnGatherer>> = header
         .columns
         .iter()
@@ -80,6 +78,20 @@ pub(crate) fn observer_tracking(
         })
         .collect();
     Box::new(Gatherer::block(group_size, columns))
+}
+
+/// The columns `metadata` declares for the table `qualified` in `database` —
+/// what a column's statistics record their declared type and collation from,
+/// and what a query compares those against (`crate::prune`).
+pub(crate) fn declared_columns<'m>(
+    metadata: Option<&'m DumpMetadata>,
+    database: Option<&str>,
+    qualified: &str,
+) -> Option<&'m [ColumnDef]> {
+    metadata
+        .and_then(|m| m.databases.iter().find(|db| db.name.as_deref() == database))
+        .and_then(|db| db.tables.get(qualified))
+        .map(Vec::as_slice)
 }
 
 /// The group a row is being added to.

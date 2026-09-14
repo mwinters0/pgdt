@@ -27,9 +27,6 @@ a test evaluates a group yet.
   unchanged; a dictionary only under the four equality operators, on a
   `Compared` column whose divergence does not reach equality. That leaves 10.8
   to check only the recorded declared type and collation.
-- **Scaffolding to delete:** six items carry `#[cfg_attr(not(test),
-  expect(dead_code, …))]`. The first non-test caller of `truths` turns each
-  into an `unfulfilled_lint_expectations` warning until it is removed.
 
 ## Tests
 

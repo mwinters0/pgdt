@@ -234,8 +234,8 @@ column's number of NULLs, and, where pgdq compares a column's values exactly, it
 least and greatest value and its distinct values (up to 64, none longer than 256
 bytes; past either, that group records no distinct values for the column).
 They are stored in the cache beside the rest of the index; `info --detail`
-sums them per table and column, and `info --json` exports every group's (below). This version
-records them; no query reads them yet.
+sums them per table and column, and `info --json` exports every group's (below), and
+`query` reads them to skip what its filter rules out (below).
 
 Gathering reads every value of every column, so it costs a `parse` time, memory
 and cache space that grow with the dump; the workers `--jobs` asks for gather
@@ -274,6 +274,22 @@ gathered at 65536 re-reads nothing. It prints its count to stderr:
 A file rewritten in place at the same size since it was scanned is refused
 here, with a message naming the block, if a re-read table's data no longer ends
 where the cache says it does: delete the cache and parse again.
+
+**`query` skips every group its statistics rule out.** Given a `--filter` or
+`--where`, a group in which no row can satisfy it is never read, and stderr
+says how much was skipped:
+
+```
+note: row-group statistics rule out 11 of 12 group(s), so 45092 of the 48592 byte(s) of rows this table holds are not read
+```
+
+The rows are the ones `query --statistics none` prints, which reads every row.
+Two things are not the same: a value that fails to decode is reported only
+where its row is read, so one in a skipped group goes unreported until
+`--statistics none` reads it; and the statistics are trusted as the rest of the
+cache is, by the file's size, so a file rewritten in place at the same size
+has stretches skipped by what they held before, and may lose rows it holds now
+— delete the cache and parse again.
 
 ### `--jobs` and `--parallel-memory`: the workers and the budget
 

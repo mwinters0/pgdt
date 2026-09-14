@@ -621,7 +621,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     .await
     .unwrap();
     assert_eq!(streams.len(), 1, "the plain source pays both terms and cannot afford a second");
-    match &streams[0].plan_notes() {
+    match streams[0].plan_notes().as_slice() {
         [note] => {
             let PlanNoteKind::ParallelismBudgetLimited { max_source_span, .. } = &note.kind else {
                 panic!("{note:?}")
@@ -770,7 +770,7 @@ async fn a_block_path_that_was_taken_is_silent() {
     )
     .await
     .unwrap();
-    assert!(!declines(streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+    assert!(!declines(&streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let streams = table_stream_partitions(
@@ -782,7 +782,7 @@ async fn a_block_path_that_was_taken_is_silent() {
     )
     .await
     .unwrap();
-    assert!(!declines(streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+    assert!(!declines(&streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
 
     // A single-block file, under a budget far too small to hold its one
     // block: still silent here, because it has nothing to seek by whatever
@@ -799,7 +799,7 @@ async fn a_block_path_that_was_taken_is_silent() {
     )
     .await
     .unwrap();
-    assert!(!declines(streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+    assert!(!declines(&streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
 }
 
 /// A stated byte budget caps the sub-stream count below the stated `--jobs`,
@@ -847,7 +847,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     .await
     .unwrap();
     assert_eq!(streams.len(), 2, "the budget binds before the job count does");
-    match &streams[0].plan_notes() {
+    match streams[0].plan_notes().as_slice() {
         [d] => {
             let PlanNoteKind::ParallelismBudgetLimited {
                 requested,
@@ -907,7 +907,7 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     .await
     .unwrap();
     assert_eq!(streams.len(), 2, "an unbounded span divides by the decode footprint alone");
-    match &streams[0].plan_notes() {
+    match streams[0].plan_notes().as_slice() {
         [d] => {
             let PlanNoteKind::ParallelismBudgetLimited {
                 requested,

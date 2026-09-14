@@ -21,7 +21,7 @@ What the later P10 slices inherit from this one. The spec is
 
 ## For the slices after
 
-- **10.8.** A `character` entry is unpadded, so a dictionary term tests it
+- **10.8.** Landed: [its notes](roadmap-P10.8-pruning-consumer-notes.md). A `character` entry is unpadded, so a dictionary term tests it
   under the column's `Comparison::Trimmed`, as a row is tested; that also
   answers right over an entry some earlier build stored padded.
 - **`FORMAT_VERSION` stays 18**: no persisted field changed

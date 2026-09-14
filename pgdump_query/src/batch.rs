@@ -123,6 +123,14 @@ pub struct QueryOptions {
     /// afford, is how many sub-streams [`crate::table_stream_partitions`]
     /// hands back. Nothing here spawns — the caller runs them.
     pub parallelism: Parallelism,
+    /// Whether the replay skips the row groups whose statistics — gathered by
+    /// a mapping pass ([`crate::stream::map_file`]) — prove no row satisfies
+    /// `filter`. On by default; the rows are the same either way, and `false`
+    /// reads every row of every block, which is also how a value in a group
+    /// it would skip still raises its decode failure
+    /// (`docs/design/decisions.md`, "D54"). What was skipped is a
+    /// [`crate::stream::PlanNoteKind::StatisticsPruned`].
+    pub use_statistics: bool,
 }
 
 impl Default for QueryOptions {
@@ -137,6 +145,7 @@ impl Default for QueryOptions {
             database: None,
             scan_extent: ScanExtent::default(),
             parallelism: Parallelism::default(),
+            use_statistics: true,
         }
     }
 }
