@@ -14,7 +14,19 @@ What the later P10 slices inherit from this one. The spec is
   `StatisticsSelection::None` is the third variant, so the type's `Default` is
   the default the spec states. `map_forward` takes the same reference, and a
   query's pass hands it `NONE`. The CLI's `StatisticsFlag` is gone,
-  `--statistics none` parsing to that variant.
+  `--statistics none` parsing to that variant. Rejected, on review:
+  `Option<&StatisticsRequest>` with `None` gathering nothing, since `Option`'s
+  default is the opposite of the spec's; and with `None` gathering everything,
+  which spells the default two ways and makes `map_file(…, None)` read as the
+  request `NONE` names. `Option`-means-unstated belongs in a resolver
+  (`CacheMode::resolve`, the CLI's `statistics_request`), and an entry point
+  takes the resolved value, as `map_file` takes `&CacheMode`.
+- **A group size is ignored in a block the request does not track, and only
+  the CLI refuses one**, beside `--statistics none`, where a person's intent is
+  ambiguous. Rejected, on review: refusing it in the library, or making it
+  unrepresentable with a `None` request variant carrying no size. Targets naming
+  no table in the dump leave the same size sizing nothing, so either would close
+  one instance of it.
 - **`build_index` and `preamble_only` gather nothing**, as before: neither is
   the mapping pass the spec names, and the eager producer is what
   `tests/map_file.rs` compares a mapped index against.

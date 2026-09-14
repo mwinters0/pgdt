@@ -44,7 +44,9 @@ pub struct StatisticsRequest {
     /// The group size, `None` when the caller stated none and
     /// [`DEFAULT_STATISTICS_GROUP_SIZE`] applies. Kept apart from the default
     /// because a stated size and an unstated one are different requests to a
-    /// block already gathered at another.
+    /// block already gathered at another. In a block the request does not
+    /// track ([`Self::tracked_columns`] answering `None`, as it always does
+    /// for [`StatisticsSelection::None`]) it sizes nothing and is ignored.
     pub group_size: Option<NonZeroU64>,
 }
 
@@ -104,7 +106,7 @@ pub enum StatisticsSelection {
     All,
     /// Only these tables and columns.
     Only(Vec<StatisticsTarget>),
-    /// No column of any table; a group size beside it sizes nothing.
+    /// No column of any table.
     None,
 }
 

@@ -301,16 +301,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`map_file` takes a required `&StatisticsRequest`, and "gather nothing" is
-  `StatisticsSelection::None` rather than `Option<StatisticsRequest>`.** The
-  spec says the library defaults to gathering everything unless the caller
-  states none. Rust has no default arguments, so "default" here means what
-  `Default::default()` returns, and `Option`'s default is `None`, the opposite.
-  The cost: a request can now hold `NONE` together with a group size, which
-  the library ignores and only the CLI refuses. Reconsidering means one of
-  two things. Either `Option<&StatisticsRequest>`, where every caller writes
-  `Some(&StatisticsRequest::default())` to get the spec's default. Or two
-  entry points, a `map_file` that always gathers and a variant that takes the
-  request. Either way the call sites in `tests/` and `main.rs` change, and
-  nothing else does.
