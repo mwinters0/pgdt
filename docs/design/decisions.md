@@ -439,9 +439,9 @@ a null. Rejected: Arrow's display formatting.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
 Keyed by block, no version field: a table spans blocks (I2) and a rollup needs a merge rule that
-does not exist, but for statistics' counts, which sum, per table and column. Coverage is one
-line at the top, nothing below qualified. No `help` attributes; every page is snapshotted with
-width and bare-flag assertions. Rejected: a `long_help` per flag; group values, dump-sized.
+does not exist, but for statistics' counts, which sum per table and column. Coverage is one line
+at the top, nothing below qualified. No `help` attributes; pages are snapshotted with width and
+bare-flag assertions. Rejected: `long_help` per flag; group values, dump-sized; per-block summaries.
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go

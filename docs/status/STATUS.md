@@ -301,19 +301,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`info --json` drops each `COPY` block's `statistics` outright, and both
-  renderings carry one rollup per table and column instead.** The spec asks
-  for statistics per table and column "over how many of its blocks" and
-  reports no group's values, so D67 now names statistics as the one rollup,
-  its counts summing across blocks. Inside that call: a table is its database
-  and the name its blocks' `COPY` gives, so a `--load-via-partition-root`
-  dump's partitions roll up under the root; sortedness is counted per block,
-  never concluded for the table; and a group of NULLs counts as one without
-  bounds. The strip goes through `serde_json::Value`, which sorts every key in
-  the document. Reconsidering could mean a per-block summary on each block
-  record as well (its group size, group counts and each column's order), which
-  a script checking one block would want and the rollup cannot give; a share
-  that leaves out groups with no non-NULL value; or a mirror struct keeping key
-  order. Each touches `pgdump_query-cli/src/info_statistics.rs` and
-  `print_index_json` alone.

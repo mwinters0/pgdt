@@ -19,7 +19,8 @@ changed.
 - **`--json` carries a top-level `statistics` array, and no `COPY` block's
   `statistics` field**: `strip_block_statistics` removes it from a
   `serde_json::Value` of the whole document, since the field is the persisted
-  struct's and the cache needs it.
+  struct's and the cache needs it. Rejected, on review: a per-block summary on
+  each block record beside the rollup, the spec reporting per table and column.
 - **Pinned by** `pgdump_query-cli/tests/statistics.rs` (the counts against the
   fixture's asserted shapes, text against JSON line by line, no block field,
   partition roots and database headings) and the module's unit tests (the
