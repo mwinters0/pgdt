@@ -54,6 +54,21 @@ figure was taken.
 - **10.10.** `statistics-gathering` times a cold gathering `parse`; a back-fill
   is a second, block-by-block read, unmeasured.
 
+## Rejected, on review
+
+- **A back-fill narrowed to its request**: `--statistics colA` re-reads no
+  block already holding `colA`, so a narrowed re-read would drop another column
+  only from the blocks some other lack sent back to the source. A cache that
+  shrinks on a selection would strip unrequested columns from every block in
+  place, needing no read; as built, the cache only accumulates, and dropping a
+  statistic means deleting it.
+- **Storing, skipping or re-mapping a block that no longer ends where the map
+  says.** Stored, its statistics contradict the offsets and row count beside
+  them; skipped, the back-fill goes on writing statistics for a file it knows
+  was rewritten; re-mapped, the library replaces cache data unasked ("D20").
+  Cached replay trusts the map's offsets unchecked, so `CachedBlockChanged` is
+  the only place a same-size rewrite moving a block's end surfaces.
+
 ## Negative results
 
 - **Five hand mutations each failed a new test**: the stated size ignored, the

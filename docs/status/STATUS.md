@@ -302,22 +302,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A statistics back-fill never narrows a block.** A block re-read for
-  statistics it lacks gathers every column it already held as well as the
-  request's, at a stated group size or else its own
-  (`StatisticsRequest::backfill`; `decisions.md`, "D34"), so `parse
-  --statistics <one column> --statistics-group-size <other>` re-reads a
-  table whole at the new size and nothing short of deleting the cache drops a
-  statistic. Made so because the spec says only that missing statistics are
-  re-read, and "D20" keeps the library from discarding cache data unasked.
-  Reconsidering makes a selection also the way to shrink a cache: `backfill`'s
-  column union and D34's `Rejected` clause go.
-
-- **A re-read block that no longer ends where the map says is refused**, as
-  the new `Error::CachedBlockChanged`, before its statistics are stored
-  (`stream.rs`, `reread_block`). The spec accepts *pruning* a same-size
-  rewrite on stale statistics; a back-fill *writes* them, and a row count the
-  map contradicts would leave the cache disagreeing with itself. Reconsidering
-  chooses between storing what was read anyway and this refusal, whose
-  message sends the user to delete the cache.

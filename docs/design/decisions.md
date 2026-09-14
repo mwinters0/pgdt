@@ -245,7 +245,7 @@ streamed schema commits over the blocks it replays, ungated (I2). Statistics sit
 behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
 byte range, no leader piece knowing a global row index. A back-fill keeps every column a block
 held, and its size unless one is stated. Rejected: `SparseRowIndex`; padded `character` bounds
-and entries, keyed alike but past the cap; a back-fill narrowed to its request, losing statistics.
+and entries, keyed alike but past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at

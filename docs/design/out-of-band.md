@@ -67,6 +67,7 @@ table as a work queue.
 | M106 | 2026-09-14 | `plan_blocks` raises the first refusing block's filter refusal in file order before any row; the rows-then-refusal test inverts, and D52/D54 are restated | | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
 | M107 | 2026-09-14 | `plan_blocks` raises every resolution refusal — schema, filter, projection — for the first refusing block in file order, through `resolve_for_query`; D54 widens to resolution refusals | | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
 | M108 | | `info --json` exports the rest of the cache file: `format_version`, `container_kind`, the xz seek table and the source identity | | [2026-09-14](../status/history/2026-09-14.md), "`--json` exports the cache, group values included" |
+| M109 | | `Error::CachedBlockChanged` names the cache path, as `CacheSourceMismatch` does, so a user with `--dqcache` elsewhere knows which file to remove | | [2026-09-14](../status/history/2026-09-14.md), "A back-fill keeps what a block held, and refuses a moved block" |
 
 
 
