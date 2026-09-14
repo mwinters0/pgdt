@@ -42,11 +42,11 @@ suite passed unedited apart from the tests added.
   (`resume_state` calls it). It takes the planned entry only when the header,
   field count and database match the activation, and resolves for itself
   otherwise; the entry's filter is an `Arc` shared by every piece of the block.
-- **Two kinds of block have no entry, and neither may be pruned**: a block
-  whose header names no columns, whose field count only a row says; and a block
-  whose projection refuses, raised where the block is reached. Reading such a
-  block is what learns its field count or raises its error in place. A block's
-  *filter* refusal refuses the whole plan instead, since `M106`
+- **One kind of block has no entry, and may not be pruned**: a block whose
+  header names no columns, whose field count only a row says, so reading it is
+  what learns its field count or raises its refusal in place. Every other
+  block's schema, filter or projection refusal refuses the whole plan, since
+  `M106` and `M107`
   ([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "A
   block's filter refusal moves to the plan").
 - **A `PlannedBlock` holds the projected schema only.** The truth-set evaluator
@@ -59,9 +59,9 @@ suite passed unedited apart from the tests added.
 ## Negative results
 
 - **A refusal is not raised from the plan** here, the slice being
-  behaviour-preserving; reviewed, it moves there under `M106`, ahead of the
-  slices that extend `PlannedBlock`, so 10.3 inherits a plan that resolved every
-  block with a column list or refused.
+  behaviour-preserving; reviewed, it moves there under `M106` and `M107`, ahead
+  of the slices that extend `PlannedBlock`, so 10.3 inherits a plan that
+  resolved every block with a column list or refused.
 - **`Error` is not `Clone`**, so the plan cannot hold a refusal to hand out on
   activation; a refusing block is resolved a second time instead, resolution
   being a function of the block and the plan alone.
