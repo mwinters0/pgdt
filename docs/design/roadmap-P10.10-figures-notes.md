@@ -54,12 +54,10 @@ below is there.
   input's size as about pruning.
 - **Consulting statistics that skip nothing costs nothing the table resolves**
   at this input's group count.
-- **Neither figure prices loading a cache that carries statistics.** The cache
-  is one bincode file decoded whole (`cache::read_cache_file`), so a query
-  stating `--statistics none` decodes every group's statistics as well; both
-  legs of every pruning row pay it, and no leg of this sitting reads a cache
-  written under `parse --statistics none`; 10.10.1 adds that leg
-  ([`roadmap-P10.10.1-uncarried-statistics-notes.md`](roadmap-P10.10.1-uncarried-statistics-notes.md)).
+- **What loading a cache that carries statistics costs is 10.10.1's leg**
+  ([`roadmap-P10.10.1-uncarried-statistics-notes.md`](roadmap-P10.10.1-uncarried-statistics-notes.md)):
+  the cache is one bincode file decoded whole (`cache::read_cache_file`), so
+  both legs of every pruning row pay it, whatever `--statistics` they state.
 
 ## Tests
 

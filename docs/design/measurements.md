@@ -8,7 +8,7 @@ kept**.
 **Session stamp.** Every figure below — every section carrying a
 `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on
 2026-09-13, against commit `9b35bea` (with uncommitted changes under a measured
-path), under the `system` allocator. **23 of the 25 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `statistics-gathering` (`312af13`), `statistics-pruning` (`312af13`).
+path), under the `system` allocator. **23 of the 25 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `statistics-gathering` (`312af13`), `statistics-pruning` (`d5c3764`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -2501,51 +2501,63 @@ Apparatus over every run in this table: CPU stall ≤0.33%, I/O stall ≤14.48%,
 
 ## What row-group statistics buy a query
 
-<!-- figure: statistics-pruning — taken at `312af13` — reproduce with `cd scripts && uv run measure.py --figure statistics-pruning` -->
+<!-- figure: statistics-pruning — taken at `d5c3764` — reproduce with `cd scripts && uv run measure.py --figure statistics-pruning` -->
 
-| Filter | `--statistics none` | Statistics used | Δ | Speedup | Groups skipped | Bytes a stop left unread | Of the rows' bytes, not read | Rows returned |
-|---|---|---|---|---|---|---|---|---|
-| Range on the sorted `id`: `id > 400000 AND id <= 403000` | **0.565 s** (0.552–0.576) | **0.038 s** (0.036–0.039) | **-0.526 s, -93%** | **14.9×** | 3,060 of 3,072 | 432,922 | 99.62% | 3,000 |
-| Equality on the low-cardinality `v_category`: `v_category=category-200` | **0.680 s** (0.635–0.755) | **0.037 s** (0.036–0.038) | **-0.643 s, -95%** | **18.4×** | 3,057 of 3,072 | 0 | 99.51% | 3,000 |
-| Equality on the uniformly drawn `v_smallint`: `v_smallint=0` | **0.512 s** (0.495–0.558) | **0.514 s** (0.493–0.554) | **+0.002 s, +0%** | **1.0×** | 0 of 3,072 | 0 | 0.00% | 13 |
+| Filter | `--statistics none` | Statistics used | Δ | Speedup | Statistics used, none in the cache | Δ carrying them | Groups skipped | Bytes a stop left unread | Of the rows' bytes, not read | Rows returned |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Range on the sorted `id`: `id > 400000 AND id <= 403000` | **0.499 s** (0.494–0.513) | **0.038 s** (0.037–0.039) | **-0.462 s, -92%** | **13.1×** | — | — | 3,060 of 3,072 | 432,922 | 99.62% | 3,000 |
+| Equality on the low-cardinality `v_category`: `v_category=category-200` | **0.634 s** (0.595–0.641) | **0.036 s** (0.034–0.038) | **-0.598 s, -94%** | **17.4×** | — | — | 3,057 of 3,072 | 0 | 99.51% | 3,000 |
+| Equality on the uniformly drawn `v_smallint`: `v_smallint=0` | **0.462 s** (0.453–0.543) | **0.467 s** (0.465–0.523) | **+0.006 s, +1%** | **1.0×** | **0.473 s** (0.451–0.493) | **-0.006 s, -1%** | 0 of 3,072 | 0 | 0.00% | 13 |
 
-One file — the control's rows with `v_category` appended, 811,677 rows of 17 columns — queried warm at `--jobs 1`, `--schema-mode typed`, against a cache one untimed `parse` stating `--statistics all --statistics-group-size 1048576` wrote in the same container, so the two legs of a row differ by `--statistics` alone. The first two rows price what pruning buys; the third, which skips nothing, what consulting the statistics costs a query they cannot narrow. The skipped groups and bytes are the query's own notes; the bytes a stop left unread are a lower bound, and the share not read adds them to the skipped groups'. `dd` → `/dev/null` on the same file: **0.335 s**.
+One file — the control's rows with `v_category` appended, 811,677 rows of 17 columns — queried warm at `--jobs 1`, `--schema-mode typed`, against a cache one untimed `parse` stating `--statistics all --statistics-group-size 1048576` wrote in the same container, so the two legs of a row differ by `--statistics` alone. The first two rows price what pruning buys; the third, which skips nothing, what consulting the statistics costs a query they cannot narrow. The cache is decoded whole whatever the query states, so the third filter also runs against a cache an untimed `parse` stating `--statistics none` wrote, with statistics used and none to consult, and its Δ against the cache carrying them is what carrying them costs that query. The skipped groups and bytes are the query's own notes; the bytes a stop left unread are a lower bound, and the share not read adds them to the skipped groups'. `dd` → `/dev/null` on the same file: **0.296 s**.
 
 **Both pruned legs read a floor, not their bytes.** Each read under 0.5% of the
-file's row bytes — about 11.7 MiB for the range, which at the unpruned leg's
-own rate of 0.184 ms a MiB is about 2 ms of the 38 ms measured — so about
+file's row bytes — about 11.6 MiB for the range, which at the unpruned leg's
+own rate of 0.162 ms a MiB is about 2 ms of the 38 ms measured — so about
 36 ms of each pruned leg is not reading rows. Process start, the preamble, the
 plan and decoding the whole cache are in it, and **it is unattributed between
-them**. The cache is one bincode file decoded whole, statistics included, by
-both legs of every row, so no leg here prices loading a cache that carries
-statistics against one that does not. The speedups are therefore ratios
-against that floor: the range leg's bytes not read are 263× its bytes read,
-where its wall is 14.9× shorter. The dictionary leg reads fifteen groups to the
-range's twelve, three runs of about 1,000 rows each, and lands within a
-millisecond of it, which is what a fixed floor predicts. Six reps resolve both:
-neither spread is wider than 3 ms.
+them**. The speedups are therefore ratios against that floor: the range leg's
+bytes not read are 264× its bytes read, where its wall is 13.1× shorter. The
+dictionary leg reads fifteen groups to the range's twelve, three runs of about
+1,000 rows each, and lands within 2 ms of it, faster rather than slower, which
+is what a fixed floor predicts. Six reps resolve both: neither spread is wider
+than 4 ms.
 
 **Consulting statistics that skip nothing costs nothing this table resolves**:
-the third row's legs overlap rep for rep, 0.493–0.554 s against 0.495–0.558 s,
-the query having consulted every one of 3,072 groups' statistics and skipped none.
-**Rows returned agree across every pair**, 13 on the third exactly as
-`generate_pruning_bench.py`'s draws, recomputed without writing the file,
-predicted — a count taken by a different route from the one timed.
+the third row's legs overlap, 0.465–0.523 s against 0.453–0.543 s, the query
+having consulted every one of 3,072 groups' statistics and skipped none.
 
-The three unpruned legs differ by their filters alone, 0.512 s to 0.680 s, the
+**Nor does carrying them.** Against a cache written without statistics the same
+query reads 0.451–0.493 s, overlapping both other legs' spreads, and its median
+is 6 ms *slower* than the carrying cache's; paired rep by rep the difference
+alternates in sign. Subtracting the two Δs to isolate the decode would give a
+negative cost, which is the spreads and not a term, so **the decode is
+unresolved here, not zero**. What bounds it is the pruned legs: each decodes
+this same cache whole, statistics included, inside a 34–39 ms wall, so
+decoding 3,072 groups' statistics costs at most that floor, well under what the
+unnarrowed legs' tens-of-ms spreads can see. Pricing it below the floor takes
+more groups or the process timing its own cache load, not another subtraction.
+
+**Rows returned agree across every leg**, 13 on the third, the cache without
+statistics included, exactly as `generate_pruning_bench.py`'s draws, recomputed
+without writing the file, predicted — a count taken by a different route from
+the one timed.
+
+The three unpruned legs differ by their filters alone, 0.462 s to 0.634 s, the
 text equality on the last column slowest; that is the filter's own cost,
 `predicate-terms`' subject, and is not attributed here.
 
 Per-rep readings (s):
-- Range on the sorted `id`, `--statistics none`: 0.561, 0.552, 0.568, 0.576, 0.569, 0.557
-- Range on the sorted `id`, `--statistics all`: 0.038, 0.038, 0.038, 0.039, 0.037, 0.036
-- Equality on the low-cardinality `v_category`, `--statistics none`: 0.635, 0.701, 0.638, 0.724, 0.660, 0.755
-- Equality on the low-cardinality `v_category`, `--statistics all`: 0.037, 0.038, 0.037, 0.036, 0.037, 0.038
-- Equality on the uniformly drawn `v_smallint`, `--statistics none`: 0.504, 0.495, 0.520, 0.504, 0.548, 0.558
-- Equality on the uniformly drawn `v_smallint`, `--statistics all`: 0.554, 0.502, 0.535, 0.516, 0.493, 0.511
-- `dd` → `/dev/null`: 0.334, 0.340, 0.335
+- Range on the sorted `id`, `--statistics none`: 0.502, 0.502, 0.494, 0.497, 0.513, 0.496
+- Range on the sorted `id`, `--statistics all`: 0.038, 0.037, 0.038, 0.037, 0.039, 0.039
+- Equality on the low-cardinality `v_category`, `--statistics none`: 0.640, 0.602, 0.628, 0.595, 0.640, 0.641
+- Equality on the low-cardinality `v_category`, `--statistics all`: 0.037, 0.038, 0.035, 0.038, 0.034, 0.036
+- Equality on the uniformly drawn `v_smallint`, `--statistics none`: 0.457, 0.463, 0.453, 0.495, 0.460, 0.543
+- Equality on the uniformly drawn `v_smallint`, `--statistics all`: 0.468, 0.465, 0.523, 0.466, 0.518, 0.465
+- Equality on the uniformly drawn `v_smallint`, `--statistics all`, a cache written by `parse --statistics none`: 0.455, 0.480, 0.451, 0.471, 0.475, 0.493
+- `dd` → `/dev/null`: 0.297, 0.295, 0.296
 
-Apparatus over every run in this table: CPU stall ≤0.26%, I/O stall ≤4.94%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.72 GHz, ≤65°C.
+Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤7.51%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.74 GHz, ≤68°C.
 
 ## What a session's own drift costs, measured rather than asserted
 

@@ -83,7 +83,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.9** Early stop on a column sorted over its block; [notes](../design/roadmap-P10.9-sorted-stop-notes.md)
 - [x] **10.11** The early stop reported after the fact: blocks stopped and bytes left unread, counted per stream and printed by `pgdq query` where a stop fired; [notes](../design/roadmap-P10.11-stop-report-notes.md)
 - [x] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`, over the `pruning` input with all three of the spec's filters — taken from the instrument's commit and folded into `measurements.md`; [notes](../design/roadmap-P10.10-figures-notes.md)
-- [ ] **10.10.1** `statistics-pruning`'s third filter also against a cache written by `parse --statistics none`, pricing what carrying statistics costs a query; strikes the second half of P20's inbox entry "What the statistics figures leave unpriced". The instrument has landed ([notes](../design/roadmap-P10.10.1-uncarried-statistics-notes.md)); what remains is re-taking `statistics-pruning` from its commit, folding the table and its prose into `measurements.md`, and striking the inbox half
+- [x] **10.10.1** `statistics-pruning`'s third filter also against a cache written by `parse --statistics none`, pricing what carrying statistics costs a query — taken from the instrument's commit and folded into `measurements.md` — and the second half of P20's inbox entry "What the statistics figures leave unpriced" rewritten to what the reading leaves unpriced; [notes](../design/roadmap-P10.10.1-uncarried-statistics-notes.md)
 
 ## Not started
 
