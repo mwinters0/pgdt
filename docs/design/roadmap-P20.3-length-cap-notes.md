@@ -60,6 +60,7 @@ what `parse` records for later queries", and the flag's help.
 - **A back-fill under an unstated size re-reads a held block exactly at the size
   it holds** (`group_cap: None`), which is what an unstated size lacking a column
   asked for before; 20.4's recorded bounds decide it per bound.
-- **Merges are outside every account reconciliation leg** (above). 20.8's
-  attribution legs gather flagless and so reach the cap only on an input past
-  4 GiB a block.
+- **No account reconciliation leg merges past the cap** (above); its flagless
+  wide- and long-text legs merge only at a block's end, under the density
+  minimum. 20.8's attribution legs gather flagless and so reach the cap only on
+  an input past 4 GiB a block.

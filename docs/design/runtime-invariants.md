@@ -692,8 +692,9 @@ allocation of `buckets × size_of::<(K, V)>()`, rounded up to
 16 on x86 and x86-64 and 8 elsewhere and `buckets` is `capacity + 1` below a
 capacity of 8 and `capacity × 8 / 7` from there. An insert into a map whose
 length equals its capacity allocates the table sized for one more entry before
-it frees the old one, so the two are live together for the rehash. An empty map
-allocates nothing.
+it frees the old one, so the two are live together for the rehash. A map made
+`with_capacity(k)`, `k` nonzero, allocates that same table — the one a full map
+of `k − 1` grows into. An empty map allocates nothing.
 
 **Proof.** `std` re-exports the `hashbrown` crate, whose version is in
 `library/Cargo.lock` under the toolchain's `rust-src`. `hashbrown` 0.17.1,
@@ -702,10 +703,11 @@ arm through `min_cap`) and `TableLayout::calculate_layout_for`, whose
 `ctrl_offset` is the rounded slot bytes and whose `len` adds `buckets +
 Group::WIDTH`; `reserve_rehash_inner` resizes to
 `max(new_items, full_capacity + 1)` and frees the old allocation after moving
-the entries.
+the entries; `with_capacity` sizes its table by the same `capacity_to_buckets`.
 
 **Scope limit.** Nothing is claimed of a map that has had entries removed,
-whose capacity no longer names its buckets, nor of any allocator's own
+whose capacity no longer names its buckets — which is why a dictionary's
+interning map is rebuilt rather than pruned — nor of any allocator's own
 rounding: the sizes are what `GlobalAlloc` is asked for.
 
 **Verified against:** Rust 1.98.0, `hashbrown` 0.17.1 (source read; observed
@@ -719,12 +721,13 @@ the statistics account, `gather::map_heap` and `gather::grown_map_heap`.
 ```sh
 grep -A2 'name = "hashbrown"' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/Cargo.lock"
 cargo test -p pgdump_query --lib a_full_map_grows_into_the_table_it_is_charged
+cargo test -p pgdump_query --lib a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged
 cargo test -p pgdump_query-cli --features introspect --test statistics_account --target-dir <own>
 ```
 
-The first names the version whose `src/raw.rs` the proof reads; the second holds
-the capacities to the growth rule; the third holds the bytes to what the
-allocator was asked for.
+The first names the version whose `src/raw.rs` the proof reads; the second and
+third hold the capacities to the growth rule and to `with_capacity`; the last
+holds the bytes to what the allocator was asked for.
 
 ## RT12 — `Vec::reserve_exact` leaves the capacity it was asked for, grown by one `realloc`
 

@@ -2187,8 +2187,9 @@ STATISTICS_GROUP_SIZE = 1 << 20
 #: figure, so they are its one exemption, and they state the request rather
 #: than inherit it for the rule's own reason: the selection and the group size
 #: are both defaults that can move, and a shape inheriting either would re-time
-#: its figure the day one did. The size stated is the shipped default, so what
-#: is priced is what a flagless `parse` does today.
+#: its figure the day one did. The size stated is the default's base size, and a
+#: stated size is gathered exactly, so what is priced is gathering at a
+#: mebibyte, which a flagless `parse` coarsens where rows are wide.
 GATHER_STATISTICS = f"--statistics all --statistics-group-size {STATISTICS_GROUP_SIZE}"
 
 #: `statistics-gathering`'s shapes: one whole-file `parse` under the resident

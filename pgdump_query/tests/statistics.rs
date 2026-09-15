@@ -16,8 +16,9 @@ use std::sync::Arc;
 
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
-    BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET, DICTIONARY_CAP, DumpIndex, LocalFileSource,
-    MapRun, Parallelism, STATISTICS_GROUP_CAP, STORED_VALUE_CAP, ScanOptions, Sortedness,
+    BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET, DEFAULT_STATISTICS_GROUP_SIZE,
+    DEFAULT_STATISTICS_MIN_ROWS, DICTIONARY_CAP, DumpIndex, GroupSizing, LocalFileSource, MapRun,
+    Parallelism, STATISTICS_GROUP_CAP, STORED_VALUE_CAP, ScanOptions, Sortedness,
     StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
     gather_block_statistics, map_file,
 };
@@ -31,7 +32,8 @@ use common::{VERSIONS, sandboxed, statistics_fixture};
 const SMALL_GROUP: u64 = 4096;
 
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
-    StatisticsRequest { selection, group_size: Some(NonZeroU64::new(group_size).unwrap()) }
+    let group_size = Some(NonZeroU64::new(group_size).unwrap());
+    StatisticsRequest { selection, group_size, min_rows: None }
 }
 
 async fn gathered(dump: &Path, statistics: &StatisticsRequest) -> DumpIndex {
@@ -288,21 +290,34 @@ async fn a_long_value_is_bounded_by_truncated_texts() {
 
 /// **The default request gathers every statistic**: every column of every
 /// block, at the mebibyte default group size, at which `ordered` is a single
-/// group and the block holding the megabyte row is not. The group size is
-/// stated per request and recorded per block.
+/// group and the block holding the megabyte row is not — until the density
+/// minimum, which no group of a few rows reaches, makes that block one group
+/// too, and which a minimum of zero turns off. The request each block was
+/// sized under is recorded beside its size.
 #[tokio::test]
 async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let dump = statistics_fixture(16, "default");
     assert_eq!(StatisticsRequest::default(), StatisticsRequest::ALL);
     let index = gathered(&dump, &StatisticsRequest::default()).await;
+    let default_sizing = GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS };
     for block in index.blocks() {
         let statistics = statistics(block);
-        assert_eq!(statistics.group_size, pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
         assert_eq!(statistics.columns.len(), block.header.columns.len());
         assert!(statistics.columns.iter().all(Option::is_some), "{}", block.header.table);
+        assert_eq!(statistics.sizing, default_sizing, "{}", block.header.table);
+        assert_eq!(statistics.groups.len(), 1, "{}", block.header.table);
     }
-    assert_eq!(statistics(block(&index, "public.ordered")).groups.len(), 1);
-    assert!(statistics(block(&index, "public.long_value")).groups.len() > 1);
+    let ordered = statistics(block(&index, "public.ordered"));
+    assert_eq!(ordered.group_size, pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
+    let long_value = statistics(block(&index, "public.long_value"));
+    assert!(long_value.group_size > pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
+
+    let uncoarsened = StatisticsRequest { min_rows: Some(0), ..StatisticsRequest::ALL };
+    let index = gathered(&dump, &uncoarsened).await;
+    let long_value = statistics(block(&index, "public.long_value"));
+    assert_eq!(long_value.group_size, pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
+    assert!(long_value.groups.len() > 1);
+    assert_eq!(long_value.sizing, GroupSizing::Density { min_rows: 0 });
 }
 
 /// A selection tracks only what it names: a table, or one column, whose
@@ -605,6 +620,7 @@ async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
     let specials = StatisticsRequest {
         selection: StatisticsSelection::Only(vec![StatisticsTarget::Table("specials".to_string())]),
         group_size: None,
+        min_rows: None,
     };
     let run = mapped_into_cache(&dump, &options, &specials).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
@@ -640,6 +656,67 @@ async fn one_block_is_gathered_on_its_own() {
     .expect("nothing cancelled it");
     assert_eq!(Some(&gathered), block(&reference, "public.ordered").statistics.as_deref());
     assert_eq!(wanted.backfill(block(&reference, "public.ordered")), None);
+}
+
+/// **A block records the request its size was chosen under, and a back-fill
+/// re-reads it only for a stated one that differs** (`D34`'s rule, per bound):
+/// a stated minimum re-reads every block sized under another, from its first
+/// row; an unstated minimum and size keep what a block holds, a block lacking
+/// a column being re-read at its size and keeping its record; and a stated
+/// size compares sizes alone.
+#[tokio::test]
+async fn a_stated_minimum_rereads_a_block_sized_under_another() {
+    let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "sized.sql");
+    let options = ScanOptions::default();
+    let with_min =
+        |min_rows| StatisticsRequest { min_rows: Some(min_rows), ..StatisticsRequest::ALL };
+    let records = |run: &MapRun| {
+        ["public.ordered", "public.specials", "public.long_value"]
+            .map(|table| statistics(block(&run.index, table)).sizing)
+    };
+    let density = |min_rows| GroupSizing::Density { min_rows };
+    let default = density(DEFAULT_STATISTICS_MIN_ROWS);
+    let only_id = StatisticsRequest {
+        selection: StatisticsSelection::Only(vec![StatisticsTarget::Column {
+            table: "public.ordered".to_string(),
+            column: "id".to_string(),
+        }]),
+        ..with_min(0)
+    };
+
+    let run = mapped_into_cache(&dump, &options, &only_id).await;
+    assert_eq!(statistics(block(&run.index, "public.ordered")).sizing, density(0));
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    assert_eq!(run.backfilled, 3, "ordered lacks columns, the others everything");
+    assert_eq!(records(&run), [density(0), default, default], "ordered kept its record");
+
+    let run = mapped_into_cache(&dump, &options, &with_min(DEFAULT_STATISTICS_MIN_ROWS)).await;
+    assert_eq!(run.backfilled, 1, "only ordered was sized under another minimum");
+    assert_eq!(records(&run), [default; 3]);
+    let long_value = |run: &MapRun| statistics(block(&run.index, "public.long_value")).clone();
+    let coarse = long_value(&run);
+
+    let run = mapped_into_cache(&dump, &options, &with_min(0)).await;
+    assert_eq!(run.backfilled, 3);
+    assert_eq!(records(&run), [density(0); 3]);
+    assert!(long_value(&run).groups.len() > coarse.groups.len());
+    for request in [StatisticsRequest::ALL, with_min(0)] {
+        let run = mapped_into_cache(&dump, &options, &request).await;
+        assert_eq!(run.backfilled, 0, "{request:?}");
+    }
+
+    let at_default_size = request(StatisticsSelection::All, DEFAULT_STATISTICS_GROUP_SIZE);
+    let run = mapped_into_cache(&dump, &options, &at_default_size).await;
+    assert_eq!(run.backfilled, 0, "every block is at the size stated, whatever sized it");
+    let run = mapped_into_cache(&dump, &options, &request(StatisticsSelection::All, 4096)).await;
+    assert_eq!(run.backfilled, 3);
+    assert_eq!(records(&run), [GroupSizing::Stated; 3]);
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    assert_eq!(run.backfilled, 0, "an unstated minimum keeps a stated size");
+    let run = mapped_into_cache(&dump, &options, &with_min(DEFAULT_STATISTICS_MIN_ROWS)).await;
+    assert_eq!(run.backfilled, 3);
+    assert_eq!(records(&run), [default; 3]);
+    assert_eq!(long_value(&run), coarse, "re-read from the first row, as gathered cold");
 }
 
 /// **A back-fill the leader splits gathers what the serial pass gathers**, at
@@ -698,7 +775,12 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
             let backfill = unstated.backfill(block).expect("the block holds no statistics");
             assert_eq!(backfill.group_cap, Some(STATISTICS_GROUP_CAP));
             assert_eq!(stated.backfill(block).unwrap().group_cap, None);
-            let capped = StatisticsBackfill { group_size: BASE, group_cap: Some(CAP), ..backfill };
+            let capped = StatisticsBackfill {
+                group_size: BASE,
+                group_cap: Some(CAP),
+                min_rows: None,
+                ..backfill
+            };
             let gather = |options: ScanOptions, backfill: StatisticsBackfill| {
                 let (source, metadata) = (&source, index.metadata.as_ref());
                 async move {
@@ -728,6 +810,92 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
         }
     }
     assert!(merged * 2 > blocks, "only {merged} of {blocks} blocks merged");
+}
+
+/// The merges the density minimum must choose over a block gathered exactly
+/// at its base size, written as `scripts/row_density.py` chooses: the first
+/// size, from the base to a single group, whose nearest-rank median group
+/// holds `min_rows`, else the single group.
+fn chosen_merges(rows: &[u64], min_rows: u64) -> u32 {
+    let mut level = rows.to_vec();
+    let mut merges = 0;
+    loop {
+        let mut sorted = level.clone();
+        sorted.sort_unstable();
+        if level.len() <= 1 || sorted[sorted.len().div_ceil(2) - 1] >= min_rows {
+            return merges;
+        }
+        level = level.chunks(2).map(|pair| pair.iter().sum()).collect();
+        merges += 1;
+    }
+}
+
+/// **A block sized by its density minimum gathers, split by the leader, what
+/// the serial pass gathers, at the size the rows its base size gathered
+/// choose, and that is what gathering exactly at that size gathers** — every
+/// block of every fixture, re-read at a group size of a few bytes under a
+/// minimum of a few rows, so most blocks coarsen. What sizes a block under a
+/// request is [`StatisticsRequest::backfill`]'s answer, asserted first.
+#[tokio::test]
+async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_gathers() {
+    const BASE: u64 = 8;
+    const MIN_ROWS: u64 = 3;
+    let unstated = StatisticsRequest::ALL;
+    let stated = request(StatisticsSelection::All, BASE);
+    let serial = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
+    let (mut blocks, mut coarsened) = (0, 0);
+    for fixture in common::all_fixtures() {
+        let source = LocalFileSource::open(&fixture).unwrap();
+        let (options, mode) = (ScanOptions::default(), CacheMode::Disabled);
+        let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
+        let index = run.await.unwrap().index;
+        for block in index.blocks() {
+            let backfill = unstated.backfill(block).expect("the block holds no statistics");
+            let default_sizing = GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS };
+            assert_eq!(backfill.min_rows, Some(DEFAULT_STATISTICS_MIN_ROWS));
+            assert_eq!(backfill.sizing, default_sizing);
+            let exact_request = stated.backfill(block).unwrap();
+            assert_eq!((exact_request.min_rows, exact_request.sizing), (None, GroupSizing::Stated));
+            let sized = StatisticsBackfill {
+                group_size: BASE,
+                group_cap: None,
+                min_rows: Some(MIN_ROWS),
+                ..backfill
+            };
+            let gather = |options: ScanOptions, backfill: StatisticsBackfill| {
+                let (source, metadata) = (&source, index.metadata.as_ref());
+                async move {
+                    gather_block_statistics(source, &options, metadata, block, &backfill)
+                        .await
+                        .unwrap()
+                        .expect("nothing cancels the re-read")
+                }
+            };
+            let label = format!("{}: {}", fixture.display(), block.header.table);
+            let reference = gather(serial.clone(), sized.clone()).await;
+            assert_eq!(reference.sizing, default_sizing, "{label}: the record is the plan's");
+            let exact =
+                |group_size| StatisticsBackfill { group_size, min_rows: None, ..sized.clone() };
+            let base = gather(serial.clone(), exact(BASE)).await;
+            let rows: Vec<u64> = base.groups.iter().map(|g| g.rows).collect();
+            let merges = chosen_merges(&rows, MIN_ROWS);
+            assert_eq!(reference.group_size, BASE << merges, "{label}: {rows:?}");
+            assert_eq!(
+                gather(serial.clone(), exact(reference.group_size)).await,
+                reference,
+                "{label}"
+            );
+            for jobs in [3, 8] {
+                let parallelism = Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET);
+                let parallel = ScanOptions { parallelism, ..serial.clone() };
+                let split = gather(parallel, sized.clone()).await;
+                assert_eq!(split, reference, "{label}: {jobs} jobs");
+            }
+            blocks += 1;
+            coarsened += usize::from(merges > 0);
+        }
+    }
+    assert!(coarsened * 2 > blocks, "only {coarsened} of {blocks} blocks coarsened");
 }
 
 /// **A block that no longer ends where the map says is refused**, rather than

@@ -2463,7 +2463,7 @@ not this one's.
 | Large-object region | **0.531 s** (0.517–0.603) | **0.554 s** (0.524–0.645) | **+0.023 s, +4%** | **6.03 MiB** (5.93–6.07) | **5.70 MiB** (5.61–6.09) | 0.361 s |
 | `INSERT` run | **2.37 s** (2.35–2.40) | **2.39 s** (2.35–2.43) | **+0.020 s, +1%** | **5.91 MiB** (5.73–6.04) | **5.91 MiB** (5.79–6.08) | 0.375 s |
 
-Every run is `pgdq parse` over the whole file at `--jobs 1`, statistics stated as `--statistics none` or `--statistics all --statistics-group-size 1048576` — the shipped default request — **in a 2g container**, against the register's 512m: nothing bills what statistics hold, so the limit is chosen generously and the resident column says what it left. Resident is recorded, not attributed.
+Every run is `pgdq parse` over the whole file at `--jobs 1`, statistics stated as `--statistics none` or `--statistics all --statistics-group-size 1048576` — the default's base size, gathered exactly where a flagless `parse` coarsens wide rows — **in a 2g container**, against the register's 512m: nothing bills what statistics hold, so the limit is chosen generously and the resident column says what it left. Resident is recorded, not attributed.
 
 **Gathering costs a `COPY`-dense parse most of its time, warm.** Every
 statistic over the control's 811,677 rows of 16 columns adds 3.04 s to a

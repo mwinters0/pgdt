@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | settled; parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, and say on stderr how much memory they held, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none`; under an unstated group size a block's groups merge pairwise past `STATISTICS_GROUP_CAP` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D82; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, and say on stderr how much memory they held, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none`; under an unstated group size a block's groups merge pairwise past `STATISTICS_GROUP_CAP` and, once it is read, until its median group holds the density minimum, each block recording the request that sized it | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D82; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -73,7 +73,7 @@ Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-stati
 - [x] **20.11** The cache file streamed at both ends: a save encodes into the file through a buffered writer and a load decodes through a buffered reader, the bytes written identical, so neither holds the serialized cache beside the statistics it carries; a save written beside the cache and renamed over it, a kill mid-save leaving the previous cache whole; the account's rustdoc no longer names either term; [notes](../design/roadmap-P20.11-streamed-cache-notes.md)
 - [x] **20.2** Koji's row density: a gathering `parse` of koji on the shipped build tracking one narrow column per table, launched detached; a `scripts/` tool with its tests deriving each block's rows-per-group distribution at every `2^n` from `info --json`, over koji and the fixtures, into a `runs/` artifact; the median quantile checked against the spec's registered criterion, which koji does not meet, so the median stands; [notes](../design/roadmap-P20.2-row-density-notes.md)
 - [x] **20.3** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture; [notes](../design/roadmap-P20.3-length-cap-notes.md)
-- [ ] **20.4** The density minimum: a block's size chosen at its end from rows per group at the median, default minimum 1,024, the cap's size standing where coarser; `--statistics-min-rows` (0 turns it off), a stated `--statistics-group-size` exact, a power of two and refused beside either row flag; the bounds recorded per block with D34's back-fill rule extended to each; `FORMAT_VERSION` bumped; parallel identical to serial over every fixture
+- [x] **20.4** The density minimum: a block's size chosen at its end from rows per group at the median, default minimum 1,024, the cap's size standing where coarser; `--statistics-min-rows` (0 turns it off), a stated `--statistics-group-size` exact, a power of two and refused beside either row flag; the bounds recorded per block with D34's back-fill rule extended to each; `FORMAT_VERSION` bumped; parallel identical to serial over every fixture; [notes](../design/roadmap-P20.4-density-minimum-notes.md)
 - [ ] **20.5** The stated maximum: `--statistics-max-rows` at the 90th percentile, honoured over the length cap, winning where a block meets neither bound, refused below the minimum; a block whose `2^20` groups break it re-read by the back-fill at the size its rows per group predict, once, saying where it still misses
 - [ ] **20.6** `--memory` as the resident allowance, replacing `--parallel-memory`, and the library's `Parallelism` memory carved the same way; the two-tunable rule's allowlist test; `MEMORY_RESERVE`'s value unmoved
 - [ ] **20.7** The decline: the statistics allowance carved after the workers, half of `MemAvailable` where no limit is found; a block that does not fit declines and says so, recorded in the cache with its allowance, back-fill retrying only under a larger one; the margin left against the account, closing `KD28`
@@ -319,3 +319,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A block past its cap reads its minimum at the size the cap left it**, not
+  at `2^20`: `Gatherer::fit_density` coarsens from the held size while the
+  nearest-rank median there is short, so the spec's "the cap's size stands
+  where coarser" ("Granularity follows row density") holds unless the median
+  falls on coarsening, which it can — rows per group `[m, m, m, m, 0, 0, 0]`
+  meet a minimum `m`, their pairs `[2m, 2m, 0, 0]` do not — and such a block
+  ends coarser than the cap left it. Made so because the finer rows are summed
+  as the cap merges mid-scan and keeping them grows with the block, which the
+  cap exists to stop. Reconsidering either accepts the extra doublings on that
+  shape, the spec's sentence reading as precedence rather than a guarantee, or
+  asks for the base size's rows per group kept beside a capped block until it
+  finishes, a term growing with the block.

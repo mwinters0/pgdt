@@ -1,10 +1,10 @@
-//! `pgdq parse --statistics` / `--statistics-group-size`, and what `info`
-//! reports of them.
+//! `pgdq parse --statistics` / `--statistics-group-size` /
+//! `--statistics-min-rows`, and what `info` reports of them.
 //!
 //! What a gathered statistic means is the library's
 //! (`pgdump_query/tests/statistics.rs`). What only the binary can say is that
 //! `parse` gathers by default, that each flag reaches the cache it writes, that
-//! a combination the two flags cannot both mean is refused rather than
+//! a combination the flags cannot all mean is refused rather than
 //! half-honoured, that `info --json` exports every block's groups compact and
 //! with no rollup, that `info --detail` rolls those groups up per table and
 //! column, that `query` skips what they rule out unless told `--statistics
@@ -69,13 +69,32 @@ fn array(value: &Value) -> &Vec<Value> {
     value.as_array().unwrap_or_else(|| panic!("an array: {value}"))
 }
 
+/// **`parse` gathers every table by default at a mebibyte**, recording the
+/// minimum each block was sized under — which makes the block of the megabyte
+/// row, whose groups hold a row or none, one group of a coarser size — and
+/// `--statistics-min-rows 0` leaves that block at a mebibyte.
 #[test]
 fn parse_gathers_every_table_by_default_at_a_mebibyte() {
     let blocks = blocks_after(&[]);
     assert_eq!(blocks.len(), 3);
     for (table, block) in &blocks {
-        assert_eq!(block["statistics"]["group_size"], 1 << 20, "{table}");
-        assert!(array(&block["statistics"]["columns"]).iter().all(|c| !c.is_null()), "{table}");
+        let statistics = &block["statistics"];
+        let size = statistics["group_size"].as_u64().unwrap();
+        match table.as_str() {
+            "public.long_value" => assert!(size > 1 << 20, "{table}: {size}"),
+            _ => assert_eq!(size, 1 << 20, "{table}"),
+        }
+        assert_eq!(array(&statistics["groups"]).len(), 1, "{table}");
+        assert_eq!(statistics["sizing"]["Density"]["min_rows"], 1024, "{table}");
+        assert!(array(&statistics["columns"]).iter().all(|c| !c.is_null()), "{table}");
+    }
+    for (table, block) in blocks_after(&["--statistics-min-rows", "0"]) {
+        let statistics = &block["statistics"];
+        assert_eq!(statistics["group_size"], 1 << 20, "{table}");
+        assert_eq!(statistics["sizing"]["Density"]["min_rows"], 0, "{table}");
+        if table == "public.long_value" {
+            assert!(array(&statistics["groups"]).len() > 1);
+        }
     }
 }
 
@@ -84,6 +103,7 @@ fn none_gathers_nothing_and_a_stated_size_is_recorded() {
     assert!(blocks_after(&["--statistics", "none"]).iter().all(|(_, b)| b["statistics"].is_null()));
     for (table, block) in blocks_after(&["--statistics-group-size", "4096"]) {
         assert_eq!(block["statistics"]["group_size"], 4096, "{table}");
+        assert_eq!(block["statistics"]["sizing"], "Stated", "{table}");
     }
 }
 
@@ -304,6 +324,13 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
     assert!(stdout_again.starts_with("nothing to scan"), "{stdout_again}");
     assert_ne!(stdout, stdout_again);
+
+    let (_, stderr) = parse(&["--statistics-min-rows", "16"]);
+    assert!(stderr.contains("statistics back-fill complete blocks=3"), "{stderr}");
+    let (_, stderr) = parse(&["--statistics-min-rows", "16"]);
+    assert_eq!(backfill_lines(&stderr), 0, "{stderr}");
+    let (_, stderr) = parse(&[]);
+    assert_eq!(backfill_lines(&stderr), 0, "an unstated minimum keeps a block's size: {stderr}");
 }
 
 /// **A `parse` says what its statistics held, in one status line as it
@@ -354,7 +381,14 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
     let source = dump.to_str().unwrap();
     for (extra, says) in [
         (&["--statistics", "none", "--statistics-group-size", "64"][..], "drop one of them"),
+        (&["--statistics", "none", "--statistics-min-rows", "64"][..], "drop one of them"),
         (&["--statistics-group-size", "0"][..], "a group size of 0"),
+        (&["--statistics-group-size", "1000"][..], "a power of two"),
+        (
+            &["--statistics-group-size", "4096", "--statistics-min-rows", "8"][..],
+            "cannot be used with",
+        ),
+        (&["--preamble-only", "--statistics-min-rows", "8"][..], "cannot be used with"),
         (&["--statistics", "public..id"][..], "is not a table"),
         (&["--statistics", "a.b.c.d"][..], "more parts"),
         (&["--preamble-only", "--statistics", "none"][..], "cannot be used with"),

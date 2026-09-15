@@ -56,7 +56,7 @@ use crate::{Error, Result};
 /// A new way of *reading* an existing on-disk shape needs no bump:
 /// [`CacheStatus::Incomplete`] reinterprets `scanned_through` against a size
 /// already stored.
-pub(crate) const FORMAT_VERSION: u32 = 18;
+pub(crate) const FORMAT_VERSION: u32 = 19;
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.

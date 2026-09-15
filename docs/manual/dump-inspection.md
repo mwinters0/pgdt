@@ -232,7 +232,8 @@ is refused.
 
 By default `parse` also gathers **statistics**: for every stretch of each
 table's data — a **row group**, one mebibyte of it, doubled for a table whose
-data would take more than 4,096 groups until it takes no more — the number of
+data would take more than 4,096 groups until it takes no more, and doubled
+again for a table whose rows are wide (below) — the number of
 rows, each column's number of NULLs, and, where pgdq compares a column's values
 exactly, its least and greatest value and its distinct values (up to 64, none
 longer than 256 bytes; past either, that group records no distinct values for
@@ -250,25 +251,38 @@ turns it off:
 pgdq parse --source big.sql --statistics none                        # nothing gathered
 pgdq parse --source big.sql --statistics public.orders,public.items.sku
 pgdq parse --source big.sql --statistics-group-size 65536            # finer groups
+pgdq parse --source big.sql --statistics-min-rows 4096               # fewer, fuller groups
 ```
 
 A selection is a comma-separated list of tables (`schema.table`, or a bare
 `table` matching any schema) and single columns (`schema.table.column`); every
 other table gathers nothing and is read as `--statistics none` reads it. A name
 is split at its dots, so a quoted identifier containing one cannot be named.
-`--statistics-group-size` states the bytes of data each group covers, kept
-exactly however long the table: a smaller group records more finely where values
-lie and costs memory and cache space in proportion. Neither flag combines with `--preamble-only`, which reads no row.
+`--statistics-group-size` states the bytes of data each group covers, a power of
+two kept exactly however long the table: a smaller group records more finely
+where values lie and costs memory and cache space in proportion.
+
+**A table of wide rows gets fewer groups.** A group costs the same memory
+whether it holds one row or thousands, so once a table's data is read, its
+groups double until the middle group by row count — the median — holds
+`--statistics-min-rows` rows, 1,024 by default, or the table is one group. Rows
+up to about 1 KiB wide keep the mebibyte; a table averaging 4 KiB a row ends
+at 4 MiB a group. `--statistics-min-rows 0` doubles nothing; a larger minimum
+keeps fewer, fuller groups, which a query skips less precisely. A stated
+`--statistics-group-size` is exact, so it is refused beside
+`--statistics-min-rows`, and neither is accepted beside `--statistics none`.
+No statistics flag combines with `--preamble-only`, which reads no row.
 
 **Asking for statistics the cache lacks re-reads what lacks them.** Once the
 rest of the file is scanned, `parse` re-reads each table's data an earlier run
 mapped without the statistics this one asks for — gathered with `--statistics
-none`, left out of a selection, or at a group size other than a
-`--statistics-group-size` stated now — one `COPY` block at a time, banking
+none`, left out of a selection, at a group size other than a
+`--statistics-group-size` stated now, or under a minimum other than a
+`--statistics-min-rows` stated now — one `COPY` block at a time, banking
 each as it goes, so an interrupted re-read continues where it stopped. A
-re-read keeps every column the block already had, and an unstated group size
-keeps the size it was gathered at, so a flagless `parse` over a cache
-gathered at 65536 re-reads nothing. It prints its count to stderr:
+re-read keeps every column the block already had, and a group size and a
+minimum left unstated keep the size a block was gathered at, so a flagless
+`parse` over a cache gathered at 65536 re-reads nothing. It prints its count to stderr:
 
 ```
 2026-07-23T15:10:02.114820317Z  INFO statistics back-fill started blocks=12

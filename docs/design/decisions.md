@@ -213,9 +213,10 @@ untaken until the `INSERT` row reader exists (`KD9`).
 `blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a
 streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
 behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
-byte range, no leader piece knowing a global row index. A back-fill keeps every column a block held,
-and its size unless one is stated. Rejected: `SparseRowIndex`; padded `character` bounds and
-entries, keyed alike but past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
+byte range, no leader piece knowing a global row index. A back-fill keeps a block's columns, and its
+size unless a size or a minimum it did not record is stated. Rejected: `SparseRowIndex`; padded
+`character` bounds and entries, keyed alike but past the cap; a back-fill narrowed, dropping only
+re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and
@@ -411,15 +412,14 @@ and never reached; exact bytes when split, read past each piece's limit. Reopens
 exact bytes, which each piece reporting its first row's start would give. Code: `stream::EarlyStop`.
 
 ### D81 The statistics account sums allocation sizes as they change; an instrument scope checks it
-Each term is the allocator's request — capacity, a table's layout (RT11, RT12) — under one lock: a
-block once; an observer past `CHARGE_STEP`, at a column's close, through a fold moving its piece's
-charge; a vector or map ahead of its growth, in flight made when short, unmade when over. Rejected: a
+Each term is the allocator's request — capacity, a table's layout (RT11, RT12) — under one lock, a
+vector or map charged ahead of its growth, in flight made when short, unmade when over. Rejected: a
 per-group bound, bytes never held; growth charged after it; atomic terms, a moving charge read in
 neither; in-flight growth unmade both ways, faulting a table another worker holds; walking every
-block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen term
-growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Charge`.
+block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen
+term growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Charge`.
 
-### D82 A block past its cap merges pairwise, exactly, and never while a piece of it is alive
+### D82 A block merges pairwise, exactly, past its cap and short of its minimum, never while a piece lives
 Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads until
 `finish` clips them, a clipped upper bound not ordering as its value does; a merged dictionary
 renumbers first-seen. A piece joins at its own size, so a block waits till none lives, reopening an

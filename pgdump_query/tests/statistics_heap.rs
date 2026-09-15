@@ -61,6 +61,7 @@ fn request(group_size: u64) -> StatisticsRequest {
     StatisticsRequest {
         selection: StatisticsSelection::All,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
+        min_rows: None,
     }
 }
 

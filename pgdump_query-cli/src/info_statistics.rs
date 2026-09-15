@@ -242,7 +242,7 @@ mod tests {
 
     use pgdump_query::{
         BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics, CopyHeader,
-        DataBlock, RowGroup, Span, SpanBody,
+        DataBlock, GroupSizing, RowGroup, Span, SpanBody,
     };
 
     use super::*;
@@ -317,6 +317,7 @@ mod tests {
                     None,
                     Some(BlockStatistics {
                         group_size: 64,
+                        sizing: GroupSizing::Stated,
                         groups: groups(&[3, 0, 5]),
                         columns: vec![column(Sortedness::Ascending, &[true, false, true]), None],
                     }),
@@ -327,6 +328,7 @@ mod tests {
                     None,
                     Some(BlockStatistics {
                         group_size: 32,
+                        sizing: GroupSizing::Stated,
                         groups: groups(&[4]),
                         columns: vec![column(Sortedness::Unsorted, &[false]), None],
                     }),
@@ -374,6 +376,7 @@ mod tests {
                     Some("a"),
                     Some(BlockStatistics {
                         group_size: 1 << 20,
+                        sizing: GroupSizing::Stated,
                         groups: groups(&[2]),
                         columns: vec![column(Sortedness::Descending, &[true]), unbounded],
                     }),

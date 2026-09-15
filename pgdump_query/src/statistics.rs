@@ -36,6 +36,13 @@ pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;
 /// (`docs/design/decisions.md`, "D82"). A judgement, not a reading.
 pub const STATISTICS_GROUP_CAP: usize = 4096;
 
+/// The fewest rows a block's median group holds under an unstated group size
+/// and an unstated minimum: short of it, the finished block's groups merge
+/// pairwise until its median group reaches it or the block is one group
+/// (`docs/design/decisions.md`, "D82"). `DEFAULT_STATISTICS_GROUP_SIZE` over a
+/// row a kibibyte wide; a judgement, not a reading.
+pub const DEFAULT_STATISTICS_MIN_ROWS: u64 = 1 << 10;
+
 /// The longest text any stored bound or dictionary entry may be, in bytes.
 pub const STORED_VALUE_CAP: usize = 256;
 
@@ -44,7 +51,7 @@ pub const STORED_VALUE_CAP: usize = 256;
 pub const DICTIONARY_CAP: usize = 64;
 
 /// What a mapping pass is asked to gather: which columns, at what group size
-/// (`docs/design/decisions.md`, "D77").
+/// and under what density minimum (`docs/design/decisions.md`, "D77").
 /// An argument of [`crate::stream::map_file`] alone — a query never gathers.
 ///
 /// **The default gathers every statistic** ([`Self::ALL`]), a parse carrying
@@ -57,21 +64,31 @@ pub struct StatisticsRequest {
     pub selection: StatisticsSelection,
     /// The group size, `None` when the caller stated none and
     /// [`DEFAULT_STATISTICS_GROUP_SIZE`] applies, doubled past
-    /// [`STATISTICS_GROUP_CAP`] groups; a stated size is gathered exactly.
+    /// [`STATISTICS_GROUP_CAP`] groups and short of [`Self::min_rows`]; a
+    /// stated size is gathered exactly.
     /// Kept apart from the default because a stated size and an unstated one
     /// are different requests to a block already gathered at another. In a
     /// block the request does not track ([`Self::tracked_columns`] answering
     /// `None`, as it always does for [`StatisticsSelection::None`]) it sizes
     /// nothing and is ignored.
     pub group_size: Option<NonZeroU64>,
+    /// The fewest rows a block's median group should hold, `None` when the
+    /// caller stated none and [`DEFAULT_STATISTICS_MIN_ROWS`] applies; `0`
+    /// coarsens nothing. Kept apart from the default for the reason
+    /// [`Self::group_size`] is. Under a stated group size, which is gathered
+    /// exactly, it sizes nothing and is ignored.
+    pub min_rows: Option<u64>,
 }
 
 impl StatisticsRequest {
-    /// Every column of every table, at the default group size — the default.
-    pub const ALL: Self = Self { selection: StatisticsSelection::All, group_size: None };
+    /// Every column of every table, at the default group size and minimum —
+    /// the default.
+    pub const ALL: Self =
+        Self { selection: StatisticsSelection::All, group_size: None, min_rows: None };
 
     /// Nothing gathered: what a query's mapping pass always asks.
-    pub const NONE: Self = Self { selection: StatisticsSelection::None, group_size: None };
+    pub const NONE: Self =
+        Self { selection: StatisticsSelection::None, group_size: None, min_rows: None };
 
     /// Whether this request may track a column at all — false for
     /// [`StatisticsSelection::None`] alone.
@@ -89,6 +106,33 @@ impl StatisticsRequest {
     /// one, which is gathered exactly.
     pub fn group_cap(&self) -> Option<usize> {
         self.group_size.is_none().then_some(STATISTICS_GROUP_CAP)
+    }
+
+    /// The density minimum a block this request gathers is sized by at its
+    /// end: the stated or default minimum under an unstated size, `None` under
+    /// a stated one.
+    pub fn min_rows(&self) -> Option<u64> {
+        self.group_size.is_none().then(|| self.min_rows.unwrap_or(DEFAULT_STATISTICS_MIN_ROWS))
+    }
+
+    /// What a block this request gathers from its first row records it was
+    /// sized under.
+    pub fn sizing(&self) -> GroupSizing {
+        match self.min_rows() {
+            Some(min_rows) => GroupSizing::Density { min_rows },
+            None => GroupSizing::Stated,
+        }
+    }
+
+    /// Gathering `columns` from a block's first row as this request sizes it.
+    pub(crate) fn gathering(&self, columns: Vec<bool>) -> StatisticsBackfill {
+        StatisticsBackfill {
+            columns,
+            group_size: self.group_size(),
+            group_cap: self.group_cap(),
+            min_rows: self.min_rows(),
+            sizing: self.sizing(),
+        }
     }
 
     /// Which of `header`'s columns this request tracks, positionally — `None`
@@ -125,21 +169,23 @@ impl StatisticsRequest {
     /// when the request tracks nothing in it.
     ///
     /// **A block lacks the requested statistics** where it holds none, where a
-    /// column the request tracks was not gathered, or where the request
-    /// **states** a group size other than the one the block was gathered at;
-    /// an unstated size lacks nothing a gathered block holds, and re-reads a
-    /// block lacking a column at the size it holds, exactly
+    /// column the request tracks was not gathered, where the request
+    /// **states** a group size other than the one the block was gathered at,
+    /// or where it states no size and **states** a minimum other than the
+    /// block's record ([`BlockStatistics::sizing`]). A resized block is
+    /// re-read from its first row as the request sizes it; an unstated size
+    /// and minimum lack nothing a gathered block holds, and re-read a block
+    /// lacking a column at the size it holds, exactly, keeping its record
     /// (`docs/design/decisions.md`, "D34").
     pub fn backfill(&self, block: &CopyBlock) -> Option<StatisticsBackfill> {
         let requested = self.tracked_columns(&block.header)?;
         let Some(held) = block.statistics.as_deref() else {
-            return Some(StatisticsBackfill {
-                columns: requested,
-                group_size: self.group_size(),
-                group_cap: self.group_cap(),
-            });
+            return Some(self.gathering(requested));
         };
-        let resized = self.group_size.is_some_and(|size| size.get() != held.group_size);
+        let resized = match self.group_size {
+            Some(size) => size.get() != held.group_size,
+            None => self.min_rows.is_some() && self.sizing() != held.sizing,
+        };
         let missing = requested
             .iter()
             .enumerate()
@@ -152,8 +198,16 @@ impl StatisticsRequest {
             .enumerate()
             .map(|(i, &wanted)| wanted || held.columns.get(i).is_some_and(Option::is_some))
             .collect();
-        let group_size = self.group_size.map_or(held.group_size, NonZeroU64::get);
-        Some(StatisticsBackfill { columns, group_size, group_cap: None })
+        if resized {
+            return Some(self.gathering(columns));
+        }
+        Some(StatisticsBackfill {
+            columns,
+            group_size: held.group_size,
+            group_cap: None,
+            min_rows: None,
+            sizing: held.sizing,
+        })
     }
 }
 
@@ -169,10 +223,19 @@ pub struct StatisticsBackfill {
     /// size the block already held, or else [`DEFAULT_STATISTICS_GROUP_SIZE`].
     pub group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise
-    /// past it — [`StatisticsRequest::group_cap`] for a block holding no
-    /// statistics — and `None` for a size gathered exactly: a stated one, or
+    /// past it — [`StatisticsRequest::group_cap`] for a block re-read from its
+    /// first row — and `None` for a size gathered exactly: a stated one, or
     /// the one the block already held.
     pub group_cap: Option<usize>,
+    /// The fewest rows the finished block's median group may hold, its groups
+    /// merging pairwise short of it — [`StatisticsRequest::min_rows`] for a
+    /// block re-read from its first row — and `None` for a size gathered
+    /// exactly.
+    pub min_rows: Option<u64>,
+    /// What the gathered block records it was sized under: the request's for
+    /// a block re-read from its first row, the block's own record for one
+    /// re-read at the size it held.
+    pub sizing: GroupSizing,
 }
 
 /// The columns a [`StatisticsRequest`] names.
@@ -234,11 +297,26 @@ pub(crate) trait BlockObserver: Send {
 pub struct BlockStatistics {
     /// `N`, the bytes of block data each group covers.
     pub group_size: u64,
+    /// The request `group_size` was chosen under, which a back-fill compares
+    /// a later request's against (`docs/design/decisions.md`, "D34").
+    pub sizing: GroupSizing,
     /// Every group from the first to the one the last row starts in, in order.
     pub groups: Vec<RowGroup>,
     /// One entry per column of the block's header, `None` for a column the
     /// request did not track.
     pub columns: Vec<Option<ColumnStatistics>>,
+}
+
+/// How a block's group size was chosen: what [`BlockStatistics::sizing`]
+/// records, a size no longer saying which request chose it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupSizing {
+    /// A stated group size, gathered exactly.
+    Stated,
+    /// An unstated size: [`DEFAULT_STATISTICS_GROUP_SIZE`], merged pairwise
+    /// past [`STATISTICS_GROUP_CAP`] groups and, once the block is finished,
+    /// until its median group holds `min_rows` rows or it is one group.
+    Density { min_rows: u64 },
 }
 
 /// One group's extent.
@@ -412,7 +490,8 @@ pub(crate) const CHARGE_STEP: u64 = 64 << 10;
 /// **What it does not see** is bounded by an observer rather than by the dump:
 /// each open observer's growth until it passes [`CHARGE_STEP`], a row's own
 /// decode scratch while a column observes it, a merge's scratch for the pair
-/// of groups it is merging, and the observer's own allocation.
+/// of groups it is merging, a finished block's rows per group while its size is
+/// chosen, and the observer's own allocation.
 #[derive(Debug, Default)]
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,
@@ -544,12 +623,24 @@ impl Charge {
         frees: (u64, u64),
         allocate: impl FnOnce() -> R,
     ) -> R {
+        self.ahead_freeing(grows, || (allocate(), frees))
+    }
+
+    /// [`Self::ahead`], for work that learns only as it runs what it frees:
+    /// `allocate` answers it, and it is released in the same update as the
+    /// allocation is judged made, so the account never reads freed bytes as
+    /// held.
+    pub(crate) fn ahead_freeing<R>(
+        &mut self,
+        grows: (u64, u64),
+        allocate: impl FnOnce() -> (R, (u64, u64)),
+    ) -> R {
         let announced = (grows.0 + grows.1) as i64;
         self.structure += grows.0;
         self.interned += grows.1;
         let changes = [(self.term, grows.0 as i64), (Term::Interned, grows.1 as i64)];
         self.account.update(&changes, announced, 0);
-        let made = allocate();
+        let (made, frees) = allocate();
         self.structure -= frees.0;
         self.interned -= frees.1;
         let changes = [(self.term, -(frees.0 as i64)), (Term::Interned, -(frees.1 as i64))];

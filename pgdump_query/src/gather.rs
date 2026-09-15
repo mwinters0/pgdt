@@ -26,7 +26,9 @@
 //!
 //! **A block past its cap merges its closed groups pairwise into exactly what
 //! gathering at twice the size gathers** (`docs/design/decisions.md`, "D82"),
-//! never while a piece it made is alive ([`Gatherer::fit_cap`]).
+//! never while a piece it made is alive ([`Gatherer::fit_cap`]). **A finished
+//! block short of its density minimum merges the same way**
+//! (`docs/design/decisions.md`, "D82"; [`Gatherer::fit_density`]).
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -43,8 +45,8 @@ use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
     BlockObserver, BlockStatistics, Bounds, CHARGE_STEP, Charge, ColumnBounds, ColumnDictionary,
-    ColumnStatistics, DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness, StatisticsAccount,
-    StatisticsRequest, Term, text_heap, vec_heap,
+    ColumnStatistics, DICTIONARY_CAP, GroupSizing, RowGroup, STORED_VALUE_CAP, Sortedness,
+    StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, text_heap, vec_heap,
 };
 
 /// The observer for one block, or `None` when `request` tracks nothing in it,
@@ -59,19 +61,16 @@ pub(crate) fn observer_for(
     database: Option<&str>,
     account: &Arc<StatisticsAccount>,
 ) -> Option<Box<dyn BlockObserver>> {
-    let tracked = request.tracked_columns(header)?;
-    let (size, cap) = (request.group_size(), request.group_cap());
-    Some(observer_tracking(&tracked, size, cap, header, metadata, database, account))
+    let gathering = request.gathering(request.tracked_columns(header)?);
+    Some(observer_tracking(&gathering, header, metadata, database, account))
 }
 
-/// The observer for one block gathering `tracked`'s columns — positional to
-/// `header` — at `group_size`, merged pairwise past `group_cap` groups: what
-/// [`observer_for`] builds from a request, and what a back-fill builds from a
-/// [`crate::statistics::StatisticsBackfill`].
+/// The observer for one block gathering `plan`'s columns — positional to
+/// `header` — at its group size, merged pairwise past its cap and short of its
+/// minimum: what [`observer_for`] builds from a request, and what a back-fill
+/// builds from [`StatisticsRequest::backfill`]'s answer.
 pub(crate) fn observer_tracking(
-    tracked: &[bool],
-    group_size: u64,
-    group_cap: Option<usize>,
+    plan: &StatisticsBackfill,
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
@@ -90,7 +89,7 @@ pub(crate) fn observer_tracking(
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            tracked.get(i).is_some_and(|&t| t).then(|| {
+            plan.columns.get(i).is_some_and(|&t| t).then(|| {
                 let def = declared.and_then(|cols| cols.iter().find(|c| &c.name == name));
                 ColumnGatherer::new(
                     def.map(|d| d.declared_type.clone()),
@@ -102,7 +101,7 @@ pub(crate) fn observer_tracking(
         })
         .collect();
     drop((resolved, qualified));
-    let mut gatherer = Gatherer::block(group_size, group_cap, columns, charge);
+    let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
     gatherer.charge_held();
     Box::new(gatherer)
 }
@@ -128,11 +127,33 @@ struct OpenGroup {
     rows: u64,
 }
 
+/// How a block observer sizes its groups: a [`StatisticsBackfill`] less its
+/// columns.
+#[derive(Clone, Copy)]
+struct Sizing {
+    group_size: u64,
+    cap: Option<usize>,
+    min_rows: Option<u64>,
+    record: GroupSizing,
+}
+
+impl Sizing {
+    fn of(plan: &StatisticsBackfill) -> Self {
+        let (group_size, cap, min_rows) = (plan.group_size, plan.group_cap, plan.min_rows);
+        Self { group_size, cap, min_rows, record: plan.sizing }
+    }
+}
+
 struct Gatherer {
     group_size: u64,
     /// The most groups a block holds, `None` for an exact size and for a
     /// piece, which never merges.
     cap: Option<usize>,
+    /// The fewest rows the finished block's median group holds, `None` for an
+    /// exact size and for a piece, which is never finished.
+    min_rows: Option<u64>,
+    /// What the finished block records it was sized under.
+    record: GroupSizing,
     /// Shared with every piece this block has made, once it has made one: a
     /// block merges only while no piece holds a clone, so each piece joins at
     /// the size it gathered at.
@@ -165,15 +186,12 @@ struct Gatherer {
 }
 
 impl Gatherer {
-    fn block(
-        group_size: u64,
-        cap: Option<usize>,
-        columns: Vec<Option<ColumnGatherer>>,
-        charge: Charge,
-    ) -> Self {
+    fn block(sizing: Sizing, columns: Vec<Option<ColumnGatherer>>, charge: Charge) -> Self {
         Self {
-            group_size,
-            cap: cap.map(|cap| cap.max(1)),
+            group_size: sizing.group_size,
+            cap: sizing.cap.map(|cap| cap.max(1)),
+            min_rows: sizing.min_rows,
+            record: sizing.record,
             pieces: OnceLock::new(),
             piece: false,
             groups: Vec::new(),
@@ -285,6 +303,19 @@ impl Gatherer {
             if !self.groups.len().is_multiple_of(2) && !finishing {
                 self.reopen_last();
             }
+            self.merge_pairs();
+        }
+    }
+
+    /// **Merge a finished block's groups pairwise until its median group holds
+    /// its minimum**, or it is one group — the smallest size, no finer than
+    /// the one it holds, at which the nearest-rank median does
+    /// ([`density_merges`]). Run after [`Self::fit_cap`], from the size the
+    /// cap left: the finer sizes' rows are summed as the cap merges.
+    fn fit_density(&mut self) {
+        let Some(min_rows) = self.min_rows else { return };
+        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
+        for _ in 0..density_merges(rows, min_rows) {
             self.merge_pairs();
         }
     }
@@ -466,9 +497,11 @@ impl BlockObserver for Gatherer {
             self.close_through(end, next);
         }
         self.fit_cap(true);
+        self.fit_density();
         let columns = mem::take(&mut self.columns);
         let statistics = BlockStatistics {
             group_size: self.group_size,
+            sizing: self.record,
             groups: mem::take(&mut self.groups),
             columns: columns.into_iter().map(|c| c.map(ColumnGatherer::finish)).collect(),
         };
@@ -480,7 +513,9 @@ impl BlockObserver for Gatherer {
         let _attributed = StatisticsScope::enter();
         let columns = self.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh)).collect();
         let charge = Charge::new(Arc::clone(self.charge.account()), Term::Pieces);
-        let mut piece = Gatherer::block(self.group_size, None, columns, charge);
+        let sizing =
+            Sizing { group_size: self.group_size, cap: None, min_rows: None, record: self.record };
+        let mut piece = Gatherer::block(sizing, columns, charge);
         piece.piece = true;
         let pieces = self.pieces.get_or_init(Arc::default);
         piece.pieces = OnceLock::from(Arc::clone(pieces));
@@ -498,6 +533,24 @@ impl BlockObserver for Gatherer {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+}
+
+/// How many times a block whose groups hold `rows` merges pairwise before its
+/// nearest-rank median group — the `⌈G/2⌉`-th smallest of `G` — holds
+/// `min_rows`, or it is one group: at each merge the rows per group are the
+/// sums of adjacent pairs, a last odd group standing alone.
+fn density_merges(mut rows: Vec<u64>, min_rows: u64) -> u32 {
+    let mut merges = 0;
+    while rows.len() > 1 {
+        let mut sorted = rows.clone();
+        let rank = sorted.len().div_ceil(2) - 1;
+        if *sorted.select_nth_unstable(rank).1 >= min_rows {
+            break;
+        }
+        rows = rows.chunks(2).map(|pair| pair.iter().sum()).collect();
+        merges += 1;
+    }
+    merges
 }
 
 struct ColumnGatherer {
@@ -1573,24 +1626,36 @@ impl DictionaryGatherer {
     /// closing these groups interns them, and let every other go**: a merge
     /// past [`DICTIONARY_CAP`] leaves entries no group names, and a merged
     /// group lists its second half's new texts after its first's. The
-    /// renumbering's scratch is charged ahead.
+    /// renumbering's scratch is charged ahead of it, and **the interning map
+    /// is rebuilt rather than pruned**, its new table charged ahead and the old
+    /// one released in one update with every text let go: a table pruned in
+    /// place keeps its size while its reported capacity falls, which
+    /// [`map_heap`] would read as a smaller table.
     fn renumber(&mut self, charge: &mut Charge) {
         let scratch = (self.entries.len() * size_of::<u32>()) as u64;
-        charge.ahead((scratch, 0), (scratch, 0), || {
-            let mut to = vec![u32::MAX; self.entries.len()];
-            let mut kept = 0u32;
-            for id in self.groups.iter_mut().flatten().flatten() {
-                let slot = &mut to[*id as usize];
-                if *slot == u32::MAX {
-                    *slot = kept;
-                    kept += 1;
-                }
-                *id = *slot;
+        let mut to = charge.ahead((scratch, 0), (0, 0), || vec![u32::MAX; self.entries.len()]);
+        let mut kept = 0u32;
+        for id in self.groups.iter_mut().flatten().flatten() {
+            let slot = &mut to[*id as usize];
+            if *slot == u32::MAX {
+                *slot = kept;
+                kept += 1;
             }
-            self.interned.retain(|_, id| {
-                *id = to[*id as usize];
-                *id != u32::MAX
-            });
+            *id = *slot;
+        }
+        let old_table = map_heap::<String, u32>(self.interned.capacity());
+        let new_table = match kept {
+            0 => 0,
+            kept => grown_map_heap::<String, u32>(kept as usize - 1),
+        };
+        charge.ahead_freeing((0, new_table), || {
+            let mut interned = HashMap::with_capacity(kept as usize);
+            for (key, id) in mem::take(&mut self.interned) {
+                if to[id as usize] != u32::MAX {
+                    interned.insert(key, to[id as usize]);
+                }
+            }
+            self.interned = interned;
             // Every entry no group names goes past the kept ones, then the
             // permutation is applied in place, cycle by cycle.
             for (past, slot) in (kept..).zip(to.iter_mut().filter(|slot| **slot == u32::MAX)) {
@@ -1603,9 +1668,13 @@ impl DictionaryGatherer {
                     to.swap(at, there);
                 }
             }
+            drop(to);
+            let dropped: u64 =
+                self.entries[kept as usize..].iter().map(|entry| entry.len() as u64).sum();
             self.entries.truncate(kept as usize);
+            self.entry_text -= dropped;
+            ((), (scratch + dropped, old_table + dropped))
         });
-        self.entry_text = self.entries.iter().map(|entry| entry.len() as u64).sum();
     }
 
     fn finish(self) -> ColumnDictionary {
@@ -1907,15 +1976,18 @@ mod tests {
         assert_eq!(account.held().now, expected, "{at}");
     }
 
-    /// `block` handed to one observer at `group_size`, merging past `cap`.
-    fn gathered_serially(
-        block: &RandomBlock,
-        group_size: u64,
-        cap: Option<usize>,
-    ) -> BlockStatistics {
+    /// Gathering at `group_size`, merging past `cap` and short of `min_rows`,
+    /// every block recording the same request so that only its statistics
+    /// tell two apart.
+    fn sized(group_size: u64, cap: Option<usize>, min_rows: Option<u64>) -> Sizing {
+        Sizing { group_size, cap, min_rows, record: GroupSizing::Stated }
+    }
+
+    /// `block` handed to one observer sized by `sizing`.
+    fn gathered_serially(block: &RandomBlock, sizing: Sizing) -> BlockStatistics {
         let account = Arc::new(StatisticsAccount::default());
         let charge = Charge::new(Arc::clone(&account), Term::Gathering);
-        let mut serial = Gatherer::block(group_size, cap, join_columns(), charge);
+        let mut serial = Gatherer::block(sizing, join_columns(), charge);
         for (line, &offset) in block.lines.iter().zip(&block.offsets) {
             serial.observe_row(offset, line);
         }
@@ -1924,7 +1996,7 @@ mod tests {
         statistics
     }
 
-    /// `block` handed to pieces cut at random, folded in file order a window
+    /// `block` handed to pieces cut at random, sized by `sizing`, folded in file order a window
     /// of pieces at a time — made before any of them is folded, as the leader
     /// makes them — with an empty piece now and then and one left unfolded
     /// past the block's end. Answers the statistics, and how many cuts fell
@@ -1932,13 +2004,13 @@ mod tests {
     fn gathered_in_pieces(
         rng: &mut Rng,
         block: &RandomBlock,
-        cap: Option<usize>,
+        sizing: Sizing,
     ) -> (BlockStatistics, usize) {
-        let group_size = block.group_size;
+        let group_size = sizing.group_size;
         let account = Arc::new(StatisticsAccount::default());
         let charge = Charge::new(Arc::clone(&account), Term::Gathering);
         let mut observer: Box<dyn BlockObserver> =
-            Box::new(Gatherer::block(group_size, cap, join_columns(), charge));
+            Box::new(Gatherer::block(sizing, join_columns(), charge));
         let cut_odds = 1 + rng.below(30);
         let window_pieces = 1 + rng.below(4) as usize;
         let mut window = vec![observer.piece()];
@@ -1985,8 +2057,9 @@ mod tests {
             (0, 0, 0, 0, 0);
         for round in 0..600 {
             let block = random_block(&mut rng, round);
-            let serial = gathered_serially(&block, block.group_size, None);
-            let (joined, straddled) = gathered_in_pieces(&mut rng, &block, None);
+            let exact = sized(block.group_size, None, None);
+            let serial = gathered_serially(&block, exact);
+            let (joined, straddled) = gathered_in_pieces(&mut rng, &block, exact);
             straddles += straddled;
             assert_eq!(joined, serial, "round {round}");
 
@@ -2023,16 +2096,17 @@ mod tests {
         for round in 0..600 {
             let block = random_block(&mut rng, round);
             let cap = 1 + rng.below(6) as usize;
-            let capped = gathered_serially(&block, block.group_size, Some(cap));
+            let sizing = sized(block.group_size, Some(cap), None);
+            let capped = gathered_serially(&block, sizing);
             assert!(capped.groups.len() <= cap, "round {round}: {} groups", capped.groups.len());
-            let exact = gathered_serially(&block, capped.group_size, None);
+            let exact = gathered_serially(&block, sized(capped.group_size, None, None));
             assert_eq!(capped, exact, "round {round}: serial at cap {cap}");
-            let (joined, _) = gathered_in_pieces(&mut rng, &block, Some(cap));
+            let (joined, _) = gathered_in_pieces(&mut rng, &block, sizing);
             assert_eq!(joined, capped, "round {round}: pieces at cap {cap}");
 
             if capped.group_size > block.group_size {
                 coarsened += 1;
-                let base = gathered_serially(&block, block.group_size, None);
+                let base = gathered_serially(&block, sized(block.group_size, None, None));
                 for (fine, coarse) in base.columns.iter().zip(&capped.columns) {
                     let (Some(fine), Some(coarse)) = (fine, coarse) else { continue };
                     let entries =
@@ -2052,6 +2126,96 @@ mod tests {
         assert!(coarsened > 300, "only {coarsened} blocks merged");
         assert!(dropped_entries > 30, "only {dropped_entries} dictionaries let entries go");
         assert!(overflowed > 20, "only {overflowed} merged groups passed the count cap");
+    }
+
+    /// The size [`density_merges`] must choose, written the way
+    /// `scripts/row_density.py` chooses it: every size from the gathered one
+    /// to a single group, and the first whose nearest-rank median group holds
+    /// the minimum, else the single group.
+    fn chosen_merges(rows: &[u64], min_rows: u64) -> u32 {
+        if rows.is_empty() {
+            return 0;
+        }
+        let mut ladder = vec![rows.to_vec()];
+        while ladder.last().unwrap().len() > 1 {
+            let last = ladder.last().unwrap();
+            let coarser =
+                (0..last.len()).step_by(2).map(|i| last[i..last.len().min(i + 2)].iter().sum());
+            ladder.push(coarser.collect());
+        }
+        let median = |level: &Vec<u64>| {
+            let mut sorted = level.clone();
+            sorted.sort_unstable();
+            sorted[sorted.len().div_ceil(2) - 1]
+        };
+        let reaches = ladder.iter().position(|level| median(level) >= min_rows);
+        reaches.unwrap_or(ladder.len() - 1) as u32
+    }
+
+    /// **The density rule chooses what the ladder of sizes chooses**: the
+    /// finest size whose median group holds the minimum, and the single group
+    /// where no size reaches it.
+    #[test]
+    fn density_merges_choose_the_finest_size_whose_median_holds_the_minimum() {
+        assert_eq!(density_merges(vec![], 5), 0);
+        assert_eq!(density_merges(vec![3], 5), 0, "one group is as coarse as a block gets");
+        assert_eq!(density_merges(vec![5, 0, 5], 5), 0, "the second smallest of three");
+        assert_eq!(density_merges(vec![0, 5, 0, 5], 5), 1);
+        assert_eq!(density_merges(vec![1, 1, 1, 1, 1], 5), 3, "never reached: one group");
+        assert_eq!(density_merges(vec![9, 9, 9, 9], 0), 0, "a minimum of zero merges nothing");
+        let mut rng = Rng(0x0020_0004);
+        for round in 0..2000 {
+            let groups = 1 + rng.below(40) as usize;
+            let skew = 1 + rng.below(4);
+            let rows: Vec<u64> =
+                (0..groups).map(|_| if rng.below(skew) == 0 { 0 } else { rng.below(12) }).collect();
+            let min_rows = rng.below(30);
+            assert_eq!(
+                density_merges(rows.clone(), min_rows),
+                chosen_merges(&rows, min_rows),
+                "round {round}: {rows:?} at {min_rows}"
+            );
+        }
+    }
+
+    /// **A block sized by its density minimum gathers exactly what gathering
+    /// at the size it reaches gathers**, handed its rows by one observer or by
+    /// pieces folded in file order, with or without a cap ahead of it — and
+    /// uncapped, that size is the one the ladder over the gathered size's rows
+    /// chooses, so a block no merge reached is at the size it was gathered at.
+    #[test]
+    fn a_block_sized_by_its_minimum_gathers_what_the_size_it_reaches_gathers() {
+        let mut rng = Rng(0x0020_0005);
+        let (mut coarsened, mut after_cap) = (0, 0);
+        for round in 0..600 {
+            let block = random_block(&mut rng, round);
+            let min_rows = rng.below(40);
+            let cap = (rng.below(2) == 0).then(|| 1 + rng.below(6) as usize);
+            let sizing = sized(block.group_size, cap, Some(min_rows));
+            let chosen = gathered_serially(&block, sizing);
+            let exact = gathered_serially(&block, sized(chosen.group_size, None, None));
+            assert_eq!(chosen, exact, "round {round}: serial at {min_rows} rows, cap {cap:?}");
+            let (joined, _) = gathered_in_pieces(&mut rng, &block, sizing);
+            assert_eq!(joined, chosen, "round {round}: pieces at {min_rows} rows, cap {cap:?}");
+
+            let base = gathered_serially(&block, sized(block.group_size, None, None));
+            let rows: Vec<u64> = base.groups.iter().map(|g| g.rows).collect();
+            match cap {
+                None => {
+                    let merges = chosen_merges(&rows, min_rows);
+                    assert_eq!(chosen.group_size, block.group_size << merges, "round {round}");
+                    coarsened += usize::from(merges > 0);
+                }
+                Some(cap) => {
+                    let capped =
+                        gathered_serially(&block, sized(block.group_size, Some(cap), None));
+                    assert!(chosen.group_size >= capped.group_size, "round {round}");
+                    after_cap += usize::from(chosen.group_size > capped.group_size);
+                }
+            }
+        }
+        assert!(coarsened > 100, "only {coarsened} uncapped blocks coarsened");
+        assert!(after_cap > 30, "only {after_cap} capped blocks coarsened past their cap");
     }
 
     /// **A full map grows into the table [`grown_map_heap`] charges**, and
@@ -2079,6 +2243,24 @@ mod tests {
             }
         }
         assert!(growths > 10, "only {growths} growths");
+    }
+
+    /// **A map made to hold `k` entries allocates the table a full map of
+    /// `k − 1` grows into**, which is what [`DictionaryGatherer::renumber`]
+    /// charges ahead of rebuilding its interning map, and reports a capacity
+    /// [`map_heap`] reads back as that table. A map pruned in place does not:
+    /// its capacity falls with its table unchanged, the reason it is rebuilt.
+    #[test]
+    fn a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged() {
+        for k in 1..5000usize {
+            let map: HashMap<String, u32> = HashMap::with_capacity(k);
+            let table = grown_map_heap::<String, u32>(k - 1);
+            assert_eq!(map_heap::<String, u32>(map.capacity()), table, "{k} entries");
+        }
+        let mut pruned: HashMap<String, u32> = (0..100).map(|i| (i.to_string(), i)).collect();
+        let before = pruned.capacity();
+        pruned.retain(|_, _| false);
+        assert!(pruned.capacity() < before, "a pruned table's capacity no longer falls");
     }
 
     /// **A vector pushed or extended through [`push_charged`] and

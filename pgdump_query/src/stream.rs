@@ -1257,9 +1257,7 @@ async fn reread_block(
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockStatistics>> {
     let mut observer = gather::observer_tracking(
-        &backfill.columns,
-        backfill.group_size,
-        backfill.group_cap,
+        backfill,
         &block.header,
         metadata,
         block.database.as_deref(),

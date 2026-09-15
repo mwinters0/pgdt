@@ -16,7 +16,9 @@ sums of adjacent pairs at `N`, a trailing odd group standing alone; the
 distribution at every `N * 2^k` follows from the gathered one, down to the
 single group holding the whole block. A group no row starts in is a group all
 the same -- it carries an entry per tracked column -- so empty groups are in
-the distribution.
+the distribution. A `parse` that states no minimum coarsens a block of sparse
+rows before it is cached, so the gathering run a reading reads states
+`--statistics-min-rows 0`.
 
 **A quantile is nearest-rank**: the `ceil(q * G)`-th smallest of `G` groups.
 That is what makes the spec's bound exact: where the median group holds at least
@@ -69,6 +71,9 @@ from typing import Iterable, Sequence
 
 #: The density minimum's default, in rows: `2^20` stays right for rows up to
 #: `REASONABLE_ROW_BYTES`, so `2^20 / 2^10` rows a group.
+#: `pgdump_query::statistics::DEFAULT_STATISTICS_MIN_ROWS`, mirrored, and held
+#: to the library's by a test; `pgdq` chooses a block's size by the same rule
+#: as `choose` at the median.
 DEFAULT_MIN_ROWS = 1024
 
 #: The spec's width judgement: a block whose median group at the gathered size

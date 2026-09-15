@@ -485,13 +485,15 @@ enum Command {
             conflicts_with = "preamble_only"
         )]
         statistics: Option<StatisticsSelection>,
-        /// The bytes of a table's data each row group of statistics covers.
-        /// The default, 1 MiB, is coarse, and doubles for a table whose data
-        /// would take more than 4,096 groups until it takes no more; a stated
-        /// size is kept exactly, and a smaller group records more finely where
-        /// values lie and costs memory and cache space in proportion. Stated,
-        /// it also re-reads every block gathered at another size; left
-        /// unstated, a block keeps the size it was gathered at.
+        /// The bytes of a table's data each row group of statistics covers, a
+        /// power of two. The default, 1 MiB, is coarse, and doubles for a
+        /// table whose data would take more than 4,096 groups until it takes
+        /// no more, and for a table whose rows are too wide for its groups to
+        /// hold `--statistics-min-rows`; a stated size is kept exactly, and a
+        /// smaller group records more finely where values lie and costs memory
+        /// and cache space in proportion. Stated, it also re-reads every block
+        /// gathered at another size; left unstated, a block keeps the size it
+        /// was gathered at.
         #[arg(
             long,
             value_name = "BYTES",
@@ -499,6 +501,22 @@ enum Command {
             conflicts_with = "preamble_only"
         )]
         statistics_group_size: Option<NonZeroU64>,
+        /// The fewest rows a row group of statistics should hold under the
+        /// default group size. Once a table's data is read, its groups double
+        /// until the median group holds this many rows or the table is one
+        /// group, so a table of wide rows keeps fewer groups; the default,
+        /// 1,024, leaves rows up to about 1 KiB wide at 1 MiB a group, and 0
+        /// doubles nothing. Stated, it also re-reads every block sized under
+        /// another minimum or at a stated group size; left unstated, a block
+        /// keeps the size it was gathered at. A stated
+        /// `--statistics-group-size` is kept exactly, so the two are refused
+        /// together.
+        #[arg(
+            long,
+            value_name = "ROWS",
+            conflicts_with_all = ["preamble_only", "statistics_group_size"]
+        )]
+        statistics_min_rows: Option<u64>,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -730,30 +748,41 @@ fn parse_statistics(text: &str) -> std::result::Result<StatisticsSelection, Stri
     Ok(StatisticsSelection::Only(targets))
 }
 
-/// A `--statistics-group-size` value: a byte count, and never zero, which
-/// would put every row in a group of its own past the end of the data.
+/// A `--statistics-group-size` value: a byte count, never zero, which would
+/// put every row in a group of its own past the end of the data, and a power
+/// of two, so that every size a block's groups can merge to nests in it.
 fn parse_statistics_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
     match text.parse::<u64>() {
-        Ok(n) => NonZeroU64::new(n).ok_or_else(|| "a group size of 0 covers no bytes".to_string()),
+        Ok(0) => Err("a group size of 0 covers no bytes".to_string()),
+        Ok(n) if !n.is_power_of_two() => {
+            Err(format!("a group size must be a power of two, and {n} is not"))
+        }
+        Ok(n) => Ok(NonZeroU64::new(n).expect("not zero")),
         Err(e) => Err(e.to_string()),
     }
 }
 
-/// What `parse` gathers, from its two statistics flags: `--statistics` absent
-/// is every column, and a group size beside `none` is refused rather than
-/// ignored.
+/// What `parse` gathers, from its three statistics flags: `--statistics`
+/// absent is every column, and a size or a minimum beside `none` is refused
+/// rather than ignored.
 fn statistics_request(
     selection: Option<StatisticsSelection>,
     group_size: Option<NonZeroU64>,
+    min_rows: Option<u64>,
 ) -> Result<StatisticsRequest> {
     let selection = selection.unwrap_or_default();
-    if selection == StatisticsSelection::None && group_size.is_some() {
-        anyhow::bail!(
-            "--statistics-group-size sizes the statistics `--statistics none` turns off \
-             — drop one of them"
-        );
+    if selection == StatisticsSelection::None {
+        let sizing = [
+            (group_size.is_some(), "--statistics-group-size"),
+            (min_rows.is_some(), "--statistics-min-rows"),
+        ];
+        if let Some((_, flag)) = sizing.iter().find(|(stated, _)| *stated) {
+            anyhow::bail!(
+                "{flag} sizes the statistics `--statistics none` turns off — drop one of them"
+            );
+        }
     }
-    Ok(StatisticsRequest { selection, group_size })
+    Ok(StatisticsRequest { selection, group_size, min_rows })
 }
 
 /// The two read flags every scanning command carries, as given.
@@ -1289,10 +1318,12 @@ async fn main() -> Result<()> {
             max_line_bytes,
             statistics,
             statistics_group_size,
+            statistics_min_rows,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
-            let statistics = statistics_request(statistics, statistics_group_size)?;
+            let statistics =
+                statistics_request(statistics, statistics_group_size, statistics_min_rows)?;
             // `parse` scans to persist (`docs/design/decisions.md`, "D61").
             // Reject `--dqcache none` up front, before paying for a scan we
             // won't be allowed to persist.
