@@ -545,7 +545,8 @@ item; see below.
 **Current.** Specified in
 [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); its
 slices are [`../status/STATUS.md`](../status/STATUS.md), "P20 progress".
-Reasonable defaults for what statistics hold resident: a per-block length cap,
+Reasonable defaults for what statistics hold resident: groups coarsened where
+a block's rows are sparse, a per-block length cap,
 a block that does not fit its allowance declining rather than killing the
 process, one `--memory` flag meaning resident, and one reserve for every
 operation, its size measured.
@@ -1030,3 +1031,13 @@ which is what makes the difference worth minding at the moment one is found.
   the feature set is settled rather than designed around now.
 
 - **An allocator-contention figure for a capped arena count.** Parallel `.xz` throughput under `MALLOC_ARENA_MAX=2` against uncapped — the price no figure takes, and what would reopen the in-binary cap `decisions.md`, "D13" refuses.
+
+- **Group sizing from the header for a table of fixed-width columns.** Where
+  every column's text form has a bounded width, the `COPY` header bounds a
+  row's width before the first row, so a block could be sized without waiting
+  for its end — its in-flight statistics at the final size from the start. The
+  general rule sizes by rows per group at a block's end, because `varchar` and
+  its kin leave a header silent on width
+  ([`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md),
+  "Granularity follows row density"); this is the cheaper case beside it, taken
+  once that rule has shipped.

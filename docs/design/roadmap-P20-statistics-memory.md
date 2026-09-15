@@ -1,8 +1,9 @@
 # P20 — Statistics memory and its measured expectations
 
-**Current.** Grilled with the maintainer 2026-09-15; the slices are
-[`../status/STATUS.md`](../status/STATUS.md), "P20 progress". This document
-says what the phase does and why, never how it lands in code.
+**Current.** Grilled with the maintainer 2026-09-15, and reopened the same day
+for granularity ("Granularity follows row density"; the reason is [`../status/history/2026-09-15.md`](../status/history/2026-09-15.md));
+the slices are [`../status/STATUS.md`](../status/STATUS.md), "P20 progress".
+This document says what the phase does and why, never how it lands in code.
 
 ## What this phase is for
 
@@ -25,6 +26,93 @@ statistics at the shipped group size (facts below) — no constant reserve
 reaches a term growing with bytes.
 
 ## The decisions
+
+### Granularity follows row density
+
+**A group's size is a power of two, `2^20` at least.** Under an unstated group
+size a block's groups are coarsened past that floor where its rows are sparse;
+a stated `--statistics-group-size` is still honoured exactly, and a caller can
+turn the coarsening off, leaving the floor as today.
+
+**Granularity is a trade a person may state a side of.** Fewer rows per group
+prunes more, so a query reads less; more groups cost the RAM that holds their
+statistics and the CPU that gathers and decodes them. A person sensitive to
+I/O wants more groups, one sensitive to RAM or CPU fewer, and the default is a
+point between.
+
+**The unit is rows per group.** A group costs an entry per column whether it
+holds one row or thousands, so what grows with a row's width is statistics per
+row, not per byte. Column count says nothing of a row's width unless every
+column is fixed-width; that shape is worth its own sizing, after the general
+rule that has to account for `varchar` and its kin.
+
+**It is decided from the whole block, within the mapping pass, and the pass
+stays streaming**: no row is held for it, and no read is added for it except
+where a stated maximum asks for one (below). A block
+gathers at its base size and, once its last row is seen, merges pairwise to the
+size the rule chooses — exact, so the result is what gathering at that size
+would have given, and decided after every parallel piece has joined, so serial
+and parallel agree. **The saving is claimed for retained statistics**, the
+finished blocks that accumulate until exit; a block still being gathered holds
+statistics, never rows, at no more groups than the length cap allows.
+
+**The decision reads a distribution of row density, never a mean**, because
+row width varies within a table, and a block written in heap order is no sample
+of itself. The distribution is **rows per group**, already recorded per group,
+whose shape at every candidate size follows from the base size's by summing
+adjacent pairs. **A minimum** chooses the smallest size at which a low quantile
+group holds at least the minimum rows; **a maximum** the largest at which a high
+quantile group holds at most the maximum. Where the length cap asks for a coarser size
+than the minimum, the cap's size stands.
+
+**The default minimum is a width judgement, not a koji reading**: `2^20` stays
+right for rows up to a reasonable width, taken as 1 KiB, so the default
+minimum is `2^20 / 2^10` = 1,024 rows and changes nothing for a table of
+reasonable width. Koji cannot choose it — its statistics fit under either
+candidate, the cap governing its large blocks. **The minimum's quantile is
+registered at the median**, which on any block keeps retained groups within
+twice rows over the minimum whatever the distribution; **the criterion,
+registered before the reading**: a lower quantile is chosen only if a koji
+block of reasonable width comes close to that bound.
+
+**A maximum is honoured only where stated, and then over the length cap**, as a
+stated group size is: it is the side of the trade a person sensitive to I/O
+states, and 20.4's decline, not the cap, keeps it from costing the process.
+Its quantile is **the 90th percentile**, a judgement no reading prices, koji
+stating no maximum: near enough a bound for a person who asked for one, without
+one dense stretch multiplying a whole block's groups. **Every block is gathered
+at `2^20` first; one whose groups break a stated maximum lacks what was asked
+and is re-read by the back-fill at the size its recorded rows per group
+predict**, and where rows cluster so that the size still misses, it keeps what
+the re-read gave and the run says so — never a third read. So only a block too
+dense for a stated maximum gathers below `2^20` or is read twice, and nobody
+else pays either. **The default states a minimum and no
+maximum**, so `2^20` is the default's finest size. **Where a block meets
+neither, a stated maximum wins** over the minimum: only a person stating one
+reaches the conflict, and a default does not quietly overrule what they asked.
+
+**Three switches, each intent**: `--statistics-group-size`,
+`--statistics-min-rows` and `--statistics-max-rows`, mirrored in
+`StatisticsRequest`. `--statistics-min-rows 0` turns coarsening off. A stated
+group size is exact, so it is refused beside either row flag, as beside
+`--statistics none`; **it must be a power of two**, the sizes having to nest;
+and a maximum below the minimum is refused.
+
+**A block records the bounds it was sized under**, beside its size, since a
+size no longer says which request chose it; D34's rule extends to each bound —
+a stated one differing from the record re-reads the block, an unstated one
+takes what the block holds. `FORMAT_VERSION` is bumped (D22).
+
+*Rejected:* a separate phase ahead of this one — coarsening is the same
+pairwise, byte-aligned merge the length cap uses, and the account 20.1 builds
+is what prices it; sizing by the first `2^n` bytes, an unrepresentative head;
+coarsening as the rows arrive, which cannot undo a merge that later, narrower
+rows refute, and which a partition amid a block cannot reproduce; sizing from
+the `COPY` header's column count as the general rule; a default maximum, which
+every dense block would pay for in flight and which fights the cap on koji's
+`buildroot_listing`; a stated maximum's base bounded from the header — a row
+being at least as many bytes as its columns — which reads once but holds
+groups so fine that a large table declines; a strict maximum.
 
 ### Length is bounded by a constant, per block
 
@@ -194,7 +282,8 @@ deficiency, the remedy existing today.
 
 **A CLI test lists every flag taking a byte count or a count against an
 allowlist** classifying each as hardware (`--jobs`, `--memory`), intent
-(`--statistics`, `--statistics-group-size`), input contract
+(`--statistics`, `--statistics-group-size`, `--statistics-min-rows`,
+`--statistics-max-rows`), input contract
 (`--max-line-bytes`) or expert override (`--chunk-size`), and fails on a flag
 nobody classified. `--chunk-size` stays; retiring it would be out-of-band work.
 
@@ -210,6 +299,16 @@ commits to a measurement names its instrument"); the attribution is
 introspective and only the gates are blind ("Attribution is introspective;
 only the gate is blind").
 
+- **Koji's row density** (P20.8) — a gathering `parse` of koji on the shipped
+  build tracking one narrow column per table, so every block's groups are
+  counted at `2^20` for a fraction of full gathering's memory, launched
+  detached; a script in `scripts/`, with its tests, reads each block's rows per
+  group out of `info --json` and derives its distribution at every `2^n`,
+  written to a `runs/` artifact the slice notes cite — a fact about the input,
+  not a `measurements.md` figure. The fixtures and generated inputs are run
+  through the same script as a check of the rule on known shapes. It applies
+  "Granularity follows row density"'s registered criterion. Koji is the only
+  real dump this rests on.
 - **The reserve's remainder, attributed, then gated** (P20.7) — the
   `introspect` build over gathering `parse` and `query` legs, and one blind
   sitting at the value it gives; instrument, legs and criterion are "The
@@ -248,7 +347,17 @@ visible, the instrument first:
 
 1. **The account** is built and reconciled before anything declines against
    it.
-2. **The length cap** lands before koji, which cannot fit without it.
+8. **Koji's row density**, read before any granularity code, so the quantile's
+   criterion meets real data before the rule is written; no build may run
+   beside it. Numbered 20.8, like 20.9 and 20.10, because it was admitted after
+   slicing.
+2. **The length cap**, the exact pairwise merge the density rule reuses, lands
+   before koji, which cannot fit without it.
+9. **The density minimum** on top of the merge — the decision at a block's
+   end, the switches and the record of bounds — kept apart from 2, which
+   reworks the gatherer's core.
+10. **The stated maximum**, the one path that gathers below `2^20`, passes the
+   cap and re-reads a block, through the back-fill that already re-reads.
 3. **`--memory`** changes resolution before the decline carves from it; the
    reserve's value does not move here.
 4. **The decline** reworks the gatherer's core path; kept apart from 3, which
@@ -256,7 +365,9 @@ visible, the instrument first:
 7. **The reserve, measured** — only once statistics are billed and declined
    is the remainder the reserve covers the one it will cover. Numbered 20.7
    because it was admitted after slicing; it runs before 20.5.
-5. **The generated gates and re-taken figures**, at the measured reserve.
+5. **The generated gates and re-taken figures**, at the measured reserve and
+   the granularity that ships, so their inputs are chosen against the default a
+   person gets.
 6. **Koji**, launched detached and ticked when a later session reads it; a
    cap it refutes earns a `P20.6.1`.
 
@@ -290,6 +401,22 @@ visible, the instrument first:
   not, and raising it is what declines the block path.
 - **Koji had never been parsed with statistics**: its recipe states
   `--statistics none`.
+- **Groups are dense**: a block lists every group from the first to the one its
+  last row starts in, so it holds `⌈bytes / N⌉` of them whatever its rows'
+  width. A row longer than `N` leaves groups no row starts in, each still
+  carrying a null count, a bounds slot and a dictionary slot per tracked
+  column, and pruning nothing (`statistics.rs`'s module rustdoc,
+  `Gatherer::close_through`).
+- **The group size is already per block in the cache** (`BlockStatistics`), and
+  pruning and `info` read it per block.
+- **Each closed group already records its rows** (`RowGroup::rows`), so the
+  rows per group at `2N` are the sums of adjacent pairs at `N`.
+
+**Koji's row density** (the same log's row counts over its block sizes):
+`public.task` averages about 2.6 KB a row, some 400 rows per MiB, and
+`public.buildroot_listing` about 20 B, some 54,000 per MiB. At a cap of 4,096
+groups a block, `task`'s groups are already 128 MiB, so on the two blocks that
+are 96% of koji's pairs the cap outweighs any plausible density rule.
 
 **What a default gathering `parse` of koji would hold today** (estimated
 2026-09-15 from `runs/pgdq-koji-20260905-0054/final-info.log`'s 74 `COPY`
@@ -325,3 +452,5 @@ cache in `runs/` is unreadable by the current build, `KD30`):
 - A query that skips a cache's statistics under a smaller allocation than
   wrote it.
 - Statistics gathered by a query (P21).
+- Sizing a table of fixed-width columns from its header alone — [`roadmap.md`](roadmap.md),
+  "Future — wanted, unscheduled".
