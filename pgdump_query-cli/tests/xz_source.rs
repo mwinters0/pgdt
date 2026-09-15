@@ -96,8 +96,8 @@ fn info_json(path: &Path) -> serde_json::Value {
 // ---------------------------------------------------------------------------
 
 /// The seekable shape's index is byte-for-byte the plain file's: same spans,
-/// same per-block resolution, same coverage — **and no diagnostics on either
-/// side**, since a seekable `.xz` earns no warning
+/// same per-block resolution, same coverage, the same diagnostics — **and no
+/// compression warning on either side**, since a seekable `.xz` earns none
 /// (`docs/design/decisions.md`, "D19").
 ///
 /// The `compression` object, the persisted `seek_table` it is derived from and
@@ -169,7 +169,8 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
 /// on a run's budget, where this is a property of the file). The three
 /// numbers are what a user would otherwise run `xz --list` for, and
 /// `largest block` is the largest term of what `--parallel-memory` has to
-/// clear — twice it, plus a chunk buffer and the decoder's own retention.
+/// clear — four times over, plus a read buffer and the decoder's own working
+/// memory.
 #[test]
 fn info_detail_states_the_container_shape_from_the_cache_alone() {
     let (_xd, xz_path) = seekable_xz();
@@ -306,8 +307,7 @@ fn query_widgets_agrees_across_plain_and_both_xz_shapes() {
     );
 }
 
-/// A typed filter over an xz source: forward decode only, unlike the replay
-/// read above, and it names the same row on every shape.
+/// A filter over an xz source names the same row on every shape.
 #[test]
 fn filtered_query_agrees_across_plain_and_both_xz_shapes() {
     let (_pd, plain_path) = plain();
@@ -348,7 +348,8 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
 }
 
 /// A cache whose compression claim the file contradicts is refused by all
-/// three commands, and refused **having read nothing**: no stream-footer walk
+/// three commands, and refused **having read no more than the file's leading
+/// bytes**: no stream-footer walk
 /// is spent reaching an error that was always coming
 /// (`docs/design/decisions.md`, "D20").
 ///

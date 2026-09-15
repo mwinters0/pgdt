@@ -674,8 +674,8 @@ async fn resume_token_from_break_continues_correctly() {
 /// twice). Exercises the zero-copy view path against every escape pg_dump
 /// emits, not just the hand-written edge cases.
 ///
-/// Runs in both `SchemaMode`s — the one pair of existing tests that does
-/// (`docs/design/decisions.md`, "D73"): `codepoint` is `integer` (Int32 in `Typed`, Utf8View
+/// Runs in both `SchemaMode`s (`docs/design/decisions.md`, "D73"): `codepoint`
+/// is `integer` (Int32 in `Typed`, Utf8View
 /// in `Strings`) but `value` (`text`) is `Utf8View` either way, so both modes
 /// must agree once rendered back through `rows_of`.
 #[tokio::test]

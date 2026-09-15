@@ -308,8 +308,9 @@ pub(crate) fn non_seekable_compression_diagnostic(
 /// (`docs/design/decisions.md`, "D30", "D36").
 ///
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (no
-/// `Data` span among them, the scan stopping at the first `COPY` header
-/// rather than walking into the block), that offset itself — a safe watermark
+/// `COPY` block among them, the scan stopping at the first `COPY` header
+/// rather than walking into the block — though a file with large objects and
+/// no `COPY` block maps that region as a `Data` span), that offset itself — a safe watermark
 /// for a later scan to continue from — and whatever roles/tablespaces the
 /// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
 /// partial-scan caveat applies).

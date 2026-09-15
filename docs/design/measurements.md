@@ -666,8 +666,8 @@ construction rather than by anyone keeping them in step. Evidence:
 un-declares it.** `QUERY_CLI` is the worked case, and it is now the directory
 `pgdump_query-cli/src/` rather than `main.rs`: naming the one file left every
 other module in that crate outside every declaration quoting it, which is a
-staleness edge nobody declared — and the crate has three modules, `main.rs`,
-`where_expr.rs` and `alloc.rs`. Splitting a crate up is fine; whatever splits
+staleness edge nobody declared — and the crate holds `where_expr.rs`,
+`alloc.rs`, `info_statistics.rs` and `introspect.rs` beside `main.rs`. Splitting a crate up is fine; whatever splits
 it widens the declaration to the directory in the same change, because the
 alternative is a `--stale` that is silent about the file the change is in.
 
@@ -3230,8 +3230,10 @@ not a figure: a scan stopped inside a hundred-gigabyte block and resumed
 produces the same structural record — span for span — as an uninterrupted one
 (`decisions.md`, "The CLI"). The fixture-scale version is
 `pgdump_query/tests/map_file.rs`'s
-`a_cancelled_map_file_reports_it_and_banks_what_it_scanned`, which asserts the
-resumed *index* equals an eager scan's; koji is where the same property is
+`a_cancelled_map_file_reports_it_and_banks_what_it_scanned`, which stops
+between blocks and asserts the resumed *index* equals an eager scan's — a stop
+inside a block is its `a_cancelled_parallel_region_banks_nothing_and_stays_resumable`,
+on the parallel path alone; koji is where the same property is
 checked on the serialized cache, at a scale no fixture reaches.
 
 The run was driven by `runs/koji-wrap.sh`, which is **gitignored** — it
@@ -3439,7 +3441,7 @@ is the shape a scan of a file twice as long should have. Two mechanisms
 produced that between them and they are not separable here, because the second
 changed the input to the first: the save throttle skips a save unless 20× the
 last save's own duration has elapsed, and the gate it opens also decides when
-`stream::splice` rebuilds the map ([`decisions.md`](decisions.md), "D63").
+`stream::splice` rebuilds the map ([`decisions.md`](decisions.md), "D62").
 Removing the per-block rebuild shortened the scan, and a shorter scan earns
 fewer saves under a rule that is a ratio against elapsed time — so the save
 count is **6** at every size rather than tracking the block count at `1/K` of

@@ -3,7 +3,9 @@
 //!
 //! L1 vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
-//! under, counts, and bounds as the unescaped field text `pg_dump` wrote. Which
+//! under, counts, and bounds as unescaped field text — what `pg_dump` wrote
+//! where the value fits [`STORED_VALUE_CAP`], and a prefix or a successor of it
+//! where it does not ([`Bounds::max_exact`]). Which
 //! column gets which statistic, and how a value is ordered, is decided above
 //! this layer by whatever implements [`BlockObserver`]; the mapping pass hands
 //! it every row and stays type-blind.
@@ -263,7 +265,9 @@ pub struct Bounds {
 
 /// Whether a column's non-NULL values are in order row by row over a block.
 /// Equal neighbours are in either order; a column with at most one distinct
-/// value is `Ascending`.
+/// value is `Ascending`. A value gathering cannot place against its neighbour —
+/// one that does not key, a keyed one past [`STORED_VALUE_CAP`], or a bytewise
+/// one agreeing with it past what a bound reads — makes the column `Unsorted`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sortedness {
     Ascending,
@@ -278,7 +282,7 @@ pub struct ColumnDictionary {
     /// without the trailing blanks its comparison ignores, as with [`Bounds`].
     pub entries: Vec<String>,
     /// Per group, indices into `entries`; `None` where the group held more than
-    /// [`DICTIONARY_CAP`] distinct texts or a text longer than
-    /// [`STORED_VALUE_CAP`].
+    /// [`DICTIONARY_CAP`] distinct texts, a text longer than
+    /// [`STORED_VALUE_CAP`], or a field that is not text.
     pub groups: Vec<Option<Vec<u32>>>,
 }

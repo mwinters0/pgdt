@@ -24,9 +24,9 @@ use pgdump_query::{
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture};
 
-/// A group size several `ordered` rows long and well under a block, so every
-/// block has many groups and `ordered`'s hold more than [`DICTIONARY_CAP`]
-/// rows each.
+/// A group size several `ordered` rows long and well under its block, so
+/// `ordered` has several groups, some holding more distinct `high_card` texts
+/// than [`DICTIONARY_CAP`].
 const SMALL_GROUP: u64 = 4096;
 
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
@@ -286,8 +286,8 @@ async fn a_long_value_is_bounded_by_truncated_texts() {
 }
 
 /// **The default request gathers every statistic**: every column of every
-/// block, at the mebibyte default group size, at which each fixture block but
-/// the one holding the megabyte row is a single group. The group size is
+/// block, at the mebibyte default group size, at which `ordered` is a single
+/// group and the block holding the megabyte row is not. The group size is
 /// stated per request and recorded per block.
 #[tokio::test]
 async fn the_default_request_gathers_every_column_at_a_mebibyte() {

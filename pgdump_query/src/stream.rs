@@ -23,7 +23,7 @@
 //! ever point inside already-mapped territory. A [`CacheMode::Enabled`] cache
 //! is persisted where the map advances: completed blocks whose save has earned
 //! its cost ([`SaveThrottle`]), the block that settles the query, and every
-//! exit. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
+//! exit but an error. [`CacheMode::Disabled`] runs the same way with `save` a no-op.
 //!
 //! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
 //! that, [`table_stream`] runs [`crate::index::scan_preamble`] once (skipped
@@ -34,8 +34,9 @@
 //!
 //! **Type resolution**: a matching `COPY` block's column list is resolved
 //! against that captured metadata into a [`crate::resolve::ResolvedSchema`]
-//! ([`TableStream::resolved_schema`]). That is a preview, not what decodes a
-//! row: the `RecordBatch`es this stream yields stay all-`Utf8View`.
+//! ([`TableStream::resolved_schema`]), and the batches this stream yields are
+//! built to it: typed under `SchemaMode::Typed`, all-`Utf8View` under
+//! `SchemaMode::Strings`.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -114,8 +115,10 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 /// **This is where a predicate is validated against a block**, and the only
 /// place (`docs/design/decisions.md`, "D54"): a term naming a column this
 /// block does not carry is `Error::UnknownPredicateColumn`, an ordering
-/// operator on a column that is not `Mapped` with a `NestedPlan::Scalar` plan
-/// is `Error::UnorderedPredicateColumn`, and a literal that is not a value of
+/// operator on a column the register gives no order is
+/// `Error::UnorderedPredicateColumn`, any comparing operator on a column whose
+/// server comparison is not a text one is `Error::UncomparablePredicateColumn`,
+/// and a literal that is not a value of
 /// the column's type — `=` included — is `Error::PredicateValueDecode`. All
 /// are raised for the first offending term in a left-to-right walk. The plan
 /// runs it for every block with a column list before any is read, and raises
@@ -396,7 +399,7 @@ enum MapStop {
     /// EOF, or the queried table settled.
     Reached,
     /// [`ScanOptions::cancel`] was set. The index is consistent at the last
-    /// completed block and has been persisted; everything past it is
+    /// spliced watermark and has been persisted; everything past it is
     /// unscanned.
     Interrupted,
 }
@@ -410,11 +413,11 @@ enum MapStop {
 /// a `ScanExtent` beside a sentinel table name, which is dead data any later
 /// reader has to prove is unused.
 ///
-/// The [`crate::map::Builder`] is seeded with the segment's start offset, so
-/// its first span begins at the frontier rather than at the first non-blank
-/// line past it, and with the database in scope there, which it cannot infer.
+/// The [`crate::map::Builder`] is seeded with the database in scope at the
+/// frontier, which it cannot infer; [`splice`] places its spans after the
+/// frontier (`docs/design/decisions.md`, "D48").
 ///
-/// **Not every completed block is persisted; every *exit* is** — see
+/// **Not every completed block is persisted; every exit but an error is** — see
 /// [`SaveThrottle`]. **`index.metadata` is restated at each `\connect`ed
 /// database's first `COPY` block**, which per I1 is one of the two boundaries
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
@@ -649,8 +652,8 @@ async fn map_forward(
                     }
                     // This pass needs only the block's extent; row bytes
                     // become batches in the replay phase. Rows are read here
-                    // for the array-shape census alone
-                    // (`docs/design/decisions.md`, "D35").
+                    // for the array-shape census (`docs/design/decisions.md`,
+                    // "D35") and a gathering block's statistics.
                     Event::Row(row) => builder.on_row(row.offset, row.raw),
                     Event::CopyEnd(end) => {
                         let targets = std::mem::take(&mut open_block_targets);
@@ -775,8 +778,9 @@ enum BlockClose {
 
 /// Close a `COPY` block on the [`crate::map::Builder`] and do everything
 /// [`map_forward`] owes at a `CopyEnd`: the splice, the throttled save, and the
-/// early-stop check. **One body, two callers** — the serial scanner and
-/// [`crate::leader::scan_region`] (`docs/design/decisions.md`, "D52") — and
+/// early-stop check. **One body, two call sites** — the serial scanner's
+/// `CopyEnd` and a region [`crate::leader::scan_region`] closed
+/// (`docs/design/decisions.md`, "D52") — and
 /// the ordering it holds is splice before the settled test, save before the
 /// return. `targets` is whether this block's header could be the one that
 /// settles `target`, read at `CopyStart`.
@@ -806,7 +810,7 @@ async fn close_copy_block(
     let cancelled = scan_options.cancelled();
     let due = throttle.due();
     // **The splice rides the throttle's gate** (`docs/design/decisions.md`,
-    // "D62"). Nothing between gate openings reads `index`: the metadata
+    // "D62"). Nothing between gate openings reads `index.spans`: the metadata
     // recompute in the `CopyStart` arm splices its own copy, and
     // `target_settled` is the one reader that would — which is why a block
     // whose header could satisfy it opens the gate too.
@@ -897,8 +901,9 @@ impl SaveThrottle {
 #[derive(Debug)]
 pub struct MapRun {
     /// The map as it stands after the run: whole-file when `interrupted` is
-    /// false, everything up to the last *spliced* watermark when it is true,
-    /// which is also the last save ([`SaveThrottle`]).
+    /// false or the interrupt came during the back-fill, and otherwise
+    /// everything up to the last *spliced* watermark, which is also the last
+    /// save ([`SaveThrottle`]).
     pub index: DumpIndex,
     /// The frontier this run started from.
     pub resumed_from: u64,
@@ -1313,7 +1318,7 @@ impl ResumeToken {
     }
 }
 
-/// A pull-mode stream of `Utf8View` `RecordBatch`es for one table query.
+/// A pull-mode stream of `RecordBatch`es for one table query.
 /// Construct with [`table_stream`].
 pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
@@ -1990,8 +1995,8 @@ async fn map_for_query(
     // candidate before reading any of them, so a would-be silent union across
     // schemas or databases errors instead. `query_options.database`, when
     // given, filters candidates first rather than picking among them after
-    // the fact. The map being complete already, an ambiguous name errors
-    // before a single row goes out.
+    // the fact. An ambiguous name among the blocks mapped errors before a
+    // single row goes out; one past an early stop is never seen (`KD6`).
     let matches: Vec<CopyBlock> = index
         .blocks_for(table)
         .filter(|b| selector.is_none() || b.database.as_deref() == selector)
@@ -2361,9 +2366,9 @@ fn compressed_block_path_declined(
 /// compressed source that declined the block-decode path under this budget
 /// ([`compressed_block_path_declined`]), and at most one naming a budget that
 /// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`]).**
-/// Empty on every path that limits nothing — an empty `matches` included,
-/// since a footprint of zero never trips the budget — so a caller need not
-/// special-case "nothing to say".
+/// Empty on every path that limits nothing, so a caller need not special-case
+/// "nothing to say" — though an empty `matches`, still charged its span, can
+/// name a count the budget cut.
 ///
 /// Deficiency register: `deficiency: KD17` — the sub-streams planned here
 /// never run concurrently on a plain typed `query`: throughput is flat across
@@ -2520,9 +2525,9 @@ fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
 
 /// Pass 2, for one sub-stream: replay `segments` in file order, in whatever
 /// batches `plan.query_options` asks for. This is the whole of the row path: a
-/// serial [`table_stream`] is this function over one segment per matching
-/// block, a partitioned replay it over each group [`plan_partitions`] handed
-/// out.
+/// serial [`table_stream`] is this function over one segment per kept run of
+/// each matching block, a partitioned replay it over each group
+/// [`plan_partitions`] handed out.
 fn replay<'a>(
     source: &'a dyn ByteRangeSource,
     plan: Arc<ReplayPlan>,
@@ -2878,7 +2883,7 @@ fn replay<'a>(
     }
 }
 
-/// Pull-mode entry point: stream `Utf8View` `RecordBatch`es for every row of
+/// Pull-mode entry point: stream `RecordBatch`es for every row of
 /// every `COPY` block whose table matches `table` (qualified or bare — see
 /// [`CopyHeader::matches`]). A table with zero rows yields no batches.
 ///
@@ -2886,9 +2891,9 @@ fn replay<'a>(
 /// produced; `None` starts from the beginning of `source`. A token whose query
 /// fingerprint disagrees with `query_options` is `Error::ResumeQueryMismatch`.
 ///
-/// `query_options.filters` applies the post-parse row filter as a conjunction
-/// (`docs/design/decisions.md`, "D54"): an empty list yields every row, and
-/// otherwise a row is kept only if **every** term matches, tested after that
+/// `query_options.filter` is the post-parse row filter, one `Expr` tree
+/// (`docs/design/decisions.md`, "D54"): the empty conjunction yields every row,
+/// and otherwise a row is kept only where the tree is `True`, tested after that
 /// row has been fully unescaped. A term referencing a column absent from a
 /// matching block's own schema is `Error::UnknownPredicateColumn`. Every
 /// refusal resolving a block raises — schema, filter or projection — is
@@ -2928,7 +2933,7 @@ pub fn table_stream<'a>(
             map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
 
         // Pass 2: replay each matching block for its rows, as one segment
-        // apiece. A resumed stream picks up inside this same list, every
+        // per kept run. A resumed stream picks up inside this same list, every
         // resume point being inside a mapped block by construction.
         let MappedTable { matches, metadata, census } = mapped;
         let plan =
@@ -2970,9 +2975,10 @@ pub fn table_stream<'a>(
 /// **Each sub-stream carries its own schema, notes and position.**
 /// [`TableStream::resolved_schema`] is empty on a sub-stream until that
 /// sub-stream's first block resolves, so a caller wanting the schema before
-/// consuming anything reads it off the *first* sub-stream, whose first segment
-/// is the first block's and publishes its schema on entry, holding a row or
-/// not. [`TableStream::resume_token`] is stamped with the
+/// consuming much reads it off the *first* sub-stream after its first poll:
+/// that sub-stream's first segment is the first block's and publishes its
+/// schema on entry, holding a row or not — but for a block whose header names
+/// no columns, which publishes at its first row. [`TableStream::resume_token`] is stamped with the
 /// partition it came from, so feeding one back to [`table_stream`] is
 /// `Error::ResumeQueryMismatch`: resuming a partitioned replay is not
 /// supported.

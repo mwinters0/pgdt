@@ -6,7 +6,7 @@
 //! until `\.` is line-structured rows, so the interior can be handed out in
 //! LF-split ranges to workers that never parse *structure*. [`scan_piece`] is
 //! what one worker runs and [`merge`] what the leader does with the answers;
-//! both are pure and synchronous, taking a `&[u8]` rather than a source.
+//! both are synchronous and do no I/O, taking a `&[u8]` rather than a source.
 //! [`scan_region`] is the scheduler: it asks the source where a range may be
 //! cut, hands out a window of pieces at a time, and folds until one piece
 //! holds the terminator.
@@ -109,9 +109,9 @@ pub(crate) struct PieceObserver {
 /// `columns` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list; a header-less block states zero and the rows grow
 /// it. Every row the piece owns is handed to `observer`, where the block
-/// gathers statistics. **Pure and synchronous**: this is the body a
-/// `spawn_blocking` worker runs, so it takes a slice rather than a source
-/// (`docs/design/decisions.md`, "D52").
+/// gathers statistics. **Synchronous and free of I/O**: this is the body a
+/// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
+/// rather than a source (`docs/design/decisions.md`, "D52").
 pub(crate) fn scan_piece(
     bytes: &[u8],
     base: u64,
@@ -346,8 +346,9 @@ pub(crate) struct Shortfall {
 /// into it in file order, so a block closed here has observed what the serial
 /// scanner would have handed it. A declined region leaves it untouched.
 ///
-/// **It reads `partitions()` for the shape of the cut and never for whether to
-/// make one.** Whether cutting pays is the caller's economics, stated as
+/// **It reads `partitions()` for the shape of the cut and never for whether
+/// cutting pays**, beyond a source stating one partition at most. That is the
+/// caller's economics, stated as
 /// `ScanOptions::parallelism` — which is why a plain file is cut here exactly
 /// as a compressed one is, and why the refusal of parallel plain-file
 /// discovery lives in the plain source's own worker recommendation
@@ -355,7 +356,7 @@ pub(crate) struct Shortfall {
 /// than in a branch
 /// (`docs/design/decisions.md`, "D25").
 ///
-/// **The one rule it does apply is a floor**, and it is derived rather than
+/// **The one rule of its own it applies is a floor**, and it is derived rather than
 /// chosen: cutting spends a whole reader's worth of the caller's budget on
 /// each piece and charges the scheduling besides, so what is cut must be worth
 /// more than one `partition_bytes()`. The region's extent is not known here —
@@ -467,10 +468,12 @@ fn shortfall(
 /// **A window is `workers` partitions wide**, so the memory the region holds
 /// at its peak is the worker count times what the source said one costs — the
 /// per-worker term `Parallelism::memory_bytes` was solved against to reach
-/// that count. **Wide in the source's partitions, not in its charge**
-/// (`Partitioning::window_end`, and `docs/design/decisions.md`, "D8"): the
-/// charge covers a block unit, a chunk and a decoder, so sizing the window by
-/// it would offer `cut` more boundaries than there are workers.
+/// that count. **On a boundaried source, wide in the source's partitions, not
+/// in its charge** (`Partitioning::window_end`, and
+/// `docs/design/decisions.md`, "D8"): the charge covers a block unit, a chunk
+/// and a decoder, so sizing the window by it would offer `cut` more boundaries
+/// than there are workers. A source cut anywhere has no boundary to count, and
+/// its window is `workers` charges wide.
 #[allow(clippy::too_many_arguments)]
 async fn run_region(
     source: &dyn ByteRangeSource,
@@ -582,7 +585,8 @@ async fn run_region(
 /// **How the piece is read is the source's own statement**
 /// ([`crate::io::PartitionRead`], and `docs/design/decisions.md`, "D9"). A
 /// plain file is read [`crate::io::PartitionRead::Chunked`], so
-/// [`crate::io::BufferPool`] pools every buffer a worker takes; a
+/// [`crate::io::BufferPool`] pools every chunk-long buffer a worker takes — a
+/// read grown past a chunk to finish a longer line is not pooled; a
 /// block-decoding file is read [`crate::io::PartitionRead::Whole`], one of
 /// that source's own units at a time. Both halves are asserted rather than
 /// argued: [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
@@ -596,7 +600,7 @@ async fn run_region(
 /// **The reads repeat until the piece has passed its limit**, which no read
 /// inside it can do: the line ending at or past `range.end` needs bytes past
 /// it, so the last read of a piece straddles the boundary and is scanned as a
-/// piece of its own — always chunk-sized, which is why a partition's stated
+/// piece of its own — chunk-sized unless a longer line grows it, which is why a partition's stated
 /// footprint carries a chunk buffer beside whatever the source retains
 /// (`ByteRangeSource::partitions`). Handing back several [`PieceScan`]s keeps
 /// [`merge`]'s fold the only fold. **Exactly one read is alive at a time**,
@@ -1047,9 +1051,11 @@ mod tests {
         }
     }
 
-    /// **No read a worker makes on a `PartitionRead::Chunked` source exceeds
-    /// `ScanOptions::chunk_size`** — the first read of a piece as much as the
-    /// tail. It is what keeps every buffer such a worker takes a *pooled* one
+    /// **No first read a worker makes at an offset on a
+    /// `PartitionRead::Chunked` source exceeds `ScanOptions::chunk_size`** — the
+    /// first read of a piece as much as the tail; a read grown to finish a
+    /// longer line is held to `max_line_bytes` alone. It is what keeps every
+    /// buffer such a worker takes but a grown one a *pooled* one
     /// (`crate::io::BufferPool::keeps` admits the announced length and nothing
     /// longer). It is **not** source-agnostic: the block-decoding path reads a
     /// piece whole, where the bound that binds is the source's own unit
@@ -1088,8 +1094,9 @@ mod tests {
                 // **The first read at any offset is the one this is about.**
                 // The growth path is the one legitimate way past the chunk and
                 // is never the first read at its offset, while a piece's own
-                // opening read always is — so the invariant needs no
-                // arithmetic on the lengths.
+                // opening read is unless the piece before it read from that
+                // offset too, which then holds it to the growth ceiling alone
+                // — so the invariant needs no arithmetic on the lengths.
                 let mut seen: Vec<u64> = Vec::new();
                 for &(offset, len) in reads.iter() {
                     if seen.contains(&offset) {
@@ -1114,11 +1121,10 @@ mod tests {
 
     /// **No read a worker makes on a `PartitionRead::Whole` source exceeds the
     /// unit that source stated**, however many units the piece covers. It is
-    /// what bounds the body buffer on the block-decoding path, where
-    /// `Whole` is the piece exactly and safe only while a piece is one unit
+    /// what bounds the body buffer on the block-decoding path, where a
+    /// `Whole` read is capped at `min(piece, unit)` and a cut is one unit wide
     /// (`crate::io::BOUNDARIED_PARTITION_UNITS`, and
-    /// `docs/design/decisions.md`, "D8"). Raising that width fails this test
-    /// and nothing else here. Asserted over a **plain** file restated as
+    /// `docs/design/decisions.md`, "D8"). Asserted over a **plain** file restated as
     /// `Whole`, because on the one source that says `Whole` today
     /// `min(piece, unit)` is `piece` and the bound is vacuous.
     ///
@@ -1230,7 +1236,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(got.scan, RegionScan::Declined, "a kilobyte block against a 1 MiB partition");
+        assert_eq!(got.scan, RegionScan::Declined, "a kilobyte block against a shipped partition");
     }
 
     /// Cancellation is answered between windows, and is neither a closed block

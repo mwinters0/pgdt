@@ -11,10 +11,10 @@
 //! A span opens at the `--` of a TOC comment block (recognized lexically —
 //! any run of `--`-prefixed lines containing one that matches `-- Name: ...;
 //! Type: ...`) or, absent one, at the first byte of a recognized statement.
-//! It runs greedily to the byte before the next span opens. **This module
-//! never computes a span's `end` directly**; it only ever decides where the
-//! *next* span starts, and a caller-side pass derives `end` as `next.start`
-//! (or the scan's end, for the last span).
+//! It runs greedily to the byte before the next span opens. **A span's `end`
+//! is where the next span starts**: pushing a span closes the one before it
+//! there, and [`Builder::finish`]/[`Builder::snapshot`] close the last at the
+//! scan's end.
 //!
 //! The anchor is the TOC block rather than statement completion because
 //! [`crate::scan::CopyScanner`] emits no [`crate::scan::Event::Line`] for a
@@ -127,15 +127,17 @@ pub struct Span {
     /// comment of its own **inherits** the governing entry's header rather
     /// than carrying `None`, and [`toc_owned`](Self::toc_owned) distinguishes
     /// the two (`docs/design/decisions.md`, "D31"). `None` for a span with no
-    /// governing entry at all: the header-less-input fallback, or one of the
-    /// kinds inheritance never crosses (`Framing`, `Connect`,
-    /// `VersionHeader`). Not a substitute for [`SpanBody`]'s own per-kind
+    /// governing entry at all: the header-less-input fallback, or a span of
+    /// one of the kinds inheritance never crosses (`Framing`, `Connect`,
+    /// `VersionHeader`) with no TOC comment of its own. Not a substitute for
+    /// [`SpanBody`]'s own per-kind
     /// fields: the two are separately-sourced observations of one object
     /// (`docs/design/decisions.md`, "D30").
     pub toc: Option<TocHeader>,
     /// Whether *this span's own* preceding comment carried the TOC header
     /// text (`true`), as opposed to `toc` being inherited from an earlier
-    /// entry's span (`false`) — always `false` when `toc` is `None`. An object
+    /// entry's span (`false`) — `false` when `toc` is `None`, but for a comment
+    /// block shaped like a TOC entry whose header did not parse. An object
     /// census (`pgdq info`'s `object kinds:`) counts `toc_owned` spans, one
     /// per archive entry, while TOC coverage counts every attributed span
     /// (`toc.is_some()`), inherited ones included
@@ -243,6 +245,13 @@ fn stores_text(body: &SpanBody) -> bool {
 /// because only the caller owns the source. Contiguous runs of text-storing
 /// spans are coalesced into one `read_range`, so this is one read per gap
 /// between data blocks rather than one per span.
+///
+/// Deficiency register: `deficiency: KD31` — that read is capped at
+/// `TEXT_CAP` times the run's span count from the run's start, not per span,
+/// so a span following one longer than the cap can fall past what was read and
+/// be stored empty and `truncated` however short it is. **(c) unowned**;
+/// promoted by a `--map` listing seen to lose a statement's text, the fix
+/// being a read per span past the cap.
 pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Result<()> {
     let mut i = 0;
     while i < spans.len() {
@@ -261,8 +270,9 @@ pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Re
             j += 1;
         }
         let (run_start, run_end) = (spans[i].start, spans[j].end);
-        // A run capped per span still reads only what it can store, so a
-        // multi-gigabyte `Unparsed` region is never pulled into memory whole.
+        // Capped at what the run's spans can store between them, so a
+        // multi-gigabyte `Unparsed` region is never pulled into memory whole
+        // (`KD31`).
         let want = (run_end - run_start).min(((j - i + 1) * TEXT_CAP) as u64) as usize;
         let bytes = source.read_range(run_start, want).await?;
         for span in &mut spans[i..=j] {
@@ -528,8 +538,9 @@ pub(crate) struct Builder {
     /// been seen with no flush since — see [`on_large_object_start`](Self::on_large_object_start).
     /// `.0` is the span's own start (the first region's preceding TOC
     /// comment, if it had one, else its own `BEGIN;` line); `.1` is the
-    /// offset just past the most recently closed `COMMIT;`, which becomes the
-    /// span's `end` once nothing extends it further; `.2` is the first
+    /// offset just past the most recently closed `COMMIT;`, recorded and not
+    /// read — the span's `end` is the next span's start, as every span's is;
+    /// `.2` is the first
     /// region's own TOC header, kept as the merged span's single
     /// representative `toc` (`Span::toc` holds one header; a v17+ run can
     /// carry several — see [`on_large_object_start`](Self::on_large_object_start)).
@@ -738,8 +749,9 @@ impl Builder {
     /// `toc_owned` is `true` iff *this span's own* preceding comment carried
     /// the header text `toc` came from — `false` for a follow-on statement
     /// inheriting [`governing_toc`](Self::governing_toc), which every call
-    /// site but [`push_statement_span`](Self::push_statement_span)'s
-    /// inherited path passes as `toc.is_some()`. This is also where
+    /// site but the inherited paths of
+    /// [`push_statement_span`](Self::push_statement_span) and
+    /// [`push_insert_run`](Self::push_insert_run) passes as `toc.is_some()`. This is also where
     /// [`governing_toc`](Self::governing_toc) updates, every span this module
     /// produces passing through here.
     fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>, toc_owned: bool) {

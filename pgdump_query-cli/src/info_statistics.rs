@@ -4,9 +4,10 @@
 //! **Counts, rolled up per table and column; never a group's values**, which
 //! `--json` exports block by block with no rollup (`docs/design/decisions.md`,
 //! "D67"). A rollup needs no merge rule, being sums: every block whose header
-//! names the table counts toward it — a partition root's leaves included, which
-//! is what a query of the root reads — and a column is matched across blocks by
-//! name.
+//! names the table counts toward it — a partition root's leaves included where
+//! the dump names the root in their headers (`--load-via-partition-root`),
+//! which is what a query of the root reads — and a column is matched across
+//! blocks by name.
 //!
 //! **An empty group is outside every share.** A group no row starts in holds no
 //! value to bound or list, so the groups a column's bounds and dictionary are

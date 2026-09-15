@@ -301,7 +301,7 @@ nothing.
 
 The rows are the ones `query --statistics none` prints, which reads every row.
 Two things are not the same: a value that fails to decode is reported only
-where its row is read, so one in a skipped group or past a stopping row goes
+where its row is read, so one in a skipped group or past a stopping row can go
 unreported until `--statistics none` reads it; and the statistics are trusted as the rest of the
 cache is, by the file's size, so a file rewritten in place at the same size
 has stretches skipped by what they held before, and may lose rows it holds now
@@ -805,8 +805,8 @@ Labels are listed for a plain enum column and for a domain over one. An enum
 *inside* an array or a composite does not get them, and does not need them — a
 filter cannot compare against a single label there anyway.
 
-`--detail` ends with what `parse` gathered (see "`--statistics`" above), one
-line per table and one beneath it per column:
+`--detail` closes its listing, above the totals, with what `parse` gathered
+(see "`--statistics`" above), one line per table and one beneath it per column:
 
 ```
 statistics:
@@ -817,8 +817,9 @@ statistics:
 ```
 
 - **The table line** says over how many of the table's blocks statistics were
-  gathered — every block whose `COPY` names the table, a partitioned table's
-  partitions included — the group size they were gathered at, and how many
+  gathered — every block whose `COPY` names the table, which includes a
+  partitioned table's partitions only in a dump taken with
+  `--load-via-partition-root` — the group size they were gathered at, and how many
   rows and bytes a group actually held, on average. A group in which no row
   starts, left by a row longer than the group size, is counted as `empty` and
   left out of the averages and of every share below.
@@ -832,7 +833,7 @@ statistics:
   A group holding only NULLs carries no bounds. `not gathered` is a column a
   `--statistics` selection left out.
 
-A cache with no statistics at all prints `statistics: none gathered`. No
+A cache whose blocks carry no statistics at all prints `statistics: none gathered`. No
 group's own values are shown here; `--json` carries every one of them.
 
 ### When `info` says it cannot answer
@@ -843,8 +844,8 @@ are five different messages because they mean five different things:
 | Message | What happened |
 |---|---|
 | `no cache at …` | You have not parsed this file yet. |
-| `… is not a pgdq cache` | Something else is at that path. Check `--dqcache`. |
-| `… was written by a different pgdq build` | The cache format changed under you. Pre-1.0 this happens; nothing is migrated. |
+| `… is not a pgdq cache` | Something else is at that path — or a cache from a pgdq build whose format changed, which usually reads this way rather than as the next row. Check `--dqcache`. |
+| `… was written by a different pgdq build` | The cache's format version is not this build's. Pre-1.0 this happens; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
 | `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round. |
 

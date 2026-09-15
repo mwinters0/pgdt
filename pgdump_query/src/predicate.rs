@@ -20,10 +20,11 @@ use crate::{Error, Result};
 /// own [`ComparisonPlan`]: the four ordering operators decode both sides and
 /// compare the values, `Eq`/`Ne` take the cheapest of three canonicalizations
 /// that gives the server's answer for that column ([`equality_comparison`]).
-/// Where the register has no plan for a column — it did not resolve, it is
-/// nested, or this build orders its type not at all — `Eq`/`Ne` compare the
-/// canonical `*_out` text the file holds and the ordering operators are
-/// refused.
+/// A nested column with a plan is compared structurally under every operator.
+/// Where the register has no plan for a column — it did not resolve, one of
+/// its nested positions is not compared, or this build orders its type not at
+/// all — `Eq`/`Ne` compare the canonical `*_out` text the file holds and the
+/// ordering operators are refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -49,8 +50,8 @@ pub enum PredicateOp {
 
 impl PredicateOp {
     /// Whether this operator compares by the column's own order rather than
-    /// as text — the four that need a `Mapped` column with a
-    /// [`NestedPlan::Scalar`] plan.
+    /// as text — the four that need a `Mapped` column the register gives an
+    /// order.
     pub fn is_ordering(self) -> bool {
         matches!(self, Self::Lt | Self::Le | Self::Gt | Self::Ge)
     }
@@ -81,8 +82,9 @@ impl PredicateOp {
 /// none). `value` is `None` for `IsNull`/`IsNotNull`, which need no
 /// comparison value; it is always `Some` for every other operator.
 ///
-/// `value` is read with the column's own decoder, whatever the operator, once
-/// when the block's schema resolves rather than per row — so a literal that
+/// `value` is read with the column's own decoder wherever the register gives
+/// the column a comparison, whatever the operator, once when the block's schema
+/// resolves rather than per row — so a literal that
 /// is not a value of the column's type is `Error::PredicateValueDecode`
 /// before any row is read, and both sides of a `numeric(p,s)` comparison
 /// carry that column's scale. An ordering operator keeps the decoded key and
@@ -837,7 +839,8 @@ enum OrderKey {
     /// PostgreSQL's `infinity`, above every finite value of its type.
     PositiveInfinity,
     /// `numeric`'s `NaN`, which orders above `infinity` and equals itself
-    /// (I34). Reached only through [`CompareKind::Decimal`].
+    /// (I34). Reached through [`CompareKind::Decimal`] and
+    /// [`CompareKind::Numeric`].
     NotANumber,
 }
 
@@ -913,8 +916,10 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 /// an `interval` cannot canonicalize once and compare bytewise.
 ///
 /// The walk over the text is [`decode::interval_parts`], shared with the
-/// decoder, so a literal this refuses and a field the decoder refuses are the
-/// same set. The fusing is this function's alone: a decoder that did it would
+/// decoder, so a field the decoder refuses includes every literal this
+/// refuses — and a month or day count outside `i32`, or a time part past what
+/// Arrow's nanoseconds hold, besides. The fusing is this function's alone: a
+/// decoder that did it would
 /// lose the fields Arrow carries separately.
 fn interval_span(text: &str) -> Option<i128> {
     let (months, days, time) = decode::interval_parts(text)?;
@@ -981,8 +986,8 @@ fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
     Some(OrderKey::Network(NetworkKey { v6, bits, addr }))
 }
 
-/// A `macaddr`/`macaddr8` value: `octets` lowercase hex pairs joined by
-/// colons, which is what `macaddr_out` and `macaddr8_out` write (I40). The
+/// A `macaddr`/`macaddr8` value: `octets` hex pairs of either case joined by
+/// colons, `macaddr_out` and `macaddr8_out` writing lowercase (I40). The
 /// server's input function takes other separator conventions and this takes
 /// none of them (`docs/design/decisions.md`, "D55").
 fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
@@ -1337,9 +1342,10 @@ fn range_key(
 /// order the server applies them in, and the reason `int4range '(1,2)'` is
 /// `empty` (I46).
 ///
-/// `None` is the server's `22000`: a lower bound above its upper, a *semantic*
+/// `None` is the server's `22000` — a lower bound above its upper, a *semantic*
 /// refusal the container grammar cannot see (I44), so it is raised here where
-/// the bounds have been decoded.
+/// the bounds have been decoded — or a discrete bound whose successor
+/// overflows its subtype.
 fn make_range(
     lower: RangeBoundKey,
     upper: RangeBoundKey,
@@ -1745,7 +1751,9 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 ///
 /// It lives beside the grammar rather than beside [`CompareKind`] because it
 /// describes what [`order_key`] and [`equality_comparison`] accept, which is
-/// each type's `*_out` form and no wider (`docs/design/decisions.md`, "D55").
+/// each type's `*_out` form, widened only by an integer's sign and leading
+/// zeros and a `uuid` or `macaddr` hex digit's case
+/// (`docs/design/decisions.md`, "D55").
 /// `jsonb` needs the least here, its grammar being the whole of `jsonb_in`.
 ///
 /// Two arms answer with the kind's own payload, because there the payload
@@ -2006,7 +2014,7 @@ impl ResolvedTerm {
 }
 
 /// The refusal an ordering operator earns on a column that cannot carry one.
-/// Three reasons, each a different fact about the column.
+/// Four reasons, each a different fact about the column.
 const NOT_MAPPED: &str = "the column's declared type did not resolve to an Arrow type, so it has no order of its own \
      (`--schema-mode strings` resolves no column, by design)";
 const NESTED: &str = "the column is nested (array, composite, range or multirange), and an order over such a \
@@ -2045,16 +2053,17 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// by the caller.
 ///
 /// The two NULL tests need nothing. Every other operator reads the column's
-/// [`ComparisonPlan`] and decodes the filter's own literal here, so a value
+/// [`ComparisonPlan`] and, where it compares, decodes the filter's own literal
+/// here, so a value
 /// that is not of the column's type is a fault reported once rather than a
 /// filter that matches nothing (`docs/design/decisions.md`, "D54").
 ///
 /// The two operator families part company on a column with no plan. An
 /// ordering operator is *refused*, before a row of this block flows, unless
-/// the column resolved `Mapped` with a [`NestedPlan::Scalar`] plan and the
-/// register gave it a comparison; `Eq`/`Ne` fall back to comparing the
-/// canonical `*_out` text the file holds. So a nested column still answers
-/// `=` and still refuses `<`.
+/// the column resolved `Mapped` and the register gave it a comparison — a
+/// nested column's included, where every position is compared; `Eq`/`Ne` fall
+/// back to comparing the canonical `*_out` text the file holds. So a nested
+/// column with an uncompared position still answers `=` and refuses `<`.
 ///
 /// Nothing here reads the Arrow type: how a column compares is a conclusion
 /// resolution already reached (`crate::pgtype::comparison_for`), carried in
@@ -2181,9 +2190,9 @@ pub(crate) fn resolve_term(
                 .collect(),
             BelievedStatistics::NONE,
         ),
-        // No plan at all: an ordering operator has already been refused, so
-        // this is `Eq`/`Ne` on a column the register does not compare — a
-        // comparison of the canonical `*_out` text the file holds.
+        // No plan at all: an ordering operator is refused here, and `Eq`/`Ne`
+        // on a column the register does not compare is a comparison of the
+        // canonical `*_out` text the file holds.
         _ if ordering => return Err(refuse(NO_ORDER)),
         //
         // What it announces comes from one of two places, and which one is
@@ -2280,7 +2289,7 @@ impl ResolvedTerm {
     /// `None` back is a non-NULL value that is not a value of the column's
     /// type under this term's comparison — what the row path reports as
     /// `Error::FieldDecode`, the only case in which it returns nothing. The
-    /// NULL tests and the three canonicalized equalities never decode, so
+    /// NULL tests and the two equalities comparing text never decode, so
     /// they always answer.
     #[inline]
     pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
@@ -3580,7 +3589,7 @@ mod tests {
         );
     }
 
-    /// Refusal is by resolution and plan, and the three reasons are distinct
+    /// Refusal is by resolution and plan, and the four reasons are distinct
     /// facts about the column.
     #[test]
     fn an_ordering_operator_is_refused_off_a_mapped_scalar_column() {
@@ -4357,7 +4366,7 @@ mod tests {
         );
     }
 
-    /// A divergence is operator-conditional, and three of the five reach
+    /// A divergence is operator-conditional, and three of the six reach
     /// ordering alone: a libc collation is deterministic, so `texteq` is a
     /// byte comparison whatever the collation is.
     #[test]
@@ -4850,10 +4859,9 @@ mod tests {
         /// order, paired with their cell offset after the four key columns.
         ///
         /// **`=` and `<>` are asked over a wider population than the other
-        /// four**, because equality is never refused: a column the register
-        /// has no comparison for still answers `=` as text, so a nested or
-        /// unmapped case is skipped for the ordering operators and asserted
-        /// for these two.
+        /// four**: a column the register has no order for still answers `=`
+        /// as text, so a case the register does not order is skipped for the
+        /// ordering operators and asserted for these two.
         ///
         /// What they add over `<=`/`>=`, which already carried the register's
         /// equality, is the **canonicalization** — the three-way choice
@@ -4862,8 +4870,9 @@ mod tests {
         /// that the file's own spelling compares byte for byte; the content is
         /// in the kinds where it cannot, and every one of them has a case
         /// here: `real`'s `-0` against `0`, a bare `numeric`'s `1.5` against
-        /// `1.50`, a `jsonb` number written two ways, and a `character(10)`
-        /// value padded against one that is not.
+        /// `1.50` and a `jsonb` number written two ways. `character(10)`'s
+        /// trimmed comparison is reached only over values the file pads
+        /// alike.
         const ASSERTED: [(usize, PredicateOp); 6] = [
             (0, PredicateOp::Lt),
             (1, PredicateOp::Le),
@@ -4874,7 +4883,7 @@ mod tests {
         ];
 
         /// The declared types whose columns the register refuses an ordering
-        /// operator on, so no cell of theirs is asserted: `xml`, an enum with
+        /// operator on, so none of their ordering cells is asserted: `xml`, an enum with
         /// no labels, a user-defined base type with no operator class, and the
         /// two nested shapes that are refused for reasons of their own.
         /// PostgreSQL orders all of them and this build does not.
@@ -4910,15 +4919,16 @@ mod tests {
         ///
         /// **Met means met everywhere it is permitted.** An entry is keyed by
         /// the case, so it has to disagree in every major that carries the
-        /// case and under every operator its divergence reaches — 24 cells
-        /// each today, four ordering operators by six majors. Taking
+        /// case and under every operator its divergence reaches — for a
+        /// divergence of order 24 cells, four ordering operators by six
+        /// majors. Taking
         /// *somewhere in the walk* as met would instead leave the block
         /// passing after a collation moved for one major, or after the
         /// comparator stopped being antisymmetric under one operator.
         ///
         /// **`=` and `<>` are not among those cells, and that is the
         /// assertion rather than an omission.** Every divergence in this list
-        /// is a divergence of *order*
+        /// but `box`'s, below, is a divergence of *order*
         /// ([`ComparisonDivergence::affects_equality`]) — a libc collation is
         /// deterministic, so `texteq` is a byte comparison whatever the
         /// collation is — so a disagreement under `=` would fail the
@@ -4928,7 +4938,7 @@ mod tests {
         /// [`ComparisonDivergence`], **under this operator**, which is
         /// asserted alongside — so an exception cannot be claimed for a
         /// column the register tells the user it is confident about. **Two
-        /// populations, and they are one
+        /// of its populations are one
         /// statement asked at two depths** — a collation the file does not
         /// carry (I32), reached once through a column and once through a
         /// string inside a document:

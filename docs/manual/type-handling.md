@@ -727,9 +727,9 @@ through it. The message names one: `--schema-mode strings`
 every column in the table, which is a heavy price for one of them.
 
 The other is to leave the column out of the query. **A column you do not
-project is never decoded**, so `--column`/`QueryOptions::projection` is a
-per-column escape from this error where `--schema-mode strings` is a
-whole-table one:
+project, and no filter term names, is never decoded**, so
+`--column`/`QueryOptions::projection` is a per-column escape from this error
+where `--schema-mode strings` is a whole-table one:
 
 ```sh
 # fails on v

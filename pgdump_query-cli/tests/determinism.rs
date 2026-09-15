@@ -65,8 +65,8 @@ fn gathered_cache_of(dump: &Path, out: &Path, extra: &[&str]) -> Vec<u8> {
 }
 
 /// The group size the gathering legs state: tens of bytes, where the shipped
-/// mebibyte makes every fixture block one group and a join has nothing to
-/// cross.
+/// mebibyte makes nearly every fixture block one group and a join has little
+/// to cross.
 const TINY_GROUP: &str = "32";
 
 fn parse_cache(dump: &Path, out: &Path, statistics: &[&str], extra: &[&str]) -> Vec<u8> {

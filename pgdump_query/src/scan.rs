@@ -16,8 +16,9 @@
 //!   escapes a literal backslash as `\\`, so a line that *is* exactly `\.` is
 //!   unambiguously the terminator.
 //! * psql meta-command lines (`\restrict`, `\unrestrict`, `\connect`, and any
-//!   other leading-backslash line) are skipped: outside a block only a line
-//!   matching the full `COPY ... FROM stdin;` grammar is structural.
+//!   other leading-backslash line) are ordinary [`Event::Line`]s: outside a
+//!   block only a line matching the full `COPY ... FROM stdin;` grammar, or a
+//!   bare `BEGIN;` opening the large-object region, is structural.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -67,8 +68,9 @@ pub struct CopyEnd {
 /// One line encountered outside a COPY block that is neither a COPY header
 /// nor part of a dollar-quoted string — DDL, comments, blank lines, or a
 /// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
-/// `crate::preamble` parses into a [`crate::index::DumpMetadata`]; every
-/// other caller ignores it. A COPY block's data rows never reach this arm.
+/// `crate::preamble` parses into a [`crate::index::DumpMetadata`] and
+/// `crate::map::Builder::feed_line` classifies into spans. A COPY block's data
+/// rows never reach this arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line<'a> {
     /// Absolute file offset of the line's first byte.
@@ -153,7 +155,8 @@ enum State {
 /// until it yields `None`, then call [`take_consumed`](Self::take_consumed)
 /// and drop that many bytes from the front of the buffer before refilling.
 /// [`ChunkCarry`] is that protocol done without copying the buffer, and is
-/// what every read loop in this crate drives the scanner through.
+/// what the serial read loops drive the scanner through; a leader piece scans
+/// each of its reads as a slice of its own.
 #[derive(Debug)]
 pub struct CopyScanner {
     /// Absolute file offset that `buf[0]` corresponds to.
@@ -186,9 +189,10 @@ impl CopyScanner {
     /// [`in_copy_rows`](Self::in_copy_rows) reported at the point the caller
     /// captured this position.
     ///
-    /// A resume point is always a COPY block boundary (a cached block's
-    /// `data_offset` or `end_offset`), which is never inside a dollar-quoted
-    /// string, so dollar-quote tracking always restarts clean.
+    /// A resume point is a COPY block boundary (a cached block's
+    /// `data_offset` or `end_offset`) or a row start inside a block's data
+    /// (a leader piece after its resync), neither of which is inside a
+    /// dollar-quoted string, so dollar-quote tracking always restarts clean.
     pub fn resume(offset: u64, in_copy: Option<(u64, u64)>) -> Self {
         let state = match in_copy {
             Some((header_offset, rows)) => State::InCopy { rows, header_offset },
@@ -504,7 +508,8 @@ pub struct ScanOptions {
     /// and reports that it was interrupted
     /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
     ///
-    /// Chunk granularity, not `CopyEnd` granularity, and read by
+    /// Chunk granularity — a window of pieces while the leader holds a region
+    /// — not `CopyEnd` granularity, and read by
     /// [`crate::stream::map_file`]'s two passes alone — the mapping loop and
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
@@ -558,7 +563,7 @@ where
     F: FnMut(Event<'_>) -> ControlFlow<()>,
 {
     let size = source.size().await?;
-    // Named "preamble scan", not "scan": this function's only real caller is
+    // Named "preamble scan", not "scan": the caller a `parse` runs is
     // `index::scan_preamble`, and `stream::map_forward` announces itself as
     // "scan". A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.

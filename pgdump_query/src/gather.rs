@@ -403,7 +403,8 @@ struct GroupState {
     nulls: u64,
     /// `None` for a column keeping no bounds.
     bounds: Option<GroupBounds>,
-    /// The group's distinct texts in first-seen order, `None` once past a cap;
+    /// The group's distinct texts in first-seen order, `None` once past a cap
+    /// or at a field that is not text;
     /// read only for a column keeping a dictionary.
     texts: Option<Vec<String>>,
 }

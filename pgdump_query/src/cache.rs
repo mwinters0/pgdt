@@ -4,7 +4,8 @@
 //!
 //! Reading is best-effort — the cache is never required for correctness, so
 //! a missing, foreign or unrecognised-version file just means "scan instead,"
-//! never a hard error. Which of the three it was is still reported — see
+//! never a hard error. Which of the three it was is still reported, as far as
+//! the decode can tell them apart (`KD30`) — see
 //! [`CacheStatus`], and [`CacheLoad`] for the same statuses reaching a caller
 //! that holds a live source — because `pgdq info` has no "scan instead" to
 //! fall back on and has to say what went wrong.
@@ -116,9 +117,9 @@ enum CompressionIndex {
 ///
 /// Three numbers, each answering a question the user is otherwise sent to
 /// `xz --list` for. `max_block_uncompressed` is the largest term of what a
-/// memory budget is compared against — twice it, the block path holding one
-/// block while it decodes the next, plus the chunk buffer and the decoder's
-/// own retention — so it is most of the number to raise `--parallel-memory`
+/// memory budget is compared against — four times over, one reader's block
+/// beside the further blocks the pool keeps, plus the chunk buffer and the
+/// decoder's own working memory — so it is most of the number to raise `--parallel-memory`
 /// to when a query says the block path was declined, and that query's own
 /// note states the whole of it
 /// (`crate::PlanNoteKind::CompressedBlockPathDeclined`); `blocks` is how much
@@ -211,9 +212,18 @@ pub enum CacheStatus {
     /// Something is at this path, but it does not decode as a cache at all —
     /// foreign bytes, or a truncated write.
     Unreadable,
-    /// A cache written by a build whose on-disk shape this one does not
-    /// recognise (`format_version`/`container_kind`); nothing migrates
+    /// A cache whose `format_version` or `container_kind` this build does not
+    /// recognise, where the rest of the file still decodes; nothing migrates
     /// (`docs/design/roadmap.md`, "Pre-1.0").
+    ///
+    /// Deficiency register: `deficiency: KD30` — the whole [`CacheFile`] is
+    /// decoded before its version is read, so a cache from a build whose
+    /// persisted shape changed — the change that bumps `FORMAT_VERSION` —
+    /// almost always fails to decode and is [`CacheStatus::Unreadable`], which
+    /// `pgdq info` words as not a pgdq cache at all; an unknown `ContainerKind`
+    /// cannot decode at all. **(c) unowned**; promoted by a user sent to check a
+    /// path that holds an old cache, the fix being the version read ahead of
+    /// the rest.
     UnsupportedVersion,
     /// A readable cache whose recorded *stored* size disagrees with the live
     /// source's, so every byte offset in it could be wrong — the staleness
@@ -381,9 +391,9 @@ pub enum CacheClaim {
 /// weak to invalidate anything. That comparison lives here rather than at the
 /// caller, which keeps the early refusal the same verdict as the late one.
 ///
-/// *Rejected:* stopping the decode short of the index (bincode is positional,
-/// so reaching `compression` and `identity` decodes what precedes them
-/// anyway); a sibling reporting the stored size, which would decode a
+/// *Not taken:* stopping the decode short of the index, which comes after
+/// `compression` and `identity` in [`CacheFile`]. *Rejected:* a sibling
+/// reporting the stored size, which would decode a
 /// many-thousand-entry seek table twice on the usable path to spare a walk on
 /// the path that is about to fail.
 pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
@@ -500,7 +510,7 @@ pub enum CacheMode {
 }
 
 impl CacheMode {
-    /// Resolve a `--cache-path`-style argument against `dump_path`: `None`
+    /// Resolve a `--dqcache`-style argument against `dump_path`: `None`
     /// selects the colocated default (`<dump_path>.dqcache`), the literal
     /// path `none` disables the cache, and any other path is used as-is.
     pub fn resolve(dump_path: &Path, cache_path: Option<&Path>) -> CacheMode {
@@ -511,9 +521,10 @@ impl CacheMode {
         }
     }
 
-    /// Load the cache this mode points at, discarding the
-    /// [`CacheStatus::Valid::mtime_changed`] bit (see the module docs — a
-    /// caller that wants it calls [`load`] directly). A disabled cache always
+    /// Load the cache this mode points at, turning the
+    /// [`CacheStatus::Valid::mtime_changed`] bit into a
+    /// [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the index
+    /// (see the module docs). A disabled cache always
     /// yields [`CacheLoad::Disabled`], even if a file sits at what would
     /// otherwise be its resolved location.
     ///

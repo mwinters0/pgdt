@@ -136,7 +136,7 @@ async fn a_decimal_literal_is_decoded_at_the_columns_scale() {
     );
 }
 
-/// The notes a query over `table` raises for `column` under one `>` term —
+/// The notes a query over `table` raises for `column` under one `>=` term —
 /// empty for a column whose comparison is PostgreSQL's own.
 async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
@@ -366,7 +366,7 @@ async fn jsonb_announces_its_string_leaves() {
 }
 
 /// A NULL is excluded by every ordering operator, exactly as it is by
-/// `Eq`/`Ne` — unknown collapses to false at each term, which is what bounds
+/// `Eq`/`Ne` — unknown collapses to false at the root, which is what bounds
 /// the conjunction to `AND`.
 #[tokio::test]
 async fn a_null_survives_no_ordering_operator() {
@@ -959,7 +959,7 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
 /// so the dump omits it from `COPY` and no stream can reach it — its
 /// assertion is in `tests/preamble.rs`, over `DatabaseMetadata`.
 ///
-/// Two of the seven are *silences*, and they are the half no unit test can
+/// Two of the four *silences* are the half no unit test can
 /// stand in for: `pg_dump` writes a `COLLATE` clause only where the column's
 /// collation differs from its type's default (I37), so `v_name` and
 /// `v_domain_c` carry none — the first because `name`'s type default is `C`,

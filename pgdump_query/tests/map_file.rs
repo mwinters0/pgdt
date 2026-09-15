@@ -647,8 +647,9 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
 
 /// **The interrupt guard.** A cancelled scan is not an error and not a lie: it
 /// reports `interrupted`, the index it returns stops at the last **spliced**
-/// watermark, and the cache on disk holds exactly that — every exit saves
-/// unconditionally, so what is on disk is never behind what is in hand.
+/// watermark, and the cache on disk holds exactly that — every exit but an
+/// error saves unconditionally, so what is on disk is never behind what is in
+/// hand.
 ///
 /// The flag trips one byte past the first block's end, with one-byte reads so
 /// that offset is a read boundary: the block's `CopyEnd` has been processed,

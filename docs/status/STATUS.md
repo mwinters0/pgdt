@@ -6,7 +6,7 @@ what is still ahead is [`../design/roadmap.md`](../design/roadmap.md),
 whose index table is the schedule; dated pickup notes and plan-changing
 discoveries are in `history/`.
 
-<!-- repointed: 70d479f --> The marker names the commit `scripts/repoint.py`
+<!-- repointed: 3b61c04 --> The marker names the commit `scripts/repoint.py`
 measures the record's growth from; red means a repoint is due
 ([`../process.md`](../process.md), "Repointing").
 
@@ -31,10 +31,10 @@ quotes a number: every figure is in
 | Array shape census | recorded by every mapping pass and read back before a query's first batch | `map.rs`; D35, D43 |
 | CLI `pgdq parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` is the only scanner, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdump_query-cli/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
 | Partial reporting | `info` reports an unfinished scan's cache with its completion stated once at the top; an interrupted cache is typed for every database segment the scan finished (I1) | D67 |
-| Column projection | working, library and CLI; an unprojected column is never decoded | `batch.rs`; D28; [`../manual/type-handling.md`](../manual/type-handling.md) |
+| Column projection | working, library and CLI; an unprojected column is never decoded unless a filter term names it | `batch.rs`; D28; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | The filter expression, three-valued | working; `Expr` is one tree evaluated in SQL's `True`/`False`/`Unknown` domain, reached as `--where` and as repeated `--filter` | `predicate.rs`; D53, D54 |
 | The `--where` and `--filter` grammars | working, CLI only; nothing below L4 parses a term | `pgdump_query-cli/src/where_expr.rs`, `main.rs`; D60; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`" and "Writing a filter term" |
-| Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality is never refused and falls back to text, ordering is refused where the register gives no order, and a special value is a rank rather than a fault | `predicate.rs`, `pgtype.rs`; D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
+| Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault | `predicate.rs`, `pgtype.rs`; D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
 | The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced per term on its own channel; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation | committed under `fixtures/<major>/oracle/` and checked by `predicate.rs`'s unit test, `scripts/oracle_differences.py` and `scripts/oracle_register.py` | D70, D71 |
 | ADBC floor oracle and the floor rule | committed under `fixtures/<major>/adbc/` and reconciled by `scripts/floor_mapping.py` | D38, D72 |
@@ -126,8 +126,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD28 -->
-**`KD1`–`KD28` are allocated, and nothing at or below `KD28` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD31 -->
+**`KD1`–`KD31` are allocated, and nothing at or below `KD31` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -264,14 +264,14 @@ a phase nobody has sliced.
 - **KD24** — the chunk pool's free list is billed nowhere, so a compressed
   source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks — 4
   MiB at the shipped chunk, 64 MiB against 16 billed at `--chunk-size 16m`,
-  flat in the count and never above the stated budget. **(c) unowned**;
+  flat in the count and never above the stated budget unless one chunk is. **(c) unowned**;
   promoted by a caller announcing a large chunk, or by a phase reworking
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
   `pgdump_query/src/io.rs`.
 
 - **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS × chunk` a reader
-  where the path holds `POOL_DEPTH` chunks flat, and recommends no count at
-  all, so plain readers are bounded by a charge describing nothing held — 8 MiB
+  where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
+  memory at all, so plain readers are bounded by a charge describing nothing held — 8 MiB
   billed against 4 held at the shipped chunk, and unbounded above a budget of
   `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
   scan on a real device, which is that path's own reopening condition. Detail:
@@ -295,6 +295,25 @@ a phase nobody has sliced.
   discovered limit once they outgrow what the arrangement spares. **(b) owned
   by P20**, which bounds what statistics hold; `--statistics none` restores the
   margin today. Detail: `pgdump_query/src/io.rs`.
+
+- **KD29** — a flagless `pgdq` run reads its memory limit twice, once for the
+  status lines and again inside `Parallelism::discover_in` for the budget, so
+  a limit rewritten between the two is announced as one number and budgeted as
+  another. **(c) unowned**; promoted by a limit seen to move inside a run, or
+  by discovery that can take a limit already read. Detail:
+  `pgdump_query-cli/src/main.rs`.
+
+- **KD30** — a cache from a build whose persisted shape changed is decoded
+  whole before its version is read, so it almost always reads as not a pgdq
+  cache rather than as another build's, and `info` sends the user to check the
+  path. **(c) unowned**; promoted by a user misled by it, the fix being the
+  version read first. Detail: `pgdump_query/src/cache.rs`.
+
+- **KD31** — `attach_text` caps a run's one read at `TEXT_CAP` per span from
+  the run's start, so a span following one longer than the cap can be stored
+  empty and `truncated` however short it is. **(c) unowned**; promoted by a
+  `--map` listing seen to lose a statement's text. Detail:
+  `pgdump_query/src/map.rs`.
 
 ## Decisions worth another look
 

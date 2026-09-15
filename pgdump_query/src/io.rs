@@ -372,8 +372,8 @@ impl WorkerMemory {
 
     /// The shared pool at `workers` readers: `pool_depth.max(workers) − 1`
     /// units, which is [`BufferPool::slots`] less the slot a decode is writing
-    /// into — never zero for a pooling source, and largest at the extremes of
-    /// the count rather than at one end of it.
+    /// into — flat up to the depth and rising with the count above it, and
+    /// zero only for a depth of one at one reader.
     pub fn pool_bytes(self, workers: usize) -> u64 {
         (self.pool_depth.max(workers).saturating_sub(1) as u64).saturating_mul(self.pool_unit)
     }
@@ -1370,7 +1370,8 @@ struct BufferPool {
 /// What a [`BufferPool`] holds under its lock.
 #[derive(Debug, Default)]
 struct PoolState {
-    /// Buffers nobody is using, at most [`BufferPool::slots`] of them.
+    /// Buffers nobody is using, at most [`BufferPool::slots`] of them as of
+    /// the last release: a lowered limit trims nothing until then.
     free: Vec<Vec<u8>>,
     /// Buffers handed to a [`WaitPolicy::MayWait`] loop and not yet
     /// returned — the term a waiting acquisition is bounded by, and the only
@@ -1535,7 +1536,9 @@ impl BufferPool {
     ///
     /// **It is a true bound only because [`BufferPool::keeps`] refuses
     /// anything above a slot and [`BufferPool::reserve`] takes the retained
-    /// blocks out of the free list's share.** This is what a source with
+    /// blocks out of the free list's share — and only for one reader**: with
+    /// several decoding at once the retention list outgrows its share by up to
+    /// their number ([`BlockCache::worker_memory`]). This is what a source with
     /// **two** read units subtracts before handing the remainder to the second
     /// pool (`docs/design/decisions.md`, "D17").
     ///
@@ -1764,7 +1767,7 @@ impl ByteRangeSource for LocalFileSource {
     // count while what is held is flat at `POOL_DEPTH` chunks, and above a
     // budget of `PLAIN_PARTITION_CHUNKS × chunk × jobs` nothing bounds them at
     // all. **(c) unowned.** Closing it means billing the pool's real depth and
-    // recommending a count; a reading of a parallel plain scan on a real
+    // recommending what a reader costs; a reading of a parallel plain scan on a real
     // device is what reopens it.
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         let chunk = self.pool.slot_bytes();
@@ -1848,13 +1851,15 @@ impl AsRef<[u8]> for BlockView {
 /// **Retention is what makes per-call block decode affordable**: a block
 /// decoded afresh per call would repeat the whole block's decode once per
 /// chunk inside it, where a retained block makes the next read a slice. The
-/// retained set is capped at [`BufferPool::slots`].
+/// retained set is drained to [`BufferPool::slots`] less one before each
+/// decode takes its slot.
 ///
 /// **A retained block occupies a slot rather than adding to the free list**,
 /// eviction happening *before* a slot is taken ([`BlockCache::slot`]) so the
-/// evicted buffer is what the next decode reuses. **The retained cap and the
-/// free-list cap are one count, so this pool's ceiling is `slots * unit`**:
-/// this list reserves what it holds ([`BufferPool::reserve`])
+/// evicted buffer is what the next decode reuses. **The retained list and the
+/// free list share one count** — this list reserves what it holds
+/// ([`BufferPool::reserve`]) — so one reader's ceiling is `slots * unit`, and
+/// `workers` readers decoding at once hold up to `slots − 1 + workers` units
 /// (`docs/design/decisions.md`, "D17").
 ///
 /// *Rejected: retaining one block on the serial path.* A cap of one makes
@@ -2138,7 +2143,8 @@ impl XzSource {
     /// [`XzSource::read_by_blocks`] does on every read. The block path still
     /// locks once per cache **miss**, to build a `BlockTask` out of the
     /// reader's own decode settings ([`XzSource::block`]); a hit takes no
-    /// lock. It costs no second copy: `xz_seek::Reader::index_shared` hands
+    /// reader lock, only the retention list's. It costs no second copy:
+    /// `xz_seek::Reader::index_shared` hands
     /// out the `Arc` the reader itself holds.
     ///
     /// **Nothing bills the one copy that is left.** It is unbilled on an
@@ -2239,7 +2245,8 @@ impl XzSource {
     // population from the per-reader buffer this bills, so a stated budget is
     // short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks: flat in the
     // count, since the depth is a constant, and linear in whatever chunk the
-    // caller announced. It is never *above* the stated budget. **(c)
+    // caller announced. It is never *above* the stated budget unless one
+    // chunk is. **(c)
     // unowned**; closing it means a count-independent term, which
     // [`WorkerMemory`] does not have.
     fn charged_chunk_bytes(&self) -> u64 {
@@ -3116,8 +3123,8 @@ mod tests {
     }
 
     /// A source implementing nothing but the three required methods, to pin
-    /// what the *defaults* answer — the only way to read a defaulted body,
-    /// since both shipped sources override this one.
+    /// what the *defaults* answer apart from any shipped source, `XzSource`
+    /// overriding them and `LocalFileSource` free to.
     struct BareSource;
 
     impl ByteRangeSource for BareSource {
@@ -3197,9 +3204,9 @@ mod tests {
         assert_eq!(source.partitions(0..16).partition_bytes(), 16 << 20);
     }
 
-    /// **The shipped configuration must sit *inside* the cap, not on it.**
+    /// **The shipped configuration must be whole chunks, not capped ones.**
     /// `DEFAULT_CHUNK_SIZE * PLAIN_PARTITION_CHUNKS` is exactly
-    /// [`POOL_MAX_BYTES`] and the three constants are justified
+    /// [`POOL_MAX_BYTES`], on the cap, and the three constants are justified
     /// independently, so this assertion is what stops a later change to any
     /// one of them from silently converting the default from whole chunks to
     /// capped.
@@ -3216,7 +3223,7 @@ mod tests {
     }
 
     /// A block-decoding `.xz` advises its block boundaries, so a partition is
-    /// a whole number of blocks and two workers never decode one block twice.
+    /// a whole number of blocks and no cut falls inside one.
     /// The boundaries are ascending and strictly inside the range: the block
     /// containing `range.start` begins at or before it, and is not a split.
     #[tokio::test]

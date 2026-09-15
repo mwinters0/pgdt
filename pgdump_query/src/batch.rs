@@ -160,16 +160,17 @@ impl Default for QueryOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScanExtent {
     /// Stop as soon as the queried table is settled: at least one matching
-    /// block has closed, and none of the matching blocks carried a
-    /// partition-root marker (I2 — a marked block's name owns further blocks
-    /// that are *not* adjacent, so only EOF enumerates them). This is what
+    /// block has closed, none of the matching blocks carried a partition-root
+    /// marker (I2 — a marked block's name owns further blocks that are *not*
+    /// adjacent, so only EOF enumerates them), and the map holds no
+    /// `\connect`, after which a name can be defined again. This is what
     /// keeps a query against an early table in a huge dump from costing a
     /// full scan.
     ///
     /// What it gives up: a second, conflicting candidate past the stopping
     /// point is never seen, so `Error::AmbiguousTable` reports only what the
-    /// scan reached. A file concatenating two dumps of the *same* database
-    /// name is the case with no early signal at all.
+    /// scan reached. A file whose *first* segment has no `\connect` is the
+    /// case with no early signal at all.
     ///
     /// Deficiency register: `deficiency: KD6` — so a second, conflicting
     /// table past the stopping point is never seen, `Error::AmbiguousTable` is
@@ -803,9 +804,9 @@ pub(crate) struct RowBatcher {
     /// across a long stretch that matches nothing.
     span: Option<(u64, u64)>,
     /// Whether any field of this block feeds a projected column. When
-    /// nothing does — `COUNT(*)`, `pgdq query --no-columns` — no field is
-    /// decoded and the read loop skips the bulk UTF-8 validation
-    /// (`docs/design/decisions.md`, "D27").
+    /// nothing does — `COUNT(*)`, `pgdq query --no-columns` — the batcher
+    /// decodes no field, and where the filter reads none either the read loop
+    /// skips the bulk UTF-8 validation (`docs/design/decisions.md`, "D27").
     decodes_fields: bool,
     options: QueryOptions,
 }
@@ -1078,9 +1079,8 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
         return Ok(None);
     }
     // Sized rather than empty: a zero-capacity `String` is grown by whichever
-    // `push_str` writes into it first, where one allocation suffices. 16 bytes
-    // is under glibc's smallest chunk and covers every scalar an array
-    // element can be.
+    // `push_str` writes into it first, where one allocation suffices for a
+    // value of 16 bytes or fewer.
     let mut out = String::with_capacity(16);
     if render_field_into(column, row, plan, &mut out)? { Ok(Some(out)) } else { Ok(None) }
 }
@@ -1091,8 +1091,8 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
 /// wrapper over it, so the two cannot drift.
 ///
 /// It exists so that a consumer printing a whole row builds it in one buffer:
-/// a scalar column of an integer, a boolean, a text or a date/time type is
-/// written straight into that buffer and allocates nothing
+/// a scalar column of an integer, a boolean, a text or a date/time type other
+/// than `interval` is written straight into that buffer and allocates nothing
 /// (`docs/design/decisions.md`, "D44").
 ///
 /// **An error may leave a partial value behind**, so the discipline this asks
@@ -1348,7 +1348,8 @@ fn render_list_level(
     Ok(())
 }
 
-/// Scan `source` end to end, assembling typed `RecordBatch`es for every row
+/// Scan `source` as far as `query_options.scan_extent` says, assembling typed
+/// `RecordBatch`es for every row
 /// of every `COPY` block whose table matches `table` (qualified or bare — see
 /// [`CopyHeader::matches`]). A table with zero rows produces no batches.
 ///

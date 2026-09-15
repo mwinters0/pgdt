@@ -169,9 +169,17 @@ impl ParallelArgs {
     /// same reason `ParallelArgs::resolve_in` takes one.
     fn discover_in<'a>(&'a self, root: &'a Path) -> Discovered<'a> {
         // **Read even where `--parallel-memory` was stated**: the mode is a
-        // fact about the run, not the flag. Read **once**, here — `memory.high`
-        // is writable by whoever set it, so a second walk could answer
-        // differently and the two status lines would disagree.
+        // fact about the run, not the flag. Both status lines state this read
+        // — `memory.high` is writable by whoever set it, so a second walk
+        // could answer differently.
+        //
+        // Deficiency register: `deficiency: KD29` — a flagless budget is not
+        // taken from this read: `Resolved` calls `Parallelism::discover_in`,
+        // which walks the limit again, so a limit rewritten between the two
+        // walks is announced as one number and budgeted as another. **(c)
+        // unowned**; promoted by a limit seen to move inside a run, or by a
+        // change to `Parallelism`'s discovery that can take a limit already
+        // read.
         Discovered { args: self, root, limit: pgdump_query::discover_memory_limit_in(root) }
     }
 }
@@ -183,8 +191,8 @@ impl ParallelArgs {
 struct Discovered<'a> {
     args: &'a ParallelArgs,
     /// The filesystem root the limit was read under, kept because
-    /// `Parallelism::discover_in` asks the same root again for what the
-    /// machine reports free.
+    /// `Parallelism::discover_in` asks the same root again, for the limit
+    /// (`KD29`) and for what the machine reports free.
     root: &'a Path,
     /// The memory limit this process runs under, and the file that stated it.
     limit: Option<pgdump_query::MemoryLimit>,
@@ -514,10 +522,10 @@ enum Command {
         /// it became: the Arrow type it resolved to, or — for a column that
         /// came back as a string — why. Turns the `user-defined types` count
         /// into a listing of the types themselves, on a compressed dump adds
-        /// the container's shape, and ends with the statistics `parse`
-        /// gathered, per table and column: over how many blocks, at what group
-        /// size, and in how many groups each column keeps bounds and a
-        /// dictionary.
+        /// the container's shape, and closes the listing, above its totals,
+        /// with the statistics `parse` gathered, per table and column: over
+        /// how many blocks, at what group size, and in how many groups each
+        /// column keeps bounds and a dictionary.
         #[arg(long)]
         detail: bool,
         /// List every span the map holds (`docs/design/decisions.md`,
@@ -1292,7 +1300,8 @@ async fn main() -> Result<()> {
                 .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
             // A cache written for another file is refused here as it is by
-            // `info` and `query`, having read nothing
+            // `info` and `query`, having read no more than the file's leading
+            // bytes
             // (`docs/design/decisions.md`, "D20"). The flags and the limit
             // are announced ahead of it, neither waiting on the file (D64).
             let stated = parallel.discover();
@@ -1395,7 +1404,8 @@ async fn main() -> Result<()> {
                 })?
                 .to_path_buf();
             // A cache that does not describe this file leaves `info` nothing
-            // to report from, and it says so having read nothing. This
+            // to report from, and it says so having read no more than the
+            // file's leading bytes. This
             // condition keeps `info`'s own sentence, which names the two ways
             // out ahead of the command they enable.
             let source = match open_with_cache(&file, &mode)? {
@@ -1462,7 +1472,8 @@ async fn main() -> Result<()> {
                 ),
             };
             // As `info`: a cache that does not describe this file is
-            // reported having read nothing. Announced in two lines, the first
+            // reported having read no more than the file's leading bytes.
+            // Announced in two lines, the first
             // ahead of the open, as `parse` does.
             let stated = parallel.discover();
             stated.announce();
@@ -1730,7 +1741,9 @@ fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
 /// (`docs/design/decisions.md`, "D20").
 /// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for the
 /// size-mismatch condition; `refusals_name_both_ways_out`
-/// (`tests/partial_reporting.rs`) holds the three to one wording.
+/// (`tests/partial_reporting.rs`) holds the size-mismatch refusals to one
+/// wording, and `every_command_refuses_a_cache_that_does_not_describe_the_file`
+/// (`tests/xz_source.rs`) a contradicted compression claim's.
 const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
 
 /// The sentence `pgdq info` prints for a cache it cannot use — four causes,

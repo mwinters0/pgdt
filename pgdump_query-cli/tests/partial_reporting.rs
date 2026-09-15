@@ -168,7 +168,8 @@ async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone()
 /// that describes another file reaches the user from three places — the
 /// library error `parse` and `query` surface, and the CLI sentences `info`
 /// prints for the size mismatch and all three print for a contradicted
-/// compression claim — and there is no third way out, no `--force` and no
+/// compression claim, the last held by `tests/xz_source.rs` — and there is no
+/// third way out, no `--force` and no
 /// `CacheMode` variant meaning "replace regardless"
 /// (`docs/design/decisions.md`, "D20"). A refusal that named only one
 /// of them would read as a tool with no recourse; one that named a way out the

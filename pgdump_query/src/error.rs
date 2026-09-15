@@ -151,9 +151,10 @@ pub enum Error {
     /// because nothing this crate scans can reach it — every typed column it
     /// fills comes from a `decode_*`, whose range is what its `render_*` can
     /// write back. Only an array a caller built itself carries one, and such
-    /// an array has no dump position to name. `interval` is its one case:
-    /// Arrow's `Interval(MonthDayNano)` counts nanoseconds where
-    /// PostgreSQL's field counts microseconds.
+    /// an array has no dump position to name. Two cases reach it: `interval`,
+    /// Arrow's `Interval(MonthDayNano)` counting nanoseconds where
+    /// PostgreSQL's field counts microseconds, and an `int2vector` holding a
+    /// NULL element, which its text form has no encoding for.
     #[error("this Arrow value has no `{declared_type}` text form: {reason}")]
     FieldRender { declared_type: &'static str, reason: String },
 }
