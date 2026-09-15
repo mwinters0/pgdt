@@ -464,13 +464,15 @@ class StatisticsFigures(unittest.TestCase):
         "3000 row(s)\n"
     )
 
-    def test_both_wait_untaken_and_borrow_nothing(self):
-        # Standing in no sharing edge is what lets each publish from the commit
-        # that lands it, outside a sweep.
+    def test_both_are_taken_and_borrow_nothing(self):
+        # Standing in no sharing edge is what lets each publish from its own
+        # commit, outside a sweep; taken, each is in `FIGURES`, where the
+        # doc-side checks apply.
         for fid in ("statistics-gathering", "statistics-pruning"):
             with self.subTest(figure=fid):
                 fig = measure.SELECTABLE_BY_ID[fid]
-                self.assertIn(fig, measure.UNTAKEN)
+                self.assertIn(fig, measure.FIGURES)
+                self.assertNotIn(fig, measure.UNTAKEN)
                 self.assertEqual(fig.shares, ())
                 self.assertEqual(measure.entangled_with(fid), [])
 

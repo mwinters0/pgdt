@@ -66,8 +66,8 @@ grilled and sliced"). No query reads a statistic yet.
 
 ## Negative results
 
-- **No figure was taken**: gathering's cost and resident growth are unmeasured
-  until `statistics-gathering`. The `census-*` figures' pinned
+- **No figure was taken here**: gathering's cost and resident growth are
+  `statistics-gathering`'s. The `census-*` figures' pinned
   `runs/pgdq-nocensus` predates `--statistics` and rejects it; its stamp guard
   refuses it anyway once this change is committed, paths those figures declare
   having moved.

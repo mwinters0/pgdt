@@ -51,8 +51,9 @@ figure was taken.
   asked, so a query meeting a block with `statistics: None` under a whole-file
   `parse` meets one gathered under `none` or outside a selection. Statistics
   of mixed group sizes across a table's blocks are ordinary.
-- **10.10.** `statistics-gathering` times a cold gathering `parse`; a back-fill
-  is a second, block-by-block read, unmeasured.
+- **10.10.** `statistics-gathering` times a whole-file gathering `parse`,
+  warm, over a fresh cache; a back-fill is a second, block-by-block read,
+  unmeasured.
 
 ## Rejected, on review
 

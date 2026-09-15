@@ -30,3 +30,26 @@ its readings state.
 ([`roadmap-P10.6-parallel-gathering-notes.md`](roadmap-P10.6-parallel-gathering-notes.md)).
 Contingent on the leader folding a window's partitions only once every
 partition of it has returned.
+
+## What the statistics figures leave unpriced
+
+**Fact.** `statistics-gathering` prices a gathering `parse` warm only, and
+there gathering is most of a `COPY`-dense scan's time with its terms
+unattributed; nothing prices it on a device-bound scan. `statistics-pruning`'s
+pruned legs read a fixed floor that includes decoding the whole cache, and the
+cache is one bincode file decoded whole (`cache::read_cache_file`), so every
+query decodes every group's statistics whether it states `--statistics none` or
+not — and no figure reads a cache written without them. Both tables are in
+[`measurements.md`](measurements.md) under their own markers.
+
+**Why P20 cares.** Re-deriving the defaults from readings is this phase's: the
+group size and gathering-by-default trade a parse's time and the statistics'
+resident and on-disk size against what pruning buys, and two of those terms —
+gathering's cost where the device dominates, and what carrying statistics
+costs a query that does not use them — have no reading yet.
+
+**Origin.** P10.10, 2026-09-15
+([`roadmap-P10.10-figures-notes.md`](roadmap-P10.10-figures-notes.md)).
+Contingent on the cache staying one file decoded whole, which
+[`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md),
+"One cache file" chose.
