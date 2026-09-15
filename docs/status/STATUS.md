@@ -70,7 +70,7 @@ instrument can see").
 Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-statistics-memory.md).
 
 - [x] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — an observer's growth charged whenever it passes a step, a vector or map ahead of its growth, and a fold moving a piece's charge onto its block in one update; printed by every `parse` holding statistics as one status line with the total, the peak and each term's peak, a `query` printing none; reconciled against the `introspect` build's live heap over generated reasonable-width, wide-text and long distinct-text shapes, two-sided within a step an open observer plus the longest row; declining nothing; [notes](../design/roadmap-P20.1-statistics-account-notes.md)
-- [ ] **20.11** The cache file streamed at both ends: a save encodes into the file through a buffered writer and a load decodes through a buffered reader, the bytes written identical, so neither holds the serialized cache beside the statistics it carries; a save written beside the cache and renamed over it, a kill mid-save leaving the previous cache whole; the account's rustdoc no longer names either term
+- [x] **20.11** The cache file streamed at both ends: a save encodes into the file through a buffered writer and a load decodes through a buffered reader, the bytes written identical, so neither holds the serialized cache beside the statistics it carries; a save written beside the cache and renamed over it, a kill mid-save leaving the previous cache whole; the account's rustdoc no longer names either term; [notes](../design/roadmap-P20.11-streamed-cache-notes.md)
 - [ ] **20.2** Koji's row density: a gathering `parse` of koji on the shipped build tracking one narrow column per table, launched detached; a `scripts/` tool with its tests deriving each block's rows-per-group distribution at every `2^n` from `info --json`, over koji and the fixtures, into a `runs/` artifact; the median quantile checked against the spec's registered criterion
 - [ ] **20.3** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture
 - [ ] **20.4** The density minimum: a block's size chosen at its end from rows per group at the median, default minimum 1,024, the cap's size standing where coarser; `--statistics-min-rows` (0 turns it off), a stated `--statistics-group-size` exact, a power of two and refused beside either row flag; the bounds recorded per block with D34's back-fill rule extended to each; `FORMAT_VERSION` bumped; parallel identical to serial over every fixture
@@ -319,3 +319,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A save's beside file is named per save, `<cache>.<pid>-<n>.tmp`, created
+  new.** Called that way so two saves of one cache — two `parse` processes, or
+  two tasks of one embedder — never write into one file, which a fixed name
+  opened for truncation allows: one save's rename can land the file while the
+  other is still writing it, a cache that may not decode. The cost is that
+  every save killed partway (a second Ctrl-C, `kill -9`, the OOM killer) leaves
+  its own orphan beside the cache, the size of a whole cache, removed by
+  nothing; a fixed `<cache>.tmp` would leave at most one, replaced by the next
+  save. Reconsidering means choosing between those two failures, or having a
+  save clear the orphans it can prove dead; the code is `cache::beside`
+  (`pgdump_query/src/cache.rs`).

@@ -3499,7 +3499,8 @@ rebuild is a whole-list clone, so it is only ever as cheap as the gate is
 closed.
 
 Save counts come from `strace -f -e trace=open,openat` filtered to the cache
-path (`std::fs::write` opens once per save; the first is the load's miss).
+path (a save opens once, the file it writes beside the cache and renames over
+it, whose path begins with the cache's; the first open is the load's miss).
 **Trace both calls**, not `openat` alone: glibc uses `openat` and musl uses
 `open`, so tracing one of them silently reports zero saves against the other
 libc. The counting stage runs on the host and is untimed, so `strace`'s

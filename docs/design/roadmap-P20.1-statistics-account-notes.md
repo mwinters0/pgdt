@@ -57,8 +57,8 @@ to the capacity it grows into.
   steps: one piece's map rehashing between its announcement and its release,
   the new table live, while another piece's update subtracted the announcement.
   The check now judges a shortfall against the whole account and an excess
-  against the account less what is announced — see "Decisions worth another
-  look".
+  against the account less what is announced — see
+  [`decisions.md`](decisions.md), "D81".
 - **A check could read another thread's update half applied.** One run of two
   read a split leg 0.7 MiB over past its allowance, an announcement counted in
   the terms and not yet in the announced bytes. The account is now one lock
@@ -95,9 +95,8 @@ to the capacity it grows into.
   it finishes. The decline (20.7) reads gathering and interned together, never
   a retained estimate.
 - **What the account does not see**, each named in its rustdoc: each open
-  observer's growth under a step, a row's decode scratch, the observer's own
-  allocation, a save's encode buffer and a load's file bytes. 20.11 removes the
-  last two rather than charging them (the spec's "Workers are resolved first").
+  observer's growth under a step, a row's decode scratch and the observer's own
+  allocation.
 - **Only a mapping pass keeps an account.** A `query` loads the cache whole,
   charges nothing and prints no `statistics held` line; the reserve's `query`
   legs (20.8) need a term of their own, the walk being

@@ -4593,7 +4593,9 @@ def count_saves(
     Traced on the host and untimed, so strace's overhead reaches no figure.
     **Both** `open` and `openat`: glibc uses one and musl the other, and
     tracing a single call silently reports zero saves against the other libc.
-    `std::fs::write` opens once per save; the first open is the load's miss.
+    A save opens once, the file it writes beside the cache and renames over it,
+    whose path begins with the cache's, so the filter below counts it; the first
+    open is the load's miss.
 
     Untimed, but the save count it returns is published, and `-f` follows every
     thread — so it states its worker count like everything else here."""

@@ -70,8 +70,10 @@ fraction of the scan, and it spaces the bankings by what one costs rather than
 by a fixed interval, because a scan that banked after every block would spend
 more time banking than scanning. On a large dump, where blocks are minutes
 apart, every block is banked and a clean stop loses only the one it was
-reading. Nothing is ever left *corrupt*: the cache either loads or it does not,
-and `pgdq info` states how far it goes.
+reading. Nothing is ever left *corrupt*: a write is made beside the cache and
+swapped in whole once finished, so a kill in the middle of one leaves the
+previous banking in place, and a file named after the cache and ending `.tmp`
+beside it, which is safe to delete. `pgdq info` states how far the cache goes.
 
 ### `parse --preamble-only`
 

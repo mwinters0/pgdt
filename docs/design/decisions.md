@@ -300,9 +300,8 @@ map. A cancelled mapping pass fails a query rather than shortening it (I1). Cach
 cold interior split share `worker_count` and `cut` and differ only in what they cut.
 
 ### D49 One target per query, and the early stop is conservative
-Name matches narrow to one `(database, table)` before replay or
-`AmbiguousTable`; `target_settled` vetoes a stop on a partition root (I2) or
-any `\connect`. A conflict past the stop is unseen (`KD6`).
+Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`; `target_settled`
+vetoes a stop on a partition root (I2) or any `\connect`. A conflict past the stop is unseen (`KD6`).
 
 ### D50 `ResumeToken` is opaque and fingerprints the query
 Table, projection, filter tree, schema mode and partition, hashed by explicit match (a derived
@@ -399,11 +398,12 @@ being ambiguous there). Code: `statistics::StatisticsRequest`.
 
 ### D78 Statistics share the cache file, its identity and its `FORMAT_VERSION`
 None is believed from a cache whose stored size is not the live source's (D20); the mtime stays
-advisory (D21), so a same-size rewrite in place prunes against its predecessor's statistics,
-knowingly. Bounds, order and dictionary are believed only under the declared type and `COLLATE`
-recorded beside them, and a change to how a kind orders or equates bumps the version. Rejected: a
-statistics file discardable alone; a semantics version of its own. Code: `prune::prune_block`.
-Evidence: `golden_order_is_pinned_to_the_format_version`.
+advisory (D21), so a same-size rewrite in place prunes against its predecessor's, knowingly. Bounds,
+order and dictionary are believed only under the declared type and `COLLATE` recorded beside them,
+and a change to how a kind orders or equates bumps the version. Both ends of the file stream and a
+save renames over the cache, so no encoded copy meets the statistics and a kill leaves the last save.
+Rejected: a statistics file discardable alone; a semantics version of its own; the copy charged.
+Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
 ### D79 Bounds go where a comparison orders exactly, a dictionary where it equates exactly
 Bounds and row order need the key a filter compares with, so a divergent comparison gets neither; a

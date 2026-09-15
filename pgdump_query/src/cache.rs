@@ -28,9 +28,14 @@
 //! [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the loaded
 //! index, recomputed on every load and never persisted.
 
+use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
+use bincode::error::{DecodeError, EncodeError};
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::Diagnostic;
@@ -156,6 +161,8 @@ impl CompressionShape {
     }
 }
 
+/// What a cache file holds. [`CacheFileRef`] is what a save encodes, the same
+/// fields in this order, so the two change together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheFile {
     format_version: u32,
@@ -212,7 +219,7 @@ pub enum CacheStatus {
     /// Nothing at this path.
     Missing,
     /// Something is at this path, but it does not decode as a cache at all —
-    /// foreign bytes, or a truncated write.
+    /// foreign bytes, or a file cut short.
     Unreadable,
     /// A cache whose `format_version` or `container_kind` this build does not
     /// recognise, where the rest of the file still decodes; nothing migrates
@@ -296,7 +303,7 @@ pub enum CacheLoad {
     Disabled,
     /// [`CacheStatus::Missing`] — nothing at the cache path.
     Missing,
-    /// [`CacheStatus::Unreadable`] — foreign bytes, or a truncated write.
+    /// [`CacheStatus::Unreadable`] — foreign bytes, or a file cut short.
     Unreadable,
     /// [`CacheStatus::UnsupportedVersion`] — another build's envelope.
     UnsupportedVersion,
@@ -338,17 +345,25 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
 /// [`load_offline`]. `Err(status)` is one of the three unusable outcomes that
 /// need no live source to reach; only a stored-size mismatch does, and that
 /// is [`load`]'s alone.
+///
+/// The file is decoded through a buffered reader, never read whole first
+/// (`docs/design/decisions.md`, "D78"). A file that ends early is
+/// [`CacheStatus::Unreadable`], as any other undecodable content is; an I/O
+/// failure reading it is still an error.
 fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheStatus>> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    let reader = match File::open(path) {
+        Ok(file) => BufReader::new(file),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
             return Ok(Err(CacheStatus::Missing));
         }
         Err(e) => return Err(Error::Io(e)),
     };
     let file: CacheFile =
-        match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
-            Ok((file, _)) => file,
+        match bincode::serde::decode_from_reader(reader, bincode::config::standard()) {
+            Ok(file) => file,
+            Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
+                return Err(Error::Io(inner));
+            }
             Err(_) => return Ok(Err(CacheStatus::Unreadable)),
         };
     if file.format_version != FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
@@ -484,25 +499,89 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
     }
 }
 
+/// What [`save`] encodes: [`CacheFile`]'s fields in [`CacheFile`]'s order,
+/// the index borrowed rather than cloned, so the bytes are the ones an owned
+/// `CacheFile` encodes to and [`read_cache_file`] decodes.
+#[derive(Serialize)]
+struct CacheFileRef<'a> {
+    format_version: u32,
+    container_kind: ContainerKind,
+    compression: Option<CompressionIndex>,
+    identity: SourceIdentity,
+    total_size: u64,
+    index: &'a DumpIndex,
+}
+
 /// Write `index` to `path` (colocated or explicit — whichever the caller
-/// resolved), overwriting any existing cache there, and record `source`'s
+/// resolved), replacing any existing cache there, and record `source`'s
 /// current stored size/mtime plus its addressable length for [`load`] to
 /// check next time. Propagates I/O failures as `Error::Io` rather than
 /// swallowing them — see the module docs.
+///
+/// **The index is encoded straight into a file beside `path`, which is then
+/// renamed over it** (`docs/design/decisions.md`, "D78"), so no encoded copy
+/// of the cache is held in memory, and at every moment `path` holds either
+/// the previous save or this one, whole. A save that fails removes its file;
+/// one the process is killed during leaves it, named for the cache and ending
+/// `.tmp`, and the previous cache untouched. The replacement is a new file: a
+/// cache path that was a symbolic link becomes a regular file, and the file
+/// takes default permissions rather than the old one's. Nothing is synced, so
+/// the guarantee is against a killed process, not a lost machine.
 pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) -> Result<()> {
     let identity = SourceIdentity::observe(source).await?;
     let total_size = source.size().await?;
-    let file = CacheFile {
+    let file = CacheFileRef {
         format_version: FORMAT_VERSION,
         container_kind: ContainerKind::Plain,
         compression: source.seek_table().map(CompressionIndex::Xz),
         identity,
         total_size,
-        index: index.clone(),
+        index,
     };
-    let bytes = bincode::serde::encode_to_vec(&file, bincode::config::standard())?;
-    std::fs::write(path, bytes)?;
-    Ok(())
+    write_beside(path, |writer| {
+        bincode::serde::encode_into_std_write(&file, writer, bincode::config::standard())
+            .map(drop)
+            .map_err(|e| match e {
+                EncodeError::Io { inner, .. } => Error::Io(inner),
+                other => Error::CacheEncode(other),
+            })
+    })
+}
+
+/// Run `encode` into a new file [`beside`] `path`, then rename that file over
+/// `path`; on any failure, remove it and leave `path` as it was.
+fn write_beside(
+    path: &Path,
+    encode: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
+) -> Result<()> {
+    let beside = beside(path);
+    let file = OpenOptions::new().write(true).create_new(true).open(&beside)?;
+    let written = (|| {
+        let mut writer = BufWriter::new(file);
+        encode(&mut writer)?;
+        writer.flush()?;
+        // Closed before the rename, which some platforms need.
+        drop(writer);
+        std::fs::rename(&beside, path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        // Best-effort: the error being returned is the one worth reporting.
+        let _ = std::fs::remove_file(&beside);
+    }
+    written
+}
+
+/// The file a save writes before renaming it over `path`: in `path`'s own
+/// directory, so the rename never crosses a filesystem, and named
+/// `<cache file name>.<pid>-<n>.tmp`, unique to this process and this save,
+/// so two saves of one cache — two processes, or two tasks of one — never
+/// write into one file.
+fn beside(path: &Path) -> PathBuf {
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let mut name: OsString = path.file_name().map(ToOwned::to_owned).unwrap_or_default();
+    name.push(format!(".{}-{}.tmp", std::process::id(), SAVES.fetch_add(1, Ordering::Relaxed)));
+    path.with_file_name(name)
 }
 
 /// How a caller wants the structure cache handled for one operation.
@@ -656,5 +735,149 @@ impl CacheMode {
                 "cache-only mode has no live source to scan and persist",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+    use crate::{LocalFileSource, ScanOptions, StatisticsRequest, XzSource, map_file};
+
+    /// Real `pg_dump` output whose columns gather bounds and dictionaries.
+    fn statistics_fixture() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/statistics/default.sql")
+    }
+
+    /// Every name in `dir`, sorted.
+    fn listing(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Streaming changed where the bytes go, not what they are: a save writes
+    /// exactly what the owned [`CacheFile`] encodes to in one buffer, for a
+    /// plain source and for a compressed one carrying its seek table, with
+    /// statistics gathered — and reads back through the reader as the index it
+    /// wrote. The same file cut short reads as [`CacheStatus::Unreadable`],
+    /// never as an I/O error.
+    #[tokio::test]
+    async fn a_save_writes_the_bytes_the_whole_file_encodes_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let compressed = dir.path().join("default.sql.xz");
+        let out = Command::new("xz")
+            .args(["--block-size=65536", "-c"])
+            .arg(statistics_fixture())
+            .output()
+            .expect("`xz` is not runnable, so this test cannot build its fixture; install it.");
+        assert!(out.status.success(), "xz failed: {}", String::from_utf8_lossy(&out.stderr));
+        std::fs::write(&compressed, &out.stdout).unwrap();
+
+        let plain = LocalFileSource::open(statistics_fixture()).unwrap();
+        let xz = XzSource::open(&compressed).unwrap();
+        let sources: [(&str, &dyn ByteRangeSource); 2] = [("plain", &plain), ("xz", &xz)];
+        for (name, source) in sources {
+            let run = map_file(
+                source,
+                &ScanOptions::default(),
+                &CacheMode::Disabled,
+                &StatisticsRequest::default(),
+            )
+            .await
+            .unwrap();
+            assert!(
+                run.index.spans.iter().any(|span| matches!(
+                    &span.body,
+                    SpanBody::Data(DataBlock::Copy(block)) if block.statistics.as_ref().is_some_and(
+                        |statistics| statistics.columns.iter().flatten().any(|column| {
+                            column.bounds.is_some() && column.dictionary.is_some()
+                        })
+                    )
+                )),
+                "{name}: the encoding under test must carry statistics"
+            );
+            assert_eq!(source.seek_table().is_some(), name == "xz");
+
+            let path = dir.path().join(format!("{name}.dqcache"));
+            save(&path, source, &run.index).await.unwrap();
+            let whole = CacheFile {
+                format_version: FORMAT_VERSION,
+                container_kind: ContainerKind::Plain,
+                compression: source.seek_table().map(CompressionIndex::Xz),
+                identity: SourceIdentity::observe(source).await.unwrap(),
+                total_size: source.size().await.unwrap(),
+                index: run.index.clone(),
+            };
+            let bytes = std::fs::read(&path).unwrap();
+            assert_eq!(
+                bytes,
+                bincode::serde::encode_to_vec(&whole, bincode::config::standard()).unwrap(),
+                "{name}: the streamed save's bytes"
+            );
+            let Ok(Ok(read)) = read_cache_file(&path) else {
+                panic!("{name}: the streamed save must read back");
+            };
+            // Diagnostics are not persisted, so the index is compared by its
+            // encoding: what reads back encodes to what was written.
+            assert_eq!(
+                bincode::serde::encode_to_vec(&read, bincode::config::standard()).unwrap(),
+                bytes,
+                "{name}: the file read back"
+            );
+
+            std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
+            assert!(
+                matches!(read_cache_file(&path), Ok(Err(CacheStatus::Unreadable))),
+                "{name}: a cache cut short is unreadable, not an I/O failure"
+            );
+        }
+    }
+
+    /// A kill mid-save leaves the previous cache whole. No test races a
+    /// signal (`docs/design/decisions.md`, "D73"), so the save is stopped at
+    /// the moment a kill would land — partway through its encoding — and what
+    /// it leaves on disk is read there: the previous cache, untouched, and the
+    /// partial file beside it. A save that fails removes that file, and one
+    /// that finishes replaces the cache with nothing left beside it.
+    #[test]
+    fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dump.sql.dqcache");
+        std::fs::write(&path, b"the previous cache").unwrap();
+
+        let failed = write_beside(&path, |writer| {
+            writer.write_all(b"the first half of the next")?;
+            writer.flush()?;
+            assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
+            let names = listing(dir.path());
+            assert_eq!(names.len(), 2, "the cache and the save's own file: {names:?}");
+            let partial = names.iter().find(|name| *name != "dump.sql.dqcache").unwrap();
+            assert!(
+                partial.starts_with("dump.sql.dqcache.") && partial.ends_with(".tmp"),
+                "the partial file is named for its cache: {partial}"
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join(partial)).unwrap(),
+                b"the first half of the next"
+            );
+            Err(Error::CacheModeMismatch("the save stops here"))
+        });
+        assert!(matches!(failed, Err(Error::CacheModeMismatch(_))));
+        assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
+        assert_eq!(listing(dir.path()), ["dump.sql.dqcache"]);
+
+        write_beside(&path, |writer| {
+            writer.write_all(b"the next cache")?;
+            assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"the next cache");
+        assert_eq!(listing(dir.path()), ["dump.sql.dqcache"]);
     }
 }

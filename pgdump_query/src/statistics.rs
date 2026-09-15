@@ -387,8 +387,7 @@ pub(crate) const CHARGE_STEP: u64 = 64 << 10;
 /// **What it does not see** is bounded by an observer rather than by the dump:
 /// each open observer's growth until it passes [`CHARGE_STEP`], a row's own
 /// decode scratch while a column observes it, and the observer's own
-/// allocation. Nor does it hold a save's encode buffer or a load's file bytes,
-/// which carry statistics serialized for as long as the save or the load runs.
+/// allocation.
 #[derive(Debug, Default)]
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,
