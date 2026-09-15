@@ -319,15 +319,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A save's beside file is named per save, `<cache>.<pid>-<n>.tmp`, created
-  new.** Called that way so two saves of one cache — two `parse` processes, or
-  two tasks of one embedder — never write into one file, which a fixed name
-  opened for truncation allows: one save's rename can land the file while the
-  other is still writing it, a cache that may not decode. The cost is that
-  every save killed partway (a second Ctrl-C, `kill -9`, the OOM killer) leaves
-  its own orphan beside the cache, the size of a whole cache, removed by
-  nothing; a fixed `<cache>.tmp` would leave at most one, replaced by the next
-  save. Reconsidering means choosing between those two failures, or having a
-  save clear the orphans it can prove dead; the code is `cache::beside`
-  (`pgdump_query/src/cache.rs`).

@@ -397,12 +397,12 @@ library, which closes one instance of a size sizing nothing (the CLI refuses it,
 being ambiguous there). Code: `statistics::StatisticsRequest`.
 
 ### D78 Statistics share the cache file, its identity and its `FORMAT_VERSION`
-None is believed from a cache whose stored size is not the live source's (D20); the mtime stays
-advisory (D21), so a same-size rewrite in place prunes against its predecessor's, knowingly. Bounds,
-order and dictionary are believed only under the declared type and `COLLATE` recorded beside them,
-and a change to how a kind orders or equates bumps the version. Both ends of the file stream and a
-save renames over the cache, so no encoded copy meets the statistics and a kill leaves the last save.
-Rejected: a statistics file discardable alone; a semantics version of its own; the copy charged.
+None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21), so
+a same-size rewrite prunes against its predecessor's, knowingly. Bounds, order and dictionary hold
+only under the declared type and `COLLATE` recorded with them, and changing how a kind orders or
+equates bumps the version. Both ends stream; a save renames its own file over the cache, so no copy
+meets the statistics and a kill keeps the last save, orphaning its file. Rejected: a separable
+statistics file; its own semantics version; the copy charged; one beside name two saves share.
 Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
 ### D79 Bounds go where a comparison orders exactly, a dictionary where it equates exactly
