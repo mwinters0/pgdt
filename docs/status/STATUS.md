@@ -69,7 +69,8 @@ instrument can see").
 
 Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-statistics-memory.md).
 
-- [x] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — printed by the process and reconciled against the `introspect` build's live heap over generated reasonable-width and wide-text shapes, within a stated tolerance; behaviour-preserving; [notes](../design/roadmap-P20.1-statistics-account-notes.md)
+- [ ] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — printed by the process and reconciled against the `introspect` build's live heap over generated reasonable-width and wide-text shapes, within a stated tolerance; declining nothing; [notes](../design/roadmap-P20.1-statistics-account-notes.md); **remains**: the shipped process prints the account — one status line at the end of every pass whose account held anything, gathered, loaded or back-filled, with the total at return, the peak and each term's peak, and the manual's "`--statistics`" saying what they mean; a `query` prints none. And an open group's growth charged as it happens, pushed to the account whenever an observer's uncharged growth passes a fixed step, so what the account does not see is at most a step an observer however many columns it tracks. And the tolerance re-registered before its reading: at every update and at the peak, two-sided, within one step an open observer plus the input's longest row, with no proportional slack; a flagless wide-text leg of distinct values at least `STORED_VALUE_CAP` long; every shortfall the readings show that scales — vector growth inside a close or a join the candidate — charged ahead of the growth or given a named bound, the back-fill legs' difference at return included; a fold moving a piece's charge onto its block in one update. Landed: the account read only in the `introspect` build's report, an open group charged at the largest a close measured, the first group not at all
+- [ ] **20.11** The cache file streamed at both ends: a save encodes into the file through a buffered writer and a load decodes through a buffered reader, the bytes written identical, so neither holds the serialized cache beside the statistics it carries; a save written beside the cache and renamed over it, a kill mid-save leaving the previous cache whole; the account's rustdoc no longer names either term
 - [ ] **20.2** Koji's row density: a gathering `parse` of koji on the shipped build tracking one narrow column per table, launched detached; a `scripts/` tool with its tests deriving each block's rows-per-group distribution at every `2^n` from `info --json`, over koji and the fixtures, into a `runs/` artifact; the median quantile checked against the spec's registered criterion
 - [ ] **20.3** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture
 - [ ] **20.4** The density minimum: a block's size chosen at its end from rows per group at the median, default minimum 1,024, the cap's size standing where coarser; `--statistics-min-rows` (0 turns it off), a stated `--statistics-group-size` exact, a power of two and refused beside either row flag; the bounds recorded per block with D34's back-fill rule extended to each; `FORMAT_VERSION` bumped; parallel identical to serial over every fixture
@@ -319,34 +320,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The statistics account leaves out a save's encode buffer and a load's file
-  bytes.** The spec's "Workers are resolved first; statistics take what is
-  left" counts the retained statistics' peak at a save among what the account
-  a decline reads must see; 20.1's row names retained, loaded, a window's
-  partitions and a dictionary's second copy, and the account stops there.
-  Called that way because the buffer is the whole cache serialized, no
-  allocation separating its statistics, and what a decline needs of it is a
-  prediction made before the save allocates — 20.7's design, not a count.
-  Reconsidering means charging the buffer whole now, an over-count, so that
-  20.8's attribution finds it in the account rather than in the remainder.
-
-- **The account is printed only in the `introspect` build's report.** The row
-  asks for it "printed by the process"; the shipped `parse` prints nothing new,
-  its `statistics_*` lines going to the file `PGDQ_INTROSPECT_OUT` names beside
-  the live heap they are reconciled with. Called that way to keep the slice
-  behaviour-preserving and to leave the user-facing wording of what statistics
-  hold to the decline that has to say it. Reconsidering means a status line on
-  every gathering `parse` stating the account's peak, and the manual's
-  "`parse`: reading the dump" saying what it means.
-
-- **The reconciliation's tolerance was chosen without the maintainer.** It is
-  `pgdump_query-cli/tests/statistics_account.rs`'s module doc, registered
-  before the first reading: agreement at return within a per-mille share of
-  the live statistics plus a small floor, and at every update and at the peak
-  a shortfall within `instrument::STATISTICS_SLACK_PER_MILLE` plus a one-mebibyte
-  floor. The floor is what the flagless wide-text leg is judged by, because the
-  account sees an open group grow only when an update measures it, and nothing
-  bounds a first group by an earlier close — a gap growing with the tracked
-  columns and the observers, not the dump.
-  Reconsidering means a floor scaled by columns and workers, or charging a
-  first open group at its bound, which over-charges every narrow observer.

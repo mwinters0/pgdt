@@ -59,8 +59,8 @@ gathering term once a pass returns, split or not.
   gathering and interned together, never a retained estimate.
 - **What the account does not see**, each named in its rustdoc: a column's open
   group before that column's first close, a row's decode scratch, a save's
-  encode buffer and a load's file bytes. The spec's account a decline reads
-  includes the save's buffer; nothing charges it yet.
+  encode buffer and a load's file bytes. 20.11 removes the last two rather
+  than charging them (the spec's "Workers are resolved first").
 - **Only a mapping pass keeps an account.** A `query` loads the cache whole and
   charges nothing, and the report's `statistics_*` lines follow only a `parse`;
   the reserve's `query` legs (20.8) need a term of their own, the walk being

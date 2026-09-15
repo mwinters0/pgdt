@@ -192,19 +192,35 @@ exists; on a plain dump nearly the whole allowance is statistics'.
 
 **The account a decline reads sees every statistic alive**: retained blocks,
 blocks loaded from the cache, a parallel window's partition observers — closed
-groups, held-open head, piece-local dictionary — until the window folds, a
-block's dictionary held twice while it is gathered, and the retained
-statistics' peak at a save, whose encode buffer holds them again. A term the
+groups, held-open head, piece-local dictionary — until the window folds, and a
+block's dictionary held twice while it is gathered. A term the
 account cannot see breaks "nothing is OOM-killed" on exactly the wide,
 many-worker shape where the term is large. **The margin is left against
 everything held, the account included, which closes `KD28`.** Removing terms —
 folding partitions as they return, interning once — is left an optimization
 the gate may motivate.
 
+**Neither end of the cache file holds it whole.** A save encodes into the file
+through a buffered writer and a load decodes through a buffered reader, so no
+copy of the serialized cache sits beside the statistics it carries: a save's
+buffer would meet every retained statistic and every observer still gathering,
+at the end of a gathering `parse` a second copy of all of them, and a load's
+file bytes would set a `query`'s peak. **A save writes beside the cache and
+renames over it**, so a process killed mid-save — the likelier the nearer it
+runs to its limit — leaves the previous cache whole rather than a truncated one
+that starts the next `parse` cold. The reason is
+[`../status/history/2026-09-15.md`](../status/history/2026-09-15.md), "Neither
+end of the cache file holds it whole".
+
 *Rejected:* a fixed statistics share ahead of the workers, which starves
 parallelism on dumps that gather little; a split estimated from the preamble's
 column counts, which know nothing of widths; the reserve covering the window's
-terms, safe only on data that never needed it.
+terms, safe only on data that never needed it; a decline predicting the save's
+buffer from the retained statistics, no bounded ratio relating a statistic's
+heap to its encoding; the buffer charged once allocated, too late for a
+decline to act on; the reserve covering a load's file bytes, a term growing
+with statistics; a streamed save straight onto the cache path, widening the
+window in which a kill costs the resume point from the write to the encode.
 
 ### The reserve rises uniformly, and is measured
 
@@ -368,6 +384,11 @@ visible, the instrument first:
    person gets.
 10. **Koji**, launched detached and ticked when a later session reads it; a
    cap it refutes earns a `P20.10.1`.
+
+**20.11, the streamed save and load**, was admitted after 20.1 landed and runs
+next: it removes two terms rather than adding a charge, and the decline (7) and
+the reserve's attribution (8) must meet an account with nothing left outside
+it.
 
 ## Facts it rests on
 
