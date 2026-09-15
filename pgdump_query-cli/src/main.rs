@@ -10,7 +10,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus, CompressionShape};
+use pgdump_query::cache::{CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
@@ -527,9 +527,11 @@ enum Command {
         #[arg(long)]
         map: bool,
         /// Print the internal index as compact JSON instead of the
-        /// human-readable listing: the whole `DumpIndex`, every block's
-        /// per-group statistics included, its coverage, its diagnostics, and
-        /// the per-`COPY`-block type resolution `--detail` renders as text.
+        /// human-readable listing: the whole cache file — the `DumpIndex`,
+        /// every block's per-group statistics included, and the envelope
+        /// around it: format version, container kind, seek table and source
+        /// identity — with its coverage, its diagnostics, and the
+        /// per-`COPY`-block type resolution `--detail` renders as text.
         /// Statistics are not rolled up per table, as `--detail` rolls them.
         /// No schema stability is promised — this is a raw dump of our
         /// internal representation, not a supported interchange format
@@ -1405,17 +1407,21 @@ async fn main() -> Result<()> {
                 }
             };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
-            let (mut index, mtime_changed, total_size, compression) = match status {
-                CacheStatus::Valid { index, mtime_changed, total_size, compression }
-                | CacheStatus::Incomplete { index, mtime_changed, total_size, compression } => {
-                    (index, mtime_changed, total_size, compression)
-                }
+            let (mut index, mtime_changed, total_size, compression, envelope) = match status {
+                CacheStatus::Valid { index, mtime_changed, total_size, compression, envelope }
+                | CacheStatus::Incomplete {
+                    index,
+                    mtime_changed,
+                    total_size,
+                    compression,
+                    envelope,
+                } => (index, mtime_changed, total_size, compression, envelope),
                 unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
             };
             if mtime_changed {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
-            report(&index, total_size, compression, detail, map, json)?;
+            report(&index, total_size, compression, &envelope, detail, map, json)?;
         }
         Command::Query {
             source: file,
@@ -1789,14 +1795,14 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
 /// scan to extend it with, but "as far as the scan got" is still an answer.
 async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {
     let mode = CacheMode::Offline(path.to_path_buf());
-    let (index, total_size, compression) = match mode.load_offline().await? {
-        CacheStatus::Valid { index, total_size, compression, .. }
-        | CacheStatus::Incomplete { index, total_size, compression, .. } => {
-            (index, total_size, compression)
+    let (index, total_size, compression, envelope) = match mode.load_offline().await? {
+        CacheStatus::Valid { index, total_size, compression, envelope, .. }
+        | CacheStatus::Incomplete { index, total_size, compression, envelope, .. } => {
+            (index, total_size, compression, envelope)
         }
         unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
     };
-    report(&index, total_size, compression, detail, map, json)
+    report(&index, total_size, compression, &envelope, detail, map, json)
 }
 
 /// One column's resolution outcome, in both spellings: a stable token for
@@ -2089,11 +2095,13 @@ fn block_resolutions(
         .collect()
 }
 
-/// `--json`'s shape: the whole [`DumpIndex`] flattened to one object, plus the
-/// three things it does not itself carry — how much of the file it covers, the
-/// diagnostics `#[serde(skip)]` drops (`docs/design/decisions.md`, "D22"), and
-/// the per-block type resolution, an L2 conclusion an L1 index has no field
-/// for. No schema stability is promised — see the `--json` flag's help text.
+/// `--json`'s shape: the whole cache file — the [`DumpIndex`] and the
+/// [`CacheEnvelope`] around it — flattened to one object, plus what the file
+/// does not itself carry: the container's shape derived from its seek table,
+/// the diagnostics `#[serde(skip)]` drops (`docs/design/decisions.md`, "D22"),
+/// and the per-block type resolution, an L2 conclusion an L1 index has no
+/// field for. No schema stability is promised — see the `--json` flag's help
+/// text.
 ///
 /// **Coverage is components, not a rendered percentage**: `scanned_through`
 /// and `total_size` sit side by side, so a script computes its own ratio.
@@ -2103,6 +2111,8 @@ fn block_resolutions(
 /// to stdout, never held whole (`docs/design/decisions.md`, "D67").
 #[derive(serde::Serialize)]
 struct IndexJson<'a> {
+    #[serde(flatten)]
+    envelope: &'a CacheEnvelope,
     #[serde(flatten)]
     index: &'a DumpIndex,
     total_size: u64,
@@ -2142,6 +2152,7 @@ fn print_index_json(
     index: &DumpIndex,
     total_size: u64,
     compression: Option<CompressionShape>,
+    envelope: &CacheEnvelope,
     complete: bool,
 ) -> Result<()> {
     let resolutions = block_resolutions(index, complete);
@@ -2168,8 +2179,14 @@ fn print_index_json(
                 .collect(),
         })
         .collect();
-    let wrapped =
-        IndexJson { index, total_size, compression, diagnostics: &index.diagnostics, resolution };
+    let wrapped = IndexJson {
+        envelope,
+        index,
+        total_size,
+        compression,
+        diagnostics: &index.diagnostics,
+        resolution,
+    };
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     serde_json::to_writer(&mut out, &wrapped).context("writing the JSON export")?;
     writeln!(out).and_then(|()| out.flush()).context("writing the JSON export")
@@ -2194,13 +2211,14 @@ fn report(
     index: &DumpIndex,
     total_size: u64,
     compression: Option<CompressionShape>,
+    envelope: &CacheEnvelope,
     detail: bool,
     map: bool,
     json: bool,
 ) -> Result<()> {
     let complete = index.is_complete(total_size);
     if json {
-        return print_index_json(index, total_size, compression, complete);
+        return print_index_json(index, total_size, compression, envelope, complete);
     }
     println!("{}", completion_line(index.scanned_through, total_size));
     println!();

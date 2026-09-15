@@ -439,10 +439,10 @@ its type is `FieldDecode` with an offset naming `--schema-mode strings`, never
 a null. Rejected: Arrow's display formatting.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
-Keyed by block, no version field, compact and streamed, group values in: a script sums its own
-rollup, a table spanning blocks (I2) with no merge rule but statistics' sums, `--detail`'s alone.
-Coverage is one line at the top, nothing below qualified. No `help` attributes; pages are
-snapshotted with width and bare-flag assertions. Rejected: `long_help` per flag; a `--json` rollup.
+The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:
+a script sums its own rollup, a table spanning blocks (I2) with no merge rule but statistics' sums,
+`--detail`'s alone. Coverage is one line at the top, nothing below qualified. No `help` attributes;
+pages are snapshotted with width and bare-flag assertions. Rejected: `long_help` per flag; a rollup.
 
 ## Layering
 ### D68 Four layers, drawn where crate boundaries would go

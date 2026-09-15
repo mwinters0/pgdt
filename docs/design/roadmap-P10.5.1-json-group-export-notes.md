@@ -36,8 +36,9 @@ What the later P10 slices inherit from this one. The spec is
 - **P20.** The export grows with group count times tracked columns, like the
   cache, and most at the tiny group size the correctness check gathers at.
   Nothing about its size is measured.
-- **`M108`** is what remains of exporting the cache file: `format_version`,
-  `container_kind`, the seek table and the source identity.
+- **`M108`** exports the rest of the cache file — `format_version`,
+  `container_kind`, the seek table and the source identity — through
+  `CacheEnvelope`, so the export is the whole file.
 
 ## Negative results
 

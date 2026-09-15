@@ -79,7 +79,7 @@ async fn saved_index_round_trips_exactly() {
     let path = dir.path().join("edge_cases.sql.dqcache");
     cache::save(&path, &source, &index).await.unwrap();
     let loaded = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed, total_size, compression } => {
+        CacheStatus::Valid { index, mtime_changed, total_size, compression, .. } => {
             assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
             assert_eq!(total_size, source.size().await.unwrap());
             assert_eq!(compression, None, "a plain source sits under no container");
@@ -143,10 +143,17 @@ async fn save_overwrites_an_existing_cache() {
     cache::save(&path, &source, &index).await.unwrap();
 
     let total_size = source.size().await.unwrap();
-    assert_eq!(
-        cache::load(&path, &source).await.unwrap(),
-        CacheStatus::Valid { index, mtime_changed: false, total_size, compression: None }
-    );
+    let CacheStatus::Valid {
+        index: loaded,
+        mtime_changed: false,
+        total_size: loaded_size,
+        compression: None,
+        ..
+    } = cache::load(&path, &source).await.unwrap()
+    else {
+        panic!("the overwritten cache must load as the fresh save");
+    };
+    assert_eq!((loaded, loaded_size), (index, total_size));
 }
 
 /// A write failure (here: parent directory doesn't exist) must propagate as
@@ -638,7 +645,7 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let path = dir.path().join("edge_cases.sql.xz.dqcache");
     cache::save(&path, &xz, &xz_index).await.unwrap();
     match cache::load(&path, &xz).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed, total_size, compression } => {
+        CacheStatus::Valid { index, mtime_changed, total_size, compression, .. } => {
             assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
             assert_eq!(total_size, plain.size().await.unwrap());
             assert_eq!(index, plain_index);

@@ -951,13 +951,20 @@ line — on stdout instead of formatted text:
 pgdq info --source mydump.sql --json | jq '.spans | length'
 ```
 
-Alongside the file map it carries three things the text views state differently:
+It is the whole cache file. Beside the file map is what the cache records about
+itself and the dump it was written from: `format_version`, the cache's on-disk
+version; `container_kind`; `identity`, holding under `LocalFile` the dump's
+`stored_size` in bytes on disk and its `mtime` as `[seconds, nanoseconds]` when
+the cache was saved, which a dump is checked against before its cache is used;
+and `seek_table`, holding under `Xz` an `.xz` dump's every stream and block
+with their offsets and sizes, or `null` for a plain dump. On top of that it
+carries three things the text views state differently:
 
 - **Coverage as components**, not as the rendered percentage —
   `scanned_through` and `total_size`, so you compute whatever ratio you want.
 - **`compression`**, the container's shape — `container`, `streams`, `blocks`
   and `max_block_uncompressed` — or `null` for a plain dump. The same three
-  numbers `--detail` prints on one line.
+  numbers `--detail` prints on one line, read off `seek_table`.
 - **`resolution`**, one record per `COPY` block, with the per-column outcome
   `--detail` renders as prose. Each column carries its name, the declared
   PostgreSQL type, the outcome as a token (`mapped`, `varying_array_shape`,
@@ -987,8 +994,9 @@ table the way `--detail` sums it; that is yours to do, and the export grows
 with the dump — every group of every column is in it.
 
 **This is a raw dump of pgdq's internal representation, not a designed API.**
-There's no schema, no compatibility promise across versions, no version field,
-and no attempt to make the shape convenient — field names, nesting, and what's
+There's no schema, no compatibility promise across versions, no version field
+for this shape (`format_version` versions the cache file, not the JSON), and no
+attempt to make the shape convenient — field names, nesting, and what's
 included can all change as the underlying code does. Reach for it when you need
 something the text views don't show (or don't show in a shape you can parse),
 and expect to adjust your `jq`/script when you upgrade pgdq. `--json` can't be

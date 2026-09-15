@@ -100,9 +100,10 @@ fn info_json(path: &Path) -> serde_json::Value {
 /// side**, since a seekable `.xz` earns no warning
 /// (`docs/design/decisions.md`, "D19").
 ///
-/// The `compression` object is the one field that legitimately differs, and
-/// it is asserted rather than merely excused: it describes the *container*,
-/// which is the whole of what these two files do not share.
+/// The `compression` object, the persisted `seek_table` it is derived from and
+/// the recorded `identity` are the fields that legitimately differ, and they
+/// are asserted rather than merely excused: they describe the *container* and
+/// the file on disk, which is the whole of what these two files do not share.
 #[test]
 fn seekable_xz_parses_to_the_same_index_as_plain() {
     let (_pd, plain_path) = plain();
@@ -127,8 +128,33 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     assert_eq!(shape["streams"], 1);
     assert!(shape["max_block_uncompressed"].as_u64().unwrap() > 0, "{shape}");
 
-    plain_json.as_object_mut().unwrap().remove("compression");
-    xz_json.as_object_mut().unwrap().remove("compression");
+    assert_eq!(plain_json["seek_table"], serde_json::Value::Null, "a plain file has no seek table");
+    let table = &xz_json["seek_table"]["Xz"];
+    assert_eq!(table["blocks"].as_array().unwrap().len() as u64, shape["blocks"].as_u64().unwrap());
+    assert_eq!(
+        table["streams"].as_array().unwrap().len() as u64,
+        shape["streams"].as_u64().unwrap()
+    );
+    for (json, path) in [(&plain_json, &plain_path), (&xz_json, &xz_path)] {
+        let stored = std::fs::metadata(path).unwrap().len();
+        assert_eq!(json["identity"]["LocalFile"]["stored_size"], stored, "{}", json["identity"]);
+        assert_eq!(json["container_kind"], "Plain", "an .xz source's offsets are plain ones too");
+        assert!(json["format_version"].is_u64(), "{}", json["format_version"]);
+    }
+    assert_eq!(table["compressed_file_size"], xz_json["identity"]["LocalFile"]["stored_size"]);
+    // The envelope is the cache file's, so the cache alone exports it whole.
+    let cache = xz_path.with_extension("xz.dqcache");
+    let out = run(&["info", "--dqcache", cache.to_str().unwrap(), "--json"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let offline: serde_json::Value = serde_json::from_str(&stdout_of(&out)).unwrap();
+    for key in ["format_version", "container_kind", "seek_table", "identity"] {
+        assert_eq!(offline[key], xz_json[key], "{key}");
+    }
+
+    for key in ["compression", "seek_table", "identity"] {
+        plain_json.as_object_mut().unwrap().remove(key);
+        xz_json.as_object_mut().unwrap().remove(key);
+    }
     assert_eq!(
         plain_json, xz_json,
         "a seekable .xz source parses to exactly the same index as its plain content, \
@@ -205,11 +231,14 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
     // `TocCoverage` note) — must agree exactly.
     plain_json.as_object_mut().unwrap().remove("diagnostics");
     xz_json.as_object_mut().unwrap().remove("diagnostics");
-    // The container's shape differs too, and describes the container rather
-    // than the index — a single-block file reports exactly that.
+    // The container's shape, its seek table and the recorded identity differ
+    // too, and describe the file rather than the index — a single-block file
+    // reports exactly that.
     assert_eq!(xz_json["compression"]["blocks"], 1);
-    plain_json.as_object_mut().unwrap().remove("compression");
-    xz_json.as_object_mut().unwrap().remove("compression");
+    for key in ["compression", "seek_table", "identity"] {
+        plain_json.as_object_mut().unwrap().remove(key);
+        xz_json.as_object_mut().unwrap().remove(key);
+    }
     assert_eq!(plain_json, xz_json, "the warning is the only thing that may differ");
 
     // And the warning itself is the same diagnostic's, in its rendered text

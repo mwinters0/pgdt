@@ -169,6 +169,26 @@ struct CacheFile {
     index: DumpIndex,
 }
 
+/// Everything a cache file persists beside its index and `total_size`, as it
+/// was read — handed out on [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`]
+/// so a reporting caller can export the whole file, which `pgdq info --json`
+/// does (`docs/design/decisions.md`, "D67").
+///
+/// **Opaque to Rust, whole to serde**: the fields stay private, so no caller
+/// matches on [`SourceIdentity`] or reads the seek table through this, and
+/// its `Serialize` is the persisted types' own, variant tags included. The
+/// seek table serializes as `seek_table`, the name `compression` being
+/// [`CompressionShape`]'s wherever the two sit side by side. Moved out of the
+/// decoded file rather than copied, so carrying it costs nothing the load did
+/// not already hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheEnvelope {
+    format_version: u32,
+    container_kind: ContainerKind,
+    seek_table: Option<CompressionIndex>,
+    identity: SourceIdentity,
+}
+
 /// The default cache location when no explicit path is given:
 /// `<dump-path>.dqcache`.
 pub fn colocated_path(dump_path: &Path) -> PathBuf {
@@ -210,12 +230,14 @@ pub enum CacheStatus {
     /// to stat. `compression` is the container's shape where one sits under
     /// these offsets and `None` for a plain file — read off the persisted
     /// seek table, so a cache-only caller answers it with no dump present
-    /// ([`CompressionShape`]).
+    /// ([`CompressionShape`]). `envelope` is the rest of what the file
+    /// persists, for a caller exporting it ([`CacheEnvelope`]).
     Valid {
         index: DumpIndex,
         mtime_changed: bool,
         total_size: u64,
         compression: Option<CompressionShape>,
+        envelope: CacheEnvelope,
     },
     /// A usable cache whose `index.scanned_through` falls short of
     /// `total_size` — a real, not-yet-finished scan (a preamble-only scan, or
@@ -226,13 +248,14 @@ pub enum CacheStatus {
     /// incremental scan (`crate::stream::map_file`,
     /// `crate::stream::table_stream`, `crate::index::preamble_only`) builds
     /// on this partial index, the same as [`Valid`](CacheStatus::Valid).
-    /// `total_size` and `compression` are
+    /// `total_size`, `compression` and `envelope` are
     /// [`Valid`](CacheStatus::Valid)'s and mean the same thing.
     Incomplete {
         index: DumpIndex,
         mtime_changed: bool,
         total_size: u64,
         compression: Option<CompressionShape>,
+        envelope: CacheEnvelope,
     },
 }
 
@@ -421,10 +444,16 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
     // Derived for the same reason the diagnostics above are: a projection of
     // what the envelope already holds.
     let compression = file.compression.as_ref().map(CompressionShape::of);
+    let envelope = CacheEnvelope {
+        format_version: file.format_version,
+        container_kind: file.container_kind,
+        seek_table: file.compression,
+        identity: file.identity,
+    };
     if index.is_complete(total_size) {
-        CacheStatus::Valid { index, mtime_changed, total_size, compression }
+        CacheStatus::Valid { index, mtime_changed, total_size, compression, envelope }
     } else {
-        CacheStatus::Incomplete { index, mtime_changed, total_size, compression }
+        CacheStatus::Incomplete { index, mtime_changed, total_size, compression, envelope }
     }
 }
 
