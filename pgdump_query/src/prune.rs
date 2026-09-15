@@ -48,7 +48,7 @@ pub(crate) struct BlockPruning {
 
 /// The terms of a filter whose column a block's rows are sorted on in the
 /// direction that term's bound closes: `<` and `<=` on an ascending column,
-/// `>` and `>=` on a descending one.
+/// `>` and `>=` on a descending one (`docs/design/decisions.md`, "D75").
 ///
 /// **The first row making one of them `False` is past every row the filter
 /// keeps**: every non-NULL value after it is on the same side of the bound,

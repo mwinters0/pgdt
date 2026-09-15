@@ -2629,7 +2629,8 @@ pub(crate) trait GroupStatistics {
 impl ResolvedTerm {
     /// Every value this term could take over a row of `group` — a superset
     /// of what [`Self::eval`] answers over each of its rows, and exact where
-    /// the statistics are.
+    /// the statistics are. What each operator reads is
+    /// `docs/design/decisions.md`, "D75".
     ///
     /// **A row whose value is not of the column's type is outside it**: the
     /// row path raises `Error::FieldDecode` there rather than answering, and

@@ -489,7 +489,7 @@ impl Canonical {
 const CLIP_BYTES: usize = STORED_VALUE_CAP + char::MAX.len_utf8();
 
 /// A bytewise value's first [`CLIP_BYTES`], which is all a stored bound is
-/// taken from.
+/// taken from (`docs/design/decisions.md`, "D76").
 ///
 /// **Two values whose heads cannot be told apart store the same bound.** A
 /// head that is not its whole value is at least `CLIP_BYTES` less one

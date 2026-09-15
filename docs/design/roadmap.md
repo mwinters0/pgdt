@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P10 — row-group statistics | Current | [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md); progress in [`STATUS.md`](../status/STATUS.md) |
+| P10 — row-group statistics | Complete | [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md); [notes](roadmap-P10-row-group-statistics-notes.md) |
 | P20 — statistics memory | Sketched; not grilled | this file, below; [inbox](roadmap-P20-statistics-memory-inbox.md) |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -510,9 +510,10 @@ item; see below.
 
 ## P10 — Per-row-group column statistics
 
-**Current.** Specified in
+**Complete.** Specified in
 [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md);
-its slices are [`../status/STATUS.md`](../status/STATUS.md), "P10 progress".
+what its slices left beyond the code and the register is
+[`roadmap-P10-row-group-statistics-notes.md`](roadmap-P10-row-group-statistics-notes.md).
 Per-row-group statistics gathered by `pgdq parse` and persisted in the cache,
 consumed by the query replay to skip byte ranges no row of which can match.
 

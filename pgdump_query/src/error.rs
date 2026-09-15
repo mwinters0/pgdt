@@ -56,7 +56,8 @@ pub enum Error {
     /// size — which the cache's identity check cannot see
     /// (`docs/design/decisions.md`, "D21") — and statistics gathered from it
     /// would describe other bytes than the map does. Raised before they are
-    /// stored (`crate::stream::gather_block_statistics`).
+    /// stored (`crate::stream::gather_block_statistics`), never worked around
+    /// (`docs/design/decisions.md`, "D20").
     ///
     /// `path` is the cache the map was loaded from, named as
     /// [`Error::CacheSourceMismatch`] names it, so a caller whose cache is not

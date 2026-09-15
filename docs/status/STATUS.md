@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | complete (P7); parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | in progress (P10); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D34, D54, D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | working (P10, complete); `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D77; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -65,41 +65,23 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
-## P10 progress
-
-Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-row-group-statistics.md).
-
-- [x] **10.1** Fixture shapes — sorted, reversed, unsorted, constant and all-null columns; float specials; `numeric` `1.5`/`1.50`; `C` and default-collated text; low- and over-64-cardinality columns; a value past `N` and the read chunk — and `--max-line-bytes` on `parse` and `query`; [notes](../design/roadmap-P10.1-fixture-shapes-notes.md)
-- [x] **10.2** Row-free comparison and plan-time filter resolution, behaviour-preserving; [notes](../design/roadmap-P10.2-row-free-comparison-notes.md)
-- [x] **10.3** The truth-set evaluator, property-tested against the row evaluator; [notes](../design/roadmap-P10.3-truth-set-evaluator-notes.md)
-- [x] **10.4** Serial gathering and persistence: the L1 observer, the statistics types, shared ownership, `SparseRowIndex` struck, `FORMAT_VERSION` and the golden-order test, `parse --statistics` default on and `--statistics-group-size`, the leader declining while statistics are requested, existing figures on `--statistics none`; [notes](../design/roadmap-P10.4-serial-gathering-notes.md)
-- [x] **10.4.2** The library's mapping pass gathers every statistic by default, its request an argument of the mapping pass alone rather than a `ScanOptions` field every query entry point ignores; [notes](../design/roadmap-P10.4.2-mapping-pass-request-notes.md)
-- [x] **10.4.3** A `character` dictionary entry stored and measured against the cap without its trailing blanks; [notes](../design/roadmap-P10.4.3-character-dictionary-notes.md)
-- [x] **10.5** Reporting in `info --detail` and `--json`; [notes](../design/roadmap-P10.5-reporting-notes.md)
-- [x] **10.5.1** `info --json` exports every block's per-group statistics, compact and streamed, with no per-table rollup; [notes](../design/roadmap-P10.5.1-json-group-export-notes.md)
-- [x] **10.6** Parallel gathering, identical to serial over every fixture; [notes](../design/roadmap-P10.6-parallel-gathering-notes.md)
-- [x] **10.7** Back-fill of blocks lacking the requested statistics; [notes](../design/roadmap-P10.7-backfill-notes.md)
-- [x] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check; [notes](../design/roadmap-P10.8-pruning-consumer-notes.md)
-- [x] **10.9** Early stop on a column sorted over its block; [notes](../design/roadmap-P10.9-sorted-stop-notes.md)
-- [x] **10.11** The early stop reported after the fact: blocks stopped and bytes left unread, counted per stream and printed by `pgdq query` where a stop fired; [notes](../design/roadmap-P10.11-stop-report-notes.md)
-- [x] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`, over the `pruning` input with all three of the spec's filters — taken from the instrument's commit and folded into `measurements.md`; [notes](../design/roadmap-P10.10-figures-notes.md)
-- [x] **10.10.1** `statistics-pruning`'s third filter also against a cache written by `parse --statistics none`, pricing what carrying statistics costs a query — taken from the instrument's commit and folded into `measurements.md` — and the second half of P20's inbox entry "What the statistics figures leave unpriced" rewritten to what the reading leaves unpriced; [notes](../design/roadmap-P10.10.1-uncarried-statistics-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P10 is open**; see "P10 progress" above. Every built mechanism — the
-  parallel scan's defaults included: a worker count the source recommends, a memory limit discovered
-  and filled under the reserve and the margin, and a `parse` saying
-  what it delivered rather than what it was asked for — is in
+- **No phase is open.** P10 is complete; its spec and consolidated notes
+  ([`../design/roadmap-P10-row-group-statistics-notes.md`](../design/roadmap-P10-row-group-statistics-notes.md))
+  stand until a keystone strikes them. Every built mechanism — the parallel
+  scan's defaults included: a worker count the source recommends, a memory
+  limit discovered and filled under the reserve and the margin, and a `parse`
+  saying what it delivered rather than what it was asked for — is in
   [`../design/decisions.md`](../design/decisions.md).
-  Six phases remain sketched — P20, P14, P6, P15, P18, P8, in the roadmap
-  table's schedule order; a `P<k>` is an identifier, so the numbers say nothing
-  about the order they run in. Each gets its own full grilling when it becomes
-  current, and every one that carries an inbox must have it drained as part of
-  that grilling.
+  Seven phases remain sketched — P20, P21, P14, P6, P15, P18, P8, in the
+  roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
+  nothing about the order they run in. Each gets its own full grilling when it
+  becomes current, and every one that carries an inbox must have it drained as
+  part of that grilling.
 
 ## Known deficiencies
 

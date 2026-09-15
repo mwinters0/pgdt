@@ -33,7 +33,8 @@ pub const STORED_VALUE_CAP: usize = 256;
 /// has none on that column.
 pub const DICTIONARY_CAP: usize = 64;
 
-/// What a mapping pass is asked to gather: which columns, at what group size.
+/// What a mapping pass is asked to gather: which columns, at what group size
+/// (`docs/design/decisions.md`, "D77").
 /// An argument of [`crate::stream::map_file`] alone — a query never gathers.
 ///
 /// **The default gathers every statistic** ([`Self::ALL`]), a parse carrying

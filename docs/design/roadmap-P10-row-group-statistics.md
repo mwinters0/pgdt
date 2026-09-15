@@ -1,7 +1,8 @@
 # P10 — Per-row-group column statistics
 
-What this phase will do and why; how it lands is its slices'. Progress is
-[`../status/STATUS.md`](../status/STATUS.md), "P10 progress", never this file.
+What this phase will do and why; how it lands is its slices'. Progress was
+`STATUS.md`'s checklist, never this file; what the slices left is
+[`roadmap-P10-row-group-statistics-notes.md`](roadmap-P10-row-group-statistics-notes.md).
 **Its first slice exists to produce evidence** — the fixture shapes every later
 slice is tested against — so slice numbers after it are allocation order as
 much as schedule. Grilled 2026-09-14

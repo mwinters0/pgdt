@@ -27,7 +27,7 @@ statistics are per dump; the reserve P20 re-derives is read at whatever count
 its readings state.
 
 **Origin.** P10.6, 2026-09-14
-([`roadmap-P10.6-parallel-gathering-notes.md`](roadmap-P10.6-parallel-gathering-notes.md)).
+([`roadmap-P10-row-group-statistics-notes.md`](roadmap-P10-row-group-statistics-notes.md)).
 Contingent on the leader folding a window's partitions only once every
 partition of it has returned.
 
@@ -49,8 +49,8 @@ count orders of magnitude larger, which a smaller group size or a koji-sized
 dump gives.
 
 **Origin.** P10.10 and P10.10.1, 2026-09-15
-([`roadmap-P10.10-figures-notes.md`](roadmap-P10.10-figures-notes.md),
-[`roadmap-P10.10.1-uncarried-statistics-notes.md`](roadmap-P10.10.1-uncarried-statistics-notes.md)).
+([`measurements.md`](measurements.md), "What gathering row-group statistics costs a parse" and "What
+row-group statistics buy a query").
 Contingent on the cache staying one file decoded whole, which
 [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md),
 "One cache file" chose.
