@@ -398,9 +398,17 @@ Two new figures, each with its instrument:
   generously. It prices the parse; resident is recorded beside it and not
   refined.
 - **`statistics-pruning`** — `pgdq query` under a selective range filter on a
-  sorted column and under an equality filter against a dictionary, each with
-  and without `--statistics none`, warm, on a generated file carrying a sorted
-  id column and a low-cardinality column. It prices what pruning buys.
+  sorted column, under an equality filter against a dictionary, and under a
+  filter returning few rows over a column its statistics cannot narrow, each
+  with and without `--statistics none`, warm, on a generated file carrying a
+  sorted id column and a low-cardinality column. The first two price what
+  pruning buys, the third what consulting statistics costs where it buys
+  nothing, which every filtered query pays by default. The low-cardinality
+  column's values arrive in runs, so the dictionary leg is a best case, and the
+  table prints the groups each query skipped beside its timing
+  ([`../status/history/2026-09-15.md`](../status/history/2026-09-15.md), "The
+  pruning figure prices its cost as well as its best case"). *Rejected:* values
+  scattered among the runs, a mix no distribution in the spec gives a basis for.
 
 Re-taking `reserve` and deriving `MEMORY_RESERVE` from readings is P20's; this
 phase leaves the constant as `reserve` chose it.
