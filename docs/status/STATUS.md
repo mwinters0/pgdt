@@ -319,16 +319,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **An allocation the account charges ahead is judged made where the account
-  is short and not yet made where it is over.** 20.1's tolerance is two-sided
-  at every update, and the account charges a vector's or a map's growth before
-  allocating it; another piece's update can read the heap on either side of
-  that allocation, and a map's rehash keeps its new table live for as long as
-  it moves the entries. Judged as not yet made on both sides, the first split reading
-  was 12.1 MiB short past its allowance
-  (`runs/statistics-account-20260915/readings-step.txt`). Called that way
-  because an announcement claims the heap lies between the account less what
-  is announced and the account, one update at a time. Reconsidering means another reading of "two-sided"
-  for an allocation in flight, the instrument's `account_updated` the one
-  place it lives.
