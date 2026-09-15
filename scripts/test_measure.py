@@ -450,7 +450,8 @@ class StatisticsFigures(unittest.TestCase):
     exemption: figures whose subject is the gathering.
 
     What these hold is that the exemption is stated rather than inherited, that
-    the two legs of every row differ by the statistics flag alone, and that a
+    the two legs of every row differ by the statistics flag alone — and the leg
+    over a cache written without statistics by that cache alone — and that a
     pruning sitting whose pruned leg skipped nothing refuses rather than
     publishing a table saying pruning buys nothing."""
 
@@ -531,6 +532,35 @@ class StatisticsFigures(unittest.TestCase):
                     self.assertEqual(script.count("time "), 1)
                     self.assertIn(f"--statistics {leg} ", timed)
 
+    def test_the_uncarried_leg_differs_from_the_used_leg_by_what_the_builder_wrote(self):
+        # The one leg over a cache written without statistics, asking for them
+        # as the `all` leg does, so its Δ against that leg is the cache's.
+        uncarried = measure._script(
+            f"{measure.PRUNING_FAMILY}{measure.PRUNING_UNNARROWED}-{measure.PRUNING_UNCARRIED}"
+        )
+        used = measure._script(f"{measure.PRUNING_FAMILY}{measure.PRUNING_UNNARROWED}-all")
+        builder, _, timed = uncarried.partition("; ")
+        self.assertIn(measure.NO_STATISTICS, builder)
+        self.assertNotIn("time ", builder)
+        self.assertIn("--statistics all ", timed)
+        self.assertEqual(uncarried.count("time "), 1)
+        self.assertEqual(
+            uncarried.replace(measure.NO_STATISTICS, measure.GATHER_STATISTICS, 1), used
+        )
+
+    def test_the_uncarried_leg_is_the_unnarrowed_filters_alone(self):
+        shapes = measure.command_shapes()
+        for name in measure.PRUNING_FILTERS:
+            command = f"{measure.PRUNING_FAMILY}{name}-{measure.PRUNING_UNCARRIED}"
+            with self.subTest(filter=name):
+                if name == measure.PRUNING_UNNARROWED:
+                    self.assertIn(command, shapes)
+                    self.assertIn(command, [s.command for s in measure._pruning_specs()])
+                else:
+                    self.assertNotIn(command, shapes)
+                    with self.assertRaises(ValueError):
+                        measure._script(command)
+
     def test_the_two_pruning_legs_differ_by_the_flag_alone(self):
         for name in measure.PRUNING_FILTERS:
             with self.subTest(filter=name):
@@ -604,6 +634,7 @@ class StatisticsFigures(unittest.TestCase):
             "dictionary-all": {"rows_returned": "3000", "skipped_groups": "5", "groups": "20"},
             "unnarrowed-none": {"rows_returned": "12"},
             "unnarrowed-all": {"rows_returned": "12", "skipped_groups": "0", "groups": "20"},
+            "unnarrowed-uncarried": {"rows_returned": "12"},
         }
         good.update(override)
         return good
@@ -657,6 +688,23 @@ class StatisticsFigures(unittest.TestCase):
         }
         got = self._refused(**{"unnarrowed-all": stopped})
         self.assertTrue(got.startswith("unnarrowed: "), got)
+
+    def test_an_uncarried_leg_that_consulted_statistics_is_refused(self):
+        # The note there means the builder's cache carried statistics after
+        # all, so the leg prices nothing against the others.
+        for said in (
+            {"rows_returned": "12", "skipped_groups": "0", "groups": "20"},
+            {"rows_returned": "12", "unread_bytes": "4096"},
+        ):
+            with self.subTest(said=said):
+                got = self._refused(**{"unnarrowed-uncarried": said})
+                self.assertIn("carried statistics", got)
+
+    def test_an_uncarried_leg_returning_different_rows_is_refused(self):
+        for said in ({"rows_returned": "11"}, {}):
+            with self.subTest(said=said):
+                got = self._refused(**{"unnarrowed-uncarried": said})
+                self.assertIn("a cache without statistics returned", got)
 
 
 class Allocator(unittest.TestCase):

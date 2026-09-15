@@ -134,7 +134,10 @@ fn the_perf_generator_writes_what_pgdq_reads_back() {
 /// answered by a dictionary alone — a bound on it would let the equality leg be
 /// pruned by something other than the dictionary it is named for — and
 /// `v_smallint` bounded in every group with no dictionary in any, so the
-/// figure's filter on it consults every group's bounds and skips none.
+/// figure's filter on it consults every group's bounds and skips none — and,
+/// against a cache `parse --statistics none` wrote, asks for statistics and
+/// consults none, returning the same rows, which is what the figure's leg over
+/// that cache is refused without.
 ///
 /// At the figure's own group size, `measure.GATHER_STATISTICS`'s, because the
 /// last of those rests on how many rows a group holds: a group of at most a
@@ -187,22 +190,41 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     assert!(smallint.contains("dictionary in 0 of"), "{smallint}");
     // The filter `measure.PRUNING_FILTERS` states, consulted and skipping
     // nothing: the note is printed only where statistics were consulted.
-    let queried = run(&[
-        "query",
-        "--source",
-        dump,
-        "--table",
-        "public.perf",
-        "--dqcache",
-        cache,
-        "--schema-mode",
-        "typed",
-        "--where",
-        "v_smallint=0",
-    ]);
-    assert!(queried.status.success(), "{}", stderr_of(&queried));
-    let queried = stderr_of(&queried);
+    let query = |cache: &str| {
+        let queried = run(&[
+            "query",
+            "--source",
+            dump,
+            "--table",
+            "public.perf",
+            "--dqcache",
+            cache,
+            "--schema-mode",
+            "typed",
+            "--where",
+            "v_smallint=0",
+            "--statistics",
+            "all",
+        ]);
+        assert!(queried.status.success(), "{}", stderr_of(&queried));
+        stderr_of(&queried)
+    };
+    let queried = query(cache);
     let skipped_none = format!("rule out 0 of {groups} group(s)");
     assert!(queried.contains(&skipped_none), "{queried}");
     assert!(!queried.contains("reading stopped early"), "{queried}");
+    // `measure.PRUNING_UNCARRIED`: the same query over a cache carrying none.
+    let bare = dir.path().join("bare.dqcache");
+    let bare = bare.to_str().unwrap();
+    pgdq(&["parse", "--source", dump, "--dqcache", bare, "--statistics", "none"]);
+    let uncarried = query(bare);
+    assert!(!uncarried.contains("row-group statistics"), "{uncarried}");
+    assert!(!uncarried.contains("reading stopped early"), "{uncarried}");
+    let rows = |said: &str| {
+        said.lines()
+            .rfind(|l| l.ends_with(" row(s)") || l.starts_with("no rows found for "))
+            .map(str::to_string)
+    };
+    assert!(rows(&queried).is_some(), "{queried}");
+    assert_eq!(rows(&uncarried), rows(&queried), "{uncarried}");
 }

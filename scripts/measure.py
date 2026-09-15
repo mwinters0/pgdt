@@ -2245,6 +2245,18 @@ PRUNING_FILTERS: dict[str, tuple[str, str]] = {
 PRUNING_UNNARROWED = "unnarrowed"
 #: The legs, in the table's column order: what `query --statistics` states.
 PRUNING_LEGS = ("none", "all")
+#: **The leg carrying no statistics, run for `PRUNING_UNNARROWED` alone**: its
+#: builder states `NO_STATISTICS`, and its query states `--statistics all`, as
+#: the `all` leg's does. The cache is decoded whole whatever the query states
+#: (`cache::read_cache_file`), so the `none` leg pays the statistics' decode
+#: too, and only a cache written without them prices carrying them. The query
+#: uses statistics rather than refusing them for two reasons: the leg and the
+#: `all` leg then differ by what the builder wrote alone, which is the choice a
+#: caller of a flagless `query` makes at `parse`; and its note is the check —
+#: printed wherever a block held statistics that fit it, so a leg printing none
+#: proves the cache carried nothing to consult, which `--statistics none` would
+#: print whatever the cache held.
+PRUNING_UNCARRIED = "uncarried"
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -3166,14 +3178,16 @@ def _script(command: str) -> str:
         # gathering request; the timed `query` states which use it makes of it.
         # `typed`, stated: the range compares `id` as an integer.
         name, _, leg = command.removeprefix(PRUNING_FAMILY).rpartition("-")
-        if name not in PRUNING_FILTERS or leg not in PRUNING_LEGS:
+        uncarried = (name, leg) == (PRUNING_UNNARROWED, PRUNING_UNCARRIED)
+        if name not in PRUNING_FILTERS or not (leg in PRUNING_LEGS or uncarried):
             raise ValueError(f"unknown command shape {command!r}")
         expr = PRUNING_FILTERS[name][0]
+        written, used = (NO_STATISTICS, "all") if uncarried else (GATHER_STATISTICS, leg)
         return (
             f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} "
-            f"{GATHER_STATISTICS} >/dev/null; "
+            f"{written} >/dev/null; "
             f"{q} query --source /dump.sql --table public.perf --dqcache /tmp/x.dqcache "
-            f"--schema-mode typed --where '{expr}' --statistics {leg} {j} >/dev/null"
+            f"--schema-mode typed --where '{expr}' --statistics {used} {j} >/dev/null"
         )
     if command.startswith("parse-chunk-"):
         # The read chunk, the one lever of the three I/O defaults that is a
@@ -3324,6 +3338,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
         *(f"{STATISTICS_FAMILY}{leg}-rss" for leg, _ in STATISTICS_LEGS),
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
+        f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
@@ -3771,7 +3786,8 @@ class Session:
                 # A stand-in of what the query's own notes say, for the same
                 # reason: the pruning table divides by them and refuses a
                 # pruned leg that skipped nothing — or, for the filter its
-                # statistics cannot narrow, one that skipped anything.
+                # statistics cannot narrow, one that skipped anything, and a
+                # leg over a cache without statistics that consulted any.
                 pruned = spec.command.endswith("-all")
                 skipped = (
                     0
@@ -7616,6 +7632,14 @@ def _pruning_specs() -> list[RunSpec]:
         )
         for name in PRUNING_FILTERS
         for leg in PRUNING_LEGS
+    ] + [
+        RunSpec(
+            "pgdq",
+            "pruning",
+            f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
+            "warm",
+            f"{PRUNING_UNNARROWED}, a cache written by `parse {NO_STATISTICS}`",
+        )
     ]
 
 
@@ -7631,7 +7655,12 @@ def pruning_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
     **`PRUNING_UNNARROWED` is held to the opposite**, and admitted there alone:
     its pruned leg must say it consulted statistics — the note is printed only
     where it did — and skipped no group and stopped no read, or it prices
-    something other than consulting them."""
+    something other than consulting them.
+
+    **Its `PRUNING_UNCARRIED` leg must say it consulted none**, having asked to:
+    a note there means the builder's cache carried statistics after all, and
+    the leg prices nothing against the others. Its rows are held to the rest of
+    the row's."""
     bad = []
     for name in PRUNING_FILTERS:
         none, used = reported.get(f"{name}-none", {}), reported.get(f"{name}-all", {})
@@ -7650,13 +7679,26 @@ def pruning_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
                 f"{name}: the two legs returned {none.get('rows_returned')} and "
                 f"{used.get('rows_returned')} row(s)"
             )
+        if name == PRUNING_UNNARROWED:
+            bare = reported.get(f"{name}-{PRUNING_UNCARRIED}", {})
+            if "skipped_groups" in bare or "unread_bytes" in bare:
+                bad.append(
+                    f"{name}: the cache `parse {NO_STATISTICS}` wrote carried statistics "
+                    "the query consulted"
+                )
+            if returned is None or returned != bare.get("rows_returned"):
+                bad.append(
+                    f"{name}: a cache without statistics returned "
+                    f"{bare.get('rows_returned')} row(s) against {returned}"
+                )
     return bad
 
 
 def run_statistics_pruning(session: Session) -> str:
     """`pgdq query` under a selective range on a sorted column, under an
     equality a dictionary answers, and under an equality its statistics cannot
-    narrow, each with its statistics and with `--statistics none`, warm."""
+    narrow, each with its statistics and with `--statistics none`, warm — the
+    last also against a cache written without statistics."""
     figure = "statistics-pruning"
     specs = _pruning_specs()
     session.sweep(figure, specs, session.cfg.reps(6))
@@ -7671,14 +7713,16 @@ def run_statistics_pruning(session: Session) -> str:
         raise RuntimeError("statistics-pruning does not price pruning: " + "; ".join(problems))
     rows, per_rep = [], []
     for name, (expr, label) in PRUNING_FILTERS.items():
+        legs = (*PRUNING_LEGS, PRUNING_UNCARRIED) if name == PRUNING_UNNARROWED else PRUNING_LEGS
         walls = {
             leg: session.get(
                 figure, RunSpec("pgdq", "pruning", f"{PRUNING_FAMILY}{name}-{leg}", "warm", "")
             )
-            for leg in PRUNING_LEGS
+            for leg in legs
         }
         used = reported[f"{name}-all"]
         unread = int(used["skipped_bytes"]) + int(used.get("unread_bytes", "0"))
+        bare = walls.get(PRUNING_UNCARRIED)
         rows.append(
             [
                 f"{label}: `{expr}`",
@@ -7686,6 +7730,8 @@ def run_statistics_pruning(session: Session) -> str:
                 fmt_median_spread(walls["all"]),
                 fmt_delta(median(walls["none"]), median(walls["all"])),
                 f"**{median(walls['none']) / median(walls['all']):.1f}×**",
+                "—" if bare is None else fmt_median_spread(bare),
+                "—" if bare is None else fmt_delta(median(bare), median(walls["all"])),
                 f"{int(used['skipped_groups']):,} of {int(used['groups']):,}",
                 f"{int(used.get('unread_bytes', '0')):,}",
                 f"{unread / int(used['bytes']) * 100:.2f}%",
@@ -7694,6 +7740,11 @@ def run_statistics_pruning(session: Session) -> str:
         )
         for leg in PRUNING_LEGS:
             per_rep.append(f"- {label}, `--statistics {leg}`: {fmt_readings(walls[leg])}")
+        if bare is not None:
+            per_rep.append(
+                f"- {label}, `--statistics all`, a cache written by `parse {NO_STATISTICS}`: "
+                f"{fmt_readings(bare)}"
+            )
     per_rep.append(f"- `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
     table = md_table(
         [
@@ -7702,6 +7753,8 @@ def run_statistics_pruning(session: Session) -> str:
             "Statistics used",
             "Δ",
             "Speedup",
+            "Statistics used, none in the cache",
+            "Δ carrying them",
             "Groups skipped",
             "Bytes a stop left unread",
             "Of the rows' bytes, not read",
@@ -7718,7 +7771,11 @@ def run_statistics_pruning(session: Session) -> str:
         f"`{GATHER_STATISTICS}` wrote in the same container, so the two legs of a row differ "
         "by `--statistics` alone. The first two rows price what pruning buys; the third, "
         "which skips nothing, what consulting the statistics costs a query they cannot "
-        "narrow. The skipped groups and bytes are the query's own notes; the "
+        "narrow. The cache is decoded whole whatever the query states, so the third "
+        "filter also runs against a cache an untimed `parse` stating "
+        f"`{NO_STATISTICS}` wrote, with statistics used and none to consult, and its Δ "
+        "against the cache carrying them is what carrying them costs that query. The "
+        "skipped groups and bytes are the query's own notes; the "
         "bytes a stop left unread are a lower bound, and the share not read adds them to the "
         f"skipped groups'. `dd` → `/dev/null` on the same file: "
         f"**{fmt_s(median(session.get(figure, floor)))} s**.\n\nPer-rep readings (s):\n"

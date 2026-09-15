@@ -57,8 +57,9 @@ below is there.
 - **Neither figure prices loading a cache that carries statistics.** The cache
   is one bincode file decoded whole (`cache::read_cache_file`), so a query
   stating `--statistics none` decodes every group's statistics as well; both
-  legs of every pruning row pay it, and no leg reads a cache written under
-  `parse --statistics none`.
+  legs of every pruning row pay it, and no leg of this sitting reads a cache
+  written under `parse --statistics none`; 10.10.1 adds that leg
+  ([`roadmap-P10.10.1-uncarried-statistics-notes.md`](roadmap-P10.10.1-uncarried-statistics-notes.md)).
 
 ## Tests
 
