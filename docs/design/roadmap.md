@@ -547,8 +547,8 @@ item; see below.
 slices are [`../status/STATUS.md`](../status/STATUS.md), "P20 progress".
 Reasonable defaults for what statistics hold resident: a per-block length cap,
 a block that does not fit its allowance declining rather than killing the
-process, one `--memory` flag meaning resident, and the reserve raised for every
-operation.
+process, one `--memory` flag meaning resident, and one reserve for every
+operation, its size measured.
 
 ## P21 — Statistics gathered by a query
 

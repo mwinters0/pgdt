@@ -118,42 +118,71 @@ parallelism on dumps that gather little; a split estimated from the preamble's
 column counts, which know nothing of widths; the reserve covering the window's
 terms, safe only on data that never needed it.
 
-### The reserve rises uniformly, to 512 MiB
+### The reserve rises uniformly, and is measured
 
-**`MEMORY_RESERVE` becomes 512 MiB for every operation**, a judgement
-confirmed by the re-taken `reserve` figure against its existing criterion —
-the worst rep leaves the margin — and moved only if that reading refutes it.
-Gathering raises resident most, but a query decodes the cache whole and
-consults statistics too, and a person does not write one container definition
-for `parse` and another for `query`; one reserve across every operation is the
-one they can understand.
+**One `MEMORY_RESERVE` for every operation.** Gathering raises resident most,
+but a query decodes the cache whole and consults statistics too, and a person
+does not write one container definition for `parse` and another for `query`;
+one reserve across every operation is the one they can understand.
+*Rejected:* a reserve raised only when the request gathers.
 
-Noted when it was settled: once statistics are billed inside the allowance,
-the bump covers only what nothing bills — a query's cache decode, the runtime,
-the allocator — so its first reason is weaker than when it was proposed. The
-uniform bump stands. A coarse bump was struck once before (slice 10.4.1,
-commit `81e4c2c`) because a flat subtraction did not reach what gathering held;
-here the account reaches that, and the reserve is not asked to.
+**Its size is measured, in 20.7, not judged.** Slicing first set it to
+512 MiB as a judgement "confirmed" by the re-taken `reserve` figure, and that
+confirmation was vacuous: the figure's criterion faults only a reserve too
+small, 384 MiB already met it, and its legs state `--statistics none` and
+never query, so they never exercise what the bump is for. It stays 384 MiB
+until 20.7 reads it, so no figure's arrangement moves twice and the sitting is
+not biased toward a number already shipped.
 
-*Rejected:* a reserve raised only when the request gathers; re-deriving the
-constant from a candidate grid, which asks no new question; leaving 384 MiB.
+**Attribution first, one blind gate after** ([`roadmap.md`](roadmap.md),
+"Attribution is introspective; only the gate is blind"). The `introspect`
+build of the shipped source reads, per run, the remainder *peak resident −
+(the charge + the statistics account)*, split into live heap, allocator
+retention and the rest. The legs, each pair in one container:
+
+- a flagless gathering `parse`, and
+- a flagless `query` over the cache that `parse` just wrote,
+
+over the reasonable-width input and the wide-text input that fills its
+allowance, on plain, 24 MiB-block and 128 MiB-block `.xz`, across the
+`reserve` figure's limits. **The criterion, registered here before the
+sitting**: the reserve is the smallest step covering the worst remainder such
+that the worst rep leaves `MEMORY_MARGIN_PERCENT`; then one blind sitting on
+the shipped build at that value passes or fails it.
+
+**The branch, registered before the reading too: a remainder that grows with
+the statistics volume is billed, not reserved.** A query's decode of the whole
+cache is the likely one, a parse keeping up to its whole allowance. If it
+grows, a query bills the loaded cache's statistics against its allowance
+before resolving its worker count — fewer workers rather than a kill, which is
+what lets it keep "A query fits the allocation its cache was written under" —
+and the reserve covers only what stays flat. `MEMORY_UNPOOLED_BOUND` is
+re-derived the same way if the remainder passes it.
+
+*Rejected:* a blind grid of candidate builds as `19.16` took, which answers
+which number passes and not what the remainder is; a provisional 512 MiB in
+20.3, moving the arrangements twice; a reserve sized to the worst case at the
+reference allocation, a flat number already known wrong at other sizes;
+choosing the branch after the reading.
 
 ### 512m stays the reference allocation
 
-**With the reserve at 512 MiB, a 512m allocation is the smallest that works**:
-it leaves no budget, so a compressed run there streams rather than
-block-decodes, while a plain `parse` — serial anyway — loses nothing. The koji
+**Whatever 20.7 measures, 512m stays the reference**: if the reserve reaches
+512 MiB it is the smallest allocation that works, leaving no budget, so a
+compressed run there streams rather than block-decodes while a plain `parse`
+— serial anyway — loses nothing. The koji
 runs, `PGDQ_MEASURE_MEMORY` and the resident expectations are read there, and
 every figure whose resolved arrangement moves with the reserve is re-taken.
 
 *Rejected:* moving the reference to 640m or 1g, which keeps existing figures'
-arrangements by hiding what the bump costs.
+arrangements by hiding what a bump costs.
 
 ### A query fits the allocation its cache was written under
 
 A query decodes the cache whole (D78) and a `parse` bounds its statistics by
-its own allowance, so a query in the same container fits, the reserve covering
-the decode. **That is a property, written beside the cache load**: the remedy a
+its own allowance, so a query in the same container fits — the reserve
+covering the decode, or the query billing it where 20.7 finds it grows with
+the statistics. **That is a property, written beside the cache load**: the remedy a
 person already has for a smaller allocation is more memory or `--dqcache
 none`.
 
@@ -181,6 +210,10 @@ commits to a measurement names its instrument"); the attribution is
 introspective and only the gates are blind ("Attribution is introspective;
 only the gate is blind").
 
+- **The reserve's remainder, attributed, then gated** (P20.7) — the
+  `introspect` build over gathering `parse` and `query` legs, and one blind
+  sitting at the value it gives; instrument, legs and criterion are "The
+  reserve rises uniformly, and is measured".
 - **The account reconciled against live heap** (P20.1) — the process prints its
   statistics account, and the `introspect` build's counting allocator gives
   live bytes over generated reasonable-width and wide-text shapes; the account
@@ -201,8 +234,8 @@ only the gate is blind").
 
 **Existing figures keep `--statistics none`**, still measuring scanning.
 `statistics-gathering` moves from its 2g stopgap into the 512m reference and is
-re-taken; every figure whose arrangement moves with the reserve is re-taken
-(P20.5).
+re-taken; every figure whose arrangement moves with the measured reserve is
+re-taken (P20.5).
 
 *Rejected:* the gates alone, where an under-counting account is found only by a
 kill; koji alone, narrow and never declining; figures gathering by default,
@@ -216,11 +249,14 @@ visible, the instrument first:
 1. **The account** is built and reconciled before anything declines against
    it.
 2. **The length cap** lands before koji, which cannot fit without it.
-3. **`--memory` and the reserve** change resolution before the decline carves
-   from it.
+3. **`--memory`** changes resolution before the decline carves from it; the
+   reserve's value does not move here.
 4. **The decline** reworks the gatherer's core path; kept apart from 3, which
    reworks the resolver's, so neither review accepts the other's confidence.
-5. **The generated gates and re-taken figures**, on the finished mechanism.
+7. **The reserve, measured** — only once statistics are billed and declined
+   is the remainder the reserve covers the one it will cover. Numbered 20.7
+   because it was admitted after slicing; it runs before 20.5.
+5. **The generated gates and re-taken figures**, at the measured reserve.
 6. **Koji**, launched detached and ticked when a later session reads it; a
    cap it refutes earns a `P20.6.1`.
 
