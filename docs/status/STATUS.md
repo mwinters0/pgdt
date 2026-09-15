@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | settled; parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D80; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D81; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -69,7 +69,7 @@ instrument can see").
 
 Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-statistics-memory.md).
 
-- [ ] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — printed by the process and reconciled against the `introspect` build's live heap over generated reasonable-width and wide-text shapes, within a stated tolerance; behaviour-preserving
+- [x] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — printed by the process and reconciled against the `introspect` build's live heap over generated reasonable-width and wide-text shapes, within a stated tolerance; behaviour-preserving; [notes](../design/roadmap-P20.1-statistics-account-notes.md)
 - [ ] **20.2** Koji's row density: a gathering `parse` of koji on the shipped build tracking one narrow column per table, launched detached; a `scripts/` tool with its tests deriving each block's rows-per-group distribution at every `2^n` from `info --json`, over koji and the fixtures, into a `runs/` artifact; the median quantile checked against the spec's registered criterion
 - [ ] **20.3** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture
 - [ ] **20.4** The density minimum: a block's size chosen at its end from rows per group at the median, default minimum 1,024, the cap's size standing where coarser; `--statistics-min-rows` (0 turns it off), a stated `--statistics-group-size` exact, a power of two and refused beside either row flag; the bounds recorded per block with D34's back-fill rule extended to each; `FORMAT_VERSION` bumped; parallel identical to serial over every fixture
@@ -318,3 +318,35 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The statistics account leaves out a save's encode buffer and a load's file
+  bytes.** The spec's "Workers are resolved first; statistics take what is
+  left" counts the retained statistics' peak at a save among what the account
+  a decline reads must see; 20.1's row names retained, loaded, a window's
+  partitions and a dictionary's second copy, and the account stops there.
+  Called that way because the buffer is the whole cache serialized, no
+  allocation separating its statistics, and what a decline needs of it is a
+  prediction made before the save allocates — 20.7's design, not a count.
+  Reconsidering means charging the buffer whole now, an over-count, so that
+  20.8's attribution finds it in the account rather than in the remainder.
+
+- **The account is printed only in the `introspect` build's report.** The row
+  asks for it "printed by the process"; the shipped `parse` prints nothing new,
+  its `statistics_*` lines going to the file `PGDQ_INTROSPECT_OUT` names beside
+  the live heap they are reconciled with. Called that way to keep the slice
+  behaviour-preserving and to leave the user-facing wording of what statistics
+  hold to the decline that has to say it. Reconsidering means a status line on
+  every gathering `parse` stating the account's peak, and the manual's
+  "`parse`: reading the dump" saying what it means.
+
+- **The reconciliation's tolerance was chosen without the maintainer.** It is
+  `pgdump_query-cli/tests/statistics_account.rs`'s module doc, registered
+  before the first reading: agreement at return within a per-mille share of
+  the live statistics plus a small floor, and at every update and at the peak
+  a shortfall within `instrument::STATISTICS_SLACK_PER_MILLE` plus a one-mebibyte
+  floor. The floor is what the flagless wide-text leg is judged by, because the
+  account sees an open group grow only when an update measures it, and nothing
+  bounds a first group by an earlier close — a gap growing with the tracked
+  columns and the observers, not the dump.
+  Reconsidering means a floor scaled by columns and workers, or charging a
+  first open group at its bound, which over-charges every narrow observer.

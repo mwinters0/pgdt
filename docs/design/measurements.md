@@ -966,7 +966,10 @@ report labels which each is: the counter sees Rust's `GlobalAlloc` and glibc
 sees the whole process, C included, so their difference is decoder working set
 plus bookkeeping plus retention rather than retention. How to build it, what
 each line means and why `--version` refuses to let it be timed is
-[`decisions.md`](decisions.md), "D13".
+[`decisions.md`](decisions.md), "D13". **The counter also attributes
+statistics**: what a thread allocates inside the library's statistics scope is
+counted apart, and a `parse` reports it beside the library's own account of the
+same bytes as `statistics_*` lines ([`decisions.md`](decisions.md), "D81").
 
 **The third is a tool rather than a build, and `cd scripts && uv run
 measure.py --heaptrack-recipe` prints its sequence and runs none of it** — the

@@ -60,6 +60,7 @@ use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
     union_census,
 };
+use crate::instrument::StatisticsScope;
 use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
     RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
@@ -71,7 +72,10 @@ use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_
 use crate::prune::{SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
-use crate::statistics::{BlockObserver, BlockStatistics, StatisticsBackfill, StatisticsRequest};
+use crate::statistics::{
+    BlockObserver, BlockStatistics, StatisticsAccount, StatisticsBackfill, StatisticsHeld,
+    StatisticsRequest, Term,
+};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -426,7 +430,8 @@ enum MapStop {
 /// **`statistics` is what to gather, and only [`map_file`] passes one that
 /// gathers**: a query's pass is [`StatisticsRequest::NONE`]. A block it tracks
 /// is observed row by row on this loop, or piece by piece where the leader
-/// takes it.
+/// takes it, every observer charging `account`.
+#[allow(clippy::too_many_arguments)]
 async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -434,6 +439,7 @@ async fn map_forward(
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
     statistics: &StatisticsRequest,
+    account: &Arc<StatisticsAccount>,
     size: u64,
 ) -> Result<MapStop> {
     if index.scanned_through >= size {
@@ -567,6 +573,7 @@ async fn map_forward(
                                 header,
                                 index.metadata.as_ref(),
                                 db.as_deref(),
+                                account,
                             )
                         });
                         if let Some(observer) = observer {
@@ -920,6 +927,9 @@ pub struct MapRun {
     pub lacking_statistics: usize,
     /// How many of those were re-read and now hold them.
     pub backfilled: usize,
+    /// What the run's statistics held when it returned, by term, and the most
+    /// they held (`docs/design/decisions.md`, "D81").
+    pub statistics: StatisticsHeld,
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
@@ -980,6 +990,8 @@ pub async fn map_file(
             return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
         }
     };
+    let account = Arc::new(StatisticsAccount::default());
+    account.apply(&[(Term::Loaded, statistics_heap(&index) as i64)]);
     // The one diagnostic about the cache *file* rather than about the map;
     // everything else the load computed is recomputed below.
     let carried: Vec<Diagnostic> = index
@@ -1009,7 +1021,8 @@ pub async fn map_file(
         cache.save(source, &index).await?;
     }
 
-    if map_forward(source, scan_options, cache, &mut index, None, statistics, size).await?
+    if map_forward(source, scan_options, cache, &mut index, None, statistics, &account, size)
+        .await?
         == MapStop::Interrupted
     {
         return Ok(MapRun {
@@ -1018,6 +1031,7 @@ pub async fn map_file(
             interrupted: true,
             lacking_statistics: 0,
             backfilled: 0,
+            statistics: account.held(),
         });
     }
 
@@ -1027,7 +1041,8 @@ pub async fn map_file(
     diagnostics.push(toc_coverage_diagnostic(&index.spans));
     index.diagnostics = diagnostics;
     let backfill =
-        backfill_statistics(source, scan_options, cache, &mut index, statistics, size).await?;
+        backfill_statistics(source, scan_options, cache, &mut index, statistics, &account, size)
+            .await?;
     if !backfill.interrupted {
         cache.save(source, &index).await?;
     }
@@ -1037,7 +1052,22 @@ pub async fn map_file(
         interrupted: backfill.interrupted,
         lacking_statistics: backfill.lacking,
         backfilled: backfill.reread,
+        statistics: account.held(),
     })
+}
+
+/// The heap every block's statistics in `index` hold
+/// ([`BlockStatistics::heap_bytes`]).
+fn statistics_heap(index: &DumpIndex) -> u64 {
+    index
+        .spans
+        .iter()
+        .filter_map(|span| match &span.body {
+            SpanBody::Data(DataBlock::Copy(block)) => block.statistics.as_deref(),
+            _ => None,
+        })
+        .map(BlockStatistics::heap_bytes)
+        .sum()
 }
 
 /// What [`backfill_statistics`] did.
@@ -1052,12 +1082,17 @@ struct BackfillRun {
 /// closes and saving through a [`SaveThrottle`] as [`map_forward`] does; an
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did.
+///
+/// **A block lacking statistics was loaded**, a block this pass mapped holding
+/// what its own request asked, so what a re-read replaces leaves `account`'s
+/// loaded term once it is freed.
 async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
     index: &mut DumpIndex,
     statistics: &StatisticsRequest,
+    account: &Arc<StatisticsAccount>,
     size: u64,
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
@@ -1101,6 +1136,7 @@ async fn backfill_statistics(
             index.metadata.as_ref(),
             block,
             &backfill,
+            account,
             size,
             &mut shortfall_reported,
         )
@@ -1111,7 +1147,10 @@ async fn backfill_statistics(
             return Ok(run);
         };
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
+            let _attributed = StatisticsScope::enter();
+            let replaced = block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
             block.statistics = Some(Arc::new(gathered));
+            account.apply(&[(Term::Loaded, -(replaced as i64))]);
         }
         run.reread += 1;
         // Both of `map_forward`'s check points, a block's close being the
@@ -1170,6 +1209,7 @@ pub async fn gather_block_statistics(
         metadata,
         block,
         backfill,
+        &Arc::default(),
         size,
         &mut shortfall_reported,
     )
@@ -1178,7 +1218,8 @@ pub async fn gather_block_statistics(
 
 /// [`gather_block_statistics`] once the source is announced, `size` known, and
 /// with the flag [`report_shortfall`] keeps once per pass. `cache_path` is the
-/// cache the map was loaded from, which a moved block's refusal names.
+/// cache the map was loaded from, which a moved block's refusal names; the
+/// observer charges `account`.
 #[allow(clippy::too_many_arguments)]
 async fn reread_block(
     source: &dyn ByteRangeSource,
@@ -1187,6 +1228,7 @@ async fn reread_block(
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
+    account: &Arc<StatisticsAccount>,
     size: u64,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockStatistics>> {
@@ -1196,6 +1238,7 @@ async fn reread_block(
         &block.header,
         metadata,
         block.database.as_deref(),
+        account,
     );
     let outcome = leader::scan_region(
         source,
@@ -1978,8 +2021,19 @@ async fn map_for_query(
     // A cancelled mapping pass is an error here rather than a short stream
     // (`docs/design/decisions.md`, "D48"). `pgdq query` never sets the flag;
     // an embedder that does gets told.
-    if map_forward(source, scan_options, cache, &mut index, target, &StatisticsRequest::NONE, size)
-        .await?
+    // A pass gathering nothing charges nothing, so its account is never read.
+    let account = Arc::default();
+    if map_forward(
+        source,
+        scan_options,
+        cache,
+        &mut index,
+        target,
+        &StatisticsRequest::NONE,
+        &account,
+        size,
+    )
+    .await?
         == MapStop::Interrupted
     {
         return Err(Error::ScanCancelled { scanned_through: index.scanned_through });

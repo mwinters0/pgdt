@@ -1,16 +1,14 @@
 # Decisions
 
-The decisions the code cannot explain: shapes kept for a deliverable not yet
-built, defaults chosen over an alternative, and obvious changes measured or
-argued and refused. Nothing here says how the code works (the named module
-does) or quotes a number (`measurements.md` does, cited by figure id; so do the
-invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
-`docs/design/decisions.md`, "D12". Numbers are allocated on discovery and never
-reused; a struck entry is deleted and its number stays spent. **Capped at 500
-lines**: an entry earns its place by being something a later session would
-otherwise re-litigate, and adding one may mean striking one.
+The decisions the code cannot explain: shapes kept for a deliverable not yet built, defaults chosen
+over an alternative, and obvious changes measured or argued and refused. Nothing here says how the
+code works (the named module does) or quotes a number (`measurements.md` does, cited by figure id;
+so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
+`docs/design/decisions.md`, "D12"; numbering and striking are `docs/process.md`, "The decision
+register". **Capped at 500 lines**: an entry earns its place by being something a later session
+would otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D80 -->
+<!-- decision-watermark: D81 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -172,10 +170,9 @@ preamble scan ignores the flag: a stop there is indistinguishable from reaching
 the first `COPY` header and would be cached as complete.
 
 ### D27 UTF-8 is validated once per chunk, and no hot path uses `unsafe`
-`validated_prefix` validates the largest line-terminated prefix and fields
-slice the `&str` with `str::get`, delimiters being ASCII. The escaped path
-still validates (`\xNN` synthesizes bytes); the bulk pass runs only when a row
-will decode something. Four `unsafe` attempts found the safe shape faster.
+`validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
+`str::get`, delimiters being ASCII. The escaped path still validates (`\xNN` synthesizes bytes); the
+bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape.
 
 ### D28 One row split, shared unconditionally
 `RowSplit` memoizes field ends for every term and the batcher, extends as deep as asked, and is
@@ -224,10 +221,9 @@ and its size unless one is stated. Rejected: `SparseRowIndex`; padded `character
 entries, keyed alike but past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
-`ArrayShape::observe` reads the leading brace run off still-escaped bytes at
-L1 (I15, I25); min and max depth, or `{1,2}` beside `{{1,2}}` resolves to a
-wrong `List`. Every mapping pass censuses: gating on a full scan left early
-blocks permanently uncensused. Evidence: `census-brace-free`, `census-arrays`.
+`ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and
+max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. Every mapping pass censuses:
+gating on a full scan left early blocks uncensused. Evidence: `census-brace-free`, `census-arrays`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
 Unrecognized lines are ignored, so `--binary-upgrade` noise is free (I5, I6). `record_type` keys on
@@ -238,10 +234,9 @@ declared types and collation clauses are verbatim, `None` collation is "no claus
 
 ## Type resolution and decoders (`pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs`)
 ### D37 The bar: the dump alone determines the value
-A declared type maps to a real Arrow type only if its text round-trips without
-consulting anything outside the file; otherwise `Utf8View` with a note naming
-the kind of unknown. Misreading is unrecoverable, not recognizing is not; `money`
-fails it (`KD13`). Every field is nullable regardless of DDL.
+A declared type maps to a real Arrow type only if its text round-trips consulting nothing outside
+the file; otherwise `Utf8View` with a note naming the kind of unknown. Misreading is unrecoverable,
+not recognizing is not; `money` fails it (`KD13`). Every field is nullable regardless of DDL.
 
 ### D38 The ADBC driver's shipped release is a floor, swept from the catalog
 Where the driver yields a real Arrow type, ours is never wider; the floor is a pinned release, never
@@ -267,16 +262,14 @@ collapse to element plus one level (I21, I28); normalizing at parse time would
 edit the user's DDL. Containers recurse, no cycle guard (I24): `KD3`, `KD4`.
 
 ### D42 `interval` is the struct; special values are decode failures
-`MonthDayNano` is PostgreSQL's own three fields, so text would be below the
-floor; infinities and out-of-range parts are `FieldDecode`, as for `date` and
-`numeric` (`KD8`). Twelve built-in range names are hardcoded, multiranges apart
-(I10); a `canonical` function makes a range unanswerable (I46).
+`MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
+out-of-range parts are `FieldDecode`, as for `date` and `numeric` (`KD8`). Twelve built-in range
+names are fixed, multiranges apart (I10); a `canonical` function makes a range unanswerable (I46).
 
 ### D43 The census speaks after the DDL and moves the pair
-`retype_from_census` is the one site changing `(DataType, NestedPlan)` after
-resolution, a parameter so no caller skips it; a run past `MAXDIM` is tested
-first and kept optimistic (I25). `MetadataNotScanned` refuses a stream and
-degrades a listing: same output as `NotDeclared`, opposite advice.
+`retype_from_census` alone changes `(DataType, NestedPlan)` after resolution, a parameter so no
+caller skips it; a run past `MAXDIM` is tested first and kept optimistic (I25). `MetadataNotScanned`
+refuses a stream and degrades a listing: same output as `NotDeclared`, opposite advice.
 
 ### D44 A decoder allocates only where its return type does; renderers use tables
 No scalar decoder takes an intermediate `String`; renderers write into one reused buffer through
@@ -424,6 +417,15 @@ Rejected: counting rows past the stop, never read and so only estimable; a zero 
 and never reached; exact bytes when split, read past each piece's limit. Reopens: an account needing
 exact bytes, which each piece reporting its first row's start would give. Code: `stream::EarlyStop`.
 
+### D81 The statistics account sums allocation sizes as they change; an instrument scope checks it
+Each term is what the allocator was asked for — capacity, a map's table layout (RT11) — summed as it
+changes: a block once, retained or loaded; an observer at each column's close and each fold; a map
+before the insert that grows it, since charging a close's growth after the close missed its rehash.
+Rejected: a per-group bound, declining on bytes never held; walking every block at an update; a
+header tagging each allocation, moving the glibc view the instrument build reports; two runs' peaks.
+Reopens: a leg past `statistics_account.rs`'s registered tolerance; an unseen term growing with the
+dump. Code: `statistics::StatisticsAccount`, `instrument`. Evidence: it and `statistics_heap.rs`.
+
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
@@ -447,9 +449,8 @@ meant to be read once (`KD29`). Whether a number was typed or discovered never e
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
 ### D66 Output is byte-identical whether typing is on or off
-Every value renders back to the text `pg_dump` wrote. A value contradicting
-its type is `FieldDecode` with an offset naming `--schema-mode strings`, never
-a null. Rejected: Arrow's display formatting.
+Every value renders back to the text `pg_dump` wrote. One contradicting its type is `FieldDecode`
+with an offset naming `--schema-mode strings`, never a null. Rejected: Arrow's display formatting.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:

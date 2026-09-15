@@ -95,6 +95,7 @@ use serde::{Deserialize, Serialize};
 use crate::Result;
 use crate::copy::split_fields;
 use crate::index::{ArrayShape, CopyBlock};
+use crate::instrument::StatisticsScope;
 use crate::io::ByteRangeSource;
 use crate::preamble::{
     CollationDef, ColumnDef, Extension, StatementScan, StatementShape, TypeDef, TypeKind,
@@ -1235,6 +1236,7 @@ impl Builder {
         };
         // Shared (`docs/design/decisions.md`, "D34").
         let statistics = self.pending_observer.take().map(|observer| {
+            let _attributed = StatisticsScope::enter();
             Arc::new(observer.finish(end.terminator_offset - copy_start.data_offset))
         });
         let block = CopyBlock {

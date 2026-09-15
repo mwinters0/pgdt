@@ -17,7 +17,7 @@ use crate::io::ByteRangeSource;
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, check_tiling};
 use crate::preamble::dump_metadata_from_spans;
 use crate::scan::{Event, ScanOptions, scan};
-use crate::statistics::BlockStatistics;
+use crate::statistics::{BlockStatistics, deserialize_block_statistics};
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
 /// list, user-defined type definitions. Populated by [`build_index`] via
@@ -151,6 +151,7 @@ pub struct CopyBlock {
     /// that recorded it was asked to gather them (`crate::statistics`).
     /// Shared, so a clone of the map copies a reference
     /// (`docs/design/decisions.md`, "D34").
+    #[serde(deserialize_with = "deserialize_block_statistics")]
     pub statistics: Option<Arc<BlockStatistics>>,
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order. Every mapping pass censuses

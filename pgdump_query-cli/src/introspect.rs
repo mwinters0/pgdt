@@ -29,6 +29,11 @@
 //! * **`malloc_*`** — `malloc_info`'s document-level totals, plus the raw XML,
 //!   which carries **each arena's own `system type="max"`** — the one number
 //!   `mallinfo2` cannot give.
+//! * **`statistics_*`** — where a `parse` ran: the library's statistics
+//!   account as the pass returned it, beside the live bytes the counter
+//!   attributed to statistics (`pgdump_query::instrument`) at the same moment,
+//!   their peaks, and the worst shortfall any update of the account read
+//!   (`docs/design/decisions.md`, "D81").
 //!
 //! **The two families do not cover the same memory**, so the report labels
 //! each: `live_scope` and `glibc_scope`, with the note between them. The
@@ -70,6 +75,16 @@ pub const OUT_VAR: &str = "PGDQ_INTROSPECT_OUT";
 /// exit that skips destructors, `std::process::exit` on the interrupt path,
 /// calls [`report`] itself.
 pub struct AtExit(());
+
+/// Record what a mapping pass's statistics account held when it returned,
+/// with the instrument's own count read at the same moment, for [`report`]
+/// to print. A no-op without the `introspect` feature.
+pub fn statistics_returned(held: &pgdump_query::StatisticsHeld) {
+    #[cfg(feature = "introspect")]
+    enabled::statistics_returned(held);
+    #[cfg(not(feature = "introspect"))]
+    let _ = held;
+}
 
 /// Arm the report. A no-op without the `introspect` feature, where [`report`]
 /// has nothing to write.
@@ -124,10 +139,60 @@ mod enabled {
     fn took(bytes: usize) {
         let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
         PEAK.fetch_max(live, Ordering::Relaxed);
+        pgdump_query::instrument::allocated(bytes);
     }
 
     fn gave_back(bytes: usize) {
         LIVE.fetch_sub(bytes, Ordering::Relaxed);
+        pgdump_query::instrument::freed(bytes);
+    }
+
+    /// What [`super::statistics_returned`] recorded: the account and the
+    /// instrument's reading, taken together.
+    static RETURNED: std::sync::Mutex<
+        Option<(pgdump_query::StatisticsHeld, pgdump_query::instrument::StatisticsReading)>,
+    > = std::sync::Mutex::new(None);
+
+    pub fn statistics_returned(held: &pgdump_query::StatisticsHeld) {
+        let reading = pgdump_query::instrument::statistics_reading();
+        if let Ok(mut returned) = RETURNED.lock() {
+            *returned = Some((*held, reading));
+        }
+    }
+
+    /// The `statistics_*` lines, or none where no pass returned an account.
+    fn push_statistics(out: &mut String) {
+        let Some((held, reading)) = RETURNED.lock().ok().and_then(|r| *r) else { return };
+        let terms = [
+            ("retained", held.now.retained, held.term_peaks.retained),
+            ("loaded", held.now.loaded, held.term_peaks.loaded),
+            ("gathering", held.now.gathering, held.term_peaks.gathering),
+            ("pieces", held.now.pieces, held.term_peaks.pieces),
+            ("interned", held.now.interned, held.term_peaks.interned),
+        ];
+        out.push_str("statistics_scope=library-statistics-scope\n");
+        out.push_str(&format!("statistics_account_bytes={}\n", held.now.total()));
+        out.push_str(&format!("statistics_account_peak_bytes={}\n", held.peak));
+        for (term, now, peak) in terms {
+            out.push_str(&format!("statistics_account_{term}_bytes={now}\n"));
+            out.push_str(&format!("statistics_account_{term}_peak_bytes={peak}\n"));
+        }
+        out.push_str(&format!("statistics_live_bytes={}\n", reading.live));
+        out.push_str(&format!("statistics_live_peak_bytes={}\n", reading.live_peak));
+        out.push_str(&format!("statistics_checks={}\n", reading.checks));
+        out.push_str(&format!("statistics_worst_shortfall_bytes={}\n", reading.shortfall));
+        out.push_str(&format!(
+            "statistics_worst_shortfall_live_bytes={}\n",
+            reading.shortfall_live
+        ));
+        out.push_str(&format!(
+            "statistics_slack_per_mille={}\n",
+            pgdump_query::instrument::STATISTICS_SLACK_PER_MILLE
+        ));
+        out.push_str(&format!(
+            "statistics_worst_shortfall_past_slack_bytes={}\n",
+            reading.shortfall_past_slack
+        ));
     }
 
     // SAFETY: every method forwards to `System`, which satisfies the trait's
@@ -201,6 +266,7 @@ mod enabled {
         out.push_str("live_scope=rust-global-alloc\n");
         out.push_str(&format!("live_bytes={}\n", LIVE.load(Ordering::Relaxed)));
         out.push_str(&format!("live_peak_bytes={}\n", PEAK.load(Ordering::Relaxed)));
+        push_statistics(&mut out);
         out.push_str(SCOPE_NOTE);
         out.push_str("glibc_scope=whole-process\n");
         push_glibc(&mut out);

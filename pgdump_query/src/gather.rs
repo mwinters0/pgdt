@@ -15,24 +15,35 @@
 //! inside, which a piece holds open rather than closing ([`Gatherer::head`]),
 //! and each ordered column's first value, which the rows before the piece
 //! place their last value against ([`RowOrder`]).
+//!
+//! **Every observer charges what it holds to the pass's
+//! [`StatisticsAccount`]** (`docs/design/decisions.md`, "D81"), recomputed as
+//! each column closes a group and as a piece is folded in: a block's observer
+//! as [`Term::Gathering`], a piece's as [`Term::Pieces`], each dictionary's
+//! interning map as [`Term::Interned`]. What is recomputed is O(1) a column
+//! but for the open group's distinct texts, which [`DICTIONARY_CAP`] bounds.
 
 use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::mem;
+use std::mem::{self, align_of, size_of};
+use std::sync::Arc;
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{decode_bytea, render_bytea};
+use crate::instrument::StatisticsScope;
 use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan};
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
-    BlockObserver, BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
-    DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness, StatisticsRequest,
+    BlockObserver, BlockStatistics, Bounds, Charge, ColumnBounds, ColumnDictionary,
+    ColumnStatistics, DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness, StatisticsAccount,
+    StatisticsRequest, Term, text_heap, vec_heap,
 };
 
-/// The observer for one block, or `None` when `request` tracks nothing in it.
+/// The observer for one block, or `None` when `request` tracks nothing in it,
+/// charging what it holds to `account`.
 ///
 /// Resolved against an empty census: the census moves only an array column,
 /// and a nested column gets neither bounds nor a dictionary.
@@ -41,9 +52,10 @@ pub(crate) fn observer_for(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
+    account: &Arc<StatisticsAccount>,
 ) -> Option<Box<dyn BlockObserver>> {
     let tracked = request.tracked_columns(header)?;
-    Some(observer_tracking(&tracked, request.group_size(), header, metadata, database))
+    Some(observer_tracking(&tracked, request.group_size(), header, metadata, database, account))
 }
 
 /// The observer for one block gathering `tracked`'s columns — positional to
@@ -56,7 +68,9 @@ pub(crate) fn observer_tracking(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
+    account: &Arc<StatisticsAccount>,
 ) -> Box<dyn BlockObserver> {
+    let _attributed = StatisticsScope::enter();
     let qualified = header.qualified_name();
     let resolved =
         resolve_columns(&qualified, &header.columns, metadata, database, SchemaMode::Typed, &[]);
@@ -77,7 +91,10 @@ pub(crate) fn observer_tracking(
             })
         })
         .collect();
-    Box::new(Gatherer::block(group_size, columns))
+    let charge = Charge::new(Arc::clone(account), Term::Gathering);
+    let mut gatherer = Gatherer::block(group_size, columns, charge);
+    gatherer.charge_held();
+    Box::new(gatherer)
 }
 
 /// The columns `metadata` declares for the table `qualified` in `database` —
@@ -119,10 +136,13 @@ struct Gatherer {
     /// Whether any column is tracked, so a row is worth splitting.
     splits: bool,
     columns: Vec<Option<ColumnGatherer>>,
+    /// What this observer holds, in the pass's account. **Last**, so it is
+    /// released after everything above is freed ([`Charge`]).
+    charge: Charge,
 }
 
 impl Gatherer {
-    fn block(group_size: u64, columns: Vec<Option<ColumnGatherer>>) -> Self {
+    fn block(group_size: u64, columns: Vec<Option<ColumnGatherer>>, charge: Charge) -> Self {
         Self {
             group_size,
             piece: false,
@@ -131,7 +151,24 @@ impl Gatherer {
             open: None,
             splits: columns.iter().any(Option::is_some),
             columns,
+            charge,
         }
+    }
+
+    /// The heap this observer holds, as its structure and its interning maps.
+    fn held(&self) -> (u64, u64) {
+        let own = vec_heap(&self.groups) + vec_heap(&self.columns);
+        self.columns
+            .iter()
+            .flatten()
+            .map(ColumnGatherer::held)
+            .fold((own, 0), |(structure, interned), (s, i)| (structure + s, interned + i))
+    }
+
+    /// Charge what this observer holds now to the account.
+    fn charge_held(&mut self) {
+        let (structure, interned) = self.held();
+        self.charge.set(structure, interned);
     }
 
     /// Close the open group, its last row's line ending at `end`, and list an
@@ -157,15 +194,16 @@ impl Gatherer {
         for _ in first..next {
             self.groups.push(RowGroup { rows: 0, bytes: 0 });
             for column in self.columns.iter_mut().flatten() {
-                column.close_group();
+                column.close_group(&mut self.charge);
             }
         }
+        self.charge_held();
     }
 
     fn push_closed(&mut self, group: OpenGroup, end: u64) {
         self.groups.push(RowGroup { rows: group.rows, bytes: end - group.first_start });
         for column in self.columns.iter_mut().flatten() {
-            column.close_group();
+            column.close_group(&mut self.charge);
         }
     }
 
@@ -174,7 +212,19 @@ impl Gatherer {
     /// itself. Its first group continues this one's open group where both hold
     /// the same index, and each ordered column steps from this observer's last
     /// value to the piece's first.
+    ///
+    /// **The piece's charge is released after this observer's is raised**, so
+    /// the account never reads the moved groups as held by neither.
     fn join(&mut self, mut later: Gatherer) {
+        let placeholder = Charge::new(Arc::clone(later.charge.account()), Term::Pieces);
+        let released = mem::replace(&mut later.charge, placeholder);
+        self.join_rows(later);
+        self.charge_held();
+        drop(released);
+    }
+
+    /// [`Self::join`] but for the account.
+    fn join_rows(&mut self, mut later: Gatherer) {
         debug_assert!(!self.piece && later.piece, "a block observer joins its pieces");
         let (first, first_end) = match (later.head.take(), later.open.take()) {
             (Some((group, end)), open) => {
@@ -214,17 +264,31 @@ impl Gatherer {
         let open = self.open.take().expect("the joined group is open");
         self.push_closed(open, end);
         self.groups.append(&mut later.groups);
-        self.open = later.open;
-        for (mine, theirs) in self.columns.iter_mut().zip(later.columns) {
+        self.open = later.open.take();
+        for (mine, theirs) in self.columns.iter_mut().zip(mem::take(&mut later.columns)) {
             if let (Some(mine), Some(theirs)) = (mine, theirs) {
-                mine.append(theirs);
+                mine.append(theirs, &mut self.charge);
             }
         }
     }
 }
 
+/// Under the instrument, an observer's fields are dropped inside a statistics
+/// scope, so what it frees is attributed as what it allocated was
+/// (`crate::instrument`); its charge, declared last, is released after.
+#[cfg(feature = "introspect")]
+impl Drop for Gatherer {
+    fn drop(&mut self) {
+        let _attributed = StatisticsScope::enter();
+        drop(mem::take(&mut self.columns));
+        drop(mem::take(&mut self.groups));
+        (self.head, self.open) = (None, None);
+    }
+}
+
 impl BlockObserver for Gatherer {
     fn observe_row(&mut self, offset: u64, raw: &[u8]) {
+        let _attributed = StatisticsScope::enter();
         let index = offset / self.group_size;
         match &mut self.open {
             Some(group) if group.index == index => group.rows += 1,
@@ -243,25 +307,37 @@ impl BlockObserver for Gatherer {
         }
     }
 
+    /// **The observer's charge becomes the block's retained bytes** once the
+    /// interning maps are freed, in one update of the account.
     fn finish(mut self: Box<Self>, end: u64) -> BlockStatistics {
+        let _attributed = StatisticsScope::enter();
         debug_assert!(!self.piece, "a piece is joined, never finished");
         if let Some(group) = &self.open {
             let next = group.index + 1;
             self.close_through(end, next);
         }
-        BlockStatistics {
+        let columns = mem::take(&mut self.columns);
+        let statistics = BlockStatistics {
             group_size: self.group_size,
-            groups: self.groups,
-            columns: self.columns.into_iter().map(|c| c.map(ColumnGatherer::finish)).collect(),
-        }
+            groups: mem::take(&mut self.groups),
+            columns: columns.into_iter().map(|c| c.map(ColumnGatherer::finish)).collect(),
+        };
+        self.charge.retain(statistics.heap_bytes());
+        statistics
     }
 
     fn piece(&self) -> Box<dyn BlockObserver> {
+        let _attributed = StatisticsScope::enter();
         let columns = self.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh)).collect();
-        Box::new(Gatherer { piece: true, ..Gatherer::block(self.group_size, columns) })
+        let charge = Charge::new(Arc::clone(self.charge.account()), Term::Pieces);
+        let mut piece = Gatherer::block(self.group_size, columns, charge);
+        piece.piece = true;
+        piece.charge_held();
+        Box::new(piece)
     }
 
     fn absorb(&mut self, later: Box<dyn BlockObserver>) {
+        let _attributed = StatisticsScope::enter();
         let later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
         self.join(*later);
     }
@@ -281,6 +357,10 @@ struct ColumnGatherer {
     group: GroupState,
     /// The column over a piece's held first group ([`Gatherer::head`]).
     head: Option<GroupState>,
+    /// The most heap an open group of this column held when it closed: what
+    /// the account charges for the group still open, which it cannot measure
+    /// row by row.
+    open_peak: u64,
 }
 
 impl ColumnGatherer {
@@ -319,7 +399,31 @@ impl ColumnGatherer {
             dictionary,
             group,
             head: None,
+            open_peak: 0,
         }
+    }
+
+    /// The heap this column holds, as its structure and its interning map.
+    /// The open group is charged at [`Self::open_peak`] or at what it holds
+    /// now, whichever is more, and a held head at what it holds.
+    fn held(&self) -> (u64, u64) {
+        let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
+        let open = self.open_peak.max(self.group.heap_bytes());
+        let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
+        let mut structure = named + vec_heap(&self.null_counts) + open + head;
+        if let Some(bounds) = &self.bounds {
+            structure += vec_heap(&bounds.groups) + bounds.stored + bounds.rows.heap_bytes();
+        }
+        let mut interned = 0;
+        if let Some(dictionary) = &self.dictionary {
+            structure += vec_heap(&dictionary.entries)
+                + dictionary.entry_text
+                + vec_heap(&dictionary.groups)
+                + dictionary.indices;
+            interned =
+                map_heap::<String, u32>(dictionary.interned.capacity()) + dictionary.entry_text;
+        }
+        (structure, interned)
     }
 
     /// A column of this one's kind that has gathered nothing: what a piece
@@ -365,26 +469,39 @@ impl ColumnGatherer {
         }
     }
 
-    fn close_group(&mut self) {
+    /// Close the open group, and move what it changed onto `charge` before
+    /// the next column closes: **a close's growth is charged column by
+    /// column**, so a wide block's account never waits on all its columns.
+    /// A dictionary's interning map growing here is charged as it grows
+    /// (`DictionaryGatherer::intern`), which the column's own difference then
+    /// takes in rather than adding twice.
+    fn close_group(&mut self, charge: &mut Charge) {
+        let before = self.held();
+        let base = charge.charged();
+        self.open_peak = self.open_peak.max(self.group.heap_bytes());
         let group = self.take_group();
         self.null_counts.push(group.nulls);
         if let (Some(bounds), Some(group)) = (&mut self.bounds, group.bounds) {
             bounds.close_group(group);
         }
         if let Some(dictionary) = &mut self.dictionary {
-            dictionary.close_group(group.texts);
+            dictionary.close_group(group.texts, charge);
         }
+        let after = self.held();
+        charge.set(base.0 + after.0 - before.0, base.1 + after.1 - before.1);
     }
 
     /// Append `later`'s closed groups, which follow this column's, and take
     /// its open group as this one's.
-    fn append(&mut self, later: ColumnGatherer) {
+    fn append(&mut self, later: ColumnGatherer, charge: &mut Charge) {
         self.null_counts.extend(later.null_counts);
         if let (Some(mine), Some(theirs)) = (&mut self.bounds, later.bounds) {
             mine.groups.extend(theirs.groups);
+            mine.stored += theirs.stored;
         }
+        self.open_peak = self.open_peak.max(later.open_peak);
         if let (Some(mine), Some(theirs)) = (&mut self.dictionary, later.dictionary) {
-            mine.append(theirs);
+            mine.append(theirs, charge);
         }
         self.group = later.group;
     }
@@ -414,6 +531,27 @@ struct GroupState {
 impl GroupState {
     fn fresh(bounds: Option<&BoundsGatherer>) -> Self {
         Self { nulls: 0, bounds: bounds.map(BoundsGatherer::fresh_group), texts: Some(Vec::new()) }
+    }
+
+    /// The heap this group's state holds: its distinct texts and its running
+    /// bounds.
+    fn heap_bytes(&self) -> u64 {
+        let texts = self
+            .texts
+            .as_ref()
+            .map_or(0, |texts| vec_heap(texts) + texts.iter().map(text_heap).sum::<u64>());
+        let bounds = match &self.bounds {
+            None => 0,
+            Some(GroupBounds::Bytewise { min, max, .. }) => {
+                [min, max].into_iter().flatten().map(|c| text_heap(&c.head)).sum()
+            }
+            Some(GroupBounds::Keyed { min, max, .. }) => [min, max]
+                .into_iter()
+                .flatten()
+                .map(|(key, text)| key.heap_bytes() + text_heap(text))
+                .sum(),
+        };
+        texts + bounds
     }
 
     /// Fold `later`, the same column over the same group's following rows.
@@ -561,6 +699,8 @@ impl Clipped {
 struct BoundsGatherer {
     order: Order,
     groups: Vec<Option<Bounds>>,
+    /// The text every bound in `groups` holds, summed as they are pushed.
+    stored: u64,
     rows: RowOrder,
 }
 
@@ -656,6 +796,21 @@ impl Default for RowOrder {
 }
 
 impl RowOrder {
+    /// The heap the first and the last value placed hold.
+    fn heap_bytes(&self) -> u64 {
+        let first = match &self.first {
+            None => 0,
+            Some(FirstValue::Bytewise { prefix, .. }) => vec_heap(prefix),
+            Some(FirstValue::Keyed(key)) => key.heap_bytes(),
+        };
+        let previous = match &self.previous {
+            None => 0,
+            Some(Previous::Bytewise(clipped)) => text_heap(&clipped.head),
+            Some(Previous::Keyed(key)) => key.heap_bytes(),
+        };
+        first + previous
+    }
+
     /// Fold one step of the row order: `step` is where the value orders
     /// against the previous one, `None` where that is unknown.
     fn step(&mut self, step: Option<Ordering>) {
@@ -702,11 +857,11 @@ impl BoundsGatherer {
             CompareKind::Bytea => Order::Bytewise(Canonical::Bytea),
             kind => Order::Keyed(kind),
         };
-        Self { order, groups: Vec::new(), rows: RowOrder::default() }
+        Self { order, groups: Vec::new(), stored: 0, rows: RowOrder::default() }
     }
 
     fn fresh(&self) -> Self {
-        Self { order: self.order.clone(), groups: Vec::new(), rows: RowOrder::default() }
+        Self { order: self.order.clone(), groups: Vec::new(), stored: 0, rows: RowOrder::default() }
     }
 
     fn fresh_group(&self) -> GroupBounds {
@@ -793,6 +948,7 @@ impl BoundsGatherer {
             }
             _ => None,
         };
+        self.stored += bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max));
         self.groups.push(bounds);
     }
 
@@ -886,6 +1042,41 @@ fn bytea_upper(text: &str) -> Option<String> {
     Some(render_bytea(&bytes))
 }
 
+/// The heap a `HashMap<K, V>` of `capacity` allocates, as the standard
+/// library's table lays one out: a slot per bucket, then a control byte per
+/// bucket and one probe group's worth past the end. The layout is the
+/// toolchain's, not a guarantee (`docs/design/runtime-invariants.md`, "RT11").
+fn map_heap<K, V>(capacity: usize) -> u64 {
+    if capacity == 0 {
+        return 0;
+    }
+    let buckets = if capacity < 8 { capacity + 1 } else { (capacity * 8 / 7).next_power_of_two() };
+    table_heap::<K, V>(buckets)
+}
+
+/// The heap the table a full `HashMap<K, V>` of `capacity` grows into
+/// allocates: the table sized for one more entry than it holds.
+fn grown_map_heap<K, V>(capacity: usize) -> u64 {
+    let wanted = capacity + 1;
+    let buckets = if wanted < 15 {
+        match wanted.max(3) {
+            3 => 4,
+            4..=7 => 8,
+            _ => 16,
+        }
+    } else {
+        (wanted * 8 / 7).next_power_of_two()
+    };
+    table_heap::<K, V>(buckets)
+}
+
+fn table_heap<K, V>(buckets: usize) -> u64 {
+    let probe = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) { 16 } else { 8 };
+    let align = align_of::<(K, V)>().max(probe);
+    let slots = (size_of::<(K, V)>() * buckets).next_multiple_of(align);
+    (slots + buckets + probe) as u64
+}
+
 /// A column's dictionary. A `character` entry is its text without the
 /// trailing blanks its comparison ignores, deduplicated and measured against
 /// [`STORED_VALUE_CAP`] as such (`docs/design/decisions.md`, "D34").
@@ -893,8 +1084,13 @@ struct DictionaryGatherer {
     /// Whether the column is `character`, whose entries give up their padding.
     padded: bool,
     entries: Vec<String>,
+    /// The text every entry holds, summed as each is interned — and so the
+    /// text the interning map's keys hold too.
+    entry_text: u64,
     interned: HashMap<String, u32>,
     groups: Vec<Option<Vec<u32>>>,
+    /// The heap every group's index list holds, summed as each is pushed.
+    indices: u64,
 }
 
 impl DictionaryGatherer {
@@ -902,8 +1098,10 @@ impl DictionaryGatherer {
         Self {
             padded: matches!(kind, CompareKind::PaddedText),
             entries: Vec::new(),
+            entry_text: 0,
             interned: HashMap::new(),
             groups: Vec::new(),
+            indices: 0,
         }
     }
 
@@ -911,8 +1109,10 @@ impl DictionaryGatherer {
         Self {
             padded: self.padded,
             entries: Vec::new(),
+            entry_text: 0,
             interned: HashMap::new(),
             groups: Vec::new(),
+            indices: 0,
         }
     }
 
@@ -931,28 +1131,46 @@ impl DictionaryGatherer {
         group.push(text.to_owned());
     }
 
-    fn intern(&mut self, text: &str) -> u32 {
+    /// **A map about to grow is charged its larger table before the insert
+    /// allocates it**, and released of the smaller once the insert has freed
+    /// it: the two are allocated at once while the table rehashes, and a
+    /// close interning into several full maps would otherwise hold each
+    /// growth uncharged until its observer next updates the account.
+    fn intern(&mut self, text: &str, charge: &mut Charge) -> u32 {
         if let Some(&id) = self.interned.get(text) {
             return id;
         }
         let id = self.entries.len() as u32;
         self.entries.push(text.to_owned());
+        let capacity = self.interned.capacity();
+        let grows = self.interned.len() == capacity;
+        if grows {
+            charge.adjust_interned(grown_map_heap::<String, u32>(capacity) as i64);
+        }
         self.interned.insert(text.to_owned(), id);
+        if grows {
+            charge.adjust_interned(-(map_heap::<String, u32>(capacity) as i64));
+        }
+        self.entry_text += text.len() as u64;
         id
     }
 
-    fn close_group(&mut self, texts: Option<Vec<String>>) {
-        let indices = texts.map(|texts| texts.iter().map(|text| self.intern(text)).collect());
+    fn close_group(&mut self, texts: Option<Vec<String>>, charge: &mut Charge) {
+        let indices: Option<Vec<u32>> =
+            texts.map(|texts| texts.iter().map(|text| self.intern(text, charge)).collect());
+        self.indices += indices.as_ref().map_or(0, vec_heap);
         self.groups.push(indices);
     }
 
     /// Append `later`'s groups, which follow this dictionary's, interning
     /// their entries here in the order a pass closing them would have.
-    fn append(&mut self, later: DictionaryGatherer) {
+    fn append(&mut self, later: DictionaryGatherer, charge: &mut Charge) {
         let DictionaryGatherer { entries, groups, .. } = later;
         for group in groups {
-            let indices =
-                group.map(|ids| ids.iter().map(|&id| self.intern(&entries[id as usize])).collect());
+            let indices: Option<Vec<u32>> = group.map(|ids| {
+                ids.iter().map(|&id| self.intern(&entries[id as usize], charge)).collect()
+            });
+            self.indices += indices.as_ref().map_or(0, vec_heap);
             self.groups.push(indices);
         }
     }
@@ -965,6 +1183,7 @@ impl DictionaryGatherer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::statistics::StatisticsTerms;
 
     /// SplitMix64, seeded, so a failing case reproduces.
     struct Rng(u64);
@@ -1228,15 +1447,19 @@ mod tests {
                 end += line.len() as u64 + 1;
             }
 
-            let mut serial = Gatherer::block(group_size, join_columns());
+            let serial_account = Arc::new(StatisticsAccount::default());
+            let charge = Charge::new(Arc::clone(&serial_account), Term::Gathering);
+            let mut serial = Gatherer::block(group_size, join_columns(), charge);
             for (line, &offset) in lines.iter().zip(&offsets) {
                 serial.observe_row(offset, line);
             }
             let serial = Box::new(serial).finish(end);
 
             let cut_odds = 1 + rng.below(30);
+            let account = Arc::new(StatisticsAccount::default());
+            let charge = Charge::new(Arc::clone(&account), Term::Gathering);
             let mut block: Box<dyn BlockObserver> =
-                Box::new(Gatherer::block(group_size, join_columns()));
+                Box::new(Gatherer::block(group_size, join_columns(), charge));
             let mut piece = block.piece();
             for (r, (line, &offset)) in lines.iter().zip(&offsets).enumerate() {
                 if r > 0 && rng.below(cut_odds) == 0 {
@@ -1253,6 +1476,13 @@ mod tests {
             block.absorb(piece);
             let joined = block.finish(end);
             assert_eq!(joined, serial, "round {round}");
+            // Every observer's charge is released into the block it became,
+            // pieces included, and nothing else is left in either account.
+            for (account, statistics) in [(&serial_account, &serial), (&account, &joined)] {
+                let retained = statistics.heap_bytes();
+                let expected = StatisticsTerms { retained, ..StatisticsTerms::default() };
+                assert_eq!(account.held().now, expected, "round {round}");
+            }
 
             for column in joined.columns.iter().flatten() {
                 let bounds = column.bounds.as_ref().unwrap();
@@ -1272,6 +1502,33 @@ mod tests {
         assert!(inexact > 500, "only {inexact} truncated upper bounds");
         assert!(dictionaries > 500, "only {dictionaries} dictionaries of several entries");
         assert!(overflowed > 50, "only {overflowed} dictionaries past their count cap");
+    }
+
+    /// **A full map grows into the table [`grown_map_heap`] charges**, and
+    /// every table's size follows from its capacity as [`map_heap`] reads it:
+    /// the arithmetic the account's interned term is, against the capacities
+    /// the standard library's map actually reports as it fills. That the
+    /// arithmetic is the allocation is the instrument build's to show
+    /// (`pgdump_query-cli/tests/statistics_account.rs`).
+    #[test]
+    fn a_full_map_grows_into_the_table_it_is_charged() {
+        let mut map: HashMap<String, u32> = HashMap::new();
+        let mut growths = 0;
+        for i in 0..100_000u32 {
+            let capacity = map.capacity();
+            let full = map.len() == capacity;
+            map.insert(i.to_string(), i);
+            if full {
+                growths += 1;
+                assert_eq!(
+                    map_heap::<String, u32>(map.capacity()),
+                    grown_map_heap::<String, u32>(capacity)
+                );
+            } else {
+                assert_eq!(map.capacity(), capacity, "a map grew before it was full");
+            }
+        }
+        assert!(growths > 10, "only {growths} growths");
     }
 
     fn cmp_text(a: &str, b: &str) -> Ordering {

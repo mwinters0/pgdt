@@ -1325,6 +1325,7 @@ async fn main() -> Result<()> {
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
             let run =
                 pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics).await?;
+            introspect::statistics_returned(&run.statistics);
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both
                 // lines go to stderr, so a caller redirecting stdout gets an

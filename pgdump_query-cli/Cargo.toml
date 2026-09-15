@@ -28,7 +28,7 @@ mimalloc = ["dep:mimalloc"]
 # only the gate stays black-box (`docs/design/roadmap.md`, "Attribution is
 # introspective; only the gate is blind"). It never times anything, and
 # `pgdq --version` names it so the harness cannot publish a figure taken on it.
-introspect = ["dep:libc"]
+introspect = ["dep:libc", "pgdump_query/introspect"]
 
 [dependencies]
 anyhow = "1.0.104"

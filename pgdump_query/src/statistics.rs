@@ -1,5 +1,6 @@
 //! Per-row-group column statistics: what a mapping pass may be asked to
-//! gather for a `COPY` block, and the persisted shape it gathers into.
+//! gather for a `COPY` block, the persisted shape it gathers into, and the
+//! account of every statistic a pass holds alive ([`StatisticsAccount`]).
 //!
 //! L1 vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
@@ -15,12 +16,16 @@
 //! block's data, `N` being [`BlockStatistics::group_size`]. A row longer than
 //! `N` leaves groups in which no row starts, which are listed, empty.
 
+use std::mem::size_of;
 use std::num::NonZeroU64;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::copy::CopyHeader;
 use crate::index::CopyBlock;
+use crate::instrument;
 
 /// The group size a request that states none gathers at: one mebibyte of a
 /// block's data per group.
@@ -286,4 +291,258 @@ pub struct ColumnDictionary {
     /// [`DICTIONARY_CAP`] distinct texts, a text longer than
     /// [`STORED_VALUE_CAP`], or a field that is not text.
     pub groups: Vec<Option<Vec<u32>>>,
+}
+
+/// Bytes of heap a `Vec` holds: its capacity, not its length, since no
+/// gathering vector is shrunk.
+pub(crate) fn vec_heap<T>(v: &Vec<T>) -> u64 {
+    (v.capacity() * size_of::<T>()) as u64
+}
+
+/// Bytes of heap a `String` holds.
+pub(crate) fn text_heap(text: &String) -> u64 {
+    text.capacity() as u64
+}
+
+impl BlockStatistics {
+    /// The heap one block's statistics hold, the allocation of the `Arc` that
+    /// shares them included: what [`StatisticsAccount`] charges a retained or a
+    /// loaded block. Each term is the size the allocator was asked for — a
+    /// vector's capacity, not its length — which
+    /// `tests/statistics_heap.rs` holds to what freeing a block gives back.
+    pub fn heap_bytes(&self) -> u64 {
+        let shared = size_of::<(usize, usize, Self)>() as u64;
+        shared
+            + vec_heap(&self.groups)
+            + vec_heap(&self.columns)
+            + self.columns.iter().flatten().map(ColumnStatistics::heap_bytes).sum::<u64>()
+    }
+}
+
+/// Under the instrument, a block's statistics are freed inside a statistics
+/// scope wherever they are dropped — a cache decoded only for its envelope
+/// included — so what the decode attributed is given back the same way
+/// (`crate::instrument`). Only the `Arc`'s own allocation is freed after.
+#[cfg(feature = "introspect")]
+impl Drop for BlockStatistics {
+    fn drop(&mut self) {
+        let _attributed = instrument::StatisticsScope::enter();
+        drop(std::mem::take(&mut self.columns));
+        drop(std::mem::take(&mut self.groups));
+    }
+}
+
+impl ColumnStatistics {
+    fn heap_bytes(&self) -> u64 {
+        let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
+        let bounds = self.bounds.as_ref().map_or(0, |bounds| {
+            vec_heap(&bounds.groups)
+                + bounds
+                    .groups
+                    .iter()
+                    .flatten()
+                    .map(|b| text_heap(&b.min) + text_heap(&b.max))
+                    .sum::<u64>()
+        });
+        let dictionary = self.dictionary.as_ref().map_or(0, |dictionary| {
+            vec_heap(&dictionary.entries)
+                + dictionary.entries.iter().map(text_heap).sum::<u64>()
+                + vec_heap(&dictionary.groups)
+                + dictionary.groups.iter().flatten().map(vec_heap).sum::<u64>()
+        });
+        named + vec_heap(&self.null_counts) + bounds + dictionary
+    }
+}
+
+/// [`CopyBlock::statistics`] as the cache decodes it, with what the decode
+/// allocates attributed to statistics where the instrument is built in
+/// (`crate::instrument`) — and a plain decode where it is not.
+pub(crate) fn deserialize_block_statistics<'de, D>(
+    deserializer: D,
+) -> Result<Option<Arc<BlockStatistics>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let _attributed = instrument::StatisticsScope::enter();
+    Option::<Arc<BlockStatistics>>::deserialize(deserializer)
+}
+
+/// Every statistic a mapping pass holds alive, in bytes of heap, by term
+/// (`docs/design/decisions.md`, "D81").
+///
+/// **An account, not a bound**: each term is the sizes the allocator was asked
+/// for, summed as the structures change — a finished block once, as it is
+/// retained or loaded; an observer still gathering at every column it closes a
+/// group on and every piece it folds in, a dictionary's interning map ahead of
+/// the table it grows into. Shared by every observer of one pass, the leader's
+/// pieces on the blocking pool included, so the terms are atomics and the
+/// account is read whole only by [`Self::held`].
+///
+/// **What it does not see**, each bounded by a group rather than by the dump:
+/// an open group's growth past the largest a close of that column has
+/// measured — all of it, on a column's first group — and a row's own decode
+/// scratch while a column observes it. Nor does it hold a save's encode buffer
+/// or a load's file bytes, which carry statistics serialized for as long as
+/// the save or the load runs.
+#[derive(Debug, Default)]
+pub(crate) struct StatisticsAccount {
+    terms: [AtomicU64; TERMS],
+    term_peaks: [AtomicU64; TERMS],
+    peak: AtomicU64,
+}
+
+const TERMS: usize = 5;
+
+/// One of [`StatisticsTerms`]' fields, as [`StatisticsAccount`] indexes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Term {
+    Retained,
+    Loaded,
+    Gathering,
+    Pieces,
+    Interned,
+}
+
+impl StatisticsAccount {
+    /// Apply every change in `changes` as one update: the peak and the
+    /// instrument's check read the account once all of them are in, so a
+    /// charge moving from one term to another never reads as both or neither.
+    pub(crate) fn apply(&self, changes: &[(Term, i64)]) {
+        for &(term, delta) in changes {
+            if delta == 0 {
+                continue;
+            }
+            let now = self.terms[term as usize]
+                .fetch_add(delta as u64, Ordering::Relaxed)
+                .wrapping_add(delta as u64);
+            if delta > 0 {
+                self.term_peaks[term as usize].fetch_max(now, Ordering::Relaxed);
+            }
+        }
+        let total = self.terms.iter().map(|t| t.load(Ordering::Relaxed)).sum::<u64>();
+        self.peak.fetch_max(total, Ordering::Relaxed);
+        instrument::statistics_account_updated(total);
+    }
+
+    /// What the account holds now, and the most it has held.
+    pub(crate) fn held(&self) -> StatisticsHeld {
+        let read = |atomics: &[AtomicU64; TERMS]| {
+            let [retained, loaded, gathering, pieces, interned] =
+                atomics.each_ref().map(|a| a.load(Ordering::Relaxed));
+            StatisticsTerms { retained, loaded, gathering, pieces, interned }
+        };
+        StatisticsHeld {
+            now: read(&self.terms),
+            term_peaks: read(&self.term_peaks),
+            peak: self.peak.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// An in-flight observer's share of a [`StatisticsAccount`], charged to one
+/// term and to [`Term::Interned`], and released when it is dropped.
+///
+/// **Declared last in whatever holds it**, so the release follows the drop of
+/// everything it charged for: an account released ahead of its memory reads
+/// short of the heap for as long as the drop takes.
+pub(crate) struct Charge {
+    account: Arc<StatisticsAccount>,
+    term: Term,
+    structure: u64,
+    interned: u64,
+}
+
+impl Charge {
+    pub(crate) fn new(account: Arc<StatisticsAccount>, term: Term) -> Self {
+        Self { account, term, structure: 0, interned: 0 }
+    }
+
+    /// The account this charge is part of, for a piece of the same pass.
+    pub(crate) fn account(&self) -> &Arc<StatisticsAccount> {
+        &self.account
+    }
+
+    /// What this charge holds now, as its structure and its interned bytes.
+    pub(crate) fn charged(&self) -> (u64, u64) {
+        (self.structure, self.interned)
+    }
+
+    /// Charge `structure` bytes to this charge's term and `interned` to
+    /// [`Term::Interned`], in place of what was charged before.
+    pub(crate) fn set(&mut self, structure: u64, interned: u64) {
+        let changes = [
+            (self.term, structure as i64 - self.structure as i64),
+            (Term::Interned, interned as i64 - self.interned as i64),
+        ];
+        (self.structure, self.interned) = (structure, interned);
+        self.account.apply(&changes);
+    }
+
+    /// Move `delta` bytes onto [`Term::Interned`] between two [`Self::set`]s:
+    /// a table allocated, or freed, ahead of the observer's next update.
+    pub(crate) fn adjust_interned(&mut self, delta: i64) {
+        self.interned = self.interned.wrapping_add(delta as u64);
+        self.account.apply(&[(Term::Interned, delta)]);
+    }
+
+    /// Release this charge and credit `retained` bytes to [`Term::Retained`]
+    /// in one update: an observer that has become its block's statistics.
+    pub(crate) fn retain(&mut self, retained: u64) {
+        let changes = [
+            (self.term, -(self.structure as i64)),
+            (Term::Interned, -(self.interned as i64)),
+            (Term::Retained, retained as i64),
+        ];
+        (self.structure, self.interned) = (0, 0);
+        self.account.apply(&changes);
+    }
+}
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        if self.structure != 0 || self.interned != 0 {
+            self.set(0, 0);
+        }
+    }
+}
+
+/// What a [`StatisticsAccount`] held, by term, in bytes of heap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StatisticsTerms {
+    /// Finished blocks this pass gathered, which the map holds until it is
+    /// dropped.
+    pub retained: u64,
+    /// Blocks' statistics decoded from the cache the pass loaded, less any a
+    /// back-fill has replaced.
+    pub loaded: u64,
+    /// Every block observer still gathering: its closed groups, and each
+    /// column's open group at the largest a close has measured it.
+    pub gathering: u64,
+    /// Every observer a parallel window made for a piece and has not folded
+    /// into its block — a piece past the block's terminator until it is
+    /// dropped — charged as a block observer is.
+    pub pieces: u64,
+    /// Every dictionary's interning map while it gathers, block or piece: the
+    /// second copy of each distinct text, and the table holding it.
+    pub interned: u64,
+}
+
+impl StatisticsTerms {
+    /// Every term summed.
+    pub fn total(&self) -> u64 {
+        self.retained + self.loaded + self.gathering + self.pieces + self.interned
+    }
+}
+
+/// A [`StatisticsAccount`] read whole: what one mapping pass's statistics
+/// held when it returned, and the most they held
+/// ([`crate::stream::MapRun::statistics`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StatisticsHeld {
+    /// Each term when the account was read.
+    pub now: StatisticsTerms,
+    /// The largest each term reached, each at its own moment.
+    pub term_peaks: StatisticsTerms,
+    /// The largest the sum of the terms reached, read at an update.
+    pub peak: u64,
 }

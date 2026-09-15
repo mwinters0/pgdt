@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 const LAYERS: &[(&str, u8)] = &[
     ("lib", 0),
     ("error", 0),
+    ("instrument", 0),
     ("io", 1),
     ("scan", 1),
     ("copy", 1),

@@ -11,6 +11,7 @@ pub mod diagnostic;
 mod error;
 mod gather;
 pub mod index;
+pub mod instrument;
 mod io;
 mod leader;
 pub mod map;
@@ -60,7 +61,8 @@ pub use scan::{
 pub use statistics::{
     BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
     DEFAULT_STATISTICS_GROUP_SIZE, DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness,
-    StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StatisticsBackfill, StatisticsHeld, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StatisticsTerms,
 };
 pub use stream::{
     BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream,

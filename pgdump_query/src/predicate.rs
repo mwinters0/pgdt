@@ -275,6 +275,11 @@ struct NumericKey {
 }
 
 impl NumericKey {
+    /// The heap its two digit strings hold.
+    fn heap_bytes(&self) -> u64 {
+        (self.int.capacity() + self.frac.capacity()) as u64
+    }
+
     /// `[-]digits[.digits]`, the only shape `numeric_out` writes: no
     /// exponent, no sign but `-`, and at least one digit somewhere — the same
     /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
@@ -417,6 +422,27 @@ enum Jsonb {
 }
 
 impl Jsonb {
+    /// The heap this document holds, every nested container and string
+    /// included.
+    fn heap_bytes(&self) -> u64 {
+        match self {
+            Self::Null | Self::Bool(_) => 0,
+            Self::String(text) => text.capacity() as u64,
+            Self::Number(numeric) => numeric.heap_bytes(),
+            Self::Array { items, .. } => {
+                (items.capacity() * std::mem::size_of::<Jsonb>()) as u64
+                    + items.iter().map(Self::heap_bytes).sum::<u64>()
+            }
+            Self::Object(pairs) => {
+                (pairs.capacity() * std::mem::size_of::<(String, Jsonb)>()) as u64
+                    + pairs
+                        .iter()
+                        .map(|(key, value)| key.capacity() as u64 + value.heap_bytes())
+                        .sum::<u64>()
+            }
+        }
+    }
+
     /// `JsonbValue.type`, which is the type-defined order itself (I41).
     fn rank(&self) -> u8 {
         match self {
@@ -1126,6 +1152,28 @@ impl ValueKey {
     /// [`compare_keys`]: a total order over the keys of one kind.
     pub(crate) fn compare(&self, other: &Self) -> Ordering {
         compare_keys(&self.0, &other.0)
+    }
+
+    /// The heap this key holds, as the sizes the allocator was asked for:
+    /// what gathering charges a keyed bound or row-order value
+    /// (`crate::statistics::StatisticsAccount`).
+    pub(crate) fn heap_bytes(&self) -> u64 {
+        match &self.0 {
+            OrderKey::Numeric(numeric) => numeric.heap_bytes(),
+            OrderKey::Jsonb(jsonb) => jsonb.heap_bytes(),
+            OrderKey::Bytes(bytes) => bytes.capacity() as u64,
+            OrderKey::Text(text) => text.capacity() as u64,
+            OrderKey::NegativeInfinity
+            | OrderKey::Bool(_)
+            | OrderKey::Int(_)
+            | OrderKey::Float(_)
+            | OrderKey::Decimal(_)
+            | OrderKey::Interval(_)
+            | OrderKey::TimeTz { .. }
+            | OrderKey::Network(_)
+            | OrderKey::PositiveInfinity
+            | OrderKey::NotANumber => 0,
+        }
     }
 }
 

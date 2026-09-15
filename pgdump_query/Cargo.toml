@@ -3,6 +3,13 @@ name = "pgdump_query"
 version.workspace = true
 edition.workspace = true
 
+# The introspection build's library half (`src/instrument.rs`): which
+# allocations are statistics, for `pgdump_query-cli`'s counting allocator to
+# count. Enabled only by that crate's own `introspect` feature; a build without
+# it compiles every hook to nothing.
+[features]
+introspect = []
+
 [dependencies]
 arrow = { version = "59.2.0", default-features = false }
 # The same `arrow-schema` `arrow` itself depends on, named directly because
