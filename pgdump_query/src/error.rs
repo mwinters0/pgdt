@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error as ThisError;
 
@@ -57,10 +57,14 @@ pub enum Error {
     /// (`docs/design/decisions.md`, "D21") — and statistics gathered from it
     /// would describe other bytes than the map does. Raised before they are
     /// stored (`crate::stream::gather_block_statistics`).
-    #[error(
-        "the COPY block the cache records at offset {header_offset} no longer ends where the cache says, so the file changed since it was scanned — remove the cache and parse again"
-    )]
-    CachedBlockChanged { header_offset: u64 },
+    ///
+    /// `path` is the cache the map was loaded from, named as
+    /// [`Error::CacheSourceMismatch`] names it, so a caller whose cache is not
+    /// beside the dump knows which file to remove. `crate::map_file`'s
+    /// back-fill always has one; the per-block entry point is handed a map
+    /// with no cache attached, and leaves it `None`.
+    #[error("{}", cached_block_changed(.path.as_deref(), *.header_offset))]
+    CachedBlockChanged { path: Option<PathBuf>, header_offset: u64 },
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
     #[error(
@@ -152,4 +156,18 @@ pub enum Error {
     /// PostgreSQL's field counts microseconds.
     #[error("this Arrow value has no `{declared_type}` text form: {reason}")]
     FieldRender { declared_type: &'static str, reason: String },
+}
+
+/// [`Error::CachedBlockChanged`]'s sentence: the cache named where there is
+/// one, with the remedy on it, and the map alone where there is not.
+fn cached_block_changed(path: Option<&Path>, header_offset: u64) -> String {
+    match path {
+        Some(path) => format!(
+            "the COPY block the cache at {} records at offset {header_offset} no longer ends where that cache says, so the file changed since it was scanned — remove that cache and parse again",
+            path.display()
+        ),
+        None => format!(
+            "the COPY block the map records at offset {header_offset} no longer ends where that map says, so the file changed since it was scanned"
+        ),
+    }
 }

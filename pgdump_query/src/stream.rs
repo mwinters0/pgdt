@@ -39,6 +39,7 @@
 
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -1076,6 +1077,12 @@ async fn backfill_statistics(
     }
     tracing::info!(blocks = run.lacking, "statistics back-fill started");
     announce_read_loop(source, scan_options);
+    // Only a loaded cache holds a block to lack anything: a disabled one maps
+    // every block afresh under `statistics`, and an offline one never loads.
+    let cache_path = match cache {
+        CacheMode::Enabled(path) => Some(path.as_path()),
+        CacheMode::Disabled | CacheMode::Offline(_) => None,
+    };
     let mut throttle = SaveThrottle::new();
     let mut shortfall_reported = false;
     for (at, backfill) in lacking {
@@ -1085,6 +1092,7 @@ async fn backfill_statistics(
         let gathered = reread_block(
             source,
             scan_options,
+            cache_path,
             index.metadata.as_ref(),
             block,
             &backfill,
@@ -1138,7 +1146,8 @@ fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) 
 ///
 /// **A block that no longer ends where the map says is refused**,
 /// [`Error::CachedBlockChanged`], rather than given statistics describing other
-/// bytes than its map does.
+/// bytes than its map does. It names no cache, this entry point being handed
+/// none; [`map_file`]'s back-fill names the one it loaded.
 pub async fn gather_block_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -1149,15 +1158,27 @@ pub async fn gather_block_statistics(
     let size = source.size().await?;
     announce_read_loop(source, scan_options);
     let mut shortfall_reported = false;
-    reread_block(source, scan_options, metadata, block, backfill, size, &mut shortfall_reported)
-        .await
+    reread_block(
+        source,
+        scan_options,
+        None,
+        metadata,
+        block,
+        backfill,
+        size,
+        &mut shortfall_reported,
+    )
+    .await
 }
 
 /// [`gather_block_statistics`] once the source is announced, `size` known, and
-/// with the flag [`report_shortfall`] keeps once per pass.
+/// with the flag [`report_shortfall`] keeps once per pass. `cache_path` is the
+/// cache the map was loaded from, which a moved block's refusal names.
+#[allow(clippy::too_many_arguments)]
 async fn reread_block(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
@@ -1194,7 +1215,10 @@ async fn reread_block(
     };
     let recorded = (block.terminator_offset, block.end_offset, block.row_count);
     if (end.terminator_offset, end.end_offset, end.row_count) != recorded {
-        return Err(Error::CachedBlockChanged { header_offset: block.header_offset });
+        return Err(Error::CachedBlockChanged {
+            path: cache_path.map(Path::to_path_buf),
+            header_offset: block.header_offset,
+        });
     }
     Ok(Some(observer.finish(block.terminator_offset - block.data_offset)))
 }

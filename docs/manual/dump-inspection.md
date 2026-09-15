@@ -272,8 +272,9 @@ gathered at 65536 re-reads nothing. It prints its count to stderr:
 ```
 
 A file rewritten in place at the same size since it was scanned is refused
-here, with a message naming the block, if a re-read table's data no longer ends
-where the cache says it does: delete the cache and parse again.
+here, with a message naming the block and the cache file, if a re-read table's
+data no longer ends where the cache says it does: delete that cache and parse
+again.
 
 **`query` skips every group its statistics rule out.** Given a `--filter` or
 `--where`, a group in which no row can satisfy it is never read, and stderr

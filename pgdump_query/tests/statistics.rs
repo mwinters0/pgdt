@@ -676,29 +676,58 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
 /// **A block that no longer ends where the map says is refused**, rather than
 /// given statistics of other bytes: the file is rewritten at its own size with
 /// the block's terminator moved, which the cache's identity check cannot see.
+/// The refusal names the cache the map came from — here not beside the dump,
+/// so the colocated default would name the wrong file — and the per-block
+/// entry point, handed a map with no cache, names none.
 #[tokio::test]
 async fn a_block_rewritten_at_the_same_size_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("rewritten.sql");
+    let cache_path = dir.path().join("elsewhere").join("rewritten.dqcache");
+    std::fs::create_dir(cache_path.parent().unwrap()).unwrap();
+    let mode = CacheMode::Enabled(cache_path.clone());
     let before = "COPY public.t (a) FROM stdin;\n11\n2\n\\.\nSELECT 1;\n";
     let after = "COPY public.t (a) FROM stdin;\n1\n\\.\n22\nSELECT 1;\n";
     assert_eq!(before.len(), after.len());
     std::fs::write(&dump, before).unwrap();
-    let header_offset = mapped_into_cache(&dump, &ScanOptions::default(), &StatisticsRequest::NONE)
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mapped = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
         .await
-        .index
-        .blocks()
-        .next()
         .unwrap()
-        .header_offset;
+        .index;
+    let mapped_block = mapped.blocks().next().unwrap();
+    let header_offset = mapped_block.header_offset;
     std::fs::write(&dump, after).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
     let err = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::ALL)
         .await
         .expect_err("the block moved");
     assert!(
-        matches!(err, pgdump_query::Error::CachedBlockChanged { header_offset: at } if at == header_offset),
+        matches!(
+            &err,
+            pgdump_query::Error::CachedBlockChanged { path: Some(at_path), header_offset: at }
+                if *at_path == cache_path && *at == header_offset
+        ),
+        "{err}"
+    );
+    assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
+
+    let backfill = StatisticsRequest::ALL.backfill(mapped_block).expect("it holds no statistics");
+    let err = gather_block_statistics(
+        &source,
+        &ScanOptions::default(),
+        mapped.metadata.as_ref(),
+        mapped_block,
+        &backfill,
+    )
+    .await
+    .expect_err("the block moved");
+    assert!(
+        matches!(
+            &err,
+            pgdump_query::Error::CachedBlockChanged { path: None, header_offset: at }
+                if *at == header_offset
+        ),
         "{err}"
     );
 }
