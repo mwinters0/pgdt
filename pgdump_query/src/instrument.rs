@@ -18,13 +18,14 @@
 //!
 //! What it answers is the reconciliation of `crate::statistics`'
 //! account against the heap (`docs/design/decisions.md`, "D81"): at every
-//! update the account's total is compared with the live statistics bytes this
-//! module counts, and the worst shortfall is kept.
+//! update the live statistics bytes this module counts are compared with the
+//! account's total, and with that total less what it carries for allocations
+//! charged ahead — made or not yet, on any thread — and the worst shortfall of
+//! the first and excess of the second are kept, raw and past the allowance the
+//! account gives its open observers' uncharged growth then.
 
 #[cfg(feature = "introspect")]
-pub use enabled::{
-    STATISTICS_SLACK_PER_MILLE, StatisticsReading, allocated, freed, statistics_reading,
-};
+pub use enabled::{StatisticsReading, allocated, freed, statistics_reading};
 
 /// Attributes every allocation and free the current thread makes to
 /// statistics while it is alive. Scopes nest.
@@ -54,14 +55,16 @@ impl Drop for StatisticsScope {
     }
 }
 
-/// Compare the account's new `total` with the live statistics bytes, keeping
-/// the worst shortfall. Nothing without the instrument.
+/// Compare the account's new `total`, `announced` of it charged ahead of
+/// allocations, with the live statistics bytes, keeping the worst difference
+/// either way past `allowance`, the uncharged growth its open observers may
+/// hold. Nothing without the instrument.
 #[inline]
-pub(crate) fn statistics_account_updated(total: u64) {
+pub(crate) fn statistics_account_updated(total: u64, announced: u64, allowance: u64) {
     #[cfg(feature = "introspect")]
-    enabled::account_updated(total);
+    enabled::account_updated(total, announced, allowance);
     #[cfg(not(feature = "introspect"))]
-    let _ = total;
+    let _ = (total, announced, allowance);
 }
 
 #[cfg(feature = "introspect")]
@@ -82,16 +85,14 @@ mod enabled {
     static LIVE_PEAK: AtomicU64 = AtomicU64::new(0);
     /// How many times the account was updated, and so compared.
     static CHECKS: AtomicU64 = AtomicU64::new(0);
-    /// The largest `live − total` any update read, and the live bytes then.
-    static SHORTFALL: AtomicU64 = AtomicU64::new(0);
-    static SHORTFALL_LIVE: AtomicU64 = AtomicU64::new(0);
-    /// The largest `live − total − live × SLACK` any update read.
-    static SHORTFALL_PAST_SLACK: AtomicU64 = AtomicU64::new(0);
-
-    /// The proportional half of the shortfall the account is allowed at an
-    /// update, per mille of the live statistics bytes then: what
-    /// [`StatisticsReading::shortfall_past_slack`] is measured past.
-    pub const STATISTICS_SLACK_PER_MILLE: u64 = 20;
+    /// The largest allowance any update was given.
+    static ALLOWANCE_PEAK: AtomicU64 = AtomicU64::new(0);
+    /// The largest `live − account` and `account − live` any update read, and
+    /// each past the allowance then.
+    static SHORT: AtomicU64 = AtomicU64::new(0);
+    static SHORT_PAST_ALLOWANCE: AtomicU64 = AtomicU64::new(0);
+    static OVER: AtomicU64 = AtomicU64::new(0);
+    static OVER_PAST_ALLOWANCE: AtomicU64 = AtomicU64::new(0);
 
     /// The binary's allocator reports `bytes` allocated on this thread.
     #[inline]
@@ -110,15 +111,18 @@ mod enabled {
         }
     }
 
-    pub(super) fn account_updated(total: u64) {
+    pub(super) fn account_updated(total: u64, announced: u64, allowance: u64) {
         CHECKS.fetch_add(1, Ordering::Relaxed);
+        ALLOWANCE_PEAK.fetch_max(allowance, Ordering::Relaxed);
         let live = LIVE.load(Ordering::Relaxed);
+        // An allocation charged ahead may or may not have been made yet, on
+        // this thread or another: short of the total, over what it leaves.
         let short = live.saturating_sub(total);
-        if short > SHORTFALL.fetch_max(short, Ordering::Relaxed) {
-            SHORTFALL_LIVE.store(live, Ordering::Relaxed);
-        }
-        let past = short.saturating_sub(live * STATISTICS_SLACK_PER_MILLE / 1000);
-        SHORTFALL_PAST_SLACK.fetch_max(past, Ordering::Relaxed);
+        SHORT.fetch_max(short, Ordering::Relaxed);
+        SHORT_PAST_ALLOWANCE.fetch_max(short.saturating_sub(allowance), Ordering::Relaxed);
+        let over = total.saturating_sub(announced).saturating_sub(live);
+        OVER.fetch_max(over, Ordering::Relaxed);
+        OVER_PAST_ALLOWANCE.fetch_max(over.saturating_sub(allowance), Ordering::Relaxed);
     }
 
     /// What the instrument has counted so far.
@@ -130,13 +134,16 @@ mod enabled {
         pub live_peak: u64,
         /// Account updates compared.
         pub checks: u64,
+        /// The largest allowance any update was given.
+        pub allowance_peak: u64,
         /// The largest amount any update found the account short of live.
-        pub shortfall: u64,
-        /// The live statistics bytes at that update.
-        pub shortfall_live: u64,
-        /// The largest amount any update found the account short past
-        /// [`STATISTICS_SLACK_PER_MILLE`] of live.
-        pub shortfall_past_slack: u64,
+        pub short: u64,
+        /// The largest amount any update found it short past its allowance.
+        pub short_past_allowance: u64,
+        /// The largest amount any update found the account over live.
+        pub over: u64,
+        /// The largest amount any update found it over past its allowance.
+        pub over_past_allowance: u64,
     }
 
     /// Read the counters. Racy against a thread still allocating, which the
@@ -146,9 +153,11 @@ mod enabled {
             live: LIVE.load(Ordering::Relaxed),
             live_peak: LIVE_PEAK.load(Ordering::Relaxed),
             checks: CHECKS.load(Ordering::Relaxed),
-            shortfall: SHORTFALL.load(Ordering::Relaxed),
-            shortfall_live: SHORTFALL_LIVE.load(Ordering::Relaxed),
-            shortfall_past_slack: SHORTFALL_PAST_SLACK.load(Ordering::Relaxed),
+            allowance_peak: ALLOWANCE_PEAK.load(Ordering::Relaxed),
+            short: SHORT.load(Ordering::Relaxed),
+            short_past_allowance: SHORT_PAST_ALLOWANCE.load(Ordering::Relaxed),
+            over: OVER.load(Ordering::Relaxed),
+            over_past_allowance: OVER_PAST_ALLOWANCE.load(Ordering::Relaxed),
         }
     }
 }

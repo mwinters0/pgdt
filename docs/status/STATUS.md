@@ -46,7 +46,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | not started; P14 | D6 |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | settled; parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D81; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, and say on stderr how much memory they held, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none` | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D81; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -69,7 +69,7 @@ instrument can see").
 
 Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-statistics-memory.md).
 
-- [ ] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — printed by the process and reconciled against the `introspect` build's live heap over generated reasonable-width and wide-text shapes, within a stated tolerance; declining nothing; [notes](../design/roadmap-P20.1-statistics-account-notes.md); **remains**: the shipped process prints the account — one status line at the end of every pass whose account held anything, gathered, loaded or back-filled, with the total at return, the peak and each term's peak, and the manual's "`--statistics`" saying what they mean; a `query` prints none. And an open group's growth charged as it happens, pushed to the account whenever an observer's uncharged growth passes a fixed step, so what the account does not see is at most a step an observer however many columns it tracks. And the tolerance re-registered before its reading: at every update and at the peak, two-sided, within one step an open observer plus the input's longest row, with no proportional slack; a flagless wide-text leg of distinct values at least `STORED_VALUE_CAP` long; every shortfall the readings show that scales — vector growth inside a close or a join the candidate — charged ahead of the growth or given a named bound, the back-fill legs' difference at return included; a fold moving a piece's charge onto its block in one update. Landed: the account read only in the `introspect` build's report, an open group charged at the largest a close measured, the first group not at all
+- [x] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — an observer's growth charged whenever it passes a step, a vector or map ahead of its growth, and a fold moving a piece's charge onto its block in one update; printed by every `parse` holding statistics as one status line with the total, the peak and each term's peak, a `query` printing none; reconciled against the `introspect` build's live heap over generated reasonable-width, wide-text and long distinct-text shapes, two-sided within a step an open observer plus the longest row; declining nothing; [notes](../design/roadmap-P20.1-statistics-account-notes.md)
 - [ ] **20.11** The cache file streamed at both ends: a save encodes into the file through a buffered writer and a load decodes through a buffered reader, the bytes written identical, so neither holds the serialized cache beside the statistics it carries; a save written beside the cache and renamed over it, a kill mid-save leaving the previous cache whole; the account's rustdoc no longer names either term
 - [ ] **20.2** Koji's row density: a gathering `parse` of koji on the shipped build tracking one narrow column per table, launched detached; a `scripts/` tool with its tests deriving each block's rows-per-group distribution at every `2^n` from `info --json`, over koji and the fixtures, into a `runs/` artifact; the median quantile checked against the spec's registered criterion
 - [ ] **20.3** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture
@@ -320,3 +320,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **An allocation the account charges ahead is judged made where the account
+  is short and not yet made where it is over.** 20.1's tolerance is two-sided
+  at every update, and the account charges a vector's or a map's growth before
+  allocating it; another piece's update can read the heap on either side of
+  that allocation, and a map's rehash keeps its new table live for as long as
+  it moves the entries. Judged as not yet made on both sides, the first split reading
+  was 12.1 MiB short past its allowance
+  (`runs/statistics-account-20260915/readings-step.txt`). Called that way
+  because an announcement claims the heap lies between the account less what
+  is announced and the account, one update at a time. Reconsidering means another reading of "two-sided"
+  for an allocation in flight, the instrument's `account_updated` the one
+  place it lives.

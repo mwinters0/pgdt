@@ -18,8 +18,7 @@
 
 use std::mem::size_of;
 use std::num::NonZeroU64;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -367,28 +366,45 @@ where
     Option::<Arc<BlockStatistics>>::deserialize(deserializer)
 }
 
+/// The most growth an observer holds uncharged: past it, the observer updates
+/// the pass's [`StatisticsAccount`] before it observes another row. A
+/// judgement setting only how often a wide observer updates.
+pub(crate) const CHARGE_STEP: u64 = 64 << 10;
+
 /// Every statistic a mapping pass holds alive, in bytes of heap, by term
 /// (`docs/design/decisions.md`, "D81").
 ///
 /// **An account, not a bound**: each term is the sizes the allocator was asked
 /// for, summed as the structures change — a finished block once, as it is
-/// retained or loaded; an observer still gathering at every column it closes a
-/// group on and every piece it folds in, a dictionary's interning map ahead of
-/// the table it grows into. Shared by every observer of one pass, the leader's
-/// pieces on the blocking pool included, so the terms are atomics and the
-/// account is read whole only by [`Self::held`].
+/// retained or loaded; an observer still gathering whenever its uncharged
+/// growth passes [`CHARGE_STEP`], at every column it closes a group on and
+/// through every piece it folds in; and a vector or an interning map ahead of
+/// the allocation it grows into. Shared by every observer of one pass, the
+/// leader's pieces on the blocking pool included, so it is one lock over its
+/// terms: an update, its peak and the instrument's check are read whole, and
+/// no reader sees another thread's update half applied.
 ///
-/// **What it does not see**, each bounded by a group rather than by the dump:
-/// an open group's growth past the largest a close of that column has
-/// measured — all of it, on a column's first group — and a row's own decode
-/// scratch while a column observes it. Nor does it hold a save's encode buffer
-/// or a load's file bytes, which carry statistics serialized for as long as
-/// the save or the load runs.
+/// **What it does not see** is bounded by an observer rather than by the dump:
+/// each open observer's growth until it passes [`CHARGE_STEP`], a row's own
+/// decode scratch while a column observes it, and the observer's own
+/// allocation. Nor does it hold a save's encode buffer or a load's file bytes,
+/// which carry statistics serialized for as long as the save or the load runs.
 #[derive(Debug, Default)]
 pub(crate) struct StatisticsAccount {
-    terms: [AtomicU64; TERMS],
-    term_peaks: [AtomicU64; TERMS],
-    peak: AtomicU64,
+    state: Mutex<AccountState>,
+}
+
+#[derive(Debug, Default)]
+struct AccountState {
+    terms: [u64; TERMS],
+    term_peaks: [u64; TERMS],
+    peak: u64,
+    /// What the terms carry for allocations charged ahead and not yet made
+    /// ([`Charge::ahead`]).
+    announced: u64,
+    /// Every [`Charge`] alive: the observers whose uncharged growth the
+    /// account may be short of.
+    observers: u64,
 }
 
 const TERMS: usize = 5;
@@ -408,33 +424,45 @@ impl StatisticsAccount {
     /// instrument's check read the account once all of them are in, so a
     /// charge moving from one term to another never reads as both or neither.
     pub(crate) fn apply(&self, changes: &[(Term, i64)]) {
+        self.update(changes, 0, 0);
+    }
+
+    /// [`Self::apply`], with `announced` moving what the terms carry for
+    /// allocations not yet made and `observers` the count of charges alive,
+    /// in the same update.
+    fn update(&self, changes: &[(Term, i64)], announced: i64, observers: i64) {
+        let mut state = self.lock();
         for &(term, delta) in changes {
-            if delta == 0 {
-                continue;
-            }
-            let now = self.terms[term as usize]
-                .fetch_add(delta as u64, Ordering::Relaxed)
-                .wrapping_add(delta as u64);
-            if delta > 0 {
-                self.term_peaks[term as usize].fetch_max(now, Ordering::Relaxed);
-            }
+            let term = term as usize;
+            state.terms[term] = state.terms[term].wrapping_add(delta as u64);
+            state.term_peaks[term] = state.term_peaks[term].max(state.terms[term]);
         }
-        let total = self.terms.iter().map(|t| t.load(Ordering::Relaxed)).sum::<u64>();
-        self.peak.fetch_max(total, Ordering::Relaxed);
-        instrument::statistics_account_updated(total);
+        state.announced = state.announced.wrapping_add(announced as u64);
+        // An observer closing is still open for its own update: what it has
+        // not freed yet is freed after.
+        let open = state.observers.max(state.observers.wrapping_add(observers as u64));
+        state.observers = state.observers.wrapping_add(observers as u64);
+        let total = state.terms.iter().sum::<u64>();
+        state.peak = state.peak.max(total);
+        let allowance = open * CHARGE_STEP;
+        instrument::statistics_account_updated(total, state.announced, allowance);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, AccountState> {
+        self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// What the account holds now, and the most it has held.
     pub(crate) fn held(&self) -> StatisticsHeld {
-        let read = |atomics: &[AtomicU64; TERMS]| {
-            let [retained, loaded, gathering, pieces, interned] =
-                atomics.each_ref().map(|a| a.load(Ordering::Relaxed));
+        let state = self.lock();
+        let read = |values: &[u64; TERMS]| {
+            let [retained, loaded, gathering, pieces, interned] = *values;
             StatisticsTerms { retained, loaded, gathering, pieces, interned }
         };
         StatisticsHeld {
-            now: read(&self.terms),
-            term_peaks: read(&self.term_peaks),
-            peak: self.peak.load(Ordering::Relaxed),
+            now: read(&state.terms),
+            term_peaks: read(&state.term_peaks),
+            peak: state.peak,
         }
     }
 }
@@ -454,6 +482,7 @@ pub(crate) struct Charge {
 
 impl Charge {
     pub(crate) fn new(account: Arc<StatisticsAccount>, term: Term) -> Self {
+        account.update(&[], 0, 1);
         Self { account, term, structure: 0, interned: 0 }
     }
 
@@ -478,11 +507,54 @@ impl Charge {
         self.account.apply(&changes);
     }
 
-    /// Move `delta` bytes onto [`Term::Interned`] between two [`Self::set`]s:
-    /// a table allocated, or freed, ahead of the observer's next update.
-    pub(crate) fn adjust_interned(&mut self, delta: i64) {
-        self.interned = self.interned.wrapping_add(delta as u64);
-        self.account.apply(&[(Term::Interned, delta)]);
+    /// **Charge `grows` — structure and interned bytes — ahead of the
+    /// allocation `allocate` makes, and release `frees` once it has freed
+    /// them**: a vector or a table grown while the smaller one is live, or
+    /// realloc'd, is charged before any other update can read the heap
+    /// holding it. Until the second update, the instrument's check reads the
+    /// allocation as made where it judges the account short and as not yet
+    /// made where it judges it over (`crate::instrument`).
+    pub(crate) fn ahead<R>(
+        &mut self,
+        grows: (u64, u64),
+        frees: (u64, u64),
+        allocate: impl FnOnce() -> R,
+    ) -> R {
+        let announced = (grows.0 + grows.1) as i64;
+        self.structure += grows.0;
+        self.interned += grows.1;
+        let changes = [(self.term, grows.0 as i64), (Term::Interned, grows.1 as i64)];
+        self.account.update(&changes, announced, 0);
+        let made = allocate();
+        self.structure -= frees.0;
+        self.interned -= frees.1;
+        let changes = [(self.term, -(frees.0 as i64)), (Term::Interned, -(frees.1 as i64))];
+        self.account.update(&changes, -announced, 0);
+        made
+    }
+
+    /// Take `other`'s charge onto this one's term in one update, leaving
+    /// `other` charging nothing: a piece whose structures its block is about
+    /// to hold.
+    pub(crate) fn take_over(&mut self, other: &mut Charge) {
+        let changes =
+            [(other.term, -(other.structure as i64)), (self.term, other.structure as i64)];
+        self.structure += other.structure;
+        self.interned += other.interned;
+        (other.structure, other.interned) = (0, 0);
+        self.account.apply(&changes);
+    }
+
+    /// Hand `held` — structure and interned bytes of what this charge carries
+    /// — back to `other` in one update: what is left of a folded piece, which
+    /// its own charge then releases as the piece is freed.
+    pub(crate) fn hand_back(&mut self, other: &mut Charge, held: (u64, u64)) {
+        let changes = [(self.term, -(held.0 as i64)), (other.term, held.0 as i64)];
+        self.structure -= held.0;
+        self.interned -= held.1;
+        other.structure += held.0;
+        other.interned += held.1;
+        self.account.apply(&changes);
     }
 
     /// Release this charge and credit `retained` bytes to [`Term::Retained`]
@@ -500,9 +572,9 @@ impl Charge {
 
 impl Drop for Charge {
     fn drop(&mut self) {
-        if self.structure != 0 || self.interned != 0 {
-            self.set(0, 0);
-        }
+        let changes =
+            [(self.term, -(self.structure as i64)), (Term::Interned, -(self.interned as i64))];
+        self.account.update(&changes, 0, -1);
     }
 }
 
@@ -515,8 +587,8 @@ pub struct StatisticsTerms {
     /// Blocks' statistics decoded from the cache the pass loaded, less any a
     /// back-fill has replaced.
     pub loaded: u64,
-    /// Every block observer still gathering: its closed groups, and each
-    /// column's open group at the largest a close has measured it.
+    /// Every block observer still gathering: its closed groups and its open
+    /// ones, and a piece it is folding in.
     pub gathering: u64,
     /// Every observer a parallel window made for a piece and has not folded
     /// into its block — a piece past the block's terminator until it is

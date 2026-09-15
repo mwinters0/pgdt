@@ -17,11 +17,12 @@
 //! place their last value against ([`RowOrder`]).
 //!
 //! **Every observer charges what it holds to the pass's
-//! [`StatisticsAccount`]** (`docs/design/decisions.md`, "D81"), recomputed as
-//! each column closes a group and as a piece is folded in: a block's observer
-//! as [`Term::Gathering`], a piece's as [`Term::Pieces`], each dictionary's
-//! interning map as [`Term::Interned`]. What is recomputed is O(1) a column
-//! but for the open group's distinct texts, which [`DICTIONARY_CAP`] bounds.
+//! [`StatisticsAccount`]** (`docs/design/decisions.md`, "D81"): a block's
+//! observer as [`Term::Gathering`], a piece's as [`Term::Pieces`], each
+//! dictionary's interning map as [`Term::Interned`]. What it holds is
+//! recomputed, O(1) a column, whenever its rows' growth passes
+//! [`CHARGE_STEP`], as each column closes a group and through a piece's fold;
+//! a vector or a map is charged ahead of the allocation growing it.
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -37,7 +38,7 @@ use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
-    BlockObserver, BlockStatistics, Bounds, Charge, ColumnBounds, ColumnDictionary,
+    BlockObserver, BlockStatistics, Bounds, CHARGE_STEP, Charge, ColumnBounds, ColumnDictionary,
     ColumnStatistics, DICTIONARY_CAP, RowGroup, STORED_VALUE_CAP, Sortedness, StatisticsAccount,
     StatisticsRequest, Term, text_heap, vec_heap,
 };
@@ -71,6 +72,9 @@ pub(crate) fn observer_tracking(
     account: &Arc<StatisticsAccount>,
 ) -> Box<dyn BlockObserver> {
     let _attributed = StatisticsScope::enter();
+    // Opened before anything the observer allocates, and charged once the
+    // resolution's scratch is freed, so neither update reads either as held.
+    let charge = Charge::new(Arc::clone(account), Term::Gathering);
     let qualified = header.qualified_name();
     let resolved =
         resolve_columns(&qualified, &header.columns, metadata, database, SchemaMode::Typed, &[]);
@@ -91,7 +95,7 @@ pub(crate) fn observer_tracking(
             })
         })
         .collect();
-    let charge = Charge::new(Arc::clone(account), Term::Gathering);
+    drop((resolved, qualified));
     let mut gatherer = Gatherer::block(group_size, columns, charge);
     gatherer.charge_held();
     Box::new(gatherer)
@@ -136,6 +140,12 @@ struct Gatherer {
     /// Whether any column is tracked, so a row is worth splitting.
     splits: bool,
     columns: Vec<Option<ColumnGatherer>>,
+    /// What the open groups have grown by since [`Self::charge_held`] last
+    /// ran, which it runs again once this passes [`CHARGE_STEP`].
+    uncharged: i64,
+    /// What a piece [`Self::join`] is folding in still holds, which this
+    /// observer's charge carries until the fold ends.
+    carried: (u64, u64),
     /// What this observer holds, in the pass's account. **Last**, so it is
     /// released after everything above is freed ([`Charge`]).
     charge: Charge,
@@ -151,6 +161,8 @@ impl Gatherer {
             open: None,
             splits: columns.iter().any(Option::is_some),
             columns,
+            uncharged: 0,
+            carried: (0, 0),
             charge,
         }
     }
@@ -165,15 +177,22 @@ impl Gatherer {
             .fold((own, 0), |(structure, interned), (s, i)| (structure + s, interned + i))
     }
 
-    /// Charge what this observer holds now to the account.
+    /// Charge what this observer holds now to the account, with what a piece
+    /// being folded in still holds.
     fn charge_held(&mut self) {
         let (structure, interned) = self.held();
-        self.charge.set(structure, interned);
+        self.charge.set(structure + self.carried.0, interned + self.carried.1);
+        self.uncharged = 0;
     }
 
     /// Close the open group, its last row's line ending at `end`, and list an
-    /// empty group for every index short of `next`.
+    /// empty group for every index short of `next`. **The rows' growth is
+    /// charged first**, since each column's close moves the charge by its own
+    /// difference alone.
     fn close_through(&mut self, end: u64, next: u64) {
+        if self.uncharged != 0 {
+            self.charge_held();
+        }
         let first = match self.open.take() {
             Some(group) => {
                 let after = group.index + 1;
@@ -192,7 +211,7 @@ impl Gatherer {
             None => 0,
         };
         for _ in first..next {
-            self.groups.push(RowGroup { rows: 0, bytes: 0 });
+            push_charged(&mut self.groups, RowGroup { rows: 0, bytes: 0 }, &mut self.charge);
             for column in self.columns.iter_mut().flatten() {
                 column.close_group(&mut self.charge);
             }
@@ -201,7 +220,8 @@ impl Gatherer {
     }
 
     fn push_closed(&mut self, group: OpenGroup, end: u64) {
-        self.groups.push(RowGroup { rows: group.rows, bytes: end - group.first_start });
+        let closed = RowGroup { rows: group.rows, bytes: end - group.first_start };
+        push_charged(&mut self.groups, closed, &mut self.charge);
         for column in self.columns.iter_mut().flatten() {
             column.close_group(&mut self.charge);
         }
@@ -213,19 +233,29 @@ impl Gatherer {
     /// the same index, and each ordered column steps from this observer's last
     /// value to the piece's first.
     ///
-    /// **The piece's charge is released after this observer's is raised**, so
-    /// the account never reads the moved groups as held by neither.
+    /// **The piece's charge moves onto this observer's in one update**, and
+    /// from there this observer charges what the piece still holds beside
+    /// what it holds itself, as each part moves across or is freed: the
+    /// account never reads the moved groups as held by neither or by both.
+    /// What is left of the piece goes back to its own charge in one update,
+    /// released as the piece is freed.
+    /// Pieces are folded with none of them gathering (`crate::leader`), so no
+    /// other observer updates the account while one is half moved.
     fn join(&mut self, mut later: Gatherer) {
-        let placeholder = Charge::new(Arc::clone(later.charge.account()), Term::Pieces);
-        let released = mem::replace(&mut later.charge, placeholder);
-        self.join_rows(later);
+        debug_assert!(!self.piece && later.piece, "a block observer joins its pieces");
+        later.charge_held();
+        self.charge.take_over(&mut later.charge);
+        self.carried = later.held();
         self.charge_held();
-        drop(released);
+        self.join_rows(&mut later);
+        self.charge.hand_back(&mut later.charge, mem::take(&mut self.carried));
+        drop(later);
+        self.charge_held();
     }
 
-    /// [`Self::join`] but for the account.
-    fn join_rows(&mut self, mut later: Gatherer) {
-        debug_assert!(!self.piece && later.piece, "a block observer joins its pieces");
+    /// [`Self::join`] but for moving the charge, draining `later` in place so
+    /// that what it has left is what [`Self::held`] reads of it.
+    fn join_rows(&mut self, later: &mut Gatherer) {
         let (first, first_end) = match (later.head.take(), later.open.take()) {
             (Some((group, end)), open) => {
                 later.open = open;
@@ -258,18 +288,27 @@ impl Gatherer {
                 mine.rows.absorb(mem::take(&mut theirs.rows));
             }
         }
+        self.carried = later.held();
+        self.charge_held();
         // The piece moved past its first group, so the group closes where the
         // piece's next row starts and the piece's own closed groups follow.
         let Some(end) = first_end else { return };
         let open = self.open.take().expect("the joined group is open");
         self.push_closed(open, end);
-        self.groups.append(&mut later.groups);
+        reserve_charged(&mut self.groups, later.groups.len(), &mut self.charge);
+        self.groups.extend_from_slice(&later.groups);
+        later.groups = Vec::new();
         self.open = later.open.take();
-        for (mine, theirs) in self.columns.iter_mut().zip(mem::take(&mut later.columns)) {
-            if let (Some(mine), Some(theirs)) = (mine, theirs) {
+        self.carried = later.held();
+        self.charge_held();
+        for at in 0..self.columns.len() {
+            let theirs = later.columns.get_mut(at).and_then(Option::as_mut);
+            if let (Some(mine), Some(theirs)) = (self.columns[at].as_mut(), theirs) {
                 mine.append(theirs, &mut self.charge);
             }
         }
+        self.carried = later.held();
+        self.charge_held();
     }
 }
 
@@ -302,8 +341,11 @@ impl BlockObserver for Gatherer {
         }
         for (field, column) in split_fields(raw).zip(self.columns.iter_mut()) {
             if let Some(column) = column {
-                column.observe(field);
+                self.uncharged += column.observe(field);
             }
+        }
+        if self.uncharged >= CHARGE_STEP as i64 {
+            self.charge_held();
         }
     }
 
@@ -357,10 +399,6 @@ struct ColumnGatherer {
     group: GroupState,
     /// The column over a piece's held first group ([`Gatherer::head`]).
     head: Option<GroupState>,
-    /// The most heap an open group of this column held when it closed: what
-    /// the account charges for the group still open, which it cannot measure
-    /// row by row.
-    open_peak: u64,
 }
 
 impl ColumnGatherer {
@@ -399,31 +437,31 @@ impl ColumnGatherer {
             dictionary,
             group,
             head: None,
-            open_peak: 0,
         }
     }
 
-    /// The heap this column holds, as its structure and its interning map.
-    /// The open group is charged at [`Self::open_peak`] or at what it holds
-    /// now, whichever is more, and a held head at what it holds.
+    /// The heap this column holds, as its structure and its interning map,
+    /// its open group and a held head included. O(1) but for a keyed bound's
+    /// key, which [`STORED_VALUE_CAP`] bounds.
     fn held(&self) -> (u64, u64) {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
-        let open = self.open_peak.max(self.group.heap_bytes());
         let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
-        let mut structure = named + vec_heap(&self.null_counts) + open + head;
+        let mut structure = named + vec_heap(&self.null_counts) + self.group.heap_bytes() + head;
         if let Some(bounds) = &self.bounds {
             structure += vec_heap(&bounds.groups) + bounds.stored + bounds.rows.heap_bytes();
         }
         let mut interned = 0;
         if let Some(dictionary) = &self.dictionary {
-            structure += vec_heap(&dictionary.entries)
-                + dictionary.entry_text
-                + vec_heap(&dictionary.groups)
-                + dictionary.indices;
-            interned =
-                map_heap::<String, u32>(dictionary.interned.capacity()) + dictionary.entry_text;
+            let (entries, map) = dictionary.held();
+            structure += entries;
+            interned = map;
         }
         (structure, interned)
+    }
+
+    /// The heap a row can change: the open group and the row order.
+    fn open_heap(&self) -> u64 {
+        self.group.heap_bytes() + self.bounds.as_ref().map_or(0, |b| b.rows.heap_bytes())
     }
 
     /// A column of this one's kind that has gathered nothing: what a piece
@@ -447,15 +485,20 @@ impl ColumnGatherer {
         self.head = Some(self.take_group());
     }
 
-    fn observe(&mut self, field: &[u8]) {
+    /// Observe one field, answering what the column's heap grew by.
+    fn observe(&mut self, field: &[u8]) -> i64 {
+        let before = self.open_heap();
         match decode_field(field) {
-            Ok(None) => self.group.nulls += 1,
+            Ok(None) => {
+                self.group.nulls += 1;
+                return 0;
+            }
             Ok(Some(text)) => {
                 if let (Some(bounds), Some(group)) = (&mut self.bounds, &mut self.group.bounds) {
                     bounds.observe(group, &text);
                 }
                 if let Some(dictionary) = &self.dictionary {
-                    dictionary.observe(&mut self.group.texts, &text);
+                    dictionary.observe(&mut self.group, &text);
                 }
             }
             // Not text at all, so neither a key nor an entry: the group can
@@ -464,9 +507,10 @@ impl ColumnGatherer {
                 if let (Some(bounds), Some(group)) = (&mut self.bounds, &mut self.group.bounds) {
                     bounds.lose_value(group);
                 }
-                self.group.texts = None;
+                self.group.lose_texts();
             }
         }
+        self.open_heap() as i64 - before as i64
     }
 
     /// Close the open group, and move what it changed onto `charge` before
@@ -478,11 +522,10 @@ impl ColumnGatherer {
     fn close_group(&mut self, charge: &mut Charge) {
         let before = self.held();
         let base = charge.charged();
-        self.open_peak = self.open_peak.max(self.group.heap_bytes());
         let group = self.take_group();
-        self.null_counts.push(group.nulls);
+        push_charged(&mut self.null_counts, group.nulls, charge);
         if let (Some(bounds), Some(group)) = (&mut self.bounds, group.bounds) {
-            bounds.close_group(group);
+            bounds.close_group(group, charge);
         }
         if let Some(dictionary) = &mut self.dictionary {
             dictionary.close_group(group.texts, charge);
@@ -492,18 +535,37 @@ impl ColumnGatherer {
     }
 
     /// Append `later`'s closed groups, which follow this column's, and take
-    /// its open group as this one's.
-    fn append(&mut self, later: ColumnGatherer, charge: &mut Charge) {
-        self.null_counts.extend(later.null_counts);
-        if let (Some(mine), Some(theirs)) = (&mut self.bounds, later.bounds) {
-            mine.groups.extend(theirs.groups);
-            mine.stored += theirs.stored;
+    /// its open group as this one's — **draining `later` in place**, and after
+    /// each part moves or is freed moving `charge` by the pair's difference,
+    /// so the account follows the piece's structures across rather than
+    /// releasing them all at the end.
+    fn append(&mut self, later: &mut ColumnGatherer, charge: &mut Charge) {
+        let pair = |mine: &Self, theirs: &Self| {
+            let ((a, b), (c, d)) = (mine.held(), theirs.held());
+            (a + c, b + d)
+        };
+        let before = pair(self, later);
+        let base = charge.charged();
+        let resync = |now: (u64, u64), charge: &mut Charge| {
+            charge.set(base.0 + now.0 - before.0, base.1 + now.1 - before.1);
+        };
+        reserve_charged(&mut self.null_counts, later.null_counts.len(), charge);
+        self.null_counts.extend_from_slice(&later.null_counts);
+        later.null_counts = Vec::new();
+        resync(pair(self, later), charge);
+        if let (Some(mine), Some(theirs)) = (&mut self.bounds, &mut later.bounds) {
+            reserve_charged(&mut mine.groups, theirs.groups.len(), charge);
+            mine.groups.append(&mut theirs.groups);
+            mine.stored += mem::take(&mut theirs.stored);
+            theirs.groups = Vec::new();
+            resync(pair(self, later), charge);
         }
-        self.open_peak = self.open_peak.max(later.open_peak);
-        if let (Some(mine), Some(theirs)) = (&mut self.dictionary, later.dictionary) {
+        let fresh = GroupState::fresh(later.bounds.as_ref());
+        self.group = mem::replace(&mut later.group, fresh);
+        if let (Some(mine), Some(theirs)) = (&mut self.dictionary, &mut later.dictionary) {
             mine.append(theirs, charge);
         }
-        self.group = later.group;
+        resync(pair(self, later), charge);
     }
 
     fn finish(self) -> ColumnStatistics {
@@ -526,20 +588,30 @@ struct GroupState {
     /// or at a field that is not text;
     /// read only for a column keeping a dictionary.
     texts: Option<Vec<String>>,
+    /// The heap `texts`' strings hold, summed as each is pushed.
+    text_bytes: u64,
 }
 
 impl GroupState {
     fn fresh(bounds: Option<&BoundsGatherer>) -> Self {
-        Self { nulls: 0, bounds: bounds.map(BoundsGatherer::fresh_group), texts: Some(Vec::new()) }
+        Self {
+            nulls: 0,
+            bounds: bounds.map(BoundsGatherer::fresh_group),
+            texts: Some(Vec::new()),
+            text_bytes: 0,
+        }
+    }
+
+    /// No distinct texts for this group: a cap passed, or a field not text.
+    fn lose_texts(&mut self) {
+        self.texts = None;
+        self.text_bytes = 0;
     }
 
     /// The heap this group's state holds: its distinct texts and its running
     /// bounds.
     fn heap_bytes(&self) -> u64 {
-        let texts = self
-            .texts
-            .as_ref()
-            .map_or(0, |texts| vec_heap(texts) + texts.iter().map(text_heap).sum::<u64>());
+        let texts = self.texts.as_ref().map_or(0, |texts| vec_heap(texts) + self.text_bytes);
         let bounds = match &self.bounds {
             None => 0,
             Some(GroupBounds::Bytewise { min, max, .. }) => {
@@ -563,7 +635,7 @@ impl GroupState {
             mine.absorb(theirs);
         }
         let Some(theirs) = later.texts else {
-            self.texts = None;
+            self.lose_texts();
             return;
         };
         let Some(mine) = &mut self.texts else { return };
@@ -572,9 +644,10 @@ impl GroupState {
                 continue;
             }
             if mine.len() == DICTIONARY_CAP {
-                self.texts = None;
+                self.lose_texts();
                 return;
             }
+            self.text_bytes += text_heap(&text);
             mine.push(text);
         }
     }
@@ -937,7 +1010,7 @@ impl BoundsGatherer {
         }
     }
 
-    fn close_group(&mut self, group: GroupBounds) {
+    fn close_group(&mut self, group: GroupBounds, charge: &mut Charge) {
         let bounds = match group {
             GroupBounds::Bytewise { lost: false, min: Some(min), max: Some(max) } => {
                 let Order::Bytewise(canonical) = self.order else { unreachable!() };
@@ -949,7 +1022,7 @@ impl BoundsGatherer {
             _ => None,
         };
         self.stored += bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max));
-        self.groups.push(bounds);
+        push_charged(&mut self.groups, bounds, charge);
     }
 
     fn finish(self) -> ColumnBounds {
@@ -1042,6 +1115,26 @@ fn bytea_upper(text: &str) -> Option<String> {
     Some(render_bytea(&bytes))
 }
 
+/// Make room in `vec` for `additional` more, **charging the growth ahead of
+/// the allocation** ([`Charge::ahead`]): at least doubling, as the vector's
+/// own growth would, but reserved exactly so the charge is the capacity.
+fn reserve_charged<T>(vec: &mut Vec<T>, additional: usize, charge: &mut Charge) {
+    let wanted = vec.len() + additional;
+    let capacity = vec.capacity();
+    if wanted <= capacity {
+        return;
+    }
+    let grown = wanted.max(capacity * 2).max(4);
+    let bytes = ((grown - capacity) * size_of::<T>()) as u64;
+    charge.ahead((bytes, 0), (0, 0), || vec.reserve_exact(grown - vec.len()));
+}
+
+/// Push `item` onto `vec`, charging a growth it forces ahead of it.
+fn push_charged<T>(vec: &mut Vec<T>, item: T, charge: &mut Charge) {
+    reserve_charged(vec, 1, charge);
+    vec.push(item);
+}
+
 /// The heap a `HashMap<K, V>` of `capacity` allocates, as the standard
 /// library's table lays one out: a slot per bucket, then a control byte per
 /// bucket and one probe group's worth past the end. The layout is the
@@ -1116,19 +1209,29 @@ impl DictionaryGatherer {
         }
     }
 
-    /// Add `text` to a group's distinct `texts`, which a cap passed leaves
+    /// The heap this dictionary holds, as its entries and index lists and as
+    /// its interning map.
+    fn held(&self) -> (u64, u64) {
+        let entries =
+            vec_heap(&self.entries) + self.entry_text + vec_heap(&self.groups) + self.indices;
+        (entries, map_heap::<String, u32>(self.interned.capacity()) + self.entry_text)
+    }
+
+    /// Add `text` to `group`'s distinct texts, which a cap passed leaves
     /// `None`.
-    fn observe(&self, texts: &mut Option<Vec<String>>, text: &str) {
-        let Some(group) = texts else { return };
+    fn observe(&self, group: &mut GroupState, text: &str) {
+        let Some(texts) = &mut group.texts else { return };
         let text = if self.padded { text.trim_end_matches(' ') } else { text };
-        if group.iter().any(|seen| seen == text) {
+        if texts.iter().any(|seen| seen == text) {
             return;
         }
-        if text.len() > STORED_VALUE_CAP || group.len() == DICTIONARY_CAP {
-            *texts = None;
+        if text.len() > STORED_VALUE_CAP || texts.len() == DICTIONARY_CAP {
+            group.lose_texts();
             return;
         }
-        group.push(text.to_owned());
+        let text = text.to_owned();
+        group.text_bytes += text_heap(&text);
+        texts.push(text);
     }
 
     /// **A map about to grow is charged its larger table before the insert
@@ -1141,15 +1244,15 @@ impl DictionaryGatherer {
             return id;
         }
         let id = self.entries.len() as u32;
-        self.entries.push(text.to_owned());
+        push_charged(&mut self.entries, text.to_owned(), charge);
         let capacity = self.interned.capacity();
-        let grows = self.interned.len() == capacity;
-        if grows {
-            charge.adjust_interned(grown_map_heap::<String, u32>(capacity) as i64);
-        }
-        self.interned.insert(text.to_owned(), id);
-        if grows {
-            charge.adjust_interned(-(map_heap::<String, u32>(capacity) as i64));
+        let key = text.to_owned();
+        if self.interned.len() == capacity {
+            let grown = grown_map_heap::<String, u32>(capacity);
+            let smaller = map_heap::<String, u32>(capacity);
+            charge.ahead((0, grown), (0, smaller), || self.interned.insert(key, id));
+        } else {
+            self.interned.insert(key, id);
         }
         self.entry_text += text.len() as u64;
         id
@@ -1159,20 +1262,39 @@ impl DictionaryGatherer {
         let indices: Option<Vec<u32>> =
             texts.map(|texts| texts.iter().map(|text| self.intern(text, charge)).collect());
         self.indices += indices.as_ref().map_or(0, vec_heap);
-        self.groups.push(indices);
+        push_charged(&mut self.groups, indices, charge);
     }
 
     /// Append `later`'s groups, which follow this dictionary's, interning
-    /// their entries here in the order a pass closing them would have.
-    fn append(&mut self, later: DictionaryGatherer, charge: &mut Charge) {
-        let DictionaryGatherer { entries, groups, .. } = later;
-        for group in groups {
-            let indices: Option<Vec<u32>> = group.map(|ids| {
-                ids.iter().map(|&id| self.intern(&entries[id as usize], charge)).collect()
+    /// their entries here in the order a pass closing them would have —
+    /// draining `later`'s index lists as they are re-interned, and moving
+    /// `charge` by the pair's difference whenever what this one gained passes
+    /// [`CHARGE_STEP`]. `later`'s entries and map stay until it is dropped.
+    fn append(&mut self, later: &mut DictionaryGatherer, charge: &mut Charge) {
+        let pair = |mine: &Self, theirs: &Self| {
+            let ((a, b), (c, d)) = (mine.held(), theirs.held());
+            (a + c, b + d)
+        };
+        let before = pair(self, later);
+        let base = charge.charged();
+        let mut synced = self.entry_text * 2 + self.indices;
+        for at in 0..later.groups.len() {
+            let indices: Option<Vec<u32>> = later.groups[at].take().map(|ids| {
+                later.indices -= vec_heap(&ids);
+                ids.iter().map(|&id| self.intern(&later.entries[id as usize], charge)).collect()
             });
             self.indices += indices.as_ref().map_or(0, vec_heap);
-            self.groups.push(indices);
+            push_charged(&mut self.groups, indices, charge);
+            let gained = self.entry_text * 2 + self.indices;
+            if gained - synced >= CHARGE_STEP {
+                let now = pair(self, later);
+                charge.set(base.0 + now.0 - before.0, base.1 + now.1 - before.1);
+                synced = gained;
+            }
         }
+        later.groups = Vec::new();
+        let now = pair(self, later);
+        charge.set(base.0 + now.0 - before.0, base.1 + now.1 - before.1);
     }
 
     fn finish(self) -> ColumnDictionary {
@@ -1239,6 +1361,7 @@ mod tests {
         let kinds =
             [CompareKind::Text, CompareKind::PaddedText, CompareKind::Bytea, CompareKind::Int];
         let (mut bounded, mut ordered) = (0usize, 0usize);
+        let mut charge = Charge::new(Arc::default(), Term::Gathering);
         for round in 0..400 {
             let kind = &kinds[round % kinds.len()];
             let mut gatherer = BoundsGatherer::new(kind.clone());
@@ -1270,7 +1393,7 @@ mod tests {
                 for v in &all {
                     gatherer.observe(&mut state, v);
                 }
-                gatherer.close_group(state);
+                gatherer.close_group(state, &mut charge);
                 let column = gatherer.finish();
                 assert_ne!(column.sortedness, Sortedness::Descending, "{kind:?}: sorted input");
                 continue;
@@ -1280,7 +1403,7 @@ mod tests {
                 for v in group {
                     gatherer.observe(&mut state, v);
                 }
-                gatherer.close_group(state);
+                gatherer.close_group(state, &mut charge);
             }
             let all: Vec<&String> = groups.iter().flatten().collect();
             let column = gatherer.finish();
@@ -1527,6 +1650,30 @@ mod tests {
             } else {
                 assert_eq!(map.capacity(), capacity, "a map grew before it was full");
             }
+        }
+        assert!(growths > 10, "only {growths} growths");
+    }
+
+    /// **A vector pushed or extended through [`push_charged`] and
+    /// [`reserve_charged`] grows into exactly the capacity it was charged**,
+    /// the charge ahead of each growth being the capacity after it
+    /// (`docs/design/runtime-invariants.md`, "RT12").
+    #[test]
+    fn a_vector_grows_into_the_capacity_it_is_charged() {
+        let mut charge = Charge::new(Arc::default(), Term::Gathering);
+        let (mut groups, mut bounds): (Vec<RowGroup>, Vec<Option<Bounds>>) = (vec![], vec![]);
+        let mut growths = 0;
+        for i in 0..100_000u64 {
+            let before = groups.capacity();
+            if i % 7 == 0 {
+                reserve_charged(&mut groups, (i % 13) as usize, &mut charge);
+                groups.extend((0..i % 13).map(|rows| RowGroup { rows, bytes: 0 }));
+            } else {
+                push_charged(&mut groups, RowGroup { rows: i, bytes: i }, &mut charge);
+            }
+            push_charged(&mut bounds, None, &mut charge);
+            growths += usize::from(groups.capacity() != before);
+            assert_eq!(charge.charged().0, vec_heap(&groups) + vec_heap(&bounds), "push {i}");
         }
         assert!(growths > 10, "only {growths} growths");
     }

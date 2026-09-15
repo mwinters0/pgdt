@@ -37,7 +37,9 @@ use crate::diagnostic::Diagnostic;
 use crate::index::{
     DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
+use crate::instrument::StatisticsScope;
 use crate::io::{ByteRangeSource, KnownCompression};
+use crate::map::{DataBlock, SpanBody};
 use crate::{Error, Result};
 
 /// **Bump whenever a persisted field is added, removed or reshaped.** A cache
@@ -403,6 +405,10 @@ pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
     // One variant today; a future one is matched through the variant rather
     // than a shared accessor — see [`SourceIdentity`].
     let SourceIdentity::LocalFile { stored_size, .. } = file.identity;
+    // The index is decoded only to be dropped, its statistics freed as they
+    // were decoded: inside a statistics scope (`crate::instrument`).
+    let CacheFile { compression, index, .. } = file;
+    drop_attributed(index);
     // A dump path that cannot be stat'd is left to the open that follows,
     // which is where that failure has a sentence to say.
     let Ok(live) = std::fs::metadata(dump_path) else {
@@ -414,10 +420,21 @@ pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
             live_stored_size: live.len(),
         });
     }
-    Ok(CacheClaim::Compression(match file.compression {
+    Ok(CacheClaim::Compression(match compression {
         Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table),
         None => KnownCompression::Plain,
     }))
+}
+
+/// Drop `index`, each block's statistics — the `Arc` sharing them included —
+/// inside a statistics scope, as their decode was attributed.
+fn drop_attributed(mut index: DumpIndex) {
+    let _attributed = StatisticsScope::enter();
+    for span in &mut index.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+            block.statistics = None;
+        }
+    }
 }
 
 /// Load a cache from `path` with no live source to check it against — the

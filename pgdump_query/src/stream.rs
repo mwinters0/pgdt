@@ -1025,13 +1025,14 @@ pub async fn map_file(
         .await?
         == MapStop::Interrupted
     {
+        let statistics = announce_statistics_held(&account);
         return Ok(MapRun {
             index,
             resumed_from,
             interrupted: true,
             lacking_statistics: 0,
             backfilled: 0,
-            statistics: account.held(),
+            statistics,
         });
     }
 
@@ -1052,8 +1053,31 @@ pub async fn map_file(
         interrupted: backfill.interrupted,
         lacking_statistics: backfill.lacking,
         backfilled: backfill.reread,
-        statistics: account.held(),
+        statistics: announce_statistics_held(&account),
     })
+}
+
+/// Read `account` whole as a pass returns, and say what it held on the status
+/// output — the total now, the peak and each term's own peak — unless it
+/// never held anything: a pass that gathered, loaded or back-filled no
+/// statistic prints nothing (`docs/manual/dump-inspection.md`, "`--statistics`:
+/// what `parse` records for later queries").
+fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
+    let held = account.held();
+    if held.peak > 0 {
+        let peaks = held.term_peaks;
+        tracing::info!(
+            bytes = held.now.total(),
+            peak_bytes = held.peak,
+            retained_peak_bytes = peaks.retained,
+            loaded_peak_bytes = peaks.loaded,
+            gathering_peak_bytes = peaks.gathering,
+            pieces_peak_bytes = peaks.pieces,
+            interned_peak_bytes = peaks.interned,
+            "statistics held",
+        );
+    }
+    held
 }
 
 /// The heap every block's statistics in `index` hold
@@ -1268,6 +1292,9 @@ async fn reread_block(
             header_offset: block.header_offset,
         });
     }
+    // The observer's own allocation is freed as `finish` returns, attributed
+    // as it was allocated (`crate::instrument`).
+    let _attributed = StatisticsScope::enter();
     Ok(Some(observer.finish(block.terminator_offset - block.data_offset)))
 }
 

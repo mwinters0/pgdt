@@ -13,7 +13,7 @@ surfaces as a process that sized itself wrongly rather than as an error — an O
 kill under an orchestrator, or a scan that took a fifth of the machine it was
 given. The trigger to walk this file is therefore four-sided, and each side has
 its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
-toolchain bump** (`RT7` and `RT11`, whose behaviour is `std`'s), and a **glibc
+toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), and a **glibc
 release** — the host's or the figures' image's (`RT10` only).
 
 **It is named for the runtime environment rather than for Linux or for
@@ -32,7 +32,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md), "The
 seekable-xz crate reads its compressed bytes through a trait, on purpose").
 
-**`RT1`–`RT11` are allocated**, and nothing at or below `RT11` is reused.
+**`RT1`–`RT12` are allocated**, and nothing at or below `RT12` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -725,3 +725,39 @@ cargo test -p pgdump_query-cli --features introspect --test statistics_account -
 The first names the version whose `src/raw.rs` the proof reads; the second holds
 the capacities to the growth rule; the third holds the bytes to what the
 allocator was asked for.
+
+## RT12 — `Vec::reserve_exact` leaves the capacity it was asked for, grown by one `realloc`
+
+**Claim.** On a `Vec<T>` of nonzero-sized `T` whose capacity is below
+`len + additional`, `reserve_exact(additional)` leaves `capacity()` exactly
+`len + additional`, reached by one `realloc` of the old allocation to the new
+size — one allocation of it where the vector held none. It never rounds the
+capacity up to what the allocator returned.
+
+**Proof.** `library/alloc/src/raw_vec/mod.rs`: `grow_exact` computes
+`cap = len + additional`, `finish_grow` asks the allocator to `grow` the current
+memory to `layout_array(cap)` (or to `allocate` it when there is none), and
+`set_ptr_and_cap` stores `cap` itself, not the returned slice's length.
+`library/alloc/src/alloc.rs`: `Global::grow` reaches `realloc` for a nonzero old
+size.
+
+**Scope limit.** Nothing is claimed of `reserve`, `push` or `extend` growing a
+vector by themselves, whose amortized capacities are the toolchain's choice, nor
+of any allocator's own rounding: the sizes are what `GlobalAlloc` is asked for.
+
+**Verified against:** Rust 1.98.0 (source read; observed through the instrument
+build, `pgdump_query-cli/tests/statistics_account.rs`).
+
+**Relied on by:** [`decisions.md`](decisions.md), "D81" — a vector charged
+ahead of its growth, `gather::reserve_charged` and `gather::push_charged`.
+
+**Re-verify:**
+
+```sh
+grep -n -A20 'fn grow_exact' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs"
+cargo test -p pgdump_query --lib a_vector_grows_into_the_capacity_it_is_charged
+cargo test -p pgdump_query-cli --features introspect --test statistics_account --target-dir <own>
+```
+
+The first shows the capacity stored; the second holds the capacities to the
+charge; the third holds the bytes to what the allocator was asked for.

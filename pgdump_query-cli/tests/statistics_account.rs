@@ -10,21 +10,33 @@
 //!     --target-dir <own> -- --nocapture
 //! ```
 //!
-//! Two generated shapes — a table of reasonable width and one of wide text —
-//! each through four `parse` legs: serial at a stated group size small enough
-//! to gather thousands of groups, split across four workers, a re-parse at
-//! half that size that loads the first leg's cache and back-fills every
+//! Three generated shapes. A table of reasonable width and one of wide text
+//! each go through four `parse` legs: serial at a stated group size small
+//! enough to gather thousands of groups, split across four workers, a re-parse
+//! at half that size that loads the first leg's cache and back-fills every
 //! block, and flagless. Half rather than twice: a group twice as wide holds
 //! more distinct texts than a dictionary keeps, and a leg gathering almost
-//! nothing judges nothing. Each leg's report is held to the tolerance
-//! registered before the first reading:
+//! nothing judges nothing. The third, sixty-four text columns of distinct
+//! values at least `STORED_VALUE_CAP` long, goes through a flagless leg alone:
+//! a group of about sixty rows grows each column's open group by a stored
+//! value a row, towards the most a column holds open, so an observer passes a
+//! step every few rows. Each leg's report is held to the tolerance registered
+//! before the first reading, **in bytes and either way, with no proportional
+//! slack** — `S` being `CHARGE_STEP`, the most growth an observer holds
+//! uncharged, and `R` the input's longest row, the most a column's decode holds
+//! beside it:
 //!
-//! - **at return**, the account and the live statistics bytes agree within
-//!   [`RETURN_PER_MILLE`] of live plus [`RETURN_FLOOR`], either way;
-//! - **at every update of the account**, it is short of live by no more than
-//!   `STATISTICS_SLACK_PER_MILLE` of live plus [`UPDATE_FLOOR`];
-//! - **at the peak**, the account's is short of live's by no more than the
-//!   same.
+//! - **at every update of the account**, it differs from the live statistics
+//!   bytes by no more than `S` for each observer open then, plus `R` — the
+//!   report's `statistics_worst_*_past_allowance_bytes`, the allowance being
+//!   `S` for each observer;
+//! - **at the peak**, the account's differs from live's by no more than the
+//!   largest allowance any update was given, plus `R`;
+//! - **at return**, with no observer open, by no more than `R`.
+//!
+//! An allocation the account charges ahead of making it counts as made when
+//! the account is judged short and as not yet made when it is judged over
+//! (`pgdump_query::instrument`).
 //!
 //! The per-leg readings are printed, for a sitting's `runs/` artifact.
 #![cfg(feature = "introspect")]
@@ -37,16 +49,9 @@ use std::path::{Path, PathBuf};
 mod common;
 use common::{pgdq, stderr_of};
 
-/// The proportional half of the agreement at return, per mille of live.
-const RETURN_PER_MILLE: u64 = 10;
-/// The fixed half of the agreement at return.
-const RETURN_FLOOR: u64 = 64 << 10;
-/// The fixed half of the shortfall allowed at an update and at the peak.
-const UPDATE_FLOOR: u64 = 1 << 20;
 /// The least live statistics a leg at a stated group size must end holding,
-/// so that the proportional tolerances are what it is judged by. A flagless
-/// leg gathers too few groups of either shape to meet it, and is judged by
-/// the floors.
+/// so that it judges a pass that gathered. A flagless leg gathers too few
+/// groups to meet it.
 const MEANINGFUL: u64 = 8 << 20;
 
 /// Each generated input's size.
@@ -104,13 +109,13 @@ fn words(rng: &mut Rng, count: u64) -> String {
 }
 
 /// A dump of one table, `columns` declared as given, rows from `row` until
-/// the data passes [`INPUT_BYTES`].
+/// the data passes [`INPUT_BYTES`]; answers its longest row, in bytes.
 fn write_dump(
     path: &Path,
     table: &str,
     columns: &[(String, &str)],
     mut row: impl FnMut(&mut Rng, u64) -> String,
-) {
+) -> u64 {
     let mut text = String::new();
     let declared: Vec<String> = columns.iter().map(|(n, t)| format!("    {n} {t}")).collect();
     writeln!(text, "CREATE TABLE {table} (\n{}\n);\n", declared.join(",\n")).unwrap();
@@ -118,19 +123,22 @@ fn write_dump(
     writeln!(text, "COPY {table} ({}) FROM stdin;", names.join(", ")).unwrap();
     let mut rng = Rng(0x0574_7157_11c5);
     let start = text.len();
-    let mut id = 0;
+    let (mut id, mut longest) = (0, 0);
     while text.len() - start < INPUT_BYTES {
         id += 1;
-        text.push_str(&row(&mut rng, id));
+        let line = row(&mut rng, id);
+        longest = longest.max(line.len() as u64);
+        text.push_str(&line);
         text.push('\n');
     }
     text.push_str("\\.\n\n");
     std::fs::File::create(path).unwrap().write_all(text.as_bytes()).unwrap();
+    longest
 }
 
 /// Rows of reasonable width: eight columns of the common kinds, a short text
 /// from a small pool, a SKU from a larger one and a note of a few words.
-fn reasonable(path: &Path) {
+fn reasonable(path: &Path) -> u64 {
     let columns = [
         ("id", "bigint"),
         ("customer", "integer"),
@@ -161,12 +169,12 @@ fn reasonable(path: &Path) {
             note,
             if rng.below(2) == 0 { "t" } else { "f" },
         )
-    });
+    })
 }
 
 /// Rows of wide text: sixty-four text columns, each drawing one of its own
 /// forty-eight phrases, so a group's dictionary on every column holds.
-fn wide_text(path: &Path) {
+fn wide_text(path: &Path) -> u64 {
     const COLUMNS: usize = 64;
     let mut pools = Rng(0x7ea7);
     let phrases: Vec<Vec<String>> = (0..COLUMNS)
@@ -179,7 +187,31 @@ fn wide_text(path: &Path) {
             .map(|pool| pool[rng.below(pool.len() as u64) as usize].as_str())
             .collect();
         fields.join("\t")
-    });
+    })
+}
+
+/// Rows of long distinct text: sixty-four text columns whose values are each
+/// `STORED_VALUE_CAP` bytes long and never repeat, but for one in sixty-four a
+/// byte longer — so a group's distinct texts grow row by row to the most a
+/// dictionary keeps before one passes a cap.
+fn long_text(path: &Path) -> u64 {
+    const COLUMNS: usize = 64;
+    const STORED_VALUE_CAP: usize = 256;
+    let columns: Vec<(String, &str)> = (0..COLUMNS).map(|c| (format!("l{c}"), "text")).collect();
+    write_dump(path, "public.long", &columns, |rng, id| {
+        let fields: Vec<String> = (0..COLUMNS)
+            .map(|c| {
+                let length = STORED_VALUE_CAP + usize::from(rng.below(64) == 0);
+                let mut value = format!("{id}-{c}-{} ", rng.next());
+                while value.len() < length {
+                    value.push_str(WORDS[rng.below(WORDS.len() as u64) as usize]);
+                }
+                value.truncate(length);
+                value
+            })
+            .collect();
+        fields.join("\t")
+    })
 }
 
 /// `pgdq parse` over `dump` with `extra`, and the report it wrote.
@@ -197,21 +229,24 @@ fn parse(dump: &Path, report: &Path, extra: &[&str]) -> HashMap<String, u64> {
         .collect()
 }
 
-/// Hold one leg's report to the registered tolerance, and say what it read.
-fn reconcile(label: &str, report: &HashMap<String, u64>, stated: bool) -> String {
+/// Hold one leg's report to the registered tolerance, `longest` being the
+/// input's longest row, and say what it read.
+fn reconcile(label: &str, report: &HashMap<String, u64>, stated: bool, longest: u64) -> String {
     let get = |key: &str| *report.get(key).unwrap_or_else(|| panic!("{label}: no {key}"));
     let (account, live) = (get("statistics_account_bytes"), get("statistics_live_bytes"));
     let (account_peak, live_peak) =
         (get("statistics_account_peak_bytes"), get("statistics_live_peak_bytes"));
-    let slack = get("statistics_slack_per_mille");
+    let allowance = get("statistics_allowance_peak_bytes");
     let line = format!(
         "{label}: at return account={account} live={live}; peak account={account_peak} \
-         live={live_peak}; checks={}; worst shortfall={} at live={}, past slack={}; \
-         term peaks retained={} loaded={} gathering={} pieces={} interned={}",
+         live={live_peak}; checks={}; allowance peak={allowance}; longest row={longest}; \
+         worst short={} past allowance={}; worst over={} past allowance={}; term peaks retained={} \
+         loaded={} gathering={} pieces={} interned={}",
         get("statistics_checks"),
-        get("statistics_worst_shortfall_bytes"),
-        get("statistics_worst_shortfall_live_bytes"),
-        get("statistics_worst_shortfall_past_slack_bytes"),
+        get("statistics_worst_short_bytes"),
+        get("statistics_worst_short_past_allowance_bytes"),
+        get("statistics_worst_over_bytes"),
+        get("statistics_worst_over_past_allowance_bytes"),
         get("statistics_account_retained_peak_bytes"),
         get("statistics_account_loaded_peak_bytes"),
         get("statistics_account_gathering_peak_bytes"),
@@ -220,21 +255,24 @@ fn reconcile(label: &str, report: &HashMap<String, u64>, stated: bool) -> String
     );
     assert!(!stated || live >= MEANINGFUL, "{line}\n{label}: too little gathered to judge");
     assert!(get("statistics_checks") > 0, "{line}");
-    let at_return = live * RETURN_PER_MILLE / 1000 + RETURN_FLOOR;
-    assert!(account.abs_diff(live) <= at_return, "{line}\n{label}: disagree at return");
     assert!(
-        get("statistics_worst_shortfall_past_slack_bytes") <= UPDATE_FLOOR,
+        get("statistics_worst_short_past_allowance_bytes") <= longest,
         "{line}\n{label}: short at an update"
     );
-    let at_peak = live_peak * slack / 1000 + UPDATE_FLOOR;
-    assert!(live_peak.saturating_sub(account_peak) <= at_peak, "{line}\n{label}: short at peak");
+    assert!(
+        get("statistics_worst_over_past_allowance_bytes") <= longest,
+        "{line}\n{label}: over at an update"
+    );
+    let at_peak = allowance + longest;
+    assert!(account_peak.abs_diff(live_peak) <= at_peak, "{line}\n{label}: disagree at peak");
+    assert!(account.abs_diff(live) <= longest, "{line}\n{label}: disagree at return");
     eprintln!("{line}");
     line
 }
 
 /// A generated shape: its name, its generator, the group size its first legs
 /// state and the size its back-fill states.
-type Shape = (&'static str, fn(&Path), &'static str, &'static str);
+type Shape = (&'static str, fn(&Path) -> u64, &'static str, &'static str);
 
 /// A private copy of `source` named `name` in `dir`, so each leg writes its
 /// own cache beside it.
@@ -244,8 +282,8 @@ fn copy(dir: &Path, source: &Path, name: &str) -> PathBuf {
     path
 }
 
-/// **The account never falls short of the live statistics bytes past the
-/// registered tolerance**, over both shapes and all four legs.
+/// **The account agrees with the live statistics bytes within the registered
+/// tolerance**, over every shape and leg.
 #[test]
 fn the_account_reconciles_with_the_live_statistics_heap() {
     let dir = tempfile::tempdir().unwrap();
@@ -255,11 +293,11 @@ fn the_account_reconciles_with_the_live_statistics_heap() {
         [("reasonable", reasonable, "4096", "2048"), ("wide-text", wide_text, "16384", "8192")];
     for (shape, generate, size, refill_size) in shapes {
         let input = dir.path().join(format!("{shape}.sql"));
-        generate(&input);
+        let longest = generate(&input);
 
         let serial = copy(dir.path(), &input, &format!("{shape}-serial.sql"));
         let read = parse(&serial, &report, &["--statistics-group-size", size, "--jobs", "1"]);
-        lines.push(reconcile(&format!("{shape} serial"), &read, true));
+        lines.push(reconcile(&format!("{shape} serial"), &read, true, longest));
 
         let split = copy(dir.path(), &input, &format!("{shape}-split.sql"));
         let workers = [
@@ -274,20 +312,24 @@ fn the_account_reconciles_with_the_live_statistics_heap() {
         ];
         let read = parse(&split, &report, &workers);
         assert!(read["statistics_account_pieces_peak_bytes"] > 0, "{shape}: nothing split");
-        lines.push(reconcile(&format!("{shape} split"), &read, true));
+        lines.push(reconcile(&format!("{shape} split"), &read, true, longest));
 
         let refill = ["--statistics-group-size", refill_size, "--jobs", "1"];
         let read = parse(&serial, &report, &refill);
         assert!(read["statistics_account_loaded_peak_bytes"] > 0, "{shape}: nothing loaded");
-        lines.push(reconcile(&format!("{shape} back-fill"), &read, true));
+        lines.push(reconcile(&format!("{shape} back-fill"), &read, true, longest));
 
         let flagless = copy(dir.path(), &input, &format!("{shape}-flagless.sql"));
         let read = parse(&flagless, &report, &[]);
-        lines.push(reconcile(&format!("{shape} flagless"), &read, false));
+        lines.push(reconcile(&format!("{shape} flagless"), &read, false, longest));
 
-        for name in ["serial", "split", "flagless"] {
-            let _ = std::fs::remove_file(dir.path().join(format!("{shape}-{name}.sql")));
+        for name in ["", "-serial", "-split", "-flagless"] {
+            let _ = std::fs::remove_file(dir.path().join(format!("{shape}{name}.sql")));
         }
     }
-    assert_eq!(lines.len(), 8);
+    let input = dir.path().join("long-text.sql");
+    let longest = long_text(&input);
+    let read = parse(&input, &report, &[]);
+    lines.push(reconcile("long-text flagless", &read, false, longest));
+    assert_eq!(lines.len(), 9);
 }

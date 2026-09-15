@@ -306,6 +306,48 @@ fn a_backfilling_parse_counts_the_blocks_it_rereads() {
     assert_ne!(stdout, stdout_again);
 }
 
+/// **A `parse` says what its statistics held, in one status line as it
+/// returns**: the total then, the peak and each term's peak, the terms
+/// telling a gathered pass from a loaded one. A `parse` holding none — nothing
+/// gathered and none cached — prints no such line, and neither does a `query`.
+#[test]
+fn a_parse_says_what_its_statistics_held() {
+    let (_dir, dump) = sandboxed(DUMP, "statistics.sql");
+    let source = dump.to_str().unwrap();
+    let held = |args: &[&str]| -> Vec<String> {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        let stderr = stderr_of(&out);
+        stderr.lines().filter(|l| l.contains(" statistics held ")).map(str::to_owned).collect()
+    };
+    let field = |line: &str, key: &str| -> u64 {
+        let key = format!("{key}=");
+        let value = line.split_whitespace().find_map(|word| word.strip_prefix(key.as_str()));
+        value.unwrap_or_else(|| panic!("{line}: no {key}")).parse().unwrap()
+    };
+
+    assert_eq!(held(&["parse", "--source", source, "--statistics", "none"]), Vec::<String>::new());
+
+    let gathered = held(&["parse", "--source", source]);
+    let [line] = gathered.as_slice() else { panic!("{gathered:?}") };
+    let (bytes, peak) = (field(line, "bytes"), field(line, "peak_bytes"));
+    assert!(bytes > 0 && peak >= bytes, "{line}");
+    assert_eq!(field(line, "retained_peak_bytes"), bytes, "{line}");
+    assert_eq!(field(line, "loaded_peak_bytes"), 0, "{line}: the cache held none");
+    assert!(field(line, "gathering_peak_bytes") > 0, "{line}");
+    for term in ["gathering", "pieces", "interned"] {
+        assert!(field(line, &format!("{term}_peak_bytes")) <= peak, "{line}");
+    }
+
+    let loaded = held(&["parse", "--source", source]);
+    let [line] = loaded.as_slice() else { panic!("{loaded:?}") };
+    assert_eq!(field(line, "loaded_peak_bytes"), field(line, "bytes"), "{line}");
+    assert_eq!(field(line, "gathering_peak_bytes"), 0, "{line}: nothing lacked statistics");
+
+    let queried = held(&["query", "--source", source, "--table", "public.ordered"]);
+    assert_eq!(queried, Vec::<String>::new());
+}
+
 #[test]
 fn contradictory_or_empty_statistics_flags_are_refused() {
     let (_dir, dump) = sandboxed(DUMP, "refused.sql");

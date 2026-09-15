@@ -32,8 +32,8 @@
 //! * **`statistics_*`** — where a `parse` ran: the library's statistics
 //!   account as the pass returned it, beside the live bytes the counter
 //!   attributed to statistics (`pgdump_query::instrument`) at the same moment,
-//!   their peaks, and the worst shortfall any update of the account read
-//!   (`docs/design/decisions.md`, "D81").
+//!   their peaks, and the worst difference either way any update of the
+//!   account read (`docs/design/decisions.md`, "D81").
 //!
 //! **The two families do not cover the same memory**, so the report labels
 //! each: `live_scope` and `glibc_scope`, with the note between them. The
@@ -180,18 +180,16 @@ mod enabled {
         out.push_str(&format!("statistics_live_bytes={}\n", reading.live));
         out.push_str(&format!("statistics_live_peak_bytes={}\n", reading.live_peak));
         out.push_str(&format!("statistics_checks={}\n", reading.checks));
-        out.push_str(&format!("statistics_worst_shortfall_bytes={}\n", reading.shortfall));
+        out.push_str(&format!("statistics_allowance_peak_bytes={}\n", reading.allowance_peak));
+        out.push_str(&format!("statistics_worst_short_bytes={}\n", reading.short));
         out.push_str(&format!(
-            "statistics_worst_shortfall_live_bytes={}\n",
-            reading.shortfall_live
+            "statistics_worst_short_past_allowance_bytes={}\n",
+            reading.short_past_allowance
         ));
+        out.push_str(&format!("statistics_worst_over_bytes={}\n", reading.over));
         out.push_str(&format!(
-            "statistics_slack_per_mille={}\n",
-            pgdump_query::instrument::STATISTICS_SLACK_PER_MILLE
-        ));
-        out.push_str(&format!(
-            "statistics_worst_shortfall_past_slack_bytes={}\n",
-            reading.shortfall_past_slack
+            "statistics_worst_over_past_allowance_bytes={}\n",
+            reading.over_past_allowance
         ));
     }
 

@@ -271,6 +271,33 @@ gathered at 65536 re-reads nothing. It prints its count to stderr:
 2026-07-23T15:10:09.570016894Z  INFO statistics back-fill complete blocks=12
 ```
 
+**`parse` says how much memory the statistics held**, in one line on stderr
+as it finishes, whether it gathered them, re-read them or only loaded them from
+the cache:
+
+```
+2026-07-23T15:10:09.570412108Z  INFO statistics held bytes=121335995 peak_bytes=407126070 retained_peak_bytes=121335995 loaded_peak_bytes=126535120 gathering_peak_bytes=121346806 pieces_peak_bytes=0 interned_peak_bytes=160449920
+```
+
+`bytes=` is what the statistics held when `parse` finished and `peak_bytes=`
+the most they held at once, counted as the sizes pgdq asked the allocator for
+— the statistics alone, not everything the process holds. The rest are the
+parts of it, each giving its own peak, reached at its own moment, so they do not
+add up to `peak_bytes=`:
+
+- `retained_peak_bytes=` — statistics gathered by this run, kept until it
+  exits;
+- `loaded_peak_bytes=` — statistics read from the cache;
+- `gathering_peak_bytes=` — a table's statistics while its data is still being
+  read;
+- `pieces_peak_bytes=` — what the workers `--jobs` asks for gather from their
+  stretches of a table before those are joined into the table's;
+- `interned_peak_bytes=` — a second copy of each distinct value, kept while a
+  table is read and let go when its data ends.
+
+A `parse` with no statistics to hold — `--statistics none` over a cache holding
+none — prints no such line, and `query` never prints one.
+
 A file rewritten in place at the same size since it was scanned is refused
 here, with a message naming the block and the cache file, if a re-read table's
 data no longer ends where the cache says it does: delete that cache and parse
@@ -676,7 +703,9 @@ A query's mapping pass may print `scan complete` at the offset it stopped
 rather than the file's end, once its target table is settled (`reached_eof=false`). Running `parse` against a file
 that is already fully cached is not a scan and prints neither pass, matching
 "costs nothing and says so" above; one re-reading blocks for statistics they
-lack prints the two `statistics back-fill` lines shown under "`--statistics`".
+lack prints the two `statistics back-fill` lines shown under "`--statistics`",
+and one holding statistics at all ends on the `statistics held` line described
+there.
 
 **These times are diagnostics, never figures.** This project admits a
 performance number only as a measurement taken under its own stated apparatus

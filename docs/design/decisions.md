@@ -418,13 +418,13 @@ and never reached; exact bytes when split, read past each piece's limit. Reopens
 exact bytes, which each piece reporting its first row's start would give. Code: `stream::EarlyStop`.
 
 ### D81 The statistics account sums allocation sizes as they change; an instrument scope checks it
-Each term is what the allocator was asked for — capacity, a map's table layout (RT11) — summed as it
-changes: a block once, retained or loaded; an observer at each column's close and each fold; a map
-before the insert that grows it, since charging a close's growth after the close missed its rehash.
-Rejected: a per-group bound, declining on bytes never held; walking every block at an update; a
-header tagging each allocation, moving the glibc view the instrument build reports; two runs' peaks.
-Reopens: a leg past `statistics_account.rs`'s registered tolerance; an unseen term growing with the
-dump. Code: `statistics::StatisticsAccount`, `instrument`. Evidence: it and `statistics_heap.rs`.
+Each term is what the allocator was asked for — capacity, a map's table layout (RT11, RT12) — summed
+under one lock: a block once; an observer whenever its growth passes `CHARGE_STEP`, at each column's
+close and through a fold carrying its piece's charge; a vector or a map ahead of its growth.
+Rejected: a per-group bound, declining on bytes never held; an open group at the most a close
+measured, blind to a first group; growth charged after it; atomic terms, read half applied; walking
+every block at an update; a header tagging each allocation; proportional slack. Reopens: a leg past
+`statistics_account.rs`'s tolerance; an unseen term growing with the dump. Code: `statistics::Charge`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans
