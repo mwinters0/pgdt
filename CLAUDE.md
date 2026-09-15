@@ -12,7 +12,7 @@ decisions the code cannot explain, nothing more.
 cargo check --workspace && cargo test --workspace && cargo clippy --workspace
 cargo fmt --check                                 # config: rustfmt.toml
 INSTA_UPDATE=always cargo test -p <crate> --test <target>   # accept snapshots (no cargo-insta here)
-cargo run -p pgdump_query-cli -- parse --source <file>      # binary is `pgdq`; the only scanner, resumes
+cargo run -p pgdump_query-cli -- parse --source <file>      # binary is `pgdq`; scans ahead, resumes
 cargo run -p pgdump_query-cli -- info --source <file> [--detail]   # never scans; reads the cache
 cargo build --release -p pgdump_query-cli --features introspect --target-dir <own>  # the instrument; never timed
 

@@ -50,7 +50,8 @@ pub struct ColumnStatisticsSummary<'a> {
     pub gathered_blocks: u64,
     /// Their groups holding a row: what the two counts below are shares of.
     pub groups_with_rows: u64,
-    /// Of those, the groups carrying bounds.
+    /// Of those, the groups carrying bounds — none of a group holding only
+    /// NULLs, so an all-NULL column reads bounds in none of its groups.
     pub groups_with_bounds: u64,
     /// Of those, the groups carrying a dictionary.
     pub groups_with_dictionary: u64,

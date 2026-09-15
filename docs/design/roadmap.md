@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P10 — row-group statistics | Complete | [`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md); [notes](roadmap-P10-row-group-statistics-notes.md) |
+| P1–P5, P7, P9–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P20 — statistics memory | Sketched; not grilled | this file, below; [inbox](roadmap-P20-statistics-memory-inbox.md) |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -43,14 +42,14 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P20`** — nothing at or below it
+centering"). **Phase numbering continues from `P21`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
 [`decisions.md`](decisions.md), "D68" and "D74", assign each module to one of
 four layers, fix the direction dependencies may point, and pre-answer the
-cross-layer phases below: what P10's statistics may persist and how they parse
-a value is settled there, and the sources P14, P15 and P18 add are L1. [`postgres-invariants.md`](postgres-invariants.md)
+cross-layer phases below: what statistics may persist and how they parse a
+value is settled there, and the sources P14, P15 and P18 add are L1. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
 
@@ -172,9 +171,10 @@ Four bounds, and they are what keep this from being "take everything":
   and resident passes the stated number (`KD21`). The first half is
   what a source's own recommendation owes — a count the file cannot supply
   work for must not be multiplied into a budget request.
-- **Unstated is not unlimited.** Absent a discovered limit the default is
-  capped at half of what the machine reports available, because the alternative
-  is sizing pgdq's appetite from hardware nobody said it could have. That cap
+- **Unstated is not unlimited.** Absent a discovered limit the charge a source
+  recommends is capped at half of what the machine reports available, because
+  the alternative is sizing pgdq's appetite from hardware nobody said it could
+  have. That cap
   costs no speed where there is room — resident saturates at the worker count
   regardless — and binds wherever the recommended count costs more than half of
   what the host has free, which on a large-block file is a large machine too.
@@ -488,9 +488,9 @@ where the work in front of you would not require them.
   than a breaking change. A cache whose version or kind is not recognised is
   treated as absent, which the "never required for correctness" rule makes
   safe.
-- **`ResumeToken` exposes no fields, ever.** Its contents today are a file
-  offset plus a row index, but a raw file offset is meaningless inside a
-  compressed archive entry. Opaque now means the representation can change
+- **`ResumeToken` exposes no fields, ever.** Its contents today include a
+  file offset, and a raw file offset is meaningless inside a compressed
+  archive entry. Opaque now means the representation can change
   without an API break.
 
 A fifth already binds: the batch layer builds `Utf8View` arrays over the
@@ -508,44 +508,33 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P10 — Per-row-group column statistics
-
-**Complete.** Specified in
-[`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md);
-what its slices left beyond the code and the register is
-[`roadmap-P10-row-group-statistics-notes.md`](roadmap-P10-row-group-statistics-notes.md).
-Per-row-group statistics gathered by `pgdq parse` and persisted in the cache,
-consumed by the query replay to skip byte ranges no row of which can match.
-
 ## P20 — Statistics memory and its measured expectations
 
-The refinement P10 deliberately defers
-([`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md),
-"Resident memory grows, and is optimized later"). P10 lets resident memory grow
-with the dump's statistics volume, moves no library constant for it, and runs
-its one gathering figure under a container limit of its own. This phase owns bounding what
-statistics hold resident and re-deriving the reserve and the expectations from
-readings, over rows of uniform width wherever an expectation is to hold
-("Project goals"). **Scheduled directly after P10**, since what it
-optimizes is what P10 ships.
+The refinement row-group statistics shipped without. Resident memory grows with
+the dump's statistics volume, which the flat-memory goal does not reach, being
+drawn from row values of varying width ("Project goals"); no library constant
+moved for it (`MEMORY_RESERVE` bills no statistic), and `statistics-gathering`
+runs under a container limit of its own. This phase owns bounding what
+statistics hold resident — the group size, the dictionary's worst case — and
+re-deriving the reserve and the expectations from readings, over rows of
+uniform width wherever an expectation is to hold. **Scheduled next**, since
+what it optimizes is what the default `parse` already pays.
 
 **Inbox:** [`roadmap-P20-statistics-memory-inbox.md`](roadmap-P20-statistics-memory-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
 ## P21 — Statistics gathered by a query
 
 A query gathers statistics for what it already reads — the columns its filter
-evaluates — where P10 has only a parse gather. Sketched to corner-avoidance
-depth, and after P20, since P10's consumer is what makes a partial gather worth
-having. What it inherits
-([`../status/history/2026-09-14.md`](../status/history/2026-09-14.md), "A parse
-gathers every statistic by default"):
+evaluates — where today only a parse gathers. Sketched to corner-avoidance
+depth, and after P20, since the pruning consumer is what makes a partial gather
+worth having. What it inherits:
 
 - **Presence per group**: a pruned or stopped query reads part of a block, so a
   statistic must tell "not yet gathered" from "none available" — an all-NULL
-  column's bounds — per group, where P10 needs it per block and column.
+  column's bounds — per group, where a parse gather needs it per block and column.
 - **A term is not evaluated on every row** (`decisions.md`, "D54"), so a filter
   column is observed completely only where every row's field is read anyway.
-- **Block sortedness and back-fill are whole-block facts** in P10; a partly
+- **Block sortedness and back-fill are whole-block facts**; a partly
   gathered block settles neither.
 - **The replay never saves the cache**; the mapping pass does, and a
   partitioned replay saving meets "D20" and the save gate ("D62").
@@ -587,7 +576,7 @@ chunk-size defaults measured against local devices say nothing about a
 high-latency ranged backend, which is the one part of that tuning that does not
 transfer.
 
-**Scheduled after P10 and ahead of P6.** Backburnered relative to the
+**Scheduled ahead of P6.** Backburnered relative to the
 compressed-input and scan-performance work,
 which is the maintainer's call; ahead of P6 because that phase's own reason for
 going last is that it presents surfaces over mechanisms that have stopped
@@ -826,7 +815,7 @@ which is what makes the difference worth minding at the moment one is found.
 - **The `POOL_MAX_BYTES` cap on the plain partition product, lifted, so a
   raised `--chunk-size` keeps its multiple.** `leader::scan_partition` reads a
   plain piece a chunk at a time (`io::PartitionRead`), so the plain source is
-  single-unit, every buffer a worker takes is pooled, and no partition-length
+  single-unit, every chunk-sized buffer a worker takes is pooled, and no partition-length
   buffer is allocated for an arena to retain — a probe on the build that
   introduced the chunked read put that at 9.4 MiB at `--jobs 24` against 209.2
   ([`decisions.md`](decisions.md), "D52"). What is left is

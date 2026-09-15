@@ -56,6 +56,10 @@ pub(crate) struct BlockPruning {
 /// every kept row ([`ResolvedExpr::required_ordering_terms`]) — is `True` of
 /// no later row. A replay of the block stops there, inside a group if need
 /// be, and nothing past it is read.
+///
+/// *Not taken:* stopping a sub-stream's later segments of a stopped block —
+/// pruning already skips a later run, and the rest is the read before a later
+/// piece's first row.
 #[derive(Debug, Clone)]
 pub(crate) struct SortedStop {
     terms: Vec<ResolvedTerm>,
@@ -75,7 +79,8 @@ impl SortedStop {
 /// its extent or its column list.
 ///
 /// **A column's bounds, row order and dictionary are believed only under the
-/// declared type and collation they were gathered under**, compared against
+/// declared type and collation they were gathered under**
+/// (`docs/design/decisions.md`, "D78"), compared against
 /// what `metadata` declares now; its NULL counts are read off the text and
 /// believed regardless. What the comparison itself believes is settled when
 /// the filter resolved ([`ResolvedExpr::truths`]).

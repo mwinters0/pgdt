@@ -284,6 +284,8 @@ struct ColumnGatherer {
 }
 
 impl ColumnGatherer {
+    /// Bounds where the comparison orders exactly, a dictionary where it
+    /// equates exactly (`docs/design/decisions.md`, "D79").
     fn new(
         declared_type: Option<String>,
         collation: Option<String>,
@@ -1145,7 +1147,8 @@ mod tests {
     /// groups straddle the cuts, whose bytewise values share heads past the
     /// cap, and which hold NULLs, values that do not key or are not text,
     /// dictionaries on both sides of their cap, and sorted columns a cut
-    /// falls inside.
+    /// falls inside. The fixture sweep does not guard a join's order step, a
+    /// block of `pg_dump` output rarely turning on it: this test does.
     #[test]
     fn pieces_joined_in_file_order_gather_what_one_pass_gathers() {
         let mut rng = Rng(0x0001_0105);

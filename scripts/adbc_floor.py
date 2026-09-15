@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """The ADBC floor oracle: what somebody else's driver returns for a type.
 
-`docs/design/decisions.md`, "D72", is the description and
-"D38" is the rule this file is
-evidence for; this module is the sweep and the file format. It has no container
+`docs/design/decisions.md`, "D38", is the rule and the description this
+file is evidence for; this module is the sweep and the file format. It has no container
 plumbing of its own -- `generate_fixtures.py` owns that and calls in here, the
 same division the comparison oracle already runs on.
 

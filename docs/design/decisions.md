@@ -10,11 +10,11 @@ reused; a struck entry is deleted and its number stays spent. **Capped at 500
 lines**: an entry earns its place by being something a later session would
 otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D77 -->
+<!-- decision-watermark: D80 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
-`Parallelism::default()` is `Serial`; discovery (`discover_for`) is opt-in and
+`Parallelism::default()` is `Serial`; discovery (`discover_in`) is opt-in and
 the CLI is its one caller, because a person ran it on purpose. Rejected:
 reading `default_workers` inside the library, so silence means concurrency.
 
@@ -29,8 +29,7 @@ parallel figures are warm-tmpfs). Evidence: `scan-throughput-*`, `parallel-scan-
 process. `MEMORY_MARGIN_PERCENT` binds the resolved *count*, not the budget (a budget ceiling never
 binds once `BufferPool::slots` clamps). `MEMORY_UNPOOLED_BOUND` is a bound off a grid, never a
 per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an ordinary
-`.xz`; clearing that gate would pick one number for two questions. Evidence: `reserve`,
-`chunk-size`.
+`.xz`; clearing that gate picks one number for two questions. Evidence: `reserve`, `chunk-size`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's
@@ -63,8 +62,8 @@ charge. Reopens: an explanation of the flagless collapse.
 ### D9 Pool sizing constants
 `hint_read_size` *becomes* the slot size and larger buffers are dropped on release: a chunk read and
 `attach_text`'s one coalesced read are indistinguishable by length. `POOL_DEPTH` is the replay
-retention depth and does not follow `--jobs`. `PLAIN_PARTITION_CHUNKS` caps tail-read waste and is
-not derived from `POOL_MAX_BYTES`. Evidence: `chunk-size`.
+retention depth, which only a block pool raises to `--jobs`. `PLAIN_PARTITION_CHUNKS` caps tail-read
+waste and is not derived from `POOL_MAX_BYTES`. Evidence: `chunk-size`.
 
 ### D10 mmap, `fadvise` and double-buffered readahead are refused
 Positioned reads via `spawn_blocking`, one chunk at a time: no overlap scheme puts a cold scan below
@@ -75,10 +74,10 @@ masked in containers and undefined over LVM/NFS. Reopens: parse CPU exceeding re
 `scan-throughput-*`, `chunk-size`, `allocator`.
 
 ### D11 Limit discovery is a public primitive taking a root
-`discover_memory_limit_in` reads the least of `memory.max` and `memory.high`
-(RT3), walking ancestors to the mount point (RT5); no limit means half of
-`MemAvailable`, untuned (RT8). The arms worth pinning are ones no machine is
-more than one of, so tests need the seam. Rejected: an env var overriding the root.
+`discover_memory_limit_in` reads the least of `memory.max` and `memory.high` (RT3), walking
+ancestors to the mount point (RT5); with no limit, a source recommending a charge is capped at half
+of `MemAvailable`, untuned (RT8), and one recommending none is not. The arms worth pinning are ones
+no machine is more than one of, so tests need the seam. Rejected: an env var overriding the root.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync`; the CLI runs `current_thread`, so thread count follows
@@ -87,11 +86,10 @@ our own; `rayon`. Consequence: cancellation is a cooperative flag (D26).
 
 ### D13 The allocator is the binary's choice
 No `#[global_allocator]` in the library; `pgdq` links the platform allocator, `jemalloc`/`mimalloc`
-are off-by-default features, `--version` names which. Rejected: `mimalloc` on a few percent, making
-every table a figure of an unshipped binary; `mallopt(M_ARENA_MAX)`, binding if set at resolution
-(RT10) but saving only below the count arenas already follow (D12), on `.xz` alone, at unpriced
-contention, overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure.
-`introspect` reports to `PGDQ_INTROSPECT_OUT`. Evidence: `allocator`.
+are opt-in features, `--version` names which. Rejected: `mimalloc` on a few percent, making every
+table a figure of an unshipped binary; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10)
+but saving only below the count arenas already follow (D12), on `.xz` alone, at unpriced contention,
+overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure. Evidence: `allocator`.
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content
@@ -108,11 +106,11 @@ partition, two readers forcing each other's restarts. Decodes read through a `Fi
 (`KD20`): an in-flight map would lock the common case to spare a boundary collision.
 
 ### D16 Block decode is afforded out of the stated budget, keyed on largest block
-`BlockCache::affordable` compares one reader's charge (unit, chunk, decoder
-footprint, one site) against the caller's number. Rejected: a fixed refusal
-line; keying on block count; deciding per read. Evidence: `reserve`.
+`BlockCache::affordable` compares the charge at one reader (unit, chunk, decoder
+footprint, and the retention list's `POOL_DEPTH − 1` units) against the caller's number,
+from file-wide inputs. Rejected: a fixed refusal line; keying on block count. Evidence: `reserve`.
 
-### D17 Two pools per source; retained and free slots are one count
+### D17 Two pools per source; retained and free units share a pool's slots
 The hinted unit drives both what a pool keeps and how it sizes, so one pool is wrong for either
 unit. Eviction runs before acquisition and the reservation drops before the evicted blocks do, or a
 released buffer meets a reservation and is discarded. A reuse rule, not progress: see D5.
@@ -127,22 +125,21 @@ and condemns the span index too, both having come from one save of one file.
 A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind`
 can be. A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`; only the
 user can judge whether one decode-from-zero is worth waiting for. A statistics skip is a note too,
-stated at zero wherever a block's statistics were consulted: a zero is the one answer to why a
-filter read everything, though its column may hold nothing usable, which `info --detail` shows.
-Rejected: omitting a zero, in library or CLI; counting only believed filtered columns. Reopens: a user
-puzzled by a zero, which a note naming the filter's columns lacking a usable statistic would answer.
+stated at zero wherever a block's statistics were consulted, the one answer to why a filter read
+everything. Rejected: omitting a zero; counting only believed filtered columns. Reopens: a user
+puzzled by a zero, which naming the filter's columns lacking a usable statistic would answer.
 
 ### D20 The library never replaces cache data automatically
-A cache recording another file's stored size is `Error::CacheSourceMismatch` before a byte is read,
-at every scan entry point and in `cache::claim`; the other unusable statuses start cold. Rejected: a
-`--force` override (set once in a script, never reconsidered); the guard inside `cache::save`
-(policy an embedder cannot override). The CLI words both refusals with one tail. A back-fill meeting
-a block that no longer ends where the map says is `CachedBlockChanged`: stored, its statistics
-contradict the offsets beside them; skipped, the back-fill goes on for a file it knows was
-rewritten; re-mapped, cache data is replaced unasked.
+A cache recording another file's stored size is refused before a byte is read: at every scan entry
+point as `Error::CacheSourceMismatch`, in `cache::claim` as `CacheClaim::SourceChanged`; the other
+unusable statuses start cold. Rejected: a `--force` override (set once in a script, never
+reconsidered); the guard inside `cache::save` (policy an embedder cannot override). The CLI words
+both refusals with one tail. A back-fill meeting a block that no longer ends where the map says is
+`CachedBlockChanged`: stored, its statistics contradict the offsets beside them; skipped, the
+back-fill goes on for a file it knows was rewritten; re-mapped, cache data is replaced unasked.
 
 ### D21 Identity is `stored_size()` plus a weak mtime, in an opaque enum
-`stored_size()` keeps the check a `stat` where `size()` on a decompressing source is an index walk.
+`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first.
 An mtime mismatch is `CacheMtimeChanged`, never persisted. `SourceIdentity` is matched through its
 variant because the next source has an ETag. `CompressionIndex` is a sibling of `ContainerKind`,
 whose `Plain` is honest for a compressed source; `total_size` is its own field.
@@ -150,7 +147,6 @@ whose `Plain` is honest for a compressed source; `total_size` is its own field.
 ### D22 `CacheLoad` is its own type and `FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;
 every entry point spells the outcomes out. Bump on any persisted reshape, record it nowhere.
-Diagnostics and `CompressionShape` are recomputed on load, because `info` never scans.
 
 ## The scanner (`scan.rs`, `copy.rs`)
 ### D23 The scanner never owns the bytes it scans
@@ -169,7 +165,7 @@ Decode is always split, extraction on any source, discovery only behind a decode
 fused. One core's rate against the device's offer decides each; readings that disagree reopen it.
 Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 
-### D26 Cancellation is per chunk, honoured by the mapping loop alone
+### D26 Cancellation is per chunk or leader window, honoured by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang;
 `map_file`'s scan and back-fill are the drivers with somewhere to put a partial result. The
 preamble scan ignores the flag: a stop there is indistinguishable from reaching
@@ -197,22 +193,21 @@ count and the census read every row); a proposal is sized against the per-row pr
 ## The file map and the preamble (`map.rs`, `index.rs`, `preamble.rs`)
 ### D30 The statement grammar is primary; the TOC is enrichment
 TOC-driven segmentation is unsound on non-`pg_dump` input, and a dollar-quoted body can hold a
-TOC-shaped line (I3). A tiling hole is `TilingBroken`, never a refusal. A span's `end` is fixed at
-push time, so `Builder::snapshot` is possible. The preamble prepass (byte 0 to the first `COPY`
+TOC-shaped line (I3). A tiling hole is `TilingBroken`, never a refusal. A span's `end` is fixed by
+the next push, so `Builder::snapshot` is possible. The preamble prepass (byte 0 to the first `COPY`
 header, I1) runs up front in both mapping entry points, or an interrupted `parse` banks blocks with
 no DDL. `attach_text` slices span text after building and `Data` spans store none, which is why
 `query` cannot run cache-only. Evidence: `preamble-prepass`.
 
 ### D31 `Span::toc` is "belongs to", vetoed after classification
-Follow-ons inherit `governing_toc` (else coverage reads half on healthy input)
-and `toc_owned` counts objects; `Framing`/`Connect` veto after the transition
-that seeded the inheritance. The boundary predicate refuses `"Data for "` and
-accepts `"Statistics for "`, which matters under `--disable-triggers` (I31).
+Follow-ons inherit `governing_toc` (else coverage reads half on healthy input) and `toc_owned`
+counts objects; `Framing` vetoes after the transition that seeded the inheritance, and `Connect` is
+never seeded. The boundary predicate refuses `"Data for "` and accepts `"Statistics for "`, which
+matters under `--disable-triggers` (I31).
 
 ### D32 Boundary rules that read as bugs
 A blank line does not close a pending comment (`_printTocEntry` writes `--\n\n`); `scan_preamble`
-retreats to `pending_comment_start()` rather than guessing the comment's kind; three things close a
-statement — `statement_complete`, a `--` line outside a quote, or `DollarQuoteEnd`.
+retreats to `pending_comment_start()` rather than guessing the comment's kind.
 
 ### D33 Bulk regions are one span kind; large objects skip at the scanner, `INSERT` runs at the map
 Only `DataBlock::Copy` has inner offsets, only `COPY` having a row reader; a data span absorbs its
@@ -224,9 +219,9 @@ untaken until the `INSERT` row reader exists (`KD9`).
 `blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a
 streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
 behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
-byte range, no leader piece knowing a global row index. A back-fill keeps every column a block
-held, and its size unless one is stated. Rejected: `SparseRowIndex`; padded `character` bounds
-and entries, keyed alike but past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
+byte range, no leader piece knowing a global row index. A back-fill keeps every column a block held,
+and its size unless one is stated. Rejected: `SparseRowIndex`; padded `character` bounds and
+entries, keyed alike but past the cap; a back-fill narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at
@@ -246,13 +241,14 @@ declared types and collation clauses are verbatim, `None` collation is "no claus
 A declared type maps to a real Arrow type only if its text round-trips without
 consulting anything outside the file; otherwise `Utf8View` with a note naming
 the kind of unknown. Misreading is unrecoverable, not recognizing is not; `money`
-fails it (`KD13`). Every field is nullable regardless of DDL. `arrow.uuid`/
-`arrow.json` are stamped by arrow-rs on a still-`Mapped` top-level column only.
+fails it (`KD13`). Every field is nullable regardless of DDL.
 
-### D38 The ADBC driver's shipped release is a floor
-Where the driver yields a real Arrow type, ours is never wider; the floor is a
-pinned release, never `main`. `floor_mapping.py` compares over value space
-(`Utf8View` is `string`) and reports an unknown arm rather than guessing.
+### D38 The ADBC driver's shipped release is a floor, swept from the catalog
+Where the driver yields a real Arrow type, ours is never wider; the floor is a pinned release, never
+`main`, one row per declarable `pg_catalog` type. `status`/`extension` columns take a row out of the
+rule by themselves, and only what they cannot say gets a `Disposition` with a stance and a resolving
+citation. `floor_mapping.py` compares value space (`Utf8View` is `string`) and reports an unknown
+arm, never guessing. Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
 ### D39 `NestedPlan` travels beside the `DataType`, with one producer
 Which literal fills a type cannot be inferred from it (`int4range[]` and
@@ -297,7 +293,7 @@ cannot tighten; each transcribes the newest major and under-accepts (I35, I44). 
 ### D46 Zero-copy views are top-level `Utf8View` only
 Every other arm copies. A retained chunk is released only past its *last* byte
 (the carried row arrives inside the next chunk) and `invalidate_block_cache`
-runs on every flush; any new flush trigger must honour it.
+runs on every flush keeping its batcher; any new flush trigger must honour it.
 
 ### D47 `max_source_span` is the only trigger that bounds pinned bytes
 `max_rows` and `max_bytes` count selected rows, which a filter makes sparse.
@@ -308,8 +304,7 @@ Rejected: compacting views past a selectivity threshold. Evidence: `parallel-pea
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
 spliced by extending the *preceding* span; a start floor on `Builder` made assembly visible in the
 map. A cancelled mapping pass fails a query rather than shortening it (I1). Cached replay and the
-cold interior split share `worker_count` and `cut` and differ only in what they cut; plan facts are
-a `PlanNote`, L4, settled before a block is read.
+cold interior split share `worker_count` and `cut` and differ only in what they cut.
 
 ### D49 One target per query, and the early stop is conservative
 Name matches narrow to one `(database, table)` before replay or
@@ -317,24 +312,24 @@ Name matches narrow to one `(database, table)` before replay or
 any `\connect`. A conflict past the stop is unseen (`KD6`).
 
 ### D50 `ResumeToken` is opaque and fingerprints the query
-Table, projection, filter tree, schema mode and partition, hashed by explicit match (a derived `Hash`
-silently stops covering a new operator). `database`, `scan_extent`, the batching knobs and
+Table, projection, filter tree, schema mode and partition, hashed by explicit match (a derived
+`Hash` silently stops covering a new operator). `database`, `scan_extent`, the batching knobs and
 `use_statistics` are outside it, a skipped group holding no row a token resumes past.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
-The first row is past the first LF at or after `start`; the piece runs to the
-first LF at or after `limit`; no cut lands on a row boundary. The scanner is
-never started mid-row, since a value can end in `\.` (I7 covers line starts).
-The first piece reaches back over the header, as a pruned block's run of group 0 does. Sub-streams are contiguous
-byte-balanced runs in file order, so concatenating them *is* the serial replay.
+The first row is past the first LF at or after `start`; the piece runs to the first LF at or after
+`limit`, so a cut at a row's first byte leaves it to the earlier piece. The scanner is never started
+mid-row, since a value can end in `\.` (I7 covers line starts). The first piece reaches back over
+the header, as a pruned block's run of group 0 does. Sub-streams are contiguous byte-balanced runs
+in file order, so concatenating them *is* the serial replay.
 
 ### D52 The worker is fused, and the earliest failing piece is the error
-One `spawn_blocking` future decodes and parses its range; `scan_piece` is pure. Rejected: decode and
-parse pools over a channel (the ratio is a property of the command); speculative splitting;
-cross-block pipelining. Pieces drain in file order so the same truncated file names the same byte.
-`close_copy_block` has one body and two callers, or a parallel cache stops matching a serial one's.
-A failure only reading finds is the lowest-indexed failed sub-stream's, after the rows before it; a
-resolution refusal comes from the plan (D54).
+A piece reads its range and parses each read in `spawn_blocking`; `scan_piece` does no I/O.
+Rejected: decode and parse pools over a channel (the ratio is a property of the command);
+speculative splitting; cross-block pipelining. Pieces drain in file order so the same truncated file
+names the same byte. `close_copy_block` has one body and two callers, or a parallel cache stops
+matching a serial one's. A failure only reading finds is the lowest-indexed failed sub-stream's,
+after the rows before it; a resolution refusal comes from the plan (D54).
 
 ## Predicates (`predicate.rs`, `where_expr.rs`)
 ### D53 The operator set is closed
@@ -342,18 +337,18 @@ No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or
 column-to-column. `IS [NOT] DISTINCT FROM` is what three-valued logic forces.
 
 ### D54 One tree, no planner, short-circuit defined against the root
-`filter` is one n-ary `Expr` defaulting to the empty conjunction. `And` may stop at the first `Unknown`
-except beneath `Not`, since only the root's `True` matters; a decode failure surfaces only where
-evaluation reaches it, never in a row group statistics rule out or past a sorted block's required bound,
-neither being read (`prune.rs`). Schema, filter and projection refusals come from the plan before any row,
-for the first refusing block in file order, walking leaves the evaluator would skip; a block with no
-column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not skipping a group marked as
+`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first
+`Unknown` except beneath `Not`, since only the root's `True` matters; a decode failure surfaces only
+where evaluation reaches it, never in a row group statistics rule out or past a sorted block's
+stopping row, neither read (`prune.rs`). Resolution refusals come from the plan before any row, for
+the first refusing block in file order, walking leaves the evaluator would skip; a block with no
+column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not skipping a group
 holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one.
 
 ### D55 A literal is read in the type's `*_out` form and no wider
 `*_in` spellings `*_out` never writes are `PredicateValueDecode`; the remedy is the user's. `jsonb`
-is the one exception (its canonical form is untypeable), `boolean` deliberately not. Integer arms
-are wider on both sides through one shared function. A literal finer than the column's scale is
+(its canonical form is untypeable), hex digits of either case, and integers (`str::parse`, field and
+literal alike) are wider; `boolean` deliberately not. A literal finer than the column's scale is
 refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow aborts.
 
 ### D56 Special values are a rank in the key
@@ -366,9 +361,10 @@ row; `v=1.5` must hit a `numeric(10,2)` written `1.50`. Rejected: widening
 `timetz` and `inet` into the rendering group (I33, I38, I41).
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
-Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container.
-Both sides of a range go through `make_range`, keyed on the range type; a user range declaring
-`canonical` is refused under every operator (I44–I47).
+Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container
+but for `int2vector`, whose elements `int2vectorin` reads. Both sides of a range go through
+`make_range`, keyed on the range type; a user range declaring `canonical` is refused under every
+comparing operator, the NULL tests reading no value (I44–I47).
 
 ### D59 Divergence is per term and per position, on its own channel
 `ComparisonNote` carries a path and the declared type there, reported by
@@ -408,10 +404,30 @@ handed reads as a request it ignores. `StatisticsSelection::None` is a variant, 
 library, which closes one instance of a size sizing nothing (the CLI refuses it, a person's intent
 being ambiguous there). Code: `statistics::StatisticsRequest`.
 
+### D78 Statistics share the cache file, its identity and its `FORMAT_VERSION`
+None is believed from a cache whose stored size is not the live source's (D20); the mtime stays
+advisory (D21), so a same-size rewrite in place prunes against its predecessor's statistics,
+knowingly. Bounds, order and dictionary are believed only under the declared type and `COLLATE`
+recorded beside them, and a change to how a kind orders or equates bumps the version. Rejected: a
+statistics file discardable alone; a semantics version of its own. Code: `prune::prune_block`.
+Evidence: `golden_order_is_pinned_to_the_format_version`.
+
+### D79 Bounds go where a comparison orders exactly, a dictionary where it equates exactly
+Bounds and row order need the key a filter compares with, so a divergent comparison gets neither; a
+dictionary needs equality alone, reaching `KD7`'s text. Nested columns get neither. A value that
+does not key leaves its group without bounds and its block `Unsorted`, or a bound would not cover
+its row. A dictionary is never an Arrow encoding, which would change a query's schema between a cold
+and a warm cache (D37). Rejected: a distinct count. Code: `gather::ColumnGatherer::new`.
+
+### D80 An early stop is reported after the fact, per block, in bytes
+Rejected: counting rows past the stop, never read and so only estimable; a zero for a stop planned
+and never reached; exact bytes when split, read past each piece's limit. Reopens: an account needing
+exact bytes, which each piece reporting its first row's start would give. Code: `stream::EarlyStop`.
+
 ## The CLI (`main.rs`, `error.rs`)
-### D61 `info` never scans; `parse` is the only scanner
-The surprise is that a scan happened at all; `--preamble-only` hangs off
-`parse`. Rejected: a scanning fallback; a `--no-scan` flag.
+### D61 `info` never scans
+The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
+lacks (D48), and `--preamble-only` hangs off `parse`. Rejected: a scanning fallback; `--no-scan`.
 
 ### D62 The save throttle is a ratio, and one gate opens save and splice
 A save is skipped unless `K` times the last save's duration has elapsed, which bounds overhead in
@@ -427,8 +443,8 @@ Rejected: `select!` over `ctrl_c` (drops the map); a `--restart` flag.
 ### D64 An omitted `--jobs` asks the source; provenance is the CLI's fact
 Absence recommends, a stated count is never lowered, zero is refused. The arrangement is announced
 in two lines, before and after the open, because a fresh `.xz` walks footers first; the limit is
-read once. Whether a number was typed or discovered never enters `Parallelism`. Logged durations are
-diagnostics, never figures: one stderr subscriber, no terminal detection.
+meant to be read once (`KD29`). Whether a number was typed or discovered never enters `Parallelism`.
+Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
 ### D66 Output is byte-identical whether typing is on or off
 Every value renders back to the text `pg_dump` wrote. A value contradicting
@@ -450,13 +466,12 @@ CLI and embedders above L4. `use` points down or sideways; a module gets a layer
 written (`tests/layering.rs`). Deviations, moved only with a `batch` rework: `read_table` (L4 work)
 and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a crate split (D74).
 
-### D74 L1 is Arrow-free and L2 is pure, so a metadata-only caller compiles no Arrow
+### D74 L1 is Arrow-free and L2 is pure, so a metadata-only crate split off would compile no Arrow
 L1 never names `arrow`; L2 names `arrow::datatypes` only, is synchronous and does no I/O; a decoder
 takes an unescaped field and returns a value, never a builder (L3, whose views marry array building
 to the read buffers, D46). Anything persisted is L1's vocabulary — declared type strings, never a
 `DataType` or another L2 conclusion, a statistic's bounds included. A cross-layer trait is defined
-below and implemented above (`ByteRangeSource::partitions`, `statistics::BlockObserver`); a scan
-predicate hook takes that shape too.
+below and implemented above (`statistics::BlockObserver`), as a scan predicate hook would be.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family
@@ -470,19 +485,12 @@ must come from a real fixture column (I36).
 folds constants and derives collation), every ordered pair, refusals recorded as `E<sqlstate>`,
 nothing version-gated, text asked under `C` and `"default"` both; ICU is in one fixture and out of
 the oracle. Semantics are the newest major's, and `oracle_differences.py` checks the union rule
-(I35) by classifying every cell that moves between adjacent majors as additive or not (I37, I38,
-I42).
+(I35) by classing every cell moving between adjacent majors as additive or not (I37, I38, I42).
 
 ### D71 Register arms are parsed out of `pgtype.rs`
 A `match` cannot be enumerated at run time; anchors turn a rewrite into a report. An arm is the
 finest closable unit, the join is existence rather than branch coverage, and an exemption carries
-`Evidence(file, needle)` the check resolves. The answer-to-answer test lives in `predicate.rs`'s
-unit tests with exceptions enumerated by pair.
-
-### D72 The ADBC floor is swept from the catalog, not curated
-One row per declarable `pg_catalog` type; `status`/`extension` columns take a row out of the rule by
-themselves, and only what they cannot say gets a `Disposition` with a stance and a resolving
-citation. Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
+`Evidence(file, needle)` the check resolves.
 
 ### D73 Round trips, asserted shapes, and a hand-verified signal path
 `Typed` against `Strings` over a fixture and `encode(decode(raw))` against on-disk bytes; boundary

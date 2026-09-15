@@ -1,7 +1,6 @@
 -- Per-row-group statistics fixture schema: the column shapes bounds,
 -- dictionaries, null counts and block sortedness are gathered from and pruned
--- against (docs/design/roadmap-P10-row-group-statistics.md, "Shapes the phase
--- must hold").
+-- against.
 --
 -- **Every table is filled by one INSERT into a fresh table and never updated**,
 -- so the heap holds the rows in insertion order and `pg_dump`'s COPY writes them
@@ -12,6 +11,11 @@
 --
 -- No value here needs COPY escaping, so a field's text in the file is the value
 -- the server rendered.
+--
+-- **Not held yet**: a `numeric` `Infinity` (PostgreSQL 13 cannot), and a
+-- `bytea`, `varchar` or `character` column carrying bounds, so
+-- statistics_fixture.rs reaches none; add a column rather than reason about
+-- bytes.
 
 -- ---------------------------------------------------------------------
 -- Row order. 1000 rows, enough that a group stated at a few KiB holds more
@@ -119,7 +123,9 @@ INSERT INTO public.specials VALUES
 -- row running past its end, a small stated group size leaves groups in which
 -- no row starts, and a leader cut can land inside the row. Past the stored
 -- value cap too, as is the 300-byte value, which is the one a truncated bound
--- is taken from without the megabyte behind it. Ascending bytewise.
+-- is taken from without the megabyte behind it. Ascending bytewise. It stays
+-- past the read chunk on every major: a shorter one hid a quadratic carry scan
+-- (scan.rs, `a_line_many_chunks_long_is_scanned_once`).
 -- ---------------------------------------------------------------------
 CREATE TABLE public.long_value (
     id integer,

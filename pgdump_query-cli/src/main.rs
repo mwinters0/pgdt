@@ -1291,9 +1291,9 @@ async fn main() -> Result<()> {
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
             let statistics = statistics_request(statistics, statistics_group_size)?;
-            // `parse` is the only scanner (`docs/design/decisions.md`,
-            // "D61"). Reject `--dqcache none` up front, before paying
-            // for a scan we won't be allowed to persist.
+            // `parse` scans to persist (`docs/design/decisions.md`, "D61").
+            // Reject `--dqcache none` up front, before paying for a scan we
+            // won't be allowed to persist.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
                 .require_enabled("parse")

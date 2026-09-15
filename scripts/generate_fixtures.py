@@ -26,7 +26,7 @@ generated, rather than as a column of `E42704` nobody reads.
 
 A third pass takes the **ADBC floor oracle** -- what the Arrow ADBC PostgreSQL
 driver returns for every declarable `pg_catalog` type, written under
-fixtures/<major-version>/adbc/ (docs/design/decisions.md, "D72"). Its sweep and file format are scripts/adbc_floor.py, and the pass
+fixtures/<major-version>/adbc/ (docs/design/decisions.md, "D38"). Its sweep and file format are scripts/adbc_floor.py, and the pass
 ends by running the floor-to-mapping reconciliation (scripts/floor_mapping.py)
 for the same reason an oracle pass runs the other two: a driver release that
 answers a type differently has to be met with a stance or a mapping at the

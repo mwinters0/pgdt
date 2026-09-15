@@ -43,7 +43,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M104 are struck**, and nothing at or below `M104` is reused. That is a
+**M1–M110 are struck**, and nothing at or below `M110` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is in `decisions.md` —
@@ -63,30 +63,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M105 | 2026-09-14 | The serial carry pass skips a chunk holding no newline short of the end, so a line many chunks long scans in linear time; strikes `KD27` | | [2026-09-14](../status/history/2026-09-14.md), "`KD27` is repaired ahead of P10" |
-| M106 | 2026-09-14 | `plan_blocks` raises the first refusing block's filter refusal in file order before any row; the rows-then-refusal test inverts, and D52/D54 are restated | | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
-| M107 | 2026-09-14 | `plan_blocks` raises every resolution refusal — schema, filter, projection — for the first refusing block in file order, through `resolve_for_query`; D54 widens to resolution refusals | | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
-| M108 | 2026-09-15 | `info --json` exports the rest of the cache file: `format_version`, `container_kind`, the xz seek table and the source identity | | [2026-09-15](../status/history/2026-09-15.md), "`--json` exports the whole cache file" |
-| M109 | 2026-09-15 | `Error::CachedBlockChanged` names the cache path, as `CacheSourceMismatch` does, so a user with `--dqcache` elsewhere knows which file to remove | | [2026-09-15](../status/history/2026-09-15.md), "A moved block's refusal names its cache" |
-| M110 | 2026-09-15 | `tests/pruning.rs`'s generated check asserts that where the unpruned query raises, a pruned query whose note skips no row's bytes and whose stops leave none unread raises the same error | | [2026-09-15](../status/history/2026-09-15.md), "A pruned query that reads every row raises the unpruned error" |
 
-
-
-
-
-
-
-
-
-
-
-
-**One obligation outlived them and is most of the way discharged.** An
-`INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,
-which argued for an `INSERT` fast path — and *that* changes a decision, so it
-went through grilling → spec amendment → a numbered slice rather than through
-this section. It is `KD9`, and the `INSERT` statement scan took it to
-**4.9× warm**. The
-entry stays live at that residual: part of it is a property of the two
-algorithms and cannot go, and part of it is two named, untaken cuts
-([`decisions.md`](decisions.md), "D33").

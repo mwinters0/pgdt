@@ -26,10 +26,24 @@ term, and a charge for it would be per worker, where the block's own
 statistics are per dump; the reserve P20 re-derives is read at whatever count
 its readings state.
 
-**Origin.** P10.6, 2026-09-14
-([`roadmap-P10-row-group-statistics-notes.md`](roadmap-P10-row-group-statistics-notes.md)).
+**Origin.** P10.6, 2026-09-14 (`leader::run_region`).
 Contingent on the leader folding a window's partitions only once every
 partition of it has returned.
+
+## Three statistics costs no figure takes
+
+**Fact.** The `info --json` export grows with groups times tracked columns, as
+the cache does, most at the tiny group sizes the correctness checks gather at;
+a back-fill is a second block-by-block read of the dump; and a query's plan
+resolves every matched block up front (`stream::plan_blocks`) — before a resume
+token's offset, and for blocks a caller never polls — per block, not per row.
+
+**Why P20 cares.** Re-deriving the group size and gathering-by-default weighs
+what statistics cost against what pruning buys, and these three are costs no
+reading holds.
+
+**Origin.** The row-group statistics wrap, 2026-09-15. Contingent on `--json`
+exporting every group and the plan resolving blocks eagerly.
 
 ## What the statistics figures leave unpriced
 
@@ -51,6 +65,5 @@ dump gives.
 **Origin.** P10.10 and P10.10.1, 2026-09-15
 ([`measurements.md`](measurements.md), "What gathering row-group statistics costs a parse" and "What
 row-group statistics buy a query").
-Contingent on the cache staying one file decoded whole, which
-[`roadmap-P10-row-group-statistics.md`](roadmap-P10-row-group-statistics.md),
-"One cache file" chose.
+Contingent on the cache staying one file decoded whole
+([`decisions.md`](decisions.md), "D78").

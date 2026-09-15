@@ -428,8 +428,9 @@ answer is one partition". Two known mismatches to check against real
 DataFusion rather than against the sketch: the partition count is decided by
 the *file* (block extents, and below them the compressed source's blocks) where
 an engine usually asks for a count it chose; and a partition's row count is
-unknown until it is read, so nothing here can answer a statistics call at plan
-time until P10 lands.
+unknown until it is read unless its block was gathered, and then only per row
+group (`statistics::RowGroup`), a byte range a partition's cuts need not
+follow.
 
 **One public method exists for the merge alone**: `TableStream::batch_source_offset`,
 the offset of the batch just yielded's first row, which is what `pgdq query`

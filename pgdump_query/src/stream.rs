@@ -2175,7 +2175,8 @@ pub enum PlanNoteKind {
 
 /// One block a [`TableStream`] replayed under a planned early stop — the
 /// filter requiring a bound the block's stored row order closes — and what
-/// the stop left unread ([`TableStream::early_stops`]).
+/// the stop left unread ([`TableStream::early_stops`];
+/// `docs/design/decisions.md`, "D80").
 ///
 /// **Per block, not a count**, because a partitioned replay can hand one
 /// block's pieces to several sub-streams and a piece past the stopping row
