@@ -69,9 +69,14 @@ the same under the median group as under the mean row:
 
 ## What the next slices inherit
 
-- **The quantile is nearest-rank**, the median being the `ceil(G/2)`-th
-  smallest group, and the bound is proved for that definition by counting the
-  groups at or above it; 20.4's rule reads the same one or proves its own.
+- **The quantile is nearest-rank**, the `ceil(q * G)`-th smallest group, and
+  the bound is proved by counting the groups at or above it. **The minimum's
+  median is the exception**, moved to the upper middle group, `floor(G/2)+1`,
+  after this reading: the spec's "Granularity follows row density". The bound
+  holds under both, and the upper middle group is the larger, so a size chosen
+  under it is never coarser than one chosen here; which koji verdicts move is
+  `koji-density.json`'s to say, `choose` and this reading being re-derived in
+  20.4.1.
 - **A uniform block that coarsens lands between a quarter and a half of
   `2R/m`**, one already dense at `2^20` lower still; only skew — half the
   groups near empty — comes near 1. `test_row_density.py` holds both.

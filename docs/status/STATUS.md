@@ -74,6 +74,7 @@ Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-stati
 - [x] **20.2** Koji's row density: a gathering `parse` of koji on the shipped build tracking one narrow column per table, launched detached; a `scripts/` tool with its tests deriving each block's rows-per-group distribution at every `2^n` from `info --json`, over koji and the fixtures, into a `runs/` artifact; the median quantile checked against the spec's registered criterion, which koji does not meet, so the median stands; [notes](../design/roadmap-P20.2-row-density-notes.md)
 - [x] **20.3** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture; [notes](../design/roadmap-P20.3-length-cap-notes.md)
 - [x] **20.4** The density minimum: a block's size chosen at its end from rows per group at the median, default minimum 1,024, the cap's size standing where coarser; `--statistics-min-rows` (0 turns it off), a stated `--statistics-group-size` exact, a power of two and refused beside either row flag; the bounds recorded per block with D34's back-fill rule extended to each; `FORMAT_VERSION` bumped; parallel identical to serial over every fixture; [notes](../design/roadmap-P20.4-density-minimum-notes.md)
+- [ ] **20.4.1** The minimum's median at the upper middle group, `floor(G/2)+1`-th smallest: the predicate monotone in size, so a block the length cap coarsened reaches no size coarser than the guarantee allows, tested on the odd-tail shape and on a capped block that reached the minimum finer; `row_density.py`'s `choose` and its tests moved with it, 20.2's koji reading re-derived from `koji-info.json` and its notes' verdicts corrected where they move; `FORMAT_VERSION` bumped, a cache written at 19 holding sizes this rule would not choose
 - [ ] **20.5** The stated maximum: `--statistics-max-rows` at the 90th percentile, honoured over the length cap, winning where a block meets neither bound, refused below the minimum; a block whose `2^20` groups break it re-read by the back-fill at the size its rows per group predict, once, saying where it still misses
 - [ ] **20.6** `--memory` as the resident allowance, replacing `--parallel-memory`, and the library's `Parallelism` memory carved the same way; the two-tunable rule's allowlist test; `MEMORY_RESERVE`'s value unmoved
 - [ ] **20.7** The decline: the statistics allowance carved after the workers, half of `MemAvailable` where no limit is found; a block that does not fit declines and says so, recorded in the cache with its allowance, back-fill retrying only under a larger one; the margin left against the account, closing `KD28`
@@ -319,16 +320,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A block past its cap reads its minimum at the size the cap left it**, not
-  at `2^20`: `Gatherer::fit_density` coarsens from the held size while the
-  nearest-rank median there is short, so the spec's "the cap's size stands
-  where coarser" ("Granularity follows row density") holds unless the median
-  falls on coarsening, which it can — rows per group `[m, m, m, m, 0, 0, 0]`
-  meet a minimum `m`, their pairs `[2m, 2m, 0, 0]` do not — and such a block
-  ends coarser than the cap left it. Made so because the finer rows are summed
-  as the cap merges mid-scan and keeping them grows with the block, which the
-  cap exists to stop. Reconsidering either accepts the extra doublings on that
-  shape, the spec's sentence reading as precedence rather than a guarantee, or
-  asks for the base size's rows per group kept beside a capped block until it
-  finishes, a term growing with the block.

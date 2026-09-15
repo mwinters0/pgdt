@@ -63,15 +63,40 @@ whose shape at every candidate size follows from the base size's by summing
 adjacent pairs. **A minimum** chooses the smallest size at which a low quantile
 group holds at least the minimum rows; **a maximum** the largest at which a high
 quantile group holds at most the maximum. Where the length cap asks for a coarser size
-than the minimum, the cap's size stands.
+than the minimum, the cap's size stands — **a guarantee about the block's size,
+not an order of precedence**: it is never coarser than the larger of the cap's
+size and the size the minimum picks from its own base distribution.
+
+**That guarantee is what fixes the minimum's quantile at the *upper* middle
+group**, the `⌊G/2⌋+1`-th smallest — equivalently, at most half the groups fall
+short. The cap merges mid-scan, summing the finer distribution away, so the
+minimum can only be read from the size the cap left; the guarantee therefore
+holds only where the predicate is **monotone in size**, since a monotone one
+cannot be satisfied below a size at which it fails. It nearly is already: a
+merged group holds the sum of its parts, so it falls short only where both
+parts did, and the count of short groups at most halves as the total halves.
+The exception is an **odd tail** — a lone short last group with no pair — which
+the nearest-rank `⌈G/2⌉`-th smallest lets push the fraction past half, and the
+upper middle group does not. Under it the guarantee costs nothing to keep.
+
+*Rejected:* the nearest-rank median, whose odd tail cascades — `[m, m, m, m, 0,
+0, 0]` meets a minimum `m`, its pairs `[2m, 2m, 0, 0]` do not, and the block
+coarsens on to one group, so one past the cap loses all pruning on a parity
+accident; the base rows per group kept beside a capped block until it finishes,
+8 bytes a MiB and a term growing with length, which is what `KD28` and this
+phase exist to remove; per-size counters of short and total groups, bounded but
+needing their own row tally across pieces and window folds, no base-sized group
+existing after the first merge.
 
 **The default minimum is a width judgement, not a koji reading**: `2^20` stays
 right for rows up to a reasonable width, taken as 1 KiB, so the default
 minimum is `2^20 / 2^10` = 1,024 rows and changes nothing for a table of
 reasonable width. Koji cannot choose it — its statistics fit under either
 candidate, the cap governing its large blocks. **The minimum's quantile is
-registered at the median**, which on any block keeps retained groups within
-twice rows over the minimum whatever the distribution; **the criterion,
+registered at the median**, the upper middle group above, which on any block
+keeps retained groups within twice rows over the minimum whatever the
+distribution — a bound `G ≤ 2R/m` that holds under either middle group, at
+least half the groups reaching the minimum either way; **the criterion,
 registered before the reading**: a lower quantile is chosen only if a koji
 block of reasonable width comes close to that bound.
 

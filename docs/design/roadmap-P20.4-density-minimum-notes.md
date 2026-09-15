@@ -61,7 +61,14 @@ statement is [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
   merge being exact; a re-read at the size a block holds keeps its record.
 - **A block no size reaches is one group**, as `choose` answers — the fixtures'
   `long_value` block by default, and any block holding fewer rows than the
-  minimum.
+  minimum. No floor sits under the coarsening; the maintainer weighed one and
+  refused it (`../status/history/2026-09-15.md`).
+- **The median this slice shipped is the wrong one.** It reads the nearest-rank
+  `ceil(G/2)`-th smallest group, which an odd short tail can push past half, so
+  a block the length cap already coarsened can cascade to one group although it
+  reached the minimum at a finer size — against the spec's guarantee that the
+  cap's size stands. 20.4.1 moves it to the upper middle group; the reasoning
+  is the spec's "Granularity follows row density".
 - **A density reading over a cache this build writes flagless reads coarsened
   groups.** `row_density.py` wants the base distribution, so its gathering
   `parse` states `--statistics-min-rows 0`, as its docstring says; 20.2's koji
