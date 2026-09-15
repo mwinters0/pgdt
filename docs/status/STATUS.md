@@ -65,17 +65,28 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
+## P20 progress
+
+Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-statistics-memory.md).
+
+- [ ] **20.1** The statistics account — every statistic alive counted, retained, loaded, a parallel window's partitions and a dictionary's second copy — printed by the process and reconciled against the `introspect` build's live heap over generated reasonable-width and wide-text shapes, within a stated tolerance; behaviour-preserving
+- [ ] **20.2** The per-block length cap: groups under an unstated group size merge pairwise past a judgement constant, a stated `--statistics-group-size` honoured exactly, parallel identical to serial over every fixture
+- [ ] **20.3** `--memory` as the resident allowance, replacing `--parallel-memory`, and the library's `Parallelism` memory carved the same way; `MEMORY_RESERVE` to 512 MiB; the two-tunable rule's allowlist test
+- [ ] **20.4** The decline: the statistics allowance carved after the workers, half of `MemAvailable` where no limit is found; a block that does not fit declines and says so, recorded in the cache with its allowance, back-fill retrying only under a larger one; the margin left against the account, closing `KD28`
+- [ ] **20.5** The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures: `reserve` at 512 MiB, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve
+- [ ] **20.6** Koji: a flagless gathering `parse` in 512m beside the `none` recipe, and one `query` over its cache, launched detached and read by a later session — no large block declines, peak leaves the margin, wall clock against the `none` run; a cap it refutes earns 20.6.1
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** Every built mechanism — the parallel
-  scan's defaults included: a worker count the source recommends, a memory
-  limit discovered and filled under the reserve and the margin, and a `parse`
-  saying what it delivered rather than what it was asked for — is in
+- **P20 is open**; see "P20 progress" above. Every built mechanism — the
+  parallel scan's defaults included: a worker count the source recommends, a
+  memory limit discovered and filled under the reserve and the margin, and a
+  `parse` saying what it delivered rather than what it was asked for — is in
   [`../design/decisions.md`](../design/decisions.md).
-  Seven phases remain sketched — P20, P21, P14, P6, P15, P18, P8, in the
+  Six phases remain sketched — P21, P14, P6, P15, P18, P8, in the
   roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
@@ -273,8 +284,8 @@ a phase nobody has sliced.
 - **KD28** — a gathering `parse` holds statistics that grow with the dump and
   that no charge bills, so `MEMORY_MARGIN_PERCENT` is not left under a
   discovered limit once they outgrow what the arrangement spares. **(b) owned
-  by P20**, which bounds what statistics hold; `--statistics none` restores the
-  margin today. Detail: `pgdump_query/src/io.rs`.
+  by P20**, closed by 20.4's decline against the statistics account;
+  `--statistics none` restores the margin today. Detail: `pgdump_query/src/io.rs`.
 
 - **KD29** — a flagless `pgdq` run reads its memory limit twice, once for the
   status lines and again inside `Parallelism::discover_in` for the budget, so

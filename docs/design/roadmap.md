@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P20 — statistics memory | Sketched; not grilled | this file, below; [inbox](roadmap-P20-statistics-memory-inbox.md) |
+| P20 — statistics memory | Current | [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); progress in [`STATUS.md`](../status/STATUS.md) |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -194,6 +194,38 @@ a number that is no longer in play. Stated per worker the answer is independent
 of every count, and multiplying is the composition's — which is also what lets
 the composition hand back a *pair*, the count an allowance affords beside the
 budget that many workers spend.
+
+### Two tunables fit pgdq to hardware: memory and parallelism
+
+**A person fits pgdq to their hardware by stating a memory allowance and a
+worker count, and needs to state nothing else.** The implementation interprets
+those two however it must — a pool's depth, a statistic's granularity, whether
+a path is afforded at all — and no new flag is added whose purpose is fitting
+the process to a machine. This is for the user's simplicity: an operator sizing
+a container knows what memory and how many cores it has, and nothing about
+chunk sizes or row groups.
+
+**The memory number means resident**, the number a person gives the
+container: a stated one is treated exactly as a discovered limit, and whatever
+pgdq holds — pools, statistics, the reserve for everything unbilled — is carved
+from it.
+
+**It governs what a person needs to state, not what exists.** A flag stating
+*intent* — `--statistics <selection>`, which columns to gather — is not a
+hardware knob, and neither is a threshold of the input contract such as
+`--max-line-bytes`. An expert override already shipped, `--chunk-size`, may
+stay; what the rule refuses is a default that is only right once a third knob
+is turned.
+
+**Reasonable defaults are promised for reasonable data only.** A shape the
+defaults cannot fit — a table of a thousand wide text columns under a small
+allocation — is fitted by raising memory or narrowing intent, and the defaults
+are not bent to reach it. A long dump of ordinary rows is not such a shape.
+
+**The check**, not yet built — P20 builds it. A CLI test lists every flag taking a byte count or a count
+against an allowlist classifying each as hardware, intent, input contract or
+expert override, and fails on a flag nobody has classified — so a third
+hardware knob is a decision somebody wrote down, not one that arrived quietly.
 
 ### A parse does all the work a later query could use
 
@@ -510,17 +542,13 @@ item; see below.
 
 ## P20 — Statistics memory and its measured expectations
 
-The refinement row-group statistics shipped without. Resident memory grows with
-the dump's statistics volume, which the flat-memory goal does not reach, being
-drawn from row values of varying width ("Project goals"); no library constant
-moved for it (`MEMORY_RESERVE` bills no statistic), and `statistics-gathering`
-runs under a container limit of its own. This phase owns bounding what
-statistics hold resident — the group size, the dictionary's worst case — and
-re-deriving the reserve and the expectations from readings, over rows of
-uniform width wherever an expectation is to hold. **Scheduled next**, since
-what it optimizes is what the default `parse` already pays.
-
-**Inbox:** [`roadmap-P20-statistics-memory-inbox.md`](roadmap-P20-statistics-memory-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
+**Current.** Specified in
+[`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); its
+slices are [`../status/STATUS.md`](../status/STATUS.md), "P20 progress".
+Reasonable defaults for what statistics hold resident: a per-block length cap,
+a block that does not fit its allowance declining rather than killing the
+process, one `--memory` flag meaning resident, and the reserve raised for every
+operation.
 
 ## P21 — Statistics gathered by a query
 
