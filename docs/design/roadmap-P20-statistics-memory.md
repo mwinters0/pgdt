@@ -77,7 +77,7 @@ block of reasonable width comes close to that bound.
 
 **A maximum is honoured only where stated, and then over the length cap**, as a
 stated group size is: it is the side of the trade a person sensitive to I/O
-states, and 20.4's decline, not the cap, keeps it from costing the process.
+states, and 20.7's decline, not the cap, keeps it from costing the process.
 Its quantile is **the 90th percentile**, a judgement no reading prices, koji
 stating no maximum: near enough a bound for a person who asked for one, without
 one dense stretch multiplying a whole block's groups. **Every block is gathered
@@ -124,7 +124,7 @@ parallel gathering stays identical to serial. **A stated
 for.
 
 **The cap is a judgement, confirmed or moved by the koji gathering run**
-(P20.6), argued from one criterion: koji's flagless gather fits 512m with the
+(P20.10), argued from one criterion: koji's flagless gather fits 512m with the
 margin left. Arithmetic puts it on the order of 4,096 groups a block — the
 largest that plausibly fits; at 1,024 koji's statistics would be about 10 MiB
 and `task`'s groups about 350 MiB, at 16,384 about 150 MiB and 22 MiB.
@@ -214,12 +214,12 @@ does not write one container definition for `parse` and another for `query`;
 one reserve across every operation is the one they can understand.
 *Rejected:* a reserve raised only when the request gathers.
 
-**Its size is measured, in 20.7, not judged.** Slicing first set it to
+**Its size is measured, in 20.8, not judged.** Slicing first set it to
 512 MiB as a judgement "confirmed" by the re-taken `reserve` figure, and that
 confirmation was vacuous: the figure's criterion faults only a reserve too
 small, 384 MiB already met it, and its legs state `--statistics none` and
 never query, so they never exercise what the bump is for. It stays 384 MiB
-until 20.7 reads it, so no figure's arrangement moves twice and the sitting is
+until 20.8 reads it, so no figure's arrangement moves twice and the sitting is
 not biased toward a number already shipped.
 
 **Attribution first, one blind gate after** ([`roadmap.md`](roadmap.md),
@@ -249,13 +249,13 @@ re-derived the same way if the remainder passes it.
 
 *Rejected:* a blind grid of candidate builds as `19.16` took, which answers
 which number passes and not what the remainder is; a provisional 512 MiB in
-20.3, moving the arrangements twice; a reserve sized to the worst case at the
+20.6, moving the arrangements twice; a reserve sized to the worst case at the
 reference allocation, a flat number already known wrong at other sizes;
 choosing the branch after the reading.
 
 ### 512m stays the reference allocation
 
-**Whatever 20.7 measures, 512m stays the reference**: if the reserve reaches
+**Whatever 20.8 measures, 512m stays the reference**: if the reserve reaches
 512 MiB it is the smallest allocation that works, leaving no budget, so a
 compressed run there streams rather than block-decodes while a plain `parse`
 — serial anyway — loses nothing. The koji
@@ -269,7 +269,7 @@ arrangements by hiding what a bump costs.
 
 A query decodes the cache whole (D78) and a `parse` bounds its statistics by
 its own allowance, so a query in the same container fits — the reserve
-covering the decode, or the query billing it where 20.7 finds it grows with
+covering the decode, or the query billing it where 20.8 finds it grows with
 the statistics. **That is a property, written beside the cache load**: the remedy a
 person already has for a smaller allocation is more memory or `--dqcache
 none`.
@@ -299,7 +299,13 @@ commits to a measurement names its instrument"); the attribution is
 introspective and only the gates are blind ("Attribution is introspective;
 only the gate is blind").
 
-- **Koji's row density** (P20.8) — a gathering `parse` of koji on the shipped
+- **The account reconciled against live heap** (P20.1) — the process prints its
+  statistics account, and the `introspect` build's counting allocator gives
+  live bytes over generated reasonable-width and wide-text shapes; the account
+  never falls short of live statistics bytes by more than a tolerance the slice
+  states. It is what shows the account right before a gate would find it wrong
+  by being killed.
+- **Koji's row density** (P20.2) — a gathering `parse` of koji on the shipped
   build tracking one narrow column per table, so every block's groups are
   counted at `2^20` for a fraction of full gathering's memory, launched
   detached; a script in `scripts/`, with its tests, reads each block's rows per
@@ -309,32 +315,26 @@ only the gate is blind").
   through the same script as a check of the rule on known shapes. It applies
   "Granularity follows row density"'s registered criterion. Koji is the only
   real dump this rests on.
-- **The reserve's remainder, attributed, then gated** (P20.7) — the
+- **The reserve's remainder, attributed, then gated** (P20.8) — the
   `introspect` build over gathering `parse` and `query` legs, and one blind
   sitting at the value it gives; instrument, legs and criterion are "The
   reserve rises uniformly, and is measured".
-- **The account reconciled against live heap** (P20.1) — the process prints its
-  statistics account, and the `introspect` build's counting allocator gives
-  live bytes over generated reasonable-width and wide-text shapes; the account
-  never falls short of live statistics bytes by more than a tolerance the slice
-  states. It is what shows the account right before a gate would find it wrong
-  by being killed.
-- **A generated wide-text input that must decline** (P20.5) — flagless `parse`
+- **A generated wide-text input that must decline** (P20.9) — flagless `parse`
   in 512m on the shipped build: exits clean, reports the decline, stays under
   the limit; a reasonable-width companion declines nothing.
-- **Koji, flagless gathering `parse` in 512m, shipped build, detached** (P20.6)
+- **Koji, flagless gathering `parse` in 512m, shipped build, detached** (P20.10)
   — the length axis on real data: exits clean, neither `task` nor
   `buildroot_listing` declines, peak resident leaves the margin. The existing
   recipe stays `--statistics none`, a scan regression check whose timings stay
   comparable, and the gathering run sits beside it.
-- **What the koji runs give for free** (P20.6) — the gathering run's wall clock
+- **What the koji runs give for free** (P20.10) — the gathering run's wall clock
   against the `none` run's is gathering's device-bound cost, and one `query`
   over its cache is the decode at a real group count.
 
 **Existing figures keep `--statistics none`**, still measuring scanning.
 `statistics-gathering` moves from its 2g stopgap into the 512m reference and is
 re-taken; every figure whose arrangement moves with the measured reserve is
-re-taken (P20.5).
+re-taken (P20.9).
 
 *Rejected:* the gates alone, where an under-counting account is found only by a
 kill; koji alone, narrow and never declining; figures gathering by default,
@@ -347,29 +347,27 @@ visible, the instrument first:
 
 1. **The account** is built and reconciled before anything declines against
    it.
-8. **Koji's row density**, read before any granularity code, so the quantile's
+2. **Koji's row density**, read before any granularity code, so the quantile's
    criterion meets real data before the rule is written; no build may run
-   beside it. Numbered 20.8, like 20.9 and 20.10, because it was admitted after
-   slicing.
-2. **The length cap**, the exact pairwise merge the density rule reuses, lands
+   beside it.
+3. **The length cap**, the exact pairwise merge the density rule reuses, lands
    before koji, which cannot fit without it.
-9. **The density minimum** on top of the merge — the decision at a block's
-   end, the switches and the record of bounds — kept apart from 2, which
+4. **The density minimum** on top of the merge — the decision at a block's
+   end, the switches and the record of bounds — kept apart from 3, which
    reworks the gatherer's core.
-10. **The stated maximum**, the one path that gathers below `2^20`, passes the
+5. **The stated maximum**, the one path that gathers below `2^20`, passes the
    cap and re-reads a block, through the back-fill that already re-reads.
-3. **`--memory`** changes resolution before the decline carves from it; the
+6. **`--memory`** changes resolution before the decline carves from it; the
    reserve's value does not move here.
-4. **The decline** reworks the gatherer's core path; kept apart from 3, which
+7. **The decline** reworks the gatherer's core path; kept apart from 6, which
    reworks the resolver's, so neither review accepts the other's confidence.
-7. **The reserve, measured** — only once statistics are billed and declined
-   is the remainder the reserve covers the one it will cover. Numbered 20.7
-   because it was admitted after slicing; it runs before 20.5.
-5. **The generated gates and re-taken figures**, at the measured reserve and
+8. **The reserve, measured** — only once statistics are billed and declined
+   is the remainder the reserve covers the one it will cover.
+9. **The generated gates and re-taken figures**, at the measured reserve and
    the granularity that ships, so their inputs are chosen against the default a
    person gets.
-6. **Koji**, launched detached and ticked when a later session reads it; a
-   cap it refutes earns a `P20.6.1`.
+10. **Koji**, launched detached and ticked when a later session reads it; a
+   cap it refutes earns a `P20.10.1`.
 
 ## Facts it rests on
 
