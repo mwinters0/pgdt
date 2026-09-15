@@ -402,8 +402,10 @@ Two new figures, each with its instrument:
   filter returning few rows over a column its statistics cannot narrow, each
   with and without `--statistics none`, warm, on a generated file carrying a
   sorted id column and a low-cardinality column. The first two price what
-  pruning buys, the third what consulting statistics costs where it buys
-  nothing, which every filtered query pays by default. The low-cardinality
+  pruning buys, the third what carrying and consulting statistics costs where
+  it buys nothing, which every filtered query pays by default — so the third
+  filter also runs against a cache written by `parse --statistics none`, the
+  cache being decoded whole whatever the query states. The low-cardinality
   column's values arrive in runs, so the dictionary leg is a best case, and the
   table prints the groups each query skipped beside its timing
   ([`../status/history/2026-09-15.md`](../status/history/2026-09-15.md), "The

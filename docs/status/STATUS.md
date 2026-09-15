@@ -83,6 +83,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.9** Early stop on a column sorted over its block; [notes](../design/roadmap-P10.9-sorted-stop-notes.md)
 - [x] **10.11** The early stop reported after the fact: blocks stopped and bytes left unread, counted per stream and printed by `pgdq query` where a stop fired; [notes](../design/roadmap-P10.11-stop-report-notes.md)
 - [x] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`, over the `pruning` input with all three of the spec's filters — taken from the instrument's commit and folded into `measurements.md`; [notes](../design/roadmap-P10.10-figures-notes.md)
+- [ ] **10.10.1** `statistics-pruning`'s third filter also against a cache written by `parse --statistics none`, pricing what carrying statistics costs a query; strikes the second half of P20's inbox entry "What the statistics figures leave unpriced"
 
 ## Not started
 
@@ -303,19 +304,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **10.10 is ticked though no figure prices loading a cache that carries
-  statistics.** The call: `statistics-pruning`'s legs differ by `query
-  --statistics` alone, as the spec's "Measurements" states them, and both
-  decode the same whole cache (`cache::read_cache_file`), statistics included;
-  so its third row prices consulting statistics, not carrying them, and the
-  pruned legs' floor holds the decode unattributed
-  ([`../design/measurements.md`](../design/measurements.md), "What row-group
-  statistics buy a query"). Why: the spec says "with and without `--statistics
-  none`", which is what was taken, and it routes the defaults that follow from
-  statistics to P20, so the gap went to P20's inbox, "What the statistics
-  figures leave unpriced", rather than into a re-taken instrument. Reconsidering
-  means reading the spec's "which every filtered query pays by default" as
-  including the decode — then 10.10 earns a `10.10.1` adding a leg against a
-  cache written under `parse --statistics none`, before the wrap, and the inbox
-  entry's second half is struck.
