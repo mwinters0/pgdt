@@ -82,7 +82,7 @@ Spec: [`../design/roadmap-P10-row-group-statistics.md`](../design/roadmap-P10-ro
 - [x] **10.8** The pruning consumer: segment gaps, the `PlanNote`, `query --statistics none`, the generated pruned-equals-unpruned check; [notes](../design/roadmap-P10.8-pruning-consumer-notes.md)
 - [x] **10.9** Early stop on a column sorted over its block; [notes](../design/roadmap-P10.9-sorted-stop-notes.md)
 - [x] **10.11** The early stop reported after the fact: blocks stopped and bytes left unread, counted per stream and printed by `pgdq query` where a stop fired; [notes](../design/roadmap-P10.11-stop-report-notes.md)
-- [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning`
+- [ ] **10.10** Figures `statistics-gathering`, under a generous container limit of its own, and `statistics-pruning` — the instrument is landed in `measure.UNTAKEN`, with the `pruning` input's generator and all three of the spec's filters; the readings remain, taken from the commit that lands it and folded into `measurements.md`; [notes](../design/roadmap-P10.10-figures-notes.md)
 
 ## Not started
 

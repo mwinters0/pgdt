@@ -1106,6 +1106,44 @@ def parse_resolution(text: str) -> dict[str, str]:
     return {"resolved_jobs": match.group(1), "resolved_budget": match.group(2)}
 
 
+#: What `pgdq query` says on stderr about the rows it did not read, and how many
+#: it returned: the pruning note (`PlanNoteKind::StatisticsPruned`), the early
+#: stop's note, and the closing count.
+PRUNING_NOTE_RE = re.compile(
+    r"^note: row-group statistics rule out (\d+) of (\d+) group\(s\), so (\d+) of the "
+    r"(\d+) byte\(s\) of rows",
+    re.MULTILINE,
+)
+STOP_NOTE_RE = re.compile(
+    r"^note: reading stopped early in (\d+) block\(s\) .*? a further (\d+) byte\(s\)",
+    re.MULTILINE,
+)
+ROWS_RETURNED_RE = re.compile(r"^(\d+) row\(s\)$", re.MULTILINE)
+#: What the CLI says in place of a count when no row passed.
+NO_ROWS_RE = re.compile(r"^no rows found for ", re.MULTILINE)
+
+
+def parse_query_notes(text: str) -> dict[str, str]:
+    """What a `pgdq query` reported of its own reading: the groups and bytes
+    its statistics skipped, the bytes an early stop left unread, and the rows
+    it returned. `{}` for a run that printed none of them.
+
+    **The process's own count, read beside the timing** — which is what makes
+    a pruned leg that silently skipped nothing a refusal rather than a table
+    saying pruning buys nothing (`run_statistics_pruning`)."""
+    out: dict[str, str] = {}
+    if match := PRUNING_NOTE_RE.search(text):
+        keys = ("skipped_groups", "groups", "skipped_bytes", "bytes")
+        out.update(zip(keys, match.groups()))
+    if match := STOP_NOTE_RE.search(text):
+        out["stopped_blocks"], out["unread_bytes"] = match.groups()
+    if match := ROWS_RETURNED_RE.search(text):
+        out["rows_returned"] = match.group(1)
+    elif NO_ROWS_RE.search(text):
+        out["rows_returned"] = "0"
+    return out
+
+
 #: `getrusage`'s syscall number, by machine. Read from the host's own
 #: architecture because the container shares this kernel, so the two cannot
 #: disagree; an unlisted machine is an error rather than a guess, since a wrong
@@ -1255,6 +1293,11 @@ INPUTS: dict[str, InputSpec] = {
     # The quadratic's control: the same byte count in one COPY block.
     "one_block": InputSpec(
         "one_block", "generate_perf_data.py", ("--seed", "42", "--size-mb", "2"), scales=False
+    ),
+    # `statistics-pruning`'s input: the control's rows, same seed and draws,
+    # with a low-cardinality column appended (`generate_pruning_bench.py`).
+    "pruning": InputSpec(
+        "pruning", "generate_pruning_bench.py", ("--seed", "42", "--size-mb", "@SIZE_MB@")
     ),
 }
 for _n in (500, 1000, 2000, 4000):
@@ -2125,7 +2168,8 @@ QUERY_SUBSTREAM_CAP: dict[str, int] = {}
 #: and obliges a re-sweep, exactly as changing the allocator would.
 SWEEP_JOBS = 1
 
-#: **Every `pgdq parse` this harness runs gathers no statistics.** `parse`
+#: **Every `pgdq parse` this harness runs gathers no statistics**, outside the
+#: two figures whose subject is the gathering (`GATHER_STATISTICS`). `parse`
 #: gathers per-row-group statistics by default, reading every value of every
 #: column, so a shape that inherited the default would re-time what its figure
 #: measures the day the default moved — the failure `SWEEP_JOBS` is stated
@@ -2133,6 +2177,74 @@ SWEEP_JOBS = 1
 #: without it; `--preamble-only` reads no row and takes no statistics flag, so
 #: it states none.
 NO_STATISTICS = "--statistics none"
+
+#: `pgdump_query::statistics::DEFAULT_STATISTICS_GROUP_SIZE`, mirrored, and
+#: held to the library's by a test.
+STATISTICS_GROUP_SIZE = 1 << 20
+
+#: **What the two statistics figures state instead, where they gather.**
+#: Their subject is the gathering the rule above keeps out of every other
+#: figure, so they are its one exemption, and they state the request rather
+#: than inherit it for the rule's own reason: the selection and the group size
+#: are both defaults that can move, and a shape inheriting either would re-time
+#: its figure the day one did. The size stated is the shipped default, so what
+#: is priced is what a flagless `parse` does today.
+GATHER_STATISTICS = f"--statistics all --statistics-group-size {STATISTICS_GROUP_SIZE}"
+
+#: `statistics-gathering`'s shapes: one whole-file `parse` under the resident
+#: wrapper, with statistics and without, `<family><leg>-rss`. **Both legs are
+#: the family's own**, the `none` leg included, though its argv is
+#: `parse-rss`'s: the figure's container is not the register's, so it is not
+#: that run, and a leg borrowed from `peak-rss` would stand this figure in a
+#: sharing edge that confines it to a stamped sweep.
+STATISTICS_FAMILY = "parse-statistics-"
+#: The two legs, in the table's column order, each with the flags it states.
+STATISTICS_LEGS: tuple[tuple[str, str], ...] = (
+    ("none", NO_STATISTICS),
+    ("all", GATHER_STATISTICS),
+)
+
+#: `statistics-gathering`'s container limit, against the register's 512 MB.
+#: **Chosen generously, as the spec asks, so that no kill interrupts the
+#: phase**: statistics are held per group per tracked column and nothing bills
+#: them (`KD28`), and the arithmetic's worst case — every one of a 3.00 GiB
+#: input's 3,072 groups holding a full dictionary of 256-byte entries and two
+#: capped bounds on each of the control's 16 columns — is about 800 MiB above
+#: the scan. The figure records resident beside the time, so the headroom this
+#: leaves is read rather than assumed. Bounding what statistics hold is P20's.
+STATISTICS_MEMORY = "2g"
+
+#: `statistics-pruning`'s shapes, `<family><filter>-<leg>`: a `pgdq query`
+#: timed against a cache one untimed gathering `parse` wrote in the same
+#: container, as `info-cache-rss` builds its own — so the cache is by
+#: construction this input's, and the two legs differ by `--statistics` alone.
+PRUNING_FAMILY = "query-pruning-"
+#: The filters, in the table's row order: the `--where` each states and what
+#: the row calls it. **The range is the one the spec names**, a selective range
+#: on a sorted column, which statistics answer twice over — groups wholly
+#: outside it are skipped by their bounds, and the block's ascending order stops
+#: the read at the first row past its upper bound. **The equality is answered by
+#: a dictionary alone**, `v_category` being text under no stated collation, so
+#: it has no bounds (`generate_pruning_bench.py`). Both select 3,000 rows of the
+#: 3.00 GiB input: one run of `id`, and three runs of one label spread across
+#: the file — which is what the table's rows-returned column reads back.
+#: **The third is one its statistics cannot narrow** (`PRUNING_UNNARROWED`):
+#: `v_smallint` is drawn uniformly per row, so each group's few hundred values
+#: have bounds spanning the column's range, holding the midrange `0`, and more
+#: distinct values than a dictionary keeps. Every group's bounds are read and
+#: none is skipped, so its legs differ by what consulting them costs. A
+#: `smallint` rather than a wider integer so the filter still returns rows:
+#: 13 of the 3.00 GiB input's, where one value of a `bigint` would match none.
+PRUNING_FILTERS: dict[str, tuple[str, str]] = {
+    "range": ("id > 400000 AND id <= 403000", "Range on the sorted `id`"),
+    "dictionary": ("v_category=category-200", "Equality on the low-cardinality `v_category`"),
+    "unnarrowed": ("v_smallint=0", "Equality on the uniformly drawn `v_smallint`"),
+}
+#: The filter whose pruned leg must consult statistics and skip nothing, where
+#: the others' must skip.
+PRUNING_UNNARROWED = "unnarrowed"
+#: The legs, in the table's column order: what `query --statistics` states.
+PRUNING_LEGS = ("none", "all")
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -3038,6 +3150,31 @@ def _script(command: str) -> str:
             f"{q} query --source /dump.sql --table public.nosuchtable --dqcache none "
             f"{j} >/dev/null"
         )
+    if command.startswith(STATISTICS_FAMILY):
+        # `statistics-gathering`: the same wrapped `parse` as `parse-rss`, its
+        # statistics request stated by the leg.
+        leg, _, suffix = command.removeprefix(STATISTICS_FAMILY).partition("-")
+        flags = dict(STATISTICS_LEGS)
+        if leg not in flags or suffix != "rss":
+            raise ValueError(f"unknown command shape {command!r}")
+        return (
+            f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
+            f"--dqcache /tmp/x.dqcache {j} {flags[leg]} >/dev/null"
+        )
+    if command.startswith(PRUNING_FAMILY):
+        # `statistics-pruning`. The builder is outside the timer and states the
+        # gathering request; the timed `query` states which use it makes of it.
+        # `typed`, stated: the range compares `id` as an integer.
+        name, _, leg = command.removeprefix(PRUNING_FAMILY).rpartition("-")
+        if name not in PRUNING_FILTERS or leg not in PRUNING_LEGS:
+            raise ValueError(f"unknown command shape {command!r}")
+        expr = PRUNING_FILTERS[name][0]
+        return (
+            f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} "
+            f"{GATHER_STATISTICS} >/dev/null; "
+            f"{q} query --source /dump.sql --table public.perf --dqcache /tmp/x.dqcache "
+            f"--schema-mode typed --where '{expr}' --statistics {leg} {j} >/dev/null"
+        )
     if command.startswith("parse-chunk-"):
         # The read chunk, the one lever of the three I/O defaults that is a
         # value rather than a scheme. `parse` rather than `query`: this is
@@ -3185,6 +3322,8 @@ def command_shapes() -> tuple[str, ...]:
         *(f"query-project-{w}" for w in PROJECTION_WIDTHS),
         *(f"query-where-{s}" for s in PREDICATE_SHAPES),
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
+        *(f"{STATISTICS_FAMILY}{leg}-rss" for leg, _ in STATISTICS_LEGS),
+        *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
@@ -3252,12 +3391,19 @@ def statistics_flag_problems() -> list[str]:
 
     `parse` gathers statistics unless told not to, so such a shape times the
     gathering default rather than the scan its figure names. `--preamble-only`
-    stops before any row and refuses the flag, so it is exempt."""
+    stops before any row and refuses the flag, so it is exempt.
+
+    **The two statistics families may state `GATHER_STATISTICS` instead**, and
+    only that: their subject is the gathering, and a `parse` of theirs that
+    inherits the request is reported exactly as anyone else's is."""
+    gathers = (STATISTICS_FAMILY, PRUNING_FAMILY)
     return [
         command
         for command in command_shapes()
         if any(
-            NO_STATISTICS not in run and "--preamble-only" not in run
+            NO_STATISTICS not in run
+            and "--preamble-only" not in run
+            and not (command.startswith(gathers) and GATHER_STATISTICS in run)
             for run in _PARSE_RUN.findall(_script(command))
         )
     ]
@@ -3621,6 +3767,30 @@ class Session:
                 if spec.command.startswith("decode-")
                 else {}
             )
+            if spec.command.startswith(PRUNING_FAMILY):
+                # A stand-in of what the query's own notes say, for the same
+                # reason: the pruning table divides by them and refuses a
+                # pruned leg that skipped nothing — or, for the filter its
+                # statistics cannot narrow, one that skipped anything.
+                pruned = spec.command.endswith("-all")
+                skipped = (
+                    0
+                    if spec.command.startswith(f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-")
+                    else 3060
+                )
+                self._last_stdout = {
+                    "rows_returned": "3000",
+                    **(
+                        {
+                            "skipped_groups": str(skipped),
+                            "groups": "3072",
+                            "skipped_bytes": str(skipped * MIB),
+                            "bytes": str(3072 * MIB),
+                        }
+                        if pruned
+                        else {}
+                    ),
+                }
             if spec.memory is not None:
                 # A stand-in resolution, for the same reason the reading above
                 # is a stand-in: a dry run must exercise every division the
@@ -3736,6 +3906,7 @@ class Session:
         self._last_stdout = {
             **parse_reported(proc.stdout),
             **parse_resolution(proc.stderr),
+            **parse_query_notes(proc.stderr),
         }
         if report_path is not None:
             self._last_instrument = self._read_instrument(spec, report_path)
@@ -4594,6 +4765,18 @@ GEN_SHAPES = (
     "scripts/generate_perf_data.py",
     "scripts/generate_large_object_bench.py",
     "scripts/generate_insert_run_bench.py",
+)
+#: The pruning input's generator, and the perf generator whose rows it writes.
+GEN_PRUNING = ("scripts/generate_pruning_bench.py", *GEN_PERF)
+#: Where statistics are gathered, stored and read back. `gather.rs` and
+#: `statistics.rs` are the gathering; `pgtype.rs`, `resolve.rs` and
+#: `predicate.rs` are the comparison a bound is keyed and ordered under.
+STATISTICS = (
+    "pgdump_query/src/gather.rs",
+    "pgdump_query/src/statistics.rs",
+    "pgdump_query/src/pgtype.rs",
+    "pgdump_query/src/resolve.rs",
+    *PREDICATE,
 )
 
 
@@ -7337,6 +7520,213 @@ def _per_rep(figure: str, session: Session, specs: Sequence[RunSpec]) -> str:
     return "Per-rep readings (s):\n" + "\n".join(lines) + "\n"
 
 
+# -- what gathering statistics costs, and what they buy --------------------
+
+#: `statistics-gathering`'s inputs, in the table's row order: the three
+#: scan-throughput inputs the spec names. **Two of them hold no `COPY` row**, and
+#: a gathering `parse` over them observes nothing: their rows are what the
+#: request costs where it gathers nothing, which is the control's row read from
+#: the other side.
+_STATISTICS_ROWS: tuple[tuple[str, str], ...] = (
+    ("control", "`COPY` block"),
+    ("large_object", "Large-object region"),
+    ("insert_run", "`INSERT` run"),
+)
+
+
+def _statistics_specs() -> list[RunSpec]:
+    return [
+        RunSpec(
+            "pgdq", name, f"{STATISTICS_FAMILY}{leg}-rss", "warm", f"{label}, statistics {leg}"
+        )
+        for name, label in _STATISTICS_ROWS
+        for leg, _ in STATISTICS_LEGS
+    ]
+
+
+def run_statistics_gathering(session: Session) -> str:
+    """Whole-file `parse` with every statistic gathered against `--statistics
+    none`, warm, in one container of the figure's own, with resident recorded
+    beside each and not refined."""
+    figure = "statistics-gathering"
+    specs = _statistics_specs()
+    session.sweep(figure, specs, session.cfg.reps(5))
+    floors = [
+        RunSpec("none", name, "dd", "warm", f"dd floor {name}") for name, _ in _STATISTICS_ROWS
+    ]
+    session.sweep(figure, floors, session.cfg.reps(3))
+    legs = [leg for leg, _ in STATISTICS_LEGS]
+    rows, per_rep = [], []
+    for (name, label), floor in zip(_STATISTICS_ROWS, floors):
+        by_leg = {
+            spec.command.removeprefix(STATISTICS_FAMILY).split("-")[0]: spec
+            for spec in specs
+            if spec.input == name
+        }
+        walls = {leg: session.get(figure, by_leg[leg]) for leg in legs}
+        rss = {leg: session.get_rss(figure, by_leg[leg]) for leg in legs}
+        rows.append(
+            [
+                label,
+                *(fmt_median_spread(walls[leg]) for leg in legs),
+                fmt_delta(median(walls["none"]), median(walls["all"])),
+                *(fmt_mib_median_spread(rss[leg]) for leg in legs),
+                f"{fmt_s(median(session.get(figure, floor)))} s",
+            ]
+        )
+        for leg in legs:
+            per_rep.append(
+                f"- {label}, `--statistics {leg}`: {fmt_readings(walls[leg])}; "
+                + ", ".join(fmt_mib(v) for v in rss[leg])
+            )
+        per_rep.append(f"- {label}, `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
+    table = md_table(
+        [
+            "Input",
+            "`--statistics none`",
+            "Every statistic",
+            "Δ",
+            "Peak RSS, none",
+            "Peak RSS, every statistic",
+            "`dd` floor",
+        ],
+        rows,
+    )
+    return (
+        table
+        + f"\n\nEvery run is `pgdq parse` over the whole file at `--jobs {SWEEP_JOBS}`, "
+        f"statistics stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the shipped "
+        f"default request — **in a {STATISTICS_MEMORY} container**, against the register's "
+        f"{session.cfg.memory}: nothing bills what statistics hold, so the limit is chosen "
+        "generously and the resident column says what it left. Resident is recorded, not "
+        "attributed.\n\nPer-rep readings (s; peak RSS):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
+
+
+def _pruning_specs() -> list[RunSpec]:
+    return [
+        RunSpec(
+            "pgdq",
+            "pruning",
+            f"{PRUNING_FAMILY}{name}-{leg}",
+            "warm",
+            f"{name}, --statistics {leg}",
+        )
+        for name in PRUNING_FILTERS
+        for leg in PRUNING_LEGS
+    ]
+
+
+def pruning_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
+    """Why a `statistics-pruning` sitting's legs do not price what it claims,
+    keyed by `<filter>-<leg>`.
+
+    **Each is a refusal, not a cell**: an unpruned leg that skipped something is
+    not the reference, a pruned leg that skipped nothing prices consulting
+    statistics rather than what they buy, and two legs returning different row
+    counts are the phase's correctness check failing under the timer.
+
+    **`PRUNING_UNNARROWED` is held to the opposite**, and admitted there alone:
+    its pruned leg must say it consulted statistics — the note is printed only
+    where it did — and skipped no group and stopped no read, or it prices
+    something other than consulting them."""
+    bad = []
+    for name in PRUNING_FILTERS:
+        none, used = reported.get(f"{name}-none", {}), reported.get(f"{name}-all", {})
+        if "skipped_groups" in none or "unread_bytes" in none:
+            bad.append(f"{name}: `--statistics none` reported skipping bytes")
+        if name != PRUNING_UNNARROWED:
+            if int(used.get("skipped_groups", "0")) == 0:
+                bad.append(f"{name}: `--statistics all` skipped no row group")
+        elif "skipped_groups" not in used:
+            bad.append(f"{name}: `--statistics all` reported consulting no statistics")
+        elif int(used["skipped_groups"]) != 0 or "unread_bytes" in used:
+            bad.append(f"{name}: `--statistics all` skipped bytes its statistics cannot narrow")
+        returned = none.get("rows_returned")
+        if returned is None or returned != used.get("rows_returned"):
+            bad.append(
+                f"{name}: the two legs returned {none.get('rows_returned')} and "
+                f"{used.get('rows_returned')} row(s)"
+            )
+    return bad
+
+
+def run_statistics_pruning(session: Session) -> str:
+    """`pgdq query` under a selective range on a sorted column, under an
+    equality a dictionary answers, and under an equality its statistics cannot
+    narrow, each with its statistics and with `--statistics none`, warm."""
+    figure = "statistics-pruning"
+    specs = _pruning_specs()
+    session.sweep(figure, specs, session.cfg.reps(6))
+    floor = RunSpec("none", "pruning", "dd", "warm", "dd floor pruning")
+    session.sweep(figure, [floor], session.cfg.reps(3))
+    reported = {
+        spec.command.removeprefix(PRUNING_FAMILY): session.reported.get(spec.key(figure), {})
+        for spec in specs
+    }
+    problems = pruning_problems(reported)
+    if problems:
+        raise RuntimeError("statistics-pruning does not price pruning: " + "; ".join(problems))
+    rows, per_rep = [], []
+    for name, (expr, label) in PRUNING_FILTERS.items():
+        walls = {
+            leg: session.get(
+                figure, RunSpec("pgdq", "pruning", f"{PRUNING_FAMILY}{name}-{leg}", "warm", "")
+            )
+            for leg in PRUNING_LEGS
+        }
+        used = reported[f"{name}-all"]
+        unread = int(used["skipped_bytes"]) + int(used.get("unread_bytes", "0"))
+        rows.append(
+            [
+                f"{label}: `{expr}`",
+                fmt_median_spread(walls["none"]),
+                fmt_median_spread(walls["all"]),
+                fmt_delta(median(walls["none"]), median(walls["all"])),
+                f"**{median(walls['none']) / median(walls['all']):.1f}×**",
+                f"{int(used['skipped_groups']):,} of {int(used['groups']):,}",
+                f"{int(used.get('unread_bytes', '0')):,}",
+                f"{unread / int(used['bytes']) * 100:.2f}%",
+                f"{int(used['rows_returned']):,}",
+            ]
+        )
+        for leg in PRUNING_LEGS:
+            per_rep.append(f"- {label}, `--statistics {leg}`: {fmt_readings(walls[leg])}")
+    per_rep.append(f"- `dd` → `/dev/null`: {fmt_readings(session.get(figure, floor))}")
+    table = md_table(
+        [
+            "Filter",
+            "`--statistics none`",
+            "Statistics used",
+            "Δ",
+            "Speedup",
+            "Groups skipped",
+            "Bytes a stop left unread",
+            "Of the rows' bytes, not read",
+            "Rows returned",
+        ],
+        rows,
+    )
+    profile = session.stager.profile("pruning")
+    return (
+        table
+        + f"\n\nOne file — the control's rows with `v_category` appended, {profile['rows']:,} rows "
+        f"of {profile['columns']} columns — queried warm at `--jobs {SWEEP_JOBS}`, "
+        "`--schema-mode typed`, against a cache one untimed `parse` stating "
+        f"`{GATHER_STATISTICS}` wrote in the same container, so the two legs of a row differ "
+        "by `--statistics` alone. The first two rows price what pruning buys; the third, "
+        "which skips nothing, what consulting the statistics costs a query they cannot "
+        "narrow. The skipped groups and bytes are the query's own notes; the "
+        "bytes a stop left unread are a lower bound, and the share not read adds them to the "
+        f"skipped groups'. `dd` → `/dev/null` on the same file: "
+        f"**{fmt_s(median(session.get(figure, floor)))} s**.\n\nPer-rep readings (s):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
+
+
 # --------------------------------------------------------------------------
 # The register. Order is run order: a figure that shares a reading comes after
 # the figure that takes it.
@@ -7813,7 +8203,45 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # The spec's two figures for per-row-group statistics, each standing in no
+    # sharing edge, so each may publish outside a sweep from the commit that
+    # lands this instrument. `depends` for the first is what a gathering scan
+    # runs through and what writes what it gathered; its `none` leg is the
+    # scan-throughput shape and declares that figure's paths.
+    Figure(
+        id="statistics-gathering",
+        section="What gathering row-group statistics costs a parse",
+        stage="warm",
+        depends=(*SCAN, *MAP, *READ, *CACHE, *STATISTICS, *QUERY_CLI, *GEN_SHAPES),
+        warm_inputs=tuple(name for name, _ in _STATISTICS_ROWS),
+        memory=STATISTICS_MEMORY,
+        run=run_statistics_gathering,
+    ),
+    # Everything the timed query reads through — the replay, the cache it
+    # loads, the pruning plan, the filter, the typed decode and batch build of
+    # the rows that pass — plus the gathering, which decides what the untimed
+    # builder leaves for the query to prune with.
+    Figure(
+        id="statistics-pruning",
+        section="What row-group statistics buy a query",
+        stage="warm",
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *CACHE,
+            *STATISTICS,
+            "pgdump_query/src/prune.rs",
+            *NESTED,
+            *DECODE,
+            *QUERY_CLI,
+            *GEN_PRUNING,
+        ),
+        warm_inputs=("pruning",),
+        run=run_statistics_pruning,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

@@ -23,7 +23,7 @@ use std::path::Path;
 use std::process::Command;
 
 mod common;
-use common::{require_uv, run_ok as pgdq, scripts_dir};
+use common::{require_uv, run, run_ok as pgdq, scripts_dir, stderr_of};
 
 /// A ~2 MiB dump — a few hundred rows, which is enough for every value shape
 /// the generator draws from to appear many times over, and small enough that
@@ -126,4 +126,83 @@ fn the_perf_generator_writes_what_pgdq_reads_back() {
     generate(&composite, &["--composite"]);
     assert_every_column_maps(&composite, &dir.path().join("composite.dqcache"));
     assert_modes_agree(&composite);
+}
+
+/// `scripts/generate_pruning_bench.py` exists for what `statistics-pruning`
+/// prices, so its guard is that the statistics that figure reads are the ones
+/// a `parse` stores: `id` ascending with bounds in every group, `v_category`
+/// answered by a dictionary alone — a bound on it would let the equality leg be
+/// pruned by something other than the dictionary it is named for — and
+/// `v_smallint` bounded in every group with no dictionary in any, so the
+/// figure's filter on it consults every group's bounds and skips none.
+///
+/// At the figure's own group size, `measure.GATHER_STATISTICS`'s, because the
+/// last of those rests on how many rows a group holds: a group of at most a
+/// dictionary's cap in rows keeps one, and a dictionary lacking the literal
+/// skips the group. A whole number of MiB, so the last group is full.
+#[test]
+fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
+    require_uv("the pruning generator's only drift guard");
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("pruning.sql");
+    let status = Command::new("uv")
+        .current_dir(scripts_dir())
+        .args(["run", "generate_pruning_bench.py", "--size-mb", "24", "--seed", "42"])
+        .arg(&dump)
+        .status()
+        .expect("uv runs");
+    assert!(status.success(), "generate_pruning_bench.py failed");
+    let cache = dir.path().join("pruning.dqcache");
+    let (dump, cache) = (dump.to_str().unwrap(), cache.to_str().unwrap());
+    assert_every_column_maps(Path::new(dump), Path::new(cache));
+    std::fs::remove_file(cache).unwrap();
+    pgdq(&["parse", "--source", dump, "--dqcache", cache, "--statistics-group-size", "1048576"]);
+    let detail = pgdq(&["info", "--dqcache", cache, "--detail"]);
+    let line = |column: &str| {
+        detail
+            .lines()
+            .find(|l| l.trim_start().starts_with(&format!("{column}: over")))
+            .unwrap_or_else(|| panic!("no statistics line for {column}:\n{detail}"))
+            .to_string()
+    };
+    let groups = detail
+        .split(" group(s)")
+        .next()
+        .and_then(|head| head.rsplit(' ').next())
+        .and_then(|n| n.parse::<u64>().ok())
+        .unwrap_or_else(|| panic!("no group count:\n{detail}"));
+    assert!(groups > 16, "{groups} group(s) prove little:\n{detail}");
+    let id = line("id");
+    assert!(id.contains("ascending"), "{id}");
+    assert!(id.contains(&format!("bounds in {groups} of {groups} group(s)")), "{id}");
+    let category = line("v_category");
+    assert!(category.contains("no bounds"), "{category}");
+    assert!(
+        category.contains(&format!("dictionary in {groups} of {groups} group(s)")),
+        "{category}"
+    );
+    let smallint = line("v_smallint");
+    assert!(smallint.contains("unsorted"), "{smallint}");
+    assert!(smallint.contains(&format!("bounds in {groups} of {groups} group(s)")), "{smallint}");
+    assert!(smallint.contains("dictionary in 0 of"), "{smallint}");
+    // The filter `measure.PRUNING_FILTERS` states, consulted and skipping
+    // nothing: the note is printed only where statistics were consulted.
+    let queried = run(&[
+        "query",
+        "--source",
+        dump,
+        "--table",
+        "public.perf",
+        "--dqcache",
+        cache,
+        "--schema-mode",
+        "typed",
+        "--where",
+        "v_smallint=0",
+    ]);
+    assert!(queried.status.success(), "{}", stderr_of(&queried));
+    let queried = stderr_of(&queried);
+    let skipped_none = format!("rule out 0 of {groups} group(s)");
+    assert!(queried.contains(&skipped_none), "{queried}");
+    assert!(!queried.contains("reading stopped early"), "{queried}");
 }

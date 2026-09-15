@@ -371,7 +371,8 @@ class WorkerCount(unittest.TestCase):
 
 
 class StatisticsFlag(unittest.TestCase):
-    """Every `pgdq parse` the harness runs gathers no statistics.
+    """Every `pgdq parse` the harness runs gathers no statistics, but for the
+    statistics figures' own (`StatisticsFigures`).
 
     `parse` gathers by default, which reads every value of every column, so a
     shape inheriting that default would re-time the figure it belongs to the
@@ -442,6 +443,218 @@ class StatisticsFlag(unittest.TestCase):
             with self.subTest(wrap=wrap):
                 self.assertTrue(legs)
                 self.assertTrue(all(measure.NO_STATISTICS in leg for leg in legs), legs)
+
+
+class StatisticsFigures(unittest.TestCase):
+    """`statistics-gathering` and `statistics-pruning`, the rule above's one
+    exemption: figures whose subject is the gathering.
+
+    What these hold is that the exemption is stated rather than inherited, that
+    the two legs of every row differ by the statistics flag alone, and that a
+    pruning sitting whose pruned leg skipped nothing refuses rather than
+    publishing a table saying pruning buys nothing."""
+
+    #: What `pgdq query` printed over a 24 MiB `pruning` input, verbatim.
+    QUERY_STDERR = (
+        "2026-09-14T23:28:26.079040999Z  INFO scan started bytes=1 jobs=1 memory_bytes=67108864\n"
+        "note: row-group statistics rule out 3060 of 3072 group(s), so 3208646636 of the "
+        "3221227176 byte(s) of rows this table holds are not read\n"
+        "note: reading stopped early in 1 block(s) sorted past the filter's bound, so a "
+        "further 429055 byte(s) of rows are not read\n"
+        "3000 row(s)\n"
+    )
+
+    def test_both_wait_untaken_and_borrow_nothing(self):
+        # Standing in no sharing edge is what lets each publish from the commit
+        # that lands it, outside a sweep.
+        for fid in ("statistics-gathering", "statistics-pruning"):
+            with self.subTest(figure=fid):
+                fig = measure.SELECTABLE_BY_ID[fid]
+                self.assertIn(fig, measure.UNTAKEN)
+                self.assertEqual(fig.shares, ())
+                self.assertEqual(measure.entangled_with(fid), [])
+
+    def test_the_gathering_figure_is_the_scan_throughput_inputs(self):
+        # The spec's inputs, whole: two of them hold no `COPY` row, and that is
+        # a row of the table rather than a reason to drop it.
+        fig = measure.SELECTABLE_BY_ID["statistics-gathering"]
+        warm = measure.FIGURES_BY_ID["scan-throughput-warm"].warm_inputs
+        self.assertEqual(set(fig.warm_inputs), set(warm))
+        self.assertEqual(fig.memory, measure.STATISTICS_MEMORY)
+        self.assertNotEqual(measure.STATISTICS_MEMORY, measure.Config().memory)
+
+    def test_the_group_size_stated_is_the_librarys_default(self):
+        src = (measure.REPO / "pgdump_query/src/statistics.rs").read_text()
+        self.assertEqual(measure.STATISTICS_GROUP_SIZE, 1 << 20)
+        self.assertIn("pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;", src)
+
+    def test_a_gathering_legs_parse_states_its_request(self):
+        for leg, flags in measure.STATISTICS_LEGS:
+            with self.subTest(leg=leg):
+                script = measure._script(f"{measure.STATISTICS_FAMILY}{leg}-rss")
+                self.assertIn(flags, script)
+                self.assertIn(measure.rss_wrapper(measure.platform.machine()), script)
+
+    def test_the_two_gathering_legs_differ_by_the_request_alone(self):
+        (none, none_flags), (every, every_flags) = measure.STATISTICS_LEGS
+        a = measure._script(f"{measure.STATISTICS_FAMILY}{none}-rss")
+        b = measure._script(f"{measure.STATISTICS_FAMILY}{every}-rss")
+        self.assertEqual(a.replace(none_flags, every_flags), b)
+
+    def test_the_exemption_admits_the_gathering_request_and_nothing_else(self):
+        # Outside the two families a `parse` stating `GATHER_STATISTICS` is
+        # still one that gathers, and is reported.
+        script = f"time /pgdq parse --source /dump.sql {measure.GATHER_STATISTICS} --jobs 1"
+        with unittest.mock.patch.object(measure, "_script", lambda c: script):
+            reported = measure.statistics_flag_problems()
+        self.assertEqual(
+            sorted(reported),
+            sorted(
+                c
+                for c in measure.command_shapes()
+                if not c.startswith((measure.STATISTICS_FAMILY, measure.PRUNING_FAMILY))
+            ),
+        )
+
+    def test_the_pruning_builder_is_untimed_and_states_the_request(self):
+        for name in measure.PRUNING_FILTERS:
+            for leg in measure.PRUNING_LEGS:
+                with self.subTest(filter=name, leg=leg):
+                    script = measure._script(f"{measure.PRUNING_FAMILY}{name}-{leg}")
+                    builder, _, timed = script.partition("; ")
+                    self.assertIn("/pgdq parse", builder)
+                    self.assertIn(measure.GATHER_STATISTICS, builder)
+                    self.assertNotIn("time ", builder)
+                    self.assertTrue(timed.startswith("time /pgdq query"))
+                    self.assertEqual(script.count("time "), 1)
+                    self.assertIn(f"--statistics {leg} ", timed)
+
+    def test_the_two_pruning_legs_differ_by_the_flag_alone(self):
+        for name in measure.PRUNING_FILTERS:
+            with self.subTest(filter=name):
+                a = measure._script(f"{measure.PRUNING_FAMILY}{name}-none")
+                b = measure._script(f"{measure.PRUNING_FAMILY}{name}-all")
+                self.assertEqual(a.replace("--statistics none", "--statistics all"), b)
+
+    def test_the_filters_name_the_generators_columns(self):
+        import generate_pruning_bench as gen
+
+        range_expr = measure.PRUNING_FILTERS["range"][0]
+        self.assertTrue(range_expr.startswith(f"{measure._PERF_SCALARS[0]} "))
+        column, literal = measure.PRUNING_FILTERS["dictionary"][0].split("=")
+        self.assertEqual(column, gen.COLUMN[0])
+        self.assertIn(literal, [gen.label(i) for i in range(gen.LABELS)])
+
+    def test_the_unnarrowed_filter_is_a_midrange_equality_on_a_uniform_smallint(self):
+        # What makes its statistics unable to narrow it is the draw: a
+        # `smallint` over its whole range, per row (`random_row`), with `0` in
+        # the middle of it. What `parse` keeps for the column at the figure's
+        # group size, and that the query skips no group, is
+        # `perf_generator_fidelity.rs`'s, which states the same filter.
+        import generate_perf_data as perf
+
+        expr = measure.PRUNING_FILTERS[measure.PRUNING_UNNARROWED][0]
+        column, literal = expr.split("=")
+        self.assertEqual(dict(perf.COLUMNS)[column], "smallint")
+        self.assertEqual(int(literal), 0)
+        fidelity = (measure.REPO / "pgdump_query-cli/tests/perf_generator_fidelity.rs").read_text()
+        self.assertIn(f'"{expr}"', fidelity)
+        self.assertIn(str(measure.STATISTICS_GROUP_SIZE), fidelity)
+
+    def test_the_query_notes_are_read_as_the_cli_prints_them(self):
+        got = measure.parse_query_notes(self.QUERY_STDERR)
+        self.assertEqual(
+            got,
+            {
+                "skipped_groups": "3060",
+                "groups": "3072",
+                "skipped_bytes": "3208646636",
+                "bytes": "3221227176",
+                "stopped_blocks": "1",
+                "unread_bytes": "429055",
+                "rows_returned": "3000",
+            },
+        )
+        self.assertEqual(
+            measure.parse_query_notes("no rows found for public.perf in /dump.sql\n"),
+            {"rows_returned": "0"},
+        )
+        self.assertEqual(measure.parse_query_notes("real 0m1.0s\n"), {})
+
+    def test_the_phrases_read_are_the_librarys_and_the_clis(self):
+        # The regexes key on wording two crates print; a rewording there would
+        # leave every leg reading as one that skipped nothing, which the
+        # renderer refuses — loudly, but a sitting late.
+        stream = (measure.REPO / "pgdump_query/src/stream.rs").read_text()
+        cli = (measure.REPO / "pgdump_query-cli/src/main.rs").read_text()
+        self.assertIn(
+            '"row-group statistics rule out {skipped_groups} of {groups} group(s), so \\', stream
+        )
+        self.assertIn("note: reading stopped early in {} block(s)", cli)
+        self.assertIn('eprintln!("{rows} row(s)");', cli)
+        self.assertIn('eprintln!("no rows found for {table} in {}"', cli)
+
+    def _reported(self, **override):
+        good = {
+            "range-none": {"rows_returned": "3000"},
+            "range-all": {"rows_returned": "3000", "skipped_groups": "12", "groups": "20"},
+            "dictionary-none": {"rows_returned": "3000"},
+            "dictionary-all": {"rows_returned": "3000", "skipped_groups": "5", "groups": "20"},
+            "unnarrowed-none": {"rows_returned": "12"},
+            "unnarrowed-all": {"rows_returned": "12", "skipped_groups": "0", "groups": "20"},
+        }
+        good.update(override)
+        return good
+
+    def _refused(self, **override):
+        """The one refusal `override` earns, by the filter it names — so a
+        test passes on the refusal it was written for rather than on any."""
+        problems = measure.pruning_problems(self._reported(**override))
+        self.assertEqual(len(problems), 1, problems)
+        return problems[0]
+
+    def test_a_sitting_that_prunes_passes(self):
+        self.assertEqual(measure.pruning_problems(self._reported()), [])
+
+    def test_a_pruned_leg_that_skipped_nothing_is_refused(self):
+        got = self._refused(**{"range-all": {"rows_returned": "3000"}})
+        self.assertTrue(got.startswith("range: "), got)
+        got = self._refused(
+            **{"dictionary-all": {"rows_returned": "3000", "skipped_groups": "0", "groups": "20"}}
+        )
+        self.assertTrue(got.startswith("dictionary: "), got)
+
+    def test_an_unpruned_leg_that_skipped_is_refused(self):
+        got = self._refused(**{"dictionary-none": {"rows_returned": "3000", "skipped_groups": "1"}})
+        self.assertTrue(got.startswith("dictionary: "), got)
+        got = self._refused(**{"unnarrowed-none": {"rows_returned": "12", "skipped_groups": "0"}})
+        self.assertTrue(got.startswith("unnarrowed: "), got)
+
+    def test_legs_returning_different_rows_are_refused(self):
+        got = self._refused(**{"range-none": {"rows_returned": "2999"}})
+        self.assertTrue(got.startswith("range: "), got)
+        got = self._refused(**{"range-none": {}})
+        self.assertTrue(got.startswith("range: "), got)
+
+    def test_the_unnarrowed_leg_is_the_one_admitted_to_skip_nothing(self):
+        self.assertIn(measure.PRUNING_UNNARROWED, measure.PRUNING_FILTERS)
+        # Not having consulted statistics at all is not skipping nothing: the
+        # note is printed only where they were consulted.
+        got = self._refused(**{"unnarrowed-all": {"rows_returned": "12"}})
+        self.assertIn("consulting no statistics", got)
+
+    def test_an_unnarrowed_leg_that_skipped_or_stopped_is_refused(self):
+        skipped = {"rows_returned": "12", "skipped_groups": "1", "groups": "20"}
+        got = self._refused(**{"unnarrowed-all": skipped})
+        self.assertTrue(got.startswith("unnarrowed: "), got)
+        stopped = {
+            "rows_returned": "12",
+            "skipped_groups": "0",
+            "groups": "20",
+            "unread_bytes": "4096",
+        }
+        got = self._refused(**{"unnarrowed-all": stopped})
+        self.assertTrue(got.startswith("unnarrowed: "), got)
 
 
 class Allocator(unittest.TestCase):
@@ -3157,9 +3370,9 @@ class XzDecodeScaling(unittest.TestCase):
         self.assertNotEqual(measure.DECODE_MEMORY, measure.Config().memory)
 
     #: Every figure permitted to depart from the recorded 512 MB, and nothing
-    #: else. Each is a figure that holds N decoded blocks at once, which is the
-    #: one reason the register admits: the departure is stated in that figure's
-    #: own table.
+    #: else. Each is a figure that holds more than the recorded container
+    #: affords, or may: N decoded blocks at once, or statistics nothing bills.
+    #: The departure is stated in that figure's own table.
     MEMORY_DEPARTURES = {
         "xz-decode-scaling",
         "parallel-scan-throughput",
@@ -3168,6 +3381,9 @@ class XzDecodeScaling(unittest.TestCase):
         # recorded 512 MB, so the container that holds a run of it cannot be
         # the recorded one; its `.xz` legs hold N decoded blocks besides.
         "reserve",
+        # Its spec gives it a generous limit of its own, so that no kill
+        # interrupts the phase while what statistics hold is unbounded (`KD28`).
+        "statistics-gathering",
     }
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):

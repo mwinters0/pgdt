@@ -169,7 +169,11 @@ Eighteen standing rules for reading anything below:
   than the scan its figure names.
   `uv run measure.py --check` fails a shape whose `parse` omits it, and the
   profile, heaptrack and koji recipes state it too; `--preamble-only` reads no
-  row and states none. What gathering costs is its own figure.
+  row and states none. What gathering costs, and what it buys a query, are the
+  two figures whose subject it is — `statistics-gathering` and
+  `statistics-pruning` — and they are the one exemption: a `parse` of theirs
+  that gathers states `measure.GATHER_STATISTICS`, the request and the group
+  size alike, and `--check` holds them to that rather than to nothing.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
   measurement: the allocator, the stage's position in the session and the
