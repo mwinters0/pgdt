@@ -68,7 +68,7 @@ table as a work queue.
 | M107 | 2026-09-14 | `plan_blocks` raises every resolution refusal — schema, filter, projection — for the first refusing block in file order, through `resolve_for_query`; D54 widens to resolution refusals | | [2026-09-14](../status/history/2026-09-14.md), "A block's filter refusal moves to the plan" |
 | M108 | 2026-09-15 | `info --json` exports the rest of the cache file: `format_version`, `container_kind`, the xz seek table and the source identity | | [2026-09-15](../status/history/2026-09-15.md), "`--json` exports the whole cache file" |
 | M109 | 2026-09-15 | `Error::CachedBlockChanged` names the cache path, as `CacheSourceMismatch` does, so a user with `--dqcache` elsewhere knows which file to remove | | [2026-09-15](../status/history/2026-09-15.md), "A moved block's refusal names its cache" |
-| M110 | | `tests/pruning.rs`'s generated check asserts that where the unpruned query raises, a pruned query whose note skips no group raises the same error | | [2026-09-14](../status/history/2026-09-14.md), "The pruned-equals-unpruned check stays whole, and grows an error leg" |
+| M110 | 2026-09-15 | `tests/pruning.rs`'s generated check asserts that where the unpruned query raises, a pruned query whose note skips no row's bytes and whose stops leave none unread raises the same error | | [2026-09-15](../status/history/2026-09-15.md), "A pruned query that reads every row raises the unpruned error" |
 
 
 

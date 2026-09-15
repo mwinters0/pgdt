@@ -50,11 +50,12 @@ on what a skipped group raises is `decisions.md`, "D54". No figure was taken.
   is the spec's check: every fixture gathered at 32 bytes, terms under all ten
   operators with literals from stored bounds, dictionary entries, their
   neighbours and the oracle, random trees, at one worker and at three; rows,
-  schema and comparison notes identical. The unpruned leg reads a cache holding
-  no statistic, which loads far faster in a debug build; the switch alone is
-  pinned by the hand tests. One thread per major; its floors count the
-  comparisons, the ones that skipped something and the unpruned errors
-  tolerated.
+  schema and comparison notes identical, and where the unpruned query raises, a
+  pruned one that skipped no row's bytes and stopped short of none raises the
+  same error. The unpruned leg reads a cache holding no statistic, which loads
+  far faster in a debug build; the switch alone is pinned by the hand tests. One
+  thread per major; its floors count the comparisons, the ones that skipped
+  something, the unpruned errors tolerated and the ones raised pruned too.
 - Hand tests: an ascending `id` under `>=` skipping exactly the groups whose
   maximum is below the bound; `low_card = bravo` skipped by the dictionary
   alone; relabelled `declared_type` pruning nothing; a pruned stream resumed at
