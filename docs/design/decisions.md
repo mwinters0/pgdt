@@ -422,9 +422,9 @@ growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Ch
 ### D82 A block past its cap merges pairwise, exactly, and never while a piece of it is alive
 Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads until
 `finish` clips them, a clipped upper bound not ordering as its value does; a merged dictionary
-renumbers first-seen. A piece joins at its own size, so its block merges once none is alive,
-reopening an odd last group. Rejected: merging stored bounds; coarsening a piece at its join;
-waiting for an even count, which windows can keep odd. Code: `gather::Gatherer::fit_cap`.
+renumbers first-seen. A piece joins at its own size, so a block waits till none lives, reopening an
+odd last group. Rejected: merging stored bounds; coarsening a piece at its join; waiting for an even
+count, which windows keep odd; the cap on the request, not the back-fill. Code: `Gatherer::fit_cap`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

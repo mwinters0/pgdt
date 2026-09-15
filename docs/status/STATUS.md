@@ -319,15 +319,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`StatisticsBackfill` carries the length cap as a public field**, `group_cap`
-  beside `group_size`, so an embedder calling `gather_block_statistics` can
-  hand a block any cap, where `StatisticsRequest` exposes none and fills in
-  `STATISTICS_GROUP_CAP` under an unstated size. Made so because a back-fill is
-  where a request's sizing becomes one block's, and because it is the seam
-  through which `tests/statistics.rs` reaches the cap over every fixture
-  without a four-gibibyte block; the alternative was a `#[doc(hidden)]` field
-  on `StatisticsRequest`, a test knob every mapping pass would read.
-  Reconsidering chooses between a library knob — length left to an embedder,
-  which the spec refuses a person — and a hidden test seam, in the struct 20.4
-  extends with the density bounds.
