@@ -23,12 +23,16 @@
 //! recomputed, O(1) a column, whenever its rows' growth passes
 //! [`CHARGE_STEP`], as each column closes a group and through a piece's fold;
 //! a vector or a map is charged ahead of the allocation growing it.
+//!
+//! **A block past its cap merges its closed groups pairwise into exactly what
+//! gathering at twice the size gathers** (`docs/design/decisions.md`, "D82"),
+//! never while a piece it made is alive ([`Gatherer::fit_cap`]).
 
 use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::mem::{self, align_of, size_of};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{decode_bytea, render_bytea};
@@ -56,16 +60,18 @@ pub(crate) fn observer_for(
     account: &Arc<StatisticsAccount>,
 ) -> Option<Box<dyn BlockObserver>> {
     let tracked = request.tracked_columns(header)?;
-    Some(observer_tracking(&tracked, request.group_size(), header, metadata, database, account))
+    let (size, cap) = (request.group_size(), request.group_cap());
+    Some(observer_tracking(&tracked, size, cap, header, metadata, database, account))
 }
 
 /// The observer for one block gathering `tracked`'s columns — positional to
-/// `header` — at `group_size`: what [`observer_for`] builds from a request,
-/// and what a back-fill builds from a
+/// `header` — at `group_size`, merged pairwise past `group_cap` groups: what
+/// [`observer_for`] builds from a request, and what a back-fill builds from a
 /// [`crate::statistics::StatisticsBackfill`].
 pub(crate) fn observer_tracking(
     tracked: &[bool],
     group_size: u64,
+    group_cap: Option<usize>,
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
@@ -96,7 +102,7 @@ pub(crate) fn observer_tracking(
         })
         .collect();
     drop((resolved, qualified));
-    let mut gatherer = Gatherer::block(group_size, columns, charge);
+    let mut gatherer = Gatherer::block(group_size, group_cap, columns, charge);
     gatherer.charge_held();
     Box::new(gatherer)
 }
@@ -124,6 +130,13 @@ struct OpenGroup {
 
 struct Gatherer {
     group_size: u64,
+    /// The most groups a block holds, `None` for an exact size and for a
+    /// piece, which never merges.
+    cap: Option<usize>,
+    /// Shared with every piece this block has made, once it has made one: a
+    /// block merges only while no piece holds a clone, so each piece joins at
+    /// the size it gathered at.
+    pieces: OnceLock<Arc<()>>,
     /// Whether this observes a piece of its block rather than the whole of it:
     /// a piece lists no group ahead of its first row's, holds that group open
     /// once a row moves past it, and is joined rather than finished.
@@ -152,9 +165,16 @@ struct Gatherer {
 }
 
 impl Gatherer {
-    fn block(group_size: u64, columns: Vec<Option<ColumnGatherer>>, charge: Charge) -> Self {
+    fn block(
+        group_size: u64,
+        cap: Option<usize>,
+        columns: Vec<Option<ColumnGatherer>>,
+        charge: Charge,
+    ) -> Self {
         Self {
             group_size,
+            cap: cap.map(|cap| cap.max(1)),
+            pieces: OnceLock::new(),
             piece: false,
             groups: Vec::new(),
             head: None,
@@ -189,13 +209,18 @@ impl Gatherer {
     /// empty group for every index short of `next`. **The rows' growth is
     /// charged first**, since each column's close moves the charge by its own
     /// difference alone.
+    ///
+    /// **A block past its cap merges as the groups close**, wherever their
+    /// count is even and so every pair is whole, `next` halving with them —
+    /// so a row longer than many groups never lists more than the cap allows.
     fn close_through(&mut self, end: u64, next: u64) {
         if self.uncharged != 0 {
             self.charge_held();
         }
-        let first = match self.open.take() {
+        let mut next = next;
+        let mut at = match self.open.take() {
             Some(group) => {
-                let after = group.index + 1;
+                let mut after = group.index + 1;
                 if self.piece && self.head.is_none() {
                     for column in self.columns.iter_mut().flatten() {
                         column.hold_head();
@@ -203,6 +228,7 @@ impl Gatherer {
                     self.head = Some((group, end));
                 } else {
                     self.push_closed(group, end);
+                    self.merge_whole_pairs(&mut after, &mut next);
                 }
                 after
             }
@@ -210,11 +236,88 @@ impl Gatherer {
             None if self.piece => next,
             None => 0,
         };
-        for _ in first..next {
+        while at < next {
             push_charged(&mut self.groups, RowGroup { rows: 0, bytes: 0 }, &mut self.charge);
             for column in self.columns.iter_mut().flatten() {
                 column.close_group(&mut self.charge);
             }
+            at += 1;
+            self.merge_whole_pairs(&mut at, &mut next);
+        }
+        self.charge_held();
+    }
+
+    /// The cap this block merges past now: none for a piece or an exact size,
+    /// and none while a piece it made is alive.
+    fn merging_cap(&self) -> Option<usize> {
+        let alive = self.pieces.get().is_some_and(|pieces| Arc::strong_count(pieces) > 1);
+        self.cap.filter(|_| !alive)
+    }
+
+    /// Merge the closed groups pairwise if they are past the cap and even in
+    /// number, halving `at` and `next` — group indices — with them.
+    fn merge_whole_pairs(&mut self, at: &mut u64, next: &mut u64) {
+        let Some(cap) = self.merging_cap() else { return };
+        let closed = self.groups.len();
+        if closed > cap && closed.is_multiple_of(2) {
+            self.merge_pairs();
+            (*at, *next) = (*at / 2, *next / 2);
+        }
+    }
+
+    /// **Merge this block's groups pairwise until they are within its cap.**
+    /// Mid-block, a last closed group left without a pair is taken back into
+    /// the open group that follows it, which is its pair ([`Self::reopen_last`]);
+    /// `finishing`, no row follows, so it stands alone, and a piece still
+    /// alive — past the block's end — joins nothing more. A block folding a
+    /// window of pieces can pass its cap by the window's groups, which those
+    /// pieces held already, until the last of them is folded.
+    fn fit_cap(&mut self, finishing: bool) {
+        let cap = if finishing { self.cap } else { self.merging_cap() };
+        let Some(cap) = cap else { return };
+        if self.groups.len() <= cap {
+            return;
+        }
+        if self.uncharged != 0 {
+            self.charge_held();
+        }
+        while self.groups.len() > cap {
+            if !self.groups.len().is_multiple_of(2) && !finishing {
+                self.reopen_last();
+            }
+            self.merge_pairs();
+        }
+    }
+
+    /// Take the last closed group back into the open group following it, as
+    /// though both groups' rows had been observed into one.
+    fn reopen_last(&mut self) {
+        let closed = self.groups.pop().expect("a block past its cap holds closed groups");
+        let open = self.open.as_mut().expect("a block mid-scan holds an open group");
+        debug_assert_eq!(open.index, self.groups.len() as u64 + 1, "the open group follows");
+        open.index -= 1;
+        // The closed group's bytes run from its first row to the open group's.
+        open.first_start -= closed.bytes;
+        open.rows += closed.rows;
+        for column in self.columns.iter_mut().flatten() {
+            column.reopen_last(&mut self.charge);
+        }
+    }
+
+    /// Merge every closed group with the one after it, a last one alone, and
+    /// double the group size: what gathering at twice the size would hold.
+    fn merge_pairs(&mut self) {
+        merge_adjacent(&mut self.groups, |a, b| RowGroup {
+            rows: a.rows + b.rows,
+            bytes: a.bytes + b.bytes,
+        });
+        for column in self.columns.iter_mut().flatten() {
+            column.merge_pairs(&mut self.charge);
+        }
+        self.group_size *= 2;
+        if let Some(open) = &mut self.open {
+            debug_assert_eq!(open.index % 2, 0, "an open group's pair is still to come");
+            open.index /= 2;
         }
         self.charge_held();
     }
@@ -321,6 +424,7 @@ impl Drop for Gatherer {
         let _attributed = StatisticsScope::enter();
         drop(mem::take(&mut self.columns));
         drop(mem::take(&mut self.groups));
+        drop(self.pieces.take());
         (self.head, self.open) = (None, None);
     }
 }
@@ -333,7 +437,10 @@ impl BlockObserver for Gatherer {
             Some(group) if group.index == index => group.rows += 1,
             _ => {
                 self.close_through(offset, index);
+                // Closing may have merged the groups, coarsening the index.
+                let index = offset / self.group_size;
                 self.open = Some(OpenGroup { index, first_start: offset, rows: 1 });
+                self.fit_cap(false);
             }
         }
         if !self.splits {
@@ -358,6 +465,7 @@ impl BlockObserver for Gatherer {
             let next = group.index + 1;
             self.close_through(end, next);
         }
+        self.fit_cap(true);
         let columns = mem::take(&mut self.columns);
         let statistics = BlockStatistics {
             group_size: self.group_size,
@@ -372,8 +480,10 @@ impl BlockObserver for Gatherer {
         let _attributed = StatisticsScope::enter();
         let columns = self.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh)).collect();
         let charge = Charge::new(Arc::clone(self.charge.account()), Term::Pieces);
-        let mut piece = Gatherer::block(self.group_size, columns, charge);
+        let mut piece = Gatherer::block(self.group_size, None, columns, charge);
         piece.piece = true;
+        let pieces = self.pieces.get_or_init(Arc::default);
+        piece.pieces = OnceLock::from(Arc::clone(pieces));
         piece.charge_held();
         Box::new(piece)
     }
@@ -382,6 +492,7 @@ impl BlockObserver for Gatherer {
         let _attributed = StatisticsScope::enter();
         let later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
         self.join(*later);
+        self.fit_cap(false);
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
@@ -448,7 +559,10 @@ impl ColumnGatherer {
         let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
         let mut structure = named + vec_heap(&self.null_counts) + self.group.heap_bytes() + head;
         if let Some(bounds) = &self.bounds {
-            structure += vec_heap(&bounds.groups) + bounds.stored + bounds.rows.heap_bytes();
+            structure += vec_heap(&bounds.groups)
+                + vec_heap(&bounds.flags)
+                + bounds.stored
+                + bounds.rows.heap_bytes();
         }
         let mut interned = 0;
         if let Some(dictionary) = &self.dictionary {
@@ -534,6 +648,47 @@ impl ColumnGatherer {
         charge.set(base.0 + after.0 - before.0, base.1 + after.1 - before.1);
     }
 
+    /// Merge every closed group with the one after it
+    /// ([`Gatherer::merge_pairs`]), moving `charge` by what the column frees
+    /// before its dictionary renumbers, and again after.
+    fn merge_pairs(&mut self, charge: &mut Charge) {
+        let (before, base) = (self.held(), charge.charged());
+        merge_adjacent(&mut self.null_counts, |a, b| a + b);
+        if let Some(bounds) = &mut self.bounds {
+            bounds.merge_pairs();
+        }
+        if let Some(dictionary) = &mut self.dictionary {
+            merge_adjacent(&mut dictionary.groups, union_indices);
+            dictionary.indices = dictionary.groups.iter().flatten().map(vec_heap).sum();
+        }
+        let after = self.held();
+        charge.set(base.0 + after.0 - before.0, base.1 + after.1 - before.1);
+        if let Some(dictionary) = &mut self.dictionary {
+            let (before, base) = (dictionary.held(), charge.charged());
+            dictionary.renumber(charge);
+            let after = dictionary.held();
+            charge.set(base.0 + after.0 - before.0, base.1 + after.1 - before.1);
+        }
+    }
+
+    /// Take the last closed group back into the open group, which follows it
+    /// ([`Gatherer::reopen_last`]), moving `charge` by the difference.
+    fn reopen_last(&mut self, charge: &mut Charge) {
+        let (before, base) = (self.held(), charge.charged());
+        let nulls = self.null_counts.pop().expect("a closed group counts its NULLs");
+        let bounds = self.bounds.as_mut().map(BoundsGatherer::reopen_last);
+        let texts = match &mut self.dictionary {
+            Some(dictionary) => dictionary.reopen_last(),
+            None => Some(Vec::new()),
+        };
+        let text_bytes = texts.iter().flatten().map(text_heap).sum();
+        let mut group = GroupState { nulls, bounds, texts, text_bytes };
+        group.absorb(mem::replace(&mut self.group, GroupState::fresh(None)));
+        self.group = group;
+        let after = self.held();
+        charge.set(base.0 + after.0 - before.0, base.1 + after.1 - before.1);
+    }
+
     /// Append `later`'s closed groups, which follow this column's, and take
     /// its open group as this one's — **draining `later` in place**, and after
     /// each part moves or is freed moving `charge` by the pair's difference,
@@ -555,9 +710,11 @@ impl ColumnGatherer {
         resync(pair(self, later), charge);
         if let (Some(mine), Some(theirs)) = (&mut self.bounds, &mut later.bounds) {
             reserve_charged(&mut mine.groups, theirs.groups.len(), charge);
+            reserve_charged(&mut mine.flags, theirs.flags.len(), charge);
             mine.groups.append(&mut theirs.groups);
+            mine.flags.append(&mut theirs.flags);
             mine.stored += mem::take(&mut theirs.stored);
-            theirs.groups = Vec::new();
+            (theirs.groups, theirs.flags) = (Vec::new(), Vec::new());
             resync(pair(self, later), charge);
         }
         let fresh = GroupState::fresh(later.bounds.as_ref());
@@ -771,11 +928,26 @@ impl Clipped {
 
 struct BoundsGatherer {
     order: Order,
+    /// Per closed group, **as a merge needs it rather than as it is stored**:
+    /// a keyed group's stored bounds, and a bytewise group's two extremes'
+    /// heads ([`Clipped`]), `max_exact` saying whether the greatest's head is
+    /// its whole value — stored bounds only once [`Self::finish`] clips them,
+    /// since a clipped upper bound no longer orders as its value does
+    /// (`docs/design/decisions.md`, "D82").
     groups: Vec<Option<Bounds>>,
-    /// The text every bound in `groups` holds, summed as they are pushed.
+    /// Per closed group, [`LOST`] and [`MIN_WHOLE`].
+    flags: Vec<u8>,
+    /// The text every entry of `groups` holds, summed as they are pushed.
     stored: u64,
     rows: RowOrder,
 }
+
+/// A closed group held a value its bounds could not cover, so it has none —
+/// where a group with `None` and no flag held no non-NULL value.
+const LOST: u8 = 1;
+
+/// A closed bytewise group's least value's head is the whole value.
+const MIN_WHOLE: u8 = 2;
 
 /// One group's running bounds.
 enum GroupBounds {
@@ -930,11 +1102,12 @@ impl BoundsGatherer {
             CompareKind::Bytea => Order::Bytewise(Canonical::Bytea),
             kind => Order::Keyed(kind),
         };
-        Self { order, groups: Vec::new(), stored: 0, rows: RowOrder::default() }
+        Self { order, groups: Vec::new(), flags: Vec::new(), stored: 0, rows: RowOrder::default() }
     }
 
     fn fresh(&self) -> Self {
-        Self { order: self.order.clone(), groups: Vec::new(), stored: 0, rows: RowOrder::default() }
+        let order = self.order.clone();
+        Self { order, groups: Vec::new(), flags: Vec::new(), stored: 0, rows: RowOrder::default() }
     }
 
     fn fresh_group(&self) -> GroupBounds {
@@ -1011,18 +1184,71 @@ impl BoundsGatherer {
     }
 
     fn close_group(&mut self, group: GroupBounds, charge: &mut Charge) {
-        let bounds = match group {
-            GroupBounds::Bytewise { lost: false, min: Some(min), max: Some(max) } => {
-                let Order::Bytewise(canonical) = self.order else { unreachable!() };
-                clipped_bounds(canonical, &min, &max)
-            }
-            GroupBounds::Keyed { lost: false, min: Some((_, min)), max: Some((_, max)) } => {
-                Some(Bounds { min, max, max_exact: true })
-            }
-            _ => None,
-        };
+        let (bounds, flags) = closed(group);
         self.stored += bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max));
         push_charged(&mut self.groups, bounds, charge);
+        push_charged(&mut self.flags, flags, charge);
+    }
+
+    /// A closed group's running bounds again, as they stood when it closed.
+    fn reopen(&self, bounds: Option<Bounds>, flags: u8) -> GroupBounds {
+        match (&self.order, bounds) {
+            (Order::Bytewise(_), Some(Bounds { min, max, max_exact })) => GroupBounds::Bytewise {
+                min: Some(Clipped { head: min, whole: flags & MIN_WHOLE != 0 }),
+                max: Some(Clipped { head: max, whole: max_exact }),
+                lost: false,
+            },
+            (Order::Keyed(kind), Some(Bounds { min, max, .. })) => {
+                let key = |text: &str| ValueKey::of(kind, text).expect("a stored bound keyed");
+                GroupBounds::Keyed {
+                    min: Some((key(&min), min)),
+                    max: Some((key(&max), max)),
+                    lost: false,
+                }
+            }
+            (_, None) => {
+                let mut group = self.fresh_group();
+                if flags & LOST != 0 {
+                    match &mut group {
+                        GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => {
+                            *lost = true
+                        }
+                    }
+                }
+                group
+            }
+        }
+    }
+
+    /// The last closed group's running bounds, no longer listed.
+    fn reopen_last(&mut self) -> GroupBounds {
+        let bounds = self.groups.pop().expect("a closed group lists its bounds");
+        let flags = self.flags.pop().expect("a closed group flags its bounds");
+        self.stored -= bounds.as_ref().map_or(0, |b| text_heap(&b.min) + text_heap(&b.max));
+        self.reopen(bounds, flags)
+    }
+
+    /// Merge every closed group with the one after it, as one pass over both
+    /// groups' values closes them.
+    fn merge_pairs(&mut self) {
+        let closed_groups = self.groups.len();
+        let merged = closed_groups.div_ceil(2);
+        for j in 0..merged {
+            let first = (self.groups[2 * j].take(), mem::take(&mut self.flags[2 * j]));
+            let pair = if 2 * j + 1 < closed_groups {
+                let second = (self.groups[2 * j + 1].take(), mem::take(&mut self.flags[2 * j + 1]));
+                let mut group = self.reopen(first.0, first.1);
+                group.absorb(self.reopen(second.0, second.1));
+                closed(group)
+            } else {
+                first
+            };
+            (self.groups[j], self.flags[j]) = pair;
+        }
+        self.groups.truncate(merged);
+        self.flags.truncate(merged);
+        self.stored =
+            self.groups.iter().flatten().map(|b| text_heap(&b.min) + text_heap(&b.max)).sum();
     }
 
     fn finish(self) -> ColumnBounds {
@@ -1035,21 +1261,60 @@ impl BoundsGatherer {
         } else {
             Sortedness::Unsorted
         };
-        ColumnBounds { sortedness, groups: self.groups }
+        let mut groups = self.groups;
+        if let Order::Bytewise(canonical) = self.order {
+            for (group, flags) in groups.iter_mut().zip(&self.flags) {
+                if let Some(Bounds { min, max, max_exact }) = group.take() {
+                    let min = Clipped { head: min, whole: flags & MIN_WHOLE != 0 };
+                    *group =
+                        clipped_bounds(canonical, min, Clipped { head: max, whole: max_exact });
+                }
+            }
+        }
+        ColumnBounds { sortedness, groups }
     }
+}
+
+/// A closed group's bounds as [`BoundsGatherer::groups`] and
+/// [`BoundsGatherer::flags`] hold them.
+fn closed(group: GroupBounds) -> (Option<Bounds>, u8) {
+    match group {
+        GroupBounds::Bytewise { lost: false, min: Some(min), max: Some(max) } => {
+            let flags = if min.whole { MIN_WHOLE } else { 0 };
+            (Some(Bounds { min: min.head, max: max.head, max_exact: max.whole }), flags)
+        }
+        GroupBounds::Keyed { lost: false, min: Some((_, min)), max: Some((_, max)) } => {
+            (Some(Bounds { min, max, max_exact: true }), 0)
+        }
+        GroupBounds::Bytewise { lost, .. } | GroupBounds::Keyed { lost, .. } => {
+            (None, if lost { LOST } else { 0 })
+        }
+    }
+}
+
+/// Merge every entry of `items` with the one after it, a last one alone, in
+/// place.
+fn merge_adjacent<T: Default>(items: &mut Vec<T>, mut merge: impl FnMut(T, T) -> T) {
+    let len = items.len();
+    for j in 0..len.div_ceil(2) {
+        let first = mem::take(&mut items[2 * j]);
+        let pair = match items.get_mut(2 * j + 1) {
+            Some(second) => merge(first, mem::take(second)),
+            None => first,
+        };
+        items[j] = pair;
+    }
+    items.truncate(len.div_ceil(2));
 }
 
 /// A bytewise group's bounds as stored: each exact where its value fits the
 /// cap, otherwise a prefix below and a successor above.
-fn clipped_bounds(canonical: Canonical, min: &Clipped, max: &Clipped) -> Option<Bounds> {
+fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bounds> {
     let fits = |c: &Clipped| c.whole && c.head.len() <= STORED_VALUE_CAP;
-    let lower = if fits(min) {
-        min.head.clone()
-    } else {
-        text_prefix(&min.head, STORED_VALUE_CAP).to_owned()
-    };
-    if fits(max) {
-        return Some(Bounds { min: lower, max: max.head.clone(), max_exact: true });
+    let lower =
+        if fits(&min) { min.head } else { text_prefix(&min.head, STORED_VALUE_CAP).to_owned() };
+    if fits(&max) {
+        return Some(Bounds { min: lower, max: max.head, max_exact: true });
     }
     let upper = match canonical {
         Canonical::Text => text_upper(&max.head, false)?,
@@ -1297,9 +1562,73 @@ impl DictionaryGatherer {
         charge.set(base.0 + now.0 - before.0, base.1 + now.1 - before.1);
     }
 
+    /// The last closed group's distinct texts, no longer listed.
+    fn reopen_last(&mut self) -> Option<Vec<String>> {
+        let ids = self.groups.pop().expect("a closed group lists its texts")?;
+        self.indices -= vec_heap(&ids);
+        Some(ids.iter().map(|&id| self.entries[id as usize].clone()).collect())
+    }
+
+    /// **Renumber the entries the groups still name in the order a pass
+    /// closing these groups interns them, and let every other go**: a merge
+    /// past [`DICTIONARY_CAP`] leaves entries no group names, and a merged
+    /// group lists its second half's new texts after its first's. The
+    /// renumbering's scratch is charged ahead.
+    fn renumber(&mut self, charge: &mut Charge) {
+        let scratch = (self.entries.len() * size_of::<u32>()) as u64;
+        charge.ahead((scratch, 0), (scratch, 0), || {
+            let mut to = vec![u32::MAX; self.entries.len()];
+            let mut kept = 0u32;
+            for id in self.groups.iter_mut().flatten().flatten() {
+                let slot = &mut to[*id as usize];
+                if *slot == u32::MAX {
+                    *slot = kept;
+                    kept += 1;
+                }
+                *id = *slot;
+            }
+            self.interned.retain(|_, id| {
+                *id = to[*id as usize];
+                *id != u32::MAX
+            });
+            // Every entry no group names goes past the kept ones, then the
+            // permutation is applied in place, cycle by cycle.
+            for (past, slot) in (kept..).zip(to.iter_mut().filter(|slot| **slot == u32::MAX)) {
+                *slot = past;
+            }
+            for at in 0..to.len() {
+                while to[at] as usize != at {
+                    let there = to[at] as usize;
+                    self.entries.swap(at, there);
+                    to.swap(at, there);
+                }
+            }
+            self.entries.truncate(kept as usize);
+        });
+        self.entry_text = self.entries.iter().map(|entry| entry.len() as u64).sum();
+    }
+
     fn finish(self) -> ColumnDictionary {
         ColumnDictionary { entries: self.entries, groups: self.groups }
     }
+}
+
+/// One group's distinct texts, as indices, merged with the following group's
+/// as one pass over both groups' values gathers them: the first's, then the
+/// second's not already listed, and none past [`DICTIONARY_CAP`].
+fn union_indices(first: Option<Vec<u32>>, second: Option<Vec<u32>>) -> Option<Vec<u32>> {
+    let (first, second) = (first?, second?);
+    let added = second.iter().filter(|id| !first.contains(id)).count();
+    if added == 0 {
+        return Some(first);
+    }
+    if first.len() + added > DICTIONARY_CAP {
+        return None;
+    }
+    let mut union = Vec::with_capacity(first.len() + added);
+    union.extend_from_slice(&first);
+    union.extend(second.iter().filter(|id| !first.contains(id)));
+    Some(union)
 }
 
 #[cfg(test)]
@@ -1484,138 +1813,192 @@ mod tests {
         text.replace('\\', "\\\\").into_bytes()
     }
 
+    /// One random block's rows as the mapping pass hands them over.
+    struct RandomBlock {
+        group_size: u64,
+        lines: Vec<Vec<u8>>,
+        offsets: Vec<u64>,
+        end: u64,
+        short: bool,
+    }
+
+    /// A random block whose groups a row can straddle or skip, whose bytewise
+    /// values share heads past the cap, and which holds NULLs, values that do
+    /// not key or are not text, dictionaries on both sides of their cap, and
+    /// sorted columns. Every fourth round is short values in wide groups, so a
+    /// dictionary on each side of a cut can pass the count cap between them.
+    fn random_block(rng: &mut Rng, round: usize) -> RandomBlock {
+        let short = round % 4 == 1;
+        let group_size =
+            if short { 4096 } else { [16u64, 64, 256, 700, 4096][rng.below(5) as usize] };
+        let sorted = round.is_multiple_of(3);
+        let rows = if short { 60 + rng.below(140) } else { rng.below(120) } as usize;
+        // A small pool per column for some rounds, so dictionaries fit.
+        let pool = 2 + rng.below(if round.is_multiple_of(2) { 6 } else { 200 });
+        let columns: Vec<Vec<Option<Vec<u8>>>> = JOIN_KINDS
+            .iter()
+            .map(|kind| {
+                let base = value(rng, kind);
+                let values: Vec<String> = (0..pool)
+                    .map(|_| {
+                        let v = match kind {
+                            CompareKind::Bytea if short => {
+                                render_bytea(&(rng.below(1 << 16) as u16).to_be_bytes())
+                            }
+                            _ if short => rng.below(1000).to_string(),
+                            _ => value(rng, kind),
+                        };
+                        match kind {
+                            CompareKind::Text | CompareKind::PaddedText if rng.below(2) == 0 => {
+                                format!("{base}{v}")
+                            }
+                            _ => v,
+                        }
+                    })
+                    .collect();
+                let mut drawn: Vec<String> =
+                    (0..rows).map(|_| values[rng.below(pool) as usize].clone()).collect();
+                if sorted {
+                    let key = |v: &String| ValueKey::of(kind, v).unwrap();
+                    drawn.sort_by(|a, b| key(a).compare(&key(b)));
+                    if rng.below(2) == 0 {
+                        drawn.reverse();
+                    }
+                }
+                drawn
+                    .into_iter()
+                    .map(|v| match rng.below(40) {
+                        0..=4 => None,
+                        5 if !sorted && !short => Some(vec![0xff, b'a']),
+                        6 if !sorted && matches!(kind, CompareKind::Int) => Some(b"x".to_vec()),
+                        6 if !sorted && matches!(kind, CompareKind::Bytea) => {
+                            Some(escaped("\\xABC"))
+                        }
+                        _ => Some(escaped(&v)),
+                    })
+                    .collect()
+            })
+            .collect();
+        let lines: Vec<Vec<u8>> = (0..rows)
+            .map(|r| {
+                let mut line = Vec::new();
+                for column in &columns {
+                    line.extend(column[r].clone().unwrap_or_else(|| b"\\N".to_vec()));
+                    line.push(b'\t');
+                }
+                line.extend(b"untracked");
+                line
+            })
+            .collect();
+        let mut offsets = Vec::with_capacity(rows);
+        let mut end = 0u64;
+        for line in &lines {
+            offsets.push(end);
+            end += line.len() as u64 + 1;
+        }
+        RandomBlock { group_size, lines, offsets, end, short }
+    }
+
+    /// Every observer's charge is released into the block it became, pieces
+    /// included, and nothing else is left in the account.
+    fn assert_only_retained(account: &StatisticsAccount, statistics: &BlockStatistics, at: &str) {
+        let retained = statistics.heap_bytes();
+        let expected = StatisticsTerms { retained, ..StatisticsTerms::default() };
+        assert_eq!(account.held().now, expected, "{at}");
+    }
+
+    /// `block` handed to one observer at `group_size`, merging past `cap`.
+    fn gathered_serially(
+        block: &RandomBlock,
+        group_size: u64,
+        cap: Option<usize>,
+    ) -> BlockStatistics {
+        let account = Arc::new(StatisticsAccount::default());
+        let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+        let mut serial = Gatherer::block(group_size, cap, join_columns(), charge);
+        for (line, &offset) in block.lines.iter().zip(&block.offsets) {
+            serial.observe_row(offset, line);
+        }
+        let statistics = Box::new(serial).finish(block.end);
+        assert_only_retained(&account, &statistics, "serial");
+        statistics
+    }
+
+    /// `block` handed to pieces cut at random, folded in file order a window
+    /// of pieces at a time — made before any of them is folded, as the leader
+    /// makes them — with an empty piece now and then and one left unfolded
+    /// past the block's end. Answers the statistics, and how many cuts fell
+    /// inside a group.
+    fn gathered_in_pieces(
+        rng: &mut Rng,
+        block: &RandomBlock,
+        cap: Option<usize>,
+    ) -> (BlockStatistics, usize) {
+        let group_size = block.group_size;
+        let account = Arc::new(StatisticsAccount::default());
+        let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+        let mut observer: Box<dyn BlockObserver> =
+            Box::new(Gatherer::block(group_size, cap, join_columns(), charge));
+        let cut_odds = 1 + rng.below(30);
+        let window_pieces = 1 + rng.below(4) as usize;
+        let mut window = vec![observer.piece()];
+        let mut straddles = 0;
+        for (r, (line, &offset)) in block.lines.iter().zip(&block.offsets).enumerate() {
+            if r > 0 && rng.below(cut_odds) == 0 {
+                if window.len() == window_pieces {
+                    for piece in window.drain(..) {
+                        observer.absorb(piece);
+                    }
+                    if rng.below(4) == 0 {
+                        observer.absorb(observer.piece());
+                    }
+                }
+                window.push(observer.piece());
+                // Only the rows' own groups say where a cut fell; the block
+                // may since have merged, which moves no row between groups
+                // it straddled at the base size.
+                if block.offsets[r - 1] / group_size == offset / group_size {
+                    straddles += 1;
+                }
+            }
+            window.last_mut().expect("a window holds a piece").observe_row(offset, line);
+        }
+        for piece in window {
+            observer.absorb(piece);
+        }
+        let past_the_end = (rng.below(2) == 0).then(|| observer.piece());
+        let statistics = observer.finish(block.end);
+        drop(past_the_end);
+        assert_only_retained(&account, &statistics, "pieces");
+        (statistics, straddles)
+    }
+
     /// **A block observed in pieces, joined in file order, gathers exactly what
-    /// one observer handed every row gathers** — over random blocks whose
-    /// groups straddle the cuts, whose bytewise values share heads past the
-    /// cap, and which hold NULLs, values that do not key or are not text,
-    /// dictionaries on both sides of their cap, and sorted columns a cut
-    /// falls inside. The fixture sweep does not guard a join's order step, a
-    /// block of `pg_dump` output rarely turning on it: this test does.
+    /// one observer handed every row gathers** — over [`random_block`]'s
+    /// blocks, whose groups straddle the cuts. The fixture sweep does not
+    /// guard a join's order step, a block of `pg_dump` output rarely turning
+    /// on it: this test does.
     #[test]
     fn pieces_joined_in_file_order_gather_what_one_pass_gathers() {
         let mut rng = Rng(0x0001_0105);
         let (mut straddles, mut ordered, mut inexact, mut dictionaries, mut overflowed) =
             (0, 0, 0, 0, 0);
         for round in 0..600 {
-            // Every fourth round is short values in wide groups, so a
-            // dictionary on each side of a cut can pass the count cap between them.
-            let short = round % 4 == 1;
-            let group_size =
-                if short { 4096 } else { [16u64, 64, 256, 700, 4096][rng.below(5) as usize] };
-            let sorted = round % 3 == 0;
-            let rows = if short { 60 + rng.below(140) } else { rng.below(120) } as usize;
-            // A small pool per column for some rounds, so dictionaries fit.
-            let pool = 2 + rng.below(if round % 2 == 0 { 6 } else { 200 });
-            let columns: Vec<Vec<Option<Vec<u8>>>> = JOIN_KINDS
-                .iter()
-                .map(|kind| {
-                    let base = value(&mut rng, kind);
-                    let values: Vec<String> = (0..pool)
-                        .map(|_| {
-                            let v = match kind {
-                                CompareKind::Bytea if short => {
-                                    render_bytea(&(rng.below(1 << 16) as u16).to_be_bytes())
-                                }
-                                _ if short => rng.below(1000).to_string(),
-                                _ => value(&mut rng, kind),
-                            };
-                            match kind {
-                                CompareKind::Text | CompareKind::PaddedText
-                                    if rng.below(2) == 0 =>
-                                {
-                                    format!("{base}{v}")
-                                }
-                                _ => v,
-                            }
-                        })
-                        .collect();
-                    let mut drawn: Vec<String> =
-                        (0..rows).map(|_| values[rng.below(pool) as usize].clone()).collect();
-                    if sorted {
-                        let key = |v: &String| ValueKey::of(kind, v).unwrap();
-                        drawn.sort_by(|a, b| key(a).compare(&key(b)));
-                        if rng.below(2) == 0 {
-                            drawn.reverse();
-                        }
-                    }
-                    drawn
-                        .into_iter()
-                        .map(|v| match rng.below(40) {
-                            0..=4 => None,
-                            5 if !sorted && !short => Some(vec![0xff, b'a']),
-                            6 if !sorted && matches!(kind, CompareKind::Int) => Some(b"x".to_vec()),
-                            6 if !sorted && matches!(kind, CompareKind::Bytea) => {
-                                Some(escaped("\\xABC"))
-                            }
-                            _ => Some(escaped(&v)),
-                        })
-                        .collect()
-                })
-                .collect();
-            let lines: Vec<Vec<u8>> = (0..rows)
-                .map(|r| {
-                    let mut line = Vec::new();
-                    for column in &columns {
-                        line.extend(column[r].clone().unwrap_or_else(|| b"\\N".to_vec()));
-                        line.push(b'\t');
-                    }
-                    line.extend(b"untracked");
-                    line
-                })
-                .collect();
-            let mut offsets = Vec::with_capacity(rows);
-            let mut end = 0u64;
-            for line in &lines {
-                offsets.push(end);
-                end += line.len() as u64 + 1;
-            }
-
-            let serial_account = Arc::new(StatisticsAccount::default());
-            let charge = Charge::new(Arc::clone(&serial_account), Term::Gathering);
-            let mut serial = Gatherer::block(group_size, join_columns(), charge);
-            for (line, &offset) in lines.iter().zip(&offsets) {
-                serial.observe_row(offset, line);
-            }
-            let serial = Box::new(serial).finish(end);
-
-            let cut_odds = 1 + rng.below(30);
-            let account = Arc::new(StatisticsAccount::default());
-            let charge = Charge::new(Arc::clone(&account), Term::Gathering);
-            let mut block: Box<dyn BlockObserver> =
-                Box::new(Gatherer::block(group_size, join_columns(), charge));
-            let mut piece = block.piece();
-            for (r, (line, &offset)) in lines.iter().zip(&offsets).enumerate() {
-                if r > 0 && rng.below(cut_odds) == 0 {
-                    block.absorb(mem::replace(&mut piece, block.piece()));
-                    if rng.below(4) == 0 {
-                        block.absorb(block.piece());
-                    }
-                    if offsets[r - 1] / group_size == offset / group_size {
-                        straddles += 1;
-                    }
-                }
-                piece.observe_row(offset, line);
-            }
-            block.absorb(piece);
-            let joined = block.finish(end);
+            let block = random_block(&mut rng, round);
+            let serial = gathered_serially(&block, block.group_size, None);
+            let (joined, straddled) = gathered_in_pieces(&mut rng, &block, None);
+            straddles += straddled;
             assert_eq!(joined, serial, "round {round}");
-            // Every observer's charge is released into the block it became,
-            // pieces included, and nothing else is left in either account.
-            for (account, statistics) in [(&serial_account, &serial), (&account, &joined)] {
-                let retained = statistics.heap_bytes();
-                let expected = StatisticsTerms { retained, ..StatisticsTerms::default() };
-                assert_eq!(account.held().now, expected, "round {round}");
-            }
 
             for column in joined.columns.iter().flatten() {
                 let bounds = column.bounds.as_ref().unwrap();
-                if bounds.sortedness != Sortedness::Unsorted && rows > 10 {
+                if bounds.sortedness != Sortedness::Unsorted && block.lines.len() > 10 {
                     ordered += 1;
                 }
                 inexact += bounds.groups.iter().flatten().filter(|b| !b.max_exact).count();
                 let dictionary = column.dictionary.as_ref().unwrap();
                 dictionaries += dictionary.groups.iter().flatten().filter(|g| g.len() > 1).count();
-                if short {
+                if block.short {
                     overflowed += dictionary.groups.iter().filter(|g| g.is_none()).count();
                 }
             }
@@ -1625,6 +2008,50 @@ mod tests {
         assert!(inexact > 500, "only {inexact} truncated upper bounds");
         assert!(dictionaries > 500, "only {dictionaries} dictionaries of several entries");
         assert!(overflowed > 50, "only {overflowed} dictionaries past their count cap");
+    }
+
+    /// **A block past its cap gathers exactly what gathering at the size it
+    /// reaches gathers**, handed its rows by one observer or by pieces folded
+    /// in file order, and holds no more groups than the cap — over
+    /// [`random_block`]'s blocks at caps of a handful of groups, so a block
+    /// merges many times, with an odd count mid-scan, between windows of
+    /// pieces and while a row skips groups.
+    #[test]
+    fn a_capped_block_gathers_what_the_size_it_reaches_gathers() {
+        let mut rng = Rng(0x0020_0003);
+        let (mut coarsened, mut dropped_entries, mut overflowed) = (0, 0, 0);
+        for round in 0..600 {
+            let block = random_block(&mut rng, round);
+            let cap = 1 + rng.below(6) as usize;
+            let capped = gathered_serially(&block, block.group_size, Some(cap));
+            assert!(capped.groups.len() <= cap, "round {round}: {} groups", capped.groups.len());
+            let exact = gathered_serially(&block, capped.group_size, None);
+            assert_eq!(capped, exact, "round {round}: serial at cap {cap}");
+            let (joined, _) = gathered_in_pieces(&mut rng, &block, Some(cap));
+            assert_eq!(joined, capped, "round {round}: pieces at cap {cap}");
+
+            if capped.group_size > block.group_size {
+                coarsened += 1;
+                let base = gathered_serially(&block, block.group_size, None);
+                for (fine, coarse) in base.columns.iter().zip(&capped.columns) {
+                    let (Some(fine), Some(coarse)) = (fine, coarse) else { continue };
+                    let entries =
+                        |c: &ColumnStatistics| c.dictionary.as_ref().unwrap().entries.len();
+                    if entries(coarse) < entries(fine) {
+                        dropped_entries += 1;
+                    }
+                    let lost = |c: &ColumnStatistics| {
+                        c.dictionary.as_ref().unwrap().groups.iter().filter(|g| g.is_none()).count()
+                    };
+                    if lost(coarse) > 0 && lost(fine) == 0 {
+                        overflowed += 1;
+                    }
+                }
+            }
+        }
+        assert!(coarsened > 300, "only {coarsened} blocks merged");
+        assert!(dropped_entries > 30, "only {dropped_entries} dictionaries let entries go");
+        assert!(overflowed > 20, "only {overflowed} merged groups passed the count cap");
     }
 
     /// **A full map grows into the table [`grown_map_heap`] charges**, and

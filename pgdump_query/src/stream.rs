@@ -1259,6 +1259,7 @@ async fn reread_block(
     let mut observer = gather::observer_tracking(
         &backfill.columns,
         backfill.group_size,
+        backfill.group_cap,
         &block.header,
         metadata,
         block.database.as_deref(),

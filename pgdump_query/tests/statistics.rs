@@ -17,8 +17,9 @@ use std::sync::Arc;
 use pgdump_query::cache::{self, CacheMode, CacheStatus};
 use pgdump_query::{
     BlockStatistics, CopyBlock, DEFAULT_MEMORY_BUDGET, DICTIONARY_CAP, DumpIndex, LocalFileSource,
-    MapRun, Parallelism, STORED_VALUE_CAP, ScanOptions, Sortedness, StatisticsRequest,
-    StatisticsSelection, StatisticsTarget, gather_block_statistics, map_file,
+    MapRun, Parallelism, STATISTICS_GROUP_CAP, STORED_VALUE_CAP, ScanOptions, Sortedness,
+    StatisticsBackfill, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    gather_block_statistics, map_file,
 };
 
 mod common;
@@ -671,6 +672,62 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
         assert_eq!(run.backfilled, 1, "{jobs} jobs");
         assert_eq!(run.index.spans, reference.spans, "{jobs} jobs");
     }
+}
+
+/// **A block past its cap gathers, split by the leader, what the serial pass
+/// gathers, and that is what gathering exactly at the size it reaches
+/// gathers** — every block of every fixture, re-read at a group size of a few
+/// bytes under a cap of two groups, so most blocks merge, many of them
+/// several times over, at chunks the leader cuts inside a group. What reaches the cap
+/// under a request is [`StatisticsRequest::backfill`]'s answer, asserted
+/// first.
+#[tokio::test]
+async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() {
+    const BASE: u64 = 8;
+    const CAP: usize = 2;
+    let unstated = StatisticsRequest::ALL;
+    let stated = request(StatisticsSelection::All, BASE);
+    let serial = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
+    let (mut blocks, mut merged) = (0, 0);
+    for fixture in common::all_fixtures() {
+        let source = LocalFileSource::open(&fixture).unwrap();
+        let (options, mode) = (ScanOptions::default(), CacheMode::Disabled);
+        let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
+        let index = run.await.unwrap().index;
+        for block in index.blocks() {
+            let backfill = unstated.backfill(block).expect("the block holds no statistics");
+            assert_eq!(backfill.group_cap, Some(STATISTICS_GROUP_CAP));
+            assert_eq!(stated.backfill(block).unwrap().group_cap, None);
+            let capped = StatisticsBackfill { group_size: BASE, group_cap: Some(CAP), ..backfill };
+            let gather = |options: ScanOptions, backfill: StatisticsBackfill| {
+                let (source, metadata) = (&source, index.metadata.as_ref());
+                async move {
+                    gather_block_statistics(source, &options, metadata, block, &backfill)
+                        .await
+                        .unwrap()
+                        .expect("nothing cancels the re-read")
+                }
+            };
+            let reference = gather(serial.clone(), capped.clone()).await;
+            let label = format!("{}: {}", fixture.display(), block.header.table);
+            assert!(reference.groups.len() <= CAP, "{label}");
+            let exact = StatisticsBackfill {
+                group_size: reference.group_size,
+                group_cap: None,
+                ..capped.clone()
+            };
+            assert_eq!(gather(serial.clone(), exact).await, reference, "{label}");
+            for jobs in [3, 8] {
+                let parallelism = Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET);
+                let parallel = ScanOptions { parallelism, ..serial.clone() };
+                let split = gather(parallel, capped.clone()).await;
+                assert_eq!(split, reference, "{label}: {jobs} jobs");
+            }
+            blocks += 1;
+            merged += usize::from(reference.group_size > BASE);
+        }
+    }
+    assert!(merged * 2 > blocks, "only {merged} of {blocks} blocks merged");
 }
 
 /// **A block that no longer ends where the map says is refused**, rather than

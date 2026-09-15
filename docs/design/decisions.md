@@ -8,13 +8,12 @@ so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
 register". **Capped at 500 lines**: an entry earns its place by being something a later session
 would otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D81 -->
+<!-- decision-watermark: D82 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
-`Parallelism::default()` is `Serial`; discovery (`discover_in`) is opt-in and
-the CLI is its one caller, because a person ran it on purpose. Rejected:
-reading `default_workers` inside the library, so silence means concurrency.
+`Parallelism::default()` is `Serial`; `discover_in` is opt-in and its one caller is the CLI, run on
+purpose. Rejected: `default_workers` read in the library, so silence means concurrency.
 
 ### D2 A plain file recommends one worker; a compressed one the machine's cores
 On every real device a serial plain scan is device-bound, and each partition reads a chunk-sized
@@ -42,10 +41,9 @@ sibling that finishes. A loop retaining into a batch holds the buffers it would 
 block pool never waits whatever the loop said. Rejected: gating on `Parallelism`.
 
 ### D6 `ByteRangeSource` mirrors `object_store` and is dyn-compatible
-`read_range`/`size`/`modified` copy `get_range`/`head` so a remote source is
-additive behind a feature without the dependency. Boxed futures so a wrapping
-source composes instead of branching at every caller. Rejected: generics with
-a per-command match; `enum AnySource`. `size_is_exact` exists for gzip/zstd.
+`read_range`/`size`/`modified` copy `get_range`/`head` so a remote source is additive behind a
+feature without the dependency. Boxed futures so wrappers compose rather than branching per caller.
+Rejected: generics matched per command; `enum AnySource`. `size_is_exact` is for gzip/zstd.
 
 ### D7 `partitions()` says where and at what cost, never whether
 The same file is worth cutting for extraction and not for discovery, so the
@@ -164,10 +162,9 @@ fused. One core's rate against the device's offer decides each; readings that di
 Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 
 ### D26 Cancellation is per chunk or leader window, honoured by the mapping passes alone
-A block can be hundreds of gigabytes, so block-boundary cancellation is a hang;
-`map_file`'s scan and back-fill are the drivers with somewhere to put a partial result. The
-preamble scan ignores the flag: a stop there is indistinguishable from reaching
-the first `COPY` header and would be cached as complete.
+A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan
+and back-fill are the drivers with a partial result to keep. The preamble scan ignores the flag: a
+stop there is indistinguishable from reaching the first `COPY` header and would cache as complete.
 
 ### D27 UTF-8 is validated once per chunk, and no hot path uses `unsafe`
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
@@ -246,20 +243,17 @@ citation. `floor_mapping.py` compares value space (`Utf8View` is `string`) and r
 arm, never guessing. Rejected: the `typelem` shape test, which deletes `int2vector` (I8, I39).
 
 ### D39 `NestedPlan` travels beside the `DataType`, with one producer
-Which literal fills a type cannot be inferred from it (`int4range[]` and
-`int4multirange` are both `List<Struct>`); there is no plan-less builder entry
-point. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
+An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `List<Struct>`);
+every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 
 ### D40 The comparison is decided per declared type, in the same arm
-`builtin_scalar` answers Arrow type and `CompareKind` together, keyed on the
-declared type and `COLLATE` clause; six declared types reach `Utf8View` with
-six comparisons. `predicate.rs` reads the plan, never the Arrow type.
+`builtin_scalar` answers Arrow type and `CompareKind` both, keyed on declared type and `COLLATE`;
+six declared types share `Utf8View` under six comparisons. `predicate.rs` never reads the Arrow type.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
-An opaque element delimiter (I22) and an array element (I26) both resolve
-`Utf8View`, decided at the end of `domain_terminal`. All `Typename` spellings
-collapse to element plus one level (I21, I28); normalizing at parse time would
-edit the user's DDL. Containers recurse, no cycle guard (I24): `KD3`, `KD4`.
+An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided in
+`domain_terminal`. All `Typename` spellings collapse to element plus one level (I21, I28);
+normalizing on parse would edit the user's DDL. Containers recurse unguarded (I24): `KD3`, `KD4`.
 
 ### D42 `interval` is the struct; special values are decode failures
 `MonthDayNano` is PostgreSQL's three fields, so text would be below the floor; infinities and
@@ -348,9 +342,8 @@ refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow a
 no `Ord`. Rejected: excluding the row like a NULL, which has no order (I33, I34).
 
 ### D57 Equality has three canonicalizations, chosen by injectivity of `*_out`
-Render the literal once, trim the field per row (`bpchar`), or decode both per
-row; `v=1.5` must hit a `numeric(10,2)` written `1.50`. Rejected: widening
-`timetz` and `inet` into the rendering group (I33, I38, I41).
+Render the literal once, trim the field per row (`bpchar`), or decode both per row; `v=1.5` must hit
+a `numeric(10,2)` written `1.50`. Rejected: rendering `timetz` and `inet` once too (I33, I38, I41).
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
 Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container
@@ -425,6 +418,13 @@ per-group bound, bytes never held; growth charged after it; atomic terms, a movi
 neither; in-flight growth unmade both ways, faulting a table another worker holds; walking every
 block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen term
 growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Charge`.
+
+### D82 A block past its cap merges pairwise, exactly, and never while a piece of it is alive
+Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads until
+`finish` clips them, a clipped upper bound not ordering as its value does; a merged dictionary
+renumbers first-seen. A piece joins at its own size, so its block merges once none is alive,
+reopening an odd last group. Rejected: merging stored bounds; coarsening a piece at its join;
+waiting for an even count, which windows can keep odd. Code: `gather::Gatherer::fit_cap`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

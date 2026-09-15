@@ -53,9 +53,11 @@ Options:
                                        statistics asked for here is re-read for them once the rest
                                        of the file is scanned, keeping any it already had
       --statistics-group-size <BYTES>  The bytes of a table's data each row group of statistics
-                                       covers. The default, 1 MiB, is coarse; a smaller group
-                                       records more finely where values lie and costs memory and
-                                       cache space in proportion. Stated, it also re-reads every
+                                       covers. The default, 1 MiB, is coarse, and doubles for a
+                                       table whose data would take more than 4,096 groups until it
+                                       takes no more; a stated size is kept exactly, and a smaller
+                                       group records more finely where values lie and costs memory
+                                       and cache space in proportion. Stated, it also re-reads every
                                        block gathered at another size; left unstated, a block keeps
                                        the size it was gathered at
       --jobs <N>                       How many workers pgdq may ask for. Left unstated, the file

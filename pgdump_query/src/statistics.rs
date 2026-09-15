@@ -30,6 +30,12 @@ use crate::instrument;
 /// block's data per group.
 pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;
 
+/// The most groups a block's statistics hold under an unstated group size:
+/// past it, adjacent groups merge pairwise and the block's group size doubles,
+/// so what a long block holds grows with its columns rather than its bytes
+/// (`docs/design/decisions.md`, "D82"). A judgement, not a reading.
+pub const STATISTICS_GROUP_CAP: usize = 4096;
+
 /// The longest text any stored bound or dictionary entry may be, in bytes.
 pub const STORED_VALUE_CAP: usize = 256;
 
@@ -50,11 +56,13 @@ pub struct StatisticsRequest {
     /// The columns statistics are gathered for.
     pub selection: StatisticsSelection,
     /// The group size, `None` when the caller stated none and
-    /// [`DEFAULT_STATISTICS_GROUP_SIZE`] applies. Kept apart from the default
-    /// because a stated size and an unstated one are different requests to a
-    /// block already gathered at another. In a block the request does not
-    /// track ([`Self::tracked_columns`] answering `None`, as it always does
-    /// for [`StatisticsSelection::None`]) it sizes nothing and is ignored.
+    /// [`DEFAULT_STATISTICS_GROUP_SIZE`] applies, doubled past
+    /// [`STATISTICS_GROUP_CAP`] groups; a stated size is gathered exactly.
+    /// Kept apart from the default because a stated size and an unstated one
+    /// are different requests to a block already gathered at another. In a
+    /// block the request does not track ([`Self::tracked_columns`] answering
+    /// `None`, as it always does for [`StatisticsSelection::None`]) it sizes
+    /// nothing and is ignored.
     pub group_size: Option<NonZeroU64>,
 }
 
@@ -71,9 +79,16 @@ impl StatisticsRequest {
         self.selection != StatisticsSelection::None
     }
 
-    /// The group size this request gathers at.
+    /// The group size this request gathers at, before any merge.
     pub fn group_size(&self) -> u64 {
         self.group_size.map_or(DEFAULT_STATISTICS_GROUP_SIZE, NonZeroU64::get)
+    }
+
+    /// The most groups a block this request gathers may hold:
+    /// [`STATISTICS_GROUP_CAP`] under an unstated size, `None` under a stated
+    /// one, which is gathered exactly.
+    pub fn group_cap(&self) -> Option<usize> {
+        self.group_size.is_none().then_some(STATISTICS_GROUP_CAP)
     }
 
     /// Which of `header`'s columns this request tracks, positionally — `None`
@@ -112,12 +127,17 @@ impl StatisticsRequest {
     /// **A block lacks the requested statistics** where it holds none, where a
     /// column the request tracks was not gathered, or where the request
     /// **states** a group size other than the one the block was gathered at;
-    /// an unstated size lacks nothing a gathered block holds
+    /// an unstated size lacks nothing a gathered block holds, and re-reads a
+    /// block lacking a column at the size it holds, exactly
     /// (`docs/design/decisions.md`, "D34").
     pub fn backfill(&self, block: &CopyBlock) -> Option<StatisticsBackfill> {
         let requested = self.tracked_columns(&block.header)?;
         let Some(held) = block.statistics.as_deref() else {
-            return Some(StatisticsBackfill { columns: requested, group_size: self.group_size() });
+            return Some(StatisticsBackfill {
+                columns: requested,
+                group_size: self.group_size(),
+                group_cap: self.group_cap(),
+            });
         };
         let resized = self.group_size.is_some_and(|size| size.get() != held.group_size);
         let missing = requested
@@ -133,7 +153,7 @@ impl StatisticsRequest {
             .map(|(i, &wanted)| wanted || held.columns.get(i).is_some_and(Option::is_some))
             .collect();
         let group_size = self.group_size.map_or(held.group_size, NonZeroU64::get);
-        Some(StatisticsBackfill { columns, group_size })
+        Some(StatisticsBackfill { columns, group_size, group_cap: None })
     }
 }
 
@@ -148,6 +168,11 @@ pub struct StatisticsBackfill {
     /// The group size gathered at: the request's stated size, or else the
     /// size the block already held, or else [`DEFAULT_STATISTICS_GROUP_SIZE`].
     pub group_size: u64,
+    /// The most groups the block may hold, adjacent ones merging pairwise
+    /// past it — [`StatisticsRequest::group_cap`] for a block holding no
+    /// statistics — and `None` for a size gathered exactly: a stated one, or
+    /// the one the block already held.
+    pub group_cap: Option<usize>,
 }
 
 /// The columns a [`StatisticsRequest`] names.
@@ -217,7 +242,7 @@ pub struct BlockStatistics {
 }
 
 /// One group's extent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowGroup {
     /// Rows whose first byte lies in the group. Zero for a group no row
     /// starts in.
@@ -386,8 +411,8 @@ pub(crate) const CHARGE_STEP: u64 = 64 << 10;
 ///
 /// **What it does not see** is bounded by an observer rather than by the dump:
 /// each open observer's growth until it passes [`CHARGE_STEP`], a row's own
-/// decode scratch while a column observes it, and the observer's own
-/// allocation.
+/// decode scratch while a column observes it, a merge's scratch for the pair
+/// of groups it is merging, and the observer's own allocation.
 #[derive(Debug, Default)]
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,

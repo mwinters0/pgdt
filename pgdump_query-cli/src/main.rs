@@ -486,10 +486,12 @@ enum Command {
         )]
         statistics: Option<StatisticsSelection>,
         /// The bytes of a table's data each row group of statistics covers.
-        /// The default, 1 MiB, is coarse; a smaller group records more finely
-        /// where values lie and costs memory and cache space in proportion.
-        /// Stated, it also re-reads every block gathered at another size;
-        /// left unstated, a block keeps the size it was gathered at.
+        /// The default, 1 MiB, is coarse, and doubles for a table whose data
+        /// would take more than 4,096 groups until it takes no more; a stated
+        /// size is kept exactly, and a smaller group records more finely where
+        /// values lie and costs memory and cache space in proportion. Stated,
+        /// it also re-reads every block gathered at another size; left
+        /// unstated, a block keeps the size it was gathered at.
         #[arg(
             long,
             value_name = "BYTES",
