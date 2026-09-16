@@ -64,6 +64,7 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | M111 | 2026-09-16 | A plain `query`'s batch pin (`max_source_span`) derived from the read-buffer budget and the requested count instead of a constant, so `--jobs` buys readers at the cost of batch size |  | [2026-09-16](../status/history/2026-09-16.md) |
-| M112 |  | `MIN_SOURCE_SPAN` read off the caller's announced `ScanOptions::chunk_size` rather than the shipped `DEFAULT_CHUNK_SIZE`, so the span floors at the unit the source actually retains at any `--chunk-size`; with it `BatchSpanNarrowed`'s remedy clause and the origin suffix on a budget-quoting note |  | [2026-09-16](../status/history/2026-09-16.md) |
+| M112 |  | `MIN_SOURCE_SPAN` read off the caller's announced `ScanOptions::chunk_size` rather than the shipped `DEFAULT_CHUNK_SIZE`, so the span floors at the unit the source actually retains at any `--chunk-size` |  | [2026-09-16](../status/history/2026-09-16.md) |
 | M113 |  | The CLI decline test moved off the `1.25 × MEMORY_UNPOOLED_BOUND` crossover it currently sits exactly on, and a unit test pinning both of `statistics_allowance`'s bands — the zero line and the cap/ceiling swap at `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` |  | [P20.7 notes](roadmap-P20.7-decline-notes.md) |
+| M114 |  | `BatchSpanNarrowed`'s remedy clause and the origin suffix on a budget-quoting note, split out of `M112` because both are text about what a memory knob buys and the knob's role is open |  | [2026-09-16](../status/history/2026-09-16.md) |
 

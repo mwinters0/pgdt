@@ -17,6 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P5, P7, P9–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P20 — statistics memory | Current | [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); progress in [`STATUS.md`](../status/STATUS.md) |
+| P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -42,7 +43,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P21`** — nothing at or below it
+centering"). **Phase numbering continues from `P22`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -215,7 +216,9 @@ from it.
 hardware knob, and neither is a threshold of the input contract such as
 `--max-line-bytes`. An expert override already shipped, `--chunk-size`, may
 stay; what the rule refuses is a default that is only right once a third knob
-is turned.
+is turned. **P22 reopens exactly this clause** — not the rule's purpose, which
+stands, but whether one number can be right for the four consumers it now fans
+out into.
 
 **Reasonable defaults are promised for reasonable data only.** A shape the
 defaults cannot fit — a table of a thousand wide text columns under a small
@@ -551,6 +554,41 @@ a block's rows are sparse, a per-block length cap,
 a block that does not fit its allowance declining rather than killing the
 process, one `--memory` flag meaning resident, and one reserve for every
 operation, its size measured.
+
+## P22 — The third tunable
+
+**One number fans out into four consumers and has to be right for all of
+them**: the worker count, the read-buffer budget, a query's batch span and now
+the statistics allowance. Every slice since 20.6 has re-fitted one term of that
+fan-out — `M111` the span, `M112` its floor, 20.7 the allowance — which is the
+tell that the number, not any one derivation, is what is overloaded. Sketched
+to corner-avoidance depth, and after P20, whose remaining slices measure and
+gate the model as it stands.
+
+**It revises [this file](roadmap.md), "Two tunables fit pgdq to hardware:
+memory and parallelism"** — that section's last clause, and nothing else about
+its purpose. Until this phase is specified the rule stands as written and the
+code keeps describing what is built.
+
+What it inherits:
+
+- **The two bands** (`pgdump_query/src/io.rs`, `statistics_allowance`): below
+  `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` the cap binds and statistics
+  have a floor; at and above it the ceiling binds and statistics get only the
+  slack one worker's step leaves, so a **wide** host at a high `--jobs` is the
+  starving case. **20.8 prices that band** before this phase is grilled, and a
+  reading showing the slack is routinely large shrinks this phase or ends it.
+- **`KD32` and `KD25`**, both `(c) unowned` today and both the same seam from
+  the other end — a stated allowance is inert on a plain source. This phase is
+  their destination, and re-stancing them to `(b)` is part of specifying it, a
+  `(b)` owner having to exist before an entry may name it.
+- **`decisions.md`, "D83"** (the typed number bounds the process, the budget
+  the pools) and **"D3"** (the reserve is a subtraction, not a fraction).
+
+What it must decide: whether the new number is statistics-only or a second
+allowance the other consumers also read; what an unset one derives, given that
+today's derivation is what every figure was taken against; and whether the
+plain-source inertness `KD32` names is fixed by the same change or stays.
 
 ## P21 — Statistics gathered by a query
 

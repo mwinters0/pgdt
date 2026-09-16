@@ -274,7 +274,17 @@ retention and the rest. The legs, each pair in one container:
 
 over the reasonable-width input and the wide-text input that fills its
 allowance, on plain, 24 MiB-block and 128 MiB-block `.xz`, across the
-`reserve` figure's limits. **The criterion, registered here before the
+`reserve` figure's limits.
+
+**And one leg for the band where statistics starve**: an allowance at or above
+`5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` at a `--jobs` high enough that
+`Parallelism::fit` solves the count against the margin ceiling rather than the
+cap, so `statistics_allowance` is left only the slack one worker's step gives.
+None of the legs above reaches it, and it is the arrangement any remedy would
+be priced against — the reading is what turns that remedy from an argument
+into a priced choice.
+
+**The criterion, registered here before the
 sitting**: the reserve is the smallest step covering the worst remainder such
 that the worst rep leaves `MEMORY_MARGIN_PERCENT`; then one blind sitting on
 the shipped build at that value passes or fails it.
