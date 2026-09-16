@@ -1,5 +1,6 @@
 //! `pgdq parse --statistics` / `--statistics-group-size` /
-//! `--statistics-min-rows`, and what `info` reports of them.
+//! `--statistics-min-rows` / `--statistics-max-rows`, and what `info` reports
+//! of them.
 //!
 //! What a gathered statistic means is the library's
 //! (`pgdump_query/tests/statistics.rs`). What only the binary can say is that
@@ -124,6 +125,52 @@ fn a_selection_gathers_its_tables_and_columns_alone() {
             _ => assert!(statistics.is_null(), "{table} was not named"),
         }
     }
+}
+
+/// **A stated maximum re-reads the table too dense for it and says where it
+/// still misses.** `ordered`'s thousand rows are one group at a mebibyte, so a
+/// maximum of a hundred is broken there; the block is read a second time at
+/// the finer size its own group predicts, records the maximum it was sized
+/// under, and — its rows all lying inside one of those finer groups — says on
+/// stderr that it still holds more. Asking again re-reads nothing and says it
+/// again.
+#[test]
+fn a_stated_maximum_rereads_the_dense_table_and_says_where_it_still_misses() {
+    let (_dir, dump) = sandboxed(DUMP, "maximum.sql");
+    let source = dump.to_str().unwrap();
+    let flags = ["--statistics-min-rows", "8", "--statistics-max-rows", "100"];
+    let parse = |extra: &[&str]| {
+        let mut args = vec!["parse", "--source", source];
+        args.extend_from_slice(extra);
+        let out = run(&args);
+        assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
+        stderr_of(&out)
+    };
+
+    let stderr = parse(&flags);
+    assert!(stderr.contains("statistics back-fill started blocks=1"), "{stderr}");
+    assert!(stderr.contains("statistics back-fill complete blocks=1"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "statistics groups still hold more rows than the stated maximum \
+             table=\"ordered\" group_size=65536 max_rows=100"
+        ),
+        "{stderr}"
+    );
+
+    let ordered = blocks_of(&info_json(&dump));
+    let ordered = &ordered.iter().find(|(t, _)| t == "public.ordered").unwrap().1["statistics"];
+    assert_eq!(ordered["group_size"], 65536);
+    assert_eq!(ordered["sizing"]["Density"]["min_rows"], 8);
+    assert_eq!(ordered["sizing"]["Density"]["max_rows"], 100);
+    assert_eq!(array(&ordered["groups"]).len(), 1, "the rows all start in one finer group");
+
+    let stderr = parse(&flags);
+    assert!(!stderr.contains("statistics back-fill started"), "no third read: {stderr}");
+    assert!(stderr.contains("still hold more rows than the stated maximum"), "{stderr}");
+    let stderr = parse(&[]);
+    assert!(!stderr.contains("statistics back-fill started"), "unstated takes what is held");
+    assert!(!stderr.contains("still hold more rows"), "{stderr}");
 }
 
 /// **The export is every group's statistics as the cache holds them**, on
@@ -382,6 +429,20 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
     for (extra, says) in [
         (&["--statistics", "none", "--statistics-group-size", "64"][..], "drop one of them"),
         (&["--statistics", "none", "--statistics-min-rows", "64"][..], "drop one of them"),
+        (&["--statistics", "none", "--statistics-max-rows", "64"][..], "drop one of them"),
+        (
+            &["--statistics-max-rows", "64"][..],
+            "1024 rows --statistics-min-rows asks for by default",
+        ),
+        (
+            &["--statistics-min-rows", "64", "--statistics-max-rows", "8"][..],
+            "below the 64 rows --statistics-min-rows asks for —",
+        ),
+        (
+            &["--statistics-group-size", "4096", "--statistics-max-rows", "8"][..],
+            "cannot be used with",
+        ),
+        (&["--preamble-only", "--statistics-max-rows", "8"][..], "cannot be used with"),
         (&["--statistics-group-size", "0"][..], "a group size of 0"),
         (&["--statistics-group-size", "1000"][..], "a power of two"),
         (

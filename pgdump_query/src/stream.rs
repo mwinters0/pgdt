@@ -38,7 +38,7 @@
 //! built to it: typed under `SchemaMode::Typed`, all-`Utf8View` under
 //! `SchemaMode::Strings`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
 use std::pin::Pin;
@@ -946,8 +946,9 @@ pub struct MapRun {
 /// discard one.
 ///
 /// **It gathers what `statistics` asks for**, over the blocks this run maps,
-/// and then **re-reads every block the cache already held that lacks it**
-/// ([`StatisticsRequest::backfill`]), one at a time in file order through
+/// and then **re-reads every block that lacks it** — one the cache already
+/// held, or one this run gathered too coarsely for a stated maximum
+/// ([`StatisticsRequest::backfill`]) — one at a time in file order through
 /// [`gather_block_statistics`], saving as it goes. The back-fill runs once the
 /// map has reached EOF, so each block resolves against whole-file metadata,
 /// and a run interrupted inside it resumes into it, the blocks still lacking
@@ -992,6 +993,14 @@ pub async fn map_file(
     };
     let account = Arc::new(StatisticsAccount::default());
     account.apply(&[(Term::Loaded, statistics_heap(&index) as i64)]);
+    // Which statistics the *cache* supplied, by the one identity a block keeps
+    // across the splice: what a back-fill replaces leaves this term, and what
+    // this run gathered leaves `Term::Retained` instead.
+    let loaded: HashSet<u64> = index
+        .blocks()
+        .filter(|block| block.statistics.is_some())
+        .map(|b| b.header_offset)
+        .collect();
     // The one diagnostic about the cache *file* rather than about the map;
     // everything else the load computed is recomputed below.
     let carried: Vec<Diagnostic> = index
@@ -1041,11 +1050,20 @@ pub async fn map_file(
     diagnostics.extend(tiling_diagnostics(&index.spans, size));
     diagnostics.push(toc_coverage_diagnostic(&index.spans));
     index.diagnostics = diagnostics;
-    let backfill =
-        backfill_statistics(source, scan_options, cache, &mut index, statistics, &account, size)
-            .await?;
+    let backfill = backfill_statistics(
+        source,
+        scan_options,
+        cache,
+        &mut index,
+        statistics,
+        &account,
+        size,
+        loaded,
+    )
+    .await?;
     if !backfill.interrupted {
         cache.save(source, &index).await?;
+        report_density_shortfall(statistics, &index);
     }
     Ok(MapRun {
         index,
@@ -1107,9 +1125,12 @@ struct BackfillRun {
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did.
 ///
-/// **A block lacking statistics was loaded**, a block this pass mapped holding
-/// what its own request asked, so what a re-read replaces leaves `account`'s
-/// loaded term once it is freed.
+/// **A block lacking statistics was loaded, or broke a stated maximum**: a
+/// block this pass mapped holds what its own request asked, except for a
+/// maximum no single read can deliver. So what a re-read replaces leaves the
+/// term that carried it — `loaded`, the header offsets the cache supplied
+/// statistics for, telling the two apart.
+#[allow(clippy::too_many_arguments)]
 async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
@@ -1118,6 +1139,7 @@ async fn backfill_statistics(
     statistics: &StatisticsRequest,
     account: &Arc<StatisticsAccount>,
     size: u64,
+    mut loaded: HashSet<u64>,
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
     let lacking: Vec<(usize, StatisticsBackfill)> = if statistics.gathers() {
@@ -1150,31 +1172,48 @@ async fn backfill_statistics(
     let mut throttle = SaveThrottle::new();
     let mut shortfall_reported = false;
     for (at, backfill) in lacking {
-        let SpanBody::Data(DataBlock::Copy(block)) = &index.spans[at].body else {
-            unreachable!("the positions were read off copy blocks of this span list");
-        };
-        let gathered = reread_block(
-            source,
-            scan_options,
-            cache_path,
-            index.metadata.as_ref(),
-            block,
-            &backfill,
-            account,
-            size,
-            &mut shortfall_reported,
-        )
-        .await?;
-        let Some(gathered) = gathered else {
-            cache.save(source, index).await?;
-            run.interrupted = true;
-            return Ok(run);
-        };
-        if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
-            let _attributed = StatisticsScope::enter();
-            let replaced = block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
-            block.statistics = Some(Arc::new(gathered));
-            account.apply(&[(Term::Loaded, -(replaced as i64))]);
+        // **At most two reads of a block**, the second being the finer size a
+        // stated maximum a block broke at the size it gathered from asks for
+        // ([`StatisticsRequest::backfill`]); nothing asks for a third, and the
+        // bound here is what says so.
+        let mut plan = Some(backfill);
+        for _ in 0..2 {
+            let Some(backfill) = plan.take() else { break };
+            let SpanBody::Data(DataBlock::Copy(block)) = &index.spans[at].body else {
+                unreachable!("the positions were read off copy blocks of this span list");
+            };
+            let gathered = reread_block(
+                source,
+                scan_options,
+                cache_path,
+                index.metadata.as_ref(),
+                block,
+                &backfill,
+                account,
+                size,
+                &mut shortfall_reported,
+            )
+            .await?;
+            let Some(gathered) = gathered else {
+                cache.save(source, index).await?;
+                run.interrupted = true;
+                return Ok(run);
+            };
+            if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
+                let _attributed = StatisticsScope::enter();
+                let replaced = block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
+                // The re-read's own observer has already credited
+                // `Term::Retained`, so what it replaced leaves the term that
+                // carried it: `Term::Loaded` for a block the cache supplied,
+                // and `Term::Retained` for one this run gathered — which a
+                // block re-read for a stated maximum is, its own first read
+                // included.
+                let term =
+                    if loaded.remove(&block.header_offset) { Term::Loaded } else { Term::Retained };
+                block.statistics = Some(Arc::new(gathered));
+                account.apply(&[(term, -(replaced as i64))]);
+                plan = statistics.backfill(block);
+            }
         }
         run.reread += 1;
         // Both of `map_forward`'s check points, a block's close being the
@@ -1190,6 +1229,26 @@ async fn backfill_statistics(
     }
     tracing::info!(blocks = run.reread, "statistics back-fill complete");
     Ok(run)
+}
+
+/// **Say which blocks still hold more rows than a stated maximum asks for**,
+/// one line each: a block too dense for it is re-read at the size its own
+/// groups predicted, and one whose rows cluster can miss it there. Nothing
+/// reads such a block again, so every run under that maximum says what it
+/// keeps rather than what it will fix.
+fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
+    let Some(max_rows) = statistics.max_rows() else { return };
+    for block in index.blocks() {
+        let Some(held) = block.statistics.as_deref() else { continue };
+        if statistics.tracked_columns(&block.header).is_some() && held.breaks_max_rows(max_rows) {
+            tracing::info!(
+                table = block.header.table,
+                group_size = held.group_size,
+                max_rows,
+                "statistics groups still hold more rows than the stated maximum",
+            );
+        }
+    }
 }
 
 /// The three hints every top-level read loop announces before its first read

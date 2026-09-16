@@ -33,7 +33,7 @@ const SMALL_GROUP: u64 = 4096;
 
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
     let group_size = Some(NonZeroU64::new(group_size).unwrap());
-    StatisticsRequest { selection, group_size, min_rows: None }
+    StatisticsRequest { selection, group_size, min_rows: None, max_rows: None }
 }
 
 async fn gathered(dump: &Path, statistics: &StatisticsRequest) -> DumpIndex {
@@ -299,7 +299,8 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let dump = statistics_fixture(16, "default");
     assert_eq!(StatisticsRequest::default(), StatisticsRequest::ALL);
     let index = gathered(&dump, &StatisticsRequest::default()).await;
-    let default_sizing = GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS };
+    let default_sizing =
+        GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS, max_rows: None };
     for block in index.blocks() {
         let statistics = statistics(block);
         assert_eq!(statistics.columns.len(), block.header.columns.len());
@@ -317,7 +318,7 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let long_value = statistics(block(&index, "public.long_value"));
     assert_eq!(long_value.group_size, pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE);
     assert!(long_value.groups.len() > 1);
-    assert_eq!(long_value.sizing, GroupSizing::Density { min_rows: 0 });
+    assert_eq!(long_value.sizing, GroupSizing::Density { min_rows: 0, max_rows: None });
 }
 
 /// A selection tracks only what it names: a table, or one column, whose
@@ -619,8 +620,7 @@ async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
     mapped_into_cache(&dump, &options, &StatisticsRequest::NONE).await;
     let specials = StatisticsRequest {
         selection: StatisticsSelection::Only(vec![StatisticsTarget::Table("specials".to_string())]),
-        group_size: None,
-        min_rows: None,
+        ..StatisticsRequest::ALL
     };
     let run = mapped_into_cache(&dump, &options, &specials).await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
@@ -674,7 +674,7 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
         ["public.ordered", "public.specials", "public.long_value"]
             .map(|table| statistics(block(&run.index, table)).sizing)
     };
-    let density = |min_rows| GroupSizing::Density { min_rows };
+    let density = |min_rows| GroupSizing::Density { min_rows, max_rows: None };
     let default = density(DEFAULT_STATISTICS_MIN_ROWS);
     let only_id = StatisticsRequest {
         selection: StatisticsSelection::Only(vec![StatisticsTarget::Column {
@@ -717,6 +717,132 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     assert_eq!(run.backfilled, 3);
     assert_eq!(records(&run), [default; 3]);
     assert_eq!(long_value(&run), coarse, "re-read from the first row, as gathered cold");
+}
+
+/// The rows the 90th-percentile group of `statistics` holds — the group a
+/// stated maximum is read at, the `⌈9G/10⌉`-th smallest — written here rather
+/// than read from the library.
+fn densest_group(statistics: &BlockStatistics) -> u64 {
+    let mut rows: Vec<u64> = statistics.groups.iter().map(|group| group.rows).collect();
+    rows.sort_unstable();
+    rows[(9 * rows.len()).div_ceil(10) - 1]
+}
+
+/// A dump of two `COPY` blocks, each over a mebibyte so that the default group
+/// size cuts them: `dense`, whose rows are spread evenly over two megabytes,
+/// and `clustered`, whose rows all start in the first few kilobytes and are
+/// followed by one row a mebibyte long.
+fn dense_and_clustered(dir: &Path) -> std::path::PathBuf {
+    let dump = dir.join("dense.sql");
+    let mut text = String::from("CREATE TABLE public.dense (\n    id integer,\n    v text\n);\n\n");
+    text.push_str("COPY public.dense (id, v) FROM stdin;\n");
+    for i in 0..20_000 {
+        text.push_str(&format!("{i}\t{}\n", "x".repeat(90)));
+    }
+    text.push_str("\\.\n\nCREATE TABLE public.clustered (\n    id integer,\n    v text\n);\n\n");
+    text.push_str("COPY public.clustered (id, v) FROM stdin;\n");
+    for i in 0..5_000 {
+        text.push_str(&format!("{i}\tshort\n"));
+    }
+    text.push_str(&format!("5000\t{}\n", "y".repeat(1 << 20)));
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    dump
+}
+
+/// **A block whose groups break a stated maximum is re-read once, at the size
+/// its own rows per group predict, and never again**: no merge makes a block
+/// finer, so the maximum is reachable only by reading the block a second time,
+/// and what that read gives is what the block keeps. `dense` meets the maximum
+/// there; `clustered`, whose rows all start in one stretch, does not, and is
+/// left as it is rather than read a third time. Asking again re-reads neither,
+/// and a split scan gathers what the serial one does.
+#[tokio::test]
+async fn a_block_breaking_a_stated_maximum_is_reread_once_at_the_size_it_predicts() {
+    const MAX_ROWS: u64 = 3_000;
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dense_and_clustered(dir.path());
+    let options = ScanOptions::default();
+    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::ALL };
+    let sizing =
+        GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS, max_rows: Some(MAX_ROWS) };
+    let tables = ["public.dense", "public.clustered"];
+
+    // Flagless first: both blocks are at the default size, and both break the
+    // maximum nobody has stated yet.
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    for table in tables {
+        let held = statistics(block(&run.index, table));
+        assert_eq!(held.group_size, DEFAULT_STATISTICS_GROUP_SIZE, "{table}");
+        assert!(densest_group(held) > MAX_ROWS, "{table}: {}", densest_group(held));
+    }
+
+    let run = mapped_into_cache(&dump, &options, &bounded).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (2, 2), "both lacked the maximum");
+    let dense = statistics(block(&run.index, "public.dense")).clone();
+    let clustered = statistics(block(&run.index, "public.clustered")).clone();
+    for (table, held) in tables.iter().zip([&dense, &clustered]) {
+        assert!(held.group_size < DEFAULT_STATISTICS_GROUP_SIZE, "{table}: {}", held.group_size);
+        assert_eq!(held.sizing, sizing, "{table}");
+    }
+    assert!(densest_group(&dense) <= MAX_ROWS, "dense: {}", densest_group(&dense));
+    assert!(densest_group(&clustered) > MAX_ROWS, "clustered keeps what the re-read gave");
+
+    // The second read is the last one, for the block that met the maximum and
+    // for the block that did not.
+    let run = mapped_into_cache(&dump, &options, &bounded).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (0, 0));
+    assert_eq!(statistics(block(&run.index, "public.dense")), &dense);
+    assert_eq!(statistics(block(&run.index, "public.clustered")), &clustered);
+
+    // What the re-read gathered is what gathering exactly at that size
+    // gathers, and what a split scan gathers.
+    for (table, held) in tables.iter().zip([&dense, &clustered]) {
+        let exact = gathered(&dump, &request(StatisticsSelection::All, held.group_size)).await;
+        let exact = statistics(block(&exact, table));
+        assert_eq!((&exact.groups, &exact.columns), (&held.groups, &held.columns), "{table}");
+    }
+    let parallel = ScanOptions {
+        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
+        chunk_size: 1 << 16,
+        ..ScanOptions::default()
+    };
+    let split = gathered_with(&dump, &parallel, &bounded).await;
+    for (table, held) in tables.iter().zip([&dense, &clustered]) {
+        assert_eq!(statistics(block(&split, table)), held, "{table}: split");
+    }
+}
+
+/// **A stated maximum turns the per-block group cap off and outranks the
+/// minimum**: a block meeting neither bound ends at the coarsest size its
+/// maximum allows, however far short of the minimum that leaves its median
+/// group — only a caller who stated a maximum reaches the conflict, and a
+/// default does not quietly overrule what they asked for.
+#[tokio::test]
+async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
+    const MAX_ROWS: u64 = 750;
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dense_and_clustered(dir.path());
+    let options = ScanOptions::default();
+    assert_eq!(StatisticsRequest::ALL.group_cap(), Some(STATISTICS_GROUP_CAP));
+    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::ALL };
+    assert_eq!(bounded.group_cap(), None, "a stated maximum is a size a caller asked for");
+
+    let run = mapped_into_cache(&dump, &options, &bounded).await;
+    let held = statistics(block(&run.index, "public.dense"));
+    assert!(densest_group(held) <= MAX_ROWS, "{}", densest_group(held));
+    let mut rows: Vec<u64> = held.groups.iter().map(|group| group.rows).collect();
+    rows.sort_unstable();
+    let median = rows[rows.len() / 2];
+    assert!(median < DEFAULT_STATISTICS_MIN_ROWS, "the minimum is unmet at {median} rows");
+    let flagless = gathered(&dump, &StatisticsRequest::ALL).await;
+    let coarse = statistics(block(&flagless, "public.dense"));
+    assert!(
+        held.groups.len() > coarse.groups.len(),
+        "{} groups against the {} a flagless parse keeps",
+        held.groups.len(),
+        coarse.groups.len()
+    );
 }
 
 /// **A back-fill the leader splits gathers what the serial pass gathers**, at
@@ -851,7 +977,8 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
         let index = run.await.unwrap().index;
         for block in index.blocks() {
             let backfill = unstated.backfill(block).expect("the block holds no statistics");
-            let default_sizing = GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS };
+            let default_sizing =
+                GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS, max_rows: None };
             assert_eq!(backfill.min_rows, Some(DEFAULT_STATISTICS_MIN_ROWS));
             assert_eq!(backfill.sizing, default_sizing);
             let exact_request = stated.backfill(block).unwrap();

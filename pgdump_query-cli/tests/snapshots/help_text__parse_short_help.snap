@@ -56,9 +56,11 @@ Options:
                                        covers, a power of two. The default, 1 MiB, is coarse, and
                                        doubles for a table whose data would take more than 4,096
                                        groups until it takes no more, and for a table whose rows are
-                                       too wide for its groups to hold `--statistics-min-rows`; a
-                                       stated size is kept exactly, and a smaller group records more
-                                       finely where values lie and costs memory and cache space in
+                                       too wide for its groups to hold `--statistics-min-rows`; it
+                                       halves instead for one too dense for a stated
+                                       `--statistics-max-rows`, which lifts both of those; a stated
+                                       size is kept exactly, and a smaller group records more finely
+                                       where values lie and costs memory and cache space in
                                        proportion. Stated, it also re-reads every block gathered at
                                        another size; left unstated, a block keeps the size it was
                                        gathered at
@@ -73,6 +75,19 @@ Options:
                                        keeps the size it was gathered at. A stated
                                        `--statistics-group-size` is kept exactly, so the two are
                                        refused together
+      --statistics-max-rows <ROWS>     The most rows a row group of statistics should hold under the
+                                       default group size, read at the 90th-percentile group so that
+                                       at most a tenth of them hold more. There is no default:
+                                       stated, it stops the doubling `--statistics-min-rows` would
+                                       otherwise do, it lifts the 4,096-group ceiling, and a table
+                                       too dense to meet it at 1 MiB a group is read a second time,
+                                       at the finer size its groups predict — once, keeping what
+                                       that gives and saying so if it still misses. Stated, it also
+                                       re-reads every block sized under another maximum or at a
+                                       stated group size; left unstated, a block keeps the size it
+                                       was gathered at. Refused below `--statistics-min-rows`, which
+                                       defaults to 1,024, and beside a stated
+                                       `--statistics-group-size`, which is kept exactly
       --jobs <N>                       How many workers pgdq may ask for. Left unstated, the file
                                        decides: a plain dump reads serially, and an `.xz` one takes
                                        the CPUs this process was given, or its own block count where

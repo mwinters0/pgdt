@@ -232,8 +232,9 @@ is refused.
 
 By default `parse` also gathers **statistics**: for every stretch of each
 table's data — a **row group**, one mebibyte of it, doubled for a table whose
-data would take more than 4,096 groups until it takes no more, and doubled
-again for a table whose rows are wide (below) — the number of
+data would take more than 4,096 groups until it takes no more, doubled
+again for a table whose rows are wide, and halved for one too dense for a
+stated maximum (both below) — the number of
 rows, each column's number of NULLs, and, where pgdq compares a column's values
 exactly, its least and greatest value and its distinct values (up to 64, none
 longer than 256 bytes; past either, that group records no distinct values for
@@ -252,6 +253,7 @@ pgdq parse --source big.sql --statistics none                        # nothing g
 pgdq parse --source big.sql --statistics public.orders,public.items.sku
 pgdq parse --source big.sql --statistics-group-size 65536            # finer groups
 pgdq parse --source big.sql --statistics-min-rows 4096               # fewer, fuller groups
+pgdq parse --source big.sql --statistics-max-rows 4096               # more, emptier groups
 ```
 
 A selection is a comma-separated list of tables (`schema.table`, or a bare
@@ -268,21 +270,43 @@ groups double until at most half of them fall short of
 `--statistics-min-rows` rows, 1,024 by default, or the table is one group. Rows
 up to about 1 KiB wide keep the mebibyte; a table averaging 4 KiB a row ends
 at 4 MiB a group. `--statistics-min-rows 0` doubles nothing; a larger minimum
-keeps fewer, fuller groups, which a query skips less precisely. A stated
-`--statistics-group-size` is exact, so it is refused beside
-`--statistics-min-rows`, and neither is accepted beside `--statistics none`.
-No statistics flag combines with `--preamble-only`, which reads no row.
+keeps fewer, fuller groups, which a query skips less precisely.
+
+**`--statistics-max-rows` asks for the other side of that trade**, and there is
+no default: state it and no group size is chosen that would put more than that
+many rows in the 90th-percentile group, so at most a tenth of a table's groups
+hold more. It wins wherever it and `--statistics-min-rows` cannot both be met,
+and it lifts the 4,096-group ceiling as well — you asked for the groups, so
+nothing quietly takes them away, and a table dense enough to need many of them
+costs the memory and the cache space they take. A table too dense to meet it at
+a mebibyte a group is read a **second time**, once the rest of the file is
+scanned, at the finer size its own groups predict; if its rows cluster so that
+even that misses, the run keeps what the second read gave rather than reading a
+third time, and every run under that maximum says so on stderr:
+
+```
+2026-07-23T15:10:09.570016894Z  INFO statistics groups still hold more rows than the stated maximum table="events" group_size=262144 max_rows=3000
+```
+
+A stated `--statistics-group-size` is exact, so it is refused beside
+`--statistics-min-rows` and `--statistics-max-rows`, a maximum below the
+minimum in force is refused, and none of the three is accepted beside
+`--statistics none`. No statistics flag combines with `--preamble-only`, which
+reads no row.
 
 **Asking for statistics the cache lacks re-reads what lacks them.** Once the
 rest of the file is scanned, `parse` re-reads each table's data an earlier run
 mapped without the statistics this one asks for — gathered with `--statistics
 none`, left out of a selection, at a group size other than a
-`--statistics-group-size` stated now, or under a minimum other than a
-`--statistics-min-rows` stated now — one `COPY` block at a time, banking
-each as it goes, so an interrupted re-read continues where it stopped. A
-re-read keeps every column the block already had, and a group size and a
-minimum left unstated keep the size a block was gathered at, so a flagless
-`parse` over a cache gathered at 65536 re-reads nothing. It prints its count to stderr:
+`--statistics-group-size` stated now, or under bounds other than a
+`--statistics-min-rows` or `--statistics-max-rows` stated now — one `COPY`
+block at a time, banking each as it goes, so an interrupted re-read continues
+where it stopped. A block this run scanned is re-read too where it is too
+dense for a stated maximum (above), that being the one thing a single read
+cannot deliver. A re-read keeps every column the block already had, and a
+group size and bounds left unstated keep the size a block was gathered at, so
+a flagless `parse` over a cache gathered at 65536 re-reads nothing. It prints
+its count to stderr:
 
 ```
 2026-07-23T15:10:02.114820317Z  INFO statistics back-fill started blocks=12

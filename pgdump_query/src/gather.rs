@@ -46,7 +46,8 @@ use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
     BlockObserver, BlockStatistics, Bounds, CHARGE_STEP, Charge, ColumnBounds, ColumnDictionary,
     ColumnStatistics, DICTIONARY_CAP, GroupSizing, RowGroup, STORED_VALUE_CAP, Sortedness,
-    StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, text_heap, vec_heap,
+    StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group, min_rows_group,
+    text_heap, vec_heap,
 };
 
 /// The observer for one block, or `None` when `request` tracks nothing in it,
@@ -134,13 +135,15 @@ struct Sizing {
     group_size: u64,
     cap: Option<usize>,
     min_rows: Option<u64>,
+    max_rows: Option<u64>,
     record: GroupSizing,
 }
 
 impl Sizing {
     fn of(plan: &StatisticsBackfill) -> Self {
-        let (group_size, cap, min_rows) = (plan.group_size, plan.group_cap, plan.min_rows);
-        Self { group_size, cap, min_rows, record: plan.sizing }
+        let (group_size, cap) = (plan.group_size, plan.group_cap);
+        let (min_rows, max_rows) = (plan.min_rows, plan.max_rows);
+        Self { group_size, cap, min_rows, max_rows, record: plan.sizing }
     }
 }
 
@@ -152,6 +155,9 @@ struct Gatherer {
     /// The fewest rows the finished block's median group holds, `None` for an
     /// exact size and for a piece, which is never finished.
     min_rows: Option<u64>,
+    /// The most rows the finished block's 90th-percentile group holds, which
+    /// no merge passes; `None` for an exact size and for a piece.
+    max_rows: Option<u64>,
     /// What the finished block records it was sized under.
     record: GroupSizing,
     /// Shared with every piece this block has made, once it has made one: a
@@ -191,6 +197,7 @@ impl Gatherer {
             group_size: sizing.group_size,
             cap: sizing.cap.map(|cap| cap.max(1)),
             min_rows: sizing.min_rows,
+            max_rows: sizing.max_rows,
             record: sizing.record,
             pieces: OnceLock::new(),
             piece: false,
@@ -308,8 +315,10 @@ impl Gatherer {
     }
 
     /// **Merge a finished block's groups pairwise until its median group holds
-    /// its minimum**, or it is one group — the smallest size, no finer than
-    /// the one it holds, at which the upper middle group does
+    /// its minimum**, or it is one group, or the next merge would put more
+    /// than its maximum in its 90th-percentile group — the smallest size, no
+    /// finer than the one it holds, at which the upper middle group reaches
+    /// the minimum, and never past the coarsest at which the maximum holds
     /// ([`density_merges`]). Run after [`Self::fit_cap`], from the size the
     /// cap left: the finer sizes' rows are summed as the cap merges, and the
     /// predicate is monotone in size, so the size the cap left is never
@@ -317,7 +326,7 @@ impl Gatherer {
     fn fit_density(&mut self) {
         let Some(min_rows) = self.min_rows else { return };
         let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
-        for _ in 0..density_merges(rows, min_rows) {
+        for _ in 0..density_merges(rows, min_rows, self.max_rows) {
             self.merge_pairs();
         }
     }
@@ -515,8 +524,13 @@ impl BlockObserver for Gatherer {
         let _attributed = StatisticsScope::enter();
         let columns = self.columns.iter().map(|c| c.as_ref().map(ColumnGatherer::fresh)).collect();
         let charge = Charge::new(Arc::clone(self.charge.account()), Term::Pieces);
-        let sizing =
-            Sizing { group_size: self.group_size, cap: None, min_rows: None, record: self.record };
+        let sizing = Sizing {
+            group_size: self.group_size,
+            cap: None,
+            min_rows: None,
+            max_rows: None,
+            record: self.record,
+        };
         let mut piece = Gatherer::block(sizing, columns, charge);
         piece.piece = true;
         let pieces = self.pieces.get_or_init(Arc::default);
@@ -538,10 +552,9 @@ impl BlockObserver for Gatherer {
 }
 
 /// How many times a block whose groups hold `rows` merges pairwise before its
-/// **upper middle** group — the `⌊G/2⌋+1`-th smallest of `G`, so that at most
-/// half the groups fall short — holds `min_rows`, or it is one group: at each
-/// merge the rows per group are the sums of adjacent pairs, a last odd group
-/// standing alone.
+/// **upper middle** group ([`min_rows_group`]) holds `min_rows`, or it is one
+/// group: at each merge the rows per group are the sums of adjacent pairs, a
+/// last odd group standing alone.
 ///
 /// Reading the upper middle group rather than the nearest-rank `⌈G/2⌉`-th is
 /// what makes the predicate **monotone in size**: a merged group falls short
@@ -549,15 +562,25 @@ impl BlockObserver for Gatherer {
 /// left fall short where `S ≤ ⌊G/2⌋` did — which is the same predicate again,
 /// and an odd short tail cannot push the fraction past half.
 /// `the_density_predicate_is_monotone_in_size` holds it.
-fn density_merges(mut rows: Vec<u64>, min_rows: u64) -> u32 {
+///
+/// **`max_rows` stops the merging first**, wherever the next size would put
+/// more than that many rows in its 90th-percentile group ([`max_rows_group`]):
+/// so a stated maximum outranks the minimum, and a block meeting neither ends
+/// at the coarsest size the maximum allows. That predicate is monotone in size
+/// too — the `k`-th smallest of the pairwise sums is at least the `2k`-th
+/// smallest of their parts, and `2⌈9⌈G/2⌉/10⌉ ≥ ⌈9G/10⌉` — so stopping at the
+/// first merge that breaks it loses no coarser size that would have held it.
+/// Nothing here can make a block *finer*: a block breaking `max_rows` at the
+/// size it gathered from is re-read instead
+/// ([`StatisticsRequest::backfill`]).
+fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u32 {
     let mut merges = 0;
-    while rows.len() > 1 {
-        let mut sorted = rows.clone();
-        let rank = sorted.len() / 2;
-        if *sorted.select_nth_unstable(rank).1 >= min_rows {
+    while rows.len() > 1 && min_rows_group(&rows) < min_rows {
+        let coarser: Vec<u64> = rows.chunks(2).map(|pair| pair.iter().sum()).collect();
+        if max_rows.is_some_and(|max_rows| max_rows_group(&coarser) > max_rows) {
             break;
         }
-        rows = rows.chunks(2).map(|pair| pair.iter().sum()).collect();
+        rows = coarser;
         merges += 1;
     }
     merges
@@ -1990,7 +2013,17 @@ mod tests {
     /// every block recording the same request so that only its statistics
     /// tell two apart.
     fn sized(group_size: u64, cap: Option<usize>, min_rows: Option<u64>) -> Sizing {
-        Sizing { group_size, cap, min_rows, record: GroupSizing::Stated }
+        bounded(group_size, cap, min_rows, None)
+    }
+
+    /// [`sized`], under a density maximum as well.
+    fn bounded(
+        group_size: u64,
+        cap: Option<usize>,
+        min_rows: Option<u64>,
+        max_rows: Option<u64>,
+    ) -> Sizing {
+        Sizing { group_size, cap, min_rows, max_rows, record: GroupSizing::Stated }
     }
 
     /// `block` handed to one observer sized by `sizing`.
@@ -2167,13 +2200,17 @@ mod tests {
     /// group where no size reaches it.
     #[test]
     fn density_merges_choose_the_finest_size_whose_median_holds_the_minimum() {
-        assert_eq!(density_merges(vec![], 5), 0);
-        assert_eq!(density_merges(vec![3], 5), 0, "one group is as coarse as a block gets");
-        assert_eq!(density_merges(vec![5, 0, 5], 5), 0, "the second smallest of three");
-        assert_eq!(density_merges(vec![0, 5, 0, 5], 5), 0, "the third smallest of four");
-        assert_eq!(density_merges(vec![0, 0, 0, 5], 5), 1, "three of four fall short");
-        assert_eq!(density_merges(vec![1, 1, 1, 1, 1], 5), 3, "never reached: one group");
-        assert_eq!(density_merges(vec![9, 9, 9, 9], 0), 0, "a minimum of zero merges nothing");
+        assert_eq!(density_merges(vec![], 5, None), 0);
+        assert_eq!(density_merges(vec![3], 5, None), 0, "one group is as coarse as a block gets");
+        assert_eq!(density_merges(vec![5, 0, 5], 5, None), 0, "the second smallest of three");
+        assert_eq!(density_merges(vec![0, 5, 0, 5], 5, None), 0, "the third smallest of four");
+        assert_eq!(density_merges(vec![0, 0, 0, 5], 5, None), 1, "three of four fall short");
+        assert_eq!(density_merges(vec![1, 1, 1, 1, 1], 5, None), 3, "never reached: one group");
+        assert_eq!(
+            density_merges(vec![9, 9, 9, 9], 0, None),
+            0,
+            "a minimum of zero merges nothing"
+        );
         let mut rng = Rng(0x0020_0004);
         for round in 0..2000 {
             let groups = 1 + rng.below(40) as usize;
@@ -2182,7 +2219,7 @@ mod tests {
                 (0..groups).map(|_| if rng.below(skew) == 0 { 0 } else { rng.below(12) }).collect();
             let min_rows = rng.below(30);
             assert_eq!(
-                density_merges(rows.clone(), min_rows),
+                density_merges(rows.clone(), min_rows, None),
                 chosen_merges(&rows, min_rows),
                 "round {round}: {rows:?} at {min_rows}"
             );
@@ -2199,8 +2236,8 @@ mod tests {
     /// level of the ladder.
     #[test]
     fn the_density_predicate_is_monotone_in_size() {
-        assert_eq!(density_merges(vec![5, 5, 5, 5, 0, 0, 0], 5), 0, "the odd tail, gathered");
-        assert_eq!(density_merges(vec![10, 10, 0, 0], 5), 0, "the same block, once capped");
+        assert_eq!(density_merges(vec![5, 5, 5, 5, 0, 0, 0], 5, None), 0, "the odd tail, gathered");
+        assert_eq!(density_merges(vec![10, 10, 0, 0], 5, None), 0, "the same block, once capped");
         let mut rng = Rng(0x0020_0011);
         let mut reached_early = 0;
         for round in 0..4000 {
@@ -2214,7 +2251,7 @@ mod tests {
             for merges in 0..groups {
                 // Every level at or past the first one that holds is asked
                 // again from there, as a capped block's `fit_density` does.
-                let from_here = density_merges(level.clone(), min_rows) as usize;
+                let from_here = density_merges(level.clone(), min_rows, None) as usize;
                 assert_eq!(
                     merges + from_here,
                     first.max(merges),
@@ -2278,6 +2315,97 @@ mod tests {
         assert!(coarsened > 100, "only {coarsened} uncapped blocks coarsened");
         assert!(after_cap > 30, "only {after_cap} capped blocks coarsened past their cap");
         assert!(finer_than_cap > 30, "only {finer_than_cap} capped blocks reached it finer");
+    }
+
+    /// The size [`density_merges`] must choose under a maximum as well as a
+    /// minimum: the ladder walked as [`chosen_merges`] walks it, stopping at
+    /// the last size whose 90th-percentile group is within the maximum.
+    fn chosen_merges_between(rows: &[u64], min_rows: u64, max_rows: u64) -> u32 {
+        let mut level = rows.to_vec();
+        let mut merges = 0;
+        while level.len() > 1 && min_rows_group(&level) < min_rows {
+            let coarser: Vec<u64> = level.chunks(2).map(|pair| pair.iter().sum()).collect();
+            if max_rows_group(&coarser) > max_rows {
+                break;
+            }
+            (level, merges) = (coarser, merges + 1);
+        }
+        merges
+    }
+
+    /// **A stated maximum stops the merging, whatever the minimum asks**, and
+    /// its predicate is monotone in size too: once the 90th-percentile group
+    /// passes the maximum, no coarser size brings it back, so stopping at the
+    /// first merge that breaks it loses no size that would have held it. A
+    /// block already past the maximum at the size it holds merges nothing —
+    /// nothing here makes a block finer.
+    #[test]
+    fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
+        assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(2)), 1, "one merge fits, two do not");
+        assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(9)), 2, "the minimum is reached");
+        assert_eq!(density_merges(vec![9, 9, 9, 9], 5, Some(2)), 0, "past the maximum already");
+        assert_eq!(density_merges(vec![1, 1, 1, 1], 5, None), 2, "no maximum stops nothing");
+        let mut rng = Rng(0x0020_0050);
+        let (mut stopped, mut agreed_with_minimum) = (0, 0);
+        for round in 0..4000 {
+            let groups = 1 + rng.below(40) as usize;
+            let skew = 1 + rng.below(4);
+            let rows: Vec<u64> =
+                (0..groups).map(|_| if rng.below(skew) == 0 { 0 } else { rng.below(12) }).collect();
+            let (min_rows, max_rows) = (rng.below(30), rng.below(60));
+            let merges = density_merges(rows.clone(), min_rows, Some(max_rows));
+            assert_eq!(
+                merges,
+                chosen_merges_between(&rows, min_rows, max_rows),
+                "round {round}: {rows:?} between {min_rows} and {max_rows}"
+            );
+            let alone = chosen_merges(&rows, min_rows);
+            assert!(merges <= alone, "round {round}: a maximum never merges further");
+            stopped += usize::from(merges < alone);
+            agreed_with_minimum += usize::from(merges == alone);
+            // Monotone: every level from the first that passes the maximum on.
+            let mut level = rows.clone();
+            let mut broken = false;
+            for _ in 0..groups {
+                broken |= max_rows_group(&level) > max_rows;
+                assert!(
+                    !broken || max_rows_group(&level) > max_rows,
+                    "round {round}: {rows:?} came back within {max_rows}"
+                );
+                level = level.chunks(2).map(|pair| pair.iter().sum()).collect();
+            }
+        }
+        assert!(stopped > 300, "only {stopped} rounds were stopped by their maximum");
+        assert!(agreed_with_minimum > 300, "only {agreed_with_minimum} rounds reached it");
+    }
+
+    /// **A block sized between its bounds gathers exactly what gathering at
+    /// the size it reaches gathers**, serially and by pieces, and that size is
+    /// the one the ladder over its base distribution chooses — the maximum
+    /// stopping where the minimum would have gone further.
+    #[test]
+    fn a_block_sized_between_its_bounds_gathers_what_the_size_it_reaches_gathers() {
+        let mut rng = Rng(0x0020_0051);
+        let (mut stopped, mut coarsened) = (0, 0);
+        for round in 0..600 {
+            let block = random_block(&mut rng, round);
+            let (min_rows, max_rows) = (rng.below(40), 1 + rng.below(30));
+            let sizing = bounded(block.group_size, None, Some(min_rows), Some(max_rows));
+            let chosen = gathered_serially(&block, sizing);
+            let exact = gathered_serially(&block, sized(chosen.group_size, None, None));
+            assert_eq!(chosen, exact, "round {round}: serial between {min_rows} and {max_rows}");
+            let (joined, _) = gathered_in_pieces(&mut rng, &block, sizing);
+            assert_eq!(joined, chosen, "round {round}: pieces");
+
+            let base = gathered_serially(&block, sized(block.group_size, None, None));
+            let rows: Vec<u64> = base.groups.iter().map(|g| g.rows).collect();
+            let merges = chosen_merges_between(&rows, min_rows, max_rows);
+            assert_eq!(chosen.group_size, block.group_size << merges, "round {round}: {rows:?}");
+            stopped += usize::from(merges < chosen_merges(&rows, min_rows));
+            coarsened += usize::from(merges > 0);
+        }
+        assert!(stopped > 50, "only {stopped} blocks were stopped by their maximum");
+        assert!(coarsened > 50, "only {coarsened} blocks coarsened at all");
     }
 
     /// **A full map grows into the table [`grown_map_heap`] charges**, and

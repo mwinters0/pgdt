@@ -65,7 +65,7 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
     let request = StatisticsRequest {
         selection: StatisticsSelection::All,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        min_rows: None,
+        ..StatisticsRequest::ALL
     };
     let cache = CacheMode::Enabled(cache::colocated_path(&copy));
     let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();

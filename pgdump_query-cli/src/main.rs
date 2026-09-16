@@ -14,11 +14,11 @@ use pgdump_query::cache::{CacheClaim, CacheEnvelope, CacheMode, CacheStatus, Com
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
-    PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody,
-    StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open_local, preamble_only,
-    render_field_into,
+    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DEFAULT_STATISTICS_MIN_ROWS,
+    DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan,
+    Parallelism, Predicate, PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span,
+    SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open_local,
+    preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -489,7 +489,9 @@ enum Command {
         /// power of two. The default, 1 MiB, is coarse, and doubles for a
         /// table whose data would take more than 4,096 groups until it takes
         /// no more, and for a table whose rows are too wide for its groups to
-        /// hold `--statistics-min-rows`; a stated size is kept exactly, and a
+        /// hold `--statistics-min-rows`; it halves instead for one too dense
+        /// for a stated `--statistics-max-rows`, which lifts both of those; a
+        /// stated size is kept exactly, and a
         /// smaller group records more finely where values lie and costs memory
         /// and cache space in proportion. Stated, it also re-reads every block
         /// gathered at another size; left unstated, a block keeps the size it
@@ -517,6 +519,24 @@ enum Command {
             conflicts_with_all = ["preamble_only", "statistics_group_size"]
         )]
         statistics_min_rows: Option<u64>,
+        /// The most rows a row group of statistics should hold under the
+        /// default group size, read at the 90th-percentile group so that at
+        /// most a tenth of them hold more. There is no default: stated, it
+        /// stops the doubling `--statistics-min-rows` would otherwise do, it
+        /// lifts the 4,096-group ceiling, and a table too dense to meet it at
+        /// 1 MiB a group is read a second time, at the finer size its groups
+        /// predict — once, keeping what that gives and saying so if it still
+        /// misses. Stated, it also re-reads every block sized under another
+        /// maximum or at a stated group size; left unstated, a block keeps the
+        /// size it was gathered at. Refused below `--statistics-min-rows`,
+        /// which defaults to 1,024, and beside a stated
+        /// `--statistics-group-size`, which is kept exactly.
+        #[arg(
+            long,
+            value_name = "ROWS",
+            conflicts_with_all = ["preamble_only", "statistics_group_size"]
+        )]
+        statistics_max_rows: Option<u64>,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -762,19 +782,23 @@ fn parse_statistics_group_size(text: &str) -> std::result::Result<NonZeroU64, St
     }
 }
 
-/// What `parse` gathers, from its three statistics flags: `--statistics`
-/// absent is every column, and a size or a minimum beside `none` is refused
-/// rather than ignored.
+/// What `parse` gathers, from its four statistics flags: `--statistics`
+/// absent is every column, a size or a bound beside `none` is refused rather
+/// than ignored, and so is a maximum below the minimum in force — the stated
+/// one, or the default where none was stated, which is the minimum the run
+/// would apply.
 fn statistics_request(
     selection: Option<StatisticsSelection>,
     group_size: Option<NonZeroU64>,
     min_rows: Option<u64>,
+    max_rows: Option<u64>,
 ) -> Result<StatisticsRequest> {
     let selection = selection.unwrap_or_default();
     if selection == StatisticsSelection::None {
         let sizing = [
             (group_size.is_some(), "--statistics-group-size"),
             (min_rows.is_some(), "--statistics-min-rows"),
+            (max_rows.is_some(), "--statistics-max-rows"),
         ];
         if let Some((_, flag)) = sizing.iter().find(|(stated, _)| *stated) {
             anyhow::bail!(
@@ -782,7 +806,16 @@ fn statistics_request(
             );
         }
     }
-    Ok(StatisticsRequest { selection, group_size, min_rows })
+    let floor = min_rows.unwrap_or(DEFAULT_STATISTICS_MIN_ROWS);
+    if max_rows.is_some_and(|max_rows| max_rows < floor) {
+        let stated = if min_rows.is_some() { "" } else { " by default" };
+        anyhow::bail!(
+            "--statistics-max-rows {} is below the {floor} rows \
+             --statistics-min-rows asks for{stated} — no group size holds both",
+            max_rows.expect("read above")
+        );
+    }
+    Ok(StatisticsRequest { selection, group_size, min_rows, max_rows })
 }
 
 /// The two read flags every scanning command carries, as given.
@@ -1319,11 +1352,16 @@ async fn main() -> Result<()> {
             statistics,
             statistics_group_size,
             statistics_min_rows,
+            statistics_max_rows,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
-            let statistics =
-                statistics_request(statistics, statistics_group_size, statistics_min_rows)?;
+            let statistics = statistics_request(
+                statistics,
+                statistics_group_size,
+                statistics_min_rows,
+                statistics_max_rows,
+            )?;
             // `parse` scans to persist (`docs/design/decisions.md`, "D61").
             // Reject `--dqcache none` up front, before paying for a scan we
             // won't be allowed to persist.
