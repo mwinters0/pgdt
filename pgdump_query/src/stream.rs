@@ -75,8 +75,8 @@ use crate::prune::{SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
 use crate::statistics::{
-    BlockObserver, BlockStatistics, StatisticsAccount, StatisticsBackfill, StatisticsHeld,
-    StatisticsRequest, Term,
+    BlockGathered, BlockObserver, BlockStatistics, StatisticsAccount, StatisticsBackfill,
+    StatisticsHeld, StatisticsRequest, Term,
 };
 use crate::{Error, Result};
 
@@ -929,6 +929,13 @@ pub struct MapRun {
     pub lacking_statistics: usize,
     /// How many of those were re-read and now hold them.
     pub backfilled: usize,
+    /// **How many blocks of the finished map declined to gather statistics**,
+    /// under this run's allowance or an earlier, larger one
+    /// ([`crate::index::CopyBlock::statistics_declined`]) — zero for a run
+    /// interrupted before its map reached EOF, which is where the count is
+    /// taken, and for one that stated no allowance
+    /// (`docs/design/decisions.md`, "D85").
+    pub declined_statistics: usize,
     /// What the run's statistics held when it returned, by term, and the most
     /// they held (`docs/design/decisions.md`, "D81").
     pub statistics: StatisticsHeld,
@@ -993,7 +1000,7 @@ pub async fn map_file(
             return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
         }
     };
-    let account = Arc::new(StatisticsAccount::default());
+    let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance));
     account.apply(&[(Term::Loaded, statistics_heap(&index) as i64)]);
     // Which statistics the *cache* supplied, by the one identity a block keeps
     // across the splice: what a back-fill replaces leaves this term, and what
@@ -1043,6 +1050,7 @@ pub async fn map_file(
             interrupted: true,
             lacking_statistics: 0,
             backfilled: 0,
+            declined_statistics: 0,
             statistics,
         });
     }
@@ -1063,9 +1071,12 @@ pub async fn map_file(
         loaded,
     )
     .await?;
+    let mut declined_statistics = 0;
     if !backfill.interrupted {
         cache.save(source, &index).await?;
         report_density_shortfall(statistics, &index);
+        declined_statistics =
+            report_statistics_declines(statistics, scan_options.statistics_allowance, &index);
     }
     Ok(MapRun {
         index,
@@ -1073,6 +1084,7 @@ pub async fn map_file(
         interrupted: backfill.interrupted,
         lacking_statistics: backfill.lacking,
         backfilled: backfill.reread,
+        declined_statistics,
         statistics: announce_statistics_held(&account),
     })
 }
@@ -1150,9 +1162,9 @@ async fn backfill_statistics(
             .iter()
             .enumerate()
             .filter_map(|(at, span)| match &span.body {
-                SpanBody::Data(DataBlock::Copy(block)) => {
-                    statistics.backfill(block).map(|backfill| (at, backfill))
-                }
+                SpanBody::Data(DataBlock::Copy(block)) => statistics
+                    .backfill(block, scan_options.statistics_allowance)
+                    .map(|backfill| (at, backfill)),
                 _ => None,
             })
             .collect()
@@ -1203,18 +1215,37 @@ async fn backfill_statistics(
             };
             if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
                 let _attributed = StatisticsScope::enter();
-                let replaced = block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
-                // The re-read's own observer has already credited
-                // `Term::Retained`, so what it replaced leaves the term that
-                // carried it: `Term::Loaded` for a block the cache supplied,
-                // and `Term::Retained` for one this run gathered — which a
-                // block re-read for a stated maximum is, its own first read
-                // included.
-                let term =
-                    if loaded.remove(&block.header_offset) { Term::Loaded } else { Term::Retained };
-                block.statistics = Some(Arc::new(gathered));
-                account.apply(&[(term, -(replaced as i64))]);
-                plan = statistics.backfill(block);
+                match gathered {
+                    // **A re-read that declined keeps what the block already
+                    // held**: the observer freed its own and holds nothing to
+                    // replace them with, so the block records the allowance
+                    // beside whatever an earlier pass gathered
+                    // (`docs/design/decisions.md`, "D85").
+                    BlockGathered::Declined { allowance } => {
+                        block.statistics_declined = Some(allowance);
+                    }
+                    BlockGathered::Gathered(gathered) => {
+                        let replaced =
+                            block.statistics.as_deref().map_or(0, BlockStatistics::heap_bytes);
+                        // The re-read's own observer has already credited
+                        // `Term::Retained`, so what it replaced leaves the term
+                        // that carried it: `Term::Loaded` for a block the cache
+                        // supplied, and `Term::Retained` for one this run
+                        // gathered — which a block re-read for a stated maximum
+                        // is, its own first read included.
+                        let term = if loaded.remove(&block.header_offset) {
+                            Term::Loaded
+                        } else {
+                            Term::Retained
+                        };
+                        block.statistics = Some(Arc::new(gathered));
+                        // A block that holds what was asked declines nothing,
+                        // so a record from an earlier, tighter allowance goes.
+                        block.statistics_declined = None;
+                        account.apply(&[(term, -(replaced as i64))]);
+                    }
+                }
+                plan = statistics.backfill(block, scan_options.statistics_allowance);
             }
         }
         run.reread += 1;
@@ -1253,6 +1284,43 @@ fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
     }
 }
 
+/// **Say which blocks hold no statistics because the allowance could not hold
+/// them**, one line each, and answer how many — what
+/// [`MapRun::declined_statistics`] carries.
+///
+/// **Every run under an allowance says it, not only the run that declined**: a
+/// block's decline is recorded in the map ([`CopyBlock::statistics_declined`])
+/// and re-read only under a larger allowance, so the run that skips one is the
+/// run that has to say what it is leaving and what would fix it
+/// (`docs/design/decisions.md`, "D85"). A pass that gathers nothing says
+/// nothing: the blocks it did not ask about are none of its business.
+fn report_statistics_declines(
+    statistics: &StatisticsRequest,
+    allowance: Option<u64>,
+    index: &DumpIndex,
+) -> usize {
+    if !statistics.gathers() {
+        return 0;
+    }
+    let mut declined = 0;
+    for block in index.blocks() {
+        let Some(under) = block.statistics_declined else { continue };
+        if statistics.tracked_columns(&block.header).is_none() {
+            continue;
+        }
+        declined += 1;
+        tracing::info!(
+            table = block.header.table,
+            header_offset = block.header_offset,
+            declined_under_bytes = under,
+            allowance_bytes = %allowance.map_or_else(|| "(none)".to_string(), |a| a.to_string()),
+            "statistics declined: this block's do not fit the allowance, and a larger --memory is \
+             what re-reads it",
+        );
+    }
+    declined
+}
+
 /// The three hints every top-level read loop announces before its first read
 /// (`crate::scan::scan`, [`map_forward`]).
 fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
@@ -1266,7 +1334,9 @@ fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) 
 /// lacking what its request asks for. `metadata` is the map's, whole-file where
 /// it can be, which the block's columns are resolved against as a mapping pass
 /// resolves them; `backfill` is [`StatisticsRequest::backfill`]'s answer for
-/// `block`. The caller stores the result in [`CopyBlock::statistics`].
+/// `block`. The caller stores the result in [`CopyBlock::statistics`], or —
+/// for [`BlockGathered::Declined`] — the allowance in
+/// [`CopyBlock::statistics_declined`] (`docs/design/decisions.md`, "D85").
 ///
 /// **The block is scanned as a mapping pass scans it**: offered to the leader
 /// under `scan_options`' parallelism, and read serially where it declines, so
@@ -1283,7 +1353,7 @@ pub async fn gather_block_statistics(
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
-) -> Result<Option<BlockStatistics>> {
+) -> Result<Option<BlockGathered>> {
     let size = source.size().await?;
     announce_read_loop(source, scan_options);
     let mut shortfall_reported = false;
@@ -1316,7 +1386,7 @@ async fn reread_block(
     account: &Arc<StatisticsAccount>,
     size: u64,
     shortfall_reported: &mut bool,
-) -> Result<Option<BlockStatistics>> {
+) -> Result<Option<BlockGathered>> {
     let mut observer = gather::observer_tracking(
         backfill,
         &block.header,
@@ -3563,6 +3633,7 @@ mod tests {
             row_count: 0,
             partition_root: None,
             statistics: None,
+            statistics_declined: None,
             array_shapes: Vec::new(),
         };
         let piece = |start: u64, limit: u64| Segment {
@@ -3608,6 +3679,7 @@ mod tests {
             row_count: 0,
             partition_root: None,
             statistics: None,
+            statistics_declined: None,
             array_shapes: Vec::new(),
         };
         let whole = Segment::over(&block, 39..403);

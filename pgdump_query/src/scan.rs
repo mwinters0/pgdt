@@ -528,6 +528,21 @@ pub struct ScanOptions {
     /// the ceiling on the workers [`crate::leader::scan_region`] runs over an
     /// open `COPY` block's interior, which is what a `parse` splits by.
     pub parallelism: Parallelism,
+    /// **The bytes of heap this scan's statistics may hold alive**, and
+    /// `None` — the default — declines nothing, an embedder that stated no
+    /// allowance having chosen no bound
+    /// (`docs/design/decisions.md`, "D1", "D85").
+    ///
+    /// It is what [`crate::statistics_allowance`] leaves under the margin once
+    /// `parallelism`'s budget is spent, and it bounds the whole account
+    /// (`crate::statistics::StatisticsAccount`): a `COPY` block whose
+    /// gathering would pass it declines, drops what it gathered, and is
+    /// recorded in the map as having declined under this number
+    /// ([`crate::index::CopyBlock::statistics_declined`]).
+    ///
+    /// **Read by [`crate::stream::map_file`] alone**: a query gathers nothing,
+    /// so on every other entry point it bounds nothing.
+    pub statistics_allowance: Option<u64>,
 }
 
 impl Default for ScanOptions {
@@ -537,6 +552,7 @@ impl Default for ScanOptions {
             max_line_bytes: DEFAULT_MAX_LINE_BYTES,
             cancel: None,
             parallelism: Parallelism::default(),
+            statistics_allowance: None,
         }
     }
 }

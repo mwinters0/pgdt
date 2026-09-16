@@ -937,12 +937,10 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// reports the budget that count spends, and [`BlockCache::affordable`] reads
 /// the budget the cap leaves, untouched by the margin.
 ///
-/// Deficiency register: `deficiency: KD28` — the margin is left against what
-/// the charge bills plus [`MEMORY_UNPOOLED_BOUND`], and a gathering `parse`
-/// also holds statistics that grow with the dump and that no term bills, so
-/// under a discovered limit it can leave less than this. **(b) owned by P20**,
-/// which bounds what statistics hold; `--statistics none` restores the margin
-/// today.
+/// **What a gathering pass holds is inside it too**: the statistics account is
+/// billed against this same margin, [`statistics_allowance`] handing a mapping
+/// pass what the resolved arrangement leaves under it and a block that does not
+/// fit declining (`docs/design/decisions.md`, "D85").
 pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 
 /// What a scan holds resident **outside the pools the budget bills**, bounded:
@@ -986,6 +984,30 @@ fn margin_allowance(allowance: u64) -> u64 {
     (allowance / 100)
         .saturating_mul(100 - MEMORY_MARGIN_PERCENT)
         .saturating_sub(MEMORY_UNPOOLED_BOUND)
+}
+
+/// **What a resolved arrangement leaves for a mapping pass's statistics**: the
+/// bytes a `crate::statistics::StatisticsAccount` may hold under `allowance` —
+/// a discovered limit or a stated `--memory` — once `budget`, the read-buffer
+/// budget that arrangement resolved to, and [`MEMORY_UNPOOLED_BOUND`] are
+/// taken off [`margin_allowance`]'s ceiling
+/// (`docs/design/decisions.md`, "D85").
+///
+/// **It is carved after the workers, never before them**
+/// (`docs/design/roadmap-P20-statistics-memory.md`, "Workers are resolved
+/// first; statistics take what is left"): the count is fixed before a byte is
+/// read, while statistics are known only as they accumulate.
+///
+/// **[`MEMORY_RESERVE`] is not subtracted again here.** The reserve comes off
+/// the top for the *cap* a count is solved against, where this is the *margin*
+/// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
+/// of the allowance — subtracting both would take the margin twice, exactly as
+/// [`margin_allowance`] refuses to.
+///
+/// Saturating, so an arrangement whose budget already fills the margin leaves
+/// zero rather than wrapping, and every block declines.
+pub fn statistics_allowance(allowance: u64, budget: u64) -> u64 {
+    margin_allowance(allowance).saturating_sub(budget)
 }
 
 /// A cgroup v1 `memory.limit_in_bytes` at or above this reads as *no limit*

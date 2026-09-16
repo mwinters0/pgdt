@@ -113,6 +113,13 @@ struct ParallelArgs {
     /// budget a run reports is always smaller than what you typed, and the
     /// `resolved the arrangement` line on stderr names both.
     ///
+    /// **What is left under that fifth is what a gathering `parse`'s
+    /// statistics may hold**, named as `statistics_bytes=` on the same line. A
+    /// table whose statistics will not fit it is skipped — the scan finishes,
+    /// stderr says which table and what it declined under, the cache records
+    /// it, and only a larger allowance re-reads it. Nothing is killed for want
+    /// of statistics, and raising this is what fits a wide table.
+    ///
     /// It is a real bound rather than a target: a `.xz` file that does not
     /// leave room inside the buffer budget for one reader — one of its blocks,
     /// a read buffer and the decompressor's own working memory, beside the
@@ -180,13 +187,14 @@ impl ParallelArgs {
         // — `memory.high` is writable by whoever set it, so a second walk
         // could answer differently.
         //
-        // Deficiency register: `deficiency: KD29` — a flagless budget is not
-        // taken from this read: `Resolved` calls `Parallelism::discover_in`,
-        // which walks the limit again, so a limit rewritten between the two
-        // walks is announced as one number and budgeted as another. **(c)
-        // unowned**; promoted by a limit seen to move inside a run, or by a
-        // change to `Parallelism`'s discovery that can take a limit already
-        // read.
+        // Deficiency register: `deficiency: KD29` — a flagless read-buffer
+        // budget is not taken from this read: `Resolved` calls
+        // `Parallelism::discover_in`, which walks the limit again, so a limit
+        // rewritten between the two walks is announced — and carved into a
+        // statistics allowance, which does take this read — as one number
+        // while the pools are budgeted from another. **(c) unowned**; promoted
+        // by a limit seen to move inside a run, or by a change to
+        // `Parallelism`'s discovery that can take a limit already read.
         Discovered { args: self, root, limit: pgdump_query::discover_memory_limit_in(root) }
     }
 }
@@ -285,7 +293,23 @@ impl Discovered<'_> {
             (Some(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
             _ => carved,
         };
-        Resolved { parallelism, limit: self.limit, allowance_stated: args.memory, recommended_jobs }
+        // **The allowance, whichever end it came from** — and with neither, a
+        // machine that has said nothing is read at half of what it reports
+        // available, the number "A default runs as fast as the allocation
+        // permits" already uses (`RT8`). `MemAvailable` unreadable leaves no
+        // allowance at all, which declines nothing
+        // (`docs/design/decisions.md`, "D85").
+        let allowance = args
+            .memory
+            .or_else(|| self.limit.as_ref().map(|limit| limit.bytes))
+            .or_else(|| pgdump_query::available_memory_in(self.root).map(|free| free / 2));
+        Resolved {
+            parallelism,
+            limit: self.limit,
+            allowance_stated: args.memory,
+            allowance,
+            recommended_jobs,
+        }
     }
 }
 
@@ -304,6 +328,12 @@ struct Resolved {
     /// The resident allowance `--memory` stated, or `None` where it was not
     /// given — in which case the allowance is the discovered limit, or nothing.
     allowance_stated: Option<u64>,
+    /// **The resident allowance in force**, whichever end it came from:
+    /// `--memory`, else the discovered limit, else half of what the machine
+    /// reports available (`RT8`). `None` is a host that has said nothing and
+    /// whose `MemAvailable` could not be read, under which nothing declines
+    /// (`docs/design/decisions.md`, "D85").
+    allowance: Option<u64>,
     /// What the source recommended for a worker count, or `None` where
     /// `--jobs` was stated — in which case the count is that flag's, unlowered.
     recommended_jobs: Option<usize>,
@@ -384,6 +414,29 @@ impl Resolved {
         format!(" — the budget in force is {}", self.budget_display())
     }
 
+    /// **What this run's statistics may hold**, carved from the allowance in
+    /// force after the workers: what the margin leaves once the read-buffer
+    /// budget is spent (`docs/design/decisions.md`, "D85"). `None` — no flag,
+    /// no limit and no `MemAvailable` — declines nothing.
+    fn statistics_allowance(&self) -> Option<u64> {
+        let budget = self.parallelism.memory_bytes().unwrap_or(pgdump_query::DEFAULT_MEMORY_BUDGET);
+        self.allowance.map(|allowance| pgdump_query::statistics_allowance(allowance, budget))
+    }
+
+    /// The statistics allowance and where the number behind it came from,
+    /// worded as [`Resolved::budget_display`] words the buffer budget.
+    fn statistics_allowance_display(&self) -> String {
+        let Some(bytes) = self.statistics_allowance() else {
+            return "(none: no limit found and the machine reports no free memory)".to_string();
+        };
+        let origin = match (self.allowance_stated, &self.limit) {
+            (Some(_), _) => "stated",
+            (None, Some(_)) => "discovered",
+            (None, None) => "half of what the machine reports available",
+        };
+        format!("{bytes} ({origin})")
+    }
+
     /// Say, once per scanning command and before the scan starts, what the
     /// source's recommendation and the allowance fitted to.
     ///
@@ -398,6 +451,7 @@ impl Resolved {
         tracing::info!(
             jobs = %self.jobs_display(),
             memory_bytes = %self.budget_display(),
+            statistics_bytes = %self.statistics_allowance_display(),
             "resolved the arrangement",
         );
     }
@@ -844,6 +898,7 @@ fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
         chunk_size: read.chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
         max_line_bytes: read.max_line_bytes.unwrap_or(pgdump_query::DEFAULT_MAX_LINE_BYTES),
         parallelism: parallel.parallelism(),
+        statistics_allowance: parallel.statistics_allowance(),
         ..ScanOptions::default()
     }
 }

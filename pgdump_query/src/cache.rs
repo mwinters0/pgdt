@@ -59,7 +59,7 @@ use crate::{Error, Result};
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
 /// unusable as one of another shape.
-pub(crate) const FORMAT_VERSION: u32 = 21;
+pub(crate) const FORMAT_VERSION: u32 = 22;
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.

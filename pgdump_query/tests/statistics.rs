@@ -643,7 +643,7 @@ async fn one_block_is_gathered_on_its_own() {
     let reference = gathered(&dump, &wanted).await;
     let source = LocalFileSource::open(&dump).unwrap();
     let ordered = block(&bare, "public.ordered");
-    let backfill = wanted.backfill(ordered).expect("a block with no statistics lacks them");
+    let backfill = wanted.backfill(ordered, None).expect("a block with no statistics lacks them");
     let gathered = gather_block_statistics(
         &source,
         &ScanOptions::default(),
@@ -653,9 +653,11 @@ async fn one_block_is_gathered_on_its_own() {
     )
     .await
     .unwrap()
-    .expect("nothing cancelled it");
+    .expect("nothing cancelled it")
+    .gathered()
+    .expect("an unbounded allowance declines nothing");
     assert_eq!(Some(&gathered), block(&reference, "public.ordered").statistics.as_deref());
-    assert_eq!(wanted.backfill(block(&reference, "public.ordered")), None);
+    assert_eq!(wanted.backfill(block(&reference, "public.ordered"), None), None);
 }
 
 /// **A block records the request its size was chosen under, and a back-fill
@@ -898,9 +900,9 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
         let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
-            let backfill = unstated.backfill(block).expect("the block holds no statistics");
+            let backfill = unstated.backfill(block, None).expect("the block holds no statistics");
             assert_eq!(backfill.group_cap, Some(STATISTICS_GROUP_CAP));
-            assert_eq!(stated.backfill(block).unwrap().group_cap, None);
+            assert_eq!(stated.backfill(block, None).unwrap().group_cap, None);
             let capped = StatisticsBackfill {
                 group_size: BASE,
                 group_cap: Some(CAP),
@@ -914,6 +916,8 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
                         .await
                         .unwrap()
                         .expect("nothing cancels the re-read")
+                        .gathered()
+                        .expect("an unbounded allowance declines nothing")
                 }
             };
             let reference = gather(serial.clone(), capped.clone()).await;
@@ -976,12 +980,12 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
         let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
-            let backfill = unstated.backfill(block).expect("the block holds no statistics");
+            let backfill = unstated.backfill(block, None).expect("the block holds no statistics");
             let default_sizing =
                 GroupSizing::Density { min_rows: DEFAULT_STATISTICS_MIN_ROWS, max_rows: None };
             assert_eq!(backfill.min_rows, Some(DEFAULT_STATISTICS_MIN_ROWS));
             assert_eq!(backfill.sizing, default_sizing);
-            let exact_request = stated.backfill(block).unwrap();
+            let exact_request = stated.backfill(block, None).unwrap();
             assert_eq!((exact_request.min_rows, exact_request.sizing), (None, GroupSizing::Stated));
             let sized = StatisticsBackfill {
                 group_size: BASE,
@@ -996,6 +1000,8 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
                         .await
                         .unwrap()
                         .expect("nothing cancels the re-read")
+                        .gathered()
+                        .expect("an unbounded allowance declines nothing")
                 }
             };
             let label = format!("{}: {}", fixture.display(), block.header.table);
@@ -1064,7 +1070,8 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     );
     assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
 
-    let backfill = StatisticsRequest::ALL.backfill(mapped_block).expect("it holds no statistics");
+    let backfill =
+        StatisticsRequest::ALL.backfill(mapped_block, None).expect("it holds no statistics");
     let err = gather_block_statistics(
         &source,
         &ScanOptions::default(),
@@ -1082,4 +1089,87 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
         ),
         "{err}"
     );
+}
+
+/// A dump of one long `COPY` block, written into `dir` — enough groups over
+/// three tracked columns that an allowance a quarter of what gathering it
+/// peaks at cannot hold them.
+fn long_block(dir: &Path) -> std::path::PathBuf {
+    let dump = dir.join("long_block.sql");
+    let mut text = String::from(
+        "CREATE TABLE public.t (\n    a integer,\n    b text COLLATE pg_catalog.\"C\",\n    c text\n);\n\n",
+    );
+    text.push_str("COPY public.t (a, b, c) FROM stdin;\n");
+    for i in 0..4000 {
+        text.push_str(&format!("{i}\t{:05}\tv{}\n", 4000 - i, i % 997));
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    dump
+}
+
+/// **A block whose statistics the allowance cannot hold declines, the scan
+/// finishes, and the map records the allowance it declined under**
+/// (`docs/design/decisions.md`, "D85"): a second run at the same allowance
+/// re-reads nothing and says so again, and one under a larger allowance
+/// re-reads the block into exactly what an unbounded pass gathers, clearing
+/// the record. Serial and at four workers, which declines the same way.
+///
+/// **Not vacuous**: the allowance is a quarter of the unbounded pass's own
+/// peak, and that unbounded pass declines nothing on the same input.
+#[tokio::test]
+async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = long_block(dir.path());
+    // A group size well under the block, so most of what the account sees
+    // grows as the rows arrive rather than at the block's close: the decline
+    // this exercises is the mid-scan one.
+    let wanted = request(StatisticsSelection::All, 256);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    // The control: no allowance, so nothing declines, and the peak the
+    // account reached gathering the whole block.
+    let free =
+        map_file(&source, &ScanOptions::default(), &CacheMode::Disabled, &wanted).await.unwrap();
+    assert_eq!(free.declined_statistics, 0, "an unbounded pass declines nothing");
+    let reference = statistics(block(&free.index, "public.t")).clone();
+    let allowance = free.statistics.peak / 4;
+    assert!(allowance > 0);
+
+    for jobs in [1, 4] {
+        let (_cache_dir, dump) = sandboxed(&dump, "long_block.sql");
+        let source = LocalFileSource::open(&dump).unwrap();
+        let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+        let tight = ScanOptions {
+            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
+            statistics_allowance: Some(allowance),
+            chunk_size: 4096,
+            ..ScanOptions::default()
+        };
+        let at = format!("{jobs} job(s)");
+
+        // The scan runs to EOF and the block declines, holding nothing.
+        let run = map_file(&source, &tight, &mode, &wanted).await.unwrap();
+        assert!(!run.interrupted, "{at}");
+        assert_eq!(run.declined_statistics, 1, "{at}");
+        let declined = block(&run.index, "public.t");
+        assert_eq!(declined.statistics_declined, Some(allowance), "{at}");
+        assert!(declined.statistics.is_none(), "{at}");
+        assert_eq!(run.statistics.now.total(), 0, "{at}: a declined pass holds nothing");
+
+        // The same allowance re-reads nothing, and still says what it holds.
+        let again = map_file(&source, &tight, &mode, &wanted).await.unwrap();
+        assert_eq!((again.lacking_statistics, again.backfilled), (0, 0), "{at}");
+        assert_eq!(again.declined_statistics, 1, "{at}");
+        assert_eq!(block(&again.index, "public.t").statistics_declined, Some(allowance), "{at}");
+
+        // A larger allowance re-reads it, into what the unbounded pass gave.
+        let roomy = ScanOptions { statistics_allowance: None, ..tight.clone() };
+        let wider = map_file(&source, &roomy, &mode, &wanted).await.unwrap();
+        assert_eq!((wider.lacking_statistics, wider.backfilled), (1, 1), "{at}");
+        assert_eq!(wider.declined_statistics, 0, "{at}");
+        let filled = block(&wider.index, "public.t");
+        assert_eq!(filled.statistics_declined, None, "{at}");
+        assert_eq!(statistics(filled), &reference, "{at}");
+    }
 }

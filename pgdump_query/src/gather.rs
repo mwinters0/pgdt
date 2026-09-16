@@ -29,6 +29,11 @@
 //! never while a piece it made is alive ([`Gatherer::fit_cap`]). **A finished
 //! block short of its density minimum merges the same way**
 //! (`docs/design/decisions.md`, "D82"; [`Gatherer::fit_density`]).
+//!
+//! **A block whose gathering passes the pass's statistics allowance declines**
+//! ([`Gatherer::decline`]): it frees what it holds, reads its remaining rows
+//! for the census alone, and answers [`BlockGathered::Declined`] with the
+//! allowance, which the map records (`docs/design/decisions.md`, "D85").
 
 use std::any::Any;
 use std::cmp::Ordering;
@@ -44,10 +49,10 @@ use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
-    BlockObserver, BlockStatistics, Bounds, CHARGE_STEP, Charge, ColumnBounds, ColumnDictionary,
-    ColumnStatistics, DICTIONARY_CAP, GroupSizing, RowGroup, STORED_VALUE_CAP, Sortedness,
-    StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group, min_rows_group,
-    text_heap, vec_heap,
+    BlockGathered, BlockObserver, BlockStatistics, Bounds, CHARGE_STEP, Charge, ColumnBounds,
+    ColumnDictionary, ColumnStatistics, DICTIONARY_CAP, GroupSizing, RowGroup, STORED_VALUE_CAP,
+    Sortedness, StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group,
+    min_rows_group, text_heap, vec_heap,
 };
 
 /// The observer for one block, or `None` when `request` tracks nothing in it,
@@ -104,6 +109,10 @@ pub(crate) fn observer_tracking(
     drop((resolved, qualified));
     let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
     gatherer.charge_held();
+    // An account already full declines this block before its first row, so a
+    // pass past its allowance costs nothing per block after it
+    // (`docs/design/decisions.md`, "D85").
+    gatherer.decline_if_over();
     Box::new(gatherer)
 }
 
@@ -183,9 +192,19 @@ struct Gatherer {
     /// What the open groups have grown by since [`Self::charge_held`] last
     /// ran, which it runs again once this passes [`CHARGE_STEP`].
     uncharged: i64,
+    /// Whether the account stood over its allowance at the last charge update
+    /// — read at a row's end and at a fold's, never mid-merge, so an observer
+    /// declines only where its structures are whole.
+    over: bool,
     /// What a piece [`Self::join`] is folding in still holds, which this
     /// observer's charge carries until the fold ends.
     carried: (u64, u64),
+    /// The allowance this observer **declined** under, once the account passed
+    /// it: everything gathered is freed, no further row is read, and a block
+    /// answers [`BlockGathered::Declined`]
+    /// (`docs/design/decisions.md`, "D85"). A piece carries it into the block
+    /// it folds into, the block having lost that piece's rows.
+    declined: Option<u64>,
     /// What this observer holds, in the pass's account. **Last**, so it is
     /// released after everything above is freed ([`Charge`]).
     charge: Charge,
@@ -207,8 +226,40 @@ impl Gatherer {
             splits: columns.iter().any(Option::is_some),
             columns,
             uncharged: 0,
+            over: false,
             carried: (0, 0),
+            declined: None,
             charge,
+        }
+    }
+
+    /// **Drop everything this observer holds and gather no more**, the account
+    /// having passed its allowance: the block's groups and columns are freed,
+    /// its charge goes to nothing in the same update, and the allowance it
+    /// declined under is what the map records
+    /// (`crate::index::CopyBlock::statistics_declined`). Called with the
+    /// caller's [`StatisticsScope`] open, so what it frees is attributed as
+    /// what allocated it was.
+    ///
+    /// **Nothing else declines with it**: the scan goes on, and a piece still
+    /// gathering is freed as it is folded in or dropped
+    /// (`docs/design/decisions.md`, "D85").
+    fn decline(&mut self, allowance: u64) {
+        debug_assert_eq!(self.carried, (0, 0), "a fold is not a place to decline");
+        self.declined = Some(allowance);
+        drop(mem::take(&mut self.columns));
+        drop(mem::take(&mut self.groups));
+        (self.head, self.open, self.splits) = (None, None, false);
+        self.uncharged = 0;
+        self.charge.set(0, 0);
+    }
+
+    /// Decline where the last charge update found the account over its
+    /// allowance, which [`Self::charge_held`] records.
+    fn decline_if_over(&mut self) {
+        if self.over && self.declined.is_none() {
+            let allowance = self.charge.allowance().expect("only an allowance can be passed");
+            self.decline(allowance);
         }
     }
 
@@ -226,7 +277,7 @@ impl Gatherer {
     /// being folded in still holds.
     fn charge_held(&mut self) {
         let (structure, interned) = self.held();
-        self.charge.set(structure + self.carried.0, interned + self.carried.1);
+        self.over = self.charge.set(structure + self.carried.0, interned + self.carried.1);
         self.uncharged = 0;
     }
 
@@ -473,6 +524,9 @@ impl Drop for Gatherer {
 
 impl BlockObserver for Gatherer {
     fn observe_row(&mut self, offset: u64, raw: &[u8]) {
+        if self.declined.is_some() {
+            return;
+        }
         let _attributed = StatisticsScope::enter();
         let index = offset / self.group_size;
         match &mut self.open {
@@ -486,6 +540,7 @@ impl BlockObserver for Gatherer {
             }
         }
         if !self.splits {
+            self.decline_if_over();
             return;
         }
         for (field, column) in split_fields(raw).zip(self.columns.iter_mut()) {
@@ -496,13 +551,22 @@ impl BlockObserver for Gatherer {
         if self.uncharged >= CHARGE_STEP as i64 {
             self.charge_held();
         }
+        // **The row is whole before the decline**, so nothing is freed
+        // half-observed; every path above that charges leaves `over` set for
+        // it (`docs/design/decisions.md`, "D85").
+        self.decline_if_over();
     }
 
     /// **The observer's charge becomes the block's retained bytes** once the
-    /// interning maps are freed, in one update of the account.
-    fn finish(mut self: Box<Self>, end: u64) -> BlockStatistics {
+    /// interning maps are freed, in one update of the account — and a block
+    /// that declined answers the allowance it declined under, holding nothing
+    /// to retain.
+    fn finish(mut self: Box<Self>, end: u64) -> BlockGathered {
         let _attributed = StatisticsScope::enter();
         debug_assert!(!self.piece, "a piece is joined, never finished");
+        if let Some(allowance) = self.declined {
+            return BlockGathered::Declined { allowance };
+        }
         if let Some(group) = &self.open {
             let next = group.index + 1;
             self.close_through(end, next);
@@ -517,7 +581,7 @@ impl BlockObserver for Gatherer {
             columns: columns.into_iter().map(|c| c.map(ColumnGatherer::finish)).collect(),
         };
         self.charge.retain(statistics.heap_bytes());
-        statistics
+        BlockGathered::Gathered(statistics)
     }
 
     fn piece(&self) -> Box<dyn BlockObserver> {
@@ -533,17 +597,35 @@ impl BlockObserver for Gatherer {
         };
         let mut piece = Gatherer::block(sizing, columns, charge);
         piece.piece = true;
+        // A piece of a block that has already declined gathers nothing: it
+        // still reads its rows for the census and the block's extent, and
+        // holds no statistic while it does.
+        piece.declined = self.declined;
         let pieces = self.pieces.get_or_init(Arc::default);
         piece.pieces = OnceLock::from(Arc::clone(pieces));
         piece.charge_held();
         Box::new(piece)
     }
 
+    /// **A declined piece declines its block**, the block having lost that
+    /// piece's rows and being unable to state statistics over the rest
+    /// (`docs/design/decisions.md`, "D85"); a block that declined while the
+    /// window ran drops every piece it is handed instead of folding it.
     fn absorb(&mut self, later: Box<dyn BlockObserver>) {
         let _attributed = StatisticsScope::enter();
         let later = later.into_any().downcast::<Gatherer>().expect("a piece of this observer");
-        self.join(*later);
-        self.fit_cap(false);
+        match (self.declined, later.declined) {
+            (Some(_), _) => drop(later),
+            (None, Some(allowance)) => {
+                drop(later);
+                self.decline(allowance);
+            }
+            (None, None) => {
+                self.join(*later);
+                self.fit_cap(false);
+                self.decline_if_over();
+            }
+        }
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
@@ -2034,7 +2116,10 @@ mod tests {
         for (line, &offset) in block.lines.iter().zip(&block.offsets) {
             serial.observe_row(offset, line);
         }
-        let statistics = Box::new(serial).finish(block.end);
+        let statistics = Box::new(serial)
+            .finish(block.end)
+            .gathered()
+            .expect("an unbounded account declines nothing");
         assert_only_retained(&account, &statistics, "serial");
         statistics
     }
@@ -2082,7 +2167,8 @@ mod tests {
             observer.absorb(piece);
         }
         let past_the_end = (rng.below(2) == 0).then(|| observer.piece());
-        let statistics = observer.finish(block.end);
+        let statistics =
+            observer.finish(block.end).gathered().expect("an unbounded account declines nothing");
         drop(past_the_end);
         assert_only_retained(&account, &statistics, "pieces");
         (statistics, straddles)
@@ -2406,6 +2492,117 @@ mod tests {
         }
         assert!(stopped > 50, "only {stopped} blocks were stopped by their maximum");
         assert!(coarsened > 50, "only {coarsened} blocks coarsened at all");
+    }
+
+    /// Every row of `block` handed to one observer bounded by `allowance`,
+    /// answering what it finished with and the account it charged.
+    fn gathered_within(
+        block: &RandomBlock,
+        sizing: Sizing,
+        allowance: Option<u64>,
+    ) -> (BlockGathered, Arc<StatisticsAccount>) {
+        let account = Arc::new(StatisticsAccount::bounded_by(allowance));
+        let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+        let mut serial = Gatherer::block(sizing, join_columns(), charge);
+        for (line, &offset) in block.lines.iter().zip(&block.offsets) {
+            serial.observe_row(offset, line);
+        }
+        (Box::new(serial).finish(block.end), account)
+    }
+
+    /// **A block whose statistics pass the pass's allowance declines**: it
+    /// answers the allowance rather than statistics, frees what it had
+    /// gathered — the account is empty after it, and never reached what the
+    /// whole block holds — and the scan reads on
+    /// (`docs/design/decisions.md`, "D85").
+    ///
+    /// **Not vacuous**: the same block, the same rows and an allowance that
+    /// fits gathers exactly what an unbounded account gathers, so the bound
+    /// and nothing else is what declined it.
+    #[test]
+    fn a_block_past_its_allowance_declines_and_frees_what_it_held() {
+        let mut rng = Rng(0x0020_0071);
+        let (mut declined, mut gathered) = (0, 0);
+        for round in 0..200 {
+            let block = random_block(&mut rng, round);
+            let sizing = sized(block.group_size, None, None);
+            // The unbounded run is the control: what the block gathers, and
+            // the peak the account reaches gathering it — the interning maps
+            // included, which the retained heap alone does not carry.
+            let (control, free) = gathered_within(&block, sizing, None);
+            let whole = control.gathered().expect("an unbounded account declines nothing");
+            let peak = free.held().peak;
+
+            let allowance = peak / 4;
+            let (short, account) = gathered_within(&block, sizing, Some(allowance));
+            assert_eq!(short, BlockGathered::Declined { allowance }, "round {round}");
+            assert_eq!(
+                account.held().now,
+                StatisticsTerms::default(),
+                "round {round}: a decline holds nothing"
+            );
+            assert!(
+                account.held().peak < peak,
+                "round {round}: {} reached the unbounded peak, {peak}",
+                account.held().peak
+            );
+            declined += 1;
+
+            // Room for the block and its interning maps several times over.
+            let (roomy, _) = gathered_within(&block, sizing, Some(peak * 64 + (1 << 20)));
+            assert_eq!(
+                roomy.gathered().as_ref(),
+                Some(&whole),
+                "round {round}: an allowance that fits"
+            );
+            gathered += 1;
+        }
+        assert_eq!((declined, gathered), (200, 200));
+    }
+
+    /// **A piece that declined declines its block**, the block having lost
+    /// that piece's rows; and a block that declined while a window ran drops
+    /// every piece it is handed, its pieces gathering nothing from there on
+    /// (`docs/design/decisions.md`, "D85").
+    #[test]
+    fn a_declined_piece_declines_its_block_and_a_declined_block_its_pieces() {
+        let mut rng = Rng(0x0020_0072);
+        let block = random_block(&mut rng, 2);
+        let sizing = sized(block.group_size, None, None);
+        let whole = gathered_serially(&block, sizing);
+        let allowance = whole.heap_bytes() / 4;
+
+        let account = Arc::new(StatisticsAccount::bounded_by(Some(allowance)));
+        let charge = Charge::new(Arc::clone(&account), Term::Gathering);
+        let mut observer: Box<dyn BlockObserver> =
+            Box::new(Gatherer::block(sizing, join_columns(), charge));
+        // One piece a row, folded a window of four at a time, as the leader
+        // folds them.
+        let mut window: Vec<Box<dyn BlockObserver>> = Vec::new();
+        for (line, &offset) in block.lines.iter().zip(&block.offsets) {
+            window.push(observer.piece());
+            window.last_mut().expect("just pushed").observe_row(offset, line);
+            if window.len() == 4 {
+                for piece in window.drain(..) {
+                    observer.absorb(piece);
+                }
+            }
+        }
+        for piece in window.drain(..) {
+            observer.absorb(piece);
+        }
+        // A piece made after the block declined holds nothing, whatever it is
+        // handed.
+        let mut late = observer.piece();
+        for (line, &offset) in block.lines.iter().zip(&block.offsets) {
+            late.observe_row(offset, line);
+        }
+        let before = account.held().now;
+        drop(late);
+        assert_eq!(account.held().now, before, "a piece of a declined block holds nothing");
+
+        assert_eq!(observer.finish(block.end), BlockGathered::Declined { allowance });
+        assert_eq!(account.held().now, StatisticsTerms::default());
     }
 
     /// **A full map grows into the table [`grown_map_heap`] charges**, and

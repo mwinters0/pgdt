@@ -208,6 +208,13 @@ impl StatisticsRequest {
     /// re-read a block lacking a column at the size it holds, exactly, keeping
     /// its record (`docs/design/decisions.md`, "D34").
     ///
+    /// **A block that declined is re-read only under a larger allowance**
+    /// ([`CopyBlock::statistics_declined`]): `allowance` is this pass's, and
+    /// `None` — an embedder that stated none — declines nothing and so retries
+    /// everything. Without the record a `parse` at the same allocation would
+    /// re-read and re-decline the same block every run
+    /// (`docs/design/decisions.md`, "D85").
+    ///
     /// **A block still at the size it gathered from also lacks a stated
     /// maximum its groups break** ([`BlockStatistics::breaks_max_rows`]): no
     /// merge can make a block finer, so the maximum is reachable only by
@@ -215,8 +222,17 @@ impl StatisticsRequest {
     /// re-read has happened the block is finer than the size a gather starts
     /// from, so it is never re-read for that maximum again however its rows
     /// cluster — the second read is the last one.
-    pub fn backfill(&self, block: &CopyBlock) -> Option<StatisticsBackfill> {
+    pub fn backfill(
+        &self,
+        block: &CopyBlock,
+        allowance: Option<u64>,
+    ) -> Option<StatisticsBackfill> {
         let requested = self.tracked_columns(&block.header)?;
+        if let (Some(declined), Some(allowance)) = (block.statistics_declined, allowance)
+            && allowance <= declined
+        {
+            return None;
+        }
         let Some(held) = block.statistics.as_deref() else {
             return Some(self.gathering(requested));
         };
@@ -328,9 +344,11 @@ pub(crate) trait BlockObserver: Send {
     /// terminator.
     fn observe_row(&mut self, offset: u64, raw: &[u8]);
 
-    /// The block's statistics. `end` is the terminator line's offset relative
-    /// to the block's first data byte — where the last row's line ends.
-    fn finish(self: Box<Self>, end: u64) -> BlockStatistics;
+    /// The block's statistics, or [`BlockGathered::Declined`] where the
+    /// allowance could not hold them. `end` is the terminator line's offset
+    /// relative to the block's first data byte — where the last row's line
+    /// ends.
+    fn finish(self: Box<Self>, end: u64) -> BlockGathered;
 
     /// An observer for a piece of this block: rows starting anywhere after the
     /// ones this observer has been handed, to be given back to
@@ -344,6 +362,37 @@ pub(crate) trait BlockObserver: Send {
     /// This observer as [`Any`](std::any::Any), which is how [`Self::absorb`]
     /// recovers the concrete piece it made.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+}
+
+/// What one block's observer answers: its statistics, or the decline that
+/// stands in their place (`docs/design/decisions.md`, "D85").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockGathered {
+    /// What the block gathered.
+    Gathered(BlockStatistics),
+    /// **The allowance could not hold this block's statistics**, so it dropped
+    /// what it had gathered and what was in flight and gathered no more. The
+    /// scan went on: nothing is OOM-killed for want of statistics, and raising
+    /// memory is what fits a wide table
+    /// (`docs/design/roadmap-P20-statistics-memory.md`, "Granularity never
+    /// depends on memory; whether a block gathers does").
+    Declined {
+        /// The [`crate::scan::ScanOptions::statistics_allowance`] it declined
+        /// under, which the map records
+        /// ([`crate::index::CopyBlock::statistics_declined`]) so that a
+        /// back-fill retries it only under a larger one.
+        allowance: u64,
+    },
+}
+
+impl BlockGathered {
+    /// What the block gathered, and `None` where it declined.
+    pub fn gathered(self) -> Option<BlockStatistics> {
+        match self {
+            Self::Gathered(statistics) => Some(statistics),
+            Self::Declined { .. } => None,
+        }
+    }
 }
 
 /// One block's statistics, held by [`crate::index::CopyBlock::statistics`].
@@ -598,9 +647,18 @@ pub(crate) const CHARGE_STEP: u64 = 64 << 10;
 /// decode scratch while a column observes it, a merge's scratch for the pair
 /// of groups it is merging, a finished block's rows per group while its size is
 /// chosen, and the observer's own allocation.
+///
+/// **It is also the bound a decline reads** (`docs/design/decisions.md`,
+/// "D85"): where [`Self::allowance`] is stated and the terms pass it, the
+/// observer whose update saw that declines, so what the account sums is what
+/// the margin is left against.
 #[derive(Debug, Default)]
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,
+    /// The bytes every statistic alive may hold between them
+    /// ([`crate::scan::ScanOptions::statistics_allowance`]); `None` bounds
+    /// nothing and declines nothing.
+    allowance: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -629,17 +687,32 @@ pub(crate) enum Term {
 }
 
 impl StatisticsAccount {
+    /// An account bounded by `allowance` — `None` bounding nothing, which is
+    /// [`Self::default`] and every caller that states no allowance.
+    pub(crate) fn bounded_by(allowance: Option<u64>) -> Self {
+        Self { state: Mutex::default(), allowance }
+    }
+
+    /// The bytes every statistic alive may hold between them, where one was
+    /// stated.
+    pub(crate) fn allowance(&self) -> Option<u64> {
+        self.allowance
+    }
+
     /// Apply every change in `changes` as one update: the peak and the
     /// instrument's check read the account once all of them are in, so a
     /// charge moving from one term to another never reads as both or neither.
-    pub(crate) fn apply(&self, changes: &[(Term, i64)]) {
-        self.update(changes, 0, 0);
+    ///
+    /// Answers whether the terms now stand **over** [`Self::allowance`], read
+    /// inside the same lock as the update that moved them.
+    pub(crate) fn apply(&self, changes: &[(Term, i64)]) -> bool {
+        self.update(changes, 0, 0)
     }
 
     /// [`Self::apply`], with `announced` moving what the terms carry for
     /// allocations not yet made and `observers` the count of charges alive,
     /// in the same update.
-    fn update(&self, changes: &[(Term, i64)], announced: i64, observers: i64) {
+    fn update(&self, changes: &[(Term, i64)], announced: i64, observers: i64) -> bool {
         let mut state = self.lock();
         for &(term, delta) in changes {
             let term = term as usize;
@@ -653,8 +726,9 @@ impl StatisticsAccount {
         state.observers = state.observers.wrapping_add(observers as u64);
         let total = state.terms.iter().sum::<u64>();
         state.peak = state.peak.max(total);
-        let allowance = open * CHARGE_STEP;
-        instrument::statistics_account_updated(total, state.announced, allowance);
+        let tolerance = open * CHARGE_STEP;
+        instrument::statistics_account_updated(total, state.announced, tolerance);
+        self.allowance.is_some_and(|allowance| total > allowance)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, AccountState> {
@@ -705,15 +779,23 @@ impl Charge {
         (self.structure, self.interned)
     }
 
+    /// The allowance this charge's account bounds every statistic alive by,
+    /// where one was stated — what a declining observer records.
+    pub(crate) fn allowance(&self) -> Option<u64> {
+        self.account.allowance()
+    }
+
     /// Charge `structure` bytes to this charge's term and `interned` to
-    /// [`Term::Interned`], in place of what was charged before.
-    pub(crate) fn set(&mut self, structure: u64, interned: u64) {
+    /// [`Term::Interned`], in place of what was charged before, and answer
+    /// whether the account now stands over its allowance
+    /// ([`StatisticsAccount::apply`]).
+    pub(crate) fn set(&mut self, structure: u64, interned: u64) -> bool {
         let changes = [
             (self.term, structure as i64 - self.structure as i64),
             (Term::Interned, interned as i64 - self.interned as i64),
         ];
         (self.structure, self.interned) = (structure, interned);
-        self.account.apply(&changes);
+        self.account.apply(&changes)
     }
 
     /// **Charge `grows` — structure and interned bytes — ahead of the

@@ -153,6 +153,19 @@ pub struct CopyBlock {
     /// (`docs/design/decisions.md`, "D34").
     #[serde(deserialize_with = "deserialize_block_statistics")]
     pub statistics: Option<Arc<BlockStatistics>>,
+    /// **The statistics allowance this block declined to gather under**, where
+    /// a mapping pass could not hold what it asked for
+    /// (`docs/design/decisions.md`, "D85"): an absence and a number, which is
+    /// what stops the next pass at the same allocation re-reading the block
+    /// and declining again. `None` is a block that declined nothing — every
+    /// block a pass gathering under no allowance maps, and every one whose
+    /// gather or re-read succeeded.
+    ///
+    /// **It is not exclusive with `statistics`**: a block already holding
+    /// statistics from an earlier pass keeps them when a re-read for a
+    /// *different* request declines, and carries this beside them.
+    #[serde(default)]
+    pub statistics_declined: Option<u64>,
     /// This block's array-shape census, one [`ArrayShape`] per column in
     /// `header.columns` order. Every mapping pass censuses
     /// (`docs/design/decisions.md`, "D35"), so a block in the map always

@@ -299,6 +299,7 @@ mod tests {
                 row_count: 0,
                 partition_root: None,
                 statistics: statistics.map(Arc::new),
+                statistics_declined: None,
                 array_shapes: Vec::new(),
             })),
         }

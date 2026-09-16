@@ -104,7 +104,7 @@ use crate::preamble::{
     push_stmt_line, statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart, Event, ScanOptions, scan};
-use crate::statistics::BlockObserver;
+use crate::statistics::{BlockGathered, BlockObserver};
 
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
 /// `[start, end)` never overlaps another span's range, and every span
@@ -1234,11 +1234,17 @@ impl Builder {
         let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
             return;
         };
-        // Shared (`docs/design/decisions.md`, "D34").
-        let statistics = self.pending_observer.take().map(|observer| {
+        // Shared (`docs/design/decisions.md`, "D34"); a block that declined
+        // records the allowance instead (`docs/design/decisions.md`, "D85").
+        let gathered = self.pending_observer.take().map(|observer| {
             let _attributed = StatisticsScope::enter();
-            Arc::new(observer.finish(end.terminator_offset - copy_start.data_offset))
+            observer.finish(end.terminator_offset - copy_start.data_offset)
         });
+        let (statistics, statistics_declined) = match gathered {
+            Some(BlockGathered::Gathered(statistics)) => (Some(Arc::new(statistics)), None),
+            Some(BlockGathered::Declined { allowance }) => (None, Some(allowance)),
+            None => (None, None),
+        };
         let block = CopyBlock {
             header: copy_start.header,
             database: self.database.clone(),
@@ -1249,6 +1255,7 @@ impl Builder {
             row_count: end.row_count,
             partition_root,
             statistics,
+            statistics_declined,
             array_shapes: std::mem::take(&mut self.pending_census),
         };
         let owned = toc.is_some();

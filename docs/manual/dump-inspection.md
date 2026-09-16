@@ -339,6 +339,31 @@ add up to `peak_bytes=`:
 A `parse` with no statistics to hold — `--statistics none` over a cache holding
 none — prints no such line, and `query` never prints one.
 
+**A table whose statistics will not fit the memory you allowed is skipped, not
+gathered badly, and pgdq says which.** What the statistics of one run may hold
+is what the allowance leaves once the workers and the fifth left free are paid
+for ("`--jobs` and `--memory`" below), and the line naming it is on the
+`resolved the arrangement` line as `statistics_bytes=`. A `COPY` block that
+would pass it drops what it had gathered and gathers no more; the scan finishes
+normally, every other block keeps its statistics, and stderr carries one line
+for the block:
+
+```
+2026-07-23T15:10:09.570412108Z  INFO statistics declined: this block's do not fit the allowance, and a larger --memory is what re-reads it table=public.wide header_offset=4823 declined_under_bytes=89128960 allowance_bytes=89128960
+```
+
+**Nothing is killed for want of statistics**, and the remedy is memory: a table
+of a thousand text columns will never gather under a small container however it
+is tuned, so raise `--memory` (or give the container more) and parse again.
+
+**The cache records that it declined, and the number it declined under.** A
+later `parse` at the same allowance or a smaller one leaves the block alone and
+prints that line again rather than re-reading 300 GB to decline a second time;
+one at a larger allowance re-reads it. `--statistics-group-size` and
+`--statistics-min-rows` do not help here: how fine the groups are is your
+choice and is never quietly changed to fit memory, because a cache must not
+depend on the container that happened to write it.
+
 A file rewritten in place at the same size since it was scanned is refused
 here, with a message naming the block and the cache file, if a re-read table's
 data no longer ends where the cache says it does: delete that cache and parse
@@ -393,6 +418,10 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   unspent**, because what kills a container is one run's peak.
 - **pgdq takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
+- **What is left under that fifth is what a gathering `parse`'s statistics may
+  hold**, and a table whose statistics will not fit it is skipped rather than
+  gathered — see "`--statistics`: what `parse` records for later queries"
+  above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
 
 So `--memory 1073741824` in a 1 GiB container asks for exactly what that
 container already told pgdq, and the read-buffer budget that follows is
@@ -659,7 +688,7 @@ $ pgdq parse --source koji.dump.xz
 2026-07-23T14:02:11.104297118Z  INFO no memory limit found: nothing is enforcing one on this process jobs_flag=(not stated) memory_flag=(not stated)
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
-2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1435282176 (no limit found: what this source asks for)
+2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1435282176 (no limit found: what this source asks for) statistics_bytes=25087383552 (half of what the machine reports available)
 2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1435282176
 2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1435282176
@@ -733,6 +762,15 @@ asked for one, and it names its own origin the same way:
   nothing capped it.
 - `(default: no limit found)` — 64 MiB, which is what an unlimited host leaves
   a plain file, whose reads ask for no budget of their own.
+
+`statistics_bytes` is what a gathering `parse`'s statistics may hold, carved
+from the same allowance once `memory_bytes` is spent, with where the allowance
+came from beside it: `(stated)` for a `--memory` you typed, `(discovered)` for
+a cgroup limit, and `half of what the machine reports available` for a host
+that set none. A block whose statistics would pass it declines, and says so
+(above, "`--statistics`: what `parse` records for later queries"); on the one
+host that states no limit and reports no free memory it reads `(none: …)` and
+nothing declines. `query` gathers nothing, so the number binds nothing there.
 
 `scan started` below repeats the two resolved numbers without the provenance,
 so a log line naming a scan says what produced everything that follows it.
@@ -1088,6 +1126,13 @@ distinct `entries` once each, and per group a list of indices into them, or
 `null`). Every per-group array is as long as `groups`. Nothing is summed per
 table the way `--detail` sums it; that is yours to do, and the export grows
 with the dump — every group of every column is in it.
+
+Beside it is **`statistics_declined`**, `null` for a block that declined
+nothing and otherwise the statistics allowance the block's statistics would not
+fit (above, "`--statistics`: what `parse` records for later queries"). It is
+how a script tells a table nobody asked statistics for from one that asked and
+was refused the memory, and the number in it is the one to parse with more
+than.
 
 **This is a raw dump of pgdq's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field

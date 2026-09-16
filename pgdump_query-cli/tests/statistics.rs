@@ -173,6 +173,60 @@ fn a_stated_maximum_rereads_the_dense_table_and_says_where_it_still_misses() {
     assert!(!stderr.contains("still hold more rows"), "{stderr}");
 }
 
+/// **A `--memory` too small for a table's statistics declines it rather than
+/// gathering it badly**: the run exits clean, says which block declined and
+/// what it declined under, records the decline in the cache, and a second run
+/// at the same allowance re-reads nothing and says it again — while a run
+/// under a larger allowance re-reads it and says nothing
+/// (`docs/design/decisions.md`, "D85").
+///
+/// **Not vacuous**: the same dump under an allowance that fits gathers every
+/// block and prints no decline, so the allowance and nothing else declined it.
+#[test]
+fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads_it() {
+    let (_dir, dump) = sandboxed(DUMP, "decline.sql");
+    let source = dump.to_str().unwrap();
+    let parse = |extra: &[&str]| {
+        let mut args = vec!["parse", "--source", source];
+        args.extend_from_slice(extra);
+        let out = run(&args);
+        assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
+        stderr_of(&out)
+    };
+
+    // At and below `4 × MEMORY_RESERVE − 5 × MEMORY_UNPOOLED_BOUND` the margin
+    // leaves the read buffers nothing, so it leaves the statistics nothing
+    // either: every block declines, whatever its width.
+    let tight = ["--memory", "335544320"];
+    let stderr = parse(&tight);
+    assert!(stderr.contains("statistics_bytes=0 (stated)"), "{stderr}");
+    assert!(stderr.contains("statistics declined"), "{stderr}");
+    assert!(stderr.contains("declined_under_bytes=0 allowance_bytes=0"), "{stderr}");
+    let blocks = blocks_of(&info_json(&dump));
+    assert!(!blocks.is_empty());
+    for (table, copy) in &blocks {
+        assert_eq!(copy["statistics"], Value::Null, "{table}");
+        assert_eq!(copy["statistics_declined"], 0, "{table}");
+    }
+
+    // The same allowance leaves them alone and says so again.
+    let stderr = parse(&tight);
+    assert!(!stderr.contains("statistics back-fill started"), "no re-read: {stderr}");
+    assert!(stderr.contains("statistics declined"), "{stderr}");
+
+    // A larger one re-reads every one of them, and nothing declines.
+    let stderr = parse(&["--memory", "8589934592"]);
+    assert!(
+        stderr.contains(&format!("statistics back-fill complete blocks={}", blocks.len())),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("statistics declined"), "{stderr}");
+    for (table, copy) in &blocks_of(&info_json(&dump)) {
+        assert_ne!(copy["statistics"], Value::Null, "{table}");
+        assert_eq!(copy["statistics_declined"], Value::Null, "{table}");
+    }
+}
+
 /// **The export is every group's statistics as the cache holds them**, on
 /// columns whose shape the fixture asserts
 /// (`pgdump_query/tests/statistics_fixture.rs`): at a group size of a few KiB

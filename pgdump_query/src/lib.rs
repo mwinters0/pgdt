@@ -39,7 +39,7 @@ pub use io::{
     MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND, MemoryLimit, Parallelism,
     PartitionBoundaries, PartitionRead, Partitioning, Recognized, RetainedUnit, WaitPolicy,
     WorkerMemory, XzSource, available_memory, available_memory_in, discover_memory_limit,
-    discover_memory_limit_in, open_local,
+    discover_memory_limit_in, open_local, statistics_allowance,
 };
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,
@@ -61,7 +61,7 @@ pub use scan::{
     DEFAULT_MAX_LINE_BYTES, Event, LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
 };
 pub use statistics::{
-    BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
+    BlockGathered, BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
     DEFAULT_STATISTICS_GROUP_SIZE, DEFAULT_STATISTICS_MIN_ROWS, DICTIONARY_CAP, GroupSizing,
     RowGroup, STATISTICS_GROUP_CAP, STORED_VALUE_CAP, Sortedness, StatisticsBackfill,
     StatisticsHeld, StatisticsRequest, StatisticsSelection, StatisticsTarget, StatisticsTerms,
