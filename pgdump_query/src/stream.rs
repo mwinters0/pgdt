@@ -2731,6 +2731,12 @@ fn plan_partitions(
 ///
 /// A caller stating no budget (`Parallelism::default`) derives nothing: there
 /// is no number to solve against.
+// Deficiency register: `deficiency: KD32` — the budget divided here is the
+// read-buffer budget, which a plain source holds at `DEFAULT_MEMORY_BUDGET`
+// whatever allowance was stated, so a plain `query`'s span and its sub-stream
+// count are both fixed at a number picked to answer a different question.
+// **(c) unowned**; closing it means a plain source recommending a per-reader
+// cost, which is `KD25`'s reading.
 fn derived_source_span(charge: WorkerMemory, parallelism: Parallelism, stated: usize) -> usize {
     let Some(budget) = parallelism.memory_bytes() else { return stated };
     let jobs = parallelism.jobs();

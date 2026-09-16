@@ -126,12 +126,13 @@ it before a source exists and `XzSource::with_table` walks nothing. `KnownCompre
 and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
-A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind`
-can be. A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`; only the
-user can judge whether one decode-from-zero is worth waiting for. A statistics skip is a note too,
-stated at zero wherever a block's statistics were consulted, the one answer to why a filter read
-everything. Rejected: omitting a zero; counting only believed filtered columns. Reopens: a user
-puzzled by a zero, which naming the filter's columns lacking a usable statistic would answer.
+A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind` can be.
+A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`: only the user can judge
+one decode-from-zero. A statistics skip is a note too, stated at zero wherever statistics were consulted,
+and a narrowed span (D84) one wherever the plan charged less than stated; the ordinary case is the
+invisible one. Rejected: omitting a zero; counting only believed filtered columns; announcing a narrowing
+only where the count fell short too, which `ParallelismBudgetLimited` names. Reopens: a puzzling zero,
+which naming the columns lacking a statistic would answer.
 
 ### D20 The library never replaces cache data automatically
 A cache recording another file's stored size is refused before a byte is read: at every scan entry
@@ -298,11 +299,12 @@ Rejected: compacting views past a selectivity threshold. Evidence: `parallel-pea
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored
-at `MIN_SOURCE_SPAN` — one read chunk, below which the retained unit bounds the pin anyway — and
-writes it onto the sub-streams. A plain source is left on `DEFAULT_MEMORY_BUDGET` whatever is stated
-(D83), which the shipped span accounted for whole, so `--jobs` bought no readers at all. Rejected: a
-third flag (`roadmap.md`, "Two tunables fit pgdq to hardware"); billing the plain source a real
-per-reader cost (`KD25`), which wants a reading nobody has taken. Code: `stream.rs`.
+at `MIN_SOURCE_SPAN` — one read chunk, below which the span costs rows and bounds nothing the retained
+unit does not — and writes it onto the sub-streams. A plain source stays on `DEFAULT_MEMORY_BUDGET`
+whatever is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers.
+Rejected: a third flag (`roadmap.md`, "Two tunables fit pgdq to hardware"); pricing a plain reader
+(`KD25`); a *larger* floor, a performance claim with no batch-size figure behind it. Reopens: a plain
+`query` timed at `--jobs 8` against `--jobs 4`, the span on its floor on one leg only. Code: `stream.rs`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is

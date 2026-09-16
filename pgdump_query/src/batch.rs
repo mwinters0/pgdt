@@ -153,11 +153,12 @@ pub struct QueryOptions {
 /// pin is the span rounded out to that unit, so a batch spanning half a chunk
 /// pins the whole chunk all the same — while still costing rows per batch. It
 /// is defined as [`crate::DEFAULT_CHUNK_SIZE`] rather than repeating its
-/// value, the argument being about that unit and not about a megabyte: a
-/// caller announcing a larger chunk through `ScanOptions::chunk_size` retains
-/// more than this per batch whatever the span says, which is
-/// [`QueryOptions::max_source_span`]'s standing "rounded out to the retained
-/// unit" and not a second rule.
+/// value, the argument being about that unit and not about a megabyte.
+///
+/// **It is the *shipped* chunk, not the announced one**, so a caller stating
+/// `ScanOptions::chunk_size` floors at a unit its reads do not use: above it
+/// the span is narrowed past what a batch pins anyway, and below it the floor
+/// holds the span above what the budget had room for and costs sub-streams.
 pub const MIN_SOURCE_SPAN: usize = DEFAULT_CHUNK_SIZE;
 
 impl Default for QueryOptions {
