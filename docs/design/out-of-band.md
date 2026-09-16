@@ -63,4 +63,5 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
+| M111 |  | A plain `query`'s batch pin (`max_source_span`) derived from the read-buffer budget and the requested count instead of a constant, so `--jobs` buys readers at the cost of batch size | P20 | [2026-09-16](../status/history/2026-09-16.md) |
 

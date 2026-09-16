@@ -2123,14 +2123,20 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:           decoder (an 8 MiB dictionary, the 1 MiB input chunk and
 #:           `liblzma`'s own 34,592 B of state) = `34.03 MiB` a reader, the
 #:           span not charged, plus a `24 MiB` unit of the shared retention
-#:           list for every reader past `POOL_DEPTH`;
-#:           `floor((2 GiB + 24 MiB) / 58.03 MiB) = 35`, past the top of
-#:           `PARALLEL_JOBS`, so no entry.
-#:  plain:   `8 MiB` (`POOL_MAX_BYTES`, which is also what
-#:           `LocalFileSource::partitions` applies its multiple to and is
-#:           capped straight back to) `+ 64 MiB` span = `72 MiB` divisor;
-#:           `floor(2 GiB / 72 MiB) = 28`, likewise past the top of the axis.
-QUERY_SUBSTREAM_CAP: dict[str, int] = {}
+#:           list for every reader past `POOL_DEPTH`. The count is solved
+#:           against `margin_allowance`, which binds here — `1,689 MiB` against
+#:           a `2,048 MiB` cap — so `floor((1689 + 24) / 58.03) = 29`, still
+#:           past the top of `PARALLEL_JOBS`, so no entry.
+#:  plain:   the source recommends nothing, so `fit` hands it
+#:           `DEFAULT_MEMORY_BUDGET` whatever is stated
+#:           (`docs/design/decisions.md`, "D83") — `64 MiB`, not the stated
+#:           `PARALLEL_BUDGET`. Against `8 MiB` (`POOL_MAX_BYTES`, which is also
+#:           what `LocalFileSource::partitions` applies its multiple to and is
+#:           capped straight back to) `+ 64 MiB` span = `72 MiB` a sub-stream,
+#:           that affords none, and `WorkerMemory::affords` floors at **one**:
+#:           the leg's whole axis is flat until `M111` lands
+#:           (`docs/design/out-of-band.md`).
+QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 1}
 
 #: The worker count every `pgdq` invocation this harness makes states, and the
 #: one every registered figure is taken at **except the three whose axis it is**
@@ -6102,18 +6108,15 @@ def _substream_note() -> str:
     if not QUERY_SUBSTREAM_CAP:
         return (
             head + "**At this budget neither typed-`query` leg reaches it**, so no cell "
-            "carries the annotation: the plain leg is charged `8 MiB + 64 MiB` a "
-            "sub-stream and affords twenty-eight, and the `.xz` leg — which retains by "
-            "the partition, so the span is not charged — is charged `34.03 MiB` a "
-            "sub-stream plus a 24 MiB unit of the shared retention list for each past "
-            "four, and affords thirty-five, both past the top of the axis.\n\n"
+            "carries the annotation: what each leg is charged and what it affords is "
+            "`QUERY_SUBSTREAM_CAP`'s own argument, computed once there.\n\n"
         )
     clamped = ", ".join(
         f"`{count}` on {'`.xz`' if inp.endswith('_xz') else 'plain'}"
         for inp, count in sorted(QUERY_SUBSTREAM_CAP.items())
     )
     return (
-        head + f"The rows above four on such a leg state the count they actually "
+        head + f"The rows at or above that count on such a leg state the count they actually "
         f"planned: {clamped}. Below that count a cell's sub-stream figure equals its "
         "row label; at or above it, every further worker asked for buys nothing more "
         "to plan.\n\n"

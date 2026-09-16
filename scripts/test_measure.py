@@ -5971,8 +5971,10 @@ class SubstreamAnnotation(unittest.TestCase):
     def test_an_empty_cap_says_so_in_the_prose(self):
         # The paragraph is emitted from the dict, so the two cannot disagree:
         # empty means the note says neither leg is clamped, and an entry means
-        # it names the count.
-        empty = measure._substream_note()
+        # it names the count. The dict is not empty at today's carving, so the
+        # empty branch is reached by patching one in.
+        with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {}):
+            empty = measure._substream_note()
         self.assertIn("neither typed-`query` leg reaches it", empty)
         self.assertNotIn("state the count they actually", empty)
         with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {"control": 14}):
@@ -5988,17 +5990,19 @@ class SubstreamAnnotation(unittest.TestCase):
         for inp, cap in measure.QUERY_SUBSTREAM_CAP.items():
             self.assertLess(cap, measure.PARALLEL_JOBS[-1], inp)
 
-    def test_neither_leg_carries_a_cap_at_this_budget(self):
+    def test_only_the_plain_leg_carries_a_cap_at_this_budget(self):
         # `plan_partitions` charges the held batch's span only where the source
         # retains by the read chunk, and a block-decoding `XzSource` retains by
         # the partition — so the `.xz` leg is charged what one reader holds,
         # `34.03 MiB`, plus a 24 MiB unit of the pool's retention list for each
-        # reader past four, and affords thirty-five, while the plain leg is charged
-        # `8 + 64 MiB` and affords twenty-eight. Both are past the top of the
-        # axis. An entry appearing here again means a constant moved, and the
-        # table's own paragraph saying there is nothing to state has gone false
-        # — which is why that paragraph is emitted from this dict.
-        self.assertEqual(measure.QUERY_SUBSTREAM_CAP, {})
+        # reader past four, and affords twenty-nine against the margin ceiling,
+        # past the top of the axis. The plain leg recommends nothing, so it is
+        # handed `DEFAULT_MEMORY_BUDGET` whatever `--memory` states (`D83`):
+        # 64 MiB against a `8 + 64 MiB` divisor affords none, and `affords`
+        # floors at one, so its axis is flat. These move when `M111` lands, and
+        # the table's own paragraph is emitted from this dict so it cannot
+        # disagree with them.
+        self.assertEqual(measure.QUERY_SUBSTREAM_CAP, {"control": 1})
 
 
 class Scaffolding(unittest.TestCase):
@@ -6196,13 +6200,22 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
             ):
                 return measure.run_parallel_scan_throughput(session)
 
-    def test_the_shipped_cap_annotates_nothing(self):
-        # Empty today, and no *cell* may then carry a count — the prose below
-        # the table still discusses the clamp, and says there is none.
+    def test_the_shipped_cap_annotates_the_plain_typed_query_leg(self):
+        # The plain typed-`query` leg is clamped to one sub-stream at every job
+        # count today, so every one of its cells carries the count and no other
+        # column does. An empty dict annotates nothing at all, which is the
+        # arrangement `M111` restores.
         body = self._render(cap=measure.QUERY_SUBSTREAM_CAP)
         cells = [r for r in body.splitlines() if r.startswith("| ")]
         self.assertTrue(cells)
-        for row in cells:
+        annotated = [r for r in cells if "sub-stream" in r]
+        self.assertTrue(annotated, "the shipped cap annotates nothing")
+        for row in annotated:
+            self.assertEqual(row.count("sub-stream"), 1, row)
+            self.assertIn("1 sub-stream", row)
+        with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {}):
+            empty = self._render(cap={})
+        for row in (r for r in empty.splitlines() if r.startswith("| ")):
             self.assertNotIn("sub-stream", row)
 
     def test_the_annotation_is_in_the_typed_query_columns_only(self):

@@ -79,7 +79,7 @@ Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-stati
 - [x] **20.6** `--memory` as the resident allowance, replacing `--parallel-memory`, and the library's `Parallelism` memory carved the same way — `Parallelism::within` is the one carving and `discover_in` calls it; the two-tunable rule's allowlist test, closed three ways and pinning the hardware pair; `MEMORY_RESERVE`'s value unmoved; [notes](../design/roadmap-P20.6-memory-allowance-notes.md)
 - [ ] **20.7** The decline: the statistics allowance carved after the workers, half of `MemAvailable` where no limit is found; a block that does not fit declines and says so, recorded in the cache with its allowance, back-fill retrying only under a larger one; the margin left against the account, closing `KD28`
 - [ ] **20.8** The reserve measured: the `introspect` build attributes the remainder above the charge and the statistics account over flagless gathering `parse` and `query`-over-its-cache legs — reasonable-width and allowance-filling wide-text inputs, plain and 24/128 MiB-block `.xz`, across the `reserve` figure's limits; `MEMORY_RESERVE` set to the smallest step whose worst rep leaves the margin, a remainder growing with statistics billed to the query instead, then one blind sitting on the shipped build at that value
-- [ ] **20.9** The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures at 20.8's reserve: `reserve`, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve
+- [ ] **20.9** The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures at 20.8's reserve: `reserve`, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve; `parallel-*`'s two `.xz` legs move in `parallel-peak-rss` alone, their count unchanged and their announced budget not, while its two plain legs wait on `M111` and are redesigned rather than re-taken, their `--jobs` axis not varying until it lands
 - [ ] **20.10** Koji: a flagless gathering `parse` in 512m beside the `none` recipe, and one `query` over its cache, launched detached and read by a later session — no large block declines, peak leaves the margin, wall clock against the `none` run; a cap it refutes earns 20.10.1
 
 ## Not started
@@ -320,39 +320,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A stated `--memory` cannot raise a plain dump's read buffers, and that
-  retires a recourse.** `Parallelism::within` gives a source recommending no
-  per-worker cost `DEFAULT_MEMORY_BUDGET` under the cap, and `LocalFileSource`
-  recommends none (`KD25`), so `--memory 8g` on a plain dump leaves the pools on
-  64 MiB where `--parallel-memory 8g` gave them 8 GiB. It follows from the
-  spec's "treated exactly as a discovered limit" — a discovered limit already
-  did this — and it was taken rather than special-cased because a stated/
-  discovered asymmetry is what the flag change exists to remove. What it costs:
-  a plain `query`'s second sub-stream needs about 145 MiB of read buffers, which
-  nothing can now state, so that path is serial whatever is typed (`KD17` says
-  it does not scale anyway), and `--jobs` on a plain `query` is now inert at
-  every value, no flag reaching the 64 MiB span each sub-stream is charged.
-  That also cost the CLI's own coverage of a split plain `query`: two legs in
-  `pgdump_query-cli/tests/statistics.rs` now run one sub-stream where they ran
-  three, and say so; the split itself is still covered at the library, where a
-  `Parallelism` carries a pool budget directly
-  (`pgdump_query/tests/pruning.rs`). Reconsidering means either billing the
-  plain source a real per-reader cost — which is `KD25`'s own close — or letting
-  a *stated* allowance hand the whole cap to a source that recommends nothing,
-  which reopens D3. The manual now says `--chunk-size` is the recourse for a
-  plain read's buffers, and that a plain `query` is serial.
-
-- **The margin binds a typed number now, so every figure that states memory
-  moves, and none was re-taken.** A stated budget carried no
-  `MEMORY_MARGIN_PERCENT` ceiling before; an allowance does, and above a
-  256 MiB buffer budget (`4 × MEMORY_RESERVE − 5 × MEMORY_UNPOOLED_BOUND`) that
-  ceiling is tighter than the cap, so no allowance reproduces an old stated
-  arrangement. `scripts/measure.py`'s `stated_allowance` keeps every registered
-  figure naming the buffer budget it was registered for, which is the most that
-  can be preserved. Left to 20.9, whose row says "every figure whose
-  arrangement moves with the reserve"; the affected legs are `reserve`'s 512 MiB
-  column and both `parallel-*` figures, whose plain legs the entry above hits
-  too. Reconsidering means deciding whether `parallel-*`'s apparatus should
-  state an allowance at all, which is a figure-design call rather than a
-  re-take.
