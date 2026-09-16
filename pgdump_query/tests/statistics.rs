@@ -814,15 +814,15 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
 
 /// The merges the density minimum must choose over a block gathered exactly
 /// at its base size, written as `scripts/row_density.py` chooses: the first
-/// size, from the base to a single group, whose nearest-rank median group
-/// holds `min_rows`, else the single group.
+/// size, from the base to a single group, whose upper middle group holds
+/// `min_rows`, else the single group.
 fn chosen_merges(rows: &[u64], min_rows: u64) -> u32 {
     let mut level = rows.to_vec();
     let mut merges = 0;
     loop {
         let mut sorted = level.clone();
         sorted.sort_unstable();
-        if level.len() <= 1 || sorted[sorted.len().div_ceil(2) - 1] >= min_rows {
+        if level.len() <= 1 || sorted[sorted.len() / 2] >= min_rows {
             return merges;
         }
         level = level.chunks(2).map(|pair| pair.iter().sum()).collect();

@@ -7,7 +7,8 @@ a block's end after the cap; the request is `StatisticsRequest::min_rows` with
 that way is [`decisions.md`](decisions.md), "D82" and "D34"; the user-facing
 statement is [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--statistics`: what `parse` records for later queries", and the flags' help.
-`FORMAT_VERSION` is 19.
+Which group the median reads is 20.4.1's
+([`roadmap-P20.4.1-upper-middle-group-notes.md`](roadmap-P20.4.1-upper-middle-group-notes.md)).
 
 ## The checks
 
@@ -46,8 +47,8 @@ statement is [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
   arithmetic and that pruning in place still shrinks the reported capacity.
 - **The minimum cannot be read at `2^20` once the cap has merged**: the finer
   rows per group are summed mid-scan, and keeping them grows with the block.
-  It reads the size the cap left, which can end a skewed block coarser than the
-  spec's sentence allows — under STATUS's "Decisions worth another look".
+  It reads the size the cap left, which is why the predicate has to be monotone
+  in size — this slice's nearest-rank median was not, and 20.4.1 is that.
 
 ## What the next slices inherit
 
@@ -63,17 +64,11 @@ statement is [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
   `long_value` block by default, and any block holding fewer rows than the
   minimum. No floor sits under the coarsening; the maintainer weighed one and
   refused it (`../status/history/2026-09-15.md`).
-- **The median this slice shipped is the wrong one.** It reads the nearest-rank
-  `ceil(G/2)`-th smallest group, which an odd short tail can push past half, so
-  a block the length cap already coarsened can cascade to one group although it
-  reached the minimum at a finer size — against the spec's guarantee that the
-  cap's size stands. 20.4.1 moves it to the upper middle group; the reasoning
-  is the spec's "Granularity follows row density".
 - **A density reading over a cache this build writes flagless reads coarsened
   groups.** `row_density.py` wants the base distribution, so its gathering
   `parse` states `--statistics-min-rows 0`, as its docstring says; 20.2's koji
-  cache is unreadable at version 19, its `koji-info.json` still being what a
-  re-derivation reads.
+  cache is unreadable at every version since, its `koji-info.json` still being
+  what a re-derivation reads.
 - **`statistics-gathering` no longer prices the flagless default.** Its legs
   state `--statistics-group-size 1048576`, gathered exactly, while a flagless
   `parse` coarsens the generator's rows of about 4 KiB a row; a stated size

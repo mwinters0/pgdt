@@ -36,9 +36,10 @@ pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;
 /// (`docs/design/decisions.md`, "D82"). A judgement, not a reading.
 pub const STATISTICS_GROUP_CAP: usize = 4096;
 
-/// The fewest rows a block's median group holds under an unstated group size
-/// and an unstated minimum: short of it, the finished block's groups merge
-/// pairwise until its median group reaches it or the block is one group
+/// The fewest rows a block's median group — its upper middle one, so that at
+/// most half the groups fall short — holds under an unstated group size and an
+/// unstated minimum: short of it, the finished block's groups merge
+/// pairwise until that group reaches it or the block is one group
 /// (`docs/design/decisions.md`, "D82"). `DEFAULT_STATISTICS_GROUP_SIZE` over a
 /// row a kibibyte wide; a judgement, not a reading.
 pub const DEFAULT_STATISTICS_MIN_ROWS: u64 = 1 << 10;

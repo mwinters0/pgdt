@@ -21,9 +21,14 @@ rows before it is cached, so the gathering run a reading reads states
 `--statistics-min-rows 0`.
 
 **A quantile is nearest-rank**: the `ceil(q * G)`-th smallest of `G` groups.
-That is what makes the spec's bound exact: where the median group holds at least
-`m` rows, `floor(G/2) + 1` groups do, so a block of `R` rows holds fewer than
-`2R/m` groups at the size the minimum chooses, whatever its distribution.
+**The minimum's median is the exception**: it reads the *upper* middle group,
+the `floor(G/2) + 1`-th smallest, which is what makes the predicate monotone in
+size and so lets a block the length cap has already coarsened read its minimum
+from the size the cap left ("Granularity follows row density"). The bound holds
+under either: where that group holds at least `m` rows, `ceil(G/2)` groups do,
+so a block of `R` rows holds at most `2R/m` groups at the size the minimum
+chooses, whatever its distribution -- with equality where exactly half the
+groups hold `m` and the rest none.
 
 **The registered criterion** ("Granularity follows row density"): a quantile
 lower than the median is chosen only if a koji block of reasonable width comes
@@ -85,8 +90,9 @@ REASONABLE_ROW_BYTES = 1024
 #: most a block of uniform density reaches.
 CLOSE_RATIO = 0.75
 
-#: The quantile the minimum is registered at, and the lower ones reported
-#: beside it so a reader of a failed criterion sees what each would retain.
+#: The quantile the minimum is registered at -- read as the upper middle group,
+#: not nearest-rank -- and the lower ones reported beside it so a reader of a
+#: failed criterion sees what each would retain.
 MIN_QUANTILE = 0.5
 REPORTED_QUANTILES = (0.5, 0.25, 0.1)
 
@@ -123,6 +129,18 @@ def quantile(sorted_values: Sequence[int], q: float) -> int:
     return sorted_values[rank - 1]
 
 
+def min_group(sorted_values: Sequence[int], q: float) -> int:
+    """The group the minimum's predicate reads at quantile `q`: the upper
+    middle group -- the `floor(G/2) + 1`-th smallest, so at most half the
+    groups fall short -- at the registered median, and the nearest-rank
+    quantile at any lower one reported beside it."""
+    if not sorted_values:
+        raise ValueError("no groups to read a minimum against")
+    if q == MIN_QUANTILE:
+        return sorted_values[len(sorted_values) // 2]
+    return quantile(sorted_values, q)
+
+
 def coarsen(rows: Sequence[int]) -> list[int]:
     """Rows per group at twice the size: adjacent pairs summed from the block's
     start, a trailing odd group standing alone."""
@@ -153,10 +171,12 @@ class Choice:
 
 
 def choose(sizes: Sequence[Sequence[int]], min_rows: int, q: float) -> Choice:
-    """The smallest size at which the `q`-quantile group holds at least
-    `min_rows` rows, or the single group where none does."""
+    """The smallest size at which the `q`-quantile group ([`min_group`]) holds
+    at least `min_rows` rows, or the single group where none does. `pgdq`
+    chooses a block's size by this rule, from whatever size the length cap left
+    it; `pgdump_query::gather::density_merges`, mirrored."""
     for k, rows in enumerate(sizes):
-        if quantile(sorted(rows), q) >= min_rows:
+        if min_group(sorted(rows), q) >= min_rows:
             return Choice(q, k, len(rows), True)
     return Choice(q, len(sizes) - 1, len(sizes[-1]), False)
 

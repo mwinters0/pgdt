@@ -4,8 +4,8 @@
 
 Synthetic `info --json` documents only: the reading itself runs over caches
 `pgdq` writes, which are not committed, so what is pinned here is the
-arithmetic -- the pairwise ladder, the nearest-rank quantile the spec's bound
-rests on, the choice, the criterion and the selection.
+arithmetic -- the pairwise ladder, the quantiles the spec's bound rests on, the
+choice, the criterion and the selection.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ def block(rows, *, table="t", schema="public", group_size=1 << 20, data_bytes=No
     }
 
 
-#: 51 groups of the minimum among 100, the rest empty: the median group, the
-#: 50th smallest, holds the minimum at the gathered size.
+#: 51 groups of the minimum among 100, the rest empty: the upper middle group,
+#: the 51st smallest, holds the minimum at the gathered size.
 HALF_EMPTY = [1024, 0] * 49 + [1024, 1024]
 
 
@@ -93,6 +93,17 @@ class Quantile(unittest.TestCase):
     def test_no_groups_is_refused(self):
         with self.assertRaises(ValueError):
             rd.quantile([], 0.5)
+        with self.assertRaises(ValueError):
+            rd.min_group([], 0.5)
+
+    def test_the_minimums_median_is_the_upper_middle_group(self):
+        # Even counts are where the two differ: the 3rd smallest of four, not
+        # the 2nd, so at most half the groups fall short.
+        self.assertEqual(rd.min_group([1, 2, 3, 4], 0.5), 3)
+        self.assertEqual(rd.min_group([1, 2, 3], 0.5), 2)
+        self.assertEqual(rd.min_group([5], 0.5), 5)
+        # A lower quantile reported beside it stays nearest-rank.
+        self.assertEqual(rd.min_group([1, 2, 3, 4], 0.25), 1)
 
 
 class Choice(unittest.TestCase):
@@ -114,7 +125,9 @@ class Choice(unittest.TestCase):
 
     def test_the_median_keeps_groups_under_twice_rows_over_the_minimum(self):
         # The spec's bound, whatever the distribution: clustered, empty-gapped
-        # and heavy-tailed blocks alike.
+        # and heavy-tailed blocks alike. Under the upper middle group it is
+        # reached, not merely approached -- half the groups at the minimum and
+        # half empty sit exactly on it.
         rng = random.Random(20)
         for trial in range(400):
             shape = trial % 4
@@ -131,7 +144,29 @@ class Choice(unittest.TestCase):
             choice = rd.choose(rd.ladder(rows), minimum, 0.5)
             if choice.reaches:
                 with self.subTest(trial=trial):
-                    self.assertLess(choice.groups, 2 * sum(rows) / minimum)
+                    self.assertLessEqual(choice.groups, 2 * sum(rows) / minimum)
+
+    def test_the_choice_is_monotone_in_size(self):
+        # What the guarantee rests on: once the upper middle group holds the
+        # minimum, no coarser size falls back below it -- so a block the length
+        # cap left at some size reaches the same size the base distribution
+        # chooses, or keeps the cap's where that is coarser. The odd tail is
+        # the shape the nearest-rank median breaks it on.
+        self.assertEqual(rd.choose(rd.ladder([5, 5, 5, 5, 0, 0, 0]), 5, 0.5).doublings, 0)
+        self.assertEqual(rd.choose(rd.ladder([10, 10, 0, 0]), 5, 0.5).doublings, 0)
+        rng = random.Random(41)
+        coarsened = 0
+        for trial in range(400):
+            rows = [rng.choice([0, 0, rng.randrange(0, 12)]) for _ in range(rng.randrange(1, 40))]
+            minimum = rng.randrange(0, 30)
+            sizes = rd.ladder(rows)
+            first = rd.choose(sizes, minimum, 0.5).doublings
+            for capped, level in enumerate(sizes):
+                with self.subTest(trial=trial, capped=capped):
+                    reached = rd.choose(rd.ladder(level), minimum, 0.5).doublings
+                    self.assertEqual(capped + reached, max(first, capped))
+            coarsened += 0 < first < len(sizes) - 1
+        self.assertGreater(coarsened, 50, "too few trials coarsened short of one group")
 
     def test_half_empty_groups_approach_the_bound(self):
         # Just over half the groups at the minimum and the rest empty: the one

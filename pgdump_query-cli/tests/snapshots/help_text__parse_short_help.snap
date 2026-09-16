@@ -64,14 +64,15 @@ Options:
                                        gathered at
       --statistics-min-rows <ROWS>     The fewest rows a row group of statistics should hold under
                                        the default group size. Once a table's data is read, its
-                                       groups double until the median group holds this many rows or
-                                       the table is one group, so a table of wide rows keeps fewer
-                                       groups; the default, 1,024, leaves rows up to about 1 KiB
-                                       wide at 1 MiB a group, and 0 doubles nothing. Stated, it also
-                                       re-reads every block sized under another minimum or at a
-                                       stated group size; left unstated, a block keeps the size it
-                                       was gathered at. A stated `--statistics-group-size` is kept
-                                       exactly, so the two are refused together
+                                       groups double until at most half of them fall short of this
+                                       many rows or the table is one group, so a table of wide rows
+                                       keeps fewer groups; the default, 1,024, leaves rows up to
+                                       about 1 KiB wide at 1 MiB a group, and 0 doubles nothing.
+                                       Stated, it also re-reads every block sized under another
+                                       minimum or at a stated group size; left unstated, a block
+                                       keeps the size it was gathered at. A stated
+                                       `--statistics-group-size` is kept exactly, so the two are
+                                       refused together
       --jobs <N>                       How many workers pgdq may ask for. Left unstated, the file
                                        decides: a plain dump reads serially, and an `.xz` one takes
                                        the CPUs this process was given, or its own block count where

@@ -264,7 +264,7 @@ where values lie and costs memory and cache space in proportion.
 
 **A table of wide rows gets fewer groups.** A group costs the same memory
 whether it holds one row or thousands, so once a table's data is read, its
-groups double until the middle group by row count — the median — holds
+groups double until at most half of them fall short of
 `--statistics-min-rows` rows, 1,024 by default, or the table is one group. Rows
 up to about 1 KiB wide keep the mebibyte; a table averaging 4 KiB a row ends
 at 4 MiB a group. `--statistics-min-rows 0` doubles nothing; a larger minimum

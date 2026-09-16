@@ -55,8 +55,11 @@ use crate::{Error, Result};
 /// "Pre-1.0"), and nothing records it (`docs/design/decisions.md`, "D22").
 /// A new way of *reading* an existing on-disk shape needs no bump:
 /// [`CacheStatus::Incomplete`] reinterprets `scanned_through` against a size
-/// already stored.
-pub(crate) const FORMAT_VERSION: u32 = 19;
+/// already stored. A new way of *choosing* what an unchanged field holds does:
+/// a block recording the request that sized it is read back as already sized
+/// under it, so a cache whose sizes today's rule would not choose is as
+/// unusable as one of another shape.
+pub(crate) const FORMAT_VERSION: u32 = 20;
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.

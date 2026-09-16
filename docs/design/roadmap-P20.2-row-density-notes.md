@@ -6,7 +6,7 @@ artifact is `runs/row-density-20260915/`: the known shapes' readings in
 `known-shapes.txt` beside their distributions as JSON; the koji selection in
 `koji-selection.txt`; the gathering run's log `koji-scan.log` and its
 `info --json`, `koji-info.json`, which is what a re-derivation reads, the cache
-beside it being unreadable after 20.4's format bump; and the reading,
+beside it being unreadable after the format bumps; and the reading,
 `koji-density.txt`, with every block's distribution at every size in
 `koji-density.json`.
 
@@ -73,10 +73,10 @@ the same under the median group as under the mean row:
   the bound is proved by counting the groups at or above it. **The minimum's
   median is the exception**, moved to the upper middle group, `floor(G/2)+1`,
   after this reading: the spec's "Granularity follows row density". The bound
-  holds under both, and the upper middle group is the larger, so a size chosen
-  under it is never coarser than one chosen here; which koji verdicts move is
-  `koji-density.json`'s to say, `choose` and this reading being re-derived in
-  20.4.1.
+  holds under both. **20.4.1 re-derived this reading under it and nothing
+  moved** — every artifact below came back byte-identical, so every verdict
+  here is the upper middle group's as well as the nearest-rank median's
+  ([`roadmap-P20.4.1-upper-middle-group-notes.md`](roadmap-P20.4.1-upper-middle-group-notes.md)).
 - **A uniform block that coarsens lands between a quarter and a half of
   `2R/m`**, one already dense at `2^20` lower still; only skew — half the
   groups near empty — comes near 1. `test_row_density.py` holds both.

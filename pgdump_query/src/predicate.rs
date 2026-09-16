@@ -5433,7 +5433,7 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (19, 6_241_334_826_557_786_742);
+        const GOLDEN_ORDER: (u32, u64) = (20, 6_241_334_826_557_786_742);
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind, digests to the value pinned beside the cache's

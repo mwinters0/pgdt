@@ -503,8 +503,8 @@ enum Command {
         statistics_group_size: Option<NonZeroU64>,
         /// The fewest rows a row group of statistics should hold under the
         /// default group size. Once a table's data is read, its groups double
-        /// until the median group holds this many rows or the table is one
-        /// group, so a table of wide rows keeps fewer groups; the default,
+        /// until at most half of them fall short of this many rows or the
+        /// table is one group, so a table of wide rows keeps fewer groups; the default,
         /// 1,024, leaves rows up to about 1 KiB wide at 1 MiB a group, and 0
         /// doubles nothing. Stated, it also re-reads every block sized under
         /// another minimum or at a stated group size; left unstated, a block
