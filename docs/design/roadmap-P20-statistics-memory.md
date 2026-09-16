@@ -1,9 +1,20 @@
 # P20 — Statistics memory and its measured expectations
 
-**Current.** Grilled with the maintainer 2026-09-15, and reopened the same day
-for granularity ("Granularity follows row density"; the reason is [`../status/history/2026-09-15.md`](../status/history/2026-09-15.md));
-the slices are [`../status/STATUS.md`](../status/STATUS.md), "P20 progress".
+**Complete, and short of what it set out to do.** Grilled with the maintainer
+2026-09-15, and reopened the same day for granularity ("Granularity follows row
+density"; the reason is [`../status/history/2026-09-15.md`](../status/history/2026-09-15.md)).
 This document says what the phase does and why, never how it lands in code.
+
+**What it delivered is the bound, not the coverage.** "What this phase is for"
+below names a long dump as reasonable data, and the mechanism that bounds
+statistics — the account, and a block past its allowance declining — leaves a
+long dump's tail with no statistics at all, because nothing releases what
+earlier blocks retained. That is `KD33`. "The reserve rises uniformly, and is
+measured" was not carried out either: the sitting was taken and read, but
+`MEMORY_RESERVE` stays at 384 MiB and the remainder outruns it (`KD34`). Both
+are P23's, and the phase stopped rather than fit a constant P21 and P22 are
+about to move. [The notes](roadmap-P20-statistics-memory-notes.md) hold the
+reasoning; nothing below is rewritten, the record of intent being the point.
 
 ## What this phase is for
 

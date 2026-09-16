@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P20 — statistics memory | Current | [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); progress in [`STATUS.md`](../status/STATUS.md) |
+| P20 — statistics memory | Complete | [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); [notes](roadmap-P20-statistics-memory-notes.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -547,9 +547,11 @@ item; see below.
 
 ## P20 — Statistics memory and its measured expectations
 
-**Current.** Specified in
-[`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); its
-slices are [`../status/STATUS.md`](../status/STATUS.md), "P20 progress".
+**Complete.** Specified in
+[`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md), with
+what it left behind in
+[`roadmap-P20-statistics-memory-notes.md`](roadmap-P20-statistics-memory-notes.md).
+It delivered the bound and not the coverage — `KD33` and `KD34` are P23's.
 Reasonable defaults for what statistics hold resident: groups coarsened where
 a block's rows are sparse, a per-block length cap,
 a block that does not fit its allowance declining rather than killing the
