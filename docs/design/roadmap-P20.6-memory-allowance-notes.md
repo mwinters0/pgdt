@@ -36,15 +36,14 @@ both.
 recommends none (`KD25`). So `--memory 8g` on a plain dump leaves the pools on
 the 64 MiB constant, where `--parallel-memory 8g` gave them 8 GiB. It follows
 from "treated exactly as a discovered limit" — a discovered limit already
-behaved this way — but it retires a recourse the manual used to name: **a plain
-`query` now plans one sub-stream at every `--jobs`**, the 64 MiB batch span each
-one is charged already exceeding the 64 MiB budget, and no flag reaches that
-span. The manual says so now; `--chunk-size` is what is left for a plain read's
-buffers. Two legs of `pgdump_query-cli/tests/statistics.rs` were exercising a
-three-sub-stream plain `query` through `--parallel-memory 1g` and now run one;
-their comments say so, and the split stays covered at the library, where
+behaved this way — but it retires a recourse the manual used to name: no flag
+reaches a plain source's pool budget, and `--chunk-size` is what is left for a
+plain read's buffers. What a plain `query` gets out of `--jobs` is now bought
+with batch size instead ([`decisions.md`](decisions.md), "D84"), which is where
+the two legs of `pgdump_query-cli/tests/statistics.rs` that cover a split plain
+`query` get their split from; it also stays covered at the library, where
 `pgdump_query/tests/pruning.rs` hands `Parallelism::workers` a pool budget
-directly. Filed under STATUS's "Decisions worth another look".
+directly.
 
 **The margin now binds a typed number, and that moves figures.** A stated budget
 used to carry no ceiling; an allowance does. The crossover is a budget of

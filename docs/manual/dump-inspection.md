@@ -539,12 +539,15 @@ can.
 > **A query's read-buffer budget covers two costs on a plain file and one on
 > a compressed one.** Every piece costs what its worker holds to read. On a
 > plain file it also holds its in-flight batch until that batch is handed
-> over — up to 64 MiB worth, the same default `query` always batches to — so
-> the number of pieces you get is that budget divided by *that sum*.
-> Under a 64 MiB budget — which is what a plain file gets whatever `--memory`
-> says, its reads asking for no budget of their own — the batch term alone
-> accounts for the whole of it, so `query --jobs N` on a plain file runs one
-> piece, serially, however large `N` is. On an `.xz` file read a block at a time
+> over — up to 64 MiB worth, the size `query` batches to when nothing is in its
+> way — so the number of pieces you get is that budget divided by *that sum*.
+> **The batch is what gives way, not the piece count**: under a 64 MiB budget —
+> which is what a plain file gets whatever `--memory` says, its reads asking for
+> no budget of their own — 64 MiB batches leave room for one piece, so `query`
+> shrinks the batches until the pieces you asked for fit, down to a floor of one
+> read buffer, and says on stderr how big the batches ended up and how many
+> pieces that bought. More pieces therefore cost batch size rather than being
+> refused, and `--memory` is what buys the batch size back. On an `.xz` file read a block at a time
 > no second cost is charged: the batch is counted as holding its rows inside the
 > block its worker already decoded, so the pieces are bounded by what one reader
 > holds — a block, a read buffer and the decompressor's own working memory, over

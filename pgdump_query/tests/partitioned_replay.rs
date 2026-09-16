@@ -23,8 +23,8 @@ use std::process::Command;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, LocalFileSource, Parallelism, PlanNoteKind,
-    Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, LocalFileSource, MIN_SOURCE_SPAN, Parallelism,
+    PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
     table_stream_partitions,
 };
 
@@ -177,10 +177,17 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
 }
 
 /// A stated `--jobs` the memory budget cannot afford in full says so,
-/// naming the numbers that would raise it. The shipped CLI defaults are
-/// exactly this case — `QueryOptions::max_source_span`'s 64 MiB alone meets
-/// `DEFAULT_MEMORY_BUDGET`'s 64 MiB, so any footprint at all pushes the
-/// divisor past the budget and eight workers plan down to one.
+/// naming the numbers that would raise it — **and it says it only after the
+/// batch span has been spent** (`docs/design/decisions.md`, "D84"). The
+/// shipped CLI defaults are exactly this case: `QueryOptions::max_source_span`'s
+/// 64 MiB alone meets `DEFAULT_MEMORY_BUDGET`'s 64 MiB, so the eight workers
+/// asked for are unaffordable at the stated span, the span narrows to
+/// `MIN_SOURCE_SPAN`, and what that buys — seven of the eight — is what the
+/// shortfall is reported against.
+///
+/// Two notes, in that order, and the arithmetic of both is pinned: the span
+/// at its floor beside an 8 MiB footprint is 9 MiB a sub-stream, which
+/// `DEFAULT_MEMORY_BUDGET` affords seven of.
 #[tokio::test]
 async fn a_budget_bound_worker_count_announces_why() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -192,25 +199,47 @@ async fn a_budget_bound_worker_count_announces_why() {
         &source,
         "public.widgets",
         ScanOptions::default(),
-        options,
+        options.clone(),
         CacheMode::Disabled,
     )
     .await
     .unwrap();
-    assert_eq!(streams.len(), 1, "the budget affords exactly one sub-stream here");
+    let footprint = partition_unit(&source);
+    let planned = (DEFAULT_MEMORY_BUDGET / (footprint + MIN_SOURCE_SPAN as u64)) as usize;
+    assert_eq!(planned, 7, "the floored span leaves room for seven of the eight");
+    assert_eq!(streams.len(), planned, "the budget affords exactly this many sub-streams");
     let diagnostics = streams[0].plan_notes();
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    let PlanNoteKind::ParallelismBudgetLimited { requested, planned, memory_bytes, .. } =
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    let PlanNoteKind::BatchSpanNarrowed { stated_bytes, planned_bytes, workers, memory_bytes } =
         &diagnostics[0].kind
     else {
         panic!("{diagnostics:?}")
     };
-    assert_eq!(*requested, 8);
-    assert_eq!(*planned, 1);
+    assert_eq!(*stated_bytes, options.max_source_span.unwrap() as u64);
+    assert_eq!(*planned_bytes, MIN_SOURCE_SPAN as u64, "nothing narrows past the floor");
+    assert_eq!(*workers, planned);
     assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
-    // Every sub-stream carries the same fact — here there is only the one,
-    // but the property being tested is that the caller need not pick which
-    // sub-stream to ask.
+    let PlanNoteKind::ParallelismBudgetLimited {
+        requested,
+        planned: planned_workers,
+        footprint: charged_footprint,
+        max_source_span,
+        memory_bytes,
+    } = &diagnostics[1].kind
+    else {
+        panic!("{diagnostics:?}")
+    };
+    assert_eq!(*requested, 8);
+    assert_eq!(*planned_workers, planned);
+    assert_eq!(*charged_footprint, footprint);
+    assert_eq!(
+        *max_source_span,
+        Some(MIN_SOURCE_SPAN as u64),
+        "the shortfall is named against the span actually charged, not the one stated"
+    );
+    assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
+    // Every sub-stream carries the same facts: the property being tested is
+    // that the caller need not pick which sub-stream to ask.
     for stream in &streams {
         assert_eq!(stream.plan_notes(), diagnostics);
     }
@@ -583,10 +612,17 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
 ///
 /// - the compressed source is charged what one reader holds and nothing more,
 ///   so a budget of exactly four such readers affords the four workers asked
-///   for and the plan is silent;
+///   for, has no span to spend and **says nothing at all**;
 /// - the plain source is charged that budget against its own partition **plus**
-///   the shipped 64 MiB span, which swamps it, so the plan comes back with one
-///   sub-stream and a note naming the span it was charged.
+///   the shipped 64 MiB span, which swamps it, so the plan spends the span
+///   down to what four readers leave and says so
+///   ([`PlanNoteKind::BatchSpanNarrowed`]; `docs/design/decisions.md`, "D84").
+///
+/// **The narrowing note is what the per-source charge is observed through**,
+/// now that spending the span is what a chunk-shaped source does before its
+/// count is cut: the same budget, the same stated span and the same job count
+/// produce a note on one shape and silence on the other, which is the
+/// accounting difference and nothing else.
 ///
 /// The rows are the plain file's either way, which is what keeps this a
 /// statement about the *accounting* rather than about what gets read.
@@ -620,17 +656,24 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     )
     .await
     .unwrap();
-    assert_eq!(streams.len(), 1, "the plain source pays both terms and cannot afford a second");
     match streams[0].plan_notes().as_slice() {
         [note] => {
-            let PlanNoteKind::ParallelismBudgetLimited { max_source_span, .. } = &note.kind else {
+            let PlanNoteKind::BatchSpanNarrowed {
+                stated_bytes, planned_bytes, memory_bytes, ..
+            } = &note.kind
+            else {
                 panic!("{note:?}")
             };
             assert_eq!(
-                *max_source_span,
-                options.max_source_span.map(|span| span as u64),
-                "a chunk-shaped source is charged the span, and the note names it"
+                *stated_bytes,
+                options.max_source_span.unwrap() as u64,
+                "a chunk-shaped source is charged the span, and the note names what was stated"
             );
+            assert!(
+                *planned_bytes < *stated_bytes,
+                "the span was spent to seat the workers: {planned_bytes} of {stated_bytes}"
+            );
+            assert_eq!(*memory_bytes, budget);
         }
         other => panic!("expected exactly one plan note, got {other:?}"),
     }
@@ -810,10 +853,11 @@ async fn a_block_path_that_was_taken_is_silent() {
 /// **The divisor is two terms, not one**: what a concurrent reader costs the
 /// source (`partition_bytes`) plus what a sub-stream's held batch pins
 /// (`max_source_span`, charged here because a plain file retains by the read
-/// chunk) — so a budget of four partition-units against a one-unit span
-/// affords two workers, not four, and a test that left `max_source_span` at
-/// its 64 MiB default would need a budget past that default before the job
-/// count ever bound anything.
+/// chunk). **The second term is a ceiling the plan spends before it cuts the
+/// count** (`docs/design/decisions.md`, "D84"), so a budget of four
+/// partition-units against eight jobs narrows a one-unit span to
+/// `MIN_SOURCE_SPAN` and then affords three workers — the count binds only
+/// once the span has nothing left to give.
 ///
 /// **The unit is read off the source rather than restated**
 /// ([`partition_unit`]), so the arithmetic below stays the arithmetic under
@@ -828,10 +872,11 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
 
-    // A per-worker cost of two partition-units — one read, one pinned by the
-    // held batch — makes a budget of four such units afford two workers
-    // however many jobs are asked for.
+    // One partition-unit read plus a floored span pinned makes a budget of
+    // four such units afford three workers however many jobs are asked for.
     let chunk = partition_unit(&source);
+    let planned = (4 * chunk / (chunk + MIN_SOURCE_SPAN as u64)) as usize;
+    assert_eq!(planned, 3, "eight jobs at this budget plan down to three");
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, 4 * chunk),
         max_source_span: Some(chunk as usize),
@@ -846,12 +891,19 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     )
     .await
     .unwrap();
-    assert_eq!(streams.len(), 2, "the budget binds before the job count does");
+    assert_eq!(streams.len(), planned, "the budget binds before the job count does");
     match streams[0].plan_notes().as_slice() {
-        [d] => {
+        [narrowed, d] => {
+            let PlanNoteKind::BatchSpanNarrowed { stated_bytes, planned_bytes, .. } =
+                &narrowed.kind
+            else {
+                panic!("{narrowed:?}")
+            };
+            assert_eq!(*stated_bytes, chunk);
+            assert_eq!(*planned_bytes, MIN_SOURCE_SPAN as u64);
             let PlanNoteKind::ParallelismBudgetLimited {
                 requested,
-                planned,
+                planned: planned_workers,
                 footprint,
                 max_source_span,
                 memory_bytes,
@@ -860,12 +912,12 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
                 panic!("{d:?}")
             };
             assert_eq!(*requested, 8);
-            assert_eq!(*planned, 2);
+            assert_eq!(*planned_workers, planned);
             assert_eq!(*footprint, chunk);
-            assert_eq!(*max_source_span, Some(chunk));
+            assert_eq!(*max_source_span, Some(MIN_SOURCE_SPAN as u64));
             assert_eq!(*memory_bytes, 4 * chunk);
         }
-        other => panic!("expected exactly one plan note, got {other:?}"),
+        other => panic!("expected the narrowing note and the count note, got {other:?}"),
     }
 
     let mut rows = Rows::new();

@@ -5998,11 +5998,11 @@ class SubstreamAnnotation(unittest.TestCase):
         # reader past four, and affords twenty-nine against the margin ceiling,
         # past the top of the axis. The plain leg recommends nothing, so it is
         # handed `DEFAULT_MEMORY_BUDGET` whatever `--memory` states (`D83`):
-        # 64 MiB against a `8 + 64 MiB` divisor affords none, and `affords`
-        # floors at one, so its axis is flat. These move when `M111` lands, and
-        # the table's own paragraph is emitted from this dict so it cannot
-        # disagree with them.
-        self.assertEqual(measure.QUERY_SUBSTREAM_CAP, {"control": 1})
+        # 64 MiB, spent on readers first and on the span with what is left
+        # (`D84`), which seats every worker up to four and stops at seven once
+        # the span is on its 1 MiB floor. The table's own paragraph is emitted
+        # from this dict so it cannot disagree with it.
+        self.assertEqual(measure.QUERY_SUBSTREAM_CAP, {"control": 7})
 
 
 class Scaffolding(unittest.TestCase):
@@ -6201,10 +6201,10 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
                 return measure.run_parallel_scan_throughput(session)
 
     def test_the_shipped_cap_annotates_the_plain_typed_query_leg(self):
-        # The plain typed-`query` leg is clamped to one sub-stream at every job
-        # count today, so every one of its cells carries the count and no other
-        # column does. An empty dict annotates nothing at all, which is the
-        # arrangement `M111` restores.
+        # The plain typed-`query` leg is clamped to seven sub-streams once the
+        # span is on its floor, so every one of its annotated cells carries
+        # that count and no other column does. An empty dict annotates nothing
+        # at all, which is what a leg no budget clamps inside the axis gets.
         body = self._render(cap=measure.QUERY_SUBSTREAM_CAP)
         cells = [r for r in body.splitlines() if r.startswith("| ")]
         self.assertTrue(cells)
@@ -6212,7 +6212,7 @@ class SubstreamAnnotationLandsOnTheRightColumn(unittest.TestCase):
         self.assertTrue(annotated, "the shipped cap annotates nothing")
         for row in annotated:
             self.assertEqual(row.count("sub-stream"), 1, row)
-            self.assertIn("1 sub-stream", row)
+            self.assertIn("7 sub-streams", row)
         with unittest.mock.patch.object(measure, "QUERY_SUBSTREAM_CAP", {}):
             empty = self._render(cap={})
         for row in (r for r in empty.splitlines() if r.startswith("| ")):

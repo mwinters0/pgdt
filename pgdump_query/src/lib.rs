@@ -25,7 +25,9 @@ pub mod scan;
 pub mod statistics;
 pub mod stream;
 
-pub use batch::{QueryOptions, ScanExtent, read_table, render_field, render_field_into};
+pub use batch::{
+    MIN_SOURCE_SPAN, QueryOptions, ScanExtent, read_table, render_field, render_field_into,
+};
 pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use error::Error;

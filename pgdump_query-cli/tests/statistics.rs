@@ -467,6 +467,12 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
 /// `--statistics none` prints**, serially and split: `id` ascends, so a range
 /// near its top reads a few of the groups a 1024-byte size cuts the table
 /// into.
+///
+/// **The split leg is a real split**, asserted rather than assumed: the plan
+/// narrows the batch span to seat the readers asked for and says how many it
+/// planned (`docs/design/decisions.md`, "D84"), which is the only thing a CLI
+/// leg can read the sub-stream count off. Without it a leg that silently
+/// planned one would test the serial path twice.
 #[test]
 fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
     let (_dir, dump) = sandboxed(DUMP, "pruned.sql");
@@ -484,14 +490,12 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
                 "id >= 990 or id < 3",
                 "--jobs",
                 jobs,
-                // A stated allowance no longer buys a plain source more
-                // read buffers than the library's own constant, so this plans
-                // one sub-stream whatever `--jobs` says
-                // (`docs/design/decisions.md`, "D83"). It is stated anyway:
-                // what the pair of legs proves is that the answer does not
-                // depend on the arrangement, and the split itself is covered
-                // where a budget can still reach it
-                // (`pgdump_query/tests/pruning.rs`).
+                // A stated allowance buys a plain source no more read
+                // buffers than the library's own constant
+                // (`docs/design/decisions.md`, "D83"), so what splits this
+                // is the batch span the plan spends to seat the readers
+                // asked for ("D84") — three sub-streams at `--jobs 3`,
+                // asserted below off the note that says so.
                 "--memory",
                 "1073741824",
             ];
@@ -502,6 +506,7 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
         };
         let (pruned, said) = query(&[]);
         let (unpruned, unsaid) = query(&["--statistics", "none"]);
+        assert_eq!(said.contains(&format!("{jobs} sub-stream(s) were planned")), jobs != "1");
         assert_eq!(pruned, unpruned, "--jobs {jobs}");
         assert_eq!(pruned.lines().count(), 1 + 13, "--jobs {jobs}: {pruned}");
         let note = said.lines().find(|l| l.starts_with("note: row-group statistics rule out"));
@@ -516,6 +521,11 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
 /// skips nothing and stops at `20` — one block, however many sub-streams its
 /// pieces went to — while `id <= 1000`, planned and never passed, and
 /// `--statistics none` print no such note.
+///
+/// **The split leg is a real split**, read off the narrowing note as its
+/// sibling above reads it (`docs/design/decisions.md`, "D84"): a stop summed
+/// once over sub-streams that turned out to be one is not the property under
+/// test.
 #[test]
 fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
     let (_dir, dump) = sandboxed(DUMP, "stopped.sql");
@@ -533,14 +543,12 @@ fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
                 filter,
                 "--jobs",
                 jobs,
-                // A stated allowance no longer buys a plain source more
-                // read buffers than the library's own constant, so this plans
-                // one sub-stream whatever `--jobs` says
-                // (`docs/design/decisions.md`, "D83"). It is stated anyway:
-                // what the pair of legs proves is that the answer does not
-                // depend on the arrangement, and the split itself is covered
-                // where a budget can still reach it
-                // (`pgdump_query/tests/pruning.rs`).
+                // A stated allowance buys a plain source no more read
+                // buffers than the library's own constant
+                // (`docs/design/decisions.md`, "D83"), so what splits this
+                // is the batch span the plan spends to seat the readers
+                // asked for ("D84") — three sub-streams at `--jobs 3`,
+                // asserted below off the note that says so.
                 "--memory",
                 "1073741824",
             ];
@@ -557,6 +565,7 @@ fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
         };
         let (stopped, said) = query("id < 20", &[]);
         let (unstopped, unsaid) = query("id < 20", &["--statistics", "none"]);
+        assert_eq!(said.contains(&format!("{jobs} sub-stream(s) were planned")), jobs != "1");
         assert_eq!(stopped, unstopped, "--jobs {jobs}");
         let notes = stop_note(&said);
         assert_eq!(notes.len(), 1, "--jobs {jobs}: {said}");

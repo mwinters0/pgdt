@@ -2106,10 +2106,11 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #: partition, whose decoded blocks `partition_bytes` has already charged, so its
 #: per-reader term is what one reader of it holds and nothing more.
 #:
-#: **The dict is empty at `PARALLEL_BUDGET`, and that is a reading rather than
-#: an omission**: neither leg's count falls inside `PARALLEL_JOBS` at 2 GiB, so
-#: there is no cell to annotate. The arithmetic below is what says so, and the
-#: entry comes back the moment a constant moves it.
+#: **A span is spent before a count is cut.** `plan_partitions` narrows the
+#: held batch's span to what the budget leaves once the readers asked for are
+#: paid for, stopping at `MIN_SOURCE_SPAN` — one read chunk
+#: (`docs/design/decisions.md`, "D84") — so a plain leg's count is solved
+#: against that narrowed span and not against the shipped 64 MiB ceiling.
 #:
 #: **Hand-computed, not derived from a mirrored formula.** A Python
 #: reimplementation of `worker_count`/`plan_partitions` would be a second
@@ -2130,13 +2131,15 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:  plain:   the source recommends nothing, so `fit` hands it
 #:           `DEFAULT_MEMORY_BUDGET` whatever is stated
 #:           (`docs/design/decisions.md`, "D83") — `64 MiB`, not the stated
-#:           `PARALLEL_BUDGET`. Against `8 MiB` (`POOL_MAX_BYTES`, which is also
-#:           what `LocalFileSource::partitions` applies its multiple to and is
-#:           capped straight back to) `+ 64 MiB` span = `72 MiB` a sub-stream,
-#:           that affords none, and `WorkerMemory::affords` floors at **one**:
-#:           the leg's whole axis is flat until `M111` lands
-#:           (`docs/design/out-of-band.md`).
-QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 1}
+#:           `PARALLEL_BUDGET`. A reader costs `8 MiB` (`POOL_MAX_BYTES`, which
+#:           is also what `LocalFileSource::partitions` applies its multiple to
+#:           and is capped straight back to), so `n` readers leave
+#:           `(64 - 8n) / n MiB` of span apiece: `24 MiB` at two and `8 MiB` at
+#:           four, both of which seat every worker asked for. At eight there is
+#:           nothing left, the span stops at the `1 MiB` floor, and `9 MiB` a
+#:           sub-stream affords **seven** — which is the cap, every higher row
+#:           of `PARALLEL_JOBS` landing on the same floor and the same seven.
+QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 7}
 
 #: The worker count every `pgdq` invocation this harness makes states, and the
 #: one every registered figure is taken at **except the three whose axis it is**

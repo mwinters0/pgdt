@@ -51,7 +51,9 @@ use async_stream::try_stream;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
-use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names};
+use crate::batch::{
+    MIN_SOURCE_SPAN, QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names,
+};
 use crate::cache::{CacheLoad, CacheMode};
 use crate::copy::{CopyHeader, DELIMITER, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -2248,6 +2250,12 @@ pub enum PlanNoteKind {
     /// caller left the span unbounded or the source retains by the partition
     /// (`crate::io::RetainedUnit`). Never a reason to refuse the query:
     /// `planned` sub-streams run regardless.
+    ///
+    /// **`max_source_span` here is what was charged, not what was stated**:
+    /// the span is derived down before the count is cut
+    /// ([`derived_source_span`]), so this note beside a
+    /// [`PlanNoteKind::BatchSpanNarrowed`] names that smaller number and what
+    /// is left to raise is the budget.
     ParallelismBudgetLimited {
         requested: usize,
         planned: usize,
@@ -2295,6 +2303,21 @@ pub enum PlanNoteKind {
     /// exceeds it once a batch's pin is counted. Never a reason to refuse
     /// anything.
     AllocationBelowFloor { unit_bytes: u64, memory_bytes: u64 },
+    /// The batch span this query stated
+    /// (`crate::batch::QueryOptions::max_source_span`) did not leave room for
+    /// the workers it asked for, so the plan charged `planned_bytes` instead
+    /// of `stated_bytes` and the sub-streams' batches are that much smaller
+    /// ([`derived_source_span`]; `docs/design/decisions.md`, "D84").
+    ///
+    /// **Not a shortfall in itself**: `workers` is what the narrowed span did
+    /// buy, and where it still came up short of what was asked for a
+    /// [`PlanNoteKind::ParallelismBudgetLimited`] says so beside this. A span
+    /// at [`crate::MIN_SOURCE_SPAN`] is the floor, and nothing but a larger
+    /// `memory_bytes` moves it.
+    ///
+    /// **Not a [`crate::diagnostic::DiagnosticKind`]**, for the reason its
+    /// siblings are not (`docs/design/decisions.md`, "D19").
+    BatchSpanNarrowed { stated_bytes: u64, planned_bytes: u64, workers: usize, memory_bytes: u64 },
     /// The row-group statistics a mapping pass stored proved that
     /// `skipped_groups` of the `groups` listed by the blocks carrying them
     /// hold no row the filter keeps, so their `skipped_bytes` of rows are
@@ -2360,6 +2383,22 @@ impl PlanNote {
         Self { kind: PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } }
     }
 
+    fn batch_span_narrowed(
+        stated_bytes: u64,
+        planned_bytes: u64,
+        workers: usize,
+        memory_bytes: u64,
+    ) -> Self {
+        Self {
+            kind: PlanNoteKind::BatchSpanNarrowed {
+                stated_bytes,
+                planned_bytes,
+                workers,
+                memory_bytes,
+            },
+        }
+    }
+
     fn parallelism_budget_limited(
         requested: usize,
         planned: usize,
@@ -2394,7 +2433,8 @@ impl PlanNote {
                     "asked for up to {requested} sub-stream(s), but a memory budget of \
                      {memory_bytes} byte(s) affords only {planned}: each costs {footprint} \
                      byte(s) to decode plus {span} byte(s) held by its own batch — raise the \
-                     memory budget, or lower the batch span, to get more"
+                     memory budget to get more, the batch span already being as small as the \
+                     plan will make it"
                 ),
                 None => format!(
                     "asked for up to {requested} sub-stream(s), but a memory budget of \
@@ -2419,6 +2459,17 @@ impl PlanNote {
                  one reader of this source holds, so this runs at its one-slot floor whatever \
                  concurrency is asked for — the budget in force is what bound it, and where \
                  nothing stated one it is the memory limit this process is running under"
+            ),
+            PlanNoteKind::BatchSpanNarrowed {
+                stated_bytes,
+                planned_bytes,
+                workers,
+                memory_bytes,
+            } => format!(
+                "a memory budget of {memory_bytes} byte(s) cannot seat the sub-streams asked for \
+                 beside batches spanning {stated_bytes} byte(s) of the source each, so each \
+                 batch spans at most {planned_bytes} byte(s) instead and {workers} sub-stream(s) \
+                 were planned — raise the memory budget for larger batches at this concurrency"
             ),
             PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes } => {
                 format!(
@@ -2490,6 +2541,13 @@ fn compressed_block_path_declined(
 /// back to the decode footprint alone — the same answer a discovery worker's
 /// call gets.
 ///
+/// **And that second term is derived, not taken** ([`derived_source_span`];
+/// `docs/design/decisions.md`, "D84"): the stated span is a ceiling, and a
+/// budget that cannot seat `jobs` readers beside it narrows the span before it
+/// cuts the count. The third return value is what was charged, which the
+/// caller writes back onto the sub-streams' own `QueryOptions` so the batches
+/// are the size the plan was solved for.
+///
 /// **The span is charged per source, not universally**, because the second
 /// term is honest for one source shape and double-counts for the other: a
 /// source retaining by the read chunk pins bytes `partition_bytes` never
@@ -2504,8 +2562,10 @@ fn compressed_block_path_declined(
 /// **The second return value is the plan's own notes: at most one naming why
 /// `workers` came up short of `parallelism.jobs()`, at most one naming a
 /// compressed source that declined the block-decode path under this budget
-/// ([`compressed_block_path_declined`]), and at most one naming a budget that
-/// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`]).**
+/// ([`compressed_block_path_declined`]), at most one naming a budget that
+/// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`]),
+/// and at most one naming a batch span narrowed below what the caller stated
+/// ([`PlanNoteKind::BatchSpanNarrowed`]).**
 /// Empty on every path that limits nothing, so a caller need not special-case
 /// "nothing to say" — though an empty `matches`, still charged its span, can
 /// name a count the budget cut.
@@ -2532,7 +2592,7 @@ fn plan_partitions(
     kept: &BTreeMap<u64, Vec<Range<u64>>>,
     parallelism: Parallelism,
     max_source_span: Option<usize>,
-) -> (Vec<Vec<Segment>>, Vec<PlanNote>) {
+) -> (Vec<Vec<Segment>>, Vec<PlanNote>, Option<usize>) {
     // **Announced before the advice is asked for**, since a compressed source
     // decides from the stated budget whether it can decode a whole block at
     // all (`ByteRangeSource::partitions`): asking under the mapping pass's
@@ -2548,7 +2608,7 @@ fn plan_partitions(
     // advice would be vacuously true, so the emptiness is tested.
     let retains_partitions =
         !advice.is_empty() && advice.iter().all(|a| a.retained_unit() == RetainedUnit::Partition);
-    let charged_span = if retains_partitions { None } else { max_source_span };
+    let stated_span = if retains_partitions { None } else { max_source_span };
     // The charge the count is solved against: the largest per-worker footprint
     // above, carrying that source's shared pool term, plus this caller's span.
     let charge = advice
@@ -2556,6 +2616,10 @@ fn plan_partitions(
         .map(Partitioning::worker_memory)
         .max_by_key(|memory| memory.bytes_per_worker())
         .unwrap_or_default();
+    // The span is derived from what the budget leaves once the readers asked
+    // for are paid for, so `jobs` readers cost batch size rather than being
+    // declined (`docs/design/decisions.md`, "D84").
+    let charged_span = stated_span.map(|span| derived_source_span(charge, parallelism, span));
     let charge = match charged_span {
         Some(span) => charge.plus_per_worker(span as u64),
         None => charge,
@@ -2576,6 +2640,20 @@ fn plan_partitions(
         && memory_bytes < footprint
     {
         notes.push(PlanNote::allocation_below_floor(footprint, memory_bytes));
+    }
+    // **Said whenever the span moved, not only where the count fell short**:
+    // the span is a number the caller stated on its own `QueryOptions`, so a
+    // plan that charged a smaller one has not delivered what was asked for.
+    if let (Some(memory_bytes), Some(stated), Some(planned)) =
+        (parallelism.memory_bytes(), stated_span, charged_span)
+        && planned < stated
+    {
+        notes.push(PlanNote::batch_span_narrowed(
+            stated as u64,
+            planned as u64,
+            workers,
+            memory_bytes,
+        ));
     }
     if let Some(memory_bytes) = parallelism.memory_bytes()
         && workers < requested
@@ -2628,7 +2706,39 @@ fn plan_partitions(
             }
         }
     }
-    (distribute(segments, workers), notes)
+    (distribute(segments, workers), notes, charged_span.or(max_source_span))
+}
+
+/// The span a sub-stream's held batch is charged, given what one reader of
+/// this source costs and what the caller stated
+/// (`crate::batch::QueryOptions::max_source_span`, which is a ceiling).
+///
+/// **It moves down or not at all** (`docs/design/decisions.md`, "D84"). Where
+/// the stated span already affords the count asked for, it is returned
+/// unchanged — so a serial replay, whose count is one whatever the charge, is
+/// never narrowed. Where it does not, the span becomes what the budget has
+/// left once `jobs` readers of the source are paid for:
+/// `charge.plus_per_worker(s).at(jobs)` is `charge.at(jobs) + s × jobs`, so
+/// the largest `s` that fits is `(budget − charge.at(jobs)) / jobs` — an
+/// inversion of [`crate::io::WorkerMemory::at`] rather than a second copy of
+/// its arithmetic, which keeps the shared pool term out of this function's
+/// hands.
+///
+/// **The floor is [`MIN_SOURCE_SPAN`]**, so a budget that affords the count at
+/// no span at all narrows to one read chunk and leaves the shortfall to
+/// [`worker_count`]; below that the span would cost rows per batch while
+/// bounding nothing the retained unit does not already bound.
+///
+/// A caller stating no budget (`Parallelism::default`) derives nothing: there
+/// is no number to solve against.
+fn derived_source_span(charge: WorkerMemory, parallelism: Parallelism, stated: usize) -> usize {
+    let Some(budget) = parallelism.memory_bytes() else { return stated };
+    let jobs = parallelism.jobs();
+    if charge.plus_per_worker(stated as u64).affords(budget, jobs) >= jobs {
+        return stated;
+    }
+    let room = budget.saturating_sub(charge.at(jobs)) / jobs.max(1) as u64;
+    stated.min(usize::try_from(room.max(MIN_SOURCE_SPAN as u64)).unwrap_or(usize::MAX))
 }
 
 /// Group `segments` into at most `streams` contiguous, byte-balanced runs,
@@ -3139,14 +3249,20 @@ pub async fn table_stream_partitions<'a>(
     let table = table.to_string();
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
     let MappedTable { matches, metadata, census } = mapped;
-    let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?);
-    let (groups, mut plan_notes) = plan_partitions(
+    let mut plan = ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?;
+    let (groups, mut plan_notes, span) = plan_partitions(
         source,
         &matches,
         &plan.kept,
         plan.query_options.parallelism,
         plan.query_options.max_source_span,
     );
+    // **The span the plan was solved against is the span the batches use**, or
+    // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is
+    // outside the resume fingerprint, being a batching knob
+    // (`docs/design/decisions.md`, "D50"), so writing it back moves no token.
+    plan.query_options.max_source_span = span;
+    let plan = Arc::new(plan);
     plan_notes.extend(plan.pruned.iter().cloned());
     let of = groups.len();
     Ok(groups
@@ -3197,6 +3313,66 @@ impl<'a> Iterator for BlockingTableIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The span is spent before the count is cut, and it stops at the
+    /// floor** (`docs/design/decisions.md`, "D84"). Every arm of
+    /// [`derived_source_span`], against a plain source's shape — an 8 MiB
+    /// per-worker charge with no pool term — and the shipped 64 MiB ceiling.
+    ///
+    /// The exact-inversion arm is the load-bearing one: what comes back must
+    /// be the largest span at which the count asked for is still afforded, so
+    /// each case asserts the returned span *and* that `worker_count` then
+    /// hands out every worker (or, at the floor, how many it could).
+    #[test]
+    fn a_stated_span_is_spent_down_to_seat_the_readers_and_no_further() {
+        let footprint = 8 << 20;
+        let charge = WorkerMemory::per_worker(footprint);
+        let stated = 64 << 20;
+        let seated = |parallelism: Parallelism, span: usize| {
+            worker_count(parallelism, charge.plus_per_worker(span as u64))
+        };
+
+        // Nothing stated: nothing to solve against.
+        assert_eq!(derived_source_span(charge, Parallelism::default(), stated), stated);
+
+        // One worker is what the floors deliver whatever the charge, so the
+        // stated span is already affordable and is left alone — which is what
+        // keeps a serial replay's batches the size the caller asked for.
+        let serial = Parallelism::workers(1, 64 << 20);
+        assert_eq!(derived_source_span(charge, serial, stated), stated);
+
+        // A budget with room to spare leaves the ceiling in place.
+        let roomy = Parallelism::workers(2, 1 << 30);
+        assert_eq!(derived_source_span(charge, roomy, stated), stated);
+
+        // Two readers of 8 MiB inside 64 MiB leave 24 MiB apiece, and 24 MiB
+        // is exactly what comes back: one byte more would seat only one.
+        let two = Parallelism::workers(2, 64 << 20);
+        assert_eq!(derived_source_span(charge, two, stated), 24 << 20);
+        assert_eq!(seated(two, 24 << 20), 2);
+        assert_eq!(seated(two, (24 << 20) + 1), 1);
+
+        // Four readers leave 8 MiB apiece, on the same arithmetic.
+        let four = Parallelism::workers(4, 64 << 20);
+        assert_eq!(derived_source_span(charge, four, stated), 8 << 20);
+        assert_eq!(seated(four, 8 << 20), 4);
+
+        // Eight readers leave nothing, so the span stops at the floor and the
+        // shortfall is the count's: 9 MiB apiece affords seven of the eight.
+        let eight = Parallelism::workers(8, 64 << 20);
+        assert_eq!(derived_source_span(charge, eight, stated), MIN_SOURCE_SPAN);
+        assert_eq!(seated(eight, MIN_SOURCE_SPAN), 7);
+
+        // A budget under one reader's own charge cannot go below the floor
+        // either — `AllocationBelowFloor` is what names that arrangement.
+        let starved = Parallelism::workers(8, 1 << 20);
+        assert_eq!(derived_source_span(charge, starved, stated), MIN_SOURCE_SPAN);
+
+        // **It only ever moves down.** A caller stating less than the floor is
+        // stating a batch size, and gets it.
+        assert_eq!(derived_source_span(charge, eight, 4096), 4096);
+        assert_eq!(derived_source_span(charge, two, MIN_SOURCE_SPAN), MIN_SOURCE_SPAN);
+    }
 
     /// The throttle's whole rule, over measured quantities rather than a
     /// clock: a save that cost nothing never blocks another, and a save that

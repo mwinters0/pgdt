@@ -8,7 +8,7 @@ so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
 register". **Capped at 550 lines**: an entry earns its place by being something a later session
 would otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D83 -->
+<!-- decision-watermark: D84 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -295,6 +295,14 @@ runs on every flush keeping its batcher; any new flush trigger must honour it.
 `max_rows` and `max_bytes` count selected rows, which a filter makes sparse.
 The span term is charged only where the source retains by chunk (`KD23`).
 Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
+
+### D84 The batch span is derived from the budget and the count, and spent before the count is cut
+`max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored
+at `MIN_SOURCE_SPAN` — one read chunk, below which the retained unit bounds the pin anyway — and
+writes it onto the sub-streams. A plain source is left on `DEFAULT_MEMORY_BUDGET` whatever is stated
+(D83), which the shipped span accounted for whole, so `--jobs` bought no readers at all. Rejected: a
+third flag (`roadmap.md`, "Two tunables fit pgdq to hardware"); billing the plain source a real
+per-reader cost (`KD25`), which wants a reading nobody has taken. Code: `stream.rs`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is

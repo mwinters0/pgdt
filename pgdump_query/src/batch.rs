@@ -48,7 +48,7 @@ use crate::pgtype::NestedPlan;
 // of the two deviations `docs/design/decisions.md`, "D68" records.
 use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
-use crate::scan::ScanOptions;
+use crate::scan::{DEFAULT_CHUNK_SIZE, ScanOptions};
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs
 // in `stream.rs`; the other recorded deviation, named here rather than
 // reached for inline so `tests/layering.rs` sees it.
@@ -97,6 +97,14 @@ pub struct QueryOptions {
     /// batch's span unbounded. What it bounds is the span rounded out to the
     /// retained unit, so on a block-shaped source, whose unit can exceed the
     /// cap, this is a batch-size knob and not the bound.
+    ///
+    /// **It is a ceiling, not the span a partitioned replay uses.**
+    /// [`crate::table_stream_partitions`] derives the span it charges from the
+    /// read-buffer budget and the requested worker count, so `jobs` readers
+    /// are bought at the cost of batch size rather than declined
+    /// (`docs/design/decisions.md`, "D84"). The derivation only moves down,
+    /// never below [`MIN_SOURCE_SPAN`]; a serial [`crate::table_stream`] does
+    /// not derive at all.
     pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL
     /// (`docs/design/decisions.md`, "D46"). Every `RecordBatch` this build
@@ -135,6 +143,22 @@ pub struct QueryOptions {
     /// ([`crate::stream::TableStream::early_stops`]).
     pub use_statistics: bool,
 }
+
+/// The floor a partitioned replay's derived [`QueryOptions::max_source_span`]
+/// stops at (`docs/design/decisions.md`, "D84"): **one shipped read chunk**,
+/// which is what a chunk-shaped source retains
+/// ([`crate::io::RetainedUnit::ReadChunk`]).
+///
+/// Below it the span stops bounding anything a batch could avoid holding — the
+/// pin is the span rounded out to that unit, so a batch spanning half a chunk
+/// pins the whole chunk all the same — while still costing rows per batch. It
+/// is defined as [`crate::DEFAULT_CHUNK_SIZE`] rather than repeating its
+/// value, the argument being about that unit and not about a megabyte: a
+/// caller announcing a larger chunk through `ScanOptions::chunk_size` retains
+/// more than this per batch whatever the span says, which is
+/// [`QueryOptions::max_source_span`]'s standing "rounded out to the retained
+/// unit" and not a second rule.
+pub const MIN_SOURCE_SPAN: usize = DEFAULT_CHUNK_SIZE;
 
 impl Default for QueryOptions {
     fn default() -> Self {

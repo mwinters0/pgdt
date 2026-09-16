@@ -317,7 +317,8 @@ mechanism is [`decisions.md`](decisions.md), "I/O, memory and parallelism".
 
 **Fact.** `Partitioning::retained_unit` answers `RetainedUnit::ReadChunk` or
 `RetainedUnit::Partition`, and `stream::plan_partitions` adds a query's held
-batch span (`QueryOptions::max_source_span`, 64 MiB by default) to the
+batch span (`QueryOptions::max_source_span`, a ceiling the plan then spends
+down against the budget — [`decisions.md`](decisions.md), "D84") to the
 sub-stream divisor **only** for the first. A source that says nothing gets
 `ReadChunk` and is charged the span, which is the conservative arm.
 `LocalFileSource` answers `ReadChunk`; a block-decoding `XzSource` answers
@@ -329,9 +330,9 @@ a whole `CopyBlock` and can pin several decoded blocks where one is billed
 
 **Why this phase cares.** P14 writes the second `partitions` implementation,
 and the term is defaulted — so a remote source that never mentions it is
-silently charged 64 MiB per sub-stream on top of its ranged-GET size, which at
-the shipped 64 MiB budget plans exactly one sub-stream however many workers are
-asked for. Whether that is right is a real question for a remote source rather
+silently charged a batch span on top of its ranged-GET size, and at a budget
+that cannot seat both the sub-streams get their workers by giving up batch
+size. Whether that is right is a real question for a remote source rather
 than a formality: it depends on whether a ranged GET's bytes are retained in a
 unit a batch's views sit inside, the way a decoded xz block is, or handed over
 per read the way a chunk buffer is. Answer it deliberately when the source is

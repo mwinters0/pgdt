@@ -1178,7 +1178,12 @@ fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolv
     let origin = parallel.plan_note_origin();
     for note in stream.plan_notes() {
         match note.kind {
-            pgdump_query::PlanNoteKind::StatisticsPruned { .. } => {
+            // A skip is no fault, and neither is a span the plan narrowed to
+            // seat the readers that were asked for
+            // (`docs/design/decisions.md`, "D84") — where that still came up
+            // short, the `warning:` beside it is what says so.
+            pgdump_query::PlanNoteKind::StatisticsPruned { .. }
+            | pgdump_query::PlanNoteKind::BatchSpanNarrowed { .. } => {
                 eprintln!("note: {}", note.message());
             }
             _ => eprintln!("warning: {}{origin}", note.message()),

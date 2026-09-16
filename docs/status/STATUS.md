@@ -79,7 +79,7 @@ Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-stati
 - [x] **20.6** `--memory` as the resident allowance, replacing `--parallel-memory`, and the library's `Parallelism` memory carved the same way — `Parallelism::within` is the one carving and `discover_in` calls it; the two-tunable rule's allowlist test, closed three ways and pinning the hardware pair; `MEMORY_RESERVE`'s value unmoved; [notes](../design/roadmap-P20.6-memory-allowance-notes.md)
 - [ ] **20.7** The decline: the statistics allowance carved after the workers, half of `MemAvailable` where no limit is found; a block that does not fit declines and says so, recorded in the cache with its allowance, back-fill retrying only under a larger one; the margin left against the account, closing `KD28`
 - [ ] **20.8** The reserve measured: the `introspect` build attributes the remainder above the charge and the statistics account over flagless gathering `parse` and `query`-over-its-cache legs — reasonable-width and allowance-filling wide-text inputs, plain and 24/128 MiB-block `.xz`, across the `reserve` figure's limits; `MEMORY_RESERVE` set to the smallest step whose worst rep leaves the margin, a remainder growing with statistics billed to the query instead, then one blind sitting on the shipped build at that value
-- [ ] **20.9** The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures at 20.8's reserve: `reserve`, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve; `parallel-*`'s two `.xz` legs move in `parallel-peak-rss` alone, their count unchanged and their announced budget not, while its two plain legs wait on `M111` and are redesigned rather than re-taken, their `--jobs` axis not varying until it lands
+- [ ] **20.9** The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures at 20.8's reserve: `reserve`, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve; `parallel-*`'s two `.xz` legs move in `parallel-peak-rss` alone, their count unchanged and their announced budget not, while its plain typed-`query` leg has an axis again since `M111` and is re-taken with `QUERY_SUBSTREAM_CAP`'s annotation, and its plain `parse` leg, which `M111` does not reach, still resolves the same eight readers at every row above eight and is redesigned rather than re-taken
 - [ ] **20.10** Koji: a flagless gathering `parse` in 512m beside the `none` recipe, and one `query` over its cache, launched detached and read by a later session — no large block declines, peak leaves the margin, wall clock against the `none` run; a cap it refutes earns 20.10.1
 
 ## Not started
@@ -320,3 +320,36 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`MIN_SOURCE_SPAN` is one read chunk, chosen by arithmetic where the record
+  asked for batch-size figures.** The derivation's floor needed a value
+  ([`history/2026-09-16.md`](history/2026-09-16.md), "A plain `query`'s
+  parallelism is bounded by the batch pin, not by the budget", which left it to
+  `M111`'s own session "with the batch-size figures in front of it"). There are
+  no such figures in `measurements.md`, and taking one would have priced batch
+  size on this machine rather than settled the rule, so the floor was argued
+  from the source instead: a chunk-shaped source retains by the read chunk, so
+  a span below that unit bounds nothing the pin does not already bound while
+  still costing rows per batch (`../design/decisions.md`, "D84"). It is defined
+  as `DEFAULT_CHUNK_SIZE`, so it moves with the unit the argument is about.
+  What it costs: at `--jobs 8` and above on a plain source at
+  `DEFAULT_MEMORY_BUDGET` the batches are 1 MiB of source rather than 64, which
+  for rows over ~128 bytes is fewer rows a batch than `max_rows` would give.
+  Reconsidering means either a larger floor — fewer sub-streams for bigger
+  batches, the same trade at a different point — or a floor read off the
+  caller's announced chunk rather than the shipped one, which is plumbing
+  `plan_partitions` does not have today.
+
+- **A narrowed span is announced on stderr every time, as a `note:`.**
+  `PlanNoteKind::BatchSpanNarrowed` fires whenever the plan charged less span
+  than the caller stated, so any `pgdq query --jobs N` on a plain dump — the
+  common case, since a plain source is left on `DEFAULT_MEMORY_BUDGET` (D83) —
+  now prints a line it did not print before. It was taken rather than kept
+  silent because the span is a number the caller stated on its own
+  `QueryOptions` and the plan overrode it, which is the case this project
+  announces (`../design/decisions.md`, "D19"); it is a `note:` rather than a
+  `warning:` because nothing failed. What reconsidering changes: dropping it
+  makes the override invisible to a CLI user and takes the sub-stream count
+  back out of reach of a CLI test, which is what `pgdump_query-cli/tests/statistics.rs`'s
+  two split legs now read it for. Firing it only where the count also fell
+  short would keep the noise down and hide the ordinary case.
