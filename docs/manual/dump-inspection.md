@@ -772,6 +772,14 @@ that set none. A block whose statistics would pass it declines, and says so
 host that states no limit and reports no free memory it reads `(none: …)` and
 nothing declines. `query` gathers nothing, so the number binds nothing there.
 
+**This number bounds the whole scan, not each block in turn**, and what a
+finished block gathered is held until the scan ends. So on a dump long enough
+to reach it, the blocks before that point keep their statistics and **every
+block after it declines** — a later query then prunes over the early part of
+the file and reads the rest whole. A run that does this says so once per
+declined block. Raising `--memory` moves the point where it happens, and is
+what re-reads the blocks that declined.
+
 `scan started` below repeats the two resolved numbers without the provenance,
 so a log line naming a scan says what produced everything that follows it.
 

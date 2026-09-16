@@ -63,6 +63,8 @@ use crate::index::{
     union_census,
 };
 use crate::instrument::StatisticsScope;
+#[cfg(feature = "introspect")]
+use crate::instrument::statistics_loaded;
 use crate::io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, PartitionBoundaries, Partitioning,
     RetainedUnit, WaitPolicy, WorkerMemory, memory_budget_display,
@@ -1001,7 +1003,10 @@ pub async fn map_file(
         }
     };
     let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance));
-    account.apply(&[(Term::Loaded, statistics_heap(&index) as i64)]);
+    let loaded = statistics_heap(&index);
+    #[cfg(feature = "introspect")]
+    statistics_loaded(loaded);
+    account.apply(&[(Term::Loaded, loaded as i64)]);
     // Which statistics the *cache* supplied, by the one identity a block keeps
     // across the splice: what a back-fill replaces leaves this term, and what
     // this run gathered leaves `Term::Retained` instead.
@@ -2143,6 +2148,10 @@ async fn map_for_query(
             return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
         }
     };
+    // The one statistics term a query has: it keeps no account, so nothing else
+    // says what the cache handed it.
+    #[cfg(feature = "introspect")]
+    statistics_loaded(statistics_heap(&index));
 
     // The first database's preamble is captured before anything else runs,
     // whatever table this call queries (`docs/design/decisions.md`, "D30").

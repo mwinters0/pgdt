@@ -55,6 +55,19 @@ impl Drop for StatisticsScope {
     }
 }
 
+/// Record that a cache load handed a pass `bytes` of block statistics — the
+/// walk `crate::stream`'s `statistics_heap` does. Nothing without the
+/// instrument, and the call sites are `cfg`'d, so a shipped build does not walk
+/// the index for it.
+///
+/// **It is the only statistics term a `query` has.** A query loads a cache and
+/// keeps no [`crate::statistics::StatisticsAccount`], so nothing else says what
+/// the cache handed it.
+#[cfg(feature = "introspect")]
+pub(crate) fn statistics_loaded(bytes: u64) {
+    enabled::statistics_loaded(bytes);
+}
+
 /// Compare the account's new `total`, `announced` of it charged ahead of
 /// allocations, with the live statistics bytes, keeping the worst difference
 /// either way past `allowance`, the uncharged growth its open observers may
@@ -93,6 +106,8 @@ mod enabled {
     static SHORT_PAST_ALLOWANCE: AtomicU64 = AtomicU64::new(0);
     static OVER: AtomicU64 = AtomicU64::new(0);
     static OVER_PAST_ALLOWANCE: AtomicU64 = AtomicU64::new(0);
+    /// The most statistics heap any cache load handed a pass.
+    static LOADED: AtomicU64 = AtomicU64::new(0);
 
     /// The binary's allocator reports `bytes` allocated on this thread.
     #[inline]
@@ -125,9 +140,17 @@ mod enabled {
         OVER_PAST_ALLOWANCE.fetch_max(over.saturating_sub(allowance), Ordering::Relaxed);
     }
 
+    /// A cache load handed a pass `bytes` of block statistics.
+    pub(super) fn statistics_loaded(bytes: u64) {
+        LOADED.fetch_max(bytes, Ordering::Relaxed);
+    }
+
     /// What the instrument has counted so far.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct StatisticsReading {
+        /// The most block-statistics heap a cache load handed a pass
+        /// ([`super::statistics_loaded`]).
+        pub loaded: u64,
         /// Statistics bytes live now.
         pub live: u64,
         /// The most statistics bytes ever live at once.
@@ -150,6 +173,7 @@ mod enabled {
     /// caller avoids by reading once the pass has returned.
     pub fn statistics_reading() -> StatisticsReading {
         StatisticsReading {
+            loaded: LOADED.load(Ordering::Relaxed),
             live: LIVE.load(Ordering::Relaxed),
             live_peak: LIVE_PEAK.load(Ordering::Relaxed),
             checks: CHECKS.load(Ordering::Relaxed),

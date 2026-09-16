@@ -244,6 +244,17 @@ impl Gatherer {
     /// **Nothing else declines with it**: the scan goes on, and a piece still
     /// gathering is freed as it is folded in or dropped
     /// (`docs/design/decisions.md`, "D85").
+    ///
+    /// deficiency: KD33 — the account this tests is cumulative, and
+    /// `Term::Retained` is never released during a pass, so once a long dump's
+    /// retained statistics reach the allowance every block from there on
+    /// declines on its first charge update. Statistics are then a *prefix* of
+    /// the file rather than a sample of it, and a query prunes nothing over
+    /// the tail; how much is covered depends on the allowance the box
+    /// resolved. Coarsening under that pressure is refused by "D85" — a cache
+    /// would depend on its container — so the remedy owned by P23 is a
+    /// granularity derived from the dump's length, which is known up front and
+    /// is the same on every machine.
     fn decline(&mut self, allowance: u64) {
         debug_assert_eq!(self.carried, (0, 0), "a fold is not a place to decline");
         self.declined = Some(allowance);

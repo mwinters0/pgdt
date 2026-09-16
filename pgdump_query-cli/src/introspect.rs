@@ -33,7 +33,11 @@
 //!   account as the pass returned it, beside the live bytes the counter
 //!   attributed to statistics (`pgdump_query::instrument`) at the same moment,
 //!   their peaks, and the worst difference either way any update of the
-//!   account read (`docs/design/decisions.md`, "D81").
+//!   account read (`docs/design/decisions.md`, "D81"). Where no pass returned
+//!   an account — a `query`, which loads a cache's statistics and charges
+//!   nothing for them — the lines are `statistics_account=none` and
+//!   `statistics_loaded_bytes`, the heap the cache handed the pass, which is
+//!   the only statistics term a query has.
 //!
 //! **The two families do not cover the same memory**, so the report labels
 //! each: `live_scope` and `glibc_scope`, with the note between them. The
@@ -160,9 +164,26 @@ mod enabled {
         }
     }
 
-    /// The `statistics_*` lines, or none where no pass returned an account.
+    /// The `statistics_*` lines.
+    ///
+    /// **Two shapes, because two commands hold statistics.** A mapping pass
+    /// returns an account and the account's terms are the reading; a `query`
+    /// returns none — it loads the cache, charges nothing and prints no
+    /// `statistics held` line. The second shape says `statistics_account=none`
+    /// and leans on `statistics_loaded_bytes`, the heap the cache handed the
+    /// pass: the scope counter is not that term, seeing the decode's frees
+    /// without its allocations, so a query reading it alone would understate
+    /// what it holds.
     fn push_statistics(out: &mut String) {
-        let Some((held, reading)) = RETURNED.lock().ok().and_then(|r| *r) else { return };
+        let Some((held, reading)) = RETURNED.lock().ok().and_then(|r| *r) else {
+            let reading = pgdump_query::instrument::statistics_reading();
+            out.push_str("statistics_scope=library-statistics-scope\n");
+            out.push_str("statistics_account=none\n");
+            out.push_str(&format!("statistics_loaded_bytes={}\n", reading.loaded));
+            out.push_str(&format!("statistics_live_bytes={}\n", reading.live));
+            out.push_str(&format!("statistics_live_peak_bytes={}\n", reading.live_peak));
+            return;
+        };
         let terms = [
             ("retained", held.now.retained, held.term_peaks.retained),
             ("loaded", held.now.loaded, held.term_peaks.loaded),
@@ -173,6 +194,7 @@ mod enabled {
         out.push_str("statistics_scope=library-statistics-scope\n");
         out.push_str(&format!("statistics_account_bytes={}\n", held.now.total()));
         out.push_str(&format!("statistics_account_peak_bytes={}\n", held.peak));
+        out.push_str(&format!("statistics_loaded_bytes={}\n", reading.loaded));
         for (term, now, peak) in terms {
             out.push_str(&format!("statistics_account_{term}_bytes={now}\n"));
             out.push_str(&format!("statistics_account_{term}_peak_bytes={peak}\n"));

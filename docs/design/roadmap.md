@@ -19,6 +19,7 @@ reused, including a struck phase's.
 | P20 — statistics memory | Current | [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); progress in [`STATUS.md`](../status/STATUS.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
+| P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
@@ -562,8 +563,9 @@ them**: the worker count, the read-buffer budget, a query's batch span and now
 the statistics allowance. Every slice since 20.6 has re-fitted one term of that
 fan-out — `M111` the span, `M112` its floor, 20.7 the allowance — which is the
 tell that the number, not any one derivation, is what is overloaded. Sketched
-to corner-avoidance depth, and after P20, whose remaining slices measure and
-gate the model as it stands.
+to corner-avoidance depth. P20 wrapped without measuring or gating the model as
+it stands, leaving that to P23, so this phase inherits an unpriced constant
+rather than a freshly fitted one.
 
 **It revises [this file](roadmap.md), "Two tunables fit pgdq to hardware:
 memory and parallelism"** — that section's last clause, and nothing else about
@@ -576,8 +578,9 @@ What it inherits:
   `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` the cap binds and statistics
   have a floor; at and above it the ceiling binds and statistics get only the
   slack one worker's step leaves, so a **wide** host at a high `--jobs` is the
-  starving case. **20.8 prices that band** before this phase is grilled, and a
-  reading showing the slack is routinely large shrinks this phase or ends it.
+  starving case. **That band is priced** — the reading, and what it says about
+  shrinking this phase, is
+  [`roadmap-P22-third-tunable-inbox.md`](roadmap-P22-third-tunable-inbox.md).
 - **`KD32` and `KD25`**, both `(c) unowned` today and both the same seam from
   the other end — a stated allowance is inert on a plain source. This phase is
   their destination, and re-stancing them to `(b)` is part of specifying it, a
@@ -606,6 +609,42 @@ worth having. What it inherits:
   gathered block settles neither.
 - **The replay never saves the cache**; the mapping pass does, and a
   partitioned replay saving meets "D20" and the save gate ("D62").
+
+## P23 — Statistics coverage and the resident reserve
+
+**Statistics stop where the account fills, and the reserve does not cover what
+a run holds.** P20 bounded what statistics may hold resident and delivered the
+bound; it did not deliver usable statistics for a long dump, and it did not
+price the constant the bound is carved from. Both gaps are measured rather than
+supposed — `KD33` and `KD34` — and both were left rather than fixed because the
+architecture they answer to is still moving: P21 changes who gathers, P22
+changes what the number they answer to means. Sketched to corner-avoidance
+depth, and after both.
+
+What it inherits:
+
+- **The coverage flaw is cumulative, not per-block** (`KD33`). `Term::Retained`
+  is never released during a pass, so a long dump fills its allowance partway
+  through and every block after it declines — statistics become a prefix, and a
+  query prunes nothing over the tail. How much of a dump is covered depends on
+  the box, which is the part a user cannot predict.
+- **Granularity derived from the dump's length is the remedy that survives
+  `D85`.** That entry rejects *coarsening to fit* because a cache would then
+  depend on its container; a group size chosen from the file's size, known
+  before a byte is gathered, is deterministic — the same dump yields the same
+  cache on every machine — so the refusal does not reach it. The decline stays
+  as the backstop for shapes the estimate gets wrong.
+- **The reserve is under-covering by a measured margin** (`KD34`). The
+  2026-09-16 attribution sitting read a worst remainder of 544 MiB above charge
+  plus account, against `MEMORY_RESERVE`'s 384 MiB, and its readings are the
+  input this phase would otherwise have to re-take.
+- **A branch registered and unspent**: a remainder growing with the statistics
+  volume is billed to the query rather than reserved. It is filed for P22 as
+  well, being a fourth consumer of the one number, and whichever phase runs
+  first settles it.
+- **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
+  and `statistics-pruning` were left stale by P20's landed slices and are not
+  re-taken until the constant settles.
 
 ## P14 — Remote input
 

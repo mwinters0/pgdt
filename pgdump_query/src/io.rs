@@ -912,6 +912,14 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// **Below it the budget goes to zero rather than to a floor**, which the
 /// floors already in the mechanism turn into one reader's worth on the
 /// streaming path.
+///
+/// deficiency: KD34 — this value was fitted before statistics existed, and
+/// what a run holds above its charge and its statistics account has since been
+/// attributed at a worst 544 MiB on a compressed `query` — well past the
+/// 384 MiB held back here, with every wide-text compressed `query` leg from a
+/// 1 GiB limit up killed in every rep. That attribution was taken on the
+/// `introspect` build, so it sizes the gap without standing in for the blind
+/// gate a constant has to pass; P23 owns both.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
 /// How much of a memory allowance a resolved arrangement must leave unused, as

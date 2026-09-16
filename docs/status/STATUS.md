@@ -78,9 +78,9 @@ Spec: [`../design/roadmap-P20-statistics-memory.md`](../design/roadmap-P20-stati
 - [x] **20.5** The stated maximum: `--statistics-max-rows` at the 90th percentile, honoured over the length cap, winning where a block meets neither bound, refused below the minimum; a block whose `2^20` groups break it re-read by the back-fill at the size its rows per group predict, once, saying where it still misses; `FORMAT_VERSION` bumped; [notes](../design/roadmap-P20.5-stated-maximum-notes.md)
 - [x] **20.6** `--memory` as the resident allowance, replacing `--parallel-memory`, and the library's `Parallelism` memory carved the same way — `Parallelism::within` is the one carving and `discover_in` calls it; the two-tunable rule's allowlist test, closed three ways and pinning the hardware pair; `MEMORY_RESERVE`'s value unmoved; [notes](../design/roadmap-P20.6-memory-allowance-notes.md)
 - [x] **20.7** The decline: the statistics allowance carved after the workers, half of `MemAvailable` where no limit is found; a block that does not fit declines and says so, recorded in the cache with its allowance, back-fill retrying only under a larger one; the margin left against the account, closing `KD28`; [notes](../design/roadmap-P20.7-decline-notes.md)
-- [ ] **20.8** The reserve measured: the `introspect` build attributes the remainder above the charge and the statistics account over flagless gathering `parse` and `query`-over-its-cache legs — reasonable-width and allowance-filling wide-text inputs, plain and 24/128 MiB-block `.xz`, across the `reserve` figure's limits, and one leg in the band where the margin ceiling binds the count and statistics are left one worker's step; `MEMORY_RESERVE` set to the smallest step whose worst rep leaves the margin, a remainder growing with statistics billed to the query instead, then one blind sitting on the shipped build at that value
-- [ ] **20.9** The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures at 20.8's reserve: `reserve`, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve; `parallel-*`'s two `.xz` legs move in `parallel-peak-rss` alone, their count unchanged and their announced budget not, while its plain typed-`query` leg has an axis again since `M111` and is re-taken with `QUERY_SUBSTREAM_CAP`'s annotation, and its plain `parse` leg, which `M111` does not reach, still resolves the same eight readers at every row above eight and is redesigned rather than re-taken
-- [ ] **20.10** Koji: a flagless gathering `parse` in 512m beside the `none` recipe, and one `query` over its cache, launched detached and read by a later session — no large block declines, peak leaves the margin, wall clock against the `none` run; a cap it refutes earns 20.10.1
+- [x] **20.8** The reserve read, and the line put down: the attribution sitting taken on the `introspect` build over the legs the spec registered, its readings kept as P23's input, and the two gaps it found filed rather than fixed — statistics stop where the account fills (`KD33`) and the remainder above charge plus account outruns `MEMORY_RESERVE` (`KD34`). `MEMORY_RESERVE` is left at 384 MiB, unmeasured since statistics existed; the constant, the registered billing branch and the blind gate go to P23, and the starve band's reading to P22's inbox. [notes](../design/roadmap-P20.8-reserve-attribution-notes.md)
+- [ ] **20.9** *(not delivered; the intent moves to P23 at the wrap)* The generated gates in 512m on the shipped build — a wide-text input that must decline and a reasonable-width one that declines nothing — and the re-taken figures at 20.8's reserve: `reserve`, `statistics-gathering` in 512m, and every figure whose arrangement moves with the reserve; `parallel-*`'s two `.xz` legs move in `parallel-peak-rss` alone, their count unchanged and their announced budget not, while its plain typed-`query` leg has an axis again since `M111` and is re-taken with `QUERY_SUBSTREAM_CAP`'s annotation, and its plain `parse` leg, which `M111` does not reach, still resolves the same eight readers at every row above eight and is redesigned rather than re-taken
+- [ ] **20.10** *(not delivered; the intent moves to P23 at the wrap)* Koji: a flagless gathering `parse` in 512m beside the `none` recipe, and one `query` over its cache, launched detached and read by a later session — no large block declines, peak leaves the margin, wall clock against the `none` run; a cap it refutes earns 20.10.1
 
 ## Not started
 
@@ -123,8 +123,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD32 -->
-**`KD1`–`KD32` are allocated, and nothing at or below `KD32` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD34 -->
+**`KD1`–`KD34` are allocated, and nothing at or below `KD34` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -315,6 +315,22 @@ a phase nobody has sliced.
   `--map` listing seen to lose a statement's text. Detail:
   `pgdump_query/src/map.rs`.
 
+- **KD33** — statistics stop where the account fills: `Term::Retained` is never
+  released during a pass, so a dump long enough fills its allowance partway
+  through and every block after it declines, leaving statistics a prefix of the
+  file and a query pruning nothing over the tail. How much is covered depends on
+  the allowance the box resolved, which a user cannot predict. **(b) owned by
+  P23**, whose remedy is a granularity derived from the dump's length. Detail:
+  `pgdump_query/src/gather.rs`.
+
+- **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
+  its charge and its statistics account: the attribution sitting read a worst
+  remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`
+  leg from 1 GiB up was OOM-killed in every rep on that build. The reserve was
+  fixed before statistics existed and has not been read since. **(b) owned by
+  P23**, which sets it from those readings and runs the blind gate an
+  attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.
+
 ## Decisions worth another look
 
 Calls made without the maintainer present that a person should still weigh in
@@ -323,5 +339,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-
