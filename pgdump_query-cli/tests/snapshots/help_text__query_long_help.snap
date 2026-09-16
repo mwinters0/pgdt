@@ -114,9 +114,9 @@ Options:
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count
-          where that is smaller — lowered again to the number of readers the memory budget can pay
-          for, where that is fewer, whether that budget was discovered or stated with
-          `--parallel-memory`. A count stated here is never lowered that way.
+          where that is smaller — lowered again to the number of readers the memory allowance can
+          pay for, where that is fewer, whether that allowance was discovered or stated with
+          `--memory`. A count stated here is never lowered that way.
           
           **It states what is asked for, not what is delivered.** Two input shapes admit no
           parallelism whatever this says: a `.xz` file with one block, and an `INSERT` run
@@ -130,39 +130,45 @@ Options:
           block list; and how many decoded `.xz` blocks the source retains: four, or one per
           would-be reader where that is more.
           
-          **On `query`, `--parallel-memory` has to cover a second cost before this number is
-          delivered at all** — see that flag's own doc.
+          **On `query`, `--memory` has to cover a second cost before this number is delivered at
+          all** — see that flag's own doc.
 
-      --parallel-memory <BYTES>
-          What those workers may hold between them in read buffers, in bytes. Left unstated, pgdq
-          reads the memory limit it is running under — the smallest cgroup limit that binds — less a
-          384 MiB reserve, and takes inside that what the file asks for: one reader's worth for each
-          worker it would run, rather than the whole allowance. Where no limit is set that same
-          number is held under half the memory the machine reports available. A plain dump asks for
-          nothing of its own and gets 64 MiB, or the limit less the reserve where that is smaller.
+      --memory <BYTES>
+          How much memory pgdq may hold resident in total, in bytes — the number you would give the
+          container. Left unstated, pgdq reads the memory limit it is running under — the smallest
+          cgroup limit that binds — and uses that; where no limit is set it stays inside half the
+          memory the machine reports available. A number typed here replaces whatever was discovered
+          and is carved up exactly the same way.
           
-          It is a real bound rather than a target: a `.xz` file that does not leave room inside it
-          for one reader — one of its blocks, a read buffer and the decompressor's own working
-          memory, beside the three further blocks the pool keeps however few workers run — is read
-          through the streaming decoder instead of being decoded a block at a time, which is correct
-          but slower on backward reads. Raise it to buy the block path back on a file written with
-          large blocks (`xz -9 -T0`, `xz --block-size=`).
+          **What it is carved into.** A 384 MiB reserve comes off the top for everything pgdq holds
+          that no buffer accounts for — the runtime's threads, the allocator's per-thread arenas,
+          the decoder state a compressed source keeps outside its pools, the binary itself. What is
+          left is what the read buffers may hold, and the worker count is lowered again so that a
+          fifth of the whole number stays unspent. So the buffer budget a run reports is always
+          smaller than what you typed, and the `resolved the arrangement` line on stderr names both.
+          
+          It is a real bound rather than a target: a `.xz` file that does not leave room inside the
+          buffer budget for one reader — one of its blocks, a read buffer and the decompressor's own
+          working memory, beside the three further blocks the pool keeps however few workers run —
+          is read through the streaming decoder instead of being decoded a block at a time, which is
+          correct but slower on backward reads. Raise this to buy the block path back on a file
+          written with large blocks (`xz -9 -T0`, `xz --block-size=`).
           
           **It is also what decides how many of `--jobs`' workers read at once**, on both commands:
-          the largest count whose whole cost fits inside it. For an ordinary 24 MiB-block `.xz` the
-          first reader is about 106 MiB and each one past the fourth about 58, so a 64 MiB budget
-          affords none of them — which is why a discovered budget is sized off the count the source
-          recommends rather than off a constant.
+          the largest count whose whole cost fits inside the buffer budget. For an ordinary 24
+          MiB-block `.xz` the first reader is about 106 MiB and each one past the fourth about 58,
+          so a 64 MiB buffer budget affords none of them — which is why a discovered allowance is
+          sized off the count the source recommends rather than off a constant.
           
-          **On `query` it divides by two terms rather than one**: what a worker costs to read, plus
-          the 64 MiB a sub-stream's held batch may pin (`docs/design/decisions.md`, "I/O, memory and
-          parallelism") — charged on a plain file, where a batch pins read buffers the first term
-          never counted, and not on a block-decoding `.xz`, whose first term already counts a
-          decoded block. At 64 MiB — which is what a plain file gets unless a limit or a flag says
-          otherwise — the plain file's sum already exceeds the budget, so `query --jobs N` on one
-          runs serially however large `N` is; raise it past roughly 145 MiB to get a second
-          sub-stream at all. `parse` is unaffected by the second term: it builds no batches, so
-          nothing on that path pins a span.
+          **On `query` the buffer budget divides by two terms rather than one**: what a worker costs
+          to read, plus the 64 MiB a sub-stream's held batch may pin (`docs/design/decisions.md`,
+          "I/O, memory and parallelism") — charged on a plain file, where a batch pins read buffers
+          the first term never counted, and not on a block-decoding `.xz`, whose first term already
+          counts a decoded block. At 64 MiB — which is what a plain file gets unless a limit or this
+          flag says otherwise — the plain file's sum already exceeds the budget, so `query --jobs N`
+          on one runs serially however large `N` is; raise it past roughly 145 MiB of *buffer
+          budget* to get a second sub-stream at all. `parse` is unaffected by the second term: it
+          builds no batches, so nothing on that path pins a span.
 
   -h, --help
           Print help (see a summary with '-h')

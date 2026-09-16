@@ -684,7 +684,7 @@ async fn a_single_block_xz_declines_to_be_split() {
 /// A multi-block `.xz` whose blocks the stated budget cannot hold is
 /// read through the streaming decoder, and the plan says so — naming the
 /// file's largest block beside the budget that declined it, which is the
-/// number `--parallel-memory` has to clear.
+/// number the read-buffer budget has to clear.
 ///
 /// **Multi-block on purpose.** The decline is about a file that *does* have
 /// seekability to lose; a single-block file has none at any budget and earns

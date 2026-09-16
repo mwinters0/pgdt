@@ -2019,7 +2019,8 @@ PARALLEL_BASELINE = 1
 #: reconciles.
 JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-jobs-")
 
-#: What `--parallel-memory` states on every row of both `parallel-*` figures.
+#: The **read-buffer budget** every row of both `parallel-*` figures runs at,
+#: stated as the `--memory` allowance that leaves it (`stated_allowance`).
 #:
 #: **One value for every row, because the axis is the worker count.** A budget
 #: that grew with `--jobs` would make each row a different apparatus, and the
@@ -2342,7 +2343,7 @@ RESERVE_INPUTS: tuple[tuple[str, str], ...] = (
 RESERVE_FAMILY = "parse-rss-reserve-"
 
 #: The command-shape prefix of the legs that state **nothing** — no `--jobs`,
-#: no `--parallel-memory` — so that the arrangement under test is the one a
+#: no `--memory` — so that the arrangement under test is the one a
 #: flagless invocation resolves for itself.
 #:
 #: **This is the one family in the register that states no worker count, and it
@@ -2479,6 +2480,31 @@ LIBRARY_POOL_DEPTH = 4
 #: harness chose.
 LIBRARY_MEMORY_RESERVE = 384 << 20
 
+
+def stated_allowance(budget: int) -> int:
+    """The `--memory` value that leaves `budget` bytes for the read buffers.
+
+    **`--memory` states a *resident* allowance, not a buffer budget**
+    (`docs/design/decisions.md`, "D83"): `Parallelism::within` takes
+    `MEMORY_RESERVE` off the top before a reader is counted, so a figure
+    registered against a buffer budget states that budget plus the reserve and
+    goes on measuring what it was registered to measure.
+
+    **It reproduces the old arrangement exactly only up to a 256 MiB budget.**
+    The carve also holds the resolved *count* under `margin_allowance`, which a
+    typed number never used to answer to, and that ceiling falls below the cap
+    once the budget passes `4 x MEMORY_RESERVE - 5 x MEMORY_UNPOOLED_BOUND`.
+    Above that a leg resolves fewer readers than it did, so its cells are stale
+    and `P20.9` re-takes them; the number stated here is still the one the
+    figure's text names.
+
+    **Not the inverse of the carve**, which has none: nothing recovers the
+    allowance a budget came from, because the budget is a `min` of two terms.
+    This is the one direction that is a function.
+    """
+    return budget + LIBRARY_MEMORY_RESERVE
+
+
 #: `pgdump_query::io::MEMORY_UNPOOLED_BOUND`, mirrored: this crate's bound on
 #: what a scan holds resident outside the pools its charge bills, and what
 #: `margin_allowance` predicts a count's resident with.
@@ -2545,8 +2571,9 @@ def discovered_budget(limit: int) -> int:
     """What a flagless run inside a container of `limit` bytes resolves as its
     budget: `limit − MEMORY_RESERVE`, floored at zero.
 
-    `Parallelism::discover_in`, mirrored — `limit.bytes.saturating_sub(
-    MEMORY_RESERVE)` (`io.rs`).
+    `Parallelism::within`, mirrored — `allowance.saturating_sub(
+    MEMORY_RESERVE)` (`io.rs`), which a stated `--memory` reaches by the same
+    call (`stated_allowance`).
 
     **The margin is deliberately left out**, as the recommendation is. The
     resolved *count* also answers to `MEMORY_MARGIN_PERCENT` — its predicted
@@ -2994,7 +3021,7 @@ RESERVE_MECHANISM_UNIT = next(
 #: neither took.
 #:
 #: It earns its place whatever the attribution finds: it is what an operator
-#: needs in order to decide whether `--parallel-memory` is worth setting, and no
+#: needs in order to decide whether `--memory` is worth setting, and no
 #: figure states it.
 RESERVE_STEP_BUDGETS: tuple[int, ...] = (
     charge_bytes(RESERVE_MECHANISM_UNIT, 1),
@@ -3224,7 +3251,7 @@ def _script(command: str) -> str:
         return (
             f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
             f"--source /dump.sql --dqcache /tmp/x.dqcache "
-            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} {ns} >/dev/null"
+            f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FLAGLESS):
         # The flagless family: the same `parse` under the same wrapper, with
@@ -3258,14 +3285,14 @@ def _script(command: str) -> str:
         return (
             f"time {rss_wrapper(platform.machine())} /pgdq parse "
             f"--source /dump.sql --dqcache /tmp/x.dqcache "
-            f"--jobs {RESERVE_JOBS} --parallel-memory {budget} {ns} >/dev/null"
+            f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Everything else about them is the shape they are
         # named after, so a row of `parallel-scan-throughput` and the
         # corresponding row of `scan-throughput-warm` differ in `--jobs` and
-        # `--parallel-memory` and nothing else.
+        # `--memory` and nothing else.
         #
         # **The budget is stated on every row, including the first, where it is
         # inert**: `--jobs 1` is `Parallelism::Serial` and `Serial` carries no
@@ -3277,7 +3304,7 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         if int(jobs) not in PARALLEL_JOBS:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
-        p = f"--jobs {jobs} --parallel-memory {PARALLEL_BUDGET}"
+        p = f"--jobs {jobs} --memory {stated_allowance(PARALLEL_BUDGET)}"
         if shape == "parse":
             return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {p} {ns} >/dev/null"
         if shape == "parse-rss":
@@ -3427,7 +3454,7 @@ def statistics_flag_problems() -> list[str]:
 
 #: A byte budget stated on a command line. The flagless family must carry
 #: neither this nor a worker count.
-_BUDGET_STATED = re.compile(r"--parallel-memory \d+")
+_BUDGET_STATED = re.compile(r"--memory \d+")
 
 
 def flagless_flag_problems() -> list[str]:
@@ -3436,7 +3463,7 @@ def flagless_flag_problems() -> list[str]:
     The exemption `_NO_FLAGS` opens is from *stating a count*, and its whole
     premise is that the arrangement under test is the one a run with no flags
     resolves for itself. A shape that quietly acquired `--jobs` or
-    `--parallel-memory` would still pass `worker_count_problems` — it is exempt
+    `--memory` would still pass `worker_count_problems` — it is exempt
     — and would publish a stated arrangement under a heading that says
     discovered, which is the failure the count reconciliation exists against
     seen from the far side."""
@@ -6034,10 +6061,11 @@ def run_parallel_scan_throughput(session: Session) -> str:
         f"{_fmt_bytes(plain)} of plaintext the plain legs read directly "
         f"({_fmt_bytes(compressed)} on disk, {plain / compressed:.2f}×), so a rate is "
         "comparable across all four columns.\n\n"
-        f"Every row states `--parallel-memory {PARALLEL_BUDGET}` "
-        f"({_fmt_bytes(PARALLEL_BUDGET)}) in a {PARALLEL_MEMORY} container — **not** the "
+        f"Every row states `--memory {stated_allowance(PARALLEL_BUDGET)}`, the allowance "
+        f"that leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in a "
+        f"{PARALLEL_MEMORY} container — **not** the "
         "register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The "
-        "one-job row states the same budget: `--jobs 1` is `Parallelism::Serial` carrying "
+        "one-job row states the same allowance: `--jobs 1` is `Parallelism::Serial` carrying "
         "it, so an `.xz` leg's one-job row is one block-decoding reader rather than the "
         "streaming fallback, and that serial path is what a speedup is a speedup over.\n\n"
         "**A plain leg's `--jobs` is what is asked for, not what is delivered.** "
@@ -6066,7 +6094,7 @@ def _substream_note() -> str:
     head = (
         "**A typed-`query` leg's `--jobs` can be clamped a second way, and that one the "
         "table states per cell rather than footnotes once.** `plan_partitions` caps a "
-        "query's sub-stream count at `--parallel-memory` divided by what one sub-stream "
+        "query's sub-stream count at the read-buffer budget divided by what one sub-stream "
         "costs to read plus what its held batch pins "
         '(`docs/design/decisions.md`, "I/O, memory and parallelism") — a budget '
         "the *harness* chose, not a ceiling the library ships. "
@@ -6164,10 +6192,11 @@ def run_parallel_peak_rss(session: Session) -> str:
         )
     notes = (
         "\n\nEach cell is peak resident set, and the change from that leg's own one-job row. "
-        f"Every row states `--parallel-memory {PARALLEL_BUDGET}` "
-        f"({_fmt_bytes(PARALLEL_BUDGET)}) in a {PARALLEL_MEMORY} container — an apparatus "
+        f"Every row states `--memory {stated_allowance(PARALLEL_BUDGET)}`, the allowance "
+        f"that leaves {_fmt_bytes(PARALLEL_BUDGET)} for read buffers, in a "
+        f"{PARALLEL_MEMORY} container — an apparatus "
         "departure from the register's 512 MB, which is smaller than the budget under "
-        "test. The one-job row states the same budget — `--jobs 1` is "
+        "test. The one-job row states the same allowance — `--jobs 1` is "
         "`Parallelism::Serial` carrying it — so every row on both legs block-decodes, "
         "the one-job row with one reader.\n\n"
         + "\n".join(sizes)
@@ -6199,7 +6228,7 @@ def _fmt_budget(n: int) -> str:
 
     Not `_fmt_bytes`, which labels a mebibyte-scale value `MB`: that reads
     correctly for a file whose size nobody chose and wrongly for a number
-    someone typed on a command line as `--parallel-memory 67108864`. Every
+    someone typed on a command line as `--memory 67108864`. Every
     registered budget is a whole mebibyte, which a test holds."""
     if n % MIB:
         raise ValueError(f"budget {n} is not a whole number of MiB")
@@ -7329,7 +7358,7 @@ def run_reserve(session: Session) -> str:
         budget = int(spec.command.removeprefix(RESERVE_STEP_FAMILY))
         step_rows.append(
             [
-                f"`--parallel-memory {budget}`"
+                f"`--memory {stated_allowance(budget)}` — {_fmt_budget_bytes(budget)} of buffers"
                 + (
                     " — one reader afforded"
                     if block_path_afforded(RESERVE_MECHANISM_UNIT, budget)
@@ -7496,7 +7525,7 @@ def run_reserve(session: Session) -> str:
         "the budget against what **one** reader costs — the per-reader term plus that one "
         "reader's share of the pool's retention list — so the pair straddles that "
         f"comparison at {_fmt_budget_bytes(charge_bytes(RESERVE_MECHANISM_UNIT, 1))} and differs "
-        "in nothing else. It is what an operator deciding whether to set `--parallel-memory` "
+        "in nothing else. It is what an operator deciding whether to set `--memory` "
         "needs, and no other figure states it:\n\n"
         + step_table
         + f"\n\n**The stated-budget axis.** Each cell "
@@ -8187,7 +8216,7 @@ FIGURES: list[Figure] = [
     # rather than an edge any one of them declares.
     Figure(
         id="reserve",
-        # The manual's `--parallel-memory` guidance and its claim that a
+        # The manual's `--memory` guidance and its claim that a
         # flagless scan stays inside its allocation are read off this table
         # without naming it, so they are declared rather than computed.
         also_quoted_by=("docs/manual/dump-inspection.md",),
@@ -10334,7 +10363,7 @@ PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
 #: same pair over `arrays` would take two readings nothing reads.
 #:
 #: **The shapes are the figure's own**, `-jobs-<n>` and all, so each states
-#: `--parallel-memory` exactly as the timed row does — including on the
+#: `--memory` exactly as the timed row does — including on the
 #: one-worker leg, where `Serial` makes it inert. The reconciliation against
 #: `_script` covers these the same way it covers the three above.
 PROFILE_AXIS: tuple[tuple[str, str], ...] = (
@@ -10386,7 +10415,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
                 "--source", str(source),
                 "--dqcache", str(cache),
                 "--jobs", jobs,
-                "--parallel-memory", str(PARALLEL_BUDGET),
+                "--memory", str(stated_allowance(PARALLEL_BUDGET)),
                 *NO_STATISTICS.split(),
             ]
     raise ValueError(f"unknown profile shape {command!r}")
@@ -10632,7 +10661,7 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
             "--source", str(source),
             "--dqcache", str(cache),
             "--jobs", str(RESERVE_JOBS),
-            "--parallel-memory", budget,
+            "--memory", str(stated_allowance(int(budget))),
             *NO_STATISTICS.split(),
         ]
     raise ValueError(f"unknown heaptrack shape {command!r}")

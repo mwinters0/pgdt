@@ -222,10 +222,11 @@ defaults cannot fit — a table of a thousand wide text columns under a small
 allocation — is fitted by raising memory or narrowing intent, and the defaults
 are not bent to reach it. A long dump of ordinary rows is not such a shape.
 
-**The check**, not yet built — P20 builds it. A CLI test lists every flag taking a byte count or a count
+**The check.** A CLI test lists every flag taking a byte count or a count
 against an allowlist classifying each as hardware, intent, input contract or
 expert override, and fails on a flag nobody has classified — so a third
-hardware knob is a decision somebody wrote down, not one that arrived quietly.
+hardware knob is a decision somebody wrote down, not one that arrived quietly
+(`pgdump_query-cli/src/main.rs`, `every_numeric_flag_is_classified`).
 
 ### A parse does all the work a later query could use
 
@@ -835,7 +836,7 @@ which is what makes the difference worth minding at the moment one is found.
   all of it. The obvious shape is a flag taking the same half-of-available
   fraction the no-limit path already caps at and applying it to the discovered
   limit instead. What needs grilling before it is written is what it composes
-  with rather than the number: `--parallel-memory` stated explicitly, the
+  with rather than the number: `--memory` stated explicitly, the
   reserve, and the below-floor path, which is where a fraction of a small
   allocation lands immediately. Reasoning:
   [2026-09-09](../status/history/2026-09-09.md), "Fast by default, and the

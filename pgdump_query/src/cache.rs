@@ -129,9 +129,9 @@ enum CompressionIndex {
 /// `xz --list` for. `max_block_uncompressed` is the largest term of what a
 /// memory budget is compared against — four times over, one reader's block
 /// beside the further blocks the pool keeps, plus the chunk buffer and the
-/// decoder's own working memory — so it is most of the number to raise `--parallel-memory`
-/// to when a query says the block path was declined, and that query's own
-/// note states the whole of it
+/// decoder's own working memory — so it is most of the read-buffer budget
+/// `--memory` has to leave when a query says the block path was declined, and
+/// that query's own note states the whole of it
 /// (`crate::PlanNoteKind::CompressedBlockPathDeclined`); `blocks` is how much
 /// seeking the file offers at all; `streams` is what explains a slow first
 /// command, a concatenated file costing one seek per stream to walk

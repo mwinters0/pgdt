@@ -243,9 +243,15 @@ async fn a_genuine_resume_reports_no_preamble_pass_and_names_the_frontier() {
     );
 }
 
-/// `--jobs`/`--parallel-memory` are the arrangement a "scan started" line
+/// `--jobs`/`--memory` are the arrangement a "scan started" line
 /// names — stated once, in the library's own vocabulary, not the flags', and
 /// as a plain byte count rather than `Option`'s debug spelling.
+///
+/// The number on the line is the **read-buffer budget** carved out of the
+/// stated allowance, never the allowance itself
+/// (`docs/design/decisions.md`, "D83"): a plain source recommends no
+/// per-reader memory, so a 640 MiB allowance leaves it the library's own
+/// 64 MiB constant under a 256 MiB cap.
 #[test]
 fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
     let dir = tempfile::tempdir().unwrap();
@@ -258,8 +264,8 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
         cache.to_str().unwrap(),
         "--jobs",
         "4",
-        "--parallel-memory",
-        "268435456",
+        "--memory",
+        "671088640",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
@@ -268,9 +274,9 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
         .find(|l| l.contains("started"))
         .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"));
     assert!(started.contains("jobs=4"), "{started}");
-    // A bare quantity — not `Some(268435456)`, `Option`'s debug spelling
+    // A bare quantity — not `Some(67108864)`, `Option`'s debug spelling
     // reaching a user-facing line.
-    assert!(started.contains("memory_bytes=268435456"), "{started}");
+    assert!(started.contains("memory_bytes=67108864"), "{started}");
     assert!(!started.contains("Some("), "{started}");
     assert!(!started.contains("None"), "{started}");
 }
@@ -352,7 +358,7 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
     // Nothing was typed, and the line says so rather than leaving the reader
     // to infer it from a number's absence.
     assert!(stated.contains("jobs_flag=(not stated)"), "{stated}");
-    assert!(stated.contains("parallel_memory_flag=(not stated)"), "{stated}");
+    assert!(stated.contains("memory_flag=(not stated)"), "{stated}");
     // A flagless plain scan takes the source's own recommendation, which is
     // the serial path — and says so as a recommendation rather than as
     // something a person typed.
@@ -407,7 +413,7 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
 /// **The stated half is printed before the seek-table walk, which is the whole
 /// of why it is a line of its own.** Opening a fresh `.xz` source walks every
 /// stream footer before it can advise anything, so a mistyped
-/// `--parallel-memory` would otherwise go unconfirmed until after a wait it
+/// `--memory` would otherwise go unconfirmed until after a wait it
 /// had no bearing on (`docs/design/decisions.md`, "D64").
 ///
 /// Asserted on a fixture whose walk is instant, since what is being pinned is
@@ -423,7 +429,7 @@ fn the_stated_half_is_reported_before_the_seek_table_walk() {
         xz.to_str().unwrap(),
         "--dqcache",
         cache.to_str().unwrap(),
-        "--parallel-memory",
+        "--memory",
         "268435456",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -434,10 +440,7 @@ fn the_stated_half_is_reported_before_the_seek_table_walk() {
     assert!(stated < walk, "the flags are confirmed before the walk: {stderr}");
     assert!(walk < resolved, "the arrangement waits on the source: {stderr}");
     // And the typed value is there to be checked against what was meant.
-    assert!(
-        stderr[stated..walk].contains("parallel_memory_flag=268435456"),
-        "the flag as typed: {stderr}"
-    );
+    assert!(stderr[stated..walk].contains("memory_flag=268435456"), "the flag as typed: {stderr}");
 }
 
 /// **A stated flag is reported as stated, on both numbers.** The provenance is
@@ -456,27 +459,36 @@ fn the_mode_report_marks_a_stated_flag_as_stated() {
         cache.to_str().unwrap(),
         "--jobs",
         "3",
-        "--parallel-memory",
-        "268435456",
+        "--memory",
+        "671088640",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
     let stated = stated_report(&stderr);
     assert!(stated.contains("jobs_flag=3"), "{stated}");
-    assert!(stated.contains("parallel_memory_flag=268435456"), "{stated}");
+    assert!(stated.contains("memory_flag=671088640"), "{stated}");
     let resolved = resolved_report(&stderr);
     assert!(resolved.contains("jobs=3 (stated)"), "{resolved}");
-    assert!(resolved.contains("memory_bytes=268435456 (stated)"), "{resolved}");
+    // The budget beside it is carved, so the line carries both numbers rather
+    // than the typed one twice (`docs/design/decisions.md`, "D83").
+    assert!(
+        resolved.contains("memory_bytes=67108864 (stated: --memory allows 671088640 resident"),
+        "{resolved}"
+    );
     assert!(!resolved.contains("recommended"), "{resolved}");
 }
 
 /// **`(default)` says nobody asked, not that nobody could ask.** The serial
-/// path carries a stated budget like any other, so `--parallel-memory` over a
-/// plain file — whose own recommendation is the serial path — prints the number
-/// that was asked for, bare, which is what
-/// makes the flag's own recourse ("raise the memory budget") readable from the
-/// log without a second worker being stated beside it
-/// (`docs/design/decisions.md`, "I/O, memory and parallelism").
+/// path carries a carved budget like any other, so `--memory` over a plain
+/// file — whose own recommendation is the serial path — prints that budget
+/// bare, which is what makes the flag's own recourse ("raise the memory
+/// budget") readable from the log without a second worker being stated beside
+/// it (`docs/design/decisions.md`, "I/O, memory and parallelism").
+///
+/// **The number here is the library's constant and the marking is still
+/// absent**, which is the whole assertion: a plain source recommends nothing,
+/// so an allowance leaves it `DEFAULT_MEMORY_BUDGET` under the cap, and a run
+/// that had stated nothing would print that same number marked `(default)`.
 #[test]
 fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
     let dir = tempfile::tempdir().unwrap();
@@ -487,8 +499,8 @@ fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
         plain_dump().to_str().unwrap(),
         "--dqcache",
         cache.to_str().unwrap(),
-        "--parallel-memory",
-        "268435456",
+        "--memory",
+        "671088640",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
@@ -497,8 +509,8 @@ fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
         .find(|l| l.contains("started"))
         .unwrap_or_else(|| panic!("no main \"scan started\" line: {stderr}"));
     assert!(started.contains("jobs=1"), "{started}");
-    assert!(started.contains("memory_bytes=268435456"), "{started}");
-    assert!(!started.contains("(default)"), "a stated budget is not the default: {started}");
+    assert!(started.contains("memory_bytes=67108864"), "{started}");
+    assert!(!started.contains("(default)"), "a stated allowance is not the default: {started}");
     assert!(!started.contains("None"), "{started}");
     assert!(!started.contains("Some("), "{started}");
 }
@@ -698,7 +710,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "none",
         "--jobs",
         "2",
-        "--parallel-memory",
+        "--memory",
         "400",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -738,7 +750,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "none",
         "--jobs",
         "2",
-        "--parallel-memory",
+        "--memory",
         "536870912",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -756,7 +768,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "none",
         "--jobs",
         "2",
-        "--parallel-memory",
+        "--memory",
         "400",
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));

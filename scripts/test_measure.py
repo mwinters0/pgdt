@@ -2024,7 +2024,7 @@ class ParallelFigures(unittest.TestCase):
             for jobs in measure.PARALLEL_JOBS:
                 with self.subTest(family=family, jobs=jobs):
                     self.assertIn(
-                        f"--parallel-memory {measure.PARALLEL_BUDGET}",
+                        f"--memory {measure.stated_allowance(measure.PARALLEL_BUDGET)}",
                         measure._script(f"{family}{jobs}"),
                     )
 
@@ -2385,7 +2385,7 @@ class CompressedAccount(unittest.TestCase):
             with self.subTest(arena=token):
                 script = measure._script(f"{measure.RESERVE_FLAGLESS}{token}")
                 self.assertNotIn("--jobs", script)
-                self.assertNotIn("--parallel-memory", script)
+                self.assertNotIn("--memory", script)
                 self.assertIn("/pgdq parse --source /dump.sql", script)
 
     def test_a_flagless_shape_that_states_a_flag_is_reported(self):
@@ -2394,13 +2394,13 @@ class CompressedAccount(unittest.TestCase):
         with unittest.mock.patch.object(
             measure,
             "_script",
-            lambda c: "time /pgdq parse --source /dump.sql --jobs 4 --parallel-memory 99",
+            lambda c: "time /pgdq parse --source /dump.sql --jobs 4 --memory 99",
         ):
             reported = measure.flagless_flag_problems()
         self.assertEqual(
             sorted(reported),
             sorted(
-                f"{c} states --jobs 4, --parallel-memory 99"
+                f"{c} states --jobs 4, --memory 99"
                 for c in measure.command_shapes()
                 if c.startswith(measure.RESERVE_FLAGLESS)
             ),
@@ -2543,12 +2543,30 @@ class CompressedAccount(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("distinct reader count(s)", out.getvalue())
 
+    def test_a_stated_allowance_leaves_the_budget_the_figure_registered(self):
+        # `--memory` states resident, so a figure registered against a buffer
+        # budget has to state that budget plus the reserve or it measures a
+        # different apparatus under the same heading.
+        for budget in (*measure.RESERVE_BUDGETS, *measure.RESERVE_STEP_BUDGETS,
+                       measure.PARALLEL_BUDGET):
+            with self.subTest(budget=budget):
+                allowance = measure.stated_allowance(budget)
+                self.assertEqual(
+                    allowance - measure.LIBRARY_MEMORY_RESERVE,
+                    budget,
+                    "the carve's cap has to land back on the registered budget",
+                )
+        # And the step pair stays one byte apart, which is the whole of what
+        # that family measures.
+        step = [measure.stated_allowance(b) for b in measure.RESERVE_STEP_BUDGETS]
+        self.assertEqual(abs(step[0] - step[1]), 1)
+
     def test_the_discovered_budget_is_the_library_rule_mirrored(self):
         # `limit.bytes.saturating_sub(MEMORY_RESERVE)`, read off the source
         # rather than trusted, since the whole point of the check above is that
         # it reasons in the library's own arithmetic.
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
-        self.assertIn("limit.bytes.saturating_sub(MEMORY_RESERVE)", src)
+        self.assertIn("allowance.saturating_sub(MEMORY_RESERVE)", src)
         self.assertEqual(
             measure.discovered_budget(512 << 20), (512 << 20) - measure.LIBRARY_MEMORY_RESERVE
         )
@@ -2664,7 +2682,7 @@ class CompressedAccount(unittest.TestCase):
         script = measure._script(spec.command)
         self.assertIn("time MALLOC_ARENA_MAX=2 perl", script)
         self.assertNotIn("--jobs", script)
-        self.assertNotIn("--parallel-memory", script)
+        self.assertNotIn("--memory", script)
 
     # -- the path step -----------------------------------------------------
 
@@ -3036,7 +3054,7 @@ class CompressedAccount(unittest.TestCase):
         log = (
             "2026-09-11T03:33:02Z  INFO running inside a stated memory allocation "
             "limit_bytes=536870912 limit_read_from=/sys/fs/cgroup/memory.max "
-            "jobs_flag=(not stated) parallel_memory_flag=(not stated)\n"
+            "jobs_flag=(not stated) memory_flag=(not stated)\n"
             "2026-09-11T03:33:02Z  INFO resolved the arrangement "
             "jobs=3 (recommended by the source; lowered from 24 by the allocation) "
             "memory_bytes=204576096 (discovered: /sys/fs/cgroup/memory.max states a "
@@ -5281,7 +5299,7 @@ class HeaptrackRecipe(unittest.TestCase):
         self.assertEqual(len(first), len(second))
         differing = [i for i, (a, b) in enumerate(zip(first, second)) if a != b]
         self.assertEqual(len(differing), 1, f"{first} vs {second}")
-        self.assertEqual(first[differing[0] - 1], "--parallel-memory")
+        self.assertEqual(first[differing[0] - 1], "--memory")
         at = differing[0]
         self.assertEqual(abs(int(first[at]) - int(second[at])), 1)
 

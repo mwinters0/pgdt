@@ -1,4 +1,4 @@
-//! `pgdq parse|query --jobs / --parallel-memory` — the CLI surface a caller
+//! `pgdq parse|query --jobs / --memory` — the CLI surface a caller
 //! states its concurrency and its memory budget in
 //! (`docs/design/decisions.md`, "I/O, memory and parallelism").
 //!
@@ -68,9 +68,9 @@ fn a_query_reads_the_same_rows_at_any_stated_parallelism() {
     for extra in [
         vec!["--jobs", "1"],
         vec!["--jobs", "8"],
-        vec!["--parallel-memory", "1048576"],
-        vec!["--jobs", "8", "--parallel-memory", "536870912"],
-        vec!["--jobs", "2", "--parallel-memory", "1048576"],
+        vec!["--memory", "1048576"],
+        vec!["--jobs", "8", "--memory", "536870912"],
+        vec!["--jobs", "2", "--memory", "1048576"],
     ] {
         let out = query(&dump, "public.widgets", &extra);
         assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
@@ -98,9 +98,9 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
         // held: the streaming reader, on a file that has boundaries to seek
         // by. `--jobs 2` beside it is incidental: a stated budget reaches the
         // source at `--jobs 1` too.
-        vec!["--jobs", "2", "--parallel-memory", "400"],
-        vec!["--parallel-memory", "65536"],
-        vec!["--jobs", "8", "--parallel-memory", "536870912"],
+        vec!["--jobs", "2", "--memory", "400"],
+        vec!["--memory", "65536"],
+        vec!["--jobs", "8", "--memory", "536870912"],
     ] {
         let out = query(&compressed, "public.widgets", &extra);
         assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
@@ -127,12 +127,18 @@ fn recourse_bytes(stderr: &str) -> u64 {
 fn a_declined_block_path_is_announced_once_on_stderr() {
     let (_xz_dir, compressed) = seekable_xz();
 
-    // 400 bytes is below the fixture's 512-byte block unit.
-    let out = query(&compressed, "public.widgets", &["--jobs", "2", "--parallel-memory", "400"]);
+    // A 400-byte allowance is swallowed whole by the reserve, so what reaches
+    // the buffers is nothing at all — and the message names the carved budget
+    // with the allowance behind it (`docs/design/decisions.md`, "D83").
+    let out = query(&compressed, "public.widgets", &["--jobs", "2", "--memory", "400"]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let err = stderr_of(&out);
     assert_eq!(err.matches("streaming decoder").count(), 1, "said once, not per sub-stream: {err}");
-    assert!(err.contains("memory budget of 400"), "the budget that declined it is named: {err}");
+    assert!(err.contains("memory budget of 0"), "the budget that declined it is named: {err}");
+    assert!(
+        err.contains("--memory allows 400 resident byte(s)"),
+        "and the allowance it was carved from: {err}"
+    );
     // The recourse is the whole of what a reader costs the rule, so it is past
     // the four 512-byte blocks the pool keeps by the decoder's own dictionary —
     // read out of the sentence rather than restated, this being the CLI's view
@@ -141,8 +147,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 
     // A budget that affords a whole block says nothing at all about the read
     // path.
-    let quiet =
-        query(&compressed, "public.widgets", &["--jobs", "2", "--parallel-memory", "536870912"]);
+    let quiet = query(&compressed, "public.widgets", &["--jobs", "2", "--memory", "536870912"]);
     assert!(quiet.status.success(), "{}", stderr_of(&quiet));
     assert!(!stderr_of(&quiet).contains("streaming decoder"), "{}", stderr_of(&quiet));
 
@@ -150,7 +155,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     let plain_dir = tempfile::tempdir().unwrap();
     let plain = plain_dir.path().join("edge_cases.sql");
     std::fs::copy(edge_cases_sql(), &plain).unwrap();
-    let plain_out = query(&plain, "public.widgets", &["--jobs", "2", "--parallel-memory", "400"]);
+    let plain_out = query(&plain, "public.widgets", &["--jobs", "2", "--memory", "400"]);
     assert!(plain_out.status.success(), "{}", stderr_of(&plain_out));
     assert!(!stderr_of(&plain_out).contains("streaming decoder"), "{}", stderr_of(&plain_out));
 }
@@ -159,7 +164,7 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 /// what a caller who does not want to think about workers can ask for: the
 /// worker count is filled in from the source and the stated bytes ride through
 /// whatever it comes back as — so the same decline and the same silence follow
-/// from `--parallel-memory` alone, with no `--jobs 2` typed
+/// from `--memory` alone, with no `--jobs 2` typed
 /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 ///
 /// Driven through the CLI rather than through the value, because what this
@@ -170,15 +175,15 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
 fn a_stated_budget_decides_the_read_path_with_no_jobs_flag() {
     let (_xz_dir, compressed) = seekable_xz();
 
-    let declined = query(&compressed, "public.widgets", &["--parallel-memory", "400"]);
+    let declined = query(&compressed, "public.widgets", &["--memory", "400"]);
     assert!(declined.status.success(), "{}", stderr_of(&declined));
     let err = stderr_of(&declined);
-    assert!(err.contains("memory budget of 400"), "the stated budget declined it: {err}");
+    assert!(err.contains("memory budget of 0"), "the stated allowance declined it: {err}");
     assert!(recourse_bytes(&err) > 2 * 512, "{err}");
 
     // And raising it alone takes the block path back — the recourse the
     // message names, with nothing else stated beside it.
-    let quiet = query(&compressed, "public.widgets", &["--parallel-memory", "536870912"]);
+    let quiet = query(&compressed, "public.widgets", &["--memory", "536870912"]);
     assert!(quiet.status.success(), "{}", stderr_of(&quiet));
     assert!(!stderr_of(&quiet).contains("streaming decoder"), "{}", stderr_of(&quiet));
 
@@ -274,7 +279,7 @@ fn the_lowest_offset_error_is_the_one_the_merge_raises() {
 #[test]
 fn a_parse_reports_the_same_listing_at_any_stated_parallelism() {
     let mut reference: Option<String> = None;
-    for extra in [vec![], vec!["--jobs", "8"], vec!["--parallel-memory", "1048576"]] {
+    for extra in [vec![], vec!["--jobs", "8"], vec!["--memory", "1048576"]] {
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("parallel.sql");
         std::fs::copy(fixture("16/edge_cases/default.sql"), &dump).unwrap();
@@ -299,8 +304,9 @@ fn a_parse_reports_the_same_listing_at_any_stated_parallelism() {
 
 /// Zero is refused for both, before the file is opened: `--jobs 0` would read
 /// as the serial path through `Parallelism::workers`, which is a surprise
-/// rather than an answer, and a budget of zero leaves no room for a buffer of
-/// any unit.
+/// rather than an answer, and an allowance of zero is not one a process can run
+/// inside at all. A *small* allowance is accepted and carves to a budget of
+/// zero, which is the arm above.
 #[test]
 fn zero_is_refused_for_both_flags() {
     let dump = fixture("16/edge_cases/default.sql");
@@ -308,7 +314,7 @@ fn zero_is_refused_for_both_flags() {
     assert!(!jobs.status.success());
     assert!(stderr_of(&jobs).contains("--jobs 1 is the serial path"), "{}", stderr_of(&jobs));
 
-    let memory = query(&dump, "public.widgets", &["--parallel-memory", "0"]);
+    let memory = query(&dump, "public.widgets", &["--memory", "0"]);
     assert!(!memory.status.success());
-    assert!(stderr_of(&memory).contains("no room for a read buffer"), "{}", stderr_of(&memory));
+    assert!(stderr_of(&memory).contains("no room to run in"), "{}", stderr_of(&memory));
 }

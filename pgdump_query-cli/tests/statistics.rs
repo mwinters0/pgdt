@@ -484,9 +484,15 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
                 "id >= 990 or id < 3",
                 "--jobs",
                 jobs,
-                // Wide enough that three sub-streams are planned: the
-                // default budget affords one.
-                "--parallel-memory",
+                // A stated allowance no longer buys a plain source more
+                // read buffers than the library's own constant, so this plans
+                // one sub-stream whatever `--jobs` says
+                // (`docs/design/decisions.md`, "D83"). It is stated anyway:
+                // what the pair of legs proves is that the answer does not
+                // depend on the arrangement, and the split itself is covered
+                // where a budget can still reach it
+                // (`pgdump_query/tests/pruning.rs`).
+                "--memory",
                 "1073741824",
             ];
             args.extend_from_slice(extra);
@@ -527,9 +533,15 @@ fn query_notes_what_an_early_stop_left_unread_only_where_one_fired() {
                 filter,
                 "--jobs",
                 jobs,
-                // Wide enough that three sub-streams are planned: the
-                // default budget affords one.
-                "--parallel-memory",
+                // A stated allowance no longer buys a plain source more
+                // read buffers than the library's own constant, so this plans
+                // one sub-stream whatever `--jobs` says
+                // (`docs/design/decisions.md`, "D83"). It is stated anyway:
+                // what the pair of legs proves is that the answer does not
+                // depend on the arrangement, and the split itself is covered
+                // where a budget can still reach it
+                // (`pgdump_query/tests/pruning.rs`).
+                "--memory",
                 "1073741824",
             ];
             args.extend_from_slice(extra);

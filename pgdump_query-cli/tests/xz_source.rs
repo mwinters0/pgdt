@@ -168,9 +168,9 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
 /// the mode a budget decline deliberately cannot be reported in (it depends
 /// on a run's budget, where this is a property of the file). The three
 /// numbers are what a user would otherwise run `xz --list` for, and
-/// `largest block` is the largest term of what `--parallel-memory` has to
+/// `largest block` is the largest term of what the read-buffer budget has to
 /// clear — four times over, plus a read buffer and the decoder's own working
-/// memory.
+/// memory, and `--memory` has to clear that plus the reserve.
 #[test]
 fn info_detail_states_the_container_shape_from_the_cache_alone() {
     let (_xd, xz_path) = seekable_xz();

@@ -468,7 +468,7 @@ pinned one would measure an arrangement the shipped default never produces — a
 the count each leg ran at is read back off that run's own `scan started` line
 rather than assumed. It is declared at both ends like the first:
 `flagless_flag_problems` fails a shape in that family that states `--jobs` or
-`--parallel-memory` after all, so the exemption cannot quietly become a pin.
+`--memory` after all, so the exemption cannot quietly become a pin.
 What it is not is a *throughput* table off unpinned shapes, which the register
 refuses elsewhere because it would buy a number `parallel-scan-throughput`
 already carries at a stated count; this is a resident reading of an arrangement
@@ -3007,7 +3007,7 @@ legs of a five-build reading — taken once and transcribed in
 figure here — against the fraction of the limit left at the worst rep; on this
 sitting's flagless legs the worst remainder is 179.5 MiB. The two numbers are
 answers to different questions and neither bounds the other; the axis is here
-because an operator who sets `--parallel-memory` by hand needs it.
+because an operator who sets `--memory` by hand needs it.
 
 ## koji full scan — the regression check
 

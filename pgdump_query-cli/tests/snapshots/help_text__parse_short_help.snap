@@ -29,8 +29,8 @@ Options:
                                        worth") — so this is a tuning escape hatch for a device
                                        unlike those, not a knob with a win behind it. A raised value
                                        keeps its buffer pooling and costs memory instead: the read
-                                       path holds four buffers of whatever size you ask for, or
-                                       `--parallel-memory`'s worth, whichever is fewer
+                                       path holds four buffers of whatever size you ask for, or what
+                                       `--memory` leaves for read buffers, whichever is fewer
       --max-line-bytes <BYTES>         The longest line the scan accepts, in bytes. A longer one
                                        stops the scan with an error naming its offset rather than
                                        being buffered without bound; the check is made as each read
@@ -92,16 +92,14 @@ Options:
                                        decides: a plain dump reads serially, and an `.xz` one takes
                                        the CPUs this process was given, or its own block count where
                                        that is smaller — lowered again to the number of readers the
-                                       memory budget can pay for, where that is fewer, whether that
-                                       budget was discovered or stated with `--parallel-memory`. A
+                                       memory allowance can pay for, where that is fewer, whether
+                                       that allowance was discovered or stated with `--memory`. A
                                        count stated here is never lowered that way
-      --parallel-memory <BYTES>        What those workers may hold between them in read buffers, in
-                                       bytes. Left unstated, pgdq reads the memory limit it is
-                                       running under — the smallest cgroup limit that binds — less a
-                                       384 MiB reserve, and takes inside that what the file asks
-                                       for: one reader's worth for each worker it would run, rather
-                                       than the whole allowance. Where no limit is set that same
-                                       number is held under half the memory the machine reports
-                                       available. A plain dump asks for nothing of its own and gets
-                                       64 MiB, or the limit less the reserve where that is smaller
+      --memory <BYTES>                 How much memory pgdq may hold resident in total, in bytes —
+                                       the number you would give the container. Left unstated, pgdq
+                                       reads the memory limit it is running under — the smallest
+                                       cgroup limit that binds — and uses that; where no limit is
+                                       set it stays inside half the memory the machine reports
+                                       available. A number typed here replaces whatever was
+                                       discovered and is carved up exactly the same way
   -h, --help                           Print help (see more with '--help')

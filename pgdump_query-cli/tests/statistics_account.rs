@@ -305,7 +305,7 @@ fn the_account_reconciles_with_the_live_statistics_heap() {
             size,
             "--jobs",
             "4",
-            "--parallel-memory",
+            "--memory",
             "1073741824",
             "--chunk-size",
             "1048576",

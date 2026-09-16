@@ -606,6 +606,13 @@ impl Partitioning {
 /// `xz_seek::Bulk::new(workers, budget_bytes)`. Neither is defaulted inside
 /// [`Parallelism::Workers`].
 ///
+/// **The bytes here are a resolved pool budget, not the allowance a person
+/// states.** A caller that means "this is all the memory the process may have"
+/// says so through [`Parallelism::within`], which carves the budget out of it;
+/// what survives into this type is the carved number, because that is the one
+/// every pool and every affordability test reads
+/// (`docs/design/decisions.md`, "D83").
+///
 /// **`Serial` is a state, not the number one.** One worker and the serial path
 /// are the same execution, so [`Parallelism::workers`] answers `Serial` for a
 /// count of one rather than a degenerate `Workers`, which keeps "is this
@@ -628,7 +635,7 @@ pub enum Parallelism {
     /// `memory_bytes` where the caller stated one.
     Serial {
         /// What that one thread's source may hold in pooled buffers, in
-        /// bytes, or `None` where the caller stated no budget at all. The
+        /// bytes, or `None` where the caller stated no allowance at all. The
         /// worker count collapsing to the serial path says nothing about the
         /// budget beside it, so the budget survives the collapse.
         memory_bytes: Option<u64>,
@@ -639,10 +646,12 @@ pub enum Parallelism {
         /// The ceiling on concurrent workers — a ceiling rather than a
         /// request, since some input shapes admit no parallelism at all.
         jobs: NonZeroUsize,
-        /// What those workers may hold resident between them, in bytes. This
-        /// is the number a memory cgroup is denominated in, and the one a
-        /// worker count cannot be promised to: what a given count costs scales
-        /// with the source's block size ([`WorkerMemory::at`]).
+        /// What those workers may hold in their source's **pools**, in bytes —
+        /// a resolved budget and not the resident allowance it was carved from
+        /// ([`Parallelism::within`]), which is the number a memory cgroup is
+        /// denominated in. A worker count cannot be promised to either: what a
+        /// given count costs scales with the source's block size
+        /// ([`WorkerMemory::at`]).
         memory_bytes: u64,
     },
 }
@@ -735,9 +744,11 @@ impl Parallelism {
     /// What distinguishes *no limit found* from *a small limit* is that the
     /// first has no cap at all:
     ///
-    /// - a discovered limit caps at `limit − MEMORY_RESERVE`, and
-    ///   `jobs × per_worker` — or [`DEFAULT_MEMORY_BUDGET`] where the caller
-    ///   has no recommendation — is taken no higher, and may fall **below**
+    /// - a discovered limit is carved by [`Parallelism::within`], the same
+    ///   arithmetic a stated allowance gets: it caps at `limit −
+    ///   MEMORY_RESERVE`, and `jobs × per_worker` — or
+    ///   [`DEFAULT_MEMORY_BUDGET`] where the caller has no recommendation — is
+    ///   taken no higher, and may fall **below**
     ///   [`DEFAULT_MEMORY_BUDGET`]. The **count** answers to a second
     ///   condition: its predicted resident must leave
     ///   [`MEMORY_MARGIN_PERCENT`] of the limit unused ([`margin_allowance`]);
@@ -758,10 +769,9 @@ impl Parallelism {
     /// (`pgdump_query-cli/tests/data/runtime/`).
     pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
         let (cap, ceiling) = match discover_memory_limit_in(root) {
-            Some(limit) => (
-                Some(limit.bytes.saturating_sub(MEMORY_RESERVE)),
-                Some(margin_allowance(limit.bytes)),
-            ),
+            // The one carving, shared with a stated allowance
+            // ([`Parallelism::within`]).
+            Some(limit) => return Self::within(jobs, memory, limit.bytes),
             // Nothing discovered and nothing recommended: no cap to state, and
             // no recommendation to cap, which is the library's own default.
             None if memory.is_none() => (None, None),
@@ -782,28 +792,32 @@ impl Parallelism {
         }
     }
 
-    /// [`Parallelism::discover_for`]'s lowering against a budget the caller
-    /// already holds — a *recommended* `jobs` cut to what `memory_bytes`
-    /// affords at `per_worker` each, with the budget kept exactly as stated.
+    /// The arrangement `jobs` workers take inside a **resident allowance** the
+    /// caller states — `pgdq --memory`, and an embedder that means by its
+    /// number what a container means by one.
     ///
-    /// **A recommended count answers to the allowance however that allowance
-    /// arrived** (`docs/design/roadmap.md`, "A default runs as fast as the
-    /// allocation permits"). The rule is scoped to the absence of a **count**,
-    /// never the absence of a budget: a caller holding a stated count calls
-    /// [`Parallelism::workers`] and keeps it.
+    /// **It is [`Parallelism::discover_in`]'s own carving, called with a
+    /// stated number in place of the discovered limit**: [`MEMORY_RESERVE`]
+    /// comes off the top for everything the pools do not bill, the count is
+    /// held to [`margin_allowance`], and the budget it answers with is what
+    /// that many workers spend. Neither number the caller gets back is the one
+    /// it typed, and that is the point — the typed number bounds the
+    /// **process**, where the budget bounds the pools
+    /// (`docs/design/decisions.md`, "D83").
     ///
-    /// **No margin here**, unlike `discover_for`: [`MEMORY_MARGIN_PERCENT`] is
-    /// a share of a *limit* the environment states, and a budget somebody
-    /// typed is not one.
-    ///
-    /// **Only the count moves** — lowering a stated budget would overrule a
-    /// stated flag (`docs/design/decisions.md`, "D64").
-    pub fn recommended_within(
-        jobs: usize,
-        memory: Option<WorkerMemory>,
-        memory_bytes: u64,
-    ) -> Self {
-        Self::workers(Self::fit(jobs, memory, memory_bytes, None).0, memory_bytes)
+    /// **The count it returns is a recommendation lowered to fit**. A caller
+    /// holding a count somebody *stated* keeps that count and takes only the
+    /// budget from here, exactly as against a discovered limit
+    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
+    /// permits").
+    pub fn within(jobs: usize, memory: Option<WorkerMemory>, allowance: u64) -> Self {
+        let (jobs, budget) = Self::fit(
+            jobs,
+            memory,
+            allowance.saturating_sub(MEMORY_RESERVE),
+            Some(margin_allowance(allowance)),
+        );
+        Self::workers(jobs, budget)
     }
 
     /// The largest pair `(count, budget)` that fits inside `cap`: as many of
@@ -823,11 +837,11 @@ impl Parallelism {
     /// **`charge_ceiling` is the margin, and it bounds the count alone**: the
     /// most this arrangement may be *charged* if its predicted resident —
     /// `memory.at(n)` plus [`MEMORY_UNPOOLED_BOUND`] — is to leave
-    /// [`MEMORY_MARGIN_PERCENT`] of a discovered limit unused
-    /// ([`margin_allowance`]). A budget somebody **typed** carries no such
-    /// ceiling. The budget stays `cap`-bounded rather than ceiling-bounded, so
-    /// what a lowered count reports is still what it spends
-    /// (`docs/design/decisions.md`, "D3").
+    /// [`MEMORY_MARGIN_PERCENT`] of the allowance unused
+    /// ([`margin_allowance`]), whether that allowance was discovered or typed
+    /// (`docs/design/decisions.md`, "D83"). The budget stays `cap`-bounded
+    /// rather than ceiling-bounded, so what a lowered count reports is still
+    /// what it spends (`docs/design/decisions.md`, "D3").
     fn fit(
         jobs: usize,
         memory: Option<WorkerMemory>,
@@ -857,8 +871,8 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 }
 
 /// What a source may hold in pooled buffers when the caller has stated no
-/// budget of its own — [`Parallelism::default`]'s number, and the CLI's default
-/// for `--parallel-memory`.
+/// budget of its own — [`Parallelism::default`]'s number, and what a `pgdq` run
+/// falls back to where neither `--memory` nor a limit says otherwise.
 ///
 /// **It is the serial path's budget and deliberately not the largest block
 /// anyone might write**: [`POOL_DEPTH`] slots at the largest chunk size the
@@ -868,10 +882,11 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 /// `docs/design/decisions.md`, "D3".
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
-/// What [`Parallelism::discover`] holds back from a discovered memory limit,
-/// in bytes: everything the process holds that a stated budget does not bound
-/// — the runtime's threads, glibc's per-thread arenas, the decoder state a
-/// compressed source keeps outside its pools, and the binary itself.
+/// What [`Parallelism::within`] holds back from a memory allowance, discovered
+/// or stated, in bytes: everything the process holds that the pools' budget
+/// does not bound — the runtime's threads, glibc's per-thread arenas, the
+/// decoder state a compressed source keeps outside its pools, and the binary
+/// itself.
 ///
 /// **It is a subtraction rather than a fraction**
 /// (`docs/design/decisions.md`, "D3").
@@ -885,7 +900,7 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 ///
 /// **It is the cap, and it is not the bound on that excess** — that is
 /// [`MEMORY_UNPOOLED_BOUND`], which [`margin_allowance`] predicts with. This
-/// one comes off the top of a discovered limit and decides what
+/// one comes off the top of the allowance and decides what
 /// [`BlockCache::affordable`] sees, so **raising it is also what declines the
 /// block path**. One constant, taken from the compressed leg, a source's own
 /// answer being downstream of recognition and so of I/O.
@@ -899,17 +914,17 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 /// streaming path.
 pub const MEMORY_RESERVE: u64 = 384 << 20;
 
-/// How much of a **discovered** memory limit a resolved arrangement must leave
-/// unused, as a percentage of the limit — the criterion [`MEMORY_RESERVE`] was
-/// chosen against, enforced on the worker count instead of being left to hold
-/// by accident.
+/// How much of a memory allowance a resolved arrangement must leave unused, as
+/// a percentage of that allowance — the criterion [`MEMORY_RESERVE`] was chosen
+/// against, enforced on the worker count instead of being left to hold by
+/// accident.
 ///
 /// **A judgement rather than a derived number**, about the worst rep and not
 /// the median (`docs/design/decisions.md`, "D3"). A constant reserve leaves a
-/// shrinking *share* of the limit as the limit grows, so the cap alone stops
-/// meeting the criterion at the top end; enforcing it on the count is what
-/// makes the answer a property of the allocation rather than of the host's
-/// width.
+/// shrinking *share* of the allowance as the allowance grows, so the cap alone
+/// stops meeting the criterion at the top end; enforcing it on the count is
+/// what makes the answer a property of the allocation rather than of the
+/// host's width.
 ///
 /// **Enforced once, against [`MEMORY_UNPOOLED_BOUND`]**: the predicted
 /// resident a count is held to is `WorkerMemory::at(n)` plus that bound, not
@@ -949,15 +964,15 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 /// exit (`fordblks`) is most of it, and no term table sums to it.
 /// `scripts/measure.py`'s `charge_model_problem` faults a cell whose remainder
 /// exceeds this, which is the finding that would move it. It is not
-/// [`MEMORY_RESERVE`] because the reserve is what a discovered limit hands
-/// back before anything is spent, where this is what the arrangement is
-/// predicted to hold on top of what it spends.
+/// [`MEMORY_RESERVE`] because the reserve is what an allowance hands back
+/// before anything is spent, where this is what the arrangement is predicted
+/// to hold on top of what it spends.
 pub const MEMORY_UNPOOLED_BOUND: u64 = 256 << 20;
 
-/// The most a resolved arrangement may be **charged** under a discovered
-/// `limit` if its predicted resident is to leave [`MEMORY_MARGIN_PERCENT`] of
-/// that limit unused: `(100 − margin)% of limit`, less
-/// [`MEMORY_UNPOOLED_BOUND`].
+/// The most a resolved arrangement may be **charged** under an `allowance` —
+/// a discovered limit or a stated `--memory` — if its predicted resident is to
+/// leave [`MEMORY_MARGIN_PERCENT`] of it unused: `(100 − margin)% of
+/// allowance`, less [`MEMORY_UNPOOLED_BOUND`].
 ///
 /// **The predicted resident is `charge + MEMORY_UNPOOLED_BOUND`**, that
 /// constant being what bounds the one term the charge does not bill. Using
@@ -965,10 +980,12 @@ pub const MEMORY_UNPOOLED_BOUND: u64 = 256 << 20;
 /// the reserve being the smallest constant meeting that criterion under the
 /// cap rule (`docs/design/decisions.md`, "D3").
 ///
-/// Integer arithmetic, rounding **down** the fraction of the limit so the
-/// allowance errs small.
-fn margin_allowance(limit: u64) -> u64 {
-    (limit / 100).saturating_mul(100 - MEMORY_MARGIN_PERCENT).saturating_sub(MEMORY_UNPOOLED_BOUND)
+/// Integer arithmetic, rounding **down** the fraction of the allowance so the
+/// ceiling errs small.
+fn margin_allowance(allowance: u64) -> u64 {
+    (allowance / 100)
+        .saturating_mul(100 - MEMORY_MARGIN_PERCENT)
+        .saturating_sub(MEMORY_UNPOOLED_BOUND)
 }
 
 /// A cgroup v1 `memory.limit_in_bytes` at or above this reads as *no limit*
@@ -1961,7 +1978,7 @@ impl BlockCache {
     /// **What it declines is memory, not seekability**: a file written with
     /// large blocks (`xz -9 -T0`, or an explicit `--block-size`) is declined
     /// under the default budget and does have parallelism to lose, which
-    /// `--parallel-memory` or `Parallelism::Workers` reverses.
+    /// `--memory` or `Parallelism::Workers` reverses.
     fn affordable(&self, chunk_bytes: u64, decode_bytes: u64, budget: u64) -> bool {
         self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget
     }
@@ -4570,44 +4587,57 @@ mod tests {
         );
     }
 
-    /// **A recommended count is lowered by a stated budget exactly as it is by
-    /// a discovered one, and only the count moves.** Where
-    /// [`Parallelism::discover_in`] hands back the bytes the lowered count
-    /// spends — it chose them, and must not name a budget the allowance never
-    /// granted — the budget here was stated by the caller and is taken whole.
+    /// **A stated allowance is the discovered limit's own carving**, which is
+    /// the whole of what `--memory` promises: the same number reached either
+    /// way resolves to the same pair (`docs/design/decisions.md`, "D83"). The
+    /// allowances span the margin's crossover, so the check covers the band
+    /// where the cap binds and the band where the ceiling does.
     #[test]
-    fn a_stated_budget_lowers_a_recommendation_without_being_lowered_itself() {
-        let per_worker = 58 << 20;
+    fn a_stated_allowance_resolves_as_the_same_number_discovered_would() {
+        let memory = Some(WorkerMemory::per_worker(58 << 20).pooling(24 << 20, POOL_DEPTH));
+        for allowance in [512u64 << 20, 640 << 20, 1024 << 20, 4096 << 20] {
+            let root = FakeRoot::new();
+            root.v2("/leaf").v2_limits("/leaf", Some(&allowance.to_string()), None);
+            for jobs in [1, 4, 24] {
+                assert_eq!(
+                    Parallelism::within(jobs, memory, allowance),
+                    Parallelism::discover_in(root.path(), jobs, memory),
+                    "{allowance} bytes at {jobs} jobs",
+                );
+            }
+        }
+    }
 
-        // Six readers fit inside 400 MiB; the seventh does not.
-        let cut = Parallelism::recommended_within(
-            24,
-            Some(WorkerMemory::per_worker(per_worker)),
-            400 << 20,
-        );
+    /// **The typed number bounds the process, and what comes back bounds the
+    /// pools**: the reserve is off the top before a reader is counted, and an
+    /// allowance the reserve swallows resolves to a budget of zero rather than
+    /// to a floor — which the floors inside the mechanism turn into one reader
+    /// on the streaming path.
+    #[test]
+    fn a_stated_allowance_pays_the_reserve_before_anything_else() {
+        let per_worker = 58 << 20;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+
+        // Six readers fit inside the 400 MiB *left* by the allowance; the
+        // seventh does not. The budget is what those six spend, never the
+        // number typed.
+        let cut = Parallelism::within(24, memory, MEMORY_RESERVE + (400 << 20));
         assert_eq!(cut.jobs(), 6);
-        assert_eq!(cut.memory_bytes(), Some(400 << 20), "the stated bytes, not 6 × per_worker");
+        assert_eq!(cut.memory_bytes(), Some(6 * per_worker), "the carved spend, not the allowance");
 
         // Room for the whole recommendation leaves it standing.
-        let roomy = Parallelism::recommended_within(
-            24,
-            Some(WorkerMemory::per_worker(per_worker)),
-            64 << 30,
-        );
+        let roomy = Parallelism::within(24, memory, 64 << 30);
         assert_eq!(roomy.jobs(), 24);
-        assert_eq!(roomy.memory_bytes(), Some(64 << 30));
+        assert_eq!(roomy.memory_bytes(), Some(24 * per_worker));
 
-        // The floor is one worker at whatever was stated, which is
-        // `Parallelism::workers`' serial arrangement carrying the budget.
-        let tight = Parallelism::recommended_within(
-            24,
-            Some(WorkerMemory::per_worker(per_worker)),
-            32 << 20,
-        );
-        assert_eq!(tight, Parallelism::Serial { memory_bytes: Some(32 << 20) });
+        // At and below the reserve there is nothing left to spend.
+        let starved = Parallelism::within(24, memory, MEMORY_RESERVE);
+        assert_eq!(starved, Parallelism::Serial { memory_bytes: Some(0) });
 
-        // Nothing to divide by leaves the count where it is.
-        assert_eq!(Parallelism::recommended_within(8, None, 32 << 20).jobs(), 8);
+        // Nothing to divide by leaves the count where it is, on the constant.
+        let blind = Parallelism::within(8, None, 64 << 30);
+        assert_eq!(blind.jobs(), 8);
+        assert_eq!(blind.memory_bytes(), Some(DEFAULT_MEMORY_BUDGET));
     }
 
     /// **An unlimited environment falls back to the shipped constant**, and at

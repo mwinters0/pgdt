@@ -8,7 +8,7 @@ so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
 register". **Capped at 550 lines**: an entry earns its place by being something a later session
 would otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D82 -->
+<!-- decision-watermark: D83 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -27,6 +27,14 @@ process. `MEMORY_MARGIN_PERCENT` binds the resolved *count*, not the budget (a b
 binds once `BufferPool::slots` clamps). `MEMORY_UNPOOLED_BOUND` is a bound off a grid, never a
 per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an ordinary
 `.xz`; clearing that gate picks one number for two questions. Evidence: `reserve`, `chunk-size`.
+
+### D83 `--memory` states what the process may hold; one carving serves stated and discovered
+A read-buffer budget is a number an operator cannot size a container from, so the flag states
+resident and `Parallelism::within` carves it — reserve off the top, `margin_allowance` on the count
+— with `discover_in` calling the same function, so provenance still never enters `Parallelism`
+(D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` whatever is
+stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
+giving statistics what it leaves. Code: `io.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's
