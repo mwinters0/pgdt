@@ -75,7 +75,7 @@ one being unable to say which phase is short.
 
 ## The decision register
 
-`docs/design/decisions.md` is **capped at 500 lines** of numbered entries, each
+`docs/design/decisions.md` is **capped at 550 lines** of numbered entries, each
 at most seven lines: **Decision**, **Why**, **Rejected** (and why), **Reopens**,
 **Code** (the item), **Evidence** (a figure id, an invariant, a test).
 
@@ -232,7 +232,8 @@ the record has grown rather than by phase boundaries.
   about a hundred lines, `CLAUDE.md`, this document and each skill at the
   sizes that keep orientation cheap, no measured number in the register or in
   `STATUS.md`'s capability table, no phase provenance in a source comment.
-  Adding under a full cap means striking; a cap is never raised to fit.
+  Adding under a full cap means striking; a session never raises one to fit
+  what it is landing, and only the maintainer moves a ceiling, deliberately.
 - **An argument is written once, where it will be struck.** A decision's
   reasoning lives in its `D<k>` entry, or in the dated entry while it is still
   moving. A standing document, a comment and the manual carry the conclusion

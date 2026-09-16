@@ -13,11 +13,11 @@ maximum is shaped this way is
 [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
 "`--statistics`: what `parse` records for later queries", and the flag's help.
 
-**The register was not added to.** `decisions.md` is at its line cap, and
-`D82`'s title still describes what it describes, so this slice cites the spec
-and the rustdoc as `P20.4.1` did. The maximum's three calls the code cannot
-explain — it turns the cap off, it outranks the minimum, and a block is read
-twice and never a third time — are the wrap's to fold in.
+**The register carries the maximum.** `D82` is retitled to the merge between a
+minimum and a maximum and says a stated maximum stops the merge first and lifts
+the cap; `D34` says a back-fill re-reads once for a maximum it breaks. Both were
+amended in place rather than joined by a `D83`, and the rustdoc keeps the two
+monotonicity proofs, mechanism not being an entry's business.
 
 ## The checks
 

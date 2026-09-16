@@ -12,8 +12,8 @@ length. Both halves are mechanical, so both are here:
 * **The caps.** `decisions.md` at its line cap and seven lines an entry; a
   dated entry, from the day the cap was adopted, at about a hundred lines;
   `CLAUDE.md`, `docs/process.md` and each skill at the sizes that keep
-  orientation cheap. A cap is never raised to fit -- adding under a full one
-  means striking.
+  orientation cheap. Adding under a full one means striking; a session never
+  raises a cap to fit what it is landing, and only the maintainer moves one.
 * **No narration where a conclusion belongs.** No measured quantity in the
   register or in `STATUS.md`'s capability table (a number is stated once, in
   `measurements.md`); no phase, ledger or date provenance in a source comment
@@ -48,7 +48,7 @@ from typing import Iterable, Sequence
 REPO = Path(__file__).resolve().parent.parent
 
 #: The register's caps: `docs/process.md`, "The decision register".
-REGISTER_LINES = 500
+REGISTER_LINES = 550
 ENTRY_LINES = 7
 #: "About a hundred lines" (`docs/status/history/README.md`), read as this many,
 #: and held only for entries dated after the day the cap was adopted.

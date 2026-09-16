@@ -320,16 +320,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **20.5 put nothing in the decision register, because it is at its line cap.**
-  The stated maximum makes three calls the code cannot explain — it turns
-  `STATISTICS_GROUP_CAP` off, it outranks the minimum where a block meets
-  neither, and a block is read twice for it and never a third time — and
-  `decisions.md` is exactly 500 lines, so an entry means striking one. The
-  slice followed 20.4.1's precedent instead: the reasoning is in the rustdoc on
-  `gather::density_merges` and `StatisticsRequest::backfill`, cited from
-  [`../design/roadmap-P20.5-stated-maximum-notes.md`](../design/roadmap-P20.5-stated-maximum-notes.md),
-  and the phase wrap folds it in. Reconsidering means striking an entry now and
-  allocating `D83` — judging which of the 82 no longer binds, which is a
-  standing-record call an unattended session does not make. Nothing in the code
-  changes either way.

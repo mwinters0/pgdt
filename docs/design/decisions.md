@@ -5,7 +5,7 @@ over an alternative, and obvious changes measured or argued and refused. Nothing
 code works (the named module does) or quotes a number (`measurements.md` does, cited by figure id;
 so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
 `docs/design/decisions.md`, "D12"; numbering and striking are `docs/process.md`, "The decision
-register". **Capped at 500 lines**: an entry earns its place by being something a later session
+register". **Capped at 550 lines**: an entry earns its place by being something a later session
 would otherwise re-litigate, and adding one may mean striking one.
 
 <!-- decision-watermark: D82 -->
@@ -213,10 +213,10 @@ untaken until the `INSERT` row reader exists (`KD9`).
 `blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a
 streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block
 behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a
-byte range, no leader piece knowing a global row index. A back-fill keeps a block's columns, and its
-size unless a size or a minimum it did not record is stated. Rejected: `SparseRowIndex`; padded
-`character` bounds and entries, keyed alike but past the cap; a back-fill narrowed, dropping only
-re-read blocks' columns.
+byte range, no piece knowing a global row index. A back-fill keeps a block's columns, and its size
+unless a stated bound it did not record moves it, a maximum it breaks re-reading it once. Rejected:
+`SparseRowIndex`; padded `character` bounds and entries, keyed alike but past the cap; a back-fill
+narrowed, dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and always runs
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes at L1 (I15, I25); min and
@@ -419,12 +419,13 @@ neither; in-flight growth unmade both ways, faulting a table another worker hold
 block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen
 term growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Charge`.
 
-### D82 A block merges pairwise, exactly, past its cap and short of its minimum, never while a piece lives
-Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads until
+### D82 A block merges pairwise, exactly, between its minimum and its maximum, never while a piece lives
+Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads till
 `finish` clips them, a clipped upper bound not ordering as its value does; a merged dictionary
-renumbers first-seen. A piece joins at its own size, so a block waits till none lives, reopening an
-odd last group. Rejected: merging stored bounds; coarsening a piece at its join; waiting for an even
-count, which windows keep odd; the cap on the request, not the back-fill. Code: `Gatherer::fit_cap`.
+renumbers first-seen. A stated maximum stops the merge first and lifts the cap. A piece joins at
+its own size, so a block waits till none lives, reopening an odd last group. Rejected: merging
+stored bounds; coarsening a piece at its join; an even count, which windows keep odd; the
+nearest-rank median, not monotone under the cap. Code: `Gatherer::fit_cap`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

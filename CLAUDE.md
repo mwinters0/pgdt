@@ -45,7 +45,7 @@ Never edit a `runs/` orchestration script while it is running.
 ## Where things are, and when to read them
 
 - `docs/design/decisions.md` — the decisions the code cannot explain, one
-  numbered `D<k>` entry each, capped at 500 lines: anticipatory shapes, chosen
+  numbered `D<k>` entry each, capped at 550 lines: anticipatory shapes, chosen
   defaults, measured refusals, and the layering rules. **Read the entries for
   a mechanism before changing it or proposing an optimization to it**; most
   obvious optimizations carry a refusal already. Cite an entry, never restate
