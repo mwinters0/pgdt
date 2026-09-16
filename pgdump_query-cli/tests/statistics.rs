@@ -194,9 +194,11 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
         stderr_of(&out)
     };
 
-    // At and below `4 × MEMORY_RESERVE − 5 × MEMORY_UNPOOLED_BOUND` the margin
-    // leaves the read buffers nothing, so it leaves the statistics nothing
-    // either: every block declines, whatever its width.
+    // At and below `1.25 × MEMORY_UNPOOLED_BOUND` the margin ceiling is zero on
+    // its own, so it leaves the statistics nothing whatever the budget: every
+    // block declines, whatever its width. This number is that line exactly —
+    // 320 MiB, where `(a / 100) * 80` truncates to 16 bytes under the bound —
+    // so the assertions below rest on the rounding direction.
     let tight = ["--memory", "335544320"];
     let stderr = parse(&tight);
     assert!(stderr.contains("statistics_bytes=0 (stated)"), "{stderr}");

@@ -989,9 +989,9 @@ fn margin_allowance(allowance: u64) -> u64 {
 /// **What a resolved arrangement leaves for a mapping pass's statistics**: the
 /// bytes a `crate::statistics::StatisticsAccount` may hold under `allowance` —
 /// a discovered limit or a stated `--memory` — once `budget`, the read-buffer
-/// budget that arrangement resolved to, and [`MEMORY_UNPOOLED_BOUND`] are
-/// taken off [`margin_allowance`]'s ceiling
-/// (`docs/design/decisions.md`, "D85").
+/// budget that arrangement resolved to, comes off [`margin_allowance`]'s
+/// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
+/// of the allowance (`docs/design/decisions.md`, "D85").
 ///
 /// **It is carved after the workers, never before them**
 /// (`docs/design/roadmap-P20-statistics-memory.md`, "Workers are resolved
@@ -1003,6 +1003,17 @@ fn margin_allowance(allowance: u64) -> u64 {
 /// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
 /// of the allowance — subtracting both would take the margin twice, exactly as
 /// [`margin_allowance`] refuses to.
+///
+/// **Which of the two bounds binds decides what is left, and the bands run the
+/// other way round from the intuition.** [`Parallelism::fit`] solves the count
+/// against `cap.min(ceiling)`, so below `5 × (MEMORY_RESERVE −
+/// MEMORY_UNPOOLED_BOUND)` the *cap* binds and what is left here is at least
+/// `ceiling − cap`, strictly positive — an allowance in that band cannot starve
+/// statistics. At and above it the *ceiling* binds, the count is solved right up
+/// against the number this subtracts from, and statistics get only the slack one
+/// worker's step leaves: a wide host at a high `--jobs` is where every block
+/// declines, not a narrow one. Below `1.25 × MEMORY_UNPOOLED_BOUND` the ceiling
+/// is zero on its own and nothing is ever gathered.
 ///
 /// Saturating, so an arrangement whose budget already fills the margin leaves
 /// zero rather than wrapping, and every block declines.

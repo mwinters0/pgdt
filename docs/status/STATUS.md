@@ -324,22 +324,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The statistics allowance is `margin_allowance(allowance) − budget`, with
-  `MEMORY_RESERVE` deliberately not subtracted a second time** (20.7,
-  `io::statistics_allowance`). The spec says only "what that arrangement leaves
-  under the margin"; the reserve carves the *cap* a worker count is solved
-  against, while the margin ceiling already stands `MEMORY_UNPOOLED_BOUND`
-  below its fraction of the allowance, so taking both would apply
-  `MEMORY_MARGIN_PERCENT` twice — which `margin_allowance`'s own rustdoc
-  refuses for the same reason. **What reconsidering changes**: the number a
-  gathering `parse` may hold at the reference allocation, and therefore whether
-  koji's flagless gather fits it — which is 20.10's criterion and the one thing
-  that confirms or moves `STATISTICS_GROUP_CAP`. The phase's own arithmetic
-  (["Length is bounded by a constant, per
-  block"](../design/roadmap-P20-statistics-memory.md)) puts koji's statistics
-  at the cap within a small factor of what this formula leaves there, so the
-  margin between "fits" and "declines" is thin and the formula is what sets it.
-  A second consequence, from the same two constants: below `5 ×
-  (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` the allowance is zero and every
-  block declines, so no `parse` under that allocation gathers anything.
 

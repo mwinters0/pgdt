@@ -20,18 +20,30 @@ well as the pools' charge, so nothing grows with the dump outside it.
 - **The allowance is `margin_allowance(allowance) − budget`, and
   `MEMORY_RESERVE` is *not* subtracted again.** The reserve carves the *cap* a
   worker count is solved against; the margin ceiling already stands
-  `MEMORY_UNPOOLED_BOUND` below its fraction of the allowance, and taking both
-  would apply the margin twice, which `margin_allowance`'s own rustdoc refuses.
-  20.8 moves `MEMORY_RESERVE` and so moves the buffer budget, and the
-  statistics allowance moves with it through the budget alone.
-- **Below `4 × MEMORY_RESERVE − 5 × MEMORY_UNPOOLED_BOUND` the statistics
-  allowance is zero and every block declines**, because the margin ceiling
-  reaches `MEMORY_UNPOOLED_BOUND` there and the budget is already all of it.
-  That is what `pgdump_query-cli/tests/statistics.rs`'s decline test states an
-  allowance below to get a decline out of a small fixture. It is a consequence
-  of the two constants rather than a choice this slice made, and **20.8 moves
-  the line**: it is `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)`, the same
-  crossover 20.6 recorded for the margin.
+  `MEMORY_UNPOOLED_BOUND` below its fraction of the allowance. The two are
+  different rules over different quantities — the reserve bounds what the pools
+  may spend, the ceiling what the charge may reach — so the reserve has no
+  business in this one (D85's `Rejected` line). 20.8 moves `MEMORY_RESERVE` and
+  so moves the buffer budget, and the statistics allowance moves with it
+  through the budget alone.
+- **Nothing is gathered at all below `1.25 × MEMORY_UNPOOLED_BOUND`** — 320
+  MiB — where `margin_allowance` saturates to zero on its own, whatever the
+  budget. That is the line the CLI decline test states an allowance at to get a
+  decline out of a small fixture.
+- **Above it the two bounds swap which one binds, and the starving band is the
+  wide one, not the narrow one.** `Parallelism::fit` solves the count against
+  `cap.min(ceiling)`. Below `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` — 640
+  MiB — the cap binds, so what is left for statistics is at least `ceiling −
+  cap`, strictly positive: 20.9's 512m gates have a guaranteed floor of 25.6
+  MiB and cannot be starved. At and above 640 MiB the ceiling binds, the count
+  is solved right up against the number `statistics_allowance` subtracts from,
+  and statistics get only the slack one worker's step leaves — so a wide host
+  at a high `--jobs` is where every block declines. Both lines are a
+  consequence of the two constants rather than a choice this slice made, and
+  **20.8 moves both** by moving the reserve. What to do about the wide band is
+  open: it revises the spec's "workers are resolved first; statistics take what
+  is left", so it is a grilling's to settle, not a slice's
+  ([2026-09-16](../status/history/2026-09-16.md)).
 - **The check runs where the charge updates, not per row.** `Gatherer::over` is
   set by `charge_held` — at every group close and once a row's growth passes
   `CHARGE_STEP` — and read at a row's end, at a fold's and at the observer's

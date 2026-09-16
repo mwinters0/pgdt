@@ -446,13 +446,13 @@ stored bounds; coarsening a piece at its join; an even count, which windows keep
 nearest-rank median, not monotone under the cap. Code: `Gatherer::fit_cap`.
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
-`statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the
-workers because a count is fixed before a byte is read; the CLI's is `--memory`, else the limit,
-else half of `MemAvailable` (RT8), and an embedder stating none declines nothing (D1). A block
-passing it frees what it held, reads on for the census, and records the number
-(`CopyBlock::statistics_declined`), which stops the next pass at that allocation re-declining it; a
-declined piece declines its block. Rejected: a constant bound, an OOM kill on a wide table;
-coarsening to fit, a cache depending on its container; retrying every run. Code: `Gatherer::decline`.
+`statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers
+because a count is fixed before a byte is read; the CLI's is `--memory`, else the limit, else half of
+`MemAvailable` (RT8), an embedder stating none declining nothing (D1). A block passing it frees what it
+held, reads on for the census, and records the number (`CopyBlock::statistics_declined`), stopping the next
+pass re-declining it; a declined piece declines its block. Rejected: a constant bound, an OOM on a wide
+table; coarsening to fit, a cache depending on its container; retrying every run; MEMORY_RESERVE again,
+which carves the cap not this ceiling. Code: `Gatherer::decline`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans
