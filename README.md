@@ -1,45 +1,97 @@
 # pgdump_query
 
-A Rust library + CLI for querying individual tables out of `pg_dump`
-plain-format SQL dumps — without loading the whole file into memory —
-producing Arrow data.
+Query Postgres dumps like they're parquet.  (Or just inspect them without having to load them.)
+Because sometimes stupid problems need stupid solutions.
 
-Two things set the direction: it is meant to be **embeddable as a query data
-source** (ultimately a DataFusion `TableProvider`), and **high performance on
-local files is a core goal** rather than a later optimization — dumps are
-routinely hundreds of gigabytes, so the local-file reader aims to stay
-device-bound rather than CPU-bound, at memory that does not grow with the size
-of the dump.
+Available as:
+- A Rust library
+- A CLI
 
-**Status**: early development, pre-1.0, with no compatibility guarantees yet.
-What works today: streaming row extraction from plain-format dumps into typed
-Arrow batches — arrays, composites, ranges and multiranges included — a full
-byte-exact file map and DDL object inventory, a resumable scan that reports
-what it has, a best-effort structural cache, and pushdown: column projection
-and a filter that is a boolean expression — `AND`, `OR`, `NOT` and parens —
-over typed single-column comparisons. Input is plain SQL text, `.xz`-compressed
-or not — an `.xz` dump is read directly, with no decompression step; other
-codecs and remote sources are planned, not built. A scan runs in parallel where
-the input admits it, its worker count and memory budget defaulting to what the
-file and the container it runs in allow. What is
-next — faster parallel extraction, richer types, row-group
-statistics, gzip/zstd input, remote input, engine bindings, archive formats — is in
-[`docs/design/roadmap.md`](docs/design/roadmap.md). See
-[`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation
-state, known deficiencies included.
+```bash
+# Parse a dump
+pgdq parse --source=f00.xz
 
-## Quickstart
+# Inspect what you parsed, e.g. tables, roles, etc
+pgdq info --details --source=f00.xz
 
-```sh
-cargo build --workspace
-
-# Scan a dump once, writing a structure cache beside it (binary is `pgdq`).
-cargo run -p pgdump_query-cli -- parse --source <dump.sql>
-
-# Report what that cache holds. `info` never reads the dump itself, so this
-# is instant however large the file is.
-cargo run -p pgdump_query-cli -- info --source <dump.sql> --detail
+# Run a query.  Look ma, no daemons!
+pgdq query --where='foo.bar = baz' --source=f00.xz
 ```
+
+Heavily assisted by LLMs.
+
+
+## Roadmap / Status
+**Early development**, pre-1.0, with no compatibility guarantees yet. Two things set the direction:
+- It is meant to be **embeddable as a query data source** (ultimately a DataFusion `TableProvider`).
+- **High performance on local files is a core goal** rather than a later optimization — dumps are
+routinely hundreds of gigabytes, so the local-file reader aims to stay device-bound rather than
+CPU-bound, at memory that does not grow with the size of the dump.
+
+- Input
+    - `pg_dump` formats
+        - [X] plain
+        - [ ] directory
+        - [ ] tar
+        - [ ] custom
+    - Compression
+        - [x] xz (seekable)
+        - [ ] gzip (non-seekable) / bgzip (seekable)
+        - [ ] zstd (non-seekable and seekable)
+        - [ ] lz4
+    - File locations
+        - [x] local
+        - [ ] http
+        - [ ] object store
+- Postgres Correctness
+    - Data types
+        - [x] See the manual, but generally "all common base types".  Notable exceptions: `infinity`,
+          `-infinity`, `NaN`.  (See: KD8)
+        - [x] Any type that we don't parse today is returned as `Utf8View` (aka a string) so you can
+          parse it yourself.
+    - Collation
+        - [x] "default" = utf8
+        - [x] `C`
+        - [ ] Everything else
+- Output
+    - [x] Arrow (aiming for "at least as good as ADBC")
+    - [x] CLI text
+    - [ ] CLI parquet
+- Consumers
+    - [x] Rust
+    - [ ] DataFusion
+    - [ ] Python
+    - [ ] Trino
+    - [ ] DuckDB
+    - [ ] Spark
+
+What works today:
+- Streaming row extraction from plain-format dumps into typed Arrow batches, including arrays, composites,
+  ranges and multiranges.
+- A full byte-exact file map and DDL object inventory.
+- A resumable scan that reports what it has.
+- A best-effort structural cache.
+- Pushdown: column projection and a boolean filter expression — `AND`, `OR`, `NOT` and parens — over
+  typed single-column comparisons.
+- Parallel scan (where the input is suitable), with automatic worker count and memory budget
+  defaulting to either the full container (when run in a container), or half of the machine (e.g.,
+  workstation).
+
+See:
+- [`docs/design/roadmap.md`](docs/design/roadmap.md) for what's next.
+- [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation state, including known
+deficiencies.
+
+
+## Operation
+This code essentially has two phases:
+1. Parse the file's contents (`pgdq parse`).  Stores a file map, row group statistics, etc in a `*.dqcache` file.
+2. Query the contents using the cache (`pgdq query`).
+
+Note that this order is not strictly necessary -- you can "cold query" the file without a cache.  This will build a partial cache as it scans, though beware that:
+- A partial cache will never provide the same query efficiency as a full one.  (We can only build certain statistics with a full parse.)
+- A partial cache will not see your full data if A) your database is using partitions, or B) your dump file is from `pg_dumpall` and contains multiple databases.
+
 
 ## Documentation
 
