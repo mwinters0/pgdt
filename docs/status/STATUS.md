@@ -51,8 +51,13 @@ quotes a number: every figure is in
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
-&& uv run measure.py --stale` names what is red and why. Two things are red on
-purpose: `session-drift`, whose apparatus is the harness itself and which only
+&& uv run measure.py --stale` names what is red and why. **Every register
+figure is red**, the statistics work having moved many declared paths with no
+sweep since. Four of them are held deliberately — `reserve`, `rss-attribution`,
+`statistics-gathering` and `statistics-pruning`, whose legs resolve fewer
+readers now that the margin binds a typed number, and which are re-taken once
+P23 settles `MEMORY_RESERVE`. Two more can never be cleared by a sweep at all:
+`session-drift`, whose apparatus is the harness itself and which only
 a second sweep run back to back with a first re-takes, and the koji section,
 outside the register, which only a run on the HDD clears. Red with the reason
 written down is the standing requirement, not red cleared
@@ -70,10 +75,10 @@ instrument can see").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** P20 wrapped with its bound delivered and its coverage
-  not (`KD33`, `KD34`), both owned by P23;
-  [its notes](../design/roadmap-P20-statistics-memory-notes.md) hold what the
-  next phases inherit. Every built mechanism — the
+- **No phase is open.** What statistics may hold resident is bounded and their
+  coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
+  [`../design/roadmap.md`](../design/roadmap.md), "P23 — Statistics coverage
+  and the resident reserve" holds what it inherits. Every built mechanism — the
   parallel scan's defaults included: a worker count the source recommends, a
   memory limit discovered and filled under the reserve and the margin, and a
   `parse` saying what it delivered rather than what it was asked for — is in
@@ -268,7 +273,8 @@ a phase nobody has sliced.
   has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
 
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
-  D83 leaves at `DEFAULT_MEMORY_BUDGET` on a plain source whatever `--memory`
+  D83 leaves at `DEFAULT_MEMORY_BUDGET` capped by the allowance on a plain
+  source whatever `--memory`
   states, so a plain `query`'s sub-stream count and batch size are fixed at the
   number D3 picked to decline block decode on an ordinary `.xz`: a stated
   allowance moves neither, and no flag does. **(c) unowned**; promoted with

@@ -383,9 +383,8 @@ pub enum BlockGathered {
     /// **The allowance could not hold this block's statistics**, so it dropped
     /// what it had gathered and what was in flight and gathered no more. The
     /// scan went on: nothing is OOM-killed for want of statistics, and raising
-    /// memory is what fits a wide table
-    /// (`docs/design/roadmap-P20-statistics-memory.md`, "Granularity never
-    /// depends on memory; whether a block gathers does").
+    /// memory is what fits a wide table. Granularity never depends on memory;
+    /// whether a block gathers does (`docs/design/decisions.md`, "D85").
     Declined {
         /// The [`crate::scan::ScanOptions::statistics_allowance`] it declined
         /// under, which the map records

@@ -1006,8 +1006,7 @@ fn margin_allowance(allowance: u64) -> u64 {
 /// of the allowance (`docs/design/decisions.md`, "D85").
 ///
 /// **It is carved after the workers, never before them**
-/// (`docs/design/roadmap-P20-statistics-memory.md`, "Workers are resolved
-/// first; statistics take what is left"): the count is fixed before a byte is
+/// (`docs/design/decisions.md`, "D85"): the count is fixed before a byte is
 /// read, while statistics are known only as they accumulate.
 ///
 /// **[`MEMORY_RESERVE`] is not subtracted again here.** The reserve comes off

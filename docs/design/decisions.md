@@ -8,7 +8,7 @@ so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
 register". **Capped at 550 lines**: an entry earns its place by being something a later session
 would otherwise re-litigate, and adding one may mean striking one.
 
-<!-- decision-watermark: D84 -->
+<!-- decision-watermark: D86 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -32,8 +32,8 @@ per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block dec
 A read-buffer budget is a number an operator cannot size a container from, so the flag states
 resident and `Parallelism::within` carves it — reserve off the top, `margin_allowance` on the count
 — with `discover_in` calling the same function, so provenance still never enters `Parallelism`
-(D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` whatever is
-stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
+(D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
+allowance whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
 giving statistics what it leaves. Code: `io.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
@@ -175,10 +175,12 @@ A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; 
 and back-fill are the drivers with a partial result to keep. The preamble scan ignores the flag: a
 stop there is indistinguishable from reaching the first `COPY` header and would cache as complete.
 
-### D27 UTF-8 is validated once per chunk, and no hot path uses `unsafe`
+### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
 `str::get`, delimiters being ASCII. The escaped path still validates (`\xNN` synthesizes bytes); the
-bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape.
+bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape;
+the one that stands is `append_view_unchecked` (`batch.rs`), whose bounds and validity both come from
+the `contains` that produced its coordinates (D46).
 
 ### D28 One row split, shared unconditionally
 `RowSplit` memoizes field ends for every term and the batcher, extends as deep as asked, and is
@@ -437,22 +439,32 @@ neither; in-flight growth unmade both ways, faulting a table another worker hold
 block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen
 term growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Charge`.
 
-### D82 A block merges pairwise, exactly, between its minimum and its maximum, never while a piece lives
+### D82 A block merges pairwise, exactly, between its minimum and its maximum, never mid-scan while a piece lives
 Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads till
 `finish` clips them, a clipped upper bound not ordering as its value does; a merged dictionary
-renumbers first-seen. A stated maximum stops the merge first and lifts the cap. A piece joins at
-its own size, so a block waits till none lives, reopening an odd last group. Rejected: merging
-stored bounds; coarsening a piece at its join; an even count, which windows keep odd; the
-nearest-rank median, not monotone under the cap. Code: `Gatherer::fit_cap`.
+renumbers first-seen. A piece joins at its own size, so mid-scan a block waits till none lives, reopening
+an odd last group; at `finish` one still alive joins nothing more. Rejected: merging stored bounds;
+coarsening a piece at its join; an even count, which windows keep odd; the nearest-rank median, not
+monotone under the cap; the cap yielding to a stated maximum block by block, a partial distribution the
+leader's split would decide; a floor under the coarsening, a constant nothing prices. Code: `Gatherer::fit_cap`.
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
 `statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers
 because a count is fixed before a byte is read; the CLI's is `--memory`, else the limit, else half of
-`MemAvailable` (RT8), an embedder stating none declining nothing (D1). A block passing it frees what it
-held, reads on for the census, and records the number (`CopyBlock::statistics_declined`), stopping the next
-pass re-declining it; a declined piece declines its block. Rejected: a constant bound, an OOM on a wide
-table; coarsening to fit, a cache depending on its container; retrying every run; MEMORY_RESERVE again,
-which carves the cap not this ceiling. Code: `Gatherer::decline`.
+`MemAvailable` (RT8), an embedder stating none declining nothing (D1). A declined piece declines its block,
+dense group indices expressing no gap, and the account sees a window's pieces, so a decline is deliberately
+not the same serial and parallel. Rejected: a constant bound, an OOM on a wide table; coarsening to fit, a
+cache depending on its container; retrying every run; skipping the piece; MEMORY_RESERVE again, which carves
+the cap not this ceiling. Reopens: what the check costs, and what declining saves. Code: `Gatherer::decline`.
+
+### D86 Statistics volume follows columns and groups, not row width
+Dictionary text is interned once per block and column, not per group, so an input of wide distinct text
+cannot fill an allowance — the attribution sitting's wide-text leg was deleted rather than corrected.
+Final groups are about `min(block bytes / group size, STATISTICS_GROUP_CAP, rows / minimum)`, so above one
+group size per minimum row count the density merge binds and doubling a row's width halves the volume;
+many short columns raise it, as does a bytewise-comparable column earning per-group bounds. The allowance
+is itself non-monotone in the container limit, being `margin_allowance(allowance) − budget`. Rejected:
+sizing an attribution input by row width. Evidence: `statistics-gathering`.
 
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans

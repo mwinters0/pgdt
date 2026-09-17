@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9–P13, P16, P17, P19 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P20 — statistics memory | Complete | [`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md); [notes](roadmap-P20-statistics-memory-notes.md) |
+| P1–P5, P7, P9–P13, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -545,29 +544,16 @@ and "I/O, memory and parallelism").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P20 — Statistics memory and its measured expectations
-
-**Complete.** Specified in
-[`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md), with
-what it left behind in
-[`roadmap-P20-statistics-memory-notes.md`](roadmap-P20-statistics-memory-notes.md).
-It delivered the bound and not the coverage — `KD33` and `KD34` are P23's.
-Reasonable defaults for what statistics hold resident: groups coarsened where
-a block's rows are sparse, a per-block length cap,
-a block that does not fit its allowance declining rather than killing the
-process, one `--memory` flag meaning resident, and one reserve for every
-operation, its size measured.
-
 ## P22 — The third tunable
 
 **One number fans out into four consumers and has to be right for all of
 them**: the worker count, the read-buffer budget, a query's batch span and now
-the statistics allowance. Every slice since 20.6 has re-fitted one term of that
-fan-out — `M111` the span, `M112` its floor, 20.7 the allowance — which is the
-tell that the number, not any one derivation, is what is overloaded. Sketched
-to corner-avoidance depth. P20 wrapped without measuring or gating the model as
-it stands, leaving that to P23, so this phase inherits an unpriced constant
-rather than a freshly fitted one.
+the statistics allowance. Each of those terms has been re-fitted on its own —
+`M111` the span, `M112` its floor, the allowance last — which is the tell that
+the number, not any one derivation, is what is overloaded. Sketched to
+corner-avoidance depth. The model as it stands was never measured or gated, so
+this phase inherits an unpriced constant rather than a freshly fitted one, and
+P23 is where that constant is read.
 
 **It revises [this file](roadmap.md), "Two tunables fit pgdq to hardware:
 memory and parallelism"** — that section's last clause, and nothing else about
@@ -599,7 +585,7 @@ plain-source inertness `KD32` names is fixed by the same change or stays.
 
 A query gathers statistics for what it already reads — the columns its filter
 evaluates — where today only a parse gathers. Sketched to corner-avoidance
-depth, and after P20, since the pruning consumer is what makes a partial gather
+depth, and after the pruning consumer, which is what makes a partial gather
 worth having. What it inherits:
 
 - **Presence per group**: a pruned or stopped query reads part of a block, so a
@@ -615,13 +601,13 @@ worth having. What it inherits:
 ## P23 — Statistics coverage and the resident reserve
 
 **Statistics stop where the account fills, and the reserve does not cover what
-a run holds.** P20 bounded what statistics may hold resident and delivered the
-bound; it did not deliver usable statistics for a long dump, and it did not
-price the constant the bound is carved from. Both gaps are measured rather than
-supposed — `KD33` and `KD34` — and both were left rather than fixed because the
-architecture they answer to is still moving: P21 changes who gathers, P22
-changes what the number they answer to means. Sketched to corner-avoidance
-depth, and after both.
+a run holds.** What statistics may hold resident is bounded
+([`decisions.md`](decisions.md), "D85"); what is not delivered is usable
+statistics for a long dump, or a price for the constant the bound is carved
+from. Both gaps are measured rather than supposed — `KD33` and `KD34` — and
+both were left rather than fixed because the architecture they answer to is
+still moving: P21 changes who gathers, P22 changes what the number they answer
+to means. Sketched to corner-avoidance depth, and after both.
 
 What it inherits:
 
@@ -639,14 +625,17 @@ What it inherits:
 - **The reserve is under-covering by a measured margin** (`KD34`). The
   2026-09-16 attribution sitting read a worst remainder of 544 MiB above charge
   plus account, against `MEMORY_RESERVE`'s 384 MiB, and its readings are the
-  input this phase would otherwise have to re-take.
+  input this phase would otherwise have to re-take. No sitting re-takes them:
+  they are `runs/20.8-reserve-attribution-20260916-1857/readings.json`, named
+  again by [`../status/history/2026-09-16.md`](../status/history/2026-09-16.md).
 - **A branch registered and unspent**: a remainder growing with the statistics
-  volume is billed to the query rather than reserved. It is filed for P22 as
-  well, being a fourth consumer of the one number, and whichever phase runs
-  first settles it.
+  volume is billed to the query rather than reserved. Its instrument is kept —
+  `instrument::statistics_loaded`, the heap a cache load hands a pass, which is
+  the only statistics term a query has. It is filed for P22 as well, being a
+  fourth consumer of the one number, and whichever phase runs first settles it.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
-  and `statistics-pruning` were left stale by P20's landed slices and are not
-  re-taken until the constant settles.
+  and `statistics-pruning` are stale because the margin now binds a typed
+  number, and are not re-taken until the constant settles.
 
 ## P14 — Remote input
 
@@ -1117,7 +1106,5 @@ which is what makes the difference worth minding at the moment one is found.
   row's width before the first row, so a block could be sized without waiting
   for its end — its in-flight statistics at the final size from the start. The
   general rule sizes by rows per group at a block's end, because `varchar` and
-  its kin leave a header silent on width
-  ([`roadmap-P20-statistics-memory.md`](roadmap-P20-statistics-memory.md),
-  "Granularity follows row density"); this is the cheaper case beside it, taken
-  once that rule has shipped.
+  its kin leave a header silent on width ([`decisions.md`](decisions.md),
+  "D82"); this is the cheaper case beside it, taken once that rule has shipped.

@@ -2216,13 +2216,14 @@ STATISTICS_LEGS: tuple[tuple[str, str], ...] = (
 )
 
 #: `statistics-gathering`'s container limit, against the register's 512 MB.
-#: **Chosen generously, as the spec asks, so that no kill interrupts the
-#: phase**: statistics are held per group per tracked column and nothing bills
-#: them (`KD28`), and the arithmetic's worst case — every one of a 3.00 GiB
-#: input's 3,072 groups holding a full dictionary of 256-byte entries and two
-#: capped bounds on each of the control's 16 columns — is about 800 MiB above
-#: the scan. The figure records resident beside the time, so the headroom this
-#: leaves is read rather than assumed. Bounding what statistics hold is P20's.
+#: **Chosen generously, so that no kill interrupts the figure**: statistics are
+#: held per group per tracked column, and the arithmetic's worst case — every
+#: one of a 3.00 GiB input's 3,072 groups holding a full dictionary of 256-byte
+#: entries and two capped bounds on each of the control's 16 columns — is about
+#: 800 MiB above the scan. The figure records resident beside the time, so the
+#: headroom this leaves is read rather than assumed. What statistics may hold is
+#: bounded (`docs/design/decisions.md`, "D85"); this limit sits above that bound
+#: rather than standing in for it.
 STATISTICS_MEMORY = "2g"
 
 #: `statistics-pruning`'s shapes, `<family><filter>-<leg>`: a `pgdq query`
@@ -2504,8 +2505,8 @@ def stated_allowance(budget: int) -> int:
     typed number never used to answer to, and that ceiling falls below the cap
     once the budget passes `4 x MEMORY_RESERVE - 5 x MEMORY_UNPOOLED_BOUND`.
     Above that a leg resolves fewer readers than it did, so its cells are stale
-    and `P20.9` re-takes them; the number stated here is still the one the
-    figure's text names.
+    and are not re-taken until the reserve constant settles; the number stated
+    here is still the one the figure's text names.
 
     **Not the inverse of the carve**, which has none: nothing recovers the
     allowance a budget came from, because the budget is a `min` of two terms.

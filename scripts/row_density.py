@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """A dump's row density, per `COPY` block, at every candidate group size.
 
-Backs `docs/design/roadmap-P20-statistics-memory.md`, "Granularity follows row
-density", and its reading "Koji's row density": the rule a block's group size
+Backs `docs/design/decisions.md`, "D82": the rule a block's group size
 is chosen by reads a **distribution** of rows per group, and this is that
 distribution measured on a real dump before the rule is written. What it
 produces is a fact about the input, written to a `runs/` artifact -- not a

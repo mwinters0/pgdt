@@ -43,7 +43,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M110 are struck**, and nothing at or below `M110` is reused. That is a
+**M1–M111 are struck**, and nothing at or below `M111` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is in `decisions.md` —
@@ -63,8 +63,7 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M111 | 2026-09-16 | A plain `query`'s batch pin (`max_source_span`) derived from the read-buffer budget and the requested count instead of a constant, so `--jobs` buys readers at the cost of batch size |  | [2026-09-16](../status/history/2026-09-16.md) |
 | M112 |  | `MIN_SOURCE_SPAN` read off the caller's announced `ScanOptions::chunk_size` rather than the shipped `DEFAULT_CHUNK_SIZE`, so the span floors at the unit the source actually retains at any `--chunk-size` |  | [2026-09-16](../status/history/2026-09-16.md) |
-| M113 |  | The CLI decline test moved off the `1.25 × MEMORY_UNPOOLED_BOUND` crossover it currently sits exactly on, and a unit test pinning both of `statistics_allowance`'s bands — the zero line and the cap/ceiling swap at `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` |  | [P20 notes](roadmap-P20-statistics-memory-notes.md), "Negative results" |
+| M113 |  | The CLI decline test moved off the `1.25 × MEMORY_UNPOOLED_BOUND` crossover it currently sits exactly on, and a unit test pinning both of `statistics_allowance`'s bands — the zero line and the cap/ceiling swap at `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` |  | [`decisions.md`](decisions.md), "D85" |
 | M114 |  | `BatchSpanNarrowed`'s remedy clause and the origin suffix on a budget-quoting note, split out of `M112` because both are text about what a memory knob buys and the knob's role is open |  | [2026-09-16](../status/history/2026-09-16.md) |
 
