@@ -642,11 +642,7 @@ What it inherits:
 **Inbox:** [`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
 Read a dump over the network: `pgdq --source https://example.com/foo.dump`
-and, composing with the `.xz` source, the compressed one beside it. Carved out
-of P6, which sketched it as one
-bullet — an `object_store`-backed `ByteRangeSource` is an L1 addition, not a
-presented surface, and it is the only part of that phase with a user-facing CLI
-feature attached.
+and, composing with the `.xz` source, the compressed one beside it.
 
 **What it inherits is most of the design.** `read_range`/`size` were shaped
 against `object_store`'s `get_range`/`head` deliberately
@@ -674,12 +670,9 @@ chunk-size defaults measured against local devices say nothing about a
 high-latency ranged backend, which is the one part of that tuning that does not
 transfer.
 
-**Scheduled ahead of P6.** Backburnered relative to the
-compressed-input and scan-performance work,
-which is the maintainer's call; ahead of P6 because that phase's own reason for
-going last is that it presents surfaces over mechanisms that have stopped
-moving, and a `TableProvider` commits to the I/O layer beneath it. That layer is
-this phase.
+**Scheduled ahead of P6.** P6's own reason for going last is that it presents
+surfaces over mechanisms that have stopped moving, and a `TableProvider`
+commits to the I/O layer beneath it. That layer is this phase.
 
 ## P6 — Embeddable engine story
 
