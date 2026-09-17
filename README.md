@@ -8,7 +8,7 @@ Available as:
 - A CLI
 
 ```bash
-# Parse a dump
+# Parse a dump (builds a cache)
 pgdq parse --source=f00.xz
 
 # Inspect what you parsed, e.g. tables, roles, etc
@@ -28,6 +28,8 @@ Heavily assisted by LLMs.
 routinely hundreds of gigabytes, so the local-file reader aims to stay device-bound rather than
 CPU-bound, at memory that does not grow with the size of the dump.
 
+### Status
+Anything unchecked here is considered "TODO" / Future.
 - Input
     - `pg_dump` formats
         - [X] plain
@@ -45,12 +47,15 @@ CPU-bound, at memory that does not grow with the size of the dump.
         - [ ] object store
 - Postgres Correctness
     - Data types
-        - [x] See the manual, but generally "all common base types".  Notable exceptions: `infinity`,
-          `-infinity`, `NaN`.  (See: KD8)
-        - [x] Any type that we don't parse today is returned as `Utf8View` (aka a string) so you can
-          parse it yourself.
+        - [x] See [the
+        docs](https://github.com/mwinters0/pgdt/blob/main/docs/manual/type-handling.md), but
+        generally "all common base types".
+            - [ ] Notable exceptions: numeric `infinity`, `-infinity`, `NaN`.  (See: KD8)
+        - [ ] Common extension types, e.g. PostGIS
+        - [x] Any type that we don't parse is returned as `Utf8View` (aka a string) so you can parse
+        it yourself.
     - Collation
-        - [x] "default" = utf8
+        - [x] "default" (utf8)
         - [x] `C`
         - [ ] Everything else
 - Output
@@ -77,8 +82,9 @@ What works today:
   defaulting to either the full container (when run in a container), or half of the machine (e.g.,
   workstation).
 
+### Next
 See:
-- [`docs/design/roadmap.md`](docs/design/roadmap.md) for what's next.
+- [`docs/design/roadmap.md`](docs/design/roadmap.md)
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation state, including known
 deficiencies.
 
