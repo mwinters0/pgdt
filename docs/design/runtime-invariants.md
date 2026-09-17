@@ -29,8 +29,8 @@ citation that renumbers is a citation that lies. Two letters rather than one is
 `docs/process.md`'s advice under "Known deficiencies", and here it is not
 merely advice — `R<n>` is already spoken for in this tree by the `xz-seek`
 crate's requirements register, which two phase inboxes cite by number
-([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md), "The
-seekable-xz crate reads its compressed bytes through a trait, on purpose").
+([`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md), "The seekable-xz
+crate is xz-only on purpose, and generalizing it was rejected").
 
 **`RT1`–`RT12` are allocated**, and nothing at or below `RT12` is reused.
 

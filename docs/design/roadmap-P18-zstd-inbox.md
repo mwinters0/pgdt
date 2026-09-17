@@ -136,3 +136,29 @@ should hand out a shareable handle from the start.
 ([`decisions.md`](decisions.md), "D4";
 [`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek
 table is held twice, and the walk runs before the budget does").
+
+---
+
+## `xz-seek`'s publication waits for all three codecs to sit well together
+
+**Fact.** The `.xz` addressing layer is still a frozen vendored read-only copy
+under `vendor/xz-seek/` rather than a published crate
+([`decisions.md`](decisions.md), "D14"). Publication was gated on two real
+consumers vetting its interface; the row-group statistics phase turned out to
+make no call into it, and P14 (remote input) turned out to need none either — an
+`XzSource` wraps a `ByteRangeSource`, so a remote source composes with no new
+signature. **The maintainer's condition is now explicit: publish once gzip and
+zstd are supported and all three codecs play nicely in the same codebase.**
+
+**Why this phase cares.** This phase is the last of the three. When its codec
+lands, the condition is satisfiable for the first time, so the publication call —
+publish a version and drop the vendored copy, or keep vendoring — is this phase's
+to make, together with whether the crate's name, still provisional, survives.
+What it has to weigh is whether one addressing layer serves three codecs or
+whether each wants its own, which is a question only a tree holding all three can
+answer.
+
+**Origin.** P14's grilling, 2026-09-17, which drained the entry that had carried
+the gate; the vendoring decision itself is
+[`decisions.md`](decisions.md), "D14". **Contingent on**
+`pgdump_query/Cargo.toml` still naming a path dependency on `vendor/xz-seek`.

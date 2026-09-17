@@ -19,7 +19,7 @@ reused, including a struck phase's.
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
-| P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
+| P14 — remote input | **Current** | [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
@@ -639,40 +639,22 @@ What it inherits:
 
 ## P14 — Remote input
 
-**Inbox:** [`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
+**Specified and current: [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md)**,
+which is where this phase's decisions live; its slice checklist is
+[`../status/STATUS.md`](../status/STATUS.md). Its inbox was drained by that
+grilling and deleted.
 
-Read a dump over the network: `pgdq --source https://example.com/foo.dump`
-and, composing with the `.xz` source, the compressed one beside it.
-
-**What it inherits is most of the design.** `read_range`/`size` were shaped
+Read a dump over the network — `pgdq --source https://example.com/foo.dump`, and
+the `.xz` composition beside it — over HTTP and HTTPS alone, for correctness
+alone. What it inherits is most of the design: `read_range`/`size` were shaped
 against `object_store`'s `get_range`/`head` deliberately
-([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and
-the read pattern a ranged backend wants is already the one the code has: with a
-complete cache, a query touches the cache, the source's identity, and the target
-block's byte range, and nothing else — the preamble prepass is skipped when the
-cached preamble is complete, and the mapping pass walks nothing when
-`scanned_through` is the whole file.
-
-What it must decide is what a local file never asked: **identity for a source
-with no mtime** — `modified()` already answers `Option`, but an ETag is not a
-`SystemTime` and the cache's staleness check is what makes a remote cache
-trustworthy; **cancellation and timeouts**, since a ranged GET can hang where a
-`pread` cannot and the preamble prepass is an uncancellable region today
-([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md));
-**where a remote compressed file's seek table comes from**, which is the cache
-where one exists — that path is built now, against a local `stat` — and
-otherwise one ranged GET per stream footer, which is the cold case this phase
-still owns
-([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md)); and
-the **second set of
-measured defaults** a high-latency backend needs — readahead depth and
-chunk-size defaults measured against local devices say nothing about a
-high-latency ranged backend, which is the one part of that tuning that does not
-transfer.
+([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and with a
+complete cache a query already touches only the cache, the source's identity and
+the target block's byte range.
 
 **Scheduled ahead of P6.** P6's own reason for going last is that it presents
-surfaces over mechanisms that have stopped moving, and a `TableProvider`
-commits to the I/O layer beneath it. That layer is this phase.
+surfaces over mechanisms that have stopped moving, and a `TableProvider` commits
+to the I/O layer beneath it. That layer is this phase.
 
 ## P6 — Embeddable engine story
 
