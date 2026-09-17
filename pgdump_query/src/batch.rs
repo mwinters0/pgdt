@@ -103,8 +103,10 @@ pub struct QueryOptions {
     /// read-buffer budget and the requested worker count, so `jobs` readers
     /// are bought at the cost of batch size rather than declined
     /// (`docs/design/decisions.md`, "D84"). The derivation only moves down,
-    /// never below [`MIN_SOURCE_SPAN`]; a serial [`crate::table_stream`] does
-    /// not derive at all.
+    /// and never narrows past [`MIN_SOURCE_SPAN`] — a span stated below the
+    /// floor is left where it was, the floor bounding the derivation rather
+    /// than the result; a serial [`crate::table_stream`] does not derive at
+    /// all.
     pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL
     /// (`docs/design/decisions.md`, "D46"). Every `RecordBatch` this build
@@ -315,9 +317,10 @@ pub(crate) fn column_names(header: &CopyHeader, field_count: usize) -> Vec<Strin
 
 /// One column's typed builder, chosen from a [`crate::resolve::ResolvedSchema`]
 /// field's [`DataType`] — the complete set [`crate::pgtype::resolve_declared_type`]
-/// and [`crate::resolve::resolve_columns`] can ever produce. `with_data_type`/
-/// `with_precision_and_scale`/`with_timezone_opt` tag each builder so its
-/// `finish()`ed array's type matches the schema exactly, which
+/// and [`crate::resolve::resolve_columns`] can ever produce.
+/// `with_precision_and_scale`/`with_timezone_opt` tag the two builders whose
+/// default type carries no parameters, every other arm's default already
+/// matching, so a `finish()`ed array's type matches the schema exactly, which
 /// `RecordBatch::try_new` checks.
 enum ColumnBuilder {
     Utf8View(StringViewBuilder),
@@ -1041,10 +1044,11 @@ impl RowBatcher {
     }
 }
 
-/// Append one still-escaped field to a `Utf8View` column. Reuses
-/// [`decode_field`] so the escaping rules live in one place; a
-/// `Cow::Borrowed` result (no escapes present, already UTF-8 checked) is what
-/// makes the field eligible for a zero-copy view — everything else is copied.
+/// Append one already-decoded field to a `Utf8View` column, beside the raw
+/// field's offset and length. The caller decodes, so the escaping rules live
+/// in one place; a `Cow::Borrowed` result (no escapes present, already UTF-8
+/// checked) is what makes the field eligible for a zero-copy view —
+/// everything else is copied.
 fn push_utf8view_field(
     builder: &mut StringViewBuilder,
     col: usize,
@@ -1065,8 +1069,12 @@ fn push_utf8view_field(
                     let block = chunk.block_for(col, builder);
                     // SAFETY: `contains` confirmed `local_offset..local_offset+len`
                     // is in bounds for `block`, and the `Borrowed` case above
-                    // means `decode_field` already validated this exact byte
-                    // range as UTF-8.
+                    // means the decode already validated this exact byte
+                    // range as UTF-8. `contains` narrows to `u32`, so this
+                    // holds while a retained chunk stays under 4 GiB, which
+                    // every shipped chunk and block size is by orders of
+                    // magnitude; nothing clamps `ScanOptions::chunk_size` to
+                    // enforce it.
                     unsafe { builder.append_view_unchecked(block, local_offset, len) };
                 }
                 // The field's bytes straddle two read chunks (rare: at most
@@ -1157,11 +1165,12 @@ pub fn render_field_into(
             out.push('}');
             return Ok(true);
         }
-        // The one nested form whose elements cannot be NULL: `int2vector`
-        // has no encoding for one, so a `List<Int16>` holding a null element
-        // is an Arrow value with no PostgreSQL text form — `Error::FieldRender`,
-        // exactly as a sub-microsecond `interval` is, and reachable only from
-        // an array a caller assembled.
+        // The second nested form whose elements cannot be NULL — a
+        // multirange's members are the other, and panic above rather than
+        // faulting. `int2vector` has no encoding for one, so a `List<Int16>`
+        // holding a null element is an Arrow value with no PostgreSQL text
+        // form — `Error::FieldRender`, exactly as a sub-microsecond
+        // `interval` is, and reachable only from an array a caller assembled.
         NestedPlan::Int2Vector => {
             let list = column.as_any().downcast_ref::<ListArray>().unwrap();
             let values = list.value(row);

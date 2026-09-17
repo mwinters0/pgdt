@@ -194,7 +194,7 @@ pub struct DumpIndex {
     /// PRIVILEGES FOR ROLE` (`docs/design/decisions.md`,
     /// "D31"). `PUBLIC` is never included. Flat and per-file — a
     /// per-database view is a filter over `Span::database`. Persisted, unlike
-    /// `metadata`/`diagnostics` (`docs/design/decisions.md`, "D34"), and
+    /// `diagnostics` (`docs/design/decisions.md`, "D34"), and
     /// complete only once `scanned_through` reaches the file's size.
     pub roles: BTreeSet<String>,
     /// Tablespaces referenced anywhere the scan has reached — the TOC

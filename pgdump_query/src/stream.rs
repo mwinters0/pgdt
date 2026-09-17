@@ -756,8 +756,10 @@ async fn map_forward(
 /// what was asked for, the source's advice not having been read when it fires;
 /// on a query the same fact is a [`PlanNote`] on a `TableStream`.
 ///
-/// **Silence means the leader dispatched the announced count**, not that every
-/// one of them read at once. `flag` keeps one scan-wide fact from printing
+/// **Silence means the leader dispatched the announced count, or declined the
+/// region outright** — a region under one whole partition runs serially and
+/// reports no shortfall ([`crate::leader::Shortfall`]) — and never that every
+/// worker read at once. `flag` keeps one scan-wide fact from printing
 /// once per block, which is also why [`crate::leader::Shortfall`] reports no
 /// reason a later block could answer differently.
 fn report_shortfall(flag: &mut bool, shortfall: Option<leader::Shortfall>) {
@@ -929,7 +931,8 @@ pub struct MapRun {
     /// interrupted before its map reached EOF, which is where the count is
     /// taken.
     pub lacking_statistics: usize,
-    /// How many of those were re-read and now hold them.
+    /// How many of those were re-read — including a re-read that declined,
+    /// which leaves the block lacking still.
     pub backfilled: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one
@@ -1182,8 +1185,10 @@ async fn backfill_statistics(
     }
     tracing::info!(blocks = run.lacking, "statistics back-fill started");
     announce_read_loop(source, scan_options);
-    // Only a loaded cache holds a block to lack anything: a disabled one maps
-    // every block afresh under `statistics`, and an offline one never loads.
+    // There is no cache file to name in a `CachedBlockChanged` refusal
+    // unless one is enabled. A block can lack what was asked under any mode —
+    // a stated maximum no single read delivers leaves a freshly mapped block
+    // lacking, `CacheMode::Disabled` included (see this function's doc).
     let cache_path = match cache {
         CacheMode::Enabled(path) => Some(path.as_path()),
         CacheMode::Disabled | CacheMode::Offline(_) => None,
@@ -2366,7 +2371,7 @@ pub enum PlanNoteKind {
     },
     /// The budget in force affords less than a **single** reader of this
     /// source, so the plan runs at the one-slot floors already inside the
-    /// mechanism (`crate::stream::worker_count`'s `.max(1)`,
+    /// mechanism (`crate::io::WorkerMemory::affords`' one-worker floor,
     /// `crate::io::BufferPool`'s clamp to one slot, and a compressed source's
     /// refusal to decode a whole block).
     ///
@@ -3319,9 +3324,10 @@ pub fn table_stream<'a>(
 /// supported.
 ///
 /// **What N sub-streams cost resident is N times one**, and N is solved
-/// against the sum of what a sub-stream's in-flight batch pins
-/// (`QueryOptions::max_source_span`) and what the source charges a concurrent
-/// reader (`Partitioning::partition_bytes`)
+/// against what the source charges concurrent readers
+/// (`Partitioning::worker_memory`, a shared pool term included) plus, on a
+/// source retaining by chunk alone, what a sub-stream's in-flight batch pins
+/// (`QueryOptions::max_source_span`) — see [`plan_partitions`]
 /// (`docs/design/decisions.md`, "D4").
 pub async fn table_stream_partitions<'a>(
     source: &'a dyn ByteRangeSource,

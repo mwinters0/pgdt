@@ -17,13 +17,15 @@ Options:
       --dqcache <DQCACHE>  Cache file path, defaulting to the colocated `<source>.dqcache`. Required
                            when `--source` is omitted — that is the cache-only entry point, and
                            there is nothing else to answer from
-      --detail             Also report each `COPY` block's byte offsets and, per column, what it
-                           became: the Arrow type it resolved to, or — for a column that came back
-                           as a string — why. Turns the `user-defined types` count into a listing of
-                           the types themselves, on a compressed dump adds the container's shape,
-                           and closes the listing, above its totals, with the statistics `parse`
-                           gathered, per table and column: over how many blocks, at what group size,
-                           and in how many groups each column keeps bounds and a dictionary
+      --detail             Also report each `COPY` block's byte offsets and, per column that has
+                           something to say, what it became: the Arrow type it resolved to, or — for
+                           a column that came back as a string for a reason — why. A column that is
+                           simply text says nothing. Turns the `user-defined types` count into a
+                           listing of the types themselves, on a compressed dump adds the
+                           container's shape, and closes the listing, above its totals, with the
+                           statistics `parse` gathered, per table and column: over how many blocks,
+                           at what group size, and in how many groups each column keeps bounds and a
+                           dictionary
       --map                List every span the map holds (`docs/design/decisions.md`, "D34") — DDL
                            objects and framing included, not just `COPY` blocks — instead of the
                            per-table listing

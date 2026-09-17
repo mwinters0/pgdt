@@ -625,9 +625,9 @@ depth, and after both.
 
 What it inherits:
 
-- **The coverage flaw is cumulative, not per-block** (`KD33`). `Term::Retained`
-  is never released during a pass, so a long dump fills its allowance partway
-  through and every block after it declines — statistics become a prefix, and a
+- **The coverage flaw is cumulative, not per-block** (`KD33`). Nothing releases
+  `Term::Retained` while the pass gathers forward, so a long dump fills its
+  allowance partway through and every block after it declines — statistics become a prefix, and a
   query prunes nothing over the tail. How much of a dump is covered depends on
   the box, which is the part a user cannot predict.
 - **Granularity derived from the dump's length is the remedy that survives

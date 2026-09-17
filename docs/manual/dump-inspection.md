@@ -345,8 +345,11 @@ is what the allowance leaves once the workers and the fifth left free are paid
 for ("`--jobs` and `--memory`" below), and the line naming it is on the
 `resolved the arrangement` line as `statistics_bytes=`. A `COPY` block that
 would pass it drops what it had gathered and gathers no more; the scan finishes
-normally, every other block keeps its statistics, and stderr carries one line
-for the block:
+normally and stderr carries one line for the block. Nothing else declines
+*because of* that block — but the allowance is filled cumulatively and nothing
+releases what earlier blocks kept, so on a dump long enough to fill it every
+block after that point declines too, and the statistics you get are a prefix of
+the file rather than a sample of it:
 
 ```
 2026-07-23T15:10:09.570412108Z  INFO statistics declined: this block's do not fit the allowance, and a larger --memory is what re-reads it table=public.wide header_offset=4823 declined_under_bytes=89128960 allowance_bytes=89128960
@@ -529,7 +532,8 @@ decompression is the part of the work that more cores finish sooner, from four
 of them up: two workers read a compressed dump no faster than one — and fewer
 still where the file itself has fewer blocks than that:
 pgdq splits a compressed file at its block boundaries, so a file with six
-blocks reads with six workers on a machine of any width. **How many of those workers actually read is then bounded by
+blocks reads with at most six workers however wide the machine — and with
+fewer on a machine narrower than that, the count being the smaller of the two. **How many of those workers actually read is then bounded by
 `--memory`**: one reader of an ordinary 24 MiB-block file wants about
 106 MiB once the pool's four slots are counted, so a read-buffer budget of
 64 MiB delivers one worker whatever `--jobs` says, reading through the

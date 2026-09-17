@@ -1313,7 +1313,8 @@ impl Builder {
 
     /// Close the pending large-object region, if one is open, into a real
     /// span. Called at the top of every [`push_span`](Self::push_span) (so
-    /// any *other* span implies this one isn't being extended further) and at
+    /// any *other* span implies this one isn't being extended further), at
+    /// [`on_copy_start`](Self::on_copy_start), and at
     /// [`finish`](Self::finish) (so a file ending right after the region's
     /// last `COMMIT;` still closes it).
     fn flush_large_objects(&mut self) {

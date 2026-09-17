@@ -408,7 +408,8 @@ impl WorkerMemory {
     /// affordable count there is a single division. Below the depth the shared
     /// pool is a constant `(pool_depth − 1)` units, so the cost is linear again
     /// with a different intercept; those candidates are enumerated rather than
-    /// divided for, and there are at most [`POOL_DEPTH`] of them.
+    /// divided for, and there are at most `pool_depth` of them — which every
+    /// shipped shape sets to [`POOL_DEPTH`], though the type accepts any.
     ///
     /// The cost is non-decreasing in the count on both pieces, so the first
     /// regime's answer is final whenever it reaches the depth at all.
@@ -496,7 +497,9 @@ impl Partitioning {
 
     /// What concurrent readers of this source cost, as a shape a budget is
     /// solved against — [`Partitioning::partition_bytes`] is its per-worker
-    /// term, and `crate::stream::worker_count` is what reads it.
+    /// term. `crate::stream::worker_count` solves against it,
+    /// `crate::stream::plan_partitions` builds a query's charge from it, and
+    /// `crate::leader` reads it for the `scan arrangement` note.
     pub fn worker_memory(&self) -> WorkerMemory {
         self.memory
     }
@@ -511,9 +514,10 @@ impl Partitioning {
     /// **the buffers the source itself allocates per partition**, and nothing
     /// else.
     ///
-    /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`] read chunks, which
-    /// is the **cut** size and not what a worker of it holds, so this
-    /// over-bills that source (`KD25`). For a block-decoding compressed one it
+    /// For a plain file that is [`PLAIN_PARTITION_CHUNKS`] read chunks, capped
+    /// at [`POOL_MAX_BYTES`] and floored at one chunk, which is the **cut**
+    /// size and not what a worker of it holds, so this over-bills that source
+    /// (`KD25`). For a block-decoding compressed one it
     /// is the block unit **once** — the block being decoded is the block the
     /// reader then retains — plus the chunk buffer a straddling read is
     /// assembled into, plus the decoder's own retention. The rest of the

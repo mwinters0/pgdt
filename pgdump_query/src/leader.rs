@@ -392,7 +392,8 @@ pub(crate) async fn scan_region(
     let workers = worker_count(options.parallelism, advice.worker_memory());
     // Whether this region could hold one of the source's own partitions — the
     // floor above, and the one refusal about *this* block rather than about
-    // the arrangement. A source stating no cost states no floor either.
+    // the arrangement. A source stating no cost fails it always, and is never
+    // cut — which every such source's `max_partitions() == Some(1)` also says.
     let region_fits = partition_bytes > 0 && size.saturating_sub(data_offset) >= partition_bytes;
     let shortfall = shortfall(source, options, &advice, workers, size);
     if workers <= 1 || !region_fits || advice.max_partitions() == Some(1) {
@@ -587,9 +588,11 @@ async fn run_region(
 /// plain file is read [`crate::io::PartitionRead::Chunked`], so
 /// [`crate::io::BufferPool`] pools every chunk-long buffer a worker takes — a
 /// read grown past a chunk to finish a longer line is not pooled; a
-/// block-decoding file is read [`crate::io::PartitionRead::Whole`], one of
-/// that source's own units at a time. Both halves are asserted rather than
-/// argued: [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
+/// block-decoding file is read [`crate::io::PartitionRead::Whole`], whose
+/// *first* read of a piece is one of that source's own units; each
+/// continuation read is a chunk, so the unit bounds the whole piece only
+/// while a chunk is no larger, which nothing here enforces. Both halves are
+/// asserted rather than argued: [`no_read_a_worker_makes_exceeds_the_chunk_size`] and
 /// [`no_read_a_worker_makes_exceeds_the_stated_unit`].
 ///
 /// **`Whole` is `min(piece, unit)`, not the piece**, so a cut wider than one
@@ -941,8 +944,9 @@ mod tests {
     /// advise 64-byte partitions, which is what exercises the window loop, the
     /// tail read and the growth path at all. **It is bounded below by the
     /// smallest region any fixture here ends with**: [`scan_region`]'s floor
-    /// is one whole partition, so a larger partition declines a trailing block
-    /// and the sweep below stops asserting anything about it.
+    /// is one whole partition, so a larger partition would decline a trailing
+    /// block and the sweeps below, which assert a closed region and a non-empty
+    /// read list for every block, would fail on it.
     fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
         source.hint_read_size(8);
         ScanOptions {
@@ -1120,7 +1124,10 @@ mod tests {
     }
 
     /// **No read a worker makes on a `PartitionRead::Whole` source exceeds the
-    /// unit that source stated**, however many units the piece covers. It is
+    /// unit that source stated**, for a piece one unit covers. A longer piece
+    /// is read on past its first read a chunk at a time, so what this asserts
+    /// of the rest is `chunk_size`, not the unit; the fixture here runs a
+    /// chunk far below the unit, which is the case it covers. It is
     /// what bounds the body buffer on the block-decoding path, where a
     /// `Whole` read is capped at `min(piece, unit)` and a cut is one unit wide
     /// (`crate::io::BOUNDARIED_PARTITION_UNITS`, and

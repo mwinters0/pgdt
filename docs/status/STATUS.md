@@ -6,7 +6,7 @@ what is still ahead is [`../design/roadmap.md`](../design/roadmap.md),
 whose index table is the schedule; dated pickup notes and plan-changing
 discoveries are in `history/`.
 
-<!-- repointed: 3b61c04 --> The marker names the commit `scripts/repoint.py`
+<!-- repointed: 94220cc --> The marker names the commit `scripts/repoint.py`
 measures the record's growth from; red means a repoint is due
 ([`../process.md`](../process.md), "Repointing").
 
@@ -301,9 +301,9 @@ a phase nobody has sliced.
   `--map` listing seen to lose a statement's text. Detail:
   `pgdump_query/src/map.rs`.
 
-- **KD33** — statistics stop where the account fills: `Term::Retained` is never
-  released during a pass, so a dump long enough fills its allowance partway
-  through and every block after it declines, leaving statistics a prefix of the
+- **KD33** — statistics stop where the account fills: nothing releases
+  `Term::Retained` while the pass gathers forward, so a dump long enough fills
+  its allowance partway through and every block after it declines, leaving statistics a prefix of the
   file and a query pruning nothing over the tail. How much is covered depends on
   the allowance the box resolved, which a user cannot predict. **(b) owned by
   P23**, whose remedy is a granularity derived from the dump's length. Detail:

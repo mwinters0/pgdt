@@ -44,10 +44,11 @@ pub struct DumpMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseMetadata {
     /// `None` for a plain `pg_dump` output, which has no `\connect` and so
-    /// names no database. Never guessed — see [`dump_metadata_from_spans`]'s
-    /// docs for how a `--create` dump's pre-`\connect` segment (which names
-    /// no real database either, but for a different reason) is told apart
-    /// from this case.
+    /// names no database. Never guessed: a `--create` dump's pre-`\connect`
+    /// segment names no real database either, and is told apart by being
+    /// *replaced* rather than pushed when the first `\connect` arrives, its
+    /// version headers carried over ([`dump_metadata_from_spans`]'s `Connect`
+    /// arm).
     pub name: Option<String>,
     /// Whether this database's preamble was read to completion. Always
     /// `true` for every entry a [`crate::index::build_index`] full scan or a
@@ -204,7 +205,7 @@ pub enum TypeKind {
     /// `crate::pgtype` resolves a column declared with that name from.
     ///
     /// `canonical` is the `canonical = <function>` parameter, verbatim, which
-    /// `pg_dump` writes whenever `pg_range.rngcanonical` is set (I46). Its
+    /// `pg_dump` writes whenever `pg_range.rngcanonical` is set (I10). Its
     /// *presence* is the fact `crate::pgtype` needs: a user's canonical
     /// function is arbitrary server-side code, so knowing it exists licenses
     /// declining the column rather than reproducing its rewriting.
@@ -595,7 +596,9 @@ fn parse_create_collation(rest: &str) -> Option<CollationDef> {
     Some(CollationDef { name, deterministic })
 }
 
-/// `CREATE TYPE <name>` in any of its six shapes (see [`TypeKind`]).
+/// `CREATE TYPE <name>` in any of its six shapes, which reach five of
+/// [`TypeKind`]'s variants — [`TypeKind::Domain`] comes from
+/// [`parse_create_domain`] instead.
 fn parse_create_type(rest: &str) -> Option<TypeDef> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let after = rest[consumed..].trim_start();

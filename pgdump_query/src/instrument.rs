@@ -100,8 +100,9 @@ mod enabled {
     static CHECKS: AtomicU64 = AtomicU64::new(0);
     /// The largest allowance any update was given.
     static ALLOWANCE_PEAK: AtomicU64 = AtomicU64::new(0);
-    /// The largest `live − account` and `account − live` any update read, and
-    /// each past the allowance then.
+    /// The largest `live − total` and `total − announced − live` any update
+    /// read, and each past the allowance then — the second being the total
+    /// less what it carries for allocations charged ahead.
     static SHORT: AtomicU64 = AtomicU64::new(0);
     static SHORT_PAST_ALLOWANCE: AtomicU64 = AtomicU64::new(0);
     static OVER: AtomicU64 = AtomicU64::new(0);
@@ -163,7 +164,8 @@ mod enabled {
         pub short: u64,
         /// The largest amount any update found it short past its allowance.
         pub short_past_allowance: u64,
-        /// The largest amount any update found the account over live.
+        /// The largest amount any update found the account, less what it
+        /// announced, over live.
         pub over: u64,
         /// The largest amount any update found it over past its allowance.
         pub over_past_allowance: u64,

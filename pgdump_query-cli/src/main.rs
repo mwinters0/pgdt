@@ -109,11 +109,12 @@ struct ParallelArgs {
     /// threads, the allocator's per-thread arenas, the decoder state a
     /// compressed source keeps outside its pools, the binary itself. What is
     /// left is what the read buffers may hold, and the worker count is lowered
-    /// again so that a fifth of the whole number stays unspent. So the buffer
+    /// again so that a fifth of the whole number, plus a further 256 MiB,
+    /// stays unspent. So the buffer
     /// budget a run reports is always smaller than what you typed, and the
     /// `resolved the arrangement` line on stderr names both.
     ///
-    /// **What is left under that fifth is what a gathering `parse`'s
+    /// **What is left under that margin is what a gathering `parse`'s
     /// statistics may hold**, named as `statistics_bytes=` on the same line. A
     /// table whose statistics will not fit it is skipped — the scan finishes,
     /// stderr says which table and what it declined under, the cache records
@@ -143,9 +144,10 @@ struct ParallelArgs {
     /// never counted, and not on a block-decoding `.xz`, whose first term
     /// already counts a decoded block. At 64 MiB — which is what a plain file
     /// gets unless a limit or this flag says otherwise — the plain file's sum
-    /// already exceeds the budget, so `query --jobs N` on one runs serially
-    /// however large `N` is; raise it past roughly 145 MiB of *buffer budget*
-    /// to get a second sub-stream at all.
+    /// already exceeds the budget, so rather than decline the readers the
+    /// plan narrows each sub-stream's batch span to seat them
+    /// (`docs/design/decisions.md`, "D84"): `--jobs N` buys N sub-streams,
+    /// bought with batch size rather than with buffers.
     /// `parse` is unaffected by the second term: it builds no batches, so
     /// nothing on that path pins a span.
     #[arg(long, value_name = "BYTES", value_parser = parse_memory)]
@@ -349,8 +351,8 @@ impl Resolved {
     /// **A recommended count reads differently from a stated one**: a
     /// recommendation is printed lowered to what the allowance affords, a
     /// stated `--jobs` as typed. What did the lowering is named — `by the
-    /// allocation` or `by the stated budget`, those being different numbers to
-    /// change — with [`Resolved::budget_display`] beside it naming the number
+    /// allocation` or `by the stated allowance`, those being different numbers
+    /// to change — with [`Resolved::budget_display`] beside it naming the number
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
     fn jobs_display(&self) -> String {
@@ -486,8 +488,9 @@ fn parse_memory(text: &str) -> std::result::Result<u64, String> {
 #[derive(Subcommand)]
 enum Command {
     /// Scan a dump file and build the structure cache — the only command
-    /// that reads the dump for its structure (`pgdq info` reports from the
-    /// cache this leaves). Resumes from a matching cache rather than
+    /// that scans ahead of what was asked and the only one that persists what
+    /// it found (`pgdq info` reports from the cache this leaves; a `query`
+    /// maps what the cache lacks without saving it). Resumes from a matching cache rather than
     /// restarting, and banks its progress at `COPY` block boundaries as it
     /// goes — including on Ctrl-C, which saves what has been scanned and
     /// exits 130 — so an interrupted scan is not wasted work. Remove the
@@ -620,9 +623,10 @@ enum Command {
         /// point, and there is nothing else to answer from.
         #[arg(long, required_unless_present = "source")]
         dqcache: Option<PathBuf>,
-        /// Also report each `COPY` block's byte offsets and, per column, what
-        /// it became: the Arrow type it resolved to, or — for a column that
-        /// came back as a string — why. Turns the `user-defined types` count
+        /// Also report each `COPY` block's byte offsets and, per column that
+        /// has something to say, what it became: the Arrow type it resolved
+        /// to, or — for a column that came back as a string for a reason —
+        /// why. A column that is simply text says nothing. Turns the `user-defined types` count
         /// into a listing of the types themselves, on a compressed dump adds
         /// the container's shape, and closes the listing, above its totals,
         /// with the statistics `parse` gathered, per table and column: over
@@ -2014,7 +2018,9 @@ fn resolution_label(r: &ColumnResolution) -> &'static str {
 /// those names, and `pgtype::RANGE_STRUCT_FIELDS` reserves dispatch to the
 /// plan. A built-in multirange and an array of the matching range render
 /// *identically* (`List(Range<Int32>)`): the same Arrow type, different plans,
-/// with the declared PostgreSQL type on the same line.
+/// told apart by the declared PostgreSQL type, which `info --detail` carries
+/// on its `columns:` summary line rather than on this one, and `--json`
+/// beside this string.
 ///
 /// The type and the plan come from one producer and cannot disagree; this
 /// being display code, a disagreeing pair falls back to plain `Display`

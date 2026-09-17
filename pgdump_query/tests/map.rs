@@ -55,12 +55,13 @@ async fn build_index_spans_match_build_map_exactly() {
     }
 }
 
-/// `dump_metadata_from_spans` (span-driven) must recover exactly what a
-/// line-driven preamble pass does, across every fixture shape — multi-database `\connect` segmenting,
+/// `dump_metadata_from_spans` must be a pure function of `Span::body` — the
+/// metadata a fresh call derives from an index's spans is the metadata that
+/// index carries — across every fixture shape — multi-database `\connect` segmenting,
 /// version-header staging across that boundary, and `--binary-upgrade` enum
 /// label folding included (`docs/design/decisions.md`, "D30").
 #[tokio::test]
-async fn metadata_from_spans_matches_preamble_builder_exactly() {
+async fn metadata_from_spans_is_a_pure_function_of_the_spans() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
         let source = LocalFileSource::open(&path).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
@@ -274,9 +275,9 @@ async fn the_large_object_region_is_one_data_span_on_every_routine_version() {
     }
 }
 
-/// A `CREATE TABLE`'s span carries the same name/columns
-/// `crate::preamble::PreambleBuilder` would have parsed out of the same
-/// statement.
+/// A `CREATE TABLE`'s span carries the name and columns
+/// `crate::preamble::classify_statement` parsed out of the statement, that
+/// being the only parser of one in the tree.
 #[tokio::test]
 async fn create_table_span_carries_name_and_columns() {
     let path = edge_cases_fixture(18, "default");

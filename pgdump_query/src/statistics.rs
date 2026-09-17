@@ -30,18 +30,23 @@ use crate::instrument;
 /// block's data per group.
 pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;
 
-/// The most groups a block's statistics hold under an unstated group size:
-/// past it, adjacent groups merge pairwise and the block's group size doubles,
-/// so what a long block holds grows with its columns rather than its bytes
-/// (`docs/design/decisions.md`, "D82"). A judgement, not a reading.
+/// The most groups a block's statistics hold under an unstated group size and
+/// an unstated maximum: past it, adjacent groups merge pairwise and the
+/// block's group size doubles, so what a long block holds grows with its
+/// columns rather than its bytes (`docs/design/decisions.md`, "D82"). A stated
+/// maximum turns the cap off ([`StatisticsRequest::group_cap`]), so a block
+/// gathered under one may hold more groups than this. A judgement, not a
+/// reading.
 pub const STATISTICS_GROUP_CAP: usize = 4096;
 
 /// The fewest rows a block's median group — its upper middle one, so that at
 /// most half the groups fall short — holds under an unstated group size and an
 /// unstated minimum: short of it, the finished block's groups merge
-/// pairwise until that group reaches it or the block is one group
-/// (`docs/design/decisions.md`, "D82"). `DEFAULT_STATISTICS_GROUP_SIZE` over a
-/// row a kibibyte wide; a judgement, not a reading.
+/// pairwise until that group reaches it, the block is one group, or the next
+/// size would break a stated maximum, which outranks the minimum
+/// (`gather::density_merges`; `docs/design/decisions.md`, "D82").
+/// `DEFAULT_STATISTICS_GROUP_SIZE` over a row a kibibyte wide; a judgement,
+/// not a reading.
 pub const DEFAULT_STATISTICS_MIN_ROWS: u64 = 1 << 10;
 
 /// The longest text any stored bound or dictionary entry may be, in bytes.
@@ -168,7 +173,10 @@ impl StatisticsRequest {
     /// Which of `header`'s columns this request tracks, positionally — `None`
     /// when it tracks nothing in the block, which then gathers no statistics
     /// at all. A block whose header names no columns is tracked with no
-    /// column, its groups still counted.
+    /// column, its groups still counted — under [`StatisticsSelection::All`],
+    /// or where a [`StatisticsTarget::Table`] names it; an `Only` selection
+    /// reaching it by column alone tracks nothing there, there being no column
+    /// to match.
     pub fn tracked_columns(&self, header: &CopyHeader) -> Option<Vec<bool>> {
         let targets = match &self.selection {
             StatisticsSelection::All => return Some(vec![true; header.columns.len()]),
@@ -285,8 +293,10 @@ impl StatisticsRequest {
 pub struct StatisticsBackfill {
     /// The columns gathered, positionally to the block's header.
     pub columns: Vec<bool>,
-    /// The group size gathered at: the request's stated size, or else the
-    /// size the block already held, or else [`DEFAULT_STATISTICS_GROUP_SIZE`].
+    /// The group size gathered at: the request's stated size; or, for a block
+    /// whose groups break a stated maximum, the finer size
+    /// [`BlockStatistics::predicted_group_size`] predicts; or else the size
+    /// the block already held, or else [`DEFAULT_STATISTICS_GROUP_SIZE`].
     pub group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise
     /// past it — [`StatisticsRequest::group_cap`] for a block re-read from its

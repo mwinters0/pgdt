@@ -7,11 +7,12 @@ Query pg_dump plain-format files without loading them into memory
 Usage: pgdq <COMMAND>
 
 Commands:
-  parse  Scan a dump file and build the structure cache — the only command that reads the dump for
-         its structure (`pgdq info` reports from the cache this leaves). Resumes from a matching
-         cache rather than restarting, and banks its progress at `COPY` block boundaries as it goes
-         — including on Ctrl-C, which saves what has been scanned and exits 130 — so an interrupted
-         scan is not wasted work. Remove the cache file to force a scan from byte 0
+  parse  Scan a dump file and build the structure cache — the only command that scans ahead of what
+         was asked and the only one that persists what it found (`pgdq info` reports from the cache
+         this leaves; a `query` maps what the cache lacks without saving it). Resumes from a
+         matching cache rather than restarting, and banks its progress at `COPY` block boundaries as
+         it goes — including on Ctrl-C, which saves what has been scanned and exits 130 — so an
+         interrupted scan is not wasted work. Remove the cache file to force a scan from byte 0
   info   Report what a dump's cache holds. **`info` never scans** — it reads the cache `pgdq parse`
          wrote and errors if there is not one, rather than starting an hours-long scan on your
          behalf (`docs/design/decisions.md`, "D61"). A cache from an unfinished scan is reported for

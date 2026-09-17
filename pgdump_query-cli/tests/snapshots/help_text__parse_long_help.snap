@@ -2,9 +2,10 @@
 source: pgdump_query-cli/tests/help_text.rs
 expression: "help_page(&[\"parse\", \"--help\"])"
 ---
-Scan a dump file and build the structure cache — the only command that reads the dump for its
-structure (`pgdq info` reports from the cache this leaves). Resumes from a matching cache rather
-than restarting, and banks its progress at `COPY` block boundaries as it goes — including on Ctrl-C,
+Scan a dump file and build the structure cache — the only command that scans ahead of what was asked
+and the only one that persists what it found (`pgdq info` reports from the cache this leaves; a
+`query` maps what the cache lacks without saving it). Resumes from a matching cache rather than
+restarting, and banks its progress at `COPY` block boundaries as it goes — including on Ctrl-C,
 which saves what has been scanned and exits 130 — so an interrupted scan is not wasted work. Remove
 the cache file to force a scan from byte 0
 
@@ -115,11 +116,12 @@ Options:
           that no buffer accounts for — the runtime's threads, the allocator's per-thread arenas,
           the decoder state a compressed source keeps outside its pools, the binary itself. What is
           left is what the read buffers may hold, and the worker count is lowered again so that a
-          fifth of the whole number stays unspent. So the buffer budget a run reports is always
-          smaller than what you typed, and the `resolved the arrangement` line on stderr names both.
+          fifth of the whole number, plus a further 256 MiB, stays unspent. So the buffer budget a
+          run reports is always smaller than what you typed, and the `resolved the arrangement` line
+          on stderr names both.
           
-          **What is left under that fifth is what a gathering `parse`'s statistics may hold**, named
-          as `statistics_bytes=` on the same line. A table whose statistics will not fit it is
+          **What is left under that margin is what a gathering `parse`'s statistics may hold**,
+          named as `statistics_bytes=` on the same line. A table whose statistics will not fit it is
           skipped — the scan finishes, stderr says which table and what it declined under, the cache
           records it, and only a larger allowance re-reads it. Nothing is killed for want of
           statistics, and raising this is what fits a wide table.
@@ -142,10 +144,11 @@ Options:
           "I/O, memory and parallelism") — charged on a plain file, where a batch pins read buffers
           the first term never counted, and not on a block-decoding `.xz`, whose first term already
           counts a decoded block. At 64 MiB — which is what a plain file gets unless a limit or this
-          flag says otherwise — the plain file's sum already exceeds the budget, so `query --jobs N`
-          on one runs serially however large `N` is; raise it past roughly 145 MiB of *buffer
-          budget* to get a second sub-stream at all. `parse` is unaffected by the second term: it
-          builds no batches, so nothing on that path pins a span.
+          flag says otherwise — the plain file's sum already exceeds the budget, so rather than
+          decline the readers the plan narrows each sub-stream's batch span to seat them
+          (`docs/design/decisions.md`, "D84"): `--jobs N` buys N sub-streams, bought with batch size
+          rather than with buffers. `parse` is unaffected by the second term: it builds no batches,
+          so nothing on that path pins a span.
 
   -h, --help
           Print help (see a summary with '-h')

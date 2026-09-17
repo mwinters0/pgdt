@@ -207,7 +207,7 @@ Eighteen standing rules for reading anything below:
   retire **114.62 G against 114.66 G instructions** for that scan — 0.03% apart
   — and spend **35.8 G against 40.0 G cycles**, with branch misses, cache
   misses, L1-icache misses and frontend stalls flat or *lower* on the slower
-  one. The whole difference is inside `preamble::scan_buf`, whose 293
+  one. The whole difference is inside one hot `preamble` scanning loop, whose 293
   instructions are byte-identical between the two binaries and differ only in
   address; building both with `-C llvm-args=-align-all-functions=6` collapses
   it to −1.5% and takes both below the faster one. What follows for reading a
@@ -2791,7 +2791,7 @@ Per-rep readings (peak RSS):
 - 128 MiB blocks, 16j: 3032.11 MiB, 3033.32 MiB, 3003.16 MiB
 - 128 MiB blocks, 24j: 3003.34 MiB, 3005.48 MiB, 2988.17 MiB
 
-**Where a leg goes flat, it is the block pool's slot ceiling that stopped growing.** The pool's slots are `clamp((budget - chunk) / unit, 1, max(POOL_DEPTH, jobs))`, and it holds one unit below that beside the block each reader has in flight. Above four workers the depth term is the stated `--jobs`, so which term binds is set by the *file's* block size: on the fine leg the budget term is far above the axis, the depth term binds, and the curve is still climbing at the right-hand end; on the coarse leg the budget term binds and the leg levels off. That ceiling follows the `--jobs` announced rather than the readers the budget affords, so the coarse leg's flat value sits above the stated budget — `KD21`, not a bound the library keeps.
+**Where a leg goes flat, it is the block pool's slot ceiling that stopped growing.** The pool's slots are `clamp((budget - POOL_DEPTH*chunk) / unit, 1, max(POOL_DEPTH, jobs))`, and it holds one unit below that beside the block each reader has in flight. Above four workers the depth term is the stated `--jobs`, so which term binds is set by the *file's* block size: on the fine leg the budget term is far above the axis, the depth term binds, and the curve is still climbing at the right-hand end; on the coarse leg the budget term binds and the leg levels off. That ceiling follows the `--jobs` announced rather than the readers the budget affords, so the coarse leg's flat value sits above the stated budget — `KD21`, not a bound the library keeps.
 
 Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤2.20%, machine ≤40% busy, steal ≤0.00%, busiest core ≥3.67 GHz, ≤72°C.
 

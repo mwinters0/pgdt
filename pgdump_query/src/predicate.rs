@@ -513,9 +513,10 @@ const JSONB_MAX_DEPTH: usize = 1000;
 
 /// The furthest a `jsonb` number's exponent may move the decimal point,
 /// bounding the digit string this builds. Ours rather than PostgreSQL's —
-/// `numeric` reaches further — and no *field* is affected: `jsonb` prints its
-/// numbers through `numeric_out`, which never writes an exponent, so only a
-/// literal can reach it.
+/// `numeric` reaches further, and what is bounded is where the decimal point
+/// lands rather than the exponent itself, so a field holding a number whose
+/// integer part runs past this many digits reaches it with no exponent
+/// written at all.
 const JSONB_MAX_EXPONENT: i64 = 100_000;
 
 /// A recursive-descent reader over one JSON document, implementing what
@@ -1799,8 +1800,9 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
 ///
 /// It lives beside the grammar rather than beside [`CompareKind`] because it
 /// describes what [`order_key`] and [`equality_comparison`] accept, which is
-/// each type's `*_out` form, widened only by an integer's sign and leading
-/// zeros and a `uuid` or `macaddr` hex digit's case
+/// each type's `*_out` form, widened by an integer's sign and leading zeros,
+/// a `uuid` or `macaddr` hex digit's case, a `uuid`'s hyphen placement, and
+/// either `numeric` kind's leading or trailing point and leading zeros
 /// (`docs/design/decisions.md`, "D55").
 /// `jsonb` needs the least here, its grammar being the whole of `jsonb_in`.
 ///
@@ -2133,9 +2135,11 @@ pub(crate) fn resolve_term(
         reason: reason.to_string(),
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
-    // `value` is `Some` for every operator but the two NULL tests; an
-    // embedder that builds a `Gt` term without one gets the same fault as an
-    // unparseable literal.
+    // `value` is `Some` for every operator but the two NULL tests. An
+    // embedder that builds a `Gt` term without one is read as having stated
+    // the empty string: a fault wherever the kind's decoder rejects it, and
+    // silently a comparison against `""` for the text kinds, which refuse no
+    // literal.
     let text = predicate.value.as_deref().unwrap_or_default();
     // `kind` is what knows which grammar was applied, so the refusal is built
     // where it is in scope.

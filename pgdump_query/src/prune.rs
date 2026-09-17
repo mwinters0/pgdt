@@ -75,8 +75,9 @@ impl SortedStop {
 
 /// Which of `block`'s groups `filter` could keep a row of, and where its row
 /// order stops a replay of it — or `None` where the block's statistics answer
-/// nothing: it holds none, lists no group, or holds statistics that do not fit
-/// its extent or its column list.
+/// nothing: it holds none, lists no group, holds statistics that do not fit
+/// its extent or its column list, or records a `data_offset` of zero, which
+/// the group arithmetic below subtracts one from.
 ///
 /// **A column's bounds, row order and dictionary are believed only under the
 /// declared type and collation they were gathered under**

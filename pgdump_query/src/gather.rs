@@ -26,7 +26,9 @@
 //!
 //! **A block past its cap merges its closed groups pairwise into exactly what
 //! gathering at twice the size gathers** (`docs/design/decisions.md`, "D82"),
-//! never while a piece it made is alive ([`Gatherer::fit_cap`]). **A finished
+//! never mid-scan while a piece it made is alive; at the block's end it merges
+//! whatever is outstanding, a piece alive there joining nothing more
+//! ([`Gatherer::fit_cap`]). **A finished
 //! block short of its density minimum merges the same way**
 //! (`docs/design/decisions.md`, "D82"; [`Gatherer::fit_density`]).
 //!
@@ -161,17 +163,25 @@ struct Gatherer {
     /// The most groups a block holds, `None` for an exact size and for a
     /// piece, which never merges.
     cap: Option<usize>,
-    /// The fewest rows the finished block's median group holds, `None` for an
-    /// exact size and for a piece, which is never finished.
+    /// The fewest rows the finished block's median group is merged *towards*,
+    /// `None` for an exact size and for a piece, which is never finished. Not
+    /// a floor: the merging stops at one group, or where the next size would
+    /// break `max_rows`, whichever comes first ([`density_merges`]).
     min_rows: Option<u64>,
-    /// The most rows the finished block's 90th-percentile group holds, which
-    /// no merge passes; `None` for an exact size and for a piece.
+    /// The most rows a merge here may put in the finished block's
+    /// 90th-percentile group; `None` for an exact size and for a piece. Not a
+    /// ceiling: a block already past it at the size it gathered from merges
+    /// nothing and finishes over it, the re-read in
+    /// [`crate::statistics::StatisticsRequest::backfill`] being what brings it
+    /// back within one.
     max_rows: Option<u64>,
     /// What the finished block records it was sized under.
     record: GroupSizing,
-    /// Shared with every piece this block has made, once it has made one: a
-    /// block merges only while no piece holds a clone, so each piece joins at
-    /// the size it gathered at.
+    /// Shared with every piece this block has made, once it has made one:
+    /// mid-scan a block merges only while no piece holds a clone, so each
+    /// piece joins at the size it gathered at. At the block's end the check
+    /// is dropped, a piece still alive being past joining
+    /// ([`Gatherer::fit_cap`]).
     pieces: OnceLock<Arc<()>>,
     /// Whether this observes a piece of its block rather than the whole of it:
     /// a piece lists no group ahead of its first row's, holds that group open
@@ -245,10 +255,11 @@ impl Gatherer {
     /// gathering is freed as it is folded in or dropped
     /// (`docs/design/decisions.md`, "D85").
     ///
-    /// deficiency: KD33 — the account this tests is cumulative, and
-    /// `Term::Retained` is never released during a pass, so once a long dump's
-    /// retained statistics reach the allowance every block from there on
-    /// declines on its first charge update. Statistics are then a *prefix* of
+    /// deficiency: KD33 — the account this tests is cumulative, and nothing
+    /// releases `Term::Retained` while the pass gathers forward (the back-fill
+    /// does, replacing a block's statistics, `crate::stream::map_forward`), so
+    /// once a long dump's retained statistics reach the allowance every block
+    /// from there on declines on its first charge update. Statistics are then a *prefix* of
     /// the file rather than a sample of it, and a query prunes nothing over
     /// the tail; how much is covered depends on the allowance the box
     /// resolved. Coarsening under that pressure is refused by "D85" — a cache

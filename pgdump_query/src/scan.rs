@@ -369,7 +369,9 @@ pub enum ChunkPass {
 /// single buffer's refill would be.
 ///
 /// The degenerate case is a chunk containing no newline at all: the whole of
-/// it joins the carry and the in-place pass is empty, which is the growth
+/// it joins the carry, and from the second such chunk on the in-place pass is
+/// empty — the first is handed over whole, finds no newline and consumes
+/// nothing, there being no carry yet to base it against. That is the growth
 /// [`ScanOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
 /// short of the end of the file, since a span holding no newline is one the
 /// scanner can neither consume nor emit anything from; handing it over anyway
@@ -581,7 +583,8 @@ where
     let size = source.size().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
     // `index::scan_preamble`, and `stream::map_forward` announces itself as
-    // "scan". A single `parse` runs both in sequence, so two passes sharing
+    // "scan". `index::build_index` and `map::build_map` share this label
+    // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
         bytes = size,
