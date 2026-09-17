@@ -489,7 +489,7 @@ class StatisticsFigures(unittest.TestCase):
     def test_the_group_size_stated_is_the_librarys_default(self):
         src = (measure.REPO / "pgdump_query/src/statistics.rs").read_text()
         self.assertEqual(measure.STATISTICS_GROUP_SIZE, 1 << 20)
-        self.assertIn("pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;", src)
+        self.assertIn("pub const STATISTICS_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;", src)
 
     def test_a_gathering_legs_parse_states_its_request(self):
         for leg, flags in measure.STATISTICS_LEGS:
@@ -2735,7 +2735,7 @@ class CompressedAccount(unittest.TestCase):
         # property of the file or of the decoder.
         src = (measure.REPO / "pgdump_query/src/scan.rs").read_text()
         self.assertIn(
-            f"pub const DEFAULT_CHUNK_SIZE: usize = {measure.LIBRARY_CHUNK_BYTES >> 20} << 20;",
+            f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = {measure.LIBRARY_CHUNK_BYTES >> 20} << 20;",
             src,
         )
 
@@ -5603,7 +5603,7 @@ class ChunkSize(unittest.TestCase):
         self.assertIn(measure.CHUNK_DEFAULT, measure.CHUNK_SIZES)
         source = (measure.REPO / "pgdump_query/src/scan.rs").read_text()
         self.assertIn(
-            f"pub const DEFAULT_CHUNK_SIZE: usize = 1 << {measure.CHUNK_DEFAULT.bit_length() - 1};",
+            f"pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << {measure.CHUNK_DEFAULT.bit_length() - 1};",
             source,
         )
 

@@ -1,5 +1,6 @@
 /target
 *.swp
+.idea/
 .DS_Store
 /scripts/.venv
 __pycache__/

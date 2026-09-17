@@ -13,7 +13,7 @@ use std::sync::Arc;
 use arrow::datatypes::{Field, Schema, SchemaRef};
 
 use crate::diagnostic::Severity;
-use crate::index::{ArrayShape, MAX_ARRAY_DIMS};
+use crate::index::{ArrayShape, PG_ARRAY_MAX_DIMS};
 use crate::pgtype::{
     ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type, with_extension,
 };
@@ -193,13 +193,13 @@ enum ShapeVerdict {
 /// Read one column's census.
 ///
 /// The order of the tests is the load-bearing part. A leading brace run
-/// longer than [`MAX_ARRAY_DIMS`] did not come out of `array_out` at all
+/// longer than [`PG_ARRAY_MAX_DIMS`] did not come out of `array_out` at all
 /// (I25), so it is not evidence about an array and must not degrade the
 /// column: the honest outcome is the optimistic type plus a `FieldDecode`
 /// naming the row. Only after that does a lower-bound prefix disqualify the
 /// column on its own, however uniform the dimensionality is.
 fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
-    if shape.dims.is_some_and(|(_, max)| max > MAX_ARRAY_DIMS) {
+    if shape.dims.is_some_and(|(_, max)| max > PG_ARRAY_MAX_DIMS) {
         return ShapeVerdict::Keep;
     }
     if shape.lower_bound_prefix {

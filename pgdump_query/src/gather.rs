@@ -21,7 +21,7 @@
 //! observer as [`Term::Gathering`], a piece's as [`Term::Pieces`], each
 //! dictionary's interning map as [`Term::Interned`]. What it holds is
 //! recomputed, O(1) a column, whenever its rows' growth passes
-//! [`CHARGE_STEP`], as each column closes a group and through a piece's fold;
+//! [`STATISTICS_ACCOUNT_CHARGE_STEP`], as each column closes a group and through a piece's fold;
 //! a vector or a map is charged ahead of the allocation growing it.
 //!
 //! **A block past its cap merges its closed groups pairwise into exactly what
@@ -51,8 +51,8 @@ use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, Bounds, CHARGE_STEP, Charge, ColumnBounds,
-    ColumnDictionary, ColumnStatistics, DICTIONARY_CAP, GroupSizing, RowGroup, STORED_VALUE_CAP,
+    BlockGathered, BlockObserver, BlockStatistics, Bounds, STATISTICS_ACCOUNT_CHARGE_STEP, Charge, ColumnBounds,
+    ColumnDictionary, ColumnStatistics, DICTIONARY_MAX_ENTRIES, GroupSizing, RowGroup, DICTIONARY_ENTRY_MAX_BYTES,
     Sortedness, StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group,
     min_rows_group, text_heap, vec_heap,
 };
@@ -200,7 +200,7 @@ struct Gatherer {
     splits: bool,
     columns: Vec<Option<ColumnGatherer>>,
     /// What the open groups have grown by since [`Self::charge_held`] last
-    /// ran, which it runs again once this passes [`CHARGE_STEP`].
+    /// ran, which it runs again once this passes [`STATISTICS_ACCOUNT_CHARGE_STEP`].
     uncharged: i64,
     /// Whether the account stood over its allowance at the last charge update
     /// — read at a row's end and at a fold's, never mid-merge, so an observer
@@ -570,7 +570,7 @@ impl BlockObserver for Gatherer {
                 self.uncharged += column.observe(field);
             }
         }
-        if self.uncharged >= CHARGE_STEP as i64 {
+        if self.uncharged >= STATISTICS_ACCOUNT_CHARGE_STEP as i64 {
             self.charge_held();
         }
         // **The row is whole before the decline**, so nothing is freed
@@ -743,7 +743,7 @@ impl ColumnGatherer {
 
     /// The heap this column holds, as its structure and its interning map,
     /// its open group and a held head included. O(1) but for a keyed bound's
-    /// key, which [`STORED_VALUE_CAP`] bounds.
+    /// key, which [`DICTIONARY_ENTRY_MAX_BYTES`] bounds.
     fn held(&self) -> (u64, u64) {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
         let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
@@ -990,7 +990,7 @@ impl GroupState {
             if mine.contains(&text) {
                 continue;
             }
-            if mine.len() == DICTIONARY_CAP {
+            if mine.len() == DICTIONARY_MAX_ENTRIES {
                 self.lose_texts();
                 return;
             }
@@ -1005,10 +1005,10 @@ impl GroupState {
 enum Order {
     /// By the text itself, bytewise, once put in [`Canonical`] form: never
     /// keyed, since a key copies the whole value and a value may be hundreds
-    /// of megabytes, and a bound past [`STORED_VALUE_CAP`] is truncated.
+    /// of megabytes, and a bound past [`DICTIONARY_ENTRY_MAX_BYTES`] is truncated.
     Bytewise(Canonical),
     /// By [`ValueKey`], the key a filter orders by. A value past
-    /// [`STORED_VALUE_CAP`] leaves its group unbounded and its block unordered,
+    /// [`DICTIONARY_ENTRY_MAX_BYTES`] leaves its group unbounded and its block unordered,
     /// no truncation of it being a bound.
     Keyed(CompareKind),
 }
@@ -1046,7 +1046,7 @@ impl Canonical {
 
 /// How much of a bytewise value is kept: past the cap by one character's
 /// width, so a kept head longer than the cap says its value is too.
-const CLIP_BYTES: usize = STORED_VALUE_CAP + char::MAX.len_utf8();
+const CLIP_BYTES: usize = DICTIONARY_ENTRY_MAX_BYTES + char::MAX.len_utf8();
 
 /// A bytewise value's first [`CLIP_BYTES`], which is all a stored bound is
 /// taken from (`docs/design/decisions.md`, "D76").
@@ -1344,7 +1344,7 @@ impl BoundsGatherer {
                 }
             }
             Order::Keyed(kind) => {
-                if text.len() > STORED_VALUE_CAP {
+                if text.len() > DICTIONARY_ENTRY_MAX_BYTES {
                     return self.lose_value(group);
                 }
                 let Some(key) = ValueKey::of(kind, text) else { return self.lose_value(group) };
@@ -1500,9 +1500,9 @@ fn merge_adjacent<T: Default>(items: &mut Vec<T>, mut merge: impl FnMut(T, T) ->
 /// A bytewise group's bounds as stored: each exact where its value fits the
 /// cap, otherwise a prefix below and a successor above.
 fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bounds> {
-    let fits = |c: &Clipped| c.whole && c.head.len() <= STORED_VALUE_CAP;
+    let fits = |c: &Clipped| c.whole && c.head.len() <= DICTIONARY_ENTRY_MAX_BYTES;
     let lower =
-        if fits(&min) { min.head } else { text_prefix(&min.head, STORED_VALUE_CAP).to_owned() };
+        if fits(&min) { min.head } else { text_prefix(&min.head, DICTIONARY_ENTRY_MAX_BYTES).to_owned() };
     if fits(&max) {
         return Some(Bounds { min: lower, max: max.head, max_exact: true });
     }
@@ -1524,7 +1524,7 @@ fn text_prefix(text: &str, cap: usize) -> &str {
     &text[..end]
 }
 
-/// A text no longer than [`STORED_VALUE_CAP`] ordering above `text` bytewise:
+/// A text no longer than [`DICTIONARY_ENTRY_MAX_BYTES`] ordering above `text` bytewise:
 /// a prefix with its last character replaced by the next one. UTF-8 orders
 /// bytewise as it orders code points, so the successor is above every text
 /// the prefix begins. `padded` is `character`, whose comparison drops trailing
@@ -1533,7 +1533,7 @@ fn text_prefix(text: &str, cap: usize) -> &str {
 fn text_upper(text: &str, padded: bool) -> Option<String> {
     // Room for a successor one byte longer than the character it replaces.
     let mut prefix: String =
-        text_prefix(text, STORED_VALUE_CAP - char::MAX.len_utf8() + 1).to_owned();
+        text_prefix(text, DICTIONARY_ENTRY_MAX_BYTES - char::MAX.len_utf8() + 1).to_owned();
     if padded {
         prefix.truncate(prefix.trim_end_matches(' ').len());
     }
@@ -1556,7 +1556,7 @@ fn successor(c: char) -> Option<char> {
 }
 
 /// The most bytes a rendered `\x` bound can carry within the cap.
-const BYTEA_CAP_BYTES: usize = (STORED_VALUE_CAP - 2) / 2;
+const BYTEA_CAP_BYTES: usize = (DICTIONARY_ENTRY_MAX_BYTES - 2) / 2;
 
 /// A rendered `bytea` above the value: its prefix with trailing `0xFF` bytes
 /// dropped and the last byte incremented. `None` when every byte is `0xFF`.
@@ -1627,7 +1627,7 @@ fn table_heap<K, V>(buckets: usize) -> u64 {
 
 /// A column's dictionary. A `character` entry is its text without the
 /// trailing blanks its comparison ignores, deduplicated and measured against
-/// [`STORED_VALUE_CAP`] as such (`docs/design/decisions.md`, "D34").
+/// [`DICTIONARY_ENTRY_MAX_BYTES`] as such (`docs/design/decisions.md`, "D34").
 struct DictionaryGatherer {
     /// Whether the column is `character`, whose entries give up their padding.
     padded: bool,
@@ -1680,7 +1680,7 @@ impl DictionaryGatherer {
         if texts.iter().any(|seen| seen == text) {
             return;
         }
-        if text.len() > STORED_VALUE_CAP || texts.len() == DICTIONARY_CAP {
+        if text.len() > DICTIONARY_ENTRY_MAX_BYTES || texts.len() == DICTIONARY_MAX_ENTRIES {
             group.lose_texts();
             return;
         }
@@ -1724,7 +1724,7 @@ impl DictionaryGatherer {
     /// their entries here in the order a pass closing them would have —
     /// draining `later`'s index lists as they are re-interned, and moving
     /// `charge` by the pair's difference whenever what this one gained passes
-    /// [`CHARGE_STEP`]. `later`'s entries and map stay until it is dropped.
+    /// [`STATISTICS_ACCOUNT_CHARGE_STEP`]. `later`'s entries and map stay until it is dropped.
     fn append(&mut self, later: &mut DictionaryGatherer, charge: &mut Charge) {
         let pair = |mine: &Self, theirs: &Self| {
             let ((a, b), (c, d)) = (mine.held(), theirs.held());
@@ -1741,7 +1741,7 @@ impl DictionaryGatherer {
             self.indices += indices.as_ref().map_or(0, vec_heap);
             push_charged(&mut self.groups, indices, charge);
             let gained = self.entry_text * 2 + self.indices;
-            if gained - synced >= CHARGE_STEP {
+            if gained - synced >= STATISTICS_ACCOUNT_CHARGE_STEP {
                 let now = pair(self, later);
                 charge.set(base.0 + now.0 - before.0, base.1 + now.1 - before.1);
                 synced = gained;
@@ -1761,7 +1761,7 @@ impl DictionaryGatherer {
 
     /// **Renumber the entries the groups still name in the order a pass
     /// closing these groups interns them, and let every other go**: a merge
-    /// past [`DICTIONARY_CAP`] leaves entries no group names, and a merged
+    /// past [`DICTIONARY_MAX_ENTRIES`] leaves entries no group names, and a merged
     /// group lists its second half's new texts after its first's. The
     /// renumbering's scratch is charged ahead of it, and **the interning map
     /// is rebuilt rather than pruned**, its new table charged ahead and the old
@@ -1821,14 +1821,14 @@ impl DictionaryGatherer {
 
 /// One group's distinct texts, as indices, merged with the following group's
 /// as one pass over both groups' values gathers them: the first's, then the
-/// second's not already listed, and none past [`DICTIONARY_CAP`].
+/// second's not already listed, and none past [`DICTIONARY_MAX_ENTRIES`].
 fn union_indices(first: Option<Vec<u32>>, second: Option<Vec<u32>>) -> Option<Vec<u32>> {
     let (first, second) = (first?, second?);
     let added = second.iter().filter(|id| !first.contains(id)).count();
     if added == 0 {
         return Some(first);
     }
-    if first.len() + added > DICTIONARY_CAP {
+    if first.len() + added > DICTIONARY_MAX_ENTRIES {
         return None;
     }
     let mut union = Vec::with_capacity(first.len() + added);
@@ -1864,7 +1864,7 @@ mod tests {
     fn value(rng: &mut Rng, kind: &CompareKind) -> String {
         let length = match rng.below(4) {
             0 => rng.below(4) as usize,
-            1 => STORED_VALUE_CAP - 2 + rng.below(8) as usize,
+            1 => DICTIONARY_ENTRY_MAX_BYTES - 2 + rng.below(8) as usize,
             _ => 250 + rng.below(40) as usize,
         };
         let alphabet: &[char] = &['a', 'b', ' ', 'é', '\u{10FFFF}', '\u{1f}'];
@@ -1952,7 +1952,7 @@ mod tests {
                     continue;
                 };
                 bounded += 1;
-                assert!(b.min.len() <= STORED_VALUE_CAP && b.max.len() <= STORED_VALUE_CAP);
+                assert!(b.min.len() <= DICTIONARY_ENTRY_MAX_BYTES && b.max.len() <= DICTIONARY_ENTRY_MAX_BYTES);
                 let low = ValueKey::of(kind, &b.min).expect("a stored min keys");
                 let high = ValueKey::of(kind, &b.max).expect("a stored max keys");
                 for v in group {
@@ -2703,11 +2703,11 @@ mod tests {
     #[test]
     fn a_long_texts_stored_bounds_are_on_the_right_side_of_it() {
         let long = format!("{}é{}", "a".repeat(250), "z".repeat(40));
-        let lower = text_prefix(&long, STORED_VALUE_CAP);
-        assert!(lower.len() <= STORED_VALUE_CAP);
+        let lower = text_prefix(&long, DICTIONARY_ENTRY_MAX_BYTES);
+        assert!(lower.len() <= DICTIONARY_ENTRY_MAX_BYTES);
         assert_ne!(cmp_text(lower, &long), Ordering::Greater);
         let upper = text_upper(&long, false).unwrap();
-        assert!(upper.len() <= STORED_VALUE_CAP);
+        assert!(upper.len() <= DICTIONARY_ENTRY_MAX_BYTES);
         assert_eq!(cmp_text(&upper, &long), Ordering::Greater);
 
         // The last character has no successor, so the one before it moves.
@@ -2734,11 +2734,11 @@ mod tests {
         bytes.extend([0xFF; 3]);
         let text = render_bytea(&bytes);
         let value = decode_bytea(&text).unwrap();
-        let lower = text_prefix(&text, STORED_VALUE_CAP);
-        assert!(lower.len() <= STORED_VALUE_CAP);
+        let lower = text_prefix(&text, DICTIONARY_ENTRY_MAX_BYTES);
+        assert!(lower.len() <= DICTIONARY_ENTRY_MAX_BYTES);
         assert!(decode_bytea(lower).unwrap() <= value);
         let upper = bytea_upper(&text).unwrap();
-        assert!(upper.len() <= STORED_VALUE_CAP);
+        assert!(upper.len() <= DICTIONARY_ENTRY_MAX_BYTES);
         assert!(decode_bytea(&upper).unwrap() > value);
         assert!(bytea_upper(&render_bytea(&[0xFF; 300])).is_none());
     }

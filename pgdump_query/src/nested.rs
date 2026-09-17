@@ -810,7 +810,7 @@ pub fn render_int2vector(values: &[i16]) -> String {
 // the element type.
 
 /// PostgreSQL's `MAXDIM`: the most dimensions an array value may have.
-/// `crate::index::MAX_ARRAY_DIMS` is the same number for the shape census;
+/// `crate::index::PG_ARRAY_MAX_DIMS` is the same number for the shape census;
 /// it is a `u8` there and this is an index bound, and neither module is worth
 /// a dependency edge on the other for one constant.
 const MAXDIM: usize = 6;

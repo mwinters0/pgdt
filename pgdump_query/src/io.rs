@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 
-use crate::scan::DEFAULT_CHUNK_SIZE;
+use crate::scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use crate::{Error, Result};
 
 /// Minimal async byte-range read abstraction.
@@ -1301,7 +1301,7 @@ const POOL_DEPTH: usize = 4;
 /// The largest buffer worth keeping, in bytes, for a length nobody has
 /// announced as a read size.
 ///
-/// The read path's steady state is chunk-sized — [`crate::DEFAULT_CHUNK_SIZE`],
+/// The read path's steady state is chunk-sized — [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`],
 /// tunable through `ScanOptions::chunk_size`. What can be far larger is
 /// `crate::map::attach_text`'s coalesced span read, which happens once per map
 /// and never again; holding one of those for the rest of a process would trade
@@ -1334,7 +1334,7 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// announced chunk grows, reaching **one** at [`POOL_MAX_BYTES`] and above.
 ///
 /// **The shipped default sits exactly on the cap** — this multiple of
-/// [`crate::DEFAULT_CHUNK_SIZE`] is [`POOL_MAX_BYTES`] — and the two constants
+/// [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`] is [`POOL_MAX_BYTES`] — and the two constants
 /// are justified independently, so
 /// [`a_shipped_plain_partition_is_eight_whole_chunks`] is what stops a later
 /// change to either from silently capping the default configuration.
@@ -2290,7 +2290,7 @@ impl XzSource {
 
     /// The chunk slot every one of this source's charges is stated against:
     /// the length a read loop announced ([`ByteRangeSource::hint_read_size`]),
-    /// or [`crate::DEFAULT_CHUNK_SIZE`] where none has yet.
+    /// or [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`] where none has yet.
     ///
     /// **The fallback is the chunk a scan settles at, not
     /// [`POOL_MAX_BYTES`]**: an allowance is solved against this number by
@@ -2313,7 +2313,7 @@ impl XzSource {
     fn charged_chunk_bytes(&self) -> u64 {
         match self.pool.announced_bytes() {
             Some(len) => len as u64,
-            None => DEFAULT_CHUNK_SIZE as u64,
+            None => SCAN_CHUNK_DEFAULT_SIZE_BYTES as u64,
         }
     }
 
@@ -3266,7 +3266,7 @@ mod tests {
     }
 
     /// **The shipped configuration must be whole chunks, not capped ones.**
-    /// `DEFAULT_CHUNK_SIZE * PLAIN_PARTITION_CHUNKS` is exactly
+    /// `SCAN_CHUNK_DEFAULT_SIZE_BYTES * PLAIN_PARTITION_CHUNKS` is exactly
     /// [`POOL_MAX_BYTES`], on the cap, and the three constants are justified
     /// independently, so this assertion is what stops a later change to any
     /// one of them from silently converting the default from whole chunks to
@@ -3275,10 +3275,10 @@ mod tests {
     fn a_shipped_plain_partition_is_eight_whole_chunks() {
         let file = tempfile::NamedTempFile::new().unwrap();
         let source = LocalFileSource::open(file.path()).unwrap();
-        source.hint_read_size(crate::DEFAULT_CHUNK_SIZE);
+        source.hint_read_size(crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES);
         assert_eq!(
             source.partitions(0..16).partition_bytes(),
-            (PLAIN_PARTITION_CHUNKS as u64) * (crate::DEFAULT_CHUNK_SIZE as u64),
+            (PLAIN_PARTITION_CHUNKS as u64) * (crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES as u64),
             "the shipped chunk size must yield a whole multiple, uncapped"
         );
     }
@@ -3319,7 +3319,7 @@ mod tests {
         let unit = source.blocks.as_ref().unwrap().unit as u64;
         assert_eq!(
             whole.partition_bytes(),
-            unit + crate::DEFAULT_CHUNK_SIZE as u64 + source.decode_bytes
+            unit + crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES as u64 + source.decode_bytes
         );
         assert_eq!(whole.worker_memory().bytes_per_worker(), whole.partition_bytes());
 
@@ -3899,7 +3899,7 @@ mod tests {
         const DECODE: u64 = 9_471_776;
         let affordable = |unit: u64, budget: u64| {
             let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
-            cache.affordable(crate::DEFAULT_CHUNK_SIZE as u64, DECODE, budget)
+            cache.affordable(crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES as u64, DECODE, budget)
         };
         // **`POOL_DEPTH` units, not one.** A single reader is charged the
         // block it holds *and* the retention list beside it
@@ -4787,7 +4787,7 @@ mod tests {
         let (jobs, budget) = Parallelism::fit(24, Some(memory), memory.at(4), None);
         assert_eq!(jobs, 4);
         let parallelism = Parallelism::workers(jobs, budget);
-        source.hint_read_size(crate::DEFAULT_CHUNK_SIZE);
+        source.hint_read_size(crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES);
         source.hint_parallelism(parallelism);
         let advice = source.partitions(0..payload.len() as u64);
         assert_eq!(

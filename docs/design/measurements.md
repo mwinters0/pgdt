@@ -1607,7 +1607,7 @@ its own container, untimed and unwrapped.
 
 One `pgdq parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
 three regimes, differing in nothing but the number `--chunk-size` carries.
-`scan::DEFAULT_CHUNK_SIZE` is the shipped constant and the ratio column is
+`scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is the shipped constant and the ratio column is
 against its row. The figure exists to decide one of the three I/O defaults and
 to bound the other two ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 

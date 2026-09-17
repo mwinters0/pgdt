@@ -73,7 +73,7 @@
 //!   cannot cover.
 //!
 //! - **Span text and the tiling check.** [`attach_text`] fills [`Span::text`]
-//!   by slicing the file at each span's own offsets, capped at [`TEXT_CAP`];
+//!   by slicing the file at each span's own offsets, capped at [`SPAN_STORED_TEXT_MAX_BYTES`];
 //!   `Data` and `Unscanned` spans store none. [`check_tiling`]'s production
 //!   callers report a failure as a
 //!   [`crate::diagnostic::DiagnosticKind::TilingBroken`] on the index and
@@ -215,7 +215,7 @@ fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
     })
 }
 
-/// A span's stored bytes. Capped at [`TEXT_CAP`]: one pathological function
+/// A span's stored bytes. Capped at [`SPAN_STORED_TEXT_MAX_BYTES`]: one pathological function
 /// body must not make the cache unbounded, and the offsets are kept
 /// regardless, so a caller that needs the rest can always read the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,7 +228,7 @@ pub struct SpanText {
 
 /// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
 /// schema's DDL being small, it only bites on one enormous statement.
-pub const TEXT_CAP: usize = 64 * 1024;
+pub const SPAN_STORED_TEXT_MAX_BYTES: usize = 64 * 1024;
 
 /// Whether a span of this kind stores its text at all. `Data` spans never do
 /// (`docs/design/decisions.md`, "D30"); `Unscanned` covers bytes by
@@ -248,7 +248,7 @@ fn stores_text(body: &SpanBody) -> bool {
 /// between data blocks rather than one per span.
 ///
 /// Deficiency register: `deficiency: KD31` — that read is capped at
-/// `TEXT_CAP` times the run's span count from the run's start, not per span,
+/// `SPAN_STORED_TEXT_MAX_BYTES` times the run's span count from the run's start, not per span,
 /// so a span following one longer than the cap can fall past what was read and
 /// be stored empty and `truncated` however short it is. **(c) unowned**;
 /// promoted by a `--map` listing seen to lose a statement's text, the fix
@@ -274,15 +274,15 @@ pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Re
         // Capped at what the run's spans can store between them, so a
         // multi-gigabyte `Unparsed` region is never pulled into memory whole
         // (`KD31`).
-        let want = (run_end - run_start).min(((j - i + 1) * TEXT_CAP) as u64) as usize;
+        let want = (run_end - run_start).min(((j - i + 1) * SPAN_STORED_TEXT_MAX_BYTES) as u64) as usize;
         let bytes = source.read_range(run_start, want).await?;
         for span in &mut spans[i..=j] {
             let from = (span.start - run_start) as usize;
             let to = ((span.end - run_start) as usize).min(bytes.len());
             let slice = if from < to { &bytes[from..to] } else { &[][..] };
             let truncated = slice.len() < (span.end - span.start) as usize
-                || (span.end - span.start) as usize > TEXT_CAP;
-            let slice = &slice[..slice.len().min(TEXT_CAP)];
+                || (span.end - span.start) as usize > SPAN_STORED_TEXT_MAX_BYTES;
+            let slice = &slice[..slice.len().min(SPAN_STORED_TEXT_MAX_BYTES)];
             span.text =
                 Some(SpanText { text: String::from_utf8_lossy(slice).into_owned(), truncated });
         }

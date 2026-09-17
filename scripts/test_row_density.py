@@ -78,7 +78,7 @@ class LibraryDefault(unittest.TestCase):
     def test_the_default_minimum_is_the_librarys(self):
         src = (Path(__file__).resolve().parent.parent / "pgdump_query/src/statistics.rs").read_text()
         self.assertEqual(rd.DEFAULT_MIN_ROWS, 1 << 10)
-        self.assertIn("pub const DEFAULT_STATISTICS_MIN_ROWS: u64 = 1 << 10;", src)
+        self.assertIn("pub const STATISTICS_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;", src)
 
 
 class Quantile(unittest.TestCase):

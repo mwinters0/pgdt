@@ -48,7 +48,7 @@ use crate::pgtype::NestedPlan;
 // of the two deviations `docs/design/decisions.md`, "D68" records.
 use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
-use crate::scan::{DEFAULT_CHUNK_SIZE, ScanOptions};
+use crate::scan::{SCAN_CHUNK_DEFAULT_SIZE_BYTES, ScanOptions};
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs
 // in `stream.rs`; the other recorded deviation, named here rather than
 // reached for inline so `tests/layering.rs` sees it.
@@ -154,14 +154,14 @@ pub struct QueryOptions {
 /// Below it the span stops bounding anything a batch could avoid holding — the
 /// pin is the span rounded out to that unit, so a batch spanning half a chunk
 /// pins the whole chunk all the same — while still costing rows per batch. It
-/// is defined as [`crate::DEFAULT_CHUNK_SIZE`] rather than repeating its
+/// is defined as [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`] rather than repeating its
 /// value, the argument being about that unit and not about a megabyte.
 ///
 /// **It is the *shipped* chunk, not the announced one**, so a caller stating
 /// `ScanOptions::chunk_size` floors at a unit its reads do not use: above it
 /// the span is narrowed past what a batch pins anyway, and below it the floor
 /// holds the span above what the budget had room for and costs sub-streams.
-pub const MIN_SOURCE_SPAN: usize = DEFAULT_CHUNK_SIZE;
+pub const MIN_SOURCE_SPAN: usize = SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 
 impl Default for QueryOptions {
     fn default() -> Self {

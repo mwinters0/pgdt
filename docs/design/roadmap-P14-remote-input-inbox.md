@@ -129,7 +129,7 @@ its I/O, this phase inherits the problem.
 
 ## The 1 MiB read chunk and the refusal of double-buffering are both facts about local disks
 
-**Fact.** `scan::DEFAULT_CHUNK_SIZE` is 1 MiB, chosen by measurement over six
+**Fact.** `scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is 1 MiB, chosen by measurement over six
 sizes from 64 KiB to 16 MiB on a SATA SSD, an NVMe drive and tmpfs
 ([`measurements.md`](measurements.md), "What the read chunk size is worth"). Two
 things travel with it. `io::BufferPool` **keeps nothing above 8 MiB unless a

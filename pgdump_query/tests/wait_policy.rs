@@ -138,7 +138,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = RecordingSource::wrap(LocalFileSource::open(&dump).unwrap());
     let options = ScanOptions {
-        chunk_size: 64,
+        chunk_size_bytes: 64,
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };

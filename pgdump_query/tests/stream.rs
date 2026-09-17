@@ -549,7 +549,7 @@ async fn notes_rows(
     let mut stream = table_stream(
         &source,
         "public.notes",
-        ScanOptions { chunk_size, ..ScanOptions::default() },
+        ScanOptions { chunk_size_bytes: chunk_size, ..ScanOptions::default() },
         options,
         None,
         CacheMode::Disabled,

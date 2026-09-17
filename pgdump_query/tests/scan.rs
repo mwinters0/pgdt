@@ -14,7 +14,7 @@ use common::{edge_cases, edge_cases_fixture};
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
     let source = LocalFileSource::open(path).unwrap();
-    let options = ScanOptions { chunk_size, ..Default::default() };
+    let options = ScanOptions { chunk_size_bytes: chunk_size, ..Default::default() };
     let mut out = String::new();
 
     scan(&source, &options, |event| {
@@ -311,7 +311,7 @@ async fn line_length_limit_is_enforced() {
     std::fs::write(&path, &content).unwrap();
 
     let source = LocalFileSource::open(&path).unwrap();
-    let options = ScanOptions { chunk_size: 64, max_line_bytes: 512, ..Default::default() };
+    let options = ScanOptions { chunk_size_bytes: 64, max_line_bytes: 512, ..Default::default() };
     let err = build_index(&source, &options).await.unwrap_err();
     assert!(matches!(err, pgdump_query::Error::LineTooLong { .. }), "unexpected error: {err}");
 }

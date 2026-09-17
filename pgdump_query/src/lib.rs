@@ -32,7 +32,7 @@ pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use error::Error;
 pub use index::{
-    ArrayShape, CopyBlock, DumpIndex, MAX_ARRAY_DIMS, build_index, preamble_only, union_census,
+    ArrayShape, CopyBlock, DumpIndex, PG_ARRAY_MAX_DIMS, build_index, preamble_only, union_census,
 };
 pub use io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, KnownCompression, LocalFileSource,
@@ -42,7 +42,7 @@ pub use io::{
     discover_memory_limit_in, open_local, statistics_allowance,
 };
 pub use map::{
-    DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,
+    DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, SPAN_STORED_TEXT_MAX_BYTES, TilingIssue,
     TocHeader, attach_text, build_map, check_tiling,
 };
 pub use pgtype::{
@@ -57,13 +57,13 @@ pub use preamble::{
 pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
-    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DEFAULT_CHUNK_SIZE,
-    DEFAULT_MAX_LINE_BYTES, Event, LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
+    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
+    SCAN_LINE_DEFAULT_MAX_BYTES, Event, LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
 };
 pub use statistics::{
     BlockGathered, BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
-    DEFAULT_STATISTICS_GROUP_SIZE, DEFAULT_STATISTICS_MIN_ROWS, DICTIONARY_CAP, GroupSizing,
-    RowGroup, STATISTICS_GROUP_CAP, STORED_VALUE_CAP, Sortedness, StatisticsBackfill,
+    STATISTICS_GROUP_DEFAULT_SIZE_BYTES, STATISTICS_GROUP_DEFAULT_MIN_ROWS, DICTIONARY_MAX_ENTRIES, GroupSizing,
+    RowGroup, BLOCK_MAX_STATISTICS_GROUPS, DICTIONARY_ENTRY_MAX_BYTES, Sortedness, StatisticsBackfill,
     StatisticsHeld, StatisticsRequest, StatisticsSelection, StatisticsTarget, StatisticsTerms,
 };
 pub use stream::{

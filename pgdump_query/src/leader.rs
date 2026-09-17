@@ -626,7 +626,7 @@ async fn scan_partition(
     let mut start = range.start;
     let mut want = match read {
         PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),
-        PartitionRead::Chunked => (options.chunk_size as u64).max(1),
+        PartitionRead::Chunked => (options.chunk_size_bytes as u64).max(1),
     };
 
     while start < size {
@@ -657,7 +657,7 @@ async fn scan_partition(
         if advanced {
             start = next_start;
             entry = next_entry;
-            want = options.chunk_size as u64;
+            want = options.chunk_size_bytes as u64;
         } else {
             // Not one line boundary in `want` bytes. Growing rather than
             // failing lets a legitimately long row through; `max_line_bytes`
@@ -950,7 +950,7 @@ mod tests {
     fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
         source.hint_read_size(8);
         ScanOptions {
-            chunk_size: 8,
+            chunk_size_bytes: 8,
             parallelism: Parallelism::workers(jobs, crate::io::DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()
         }
@@ -1112,10 +1112,10 @@ mod tests {
                     }
                     seen.push(offset);
                     assert!(
-                        len <= options.chunk_size,
+                        len <= options.chunk_size_bytes,
                         "the first read at {offset} under {jobs} jobs is {len} bytes, past the \
                          {}-byte chunk",
-                        options.chunk_size
+                        options.chunk_size_bytes
                     );
                 }
             }
@@ -1231,7 +1231,7 @@ mod tests {
             parallelism: Parallelism::workers(8, crate::io::DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()
         };
-        source.hint_read_size(shipped.chunk_size);
+        source.hint_read_size(shipped.chunk_size_bytes);
         let got = scan_region(
             &source,
             &shipped,
@@ -1349,7 +1349,7 @@ mod tests {
             parallelism: Parallelism::workers(8, crate::io::DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()
         };
-        source.hint_read_size(shipped.chunk_size);
+        source.hint_read_size(shipped.chunk_size_bytes);
         let got = scan_region(
             &source,
             &shipped,

@@ -1877,7 +1877,7 @@ fn accepted_form(kind: &CompareKind) -> String {
 /// How many of an enum's labels [`accepted_form`] names before it stops
 /// counting them out.
 ///
-/// A count cap rather than a length cap (`map.rs`'s `TEXT_CAP` is the other
+/// A count cap rather than a length cap (`map.rs`'s `SPAN_STORED_TEXT_MAX_BYTES` is the other
 /// shape): every label a message prints is printed whole, where a length cap
 /// would hand the user a spelling that is not a label. Nothing bounds how
 /// many labels a type declares.
@@ -5441,7 +5441,7 @@ mod tests {
 
         /// **Every committed oracle value, sorted under its declared type's
         /// comparison kind, digests to the value pinned beside the cache's
-        /// `FORMAT_VERSION`.** A stored bound, sortedness or dictionary means
+        /// `CACHE_FORMAT_VERSION`.** A stored bound, sortedness or dictionary means
         /// what this build's comparison says, so a change to how any kind
         /// orders or equates values is a persisted reshape that bumps the
         /// version (`docs/design/decisions.md`, "D22"); this fails until it
@@ -5496,9 +5496,9 @@ mod tests {
             }
             assert!(values_sorted > 800, "only {values_sorted} values sorted");
             assert_eq!(
-                (crate::cache::FORMAT_VERSION, digest),
+                (crate::cache::CACHE_FORMAT_VERSION, digest),
                 GOLDEN_ORDER,
-                "the comparison order moved, or FORMAT_VERSION did: bump FORMAT_VERSION if any \
+                "the comparison order moved, or CACHE_FORMAT_VERSION did: bump CACHE_FORMAT_VERSION if any \
                  kind orders or equates differently, then re-pin both here"
             );
         }

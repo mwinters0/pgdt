@@ -73,7 +73,7 @@ waste and is not derived from `POOL_MAX_BYTES`. Evidence: `chunk-size`.
 Positioned reads via `spawn_blocking`, one chunk at a time: no overlap scheme puts a cold scan below
 the device's delivery time, which the scan already sits within a few percent of. mmap also bypasses
 the trait, faults uninterruptibly and errors as `SIGBUS`. Buffers are pooled and the `Bytes` sliced
-(`vec![0; len]` is `calloc`). `DEFAULT_CHUNK_SIZE` is shipped, not probed: rotational detection is
+(`vec![0; len]` is `calloc`). `SCAN_CHUNK_DEFAULT_SIZE_BYTES` is shipped, not probed: rotational detection is
 masked in containers and undefined over LVM/NFS. Reopens: parse CPU exceeding read time. Evidence:
 `scan-throughput-*`, `chunk-size`, `allocator`.
 
@@ -149,7 +149,7 @@ An mtime mismatch is `CacheMtimeChanged`, never persisted. `SourceIdentity` is m
 variant because the next source has an ETag. `CompressionIndex` is a sibling of `ContainerKind`,
 whose `Plain` is honest for a compressed source; `total_size` is its own field.
 
-### D22 `CacheLoad` is its own type and `FORMAT_VERSION` is bumped freely
+### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;
 every entry point spells the outcomes out. Bump on any persisted reshape, record it nowhere.
 
@@ -410,7 +410,7 @@ handed reads as a request it ignores. `StatisticsSelection::None` is a variant, 
 library, which closes one instance of a size sizing nothing (the CLI refuses it, a person's intent
 being ambiguous there). Code: `statistics::StatisticsRequest`.
 
-### D78 Statistics share the cache file, its identity and its `FORMAT_VERSION`
+### D78 Statistics share the cache file, its identity and its `CACHE_FORMAT_VERSION`
 None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21), so
 a same-size rewrite prunes against its predecessor's, knowingly. Bounds, order and dictionary hold
 only under the declared type and `COLLATE` recorded with them, and changing how a kind orders or
@@ -460,7 +460,7 @@ the cap not this ceiling. Reopens: what the check costs, and what declining save
 ### D86 Statistics volume follows columns and groups, not row width
 Dictionary text is interned once per block and column, not per group, so an input of wide distinct text
 cannot fill an allowance — the attribution sitting's wide-text leg was deleted rather than corrected.
-Final groups are about `min(block bytes / group size, STATISTICS_GROUP_CAP, rows / minimum)`, so above one
+Final groups are about `min(block bytes / group size, BLOCK_MAX_STATISTICS_GROUPS, rows / minimum)`, so above one
 group size per minimum row count the density merge binds and doubling a row's width halves the volume;
 many short columns raise it, as does a bytewise-comparable column earning per-group bounds. The allowance
 is itself non-monotone in the container limit, being `margin_allowance(allowance) − budget`. Rejected:

@@ -667,7 +667,7 @@ METADATA` per-object.
 options clause. Data is emitted either as `COPY <table> [(<cols>)] FROM
 stdin;` with COPY's default TEXT format, or — under `--inserts` /
 `--column-inserts` — as `INSERT INTO` statements. No flag produces
-`WITH (FORMAT csv)`, `WITH (FORMAT binary)`, a custom `DELIMITER`, or any
+`WITH (FORMAT csv)`, `WITH (FORMAT binary)`, a custom `COPY_TEXT_DELIMITER`, or any
 other `COPY` option.
 
 **Proof.** `dumpTableData()` (`pg_dump.c`) branches on exactly one condition:
@@ -1161,7 +1161,7 @@ back in three different shapes.
 2. **`CREATE DOMAIN` copies `typdelim` from its base type**, so a domain over
    `box` has delimiter `;`, and so does a domain over a domain over `box`. The
    DDL `pg_dump` writes for that domain records nothing about it — `CREATE
-   DOMAIN` has no `DELIMITER` clause — so **the base type's name is the only
+   DOMAIN` has no `COPY_TEXT_DELIMITER` clause — so **the base type's name is the only
    trace of the delimiter in the file.**
 
 **Proof.** `src/include/catalog/pg_type.dat` contains exactly one `typdelim =>
@@ -1169,7 +1169,7 @@ back in three different shapes.
 `src/backend/commands/typecmds.c`, in the domain-definition path: `/* Array
 element Delimiter */ delimiter = baseType->typdelim;` — alongside the same
 copy-from-base treatment given to alignment, storage, category and the output
-function. A user-defined base type may also set one (`CREATE TYPE … DELIMITER =
+function. A user-defined base type may also set one (`CREATE TYPE … COPY_TEXT_DELIMITER =
 ';'`), and there `pg_dump` *does* emit the clause — but such a type resolves as
 `TypeKind::Base` and is refused on its own account, so the clause never has to
 be parsed.

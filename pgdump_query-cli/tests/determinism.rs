@@ -40,7 +40,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pgdump_query::{ByteRangeSource, DEFAULT_CHUNK_SIZE, LocalFileSource};
+use pgdump_query::{ByteRangeSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES, LocalFileSource};
 
 mod common;
 use common::{all_fixtures, run, stderr_of};
@@ -203,7 +203,7 @@ fn plain_partition_bytes(dir: &Path) -> u64 {
     let probe = dir.join("probe.bin");
     std::fs::write(&probe, b"x").unwrap();
     let source = LocalFileSource::open(&probe).unwrap();
-    source.hint_read_size(DEFAULT_CHUNK_SIZE);
+    source.hint_read_size(SCAN_CHUNK_DEFAULT_SIZE_BYTES);
     source.partitions(0..1).partition_bytes()
 }
 

@@ -5,7 +5,7 @@
 //! L1 vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
 //! under, counts, and bounds as unescaped field text — what `pg_dump` wrote
-//! where the value fits [`STORED_VALUE_CAP`], and a prefix or a successor of it
+//! where the value fits [`DICTIONARY_ENTRY_MAX_BYTES`], and a prefix or a successor of it
 //! where it does not ([`Bounds::max_exact`]). Which
 //! column gets which statistic, and how a value is ordered, is decided above
 //! this layer by whatever implements [`BlockObserver`]; the mapping pass hands
@@ -28,7 +28,7 @@ use crate::instrument;
 
 /// The group size a request that states none gathers at: one mebibyte of a
 /// block's data per group.
-pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;
+pub const STATISTICS_GROUP_DEFAULT_SIZE_BYTES: u64 = 1 << 20;
 
 /// The most groups a block's statistics hold under an unstated group size and
 /// an unstated maximum: past it, adjacent groups merge pairwise and the
@@ -37,7 +37,7 @@ pub const DEFAULT_STATISTICS_GROUP_SIZE: u64 = 1 << 20;
 /// maximum turns the cap off ([`StatisticsRequest::group_cap`]), so a block
 /// gathered under one may hold more groups than this. A judgement, not a
 /// reading.
-pub const STATISTICS_GROUP_CAP: usize = 4096;
+pub const BLOCK_MAX_STATISTICS_GROUPS: usize = 4096;
 
 /// The fewest rows a block's median group — its upper middle one, so that at
 /// most half the groups fall short — holds under an unstated group size and an
@@ -45,16 +45,16 @@ pub const STATISTICS_GROUP_CAP: usize = 4096;
 /// pairwise until that group reaches it, the block is one group, or the next
 /// size would break a stated maximum, which outranks the minimum
 /// (`gather::density_merges`; `docs/design/decisions.md`, "D82").
-/// `DEFAULT_STATISTICS_GROUP_SIZE` over a row a kibibyte wide; a judgement,
+/// `STATISTICS_GROUP_DEFAULT_SIZE_BYTES` over a row a kibibyte wide; a judgement,
 /// not a reading.
-pub const DEFAULT_STATISTICS_MIN_ROWS: u64 = 1 << 10;
+pub const STATISTICS_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
 
 /// The longest text any stored bound or dictionary entry may be, in bytes.
-pub const STORED_VALUE_CAP: usize = 256;
+pub const DICTIONARY_ENTRY_MAX_BYTES: usize = 256;
 
 /// The most distinct texts one group's dictionary may hold; a group with more
 /// has none on that column.
-pub const DICTIONARY_CAP: usize = 64;
+pub const DICTIONARY_MAX_ENTRIES: usize = 64;
 
 /// What a mapping pass is asked to gather: which columns, at what group size
 /// and between what density bounds (`docs/design/decisions.md`, "D77").
@@ -69,8 +69,8 @@ pub struct StatisticsRequest {
     /// The columns statistics are gathered for.
     pub selection: StatisticsSelection,
     /// The group size, `None` when the caller stated none and
-    /// [`DEFAULT_STATISTICS_GROUP_SIZE`] applies, doubled past
-    /// [`STATISTICS_GROUP_CAP`] groups and short of [`Self::min_rows`]; a
+    /// [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`] applies, doubled past
+    /// [`BLOCK_MAX_STATISTICS_GROUPS`] groups and short of [`Self::min_rows`]; a
     /// stated size is gathered exactly.
     /// Kept apart from the default because a stated size and an unstated one
     /// are different requests to a block already gathered at another. In a
@@ -79,7 +79,7 @@ pub struct StatisticsRequest {
     /// nothing and is ignored.
     pub group_size: Option<NonZeroU64>,
     /// The fewest rows a block's median group should hold, `None` when the
-    /// caller stated none and [`DEFAULT_STATISTICS_MIN_ROWS`] applies; `0`
+    /// caller stated none and [`STATISTICS_GROUP_DEFAULT_MIN_ROWS`] applies; `0`
     /// coarsens nothing. Kept apart from the default for the reason
     /// [`Self::group_size`] is. Under a stated group size, which is gathered
     /// exactly, it sizes nothing and is ignored.
@@ -89,8 +89,8 @@ pub struct StatisticsRequest {
     /// default**: a maximum applies only where a caller states one.
     ///
     /// It is the only thing that makes a block finer than
-    /// [`DEFAULT_STATISTICS_GROUP_SIZE`], so where it is stated it **outranks
-    /// both the minimum and [`STATISTICS_GROUP_CAP`]**, which it turns off
+    /// [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it **outranks
+    /// both the minimum and [`BLOCK_MAX_STATISTICS_GROUPS`]**, which it turns off
     /// ([`Self::group_cap`]) — a person sensitive to what a query reads asked
     /// for the groups, and neither a default nor a bound on memory quietly
     /// overrules them. Under a stated group size it sizes nothing and is
@@ -124,22 +124,25 @@ impl StatisticsRequest {
 
     /// The group size this request gathers at, before any merge.
     pub fn group_size(&self) -> u64 {
-        self.group_size.map_or(DEFAULT_STATISTICS_GROUP_SIZE, NonZeroU64::get)
+        self.group_size.map_or(STATISTICS_GROUP_DEFAULT_SIZE_BYTES, NonZeroU64::get)
     }
 
     /// The most groups a block this request gathers may hold:
-    /// [`STATISTICS_GROUP_CAP`] under an unstated size and an unstated
+    /// [`BLOCK_MAX_STATISTICS_GROUPS`] under an unstated size and an unstated
     /// maximum, `None` under either, both being sizes a caller asked for
     /// exactly.
     pub fn group_cap(&self) -> Option<usize> {
-        (self.group_size.is_none() && self.max_rows.is_none()).then_some(STATISTICS_GROUP_CAP)
+        (self.group_size.is_none() && self.max_rows.is_none())
+            .then_some(BLOCK_MAX_STATISTICS_GROUPS)
     }
 
     /// The density minimum a block this request gathers is sized by at its
     /// end: the stated or default minimum under an unstated size, `None` under
     /// a stated one.
     pub fn min_rows(&self) -> Option<u64> {
-        self.group_size.is_none().then(|| self.min_rows.unwrap_or(DEFAULT_STATISTICS_MIN_ROWS))
+        self.group_size
+            .is_none()
+            .then(|| self.min_rows.unwrap_or(STATISTICS_GROUP_DEFAULT_MIN_ROWS))
     }
 
     /// The density maximum a block this request gathers is sized by at its
@@ -296,7 +299,7 @@ pub struct StatisticsBackfill {
     /// The group size gathered at: the request's stated size; or, for a block
     /// whose groups break a stated maximum, the finer size
     /// [`BlockStatistics::predicted_group_size`] predicts; or else the size
-    /// the block already held, or else [`DEFAULT_STATISTICS_GROUP_SIZE`].
+    /// the block already held, or else [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`].
     pub group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise
     /// past it — [`StatisticsRequest::group_cap`] for a block re-read from its
@@ -425,8 +428,8 @@ pub struct BlockStatistics {
 pub enum GroupSizing {
     /// A stated group size, gathered exactly.
     Stated,
-    /// An unstated size: [`DEFAULT_STATISTICS_GROUP_SIZE`], merged pairwise
-    /// past [`STATISTICS_GROUP_CAP`] groups and, once the block is finished,
+    /// An unstated size: [`STATISTICS_GROUP_DEFAULT_SIZE_BYTES`], merged pairwise
+    /// past [`BLOCK_MAX_STATISTICS_GROUPS`] groups and, once the block is finished,
     /// until its median group holds `min_rows` rows or it is one group.
     ///
     /// `max_rows` is the stated maximum the size was chosen under, if any: it
@@ -475,7 +478,7 @@ pub struct ColumnBounds {
 }
 
 /// A lower and an upper bound on one group's non-NULL values, as unescaped
-/// field text no longer than [`STORED_VALUE_CAP`] — a `character` value's
+/// field text no longer than [`DICTIONARY_ENTRY_MAX_BYTES`] — a `character` value's
 /// without the trailing blanks its comparison ignores.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bounds {
@@ -491,7 +494,7 @@ pub struct Bounds {
 /// Whether a column's non-NULL values are in order row by row over a block.
 /// Equal neighbours are in either order; a column with at most one distinct
 /// value is `Ascending`. A value gathering cannot place against its neighbour —
-/// one that does not key, a keyed one past [`STORED_VALUE_CAP`], or a bytewise
+/// one that does not key, a keyed one past [`DICTIONARY_ENTRY_MAX_BYTES`], or a bytewise
 /// one agreeing with it past what a bound reads — makes the column `Unsorted`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sortedness {
@@ -507,8 +510,8 @@ pub struct ColumnDictionary {
     /// without the trailing blanks its comparison ignores, as with [`Bounds`].
     pub entries: Vec<String>,
     /// Per group, indices into `entries`; `None` where the group held more than
-    /// [`DICTIONARY_CAP`] distinct texts, a text longer than
-    /// [`STORED_VALUE_CAP`], or a field that is not text.
+    /// [`DICTIONARY_MAX_ENTRIES`] distinct texts, a text longer than
+    /// [`DICTIONARY_ENTRY_MAX_BYTES`], or a field that is not text.
     pub groups: Vec<Option<Vec<u32>>>,
 }
 
@@ -636,7 +639,7 @@ where
 /// The most growth an observer holds uncharged: past it, the observer updates
 /// the pass's [`StatisticsAccount`] before it observes another row. A
 /// judgement setting only how often a wide observer updates.
-pub(crate) const CHARGE_STEP: u64 = 64 << 10;
+pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 
 /// Every statistic a mapping pass holds alive, in bytes of heap, by term
 /// (`docs/design/decisions.md`, "D81").
@@ -644,7 +647,7 @@ pub(crate) const CHARGE_STEP: u64 = 64 << 10;
 /// **An account, not a bound**: each term is the sizes the allocator was asked
 /// for, summed as the structures change — a finished block once, as it is
 /// retained or loaded; an observer still gathering whenever its uncharged
-/// growth passes [`CHARGE_STEP`], at every column it closes a group on and
+/// growth passes [`STATISTICS_ACCOUNT_CHARGE_STEP`], at every column it closes a group on and
 /// through every piece it folds in; and a vector or an interning map ahead of
 /// the allocation it grows into. Shared by every observer of one pass, the
 /// leader's pieces on the blocking pool included, so it is one lock over its
@@ -652,7 +655,7 @@ pub(crate) const CHARGE_STEP: u64 = 64 << 10;
 /// no reader sees another thread's update half applied.
 ///
 /// **What it does not see** is bounded by an observer rather than by the dump:
-/// each open observer's growth until it passes [`CHARGE_STEP`], a row's own
+/// each open observer's growth until it passes [`STATISTICS_ACCOUNT_CHARGE_STEP`], a row's own
 /// decode scratch while a column observes it, a merge's scratch for the pair
 /// of groups it is merging, a finished block's rows per group while its size is
 /// chosen, and the observer's own allocation.
@@ -735,7 +738,7 @@ impl StatisticsAccount {
         state.observers = state.observers.wrapping_add(observers as u64);
         let total = state.terms.iter().sum::<u64>();
         state.peak = state.peak.max(total);
-        let tolerance = open * CHARGE_STEP;
+        let tolerance = open * STATISTICS_ACCOUNT_CHARGE_STEP;
         instrument::statistics_account_updated(total, state.announced, tolerance);
         self.allowance.is_some_and(|allowance| total > allowance)
     }

@@ -18,13 +18,13 @@ use crate::{Error, Result};
 
 /// The default COPY TEXT field delimiter. `pg_dump` plain-format output never
 /// overrides it, so it is hardcoded rather than configurable.
-pub const DELIMITER: u8 = b'\t';
+pub const COPY_TEXT_DELIMITER: u8 = b'\t';
 
 /// The literal that COPY TEXT uses for SQL `NULL`.
-const NULL_MARKER: &[u8] = b"\\N";
+const COPY_TEXT_NULL_MARKER: &[u8] = b"\\N";
 
 /// The line that terminates a COPY data block.
-pub const TERMINATOR: &[u8] = b"\\.";
+pub const COPY_BLOCK_TERMINATOR: &[u8] = b"\\.";
 
 /// A parsed `COPY <table> [(<columns>)] FROM stdin;` header line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,7 +113,7 @@ pub fn parse_copy_header(line: &[u8]) -> Option<CopyHeader> {
 
 /// Whether `line` is the `\.` block terminator.
 pub fn is_terminator(line: &[u8]) -> bool {
-    line == TERMINATOR
+    line == COPY_BLOCK_TERMINATOR
 }
 
 /// Find the next `$tag$` dollar-quote delimiter at or after `from` in `line`.
@@ -219,7 +219,7 @@ impl Iterator for FieldRanges<'_> {
         if self.done {
             return None;
         }
-        match memchr::memchr(DELIMITER, &self.line[self.start..]) {
+        match memchr::memchr(COPY_TEXT_DELIMITER, &self.line[self.start..]) {
             Some(rel) => {
                 let end = self.start + rel;
                 let range = self.start..end;
@@ -334,7 +334,7 @@ impl RowSplit {
         if !self.complete {
             let mut pos = self.ends.last().map_or(0, |end| end + 1);
             loop {
-                match memchr::memchr(DELIMITER, &row[pos..]) {
+                match memchr::memchr(COPY_TEXT_DELIMITER, &row[pos..]) {
                     Some(rel) => {
                         let end = pos + rel;
                         self.ends.push(end);
@@ -354,7 +354,7 @@ impl RowSplit {
     #[inline]
     fn extend(&mut self, row: &[u8]) {
         let start = self.ends.last().map_or(0, |end| end + 1);
-        match memchr::memchr(DELIMITER, &row[start..]) {
+        match memchr::memchr(COPY_TEXT_DELIMITER, &row[start..]) {
             Some(rel) => self.ends.push(start + rel),
             None => {
                 self.ends.push(row.len());
@@ -438,7 +438,7 @@ impl<'a> RawRow<'a> {
 /// returned whenever the field contains no escape sequences, which is the
 /// common case.
 pub fn decode_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
-    if field == NULL_MARKER {
+    if field == COPY_TEXT_NULL_MARKER {
         return Ok(None);
     }
     if !field.contains(&b'\\') {
@@ -453,7 +453,7 @@ pub fn decode_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
 /// The escaped path still validates, and must: `\xNN` and the octal forms can
 /// synthesize a byte sequence that is not UTF-8 out of input that is.
 fn decode_validated_field(field: &str) -> Result<Option<Cow<'_, str>>> {
-    if field.as_bytes() == NULL_MARKER {
+    if field.as_bytes() == COPY_TEXT_NULL_MARKER {
         return Ok(None);
     }
     if !field.as_bytes().contains(&b'\\') {
@@ -548,7 +548,7 @@ fn unescape_field(field: &[u8]) -> Result<String> {
 /// `tests/scan.rs`. `None` encodes as the `\N` null marker.
 pub fn encode_field(field: Option<&str>) -> Vec<u8> {
     let Some(s) = field else {
-        return NULL_MARKER.to_vec();
+        return COPY_TEXT_NULL_MARKER.to_vec();
     };
     let mut out = Vec::with_capacity(s.len());
     for b in s.bytes() {
@@ -917,7 +917,7 @@ mod tests {
         for row in ROWS {
             let bytes = row.as_bytes();
             let by_range: Vec<&[u8]> = field_ranges(bytes).map(|r| &bytes[r]).collect();
-            let by_slice: Vec<&[u8]> = bytes.split(|&b| b == DELIMITER).collect();
+            let by_slice: Vec<&[u8]> = bytes.split(|&b| b == COPY_TEXT_DELIMITER).collect();
             assert_eq!(by_range, by_slice, "{row:?}");
         }
     }

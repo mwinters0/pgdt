@@ -14,7 +14,7 @@ use pgdump_query::cache::{CacheClaim, CacheEnvelope, CacheMode, CacheStatus, Com
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DEFAULT_STATISTICS_MIN_ROWS,
+    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, STATISTICS_GROUP_DEFAULT_MIN_ROWS,
     DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan,
     Parallelism, Predicate, PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span,
     SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open_local,
@@ -872,7 +872,7 @@ fn statistics_request(
             );
         }
     }
-    let floor = min_rows.unwrap_or(DEFAULT_STATISTICS_MIN_ROWS);
+    let floor = min_rows.unwrap_or(STATISTICS_GROUP_DEFAULT_MIN_ROWS);
     if max_rows.is_some_and(|max_rows| max_rows < floor) {
         let stated = if min_rows.is_some() { "" } else { " by default" };
         anyhow::bail!(
@@ -899,10 +899,10 @@ struct ReadFlags {
 /// needs the same arrangement in [`QueryOptions`] as in its mapping pass.
 fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
     ScanOptions {
-        chunk_size: read.chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
-        max_line_bytes: read.max_line_bytes.unwrap_or(pgdump_query::DEFAULT_MAX_LINE_BYTES),
+        chunk_size_bytes: read.chunk_size.unwrap_or(pgdump_query::SCAN_CHUNK_DEFAULT_SIZE_BYTES),
+        max_line_bytes: read.max_line_bytes.unwrap_or(pgdump_query::SCAN_LINE_DEFAULT_MAX_BYTES),
         parallelism: parallel.parallelism(),
-        statistics_allowance: parallel.statistics_allowance(),
+        statistics_allowance_bytes: parallel.statistics_allowance(),
         ..ScanOptions::default()
     }
 }

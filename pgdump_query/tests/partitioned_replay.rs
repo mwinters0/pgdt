@@ -55,7 +55,7 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
 /// announced first because the answer scales with it, exactly as the mapping
 /// pass announces it before the plan is made.
 fn partition_unit(source: &LocalFileSource) -> u64 {
-    source.hint_read_size(ScanOptions::default().chunk_size);
+    source.hint_read_size(ScanOptions::default().chunk_size_bytes);
     source.partitions(0..1).partition_bytes()
 }
 
@@ -641,7 +641,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     // read off the source rather than restated here, so this stays a test of
     // the accounting when the terms of that charge move. It is announced the
     // chunk size the run will announce, that being one of the terms.
-    xz.hint_read_size(ScanOptions::default().chunk_size);
+    xz.hint_read_size(ScanOptions::default().chunk_size_bytes);
     let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
     let budget = 4 * reader;
     let options =

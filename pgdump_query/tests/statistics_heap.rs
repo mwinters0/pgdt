@@ -170,7 +170,7 @@ async fn a_split_blocks_pieces_are_charged_and_released() {
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(pgdump_query::cache::colocated_path(&dump));
         let options = ScanOptions {
-            chunk_size: 64,
+            chunk_size_bytes: 64,
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()
         };

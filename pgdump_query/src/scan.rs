@@ -485,25 +485,25 @@ impl ChunkCarry {
 /// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count
 /// falls out of that budget, so the cost levels off
 /// (`docs/design/decisions.md`, "D9").
-pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
+pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;
 
 /// The longest line a scan accepts unless a caller says otherwise. A row is
 /// held whole before it is emitted, so this is what one row may cost in
 /// memory; a dump holding larger values states a larger limit
 /// ([`ScanOptions::max_line_bytes`]).
-pub const DEFAULT_MAX_LINE_BYTES: usize = 64 << 20;
+pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
 
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
     /// Bytes requested per read from the source. Defaults to
-    /// [`DEFAULT_CHUNK_SIZE`].
-    pub chunk_size: usize,
+    /// [`SCAN_CHUNK_DEFAULT_SIZE_BYTES`].
+    pub chunk_size_bytes: usize,
     /// Hard cap on a single line's length. A dump whose lines exceed this is
     /// rejected rather than buffered without bound — the scanner cannot emit
     /// a row until it has the whole line, so this is the only thing standing
     /// between a malformed input and unbounded memory growth. Defaults to
-    /// [`DEFAULT_MAX_LINE_BYTES`].
+    /// [`SCAN_LINE_DEFAULT_MAX_BYTES`].
     pub max_line_bytes: usize,
     /// Cooperative cancellation: set this flag from another task and the
     /// mapping loop stops at the next chunk boundary, persists what it holds
@@ -544,17 +544,17 @@ pub struct ScanOptions {
     ///
     /// **Read by [`crate::stream::map_file`] alone**: a query gathers nothing,
     /// so on every other entry point it bounds nothing.
-    pub statistics_allowance: Option<u64>,
+    pub statistics_allowance_bytes: Option<u64>,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
         Self {
-            chunk_size: DEFAULT_CHUNK_SIZE,
-            max_line_bytes: DEFAULT_MAX_LINE_BYTES,
+            chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
+            max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
             cancel: None,
             parallelism: Parallelism::default(),
-            statistics_allowance: None,
+            statistics_allowance_bytes: None,
         }
     }
 }
@@ -588,7 +588,7 @@ where
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
         bytes = size,
-        chunk_size = options.chunk_size,
+        chunk_size = options.chunk_size_bytes,
         jobs = options.parallelism.jobs(),
         memory_bytes = %memory_budget_display(options.parallelism),
         "preamble scan started",
@@ -597,7 +597,7 @@ where
     // buffer-recycling source can keep one of that size whatever it is
     // (`ByteRangeSource::hint_read_size`), and the budget the caller allows it
     // to keep them inside (`ByteRangeSource::hint_parallelism`).
-    source.hint_read_size(options.chunk_size);
+    source.hint_read_size(options.chunk_size_bytes);
     source.hint_parallelism(options.parallelism);
     // This loop grants no wait (`ByteRangeSource::hint_wait_policy`): the
     // leader's fused worker is the holder that needs the bound and is where
@@ -609,7 +609,7 @@ where
     let mut read_pos = 0u64;
 
     loop {
-        let want = options.chunk_size.min((size - read_pos) as usize);
+        let want = options.chunk_size_bytes.min((size - read_pos) as usize);
         let chunk = if want > 0 {
             let bytes = source.read_range(read_pos, want).await?;
             read_pos += bytes.len() as u64;

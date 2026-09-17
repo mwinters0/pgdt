@@ -55,7 +55,7 @@ use crate::batch::{
     MIN_SOURCE_SPAN, QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names,
 };
 use crate::cache::{CacheLoad, CacheMode};
-use crate::copy::{CopyHeader, DELIMITER, RawRow, RowSplit, validated_prefix};
+use crate::copy::{CopyHeader, COPY_TEXT_DELIMITER, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::gather;
 use crate::index::{
@@ -460,7 +460,7 @@ async fn map_forward(
     tracing::info!(
         bytes = size,
         resumed_from = index.scanned_through,
-        chunk_size = scan_options.chunk_size,
+        chunk_size = scan_options.chunk_size_bytes,
         jobs = scan_options.parallelism.jobs(),
         memory_bytes = %memory_budget_display(scan_options.parallelism),
         "scan started",
@@ -486,7 +486,7 @@ async fn map_forward(
 
     // The chunk length this loop repeats to the frontier, and the budget it
     // may keep buffers inside (`ByteRangeSource::hint_read_size`).
-    source.hint_read_size(scan_options.chunk_size);
+    source.hint_read_size(scan_options.chunk_size_bytes);
     source.hint_parallelism(scan_options.parallelism);
     // **This loop grants no wait** (`docs/design/decisions.md`, "D5"): the
     // leader's fused worker grants it for itself and restores this policy on
@@ -512,7 +512,7 @@ async fn map_forward(
             cache.save(source, index).await?;
             return Ok(MapStop::Interrupted);
         }
-        let want = scan_options.chunk_size.min((size - read_pos) as usize);
+        let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
         let chunk = if want > 0 {
             let bytes = source.read_range(read_pos, want).await?;
             read_pos += bytes.len() as u64;
@@ -1005,7 +1005,7 @@ pub async fn map_file(
             return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
         }
     };
-    let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance));
+    let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance_bytes));
     let loaded = statistics_heap(&index);
     #[cfg(feature = "introspect")]
     statistics_loaded(loaded);
@@ -1084,7 +1084,7 @@ pub async fn map_file(
         cache.save(source, &index).await?;
         report_density_shortfall(statistics, &index);
         declined_statistics =
-            report_statistics_declines(statistics, scan_options.statistics_allowance, &index);
+            report_statistics_declines(statistics, scan_options.statistics_allowance_bytes, &index);
     }
     Ok(MapRun {
         index,
@@ -1171,7 +1171,7 @@ async fn backfill_statistics(
             .enumerate()
             .filter_map(|(at, span)| match &span.body {
                 SpanBody::Data(DataBlock::Copy(block)) => statistics
-                    .backfill(block, scan_options.statistics_allowance)
+                    .backfill(block, scan_options.statistics_allowance_bytes)
                     .map(|backfill| (at, backfill)),
                 _ => None,
             })
@@ -1255,7 +1255,7 @@ async fn backfill_statistics(
                         account.apply(&[(term, -(replaced as i64))]);
                     }
                 }
-                plan = statistics.backfill(block, scan_options.statistics_allowance);
+                plan = statistics.backfill(block, scan_options.statistics_allowance_bytes);
             }
         }
         run.reread += 1;
@@ -1334,7 +1334,7 @@ fn report_statistics_declines(
 /// The three hints every top-level read loop announces before its first read
 /// (`crate::scan::scan`, [`map_forward`]).
 fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
-    source.hint_read_size(scan_options.chunk_size);
+    source.hint_read_size(scan_options.chunk_size_bytes);
     source.hint_parallelism(scan_options.parallelism);
     source.hint_wait_policy(WaitPolicy::NeverWait);
 }
@@ -1456,7 +1456,7 @@ async fn observe_rows(
         if scan_options.cancelled() {
             return Ok(None);
         }
-        let want = scan_options.chunk_size.min((size - read_pos) as usize);
+        let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
         let chunk = if want > 0 {
             let bytes = source.read_range(read_pos, want).await?;
             read_pos += bytes.len() as u64;
@@ -2080,7 +2080,7 @@ async fn first_row_start(
 ) -> Result<Option<u64>> {
     let mut pos = from;
     while pos < end {
-        let want = options.chunk_size.min((end - pos) as usize);
+        let want = options.chunk_size_bytes.min((end - pos) as usize);
         let bytes = source.read_range(pos, want).await?;
         if bytes.is_empty() {
             return Ok(None);
@@ -2884,7 +2884,7 @@ fn replay<'a>(
         // the whole sub-stream (`ByteRangeSource::hint_read_size`). The budget
         // comes from `QueryOptions`, not `ScanOptions`: a query states the two
         // passes' parallelism separately because they split differently.
-        source.hint_read_size(scan_options.chunk_size);
+        source.hint_read_size(scan_options.chunk_size_bytes);
         source.hint_parallelism(query_options.parallelism);
         // **The replay loop could not grant a wait**
         // (`docs/design/decisions.md`, "D5"): `RetainedChunks` pins every
@@ -3019,7 +3019,7 @@ fn replay<'a>(
             let mut stopped_at: Option<u64> = None;
 
             loop {
-                let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
+                let want = scan_options.chunk_size_bytes.min((seg_end - read_pos) as usize);
                 let chunk = if want > 0 {
                     let bytes = source.read_range(read_pos, want).await?;
                     chunks.retain(read_pos, &bytes);
@@ -3071,7 +3071,7 @@ fn replay<'a>(
                                     pending.take()
                                 {
                                     let field_count = if header.columns.is_empty() {
-                                        memchr::memchr_iter(DELIMITER, row.raw).count() + 1
+                                        memchr::memchr_iter(COPY_TEXT_DELIMITER, row.raw).count() + 1
                                     } else {
                                         header.columns.len()
                                     };

@@ -149,7 +149,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "pgdump_query/src/preamble.rs | grep -E '^[+-]' | "
             "grep -vE '^(\\+\\+\\+|---)' | "
             "grep -vE '^[+-][[:space:]]*(///|//!|//)' | "
-            "grep -vE '^[+-](use |    RetainedUnit)|memory_budget_display|DEFAULT_CHUNK_SIZE'"
+            "grep -vE '^[+-](use |    RetainedUnit)|memory_budget_display|SCAN_CHUNK_DEFAULT_SIZE_BYTES'"
             "  # empty: every code line is a `use` or one of the three sites it renames"
         ),
     ),

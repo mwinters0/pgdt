@@ -775,7 +775,7 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         starts: std::sync::Mutex::new(Vec::new()),
     };
     let cache = CacheMode::Enabled(cache::colocated_path(&dump));
-    let scan = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
+    let scan = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let assert_undeep = |what: &str| {
         let starts = std::mem::take(&mut *source.starts.lock().unwrap());
         assert!(!starts.is_empty(), "{what}: read nothing at all");
@@ -888,7 +888,7 @@ enum Stop {
 #[tokio::test]
 async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
     let (_dir, dump, index) =
-        gathered(&statistics_fixture(16, "default"), pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE)
+        gathered(&statistics_fixture(16, "default"), pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES)
             .await;
     let block = index.blocks_for("public.ordered").next().unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
@@ -897,7 +897,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         starts: std::sync::Mutex::new(Vec::new()),
     };
     let cache = CacheMode::Enabled(cache::colocated_path(&dump));
-    let scan = ScanOptions { chunk_size: 64, ..ScanOptions::default() };
+    let scan = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let single = |column, op, value| Expr::Term(term(column, op, Some(value)));
 
     // A filter, its row count, and where its stop ends reading.
@@ -975,7 +975,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
                 }
                 Stop::Unreached | Stop::Unplanned => {
                     assert!(
-                        last + scan.chunk_size as u64 >= block.terminator_offset,
+                        last + scan.chunk_size_bytes as u64 >= block.terminator_offset,
                         "{what}: last read at {last}, the block ending at {}",
                         block.terminator_offset
                     );
@@ -1054,7 +1054,7 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
 #[tokio::test]
 async fn a_stopped_stream_resumes_to_the_same_rows() {
     let (_dir, dump, _index) =
-        gathered(&statistics_fixture(16, "default"), pgdump_query::DEFAULT_STATISTICS_GROUP_SIZE)
+        gathered(&statistics_fixture(16, "default"), pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES)
             .await;
     let source = LocalFileSource::open(&dump).unwrap();
     let cache = CacheMode::Enabled(cache::colocated_path(&dump));

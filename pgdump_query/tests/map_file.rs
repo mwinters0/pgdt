@@ -119,7 +119,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                     let mode =
                         CacheMode::Enabled(dir.path().join(format!("{chunk_size}-{jobs}.dqcache")));
                     let options = ScanOptions {
-                        chunk_size,
+                        chunk_size_bytes: chunk_size,
                         parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
                         ..ScanOptions::default()
                     };
@@ -369,7 +369,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let dying = FailsPast { inner: &source, fail_at: first_block_end };
-    let slow = ScanOptions { chunk_size: 1, ..ScanOptions::default() };
+    let slow = ScanOptions { chunk_size_bytes: 1, ..ScanOptions::default() };
     let err = map_file(&dying, &slow, &mode, &StatisticsRequest::NONE)
         .await
         .expect_err("the source dies mid-scan");
@@ -512,7 +512,7 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let cancel = Arc::new(AtomicBool::new(false));
     let tripping = CancelsPast { inner: &source, trip: data_offset, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
-        chunk_size: 64,
+        chunk_size_bytes: 64,
         cancel: Some(Arc::clone(&cancel)),
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
@@ -630,7 +630,7 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
 
     let failing = FailsOutOfOrder { inner: &source, fail_at: data_offset };
     let options = ScanOptions {
-        chunk_size: 64,
+        chunk_size_bytes: 64,
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
@@ -673,7 +673,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let tripping =
         CancelsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
     let options =
-        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
 
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
     assert!(run.interrupted, "a cancelled scan says so");
@@ -717,7 +717,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let cancel = Arc::new(AtomicBool::new(false));
     let tripping = CancelsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
     let options =
-        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::ALL).await.unwrap();
     assert!(run.interrupted, "a cancelled back-fill says so");
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
@@ -865,7 +865,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     let cancel = Arc::new(AtomicBool::new(false));
     let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
     let options =
-        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
 
     assert!(run.interrupted);
@@ -905,7 +905,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let cancel = Arc::new(AtomicBool::new(false));
     let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
     let options =
-        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
     assert!(run.interrupted, "{label}");
 

@@ -490,11 +490,11 @@ async fn data_and_unscanned_spans_store_no_text() {
 /// the file.
 #[tokio::test]
 async fn text_over_the_cap_is_truncated_and_marked() {
-    use pgdump_query::{Span, TEXT_CAP, attach_text};
+    use pgdump_query::{Span, SPAN_STORED_TEXT_MAX_BYTES, attach_text};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("big.sql");
-    let body = "x".repeat(TEXT_CAP * 2);
+    let body = "x".repeat(SPAN_STORED_TEXT_MAX_BYTES * 2);
     std::fs::write(&path, &body).unwrap();
     let source = LocalFileSource::open(&path).unwrap();
 
@@ -510,7 +510,7 @@ async fn text_over_the_cap_is_truncated_and_marked() {
     attach_text(&source, &mut spans).await.unwrap();
 
     let stored = spans[0].text.as_ref().unwrap();
-    assert_eq!(stored.text.len(), TEXT_CAP);
+    assert_eq!(stored.text.len(), SPAN_STORED_TEXT_MAX_BYTES);
     assert!(stored.truncated);
     assert_eq!(spans[0].end, body.len() as u64, "offsets are untouched by the cap");
 }

@@ -17,12 +17,12 @@
 //! block, and flagless. Half rather than twice: a group twice as wide holds
 //! more distinct texts than a dictionary keeps, and a leg gathering almost
 //! nothing judges nothing. The third, sixty-four text columns of distinct
-//! values at least `STORED_VALUE_CAP` long, goes through a flagless leg alone:
+//! values at least `DICTIONARY_ENTRY_MAX_BYTES` long, goes through a flagless leg alone:
 //! a group of about sixty rows grows each column's open group by a stored
 //! value a row, towards the most a column holds open, so an observer passes a
 //! step every few rows. Each leg's report is held to the tolerance registered
 //! before the first reading, **in bytes and either way, with no proportional
-//! slack** — `S` being `CHARGE_STEP`, the most growth an observer holds
+//! slack** — `S` being `STATISTICS_ACCOUNT_CHARGE_STEP`, the most growth an observer holds
 //! uncharged, and `R` the input's longest row, the most a column's decode holds
 //! beside it:
 //!
@@ -191,17 +191,17 @@ fn wide_text(path: &Path) -> u64 {
 }
 
 /// Rows of long distinct text: sixty-four text columns whose values are each
-/// `STORED_VALUE_CAP` bytes long and never repeat, but for one in sixty-four a
+/// `DICTIONARY_ENTRY_MAX_BYTES` bytes long and never repeat, but for one in sixty-four a
 /// byte longer — so a group's distinct texts grow row by row to the most a
 /// dictionary keeps before one passes a cap.
 fn long_text(path: &Path) -> u64 {
     const COLUMNS: usize = 64;
-    const STORED_VALUE_CAP: usize = 256;
+    const DICTIONARY_ENTRY_MAX_BYTES: usize = 256;
     let columns: Vec<(String, &str)> = (0..COLUMNS).map(|c| (format!("l{c}"), "text")).collect();
     write_dump(path, "public.long", &columns, |rng, id| {
         let fields: Vec<String> = (0..COLUMNS)
             .map(|c| {
-                let length = STORED_VALUE_CAP + usize::from(rng.below(64) == 0);
+                let length = DICTIONARY_ENTRY_MAX_BYTES + usize::from(rng.below(64) == 0);
                 let mut value = format!("{id}-{c}-{} ", rng.next());
                 while value.len() < length {
                     value.push_str(WORDS[rng.below(WORDS.len() as u64) as usize]);

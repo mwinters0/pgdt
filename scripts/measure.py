@@ -1957,7 +1957,7 @@ def predicate_expr(shape: str) -> str:
 
 
 #: The read chunk sizes `chunk-size` is taken at, in bytes, smallest first.
-#: `1 << 20` is the shipped default (`scan::DEFAULT_CHUNK_SIZE`) and every
+#: `1 << 20` is the shipped default (`scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES`) and every
 #: other row is read against it.
 #:
 #: **The range brackets the read path's own buffer-pool ceiling.** 8 MiB is
@@ -2188,7 +2188,7 @@ SWEEP_JOBS = 1
 #: it states none.
 NO_STATISTICS = "--statistics none"
 
-#: `pgdump_query::statistics::DEFAULT_STATISTICS_GROUP_SIZE`, mirrored, and
+#: `pgdump_query::statistics::STATISTICS_GROUP_DEFAULT_SIZE_BYTES`, mirrored, and
 #: held to the library's by a test.
 STATISTICS_GROUP_SIZE = 1 << 20
 
@@ -2386,7 +2386,7 @@ RESERVE_FLAGLESS = "parse-rss-discover-"
 #: across, and adding them there would multiply eight legs out of a pair.
 RESERVE_STEP_FAMILY = "parse-rss-step-"
 
-#: `pgdump_query::DEFAULT_CHUNK_SIZE`, mirrored — the read chunk a scan settles
+#: `pgdump_query::SCAN_CHUNK_DEFAULT_SIZE_BYTES`, mirrored — the read chunk a scan settles
 #: at when no `--chunk-size` is stated, and one of the three terms in what a
 #: block-decoding reader holds.
 #:
@@ -2440,7 +2440,7 @@ def reader_bytes(unit: int) -> int:
 
     **It is one number and not two, at the default chunk every leg here runs
     at.** `BlockCache::reader_bytes` takes its chunk term from
-    `XzSource::charged_chunk_bytes`, which answers `DEFAULT_CHUNK_SIZE` whenever
+    `XzSource::charged_chunk_bytes`, which answers `SCAN_CHUNK_DEFAULT_SIZE_BYTES` whenever
     no read loop has announced a length — so the charge
     `XzSource::default_worker_memory` recommends against *before* the file is
     open for reading and the charge `BlockCache::affordable` then compares a

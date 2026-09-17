@@ -28,7 +28,7 @@ pub use crate::preamble::DumpMetadata;
 /// supported version (I25). A literal whose leading brace run is longer than
 /// this did not come out of `array_out`, so a consumer must treat it as
 /// unusable rather than as a depth.
-pub const MAX_ARRAY_DIMS: u8 = 6;
+pub const PG_ARRAY_MAX_DIMS: u8 = 6;
 
 /// What one column's array values look like within one `COPY` block — the
 /// shape census (`docs/design/decisions.md`, "D35").

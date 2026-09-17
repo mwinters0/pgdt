@@ -19,7 +19,7 @@
 
 use std::cmp::Ordering;
 
-use pgdump_query::{DEFAULT_CHUNK_SIZE, DEFAULT_STATISTICS_GROUP_SIZE, STORED_VALUE_CAP};
+use pgdump_query::{SCAN_CHUNK_DEFAULT_SIZE_BYTES, STATISTICS_GROUP_DEFAULT_SIZE_BYTES, DICTIONARY_ENTRY_MAX_BYTES};
 
 mod common;
 use common::{VERSIONS, statistics_fixture};
@@ -183,15 +183,15 @@ fn a_long_value_runs_past_the_read_chunk_the_group_size_and_the_stored_value_cap
         let block = Block::read(version, "public.long_value");
         let lengths = block.column("v").iter().map(|v| v.unwrap().len()).collect::<Vec<_>>();
         assert!(
-            lengths.iter().any(|&len| len > DEFAULT_CHUNK_SIZE),
+            lengths.iter().any(|&len| len > SCAN_CHUNK_DEFAULT_SIZE_BYTES),
             "a value past the read chunk on {version}: {lengths:?}"
         );
         assert!(
-            lengths.iter().any(|&len| len as u64 > DEFAULT_STATISTICS_GROUP_SIZE),
+            lengths.iter().any(|&len| len as u64 > STATISTICS_GROUP_DEFAULT_SIZE_BYTES),
             "a value past the default group size on {version}: {lengths:?}"
         );
         assert!(
-            lengths.iter().any(|&len| len > STORED_VALUE_CAP && len < DEFAULT_CHUNK_SIZE),
+            lengths.iter().any(|&len| len > DICTIONARY_ENTRY_MAX_BYTES && len < SCAN_CHUNK_DEFAULT_SIZE_BYTES),
             "a value past the cap and short of the chunk on {version}: {lengths:?}"
         );
         let v = block.column("v").into_iter().flatten().collect::<Vec<_>>();

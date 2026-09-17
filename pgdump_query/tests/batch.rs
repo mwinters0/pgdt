@@ -543,7 +543,7 @@ async fn max_source_span_splits_batches() {
                 max_source_span: Some(max_source_span),
                 ..Default::default()
             };
-            let scan = ScanOptions { chunk_size, ..Default::default() };
+            let scan = ScanOptions { chunk_size_bytes: chunk_size, ..Default::default() };
             let (sizes, rows) =
                 collect(&edge_cases_fixture(16, "default"), "public.escapes", &scan, &options)
                     .await;
@@ -597,7 +597,7 @@ async fn batch_contents_are_independent_of_chunk_size() {
             .await
             .1;
     for chunk_size in [1, 2, 3, 7, 13, 64, 511, 4096] {
-        let options = ScanOptions { chunk_size, ..Default::default() };
+        let options = ScanOptions { chunk_size_bytes: chunk_size, ..Default::default() };
         let (_, rows) =
             collect(&edge_cases(), "public.widgets", &options, &QueryOptions::default()).await;
         assert_eq!(rows, reference, "chunk_size {chunk_size}");

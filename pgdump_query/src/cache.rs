@@ -59,7 +59,7 @@ use crate::{Error, Result};
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
 /// unusable as one of another shape.
-pub(crate) const FORMAT_VERSION: u32 = 22;
+pub(crate) const CACHE_FORMAT_VERSION: u32 = 22;
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.
@@ -230,7 +230,7 @@ pub enum CacheStatus {
     ///
     /// Deficiency register: `deficiency: KD30` — the whole [`CacheFile`] is
     /// decoded before its version is read, so a cache from a build whose
-    /// persisted shape changed — the change that bumps `FORMAT_VERSION` —
+    /// persisted shape changed — the change that bumps `CACHE_FORMAT_VERSION` —
     /// almost always fails to decode and is [`CacheStatus::Unreadable`], which
     /// `pgdq info` words as not a pgdq cache at all; an unknown `ContainerKind`
     /// cannot decode at all. **(c) unowned**; promoted by a user sent to check a
@@ -369,7 +369,7 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
             }
             Err(_) => return Ok(Err(CacheStatus::Unreadable)),
         };
-    if file.format_version != FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
+    if file.format_version != CACHE_FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
         return Ok(Err(CacheStatus::UnsupportedVersion));
     }
     Ok(Ok(file))
@@ -534,7 +534,7 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
     let identity = SourceIdentity::observe(source).await?;
     let total_size = source.size().await?;
     let file = CacheFileRef {
-        format_version: FORMAT_VERSION,
+        format_version: CACHE_FORMAT_VERSION,
         container_kind: ContainerKind::Plain,
         compression: source.seek_table().map(CompressionIndex::Xz),
         identity,
@@ -809,7 +809,7 @@ mod tests {
             let path = dir.path().join(format!("{name}.dqcache"));
             save(&path, source, &run.index).await.unwrap();
             let whole = CacheFile {
-                format_version: FORMAT_VERSION,
+                format_version: CACHE_FORMAT_VERSION,
                 container_kind: ContainerKind::Plain,
                 compression: source.seek_table().map(CompressionIndex::Xz),
                 identity: SourceIdentity::observe(source).await.unwrap(),
