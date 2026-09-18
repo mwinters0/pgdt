@@ -160,6 +160,42 @@ fn a_declined_block_path_is_announced_once_on_stderr() {
     assert!(!stderr_of(&plain_out).contains("streaming decoder"), "{}", stderr_of(&plain_out));
 }
 
+/// **The origin clause follows the budget a note quotes, not the severity it
+/// is printed at.** A narrowed batch span is a `note:` and no fault
+/// (`docs/design/decisions.md`, "D84"), and it still names the carved budget
+/// with the allowance it came from beside it — which on a plain source is the
+/// only thing that says the two are different numbers, the budget being held
+/// at the library's own constant however large an allowance is stated
+/// (`docs/design/decisions.md`, "D83"; `KD32`).
+///
+/// **And the remedy it names is one that is reachable there**: the sub-stream
+/// count, which `--jobs` states and the plan divides the budget by. Asserted
+/// through the CLI because the clause is this layer's and the sentence is the
+/// library's, and nothing else joins them.
+#[test]
+fn a_narrowed_span_is_a_note_and_still_says_where_its_budget_came_from() {
+    let dump = fixture("16/edge_cases/default.sql");
+    // Eight readers at the plain source's 8 MiB-a-reader charge spend the
+    // whole 64 MiB budget, so the span is narrowed to its one-chunk floor and
+    // the note fires; the allowance is far above what the budget settles at.
+    let out = query(&dump, "public.widgets", &["--jobs", "8", "--memory", "536870912"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let err = stderr_of(&out);
+    let narrowed = err
+        .lines()
+        .find(|line| line.contains("cannot seat the sub-streams asked for"))
+        .unwrap_or_else(|| panic!("no narrowing note: {err}"));
+    assert!(narrowed.starts_with("note: "), "a narrowing is no fault: {narrowed}");
+    assert!(
+        narrowed.contains("--memory allows 536870912 resident byte(s)"),
+        "a note quoting a budget says where it came from: {narrowed}"
+    );
+    assert!(
+        narrowed.contains("fewer sub-streams"),
+        "and names a lever this source has: {narrowed}"
+    );
+}
+
 /// **The budget is stated with no `--jobs` beside it**, which is the whole of
 /// what a caller who does not want to think about workers can ask for: the
 /// worker count is filled in from the source and the stated bytes ride through

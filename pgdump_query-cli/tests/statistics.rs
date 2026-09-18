@@ -569,6 +569,10 @@ fn query_skips_the_groups_its_statistics_rule_out_unless_told_none() {
         let note = said.lines().find(|l| l.starts_with("note: row-group statistics rule out"));
         assert!(note.is_some(), "--jobs {jobs}: {said}");
         assert!(!note.unwrap().contains(" 0 of"), "--jobs {jobs}: {said}");
+        // A skip quotes no budget, so it takes no provenance clause — the
+        // other half of what the narrowing note beside it carries
+        // (`pgdump_query::PlanNote::budget_bytes`).
+        assert!(!note.unwrap().contains("the budget in force is"), "--jobs {jobs}: {said}");
         assert!(!unsaid.contains("row-group statistics"), "--jobs {jobs}: {unsaid}");
     }
 }

@@ -2423,8 +2423,16 @@ pub enum PlanNoteKind {
     /// buy, and where it still came up short of what was asked for a
     /// [`PlanNoteKind::ParallelismBudgetLimited`] says so beside this. A span
     /// at one announced read chunk
-    /// (`crate::scan::ScanOptions::chunk_size_bytes`) is the floor, and
-    /// nothing but a larger `memory_bytes` moves it.
+    /// (`crate::scan::ScanOptions::chunk_size_bytes`) is the floor, and what
+    /// moves a span off it is a larger `memory_bytes` or a smaller
+    /// `Parallelism::jobs`, the two terms [`derived_source_span`] divides.
+    ///
+    /// **Both levers are named, because only one of them is always the
+    /// caller's** (`KD32`): a source recommending no per-reader cost is left
+    /// on `crate::io::DEFAULT_MEMORY_BUDGET` however large an allowance is
+    /// stated (`docs/design/decisions.md`, "D83"), and which end this run's
+    /// `memory_bytes` came from is a caller's own fact to add
+    /// ([`PlanNote::budget_bytes`]; `docs/design/decisions.md`, "D64").
     ///
     /// **Not a [`crate::diagnostic::DiagnosticKind`]**, for the reason its
     /// siblings are not (`docs/design/decisions.md`, "D19").
@@ -2528,6 +2536,27 @@ impl PlanNote {
         }
     }
 
+    /// The read-buffer budget this note's [`PlanNote::message`] quotes, where
+    /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`],
+    /// whose fact is about stored statistics and names no budget at all.
+    ///
+    /// **It exists so a caller can say where that number came from.**
+    /// Provenance is the caller's fact and never the library's
+    /// (`docs/design/decisions.md`, "D64"), so the clause naming it is
+    /// appended outside; which notes want one is a property of the note and
+    /// not of the severity a caller prints it at — a narrowed span quotes a
+    /// budget and is no fault ([`PlanNoteKind::BatchSpanNarrowed`];
+    /// `docs/design/decisions.md`, "D84").
+    pub fn budget_bytes(&self) -> Option<u64> {
+        match &self.kind {
+            PlanNoteKind::ParallelismBudgetLimited { memory_bytes, .. }
+            | PlanNoteKind::CompressedBlockPathDeclined { memory_bytes, .. }
+            | PlanNoteKind::AllocationBelowFloor { memory_bytes, .. }
+            | PlanNoteKind::BatchSpanNarrowed { memory_bytes, .. } => Some(*memory_bytes),
+            PlanNoteKind::StatisticsPruned { .. } => None,
+        }
+    }
+
     /// One sentence naming why the plan fell short of what was asked, and what
     /// to raise to close the gap — in the library's own vocabulary rather than
     /// any caller's flag names, as [`ComparisonNote::message`] is.
@@ -2580,7 +2609,9 @@ impl PlanNote {
                 "a memory budget of {memory_bytes} byte(s) cannot seat the sub-streams asked for \
                  beside batches spanning {stated_bytes} byte(s) of the source each, so each \
                  batch spans at most {planned_bytes} byte(s) instead and {workers} sub-stream(s) \
-                 were planned — raise the memory budget for larger batches at this concurrency"
+                 were planned — asking for fewer sub-streams leaves each a larger batch; so does \
+                 a larger memory budget, which is not the same as a larger allowance on a source \
+                 that recommends no per-reader cost of its own"
             ),
             PlanNoteKind::StatisticsPruned { skipped_groups, groups, skipped_bytes, bytes } => {
                 format!(
@@ -3575,6 +3606,37 @@ mod tests {
         let charge = WorkerMemory::per_worker(8 * big as u64);
         let eight = Parallelism::workers(8, 8 * 8 * big as u64);
         assert_eq!(derived_source_span(charge, eight, stated, big), big);
+    }
+
+    /// **[`PlanNote::budget_bytes`] answers for exactly the notes whose
+    /// sentence quotes a budget**, which is what a caller appends its
+    /// provenance clause to (`docs/design/decisions.md`, "D64"). Asserted
+    /// against the message rather than against a second list of kinds: a note
+    /// added later that names a budget and forgets the accessor fails here,
+    /// where a list would agree with itself.
+    #[test]
+    fn a_note_quoting_a_budget_is_the_one_that_reports_it() {
+        let memory_bytes = 64 << 20;
+        let notes = [
+            PlanNote::compressed_block_path_declined(9, 1 << 20, 2 << 20, memory_bytes),
+            PlanNote::allocation_below_floor(8 << 20, memory_bytes),
+            PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes),
+            PlanNote::parallelism_budget_limited(8, 7, 8 << 20, Some(1 << 20), memory_bytes),
+            PlanNote {
+                kind: PlanNoteKind::StatisticsPruned {
+                    skipped_groups: 1,
+                    groups: 2,
+                    skipped_bytes: 3,
+                    bytes: 4,
+                },
+            },
+        ];
+        for note in notes {
+            let quoted =
+                note.message().contains(&format!("memory budget of {memory_bytes} byte(s)"));
+            assert_eq!(note.budget_bytes().is_some(), quoted, "{}", note.message());
+            assert!(note.budget_bytes().is_none_or(|bytes| bytes == memory_bytes));
+        }
     }
 
     /// The throttle's whole rule, over measured quantities rather than a

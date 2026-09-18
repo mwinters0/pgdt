@@ -404,12 +404,13 @@ impl Resolved {
         }
     }
 
-    /// The clause a plan note carries when the budget that produced it was
-    /// **not** stated — the half of the story the library cannot tell. Every
-    /// [`pgdump_query::PlanNote`] names the budget that bound the plan, so the
-    /// CLI appends where that number came from: the same
-    /// [`Resolved::budget_display`] the mode report prints
-    /// (`docs/design/decisions.md`, "D64").
+    /// The clause a budget-quoting plan note carries — the half of the story
+    /// the library cannot tell. A [`pgdump_query::PlanNote`] that names the
+    /// budget which bound the plan
+    /// ([`pgdump_query::PlanNote::budget_bytes`]) gets where that number came
+    /// from appended: the same [`Resolved::budget_display`] the mode report
+    /// prints (`docs/design/decisions.md`, "D64"). One that names no budget —
+    /// a statistics skip — takes no clause, there being no number to source.
     ///
     /// **Printed whichever end the allowance came from.** A note names the
     /// budget that bound the plan, and under `--memory` that is a carved
@@ -1313,24 +1314,29 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
 /// partitioned replay carries the same
 /// [`pgdump_query::TableStream::plan_notes`], settled before any of them runs,
 /// so reading it off the first is reading the whole query's answer — unlike
-/// [`announce_comparisons`], this needs no block to have resolved first. A
-/// budget's note is followed by where its budget came from
-/// ([`Resolved::plan_note_origin`]), which only this layer knows; a skip is
-/// no fault, and is a `note:`.
+/// [`announce_comparisons`], this needs no block to have resolved first.
+///
+/// **Severity and the origin clause are two questions, and the note answers
+/// the second.** A note quoting a budget is followed by where that budget came
+/// from ([`Resolved::plan_note_origin`]), which only this layer knows, and
+/// that is asked of [`pgdump_query::PlanNote::budget_bytes`] rather than read
+/// off the arms below: a `note:` may quote a budget, and on a plain source the
+/// clause is the only thing saying the carved number is not the allowance that
+/// was typed (`docs/design/decisions.md`, "D83", and `KD32`).
 fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolved) {
     let origin = parallel.plan_note_origin();
     for note in stream.plan_notes() {
-        match note.kind {
-            // A skip is no fault, and neither is a span the plan narrowed to
-            // seat the readers that were asked for
-            // (`docs/design/decisions.md`, "D84") — where that still came up
-            // short, the `warning:` beside it is what says so.
+        // A skip is no fault, and neither is a span the plan narrowed to seat
+        // the readers that were asked for (`docs/design/decisions.md`, "D84")
+        // — where that still came up short, the `warning:` beside it is what
+        // says so.
+        let severity = match note.kind {
             pgdump_query::PlanNoteKind::StatisticsPruned { .. }
-            | pgdump_query::PlanNoteKind::BatchSpanNarrowed { .. } => {
-                eprintln!("note: {}", note.message());
-            }
-            _ => eprintln!("warning: {}{origin}", note.message()),
-        }
+            | pgdump_query::PlanNoteKind::BatchSpanNarrowed { .. } => "note",
+            _ => "warning",
+        };
+        let origin = if note.budget_bytes().is_some() { origin.as_str() } else { "" };
+        eprintln!("{severity}: {}{origin}", note.message());
     }
 }
 
