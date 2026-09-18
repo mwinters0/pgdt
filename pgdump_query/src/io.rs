@@ -2708,6 +2708,139 @@ impl ByteRangeSource for XzSource {
 /// (`docs/design/decisions.md`, "D14").
 const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
+/// How many leading bytes an [`Origin`] probe brings back: the longest magic
+/// recognition compares, which is [`XZ_MAGIC`]'s. A source whose whole
+/// content is shorter brings back fewer, which is not an error — it simply
+/// matches no magic.
+const ORIGIN_LEADING_BYTES: usize = XZ_MAGIC.len();
+
+/// Where a dump is, as a caller's `--source` argument resolved it, together
+/// with the one cheap probe of it that everything before the source reads
+/// from.
+///
+/// **It exists because two things are settled before a source is built, and
+/// both were reading a `&Path`.** A cache recorded against another stored
+/// size is refused before a byte of the dump is read
+/// (`docs/design/decisions.md`, "D20"), and recognition has to know what the
+/// file's first bytes are in order to choose which source to build
+/// (`docs/design/decisions.md`, "D14"). Doing either through the filesystem
+/// directly makes both of them statements about local files, which is the
+/// assumption a source reached over the network does not meet.
+///
+/// So the origin answers exactly what is needed that early — **stored size,
+/// weak identity, and the leading magic bytes** — and nothing else. It never
+/// opens a source, never walks an `.xz` file's stream footers, and never
+/// reads past the longest magic recognition compares.
+///
+/// **The probe runs at most once.** Locally that saves nothing worth naming;
+/// the reason it is cached is that a source whose probe is a round trip must
+/// answer all three from one. [`Origin::probe`] is therefore the only way to
+/// an answer, and a caller reads whichever of them it needs.
+///
+/// A probe that fails is **not** cached: the failure belongs to whoever is in
+/// a position to say something about it, which is the open that follows
+/// (see [`crate::cache::claim`]).
+#[derive(Debug)]
+pub struct Origin {
+    location: Location,
+    probed: tokio::sync::OnceCell<OriginProbe>,
+}
+
+/// The kinds of place a dump can be. One today, and private: what a caller
+/// reads is [`OriginProbe`], which is the same three answers whichever kind
+/// produced them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Location {
+    LocalFile(PathBuf),
+}
+
+/// What one probe of an [`Origin`] answered.
+///
+/// The weak identity is the modification time, which is the local source's —
+/// the half of identity a mismatch in only warns about
+/// (`docs/design/decisions.md`, "D21"). The stored size is the half that
+/// refuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginProbe {
+    stored_size: u64,
+    modified: Option<SystemTime>,
+    leading: Vec<u8>,
+}
+
+impl OriginProbe {
+    /// Bytes as stored, the number `cache::claim` compares against what a
+    /// cache recorded — [`ByteRangeSource::stored_size`] without a source.
+    pub fn stored_size(&self) -> u64 {
+        self.stored_size
+    }
+
+    /// The weak identity, `None` where the origin exposes none.
+    pub fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+
+    /// The source's first bytes, as far as the longest magic recognition
+    /// compares — fewer for a source shorter than that.
+    pub fn leading(&self) -> &[u8] {
+        &self.leading
+    }
+}
+
+impl Origin {
+    /// The dump at `path` on this filesystem.
+    pub fn local(path: impl Into<PathBuf>) -> Self {
+        Self { location: Location::LocalFile(path.into()), probed: tokio::sync::OnceCell::new() }
+    }
+
+    /// Probe this origin, or hand back the answer a previous call got.
+    pub async fn probe(&self) -> Result<&OriginProbe> {
+        self.probed
+            .get_or_try_init(|| async {
+                match &self.location {
+                    Location::LocalFile(path) => probe_local_file(path).await,
+                }
+            })
+            .await
+    }
+}
+
+impl std::fmt::Display for Origin {
+    /// How a message to the user names this source.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.location {
+            Location::LocalFile(path) => write!(f, "{}", path.display()),
+        }
+    }
+}
+
+/// One `stat` and one short read, on a blocking thread as every other local
+/// read in this module is.
+async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<OriginProbe> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path)?;
+        let metadata = file.metadata()?;
+        let mut buf = [0u8; ORIGIN_LEADING_BYTES];
+        let mut filled = 0;
+        while filled < buf.len() {
+            match file.read(&mut buf[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(Error::Io(e)),
+            }
+        }
+        Ok(OriginProbe {
+            stored_size: metadata.len(),
+            modified: Some(metadata.modified()?),
+            leading: buf[..filled].to_vec(),
+        })
+    })
+    .await
+    .map_err(Error::from)?
+}
+
 /// What a caller already knows about a file's compression layer before
 /// [`open_local`] has looked at it — normally read out of a cache written from
 /// that same file (`crate::cache::claim`), and the reason an `.xz` source need
@@ -2750,21 +2883,26 @@ pub enum Recognized {
     Mismatch,
 }
 
-/// Open `path` as a [`ByteRangeSource`], choosing between [`LocalFileSource`]
-/// and [`XzSource`] by **content**, not by name
+/// Open `origin` as a [`ByteRangeSource`], choosing between
+/// [`LocalFileSource`] and [`XzSource`] by **content**, not by name
 /// (`docs/design/decisions.md`, "D14"): the first six bytes are checked
-/// against `.xz`'s magic, whatever `path` is called. A file that really is
+/// against `.xz`'s magic, whatever the file is called. A file that really is
 /// `.xz`-compressed is recognised however it is named or extensionless; a file
 /// merely *named* `.xz` whose bytes don't match opens as plain.
 ///
+/// **The magic comes from [`Origin::probe`], not from a read of its own.**
+/// Recognition is told what the source holds, which is what keeps it from
+/// being a statement about files; by the time a caller gets here the probe
+/// has normally already run, for the cache claim.
+///
 /// `known` is what a caller read out of a cache for this same file, and it is
-/// checked rather than believed: recognition still reads the magic, and a claim
-/// the file contradicts is [`Recognized::Mismatch`] rather than a silent
+/// checked rather than believed: recognition still compares the magic, and a
+/// claim the file contradicts is [`Recognized::Mismatch`] rather than a silent
 /// fallback. [`KnownCompression::Unknown`] is the no-knowledge case and always
 /// yields a source.
-pub fn open_local(path: impl AsRef<Path>, known: KnownCompression) -> Result<Recognized> {
-    let path = path.as_ref();
-    let is_xz = is_xz_by_magic(path)?;
+pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+    let is_xz = origin.probe().await?.leading().starts_with(&XZ_MAGIC);
+    let Location::LocalFile(path) = &origin.location;
     match (is_xz, known) {
         // The saving: a table from a previous walk of this file, validated
         // against the file's length and its own internal consistency without
@@ -2786,21 +2924,6 @@ pub fn open_local(path: impl AsRef<Path>, known: KnownCompression) -> Result<Rec
         (false, KnownCompression::Unknown | KnownCompression::Plain) => {
             Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?)))
         }
-    }
-}
-
-/// Whether `path`'s first six bytes are `.xz`'s magic. A file shorter than
-/// six bytes is answered `false` rather than an error — it cannot be a valid
-/// `.xz` file either way, and the plain path already handles an empty or
-/// tiny file correctly.
-fn is_xz_by_magic(path: &Path) -> Result<bool> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
-    let mut buf = [0u8; XZ_MAGIC.len()];
-    match file.read_exact(&mut buf) {
-        Ok(()) => Ok(buf == XZ_MAGIC),
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(e) => Err(Error::Io(e)),
     }
 }
 
@@ -4090,10 +4213,70 @@ mod tests {
         assert_eq!(&backward[..], &payload[0..3000]);
     }
 
+    /// The three answers an origin exists to give, from one probe of a local
+    /// file: the bytes as stored, the weak identity, and the leading magic.
+    #[tokio::test]
+    async fn an_origin_probe_answers_size_identity_and_the_leading_bytes() {
+        let (file, _source) = source_of(b"\xfd7zXZ\x00 and then some more bytes");
+        let origin = Origin::local(file.path());
+        let probed = origin.probe().await.unwrap();
+        assert_eq!(probed.stored_size(), std::fs::metadata(file.path()).unwrap().len());
+        assert_eq!(
+            probed.modified(),
+            Some(std::fs::metadata(file.path()).unwrap().modified().unwrap())
+        );
+        assert_eq!(probed.leading(), &XZ_MAGIC[..]);
+    }
+
+    /// A source shorter than the magic brings back what it has, which is not
+    /// an error and matches nothing.
+    #[tokio::test]
+    async fn an_origin_probe_of_a_short_source_brings_back_what_there_is() {
+        let (file, _source) = source_of(b"ab");
+        let origin = Origin::local(file.path());
+        let probed = origin.probe().await.unwrap();
+        assert_eq!(probed.leading(), b"ab");
+        assert_eq!(probed.stored_size(), 2);
+    }
+
+    /// **The probe runs once.** Rewriting the file underneath a probed origin
+    /// changes nothing it answers — which is the property a source whose
+    /// probe is a round trip depends on, and the reason the claim and
+    /// recognition see one consistent set of answers.
+    #[tokio::test]
+    async fn an_origin_probes_at_most_once() {
+        let (mut file, _source) = source_of(b"plain");
+        let origin = Origin::local(file.path());
+        let first = origin.probe().await.unwrap().clone();
+        file.write_all(b" and rather more content than there was before").unwrap();
+        file.flush().unwrap();
+        assert_eq!(origin.probe().await.unwrap(), &first);
+    }
+
+    /// **A failed probe is not cached**, so the open that follows a claim
+    /// still reaches the failure — and an origin is not poisoned by having
+    /// been asked too early.
+    #[tokio::test]
+    async fn a_failed_origin_probe_is_not_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("not-yet.sql");
+        let origin = Origin::local(&path);
+        assert!(origin.probe().await.is_err(), "nothing is there yet");
+        std::fs::write(&path, b"now it is").unwrap();
+        assert_eq!(origin.probe().await.unwrap().stored_size(), 9);
+    }
+
+    /// An origin names itself the way the message that refuses it does.
+    #[tokio::test]
+    async fn an_origin_displays_as_its_path() {
+        let (file, _source) = source_of(b"x");
+        assert_eq!(Origin::local(file.path()).to_string(), file.path().display().to_string());
+    }
+
     /// Recognition with nothing claimed, unwrapped: `KnownCompression::Unknown`
     /// claims nothing recognition could contradict.
-    fn recognize(path: &Path) -> Arc<dyn ByteRangeSource> {
-        match open_local(path, KnownCompression::Unknown).unwrap() {
+    async fn recognize(path: &Path) -> Arc<dyn ByteRangeSource> {
+        match open_local(&Origin::local(path), KnownCompression::Unknown).await.unwrap() {
             Recognized::Source(source) => source,
             Recognized::Mismatch => panic!("`Unknown` claims nothing to contradict"),
         }
@@ -4109,7 +4292,7 @@ mod tests {
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         assert_ne!(compressed.path().extension(), Some(std::ffi::OsStr::new("xz")));
 
-        let source = recognize(compressed.path());
+        let source = recognize(compressed.path()).await;
         assert!(source.seek_table().is_some(), "content-sniffed as .xz");
         assert_eq!(source.size().await.unwrap(), payload.len() as u64);
         let got = source.read_range(0, payload.len()).await.unwrap();
@@ -4124,7 +4307,7 @@ mod tests {
         file.write_all(b"not actually compressed").unwrap();
         file.flush().unwrap();
 
-        let source = recognize(file.path());
+        let source = recognize(file.path()).await;
         assert!(source.seek_table().is_none(), "no compression layer — read as plain");
         let got = source.read_range(0, 23).await.unwrap();
         assert_eq!(&got[..], b"not actually compressed");
@@ -4136,7 +4319,7 @@ mod tests {
     async fn open_local_treats_a_file_shorter_than_the_magic_as_plain() {
         let (_file, plain) = source_of(b"ab");
         let path = plain.path().to_path_buf();
-        let source = recognize(&path);
+        let source = recognize(&path).await;
         assert!(source.seek_table().is_none());
         assert_eq!(source.size().await.unwrap(), 2);
     }
@@ -4149,11 +4332,16 @@ mod tests {
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
 
-        let source =
-            match open_local(compressed.path(), KnownCompression::Xz(table.clone())).unwrap() {
-                Recognized::Source(source) => source,
-                Recognized::Mismatch => panic!("the file's own table must describe it"),
-            };
+        let source = match open_local(
+            &Origin::local(compressed.path()),
+            KnownCompression::Xz(table.clone()),
+        )
+        .await
+        .unwrap()
+        {
+            Recognized::Source(source) => source,
+            Recognized::Mismatch => panic!("the file's own table must describe it"),
+        };
         assert_eq!(source.seek_table().as_ref(), Some(&table));
         assert_eq!(source.size().await.unwrap(), payload.len() as u64);
         let got = source.read_range(9_000, 4000).await.unwrap();
@@ -4181,10 +4369,14 @@ mod tests {
             stream.check = wrong;
         }
 
-        let source = match open_local(compressed.path(), KnownCompression::Xz(table)).unwrap() {
-            Recognized::Source(source) => source,
-            Recognized::Mismatch => panic!("`validate` does not police the check algorithm"),
-        };
+        let source =
+            match open_local(&Origin::local(compressed.path()), KnownCompression::Xz(table))
+                .await
+                .unwrap()
+            {
+                Recognized::Source(source) => source,
+                Recognized::Mismatch => panic!("`validate` does not police the check algorithm"),
+            };
         assert!(
             source.read_range(0, 4000).await.is_err(),
             "a decode under the wrong check must fail — a silent re-walk would have succeeded"
@@ -4204,7 +4396,9 @@ mod tests {
         let other_table = XzSource::open(other.path()).unwrap().seek_table().unwrap();
 
         assert!(matches!(
-            open_local(compressed.path(), KnownCompression::Xz(other_table)).unwrap(),
+            open_local(&Origin::local(compressed.path()), KnownCompression::Xz(other_table))
+                .await
+                .unwrap(),
             Recognized::Mismatch
         ));
     }
@@ -4220,11 +4414,13 @@ mod tests {
         let (plain_file, _plain) = source_of(&payload);
 
         assert!(matches!(
-            open_local(plain_file.path(), KnownCompression::Xz(table)).unwrap(),
+            open_local(&Origin::local(plain_file.path()), KnownCompression::Xz(table))
+                .await
+                .unwrap(),
             Recognized::Mismatch
         ));
         assert!(matches!(
-            open_local(compressed.path(), KnownCompression::Plain).unwrap(),
+            open_local(&Origin::local(compressed.path()), KnownCompression::Plain).await.unwrap(),
             Recognized::Mismatch
         ));
     }
@@ -4233,10 +4429,11 @@ mod tests {
     #[tokio::test]
     async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
         let (file, _plain) = source_of(b"0123456789abcdef");
-        let source = match open_local(file.path(), KnownCompression::Plain).unwrap() {
-            Recognized::Source(source) => source,
-            Recognized::Mismatch => panic!("a plain file is what the claim said"),
-        };
+        let source =
+            match open_local(&Origin::local(file.path()), KnownCompression::Plain).await.unwrap() {
+                Recognized::Source(source) => source,
+                Recognized::Mismatch => panic!("a plain file is what the claim said"),
+            };
         assert!(source.seek_table().is_none());
         assert_eq!(source.size().await.unwrap(), 16);
     }

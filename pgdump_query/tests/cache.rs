@@ -9,9 +9,9 @@ use futures::StreamExt;
 use pgdump_query::cache::{CacheClaim, CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
-    ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, QueryOptions,
-    Recognized, ScanOptions, StatisticsRequest, XzSource, build_index, cache, check_tiling,
-    map_file, open_local, preamble_only, table_stream,
+    ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Origin,
+    QueryOptions, Recognized, ScanOptions, StatisticsRequest, XzSource, build_index, cache,
+    check_tiling, map_file, open_local, preamble_only, table_stream,
 };
 
 mod common;
@@ -783,13 +783,13 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let path = dir.path().join("edge_cases.sql.xz.dqcache");
     cache::save(&path, &xz, &index).await.unwrap();
 
-    let known = match cache::claim(&path, compressed.path()).unwrap() {
+    let known = match cache::claim(&path, &Origin::local(compressed.path())).await.unwrap() {
         CacheClaim::Compression(known) => known,
         other => panic!("the file's own cache describes it: {other:?}"),
     };
     assert_eq!(known, KnownCompression::Xz(xz.seek_table().unwrap()));
 
-    let source = match open_local(compressed.path(), known).unwrap() {
+    let source = match open_local(&Origin::local(compressed.path()), known).await.unwrap() {
         Recognized::Source(source) => source,
         Recognized::Mismatch => panic!("the file's own cache must describe it"),
     };
@@ -810,7 +810,7 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
     cache::save(&path, &plain, &index).await.unwrap();
 
     assert_eq!(
-        cache::claim(&path, &edge_cases()).unwrap(),
+        cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
         CacheClaim::Compression(KnownCompression::Plain)
     );
 }
@@ -824,14 +824,14 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("nothing.dqcache");
     assert_eq!(
-        cache::claim(&missing, &edge_cases()).unwrap(),
+        cache::claim(&missing, &Origin::local(edge_cases())).await.unwrap(),
         CacheClaim::Compression(KnownCompression::Unknown)
     );
 
     let foreign = dir.path().join("foreign.dqcache");
     std::fs::write(&foreign, b"not a cache at all").unwrap();
     assert_eq!(
-        cache::claim(&foreign, &edge_cases()).unwrap(),
+        cache::claim(&foreign, &Origin::local(edge_cases())).await.unwrap(),
         CacheClaim::Compression(KnownCompression::Unknown)
     );
 
@@ -843,7 +843,7 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     // size to compare against, and the open that follows is where that has a
     // sentence to say.
     assert_eq!(
-        cache::claim(&path, &dir.path().join("gone.sql")).unwrap(),
+        cache::claim(&path, &Origin::local(dir.path().join("gone.sql"))).await.unwrap(),
         CacheClaim::Compression(KnownCompression::Unknown)
     );
 }
@@ -851,8 +851,8 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
 /// The one unusable outcome a caller can act on before opening anything: a
 /// cache whose recorded stored size is not this file's describes some *other*
 /// file, and every command refuses it. The stored-size check is the same one
-/// `load` applies, done here against a plain `stat` because no source exists
-/// yet — and answering it here is what spares an `.xz` file the stream-footer
+/// `load` applies, done here against the origin's probe because no source
+/// exists yet — and answering it here is what spares an `.xz` file the footer
 /// walk it would otherwise pay to reach that refusal
 /// (`docs/design/decisions.md`, "D20").
 #[tokio::test]
@@ -867,7 +867,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     // The compressed file's own cache, put to the plain file it decompresses
     // to: same content, different stored size.
     assert_eq!(
-        cache::claim(&path, &edge_cases()).unwrap(),
+        cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
         CacheClaim::SourceChanged {
             cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
             live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),

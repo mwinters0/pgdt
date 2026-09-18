@@ -15,10 +15,10 @@ use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
     ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
-    PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS, ScanOptions,
-    Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind,
-    open_local, preamble_only, render_field_into,
+    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Origin, Parallelism,
+    Predicate, PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS,
+    ScanOptions, Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget, TypeKind, open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -1449,7 +1449,8 @@ async fn main() -> Result<()> {
             // are announced ahead of it, neither waiting on the file (D64).
             let stated = parallel.discover();
             stated.announce();
-            let source = open_for_scan(&file, &mode)?;
+            let origin = Origin::local(&file);
+            let source = open_for_scan(&origin, &mode).await?;
             let parallel = stated.resolve(source.as_ref());
             parallel.announce();
             if preamble_only_flag {
@@ -1552,7 +1553,8 @@ async fn main() -> Result<()> {
             // file's leading bytes. This
             // condition keeps `info`'s own sentence, which names the two ways
             // out ahead of the command they enable.
-            let source = match open_with_cache(&file, &mode)? {
+            let origin = Origin::local(&file);
+            let source = match open_with_cache(&origin, &mode).await? {
                 Opened::Source(source) => source,
                 Opened::SourceChanged { cached_stored_size, live_stored_size } => {
                     let changed =
@@ -1621,7 +1623,8 @@ async fn main() -> Result<()> {
             // ahead of the open, as `parse` does.
             let stated = parallel.discover();
             stated.announce();
-            let source = open_for_scan(&file, &mode)?;
+            let origin = Origin::local(&file);
+            let source = open_for_scan(&origin, &mode).await?;
             let parallel = stated.resolve(source.as_ref());
             parallel.announce();
             let mut header_printed = false;
@@ -1821,13 +1824,13 @@ enum Opened {
 /// mismatch as an [`Opened`] variant — so an `.xz` source never walks its
 /// stream footers to reach a refusal the cache path alone settles. The
 /// comparison itself stays in `cache::claim` (D20).
-fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
+async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
     let claimed_by = match cache {
         CacheMode::Enabled(path) => Some(path.as_path()),
         CacheMode::Disabled | CacheMode::Offline(_) => None,
     };
     let known = match claimed_by {
-        Some(path) => match pgdump_query::cache::claim(path, file)? {
+        Some(path) => match pgdump_query::cache::claim(path, origin).await? {
             CacheClaim::Compression(known) => known,
             CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
                 return Ok(Opened::SourceChanged { cached_stored_size, live_stored_size });
@@ -1835,12 +1838,12 @@ fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
         },
         None => KnownCompression::Unknown,
     };
-    match open_local(file, known)? {
+    match open_local(origin, known).await? {
         Recognized::Source(source) => Ok(Opened::Source(source)),
         Recognized::Mismatch => {
             let path =
                 claimed_by.expect("`KnownCompression::Unknown` claims nothing to contradict");
-            anyhow::bail!(cache_written_for_another_file(path, file))
+            anyhow::bail!(cache_written_for_another_file(path, origin))
         }
     }
 }
@@ -1851,8 +1854,11 @@ fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
 /// word-for-word the one it pre-empts. The library still refuses on its own:
 /// this spares the walk, it does not replace the guarantee
 /// (`docs/design/decisions.md`, "D20").
-fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
-    match open_with_cache(file, cache)? {
+async fn open_for_scan(
+    origin: &Origin,
+    cache: &CacheMode,
+) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
+    match open_with_cache(origin, cache).await? {
         Opened::Source(source) => Ok(source),
         Opened::SourceChanged { cached_stored_size, live_stored_size } => {
             Err(cache.source_mismatch(cached_stored_size, live_stored_size).into())
@@ -1870,12 +1876,11 @@ fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query:
 /// "check the path, or run `pgdq parse`" is advice `parse` cannot take, being
 /// the command that just refused. The tail is [`TWO_WAYS_OUT`]
 /// (`docs/design/decisions.md`, "D20").
-fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
+fn cache_written_for_another_file(path: &Path, source: &Origin) -> String {
     format!(
-        "the cache at {} records compression details that {} contradicts, so it was written for \
-         another file{TWO_WAYS_OUT}",
+        "the cache at {} records compression details that {source} contradicts, so it was written \
+         for another file{TWO_WAYS_OUT}",
         path.display(),
-        source.display()
     )
 }
 

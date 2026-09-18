@@ -98,9 +98,11 @@ overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure. Evi
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content
 An `.xz` dump is third-party post-compression (input reach); gzip/zstd are `pg_dump --compress`
-output (compatibility). `open_local` reads magic bytes and sits outside the trait. Rejected:
-extension dispatch. `xz-seek` is a vendored read-only copy (`scripts/vendor_xz_seek.py`); a bug is
-fixed upstream. Rejected: a path dependency, which fails `cargo check` without the sibling checkout.
+output (compatibility). Recognition compares magic and sits outside the trait, and is *told* those
+bytes by `Origin`'s probe — which also answers D20's size, so what is settled before a source exists
+stops being a statement about files. Rejected: extension dispatch; a probe cached across failure.
+`xz-seek` is a vendored read-only copy (`scripts/vendor_xz_seek.py`); a bug is fixed upstream.
+Rejected: a path dependency, which fails `cargo check` without the sibling checkout.
 
 ### D15 A read decodes whole blocks and retains them; streaming is the fallback
 Whole-block decode, LRU-retained. The mutexed streaming reader stays for a file whose largest block

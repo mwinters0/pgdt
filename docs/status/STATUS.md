@@ -82,10 +82,11 @@ what is delivered.
   amends [`../design/decisions.md`](../design/decisions.md), "D26", which
   describes a polled flag.
   [notes](../design/roadmap-P14.1-cancellation-notes.md)
-- [ ] **14.2** The **origin**: the pre-source probe that answers stored size,
+- [x] **14.2** The **origin**: the pre-source probe that answers stored size,
   weak identity and leading magic bytes before any source is built, `cache::claim`
   consuming it instead of a `&Path`, and recognition told what it holds rather
   than reading the path (D2). The local source is its only user.
+  [notes](../design/roadmap-P14.2-origin-notes.md)
 - [ ] **14.3** In-flight identity on the local source: the check at every cache
   save and once at run end, `--strict-identity=time,location,none` with absence
   as a failure, and an abort that saves nothing and deletes nothing (D5,

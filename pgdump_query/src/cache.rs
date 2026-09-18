@@ -43,7 +43,7 @@ use crate::index::{
     DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
 use crate::instrument::StatisticsScope;
-use crate::io::{ByteRangeSource, KnownCompression};
+use crate::io::{ByteRangeSource, KnownCompression, Origin};
 use crate::map::{DataBlock, SpanBody};
 use crate::{Error, Result};
 
@@ -399,24 +399,25 @@ pub enum CacheClaim {
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
 }
 
-/// What the cache at `cache_path` settles about the file at `dump_path`,
-/// answered **before any source exists**
-/// (`docs/design/decisions.md`, "D18").
+/// What the cache at `cache_path` settles about `origin`, answered **before
+/// any source exists** (`docs/design/decisions.md`, "D18").
 ///
 /// This is the half of the cache a caller needs *early*: recognition decides
 /// which source to build, and for an `.xz` file it either walks the stream
 /// footers or is handed the table a previous walk already produced. With no
-/// source yet to give [`load`], identity is checked against a plain `stat` on
-/// `dump_path` — the same stored-size rule, with a differing mtime again too
-/// weak to invalidate anything. That comparison lives here rather than at the
-/// caller, which keeps the early refusal the same verdict as the late one.
+/// source yet to give [`load`], identity is checked against
+/// [`crate::Origin::probe`] — the same stored-size rule, with a differing
+/// mtime again too weak to invalidate anything. That comparison lives here
+/// rather than at the caller, which keeps the early refusal the same verdict
+/// as the late one, and it reads the origin's probe rather than a `stat` so
+/// that the verdict is not a statement about local files.
 ///
 /// *Not taken:* stopping the decode short of the index, which comes after
 /// `compression` and `identity` in [`CacheFile`]. *Rejected:* a sibling
 /// reporting the stored size, which would decode a
 /// many-thousand-entry seek table twice on the usable path to spare a walk on
 /// the path that is about to fail.
-pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
+pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
     let Ok(file) = read_cache_file(cache_path)? else {
         return Ok(CacheClaim::Compression(KnownCompression::Unknown));
     };
@@ -427,15 +428,15 @@ pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
     // were decoded: inside a statistics scope (`crate::instrument`).
     let CacheFile { compression, index, .. } = file;
     drop_attributed(index);
-    // A dump path that cannot be stat'd is left to the open that follows,
+    // An origin that cannot be probed is left to the open that follows,
     // which is where that failure has a sentence to say.
-    let Ok(live) = std::fs::metadata(dump_path) else {
+    let Ok(live) = origin.probe().await else {
         return Ok(CacheClaim::Compression(KnownCompression::Unknown));
     };
-    if stored_size != live.len() {
+    if stored_size != live.stored_size() {
         return Ok(CacheClaim::SourceChanged {
             cached_stored_size: stored_size,
-            live_stored_size: live.len(),
+            live_stored_size: live.stored_size(),
         });
     }
     Ok(CacheClaim::Compression(match compression {
