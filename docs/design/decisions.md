@@ -176,13 +176,13 @@ fused. One core's rate against the device's offer decides each; readings that di
 Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 
 ### D26 Cancellation is per chunk or leader window, honoured by the mapping passes alone
-A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan
-and back-fill are the drivers with a partial result to keep. The preamble scan ignores the flag: a
-stop there is indistinguishable from reaching the first `COPY` header and would cache as complete.
-`Cancellation` carries a signal beside the polled bit, so a reader waiting on a request rather than
-a `pread` drops it instead of polling past a retry schedule; the tests pin the given-up future's
-drop. **The shape follows the run, not the provider**: one with nothing to bank errors, one that
-persists returns an interrupted run. Rejected: polling alone, which bounds a Ctrl-C by retries.
+A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill
+are the drivers with a partial result to keep. The preamble scan ignores the flag: a stop there is indistinguishable
+from reaching the first `COPY` header and would cache as complete. `Cancellation` carries a signal beside the polled
+bit, so a reader waiting on a request rather than a `pread` drops it instead of polling past a retry schedule; the
+tests pin the given-up future's drop. **The shape follows the command, not the provider and not the moment**:
+`query` errors, `parse` interrupts — at byte 0 too, a Ctrl-C owing 128+signal wherever it lands. Rejected: polling
+alone, bounding a Ctrl-C by retries; keying on what this run banked, which makes the exit code a race.
 
 ### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with

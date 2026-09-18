@@ -412,17 +412,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A run whose preamble prepass was cancelled writes an empty cache.** 14.9
-  banks the map in hand before returning the interrupt, and on that one path
-  the map in hand is whatever the run loaded — nothing, for a cold run. So a
-  Ctrl-C landing in the very first remote read leaves a `.dqcache` describing
-  zero bytes where before it left an error and no file. It was done that way
-  because `parse`'s interrupt line says "the cache at … holds the scan so far",
-  which is otherwise a lie on the one path that can reach it with nothing on
-  disk. Reconsidering means either not saving there and rewording that line for
-  a run that banked nothing, or accepting the file; nothing else in the run
-  changes either way, and a local `parse` never reaches this — `scan_preamble`
-  ignores the polled flag, so locally the preamble always completes and is
-  always banked ([`../design/decisions.md`](../design/decisions.md), "D26").
-
