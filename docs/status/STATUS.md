@@ -114,14 +114,18 @@ what is delivered.
   precondition's own external behaviour, and corrects D18, which described a
   field the code does not have.
   [notes](../design/roadmap-P14.6-remote-identity-notes.md)
-- [ ] **14.9** A cancelled remote read becomes an interrupted run, not an error:
-  `map_forward` reads a cancel-flagged `ScanCancelled` from a read as the
-  interrupt arriving by another door, splices and saves at the last safe
-  watermark as a local stop at a block close does, and both providers return
-  `MapRun { interrupted: true }`; `main.rs`'s translating arm deletes itself
-  ([`../design/decisions.md`](../design/decisions.md), "D26"). Admitted after
-  spec time, so it takes the next free number, and ordered here rather than
-  last: it is upstream of what 14.7 composes and does not share 14.7's wait.
+- [x] **14.9** A cancelled read is an interrupted run on both providers, not an
+  error: `cancelled_read` is the one predicate saying a failed read *is* the
+  interrupt arriving by another door, and it routes the four reads that can
+  meet one — the mapping pass's chunk and its trailing `attach_text`, the
+  preamble prepass, the back-fill's read loop — onto the outcome the polled
+  check point beside each already produces, banking at the watermark the map
+  was consistent at rather than splicing a new one. `main.rs`'s translating arm
+  is deleted ([`../design/decisions.md`](../design/decisions.md), "D26", which
+  already carried the rule). Admitted after spec time, so it takes the next
+  free number, and ordered here rather than last: it is upstream of what 14.7
+  composes and does not share 14.7's wait.
+  [notes](../design/roadmap-P14.9-cancelled-read-notes.md)
 - [ ] **14.7** Remote `.xz`: the composition, the cold footer walk announced at
   open with its remedies, a `KD<k>` for it owned by the phase that tunes the
   network, and the vetting this project owes that crate (D1, D13).
@@ -408,4 +412,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A run whose preamble prepass was cancelled writes an empty cache.** 14.9
+  banks the map in hand before returning the interrupt, and on that one path
+  the map in hand is whatever the run loaded — nothing, for a cold run. So a
+  Ctrl-C landing in the very first remote read leaves a `.dqcache` describing
+  zero bytes where before it left an error and no file. It was done that way
+  because `parse`'s interrupt line says "the cache at … holds the scan so far",
+  which is otherwise a lie on the one path that can reach it with nothing on
+  disk. Reconsidering means either not saving there and rewording that line for
+  a run that banked nothing, or accepting the file; nothing else in the run
+  changes either way, and a local `parse` never reaches this — `scan_preamble`
+  ignores the polled flag, so locally the preamble always completes and is
+  always banked ([`../design/decisions.md`](../design/decisions.md), "D26").
 

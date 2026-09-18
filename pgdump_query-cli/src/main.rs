@@ -1586,36 +1586,9 @@ async fn main() -> Result<()> {
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
-            let run = match pgdump_query::map_file(
-                source.as_ref(),
-                &scan_options,
-                &mode,
-                &statistics,
-            )
-            .await
-            {
-                Ok(run) => run,
-                // A source whose own wait is a network request answers the
-                // interrupt by dropping the request in flight, so a Ctrl-C
-                // arrives here rather than as an interrupted run
-                // (`docs/design/decisions.md`, "D26"). The scan is still
-                // banked to the cache's last save, which is what the throttle
-                // is for, so this reports what a resumable stop reports and
-                // exits the same way.
-                Err(pgdump_query::Error::ScanCancelled { scanned_through })
-                    if signalled.load(Ordering::SeqCst) != 0 =>
-                {
-                    eprintln!(
-                        "interrupted while reading byte {scanned_through} of {size} — the cache at {} \
-                         holds the scan to its last save",
-                        path.display()
-                    );
-                    eprintln!("re-run `pgdq parse --source {origin}` to continue");
-                    introspect::report();
-                    std::process::exit(128 + signalled.load(Ordering::SeqCst));
-                }
-                Err(e) => return Err(naming_the_source(e, &origin)),
-            };
+            let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)
+                .await
+                .map_err(|e| naming_the_source(e, &origin))?;
             introspect::statistics_returned(&run.statistics);
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both

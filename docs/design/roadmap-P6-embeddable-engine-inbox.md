@@ -213,7 +213,9 @@ uncancellable region today — is the *first* thing a cold query does, and since
 `Cancellation` carries an awaitable signal beside the bit, so a source *can*
 give up a request in flight rather than inherit a flag the read path never
 checks (`decisions.md`, "D26"). What is left for this phase is the preamble
-prepass, which honours neither half.
+prepass, which still ignores the polled flag: a read dropped inside it ends the
+run as an interrupt like any other (P14.9), but between two reads nothing stops
+it.
 
 **Why P6 cares.** Both embedding surfaces have their own cancellation
 idiom and neither is this flag: a DataFusion `TableProvider`'s stream is
@@ -668,8 +670,10 @@ declines to advise. And what a cancelled read *means* to each surface: the entry
 above ("A scan is cancellable…") says a `TableStream` is cancelled by dropping
 it and that `ScanCancelled` sits awkwardly in a DataFusion error; a remote read
 now raises that same variant from inside the read path, where the flag used to
-be read only between reads. `pgdq parse` translates it into its interrupted
-report, which is a CLI decision an embedder does not inherit.
+be read only between reads. **The mapping pass folds it back into
+`MapRun::interrupted`** (P14.9), so an embedder calling `map_file` never sees
+the variant and one calling `table_stream` still does — the split the entry
+above describes, now the same on both providers.
 
 **Origin.** P14.5, 2026-09-18. See
 [`roadmap-P14.5-remote-source-notes.md`](roadmap-P14.5-remote-source-notes.md)

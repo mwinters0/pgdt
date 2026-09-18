@@ -20,8 +20,10 @@ use std::time::{Duration, Instant};
 
 use common::oracle::Oracle;
 use common::{fixture, run, run_ok, stderr_of};
+use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, Cancellation, KnownCompression, Origin, Recognized, open, open_local,
+    ByteRangeSource, Cancellation, KnownCompression, Origin, Recognized, ScanOptions,
+    StatisticsRequest, open, open_local,
 };
 
 /// The dump every test here serves: real `pg_dump` output, so a scan over it
@@ -625,8 +627,44 @@ fn an_interrupt_during_a_remote_read_is_answered_at_once_and_exits_by_signal() {
     // failure.
     assert_eq!(out.status.code(), Some(130), "{}", String::from_utf8_lossy(&out.stderr));
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("interrupted while reading byte"), "{err}");
+    // The words a *local* interrupt uses: the dropped read is the interrupt
+    // arriving by another door, not a failure of its own
+    // (`docs/design/decisions.md`, "D26").
+    assert!(err.contains("interrupted at byte"), "{err}");
+    assert!(err.contains("holds the scan so far"), "{err}");
     assert!(err.contains(&oracle.url()), "{err}");
+}
+
+#[tokio::test]
+async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
+    // The library half of the test above, which is the half an embedder sees:
+    // `map_file` answers a dropped read with the run it banked, exactly as it
+    // answers the polled flag, so the two providers differ in how fast a
+    // cancellation is noticed and not in what a caller gets back.
+    let oracle = Oracle::serving(dump_bytes()).stalling_request(FIRST_READ, STALL).start();
+    let source = source_of(&oracle.url()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let mode = CacheMode::enabled(dir.path().join("remote.dqcache"));
+    let cancel = Arc::new(Cancellation::new());
+    let options = ScanOptions { cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+
+    // Cancel while the stalled read is in flight, so the flag lands inside a
+    // wait rather than at a check point: the stall outlasts this sleep by two
+    // orders of magnitude.
+    let asker = tokio::spawn(async move {
+        tokio::time::sleep(ms(300)).await;
+        cancel.cancel();
+    });
+
+    let started = Instant::now();
+    let run = pgdump_query::map_file(source.as_ref(), &options, &mode, &StatisticsRequest::NONE)
+        .await
+        .expect("a cancelled read is not an error");
+    asker.await.unwrap();
+
+    assert!(run.interrupted, "the run says it stopped short");
+    assert!(!run.index.is_complete(dump_bytes().len() as u64), "the map is short of the file");
+    assert!(started.elapsed() < STALL, "the request was waited out rather than dropped");
 }
 
 #[test]

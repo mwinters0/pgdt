@@ -217,6 +217,10 @@ not treated as an interruption, because nobody asked for it — but a `parse`
 banks its progress to the cache as it goes, so re-running it continues from
 where the last save left off rather than from byte 0.
 
+**Ctrl-C is answered at once**, rather than at the end of the request in
+flight: that request is dropped where it stands, and the run reports and exits
+exactly as an interrupted local `parse` does.
+
 **This is correctness, not speed.** A remote read uses one reader and the same
 1 MiB requests a local read uses, both of which were chosen against local
 devices. Nothing here is tuned for a network yet.

@@ -52,13 +52,13 @@ over HTTP" is the user-facing half.
   enough to test is a value chosen for the test, and an `#[ignore]`d assertion
   is the "left unproducible" the row refuses. It is under "Decisions worth
   another look".
-- **The cancellation is a hint, and a cancelled remote read is an error.**
-  14.1 left the choice between a constructor argument and a hint open; the hint
-  wins because `ScanOptions` is where the cancellation lives and the hints are
-  already announced from there. The consequence is that a dropped request comes
-  back as `Error::ScanCancelled` rather than as `MapStop::Interrupted`, so
-  `parse` translates it in `main.rs` rather than the library's read loops
-  learning a new shape. Also under "Decisions worth another look".
+- **The cancellation is a hint.** 14.1 left the choice between a constructor
+  argument and a hint open; the hint wins because `ScanOptions` is where the
+  cancellation lives and the hints are already announced from there. A dropped
+  request comes back as `Error::ScanCancelled` from `read_range`, which this
+  slice left `main.rs` to translate; **14.9 moved that into the mapping pass**,
+  so the library and not the CLI is what answers it
+  ([`roadmap-P14.9-cancelled-read-notes.md`](roadmap-P14.9-cancelled-read-notes.md)).
 - **The stall knob is addressed to one request, not to a suffix.** Every other
   oracle knob is `_after(n)`. A stall cannot be: what it is used to observe is
   what the client does *next*, and a suffix knob stalls that attempt too. It

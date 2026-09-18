@@ -414,6 +414,18 @@ enum MapStop {
     Interrupted,
 }
 
+/// Whether this error is the interrupt arriving by another door.
+///
+/// A source whose wait is a request rather than a `pread` answers a
+/// cancellation by dropping the read in flight, so what a polled check point
+/// would have seen as a set flag reaches its caller as a failed read instead
+/// (`docs/design/decisions.md`, "D26"). The flag is what tells the two apart:
+/// a `ScanCancelled` nobody asked for is a source misreporting itself and
+/// stays an error.
+fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool {
+    matches!(error, Error::ScanCancelled { .. }) && scan_options.cancelled()
+}
+
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or the scan is
 /// cancelled. Emits no rows — see the module docs. `target` is the
@@ -518,7 +530,18 @@ async fn map_forward(
         }
         let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
         let chunk = if want > 0 {
-            let bytes = source.read_range(read_pos, want).await?;
+            let bytes = match source.read_range(read_pos, want).await {
+                Ok(bytes) => bytes,
+                // The check point above, reached through the read rather than
+                // through the flag ([`cancelled_read`]): the same chunk and
+                // the same watermark, so this banks what that would have
+                // banked.
+                Err(e) if cancelled_read(&e, scan_options) => {
+                    cache.save(watch, source, index).await?;
+                    return Ok(MapStop::Interrupted);
+                }
+                Err(e) => return Err(e),
+            };
             read_pos += bytes.len() as u64;
             bytes
         } else {
@@ -742,11 +765,26 @@ async fn map_forward(
         }
     }
 
-    index.roles.extend(builder.roles().iter().cloned());
-    index.tablespaces.extend(builder.tablespaces().iter().cloned());
-    index.spans = splice(&prefix, builder.finish(size), seg_start, size, size);
+    // **The text is attached before the index advances**, so a read dropped
+    // here ([`cancelled_read`]) leaves the map at the watermark it already
+    // held rather than at one whose spans lost their text with nothing that
+    // would ever re-attach it — a resumed run past `scanned_through` re-reads
+    // nothing.
+    let roles: Vec<String> = builder.roles().iter().cloned().collect();
+    let tablespaces: Vec<String> = builder.tablespaces().iter().cloned().collect();
+    let mut spans = splice(&prefix, builder.finish(size), seg_start, size, size);
+    match attach_text(source, &mut spans).await {
+        Ok(()) => {}
+        Err(e) if cancelled_read(&e, scan_options) => {
+            cache.save(watch, source, index).await?;
+            return Ok(MapStop::Interrupted);
+        }
+        Err(e) => return Err(e),
+    }
+    index.roles.extend(roles);
+    index.tablespaces.extend(tablespaces);
+    index.spans = spans;
     index.scanned_through = size;
-    attach_text(source, &mut index.spans).await?;
     index.diagnostics = tiling_diagnostics(&index.spans, size);
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     cache.save(watch, source, index).await?;
@@ -1054,19 +1092,37 @@ pub async fn map_file(
     if resumed_from == 0 && !first_db_preamble_known {
         // Persisted before `map_forward` runs, so an interrupt in the very
         // first chunk still finds banked metadata. `scan_preamble` itself
-        // ignores the cancel flag (`docs/design/decisions.md`, "D26").
-        let (metadata, spans, preamble_end, roles, tablespaces) =
-            scan_preamble(source, scan_options).await?;
-        index.metadata = Some(metadata);
-        index.spans = splice(&[], spans, 0, preamble_end, size);
-        index.roles.extend(roles);
-        index.tablespaces.extend(tablespaces);
-        index.scanned_through = preamble_end;
-        attach_text(source, &mut index.spans).await?;
-        cache.save(&watch, source, &index).await?;
+        // ignores the cancel flag (`docs/design/decisions.md`, "D26") — but a
+        // source whose read is dropped in flight answers it anyway, and none
+        // of a half-read preamble may be banked, which is that entry's reason.
+        // Everything the prepass reads is therefore held aside until it is
+        // whole.
+        let prepass = async {
+            let (metadata, spans, preamble_end, roles, tablespaces) =
+                scan_preamble(source, scan_options).await?;
+            let mut spans = splice(&[], spans, 0, preamble_end, size);
+            attach_text(source, &mut spans).await?;
+            Ok::<_, Error>((metadata, spans, preamble_end, roles, tablespaces))
+        }
+        .await;
+        match prepass {
+            Ok((metadata, spans, preamble_end, roles, tablespaces)) => {
+                index.metadata = Some(metadata);
+                index.spans = spans;
+                index.roles.extend(roles);
+                index.tablespaces.extend(tablespaces);
+                index.scanned_through = preamble_end;
+                cache.save(&watch, source, &index).await?;
+            }
+            Err(e) if cancelled_read(&e, scan_options) => {
+                cache.save(&watch, source, &index).await?;
+                return Ok(interrupted_run(index, resumed_from, &account));
+            }
+            Err(e) => return Err(e),
+        }
     }
 
-    if map_forward(
+    let stopped = match map_forward(
         source,
         scan_options,
         cache,
@@ -1077,22 +1133,24 @@ pub async fn map_file(
         &account,
         size,
     )
-    .await?
-        == MapStop::Interrupted
+    .await
     {
+        Ok(stop) => stop,
+        // The interrupt arriving by another door ([`cancelled_read`]). The
+        // pass's own check points save before they return and an unwinding
+        // read has not, so the bank happens here, at the watermark the map
+        // was already consistent at.
+        Err(e) if cancelled_read(&e, scan_options) => {
+            cache.save(&watch, source, &index).await?;
+            return Ok(interrupted_run(index, resumed_from, &account));
+        }
+        Err(e) => return Err(e),
+    };
+    if stopped == MapStop::Interrupted {
         // The run's own last word, for a run that saved nothing to ride
         // (`crate::cache::SourceWatch`).
         watch.check(source).await?;
-        let statistics = announce_statistics_held(&account);
-        return Ok(MapRun {
-            index,
-            resumed_from,
-            interrupted: true,
-            lacking_statistics: 0,
-            backfilled: 0,
-            declined_statistics: 0,
-            statistics,
-        });
+        return Ok(interrupted_run(index, resumed_from, &account));
     }
 
     index.metadata = Some(dump_metadata_from_spans(&index.spans));
@@ -1129,6 +1187,30 @@ pub async fn map_file(
         declined_statistics,
         statistics: announce_statistics_held(&account),
     })
+}
+
+/// What [`map_file`] returns for a run that stopped before EOF: the map as far
+/// as it is consistent, and **none of the three counts a back-fill states** —
+/// an interrupt reached during the mapping pass never ran one, so the caller
+/// is told the map is short rather than that nothing was re-read.
+///
+/// The caller banks first: whether that is the pass's own save at a check
+/// point or one made where an unwinding read was caught is this function's
+/// business either way.
+fn interrupted_run(
+    index: DumpIndex,
+    resumed_from: u64,
+    account: &Arc<StatisticsAccount>,
+) -> MapRun {
+    MapRun {
+        index,
+        resumed_from,
+        interrupted: true,
+        lacking_statistics: 0,
+        backfilled: 0,
+        declined_statistics: 0,
+        statistics: announce_statistics_held(account),
+    }
 }
 
 /// Read `account` whole as a pass returns, and say what it held on the status
@@ -1495,7 +1577,15 @@ async fn observe_rows(
         }
         let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
         let chunk = if want > 0 {
-            let bytes = source.read_range(read_pos, want).await?;
+            let bytes = match source.read_range(read_pos, want).await {
+                Ok(bytes) => bytes,
+                // The check above, reached through the read rather than
+                // through the flag ([`cancelled_read`]). This block's re-read
+                // is abandoned either way, so the caller hears the same
+                // `None`.
+                Err(e) if cancelled_read(&e, scan_options) => return Ok(None),
+                Err(e) => return Err(e),
+            };
             read_pos += bytes.len() as u64;
             bytes
         } else {

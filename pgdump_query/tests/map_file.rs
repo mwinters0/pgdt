@@ -493,6 +493,68 @@ impl ByteRangeSource for CancelsPast<'_> {
     }
 }
 
+/// A [`ByteRangeSource`] that answers a read at or past `trip` the way a
+/// source whose wait is a request answers one: it trips the cancellation and
+/// **drops the read**, handing back `Error::ScanCancelled` instead of bytes
+/// (`docs/design/decisions.md`, "D26"). [`CancelsPast`] is the other provider
+/// at the same offset — flag set, bytes delivered — so a pair of tests over
+/// the two says whether the run's shape follows the run or the provider.
+struct DropsPast<'a> {
+    inner: &'a LocalFileSource,
+    trip: u64,
+    cancel: Arc<Cancellation>,
+}
+
+impl ByteRangeSource for DropsPast<'_> {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdump_query::Result<bytes::Bytes>> + Send + '_>,
+    > {
+        if offset >= self.trip {
+            self.cancel.cancel();
+            return Box::pin(std::future::ready(Err(pgdump_query::Error::ScanCancelled {
+                scanned_through: offset,
+            })));
+        }
+        self.inner.read_range(offset, len)
+    }
+
+    fn size(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdump_query::Result<u64>> + Send + '_>>
+    {
+        self.inner.size()
+    }
+
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.inner.modified()
+    }
+
+    /// Forwarded for the reason [`CancelsPast`] forwards them.
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdump_query::Partitioning {
+        self.inner.partitions(range)
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+}
+
 /// **The interrupt guard, reached inside a region the workers were splitting.**
 /// A `COPY` block long enough to need several windows is cancelled between two
 /// of them, which is a fourth place the flag is read and the only one that can
@@ -704,6 +766,82 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     assert!(!resumed.interrupted);
     assert_eq!(resumed.resumed_from, first_block_end);
     assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled scan");
+}
+
+/// **The same guard, reached through a dropped read.** A source that answers
+/// a cancellation by abandoning the request in flight raises it where the
+/// polled provider would have delivered the chunk, so the scan hears the
+/// interrupt one read earlier and by another route. The run is the same run:
+/// it reports `interrupted`, banks the same watermark, leaves the same
+/// incomplete cache, and resumes into the eager index — which is what says the
+/// shape follows the run and not the provider
+/// (`docs/design/decisions.md`, "D26").
+#[tokio::test]
+async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
+    let (_dir, dump) = sandboxed();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let size = source.size().await.unwrap();
+    let mode = CacheMode::enabled(cache_path.clone());
+
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
+
+    let cancel = Arc::new(Cancellation::new());
+    let dropping = DropsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
+    let options = ScanOptions {
+        chunk_size_bytes: 1,
+        cancel: Some(Arc::clone(&cancel)),
+        ..ScanOptions::default()
+    };
+
+    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::NONE)
+        .await
+        .expect("a dropped read is an interrupted run, not an error");
+    assert!(run.interrupted, "a dropped read says so");
+    assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
+    assert!(!run.index.is_complete(size), "and does not claim the whole file");
+
+    let status = cache::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Incomplete { index, .. } = status else {
+        panic!("a dropped read must leave an incomplete cache, got {status:?}");
+    };
+    assert_eq!(index.scanned_through, first_block_end);
+
+    let resumed =
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+    assert!(!resumed.interrupted);
+    assert_eq!(resumed.resumed_from, first_block_end);
+    assert_matches_eager(&resumed.index, &eager, "resumed from a dropped read");
+}
+
+/// **A read dropped inside the back-fill is the back-fill's own interrupt.**
+/// The counts a polled stop reports are reported here too, which is what keeps
+/// `pgdq parse`'s two interrupt sentences apart: the map is whole and the
+/// re-read is partial, not the other way round.
+#[tokio::test]
+async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
+    let (_dir, dump) = sandboxed();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::enabled(cache_path.clone());
+    let bare =
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+    let blocks = bare.index.blocks().count();
+    let second = bare.index.blocks().nth(1).unwrap().data_offset;
+
+    let cancel = Arc::new(Cancellation::new());
+    let dropping = DropsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
+    let options = ScanOptions {
+        chunk_size_bytes: 1,
+        cancel: Some(Arc::clone(&cancel)),
+        ..ScanOptions::default()
+    };
+    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::ALL)
+        .await
+        .expect("a dropped read is an interrupted run, not an error");
+    assert!(run.interrupted, "a cancelled back-fill says so");
+    assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
 }
 
 /// **An interrupted back-fill banks the blocks it re-read and resumes into
