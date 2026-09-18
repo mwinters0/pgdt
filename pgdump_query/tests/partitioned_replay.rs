@@ -23,8 +23,8 @@ use std::process::Command;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, LocalFileSource, MIN_SOURCE_SPAN, Parallelism,
-    PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, LocalFileSource, Parallelism, PlanNoteKind,
+    Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
     table_stream_partitions,
 };
 
@@ -44,8 +44,8 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
     rows
 }
 
-/// What one concurrent reader costs `source` resident at the chunk size these
-/// queries read with — the first term of the sub-stream divisor
+/// What one concurrent reader costs `source` resident at the chunk size the
+/// query announces — the first term of the sub-stream divisor
 /// (`docs/design/decisions.md`, "D4").
 ///
 /// **Asked of the source rather than restated as a chunk count.** A plain
@@ -53,9 +53,11 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
 /// to choose, so a test that spelled the product out would be asserting the
 /// constant rather than the arithmetic that divides by it. The read size is
 /// announced first because the answer scales with it, exactly as the mapping
-/// pass announces it before the plan is made.
-fn partition_unit(source: &LocalFileSource) -> u64 {
-    source.hint_read_size(ScanOptions::default().chunk_size_bytes);
+/// pass announces it before the plan is made — and it is the caller's own
+/// `ScanOptions::chunk_size_bytes`, for the reason the span's floor is
+/// (`docs/design/decisions.md`, "D84").
+fn partition_unit(source: &LocalFileSource, scan: &ScanOptions) -> u64 {
+    source.hint_read_size(scan.chunk_size_bytes);
     source.partitions(0..1).partition_bytes()
 }
 
@@ -181,9 +183,9 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
 /// batch span has been spent** (`docs/design/decisions.md`, "D84"). The
 /// shipped CLI defaults are exactly this case: `QueryOptions::max_source_span`'s
 /// 64 MiB alone meets `DEFAULT_MEMORY_BUDGET`'s 64 MiB, so the eight workers
-/// asked for are unaffordable at the stated span, the span narrows to
-/// `MIN_SOURCE_SPAN`, and what that buys — seven of the eight — is what the
-/// shortfall is reported against.
+/// asked for are unaffordable at the stated span, the span narrows to the
+/// announced read chunk, and what that buys — seven of the eight — is what
+/// the shortfall is reported against.
 ///
 /// Two notes, in that order, and the arithmetic of both is pinned: the span
 /// at its floor beside an 8 MiB footprint is 9 MiB a sub-stream, which
@@ -191,6 +193,8 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
 #[tokio::test]
 async fn a_budget_bound_worker_count_announces_why() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
+    let scan = ScanOptions::default();
+    let floor = scan.chunk_size_bytes as u64;
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..Default::default()
@@ -198,14 +202,14 @@ async fn a_budget_bound_worker_count_announces_why() {
     let streams = table_stream_partitions(
         &source,
         "public.widgets",
-        ScanOptions::default(),
+        scan.clone(),
         options.clone(),
         CacheMode::DISABLED,
     )
     .await
     .unwrap();
-    let footprint = partition_unit(&source);
-    let planned = (DEFAULT_MEMORY_BUDGET / (footprint + MIN_SOURCE_SPAN as u64)) as usize;
+    let footprint = partition_unit(&source, &scan);
+    let planned = (DEFAULT_MEMORY_BUDGET / (footprint + floor)) as usize;
     assert_eq!(planned, 7, "the floored span leaves room for seven of the eight");
     assert_eq!(streams.len(), planned, "the budget affords exactly this many sub-streams");
     let diagnostics = streams[0].plan_notes();
@@ -216,7 +220,7 @@ async fn a_budget_bound_worker_count_announces_why() {
         panic!("{diagnostics:?}")
     };
     assert_eq!(*stated_bytes, options.max_source_span.unwrap() as u64);
-    assert_eq!(*planned_bytes, MIN_SOURCE_SPAN as u64, "nothing narrows past the floor");
+    assert_eq!(*planned_bytes, floor, "nothing narrows past the floor");
     assert_eq!(*workers, planned);
     assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
     let PlanNoteKind::ParallelismBudgetLimited {
@@ -234,7 +238,7 @@ async fn a_budget_bound_worker_count_announces_why() {
     assert_eq!(*charged_footprint, footprint);
     assert_eq!(
         *max_source_span,
-        Some(MIN_SOURCE_SPAN as u64),
+        Some(floor),
         "the shortfall is named against the span actually charged, not the one stated"
     );
     assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
@@ -259,7 +263,7 @@ async fn a_budget_bound_worker_count_announces_why() {
 #[tokio::test]
 async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let unit = partition_unit(&source);
+    let unit = partition_unit(&source, &ScanOptions::default());
     let options = QueryOptions { parallelism: Parallelism::workers(1, 0), ..Default::default() };
     let mut streams = table_stream_partitions(
         &source,
@@ -296,7 +300,7 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
 #[tokio::test]
 async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let unit = partition_unit(&source);
+    let unit = partition_unit(&source, &ScanOptions::default());
     let options = QueryOptions { parallelism: Parallelism::workers(1, unit), ..Default::default() };
     let streams = table_stream_partitions(
         &source,
@@ -855,9 +859,9 @@ async fn a_block_path_that_was_taken_is_silent() {
 /// (`max_source_span`, charged here because a plain file retains by the read
 /// chunk). **The second term is a ceiling the plan spends before it cuts the
 /// count** (`docs/design/decisions.md`, "D84"), so a budget of four
-/// partition-units against eight jobs narrows a one-unit span to
-/// `MIN_SOURCE_SPAN` and then affords three workers — the count binds only
-/// once the span has nothing left to give.
+/// partition-units against eight jobs narrows a one-unit span to the announced
+/// read chunk and then affords three workers — the count binds only once the
+/// span has nothing left to give.
 ///
 /// **The unit is read off the source rather than restated**
 /// ([`partition_unit`]), so the arithmetic below stays the arithmetic under
@@ -874,23 +878,20 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
 
     // One partition-unit read plus a floored span pinned makes a budget of
     // four such units afford three workers however many jobs are asked for.
-    let chunk = partition_unit(&source);
-    let planned = (4 * chunk / (chunk + MIN_SOURCE_SPAN as u64)) as usize;
+    let scan = ScanOptions::default();
+    let floor = scan.chunk_size_bytes as u64;
+    let chunk = partition_unit(&source, &scan);
+    let planned = (4 * chunk / (chunk + floor)) as usize;
     assert_eq!(planned, 3, "eight jobs at this budget plan down to three");
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, 4 * chunk),
         max_source_span: Some(chunk as usize),
         ..Default::default()
     };
-    let streams = table_stream_partitions(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
+    let streams =
+        table_stream_partitions(&source, "public.t_int", scan, options, CacheMode::DISABLED)
+            .await
+            .unwrap();
     assert_eq!(streams.len(), planned, "the budget binds before the job count does");
     match streams[0].plan_notes().as_slice() {
         [narrowed, d] => {
@@ -900,7 +901,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
                 panic!("{narrowed:?}")
             };
             assert_eq!(*stated_bytes, chunk);
-            assert_eq!(*planned_bytes, MIN_SOURCE_SPAN as u64);
+            assert_eq!(*planned_bytes, floor);
             let PlanNoteKind::ParallelismBudgetLimited {
                 requested,
                 planned: planned_workers,
@@ -914,7 +915,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
             assert_eq!(*requested, 8);
             assert_eq!(*planned_workers, planned);
             assert_eq!(*footprint, chunk);
-            assert_eq!(*max_source_span, Some(MIN_SOURCE_SPAN as u64));
+            assert_eq!(*max_source_span, Some(floor));
             assert_eq!(*memory_bytes, 4 * chunk);
         }
         other => panic!("expected the narrowing note and the count note, got {other:?}"),
@@ -927,6 +928,74 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
         }
     }
     assert_eq!(rows, expected);
+}
+
+/// **The span's floor is the chunk this query announced, not the shipped
+/// default** (`docs/design/decisions.md`, "D84"): what a held batch pins is its
+/// span rounded out to the unit the source retains, and that unit is the read
+/// size the replay loop announces (`ScanOptions::chunk_size_bytes`).
+///
+/// The shape is the test above at a sixteenth of the shipped chunk and at a
+/// budget of exactly what the readers asked for cost, so the room left for a
+/// span is nothing and the floor is the whole answer. The plain source's
+/// partition follows the announced chunk down, the floor does too, and the
+/// budget seats seven of the eight; at the shipped 1 MiB the span would have
+/// floored sixteen times above the unit a batch actually pins and five of those
+/// seven would have been declined for bytes nothing holds — which is the defect
+/// this pins.
+#[tokio::test]
+async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
+
+    let scan = ScanOptions { chunk_size_bytes: 64 << 10, ..ScanOptions::default() };
+    let floor = scan.chunk_size_bytes as u64;
+    let shipped_floor = ScanOptions::default().chunk_size_bytes as u64;
+    let unit = partition_unit(&source, &scan);
+    assert!(unit < shipped_floor, "the partition follows the announced chunk down: {unit}");
+    let planned = (8 * unit / (unit + floor)) as usize;
+    assert_eq!(planned, 7, "seven of the eight, at the announced floor");
+    assert_eq!(
+        (8 * unit / (unit + shipped_floor)) as usize,
+        2,
+        "two at the shipped floor, which is what makes this test discriminating"
+    );
+
+    // Eight readers of one unit inside eight units: the count is afforded at no
+    // span at all, so what the span narrows to is the floor and nothing else.
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(8, 8 * unit), ..Default::default() };
+    let streams =
+        table_stream_partitions(&source, "public.t_int", scan, options, CacheMode::DISABLED)
+            .await
+            .unwrap();
+    assert_eq!(streams.len(), planned);
+    match streams[0].plan_notes().as_slice() {
+        [narrowed, limited] => {
+            let PlanNoteKind::BatchSpanNarrowed { planned_bytes, workers, .. } = &narrowed.kind
+            else {
+                panic!("{narrowed:?}")
+            };
+            assert_eq!(*planned_bytes, floor, "narrowed to the announced chunk");
+            assert_eq!(*workers, planned);
+            let PlanNoteKind::ParallelismBudgetLimited { requested, max_source_span, .. } =
+                &limited.kind
+            else {
+                panic!("{limited:?}")
+            };
+            assert_eq!(*requested, 8);
+            assert_eq!(*max_source_span, Some(floor));
+        }
+        other => panic!("expected the narrowing note and the count note, got {other:?}"),
+    }
+
+    let mut rows = Rows::new();
+    for mut stream in streams {
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
+    }
+    assert_eq!(rows, expected, "the rows are the serial oracle's whatever the chunk");
 }
 
 /// **`max_source_span: None` opts a query out of the span term entirely**,
@@ -943,7 +1012,7 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
 
-    let chunk = partition_unit(&source);
+    let chunk = partition_unit(&source, &ScanOptions::default());
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, 2 * chunk),
         max_source_span: None,

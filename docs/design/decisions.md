@@ -308,13 +308,13 @@ The span term is charged only where the source retains by chunk (`KD23`).
 Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
-`max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored
-at `MIN_SOURCE_SPAN` — one read chunk, below which the span costs rows and bounds nothing the retained
-unit does not — and writes it onto the sub-streams. A plain source stays on `DEFAULT_MEMORY_BUDGET`
-whatever is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers.
-Rejected: a third flag (`roadmap.md`, "Two tunables fit pgdq to hardware"); pricing a plain reader
-(`KD25`); a *larger* floor, a performance claim with no batch-size figure behind it. Reopens: a plain
-`query` timed at `--jobs 8` against `--jobs 4`, the span on its floor on one leg only. Code: `stream.rs`.
+`max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored at the caller's
+announced `ScanOptions::chunk_size_bytes` — one read chunk, below which the span costs rows and bounds nothing the
+retained unit does not — and writes it onto the sub-streams. A plain source stays on `DEFAULT_MEMORY_BUDGET` whatever
+is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
+(`roadmap.md`, "Two tunables fit pgdq to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
+claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
+readers the announced one seats. Reopens: a plain `query` at `--jobs 8` vs `--jobs 4`, the span floored on one leg. Code: `stream.rs`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is

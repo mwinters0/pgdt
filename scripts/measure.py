@@ -2108,9 +2108,10 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:
 #: **A span is spent before a count is cut.** `plan_partitions` narrows the
 #: held batch's span to what the budget leaves once the readers asked for are
-#: paid for, stopping at `MIN_SOURCE_SPAN` — one read chunk
-#: (`docs/design/decisions.md`, "D84") — so a plain leg's count is solved
-#: against that narrowed span and not against the shipped 64 MiB ceiling.
+#: paid for, stopping at one *announced* read chunk — `ScanOptions::chunk_size_bytes`
+#: (`docs/design/decisions.md`, "D84"), which no leg here states, so the shipped
+#: default — so a plain leg's count is solved against that narrowed span and
+#: not against the shipped 64 MiB ceiling.
 #:
 #: **Hand-computed, not derived from a mirrored formula.** A Python
 #: reimplementation of `worker_count`/`plan_partitions` would be a second

@@ -51,9 +51,7 @@ use async_stream::try_stream;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
-use crate::batch::{
-    MIN_SOURCE_SPAN, QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names,
-};
+use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names};
 #[cfg(test)]
 use crate::cache::StrictIdentity;
 use crate::cache::{CacheLoad, CacheMode, SourceWatch};
@@ -2424,8 +2422,9 @@ pub enum PlanNoteKind {
     /// **Not a shortfall in itself**: `workers` is what the narrowed span did
     /// buy, and where it still came up short of what was asked for a
     /// [`PlanNoteKind::ParallelismBudgetLimited`] says so beside this. A span
-    /// at [`crate::MIN_SOURCE_SPAN`] is the floor, and nothing but a larger
-    /// `memory_bytes` moves it.
+    /// at one announced read chunk
+    /// (`crate::scan::ScanOptions::chunk_size_bytes`) is the floor, and
+    /// nothing but a larger `memory_bytes` moves it.
     ///
     /// **Not a [`crate::diagnostic::DiagnosticKind`]**, for the reason its
     /// siblings are not (`docs/design/decisions.md`, "D19").
@@ -2656,9 +2655,11 @@ fn compressed_block_path_declined(
 /// **And that second term is derived, not taken** ([`derived_source_span`];
 /// `docs/design/decisions.md`, "D84"): the stated span is a ceiling, and a
 /// budget that cannot seat `jobs` readers beside it narrows the span before it
-/// cuts the count. The third return value is what was charged, which the
-/// caller writes back onto the sub-streams' own `QueryOptions` so the batches
-/// are the size the plan was solved for.
+/// cuts the count, stopping at `chunk_size` — the length this caller's replay
+/// will announce to the source, and so the unit a batch actually pins. The
+/// third return value is what was charged, which the caller writes back onto
+/// the sub-streams' own `QueryOptions` so the batches are the size the plan
+/// was solved for.
 ///
 /// **The span is charged per source, not universally**, because the second
 /// term is honest for one source shape and double-counts for the other: a
@@ -2704,6 +2705,7 @@ fn plan_partitions(
     kept: &BTreeMap<u64, Vec<Range<u64>>>,
     parallelism: Parallelism,
     max_source_span: Option<usize>,
+    chunk_size: usize,
 ) -> (Vec<Vec<Segment>>, Vec<PlanNote>, Option<usize>) {
     // **Announced before the advice is asked for**, since a compressed source
     // decides from the stated budget whether it can decode a whole block at
@@ -2731,7 +2733,8 @@ fn plan_partitions(
     // The span is derived from what the budget leaves once the readers asked
     // for are paid for, so `jobs` readers cost batch size rather than being
     // declined (`docs/design/decisions.md`, "D84").
-    let charged_span = stated_span.map(|span| derived_source_span(charge, parallelism, span));
+    let charged_span =
+        stated_span.map(|span| derived_source_span(charge, parallelism, span, chunk_size));
     let charge = match charged_span {
         Some(span) => charge.plus_per_worker(span as u64),
         None => charge,
@@ -2836,10 +2839,15 @@ fn plan_partitions(
 /// its arithmetic, which keeps the shared pool term out of this function's
 /// hands.
 ///
-/// **The floor is [`MIN_SOURCE_SPAN`]**, so a budget that affords the count at
-/// no span at all narrows to one read chunk and leaves the shortfall to
-/// [`worker_count`]; below that the span would cost rows per batch while
-/// bounding nothing the retained unit does not already bound.
+/// **The floor is `chunk_size`**, the length the replay loop announces to the
+/// source (`crate::scan::ScanOptions::chunk_size_bytes`,
+/// [`crate::io::ByteRangeSource::hint_read_size`]), so a budget that affords
+/// the count at no span at all narrows to one read chunk and leaves the
+/// shortfall to [`worker_count`]; below that the span would cost rows per
+/// batch while bounding nothing the retained unit does not already bound.
+/// **It is the announced chunk and not the shipped default**: the pin is the
+/// span rounded out to what this source actually retains, which is what this
+/// caller asked it to read in.
 ///
 /// A caller stating no budget (`Parallelism::default`) derives nothing: there
 /// is no number to solve against.
@@ -2849,14 +2857,19 @@ fn plan_partitions(
 // count are both fixed at a number picked to answer a different question.
 // **(c) unowned**; closing it means a plain source recommending a per-reader
 // cost, which is `KD25`'s reading.
-fn derived_source_span(charge: WorkerMemory, parallelism: Parallelism, stated: usize) -> usize {
+fn derived_source_span(
+    charge: WorkerMemory,
+    parallelism: Parallelism,
+    stated: usize,
+    chunk_size: usize,
+) -> usize {
     let Some(budget) = parallelism.memory_bytes() else { return stated };
     let jobs = parallelism.jobs();
     if charge.plus_per_worker(stated as u64).affords(budget, jobs) >= jobs {
         return stated;
     }
     let room = budget.saturating_sub(charge.at(jobs)) / jobs.max(1) as u64;
-    stated.min(usize::try_from(room.max(MIN_SOURCE_SPAN as u64)).unwrap_or(usize::MAX))
+    stated.min(usize::try_from(room.max(chunk_size as u64)).unwrap_or(usize::MAX))
 }
 
 /// Group `segments` into at most `streams` contiguous, byte-balanced runs,
@@ -3384,6 +3397,7 @@ pub async fn table_stream_partitions<'a>(
         &plan.kept,
         plan.query_options.parallelism,
         plan.query_options.max_source_span,
+        plan.scan_options.chunk_size_bytes,
     );
     // **The span the plan was solved against is the span the batches use**, or
     // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is
@@ -3454,11 +3468,13 @@ impl<'a> Iterator for BlockingTableIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 
     /// **The span is spent before the count is cut, and it stops at the
     /// floor** (`docs/design/decisions.md`, "D84"). Every arm of
     /// [`derived_source_span`], against a plain source's shape — an 8 MiB
-    /// per-worker charge with no pool term — and the shipped 64 MiB ceiling.
+    /// per-worker charge with no pool term — the shipped 64 MiB ceiling, and
+    /// the shipped 1 MiB read chunk as the floor.
     ///
     /// The exact-inversion arm is the load-bearing one: what comes back must
     /// be the largest span at which the count asked for is still afforded, so
@@ -3469,50 +3485,96 @@ mod tests {
         let footprint = 8 << 20;
         let charge = WorkerMemory::per_worker(footprint);
         let stated = 64 << 20;
+        let chunk = SCAN_CHUNK_DEFAULT_SIZE_BYTES;
+        let derived = |parallelism: Parallelism, stated: usize| {
+            derived_source_span(charge, parallelism, stated, chunk)
+        };
         let seated = |parallelism: Parallelism, span: usize| {
             worker_count(parallelism, charge.plus_per_worker(span as u64))
         };
 
         // Nothing stated: nothing to solve against.
-        assert_eq!(derived_source_span(charge, Parallelism::default(), stated), stated);
+        assert_eq!(derived(Parallelism::default(), stated), stated);
 
         // One worker is what the floors deliver whatever the charge, so the
         // stated span is already affordable and is left alone — which is what
         // keeps a serial replay's batches the size the caller asked for.
         let serial = Parallelism::workers(1, 64 << 20);
-        assert_eq!(derived_source_span(charge, serial, stated), stated);
+        assert_eq!(derived(serial, stated), stated);
 
         // A budget with room to spare leaves the ceiling in place.
         let roomy = Parallelism::workers(2, 1 << 30);
-        assert_eq!(derived_source_span(charge, roomy, stated), stated);
+        assert_eq!(derived(roomy, stated), stated);
 
         // Two readers of 8 MiB inside 64 MiB leave 24 MiB apiece, and 24 MiB
         // is exactly what comes back: one byte more would seat only one.
         let two = Parallelism::workers(2, 64 << 20);
-        assert_eq!(derived_source_span(charge, two, stated), 24 << 20);
+        assert_eq!(derived(two, stated), 24 << 20);
         assert_eq!(seated(two, 24 << 20), 2);
         assert_eq!(seated(two, (24 << 20) + 1), 1);
 
         // Four readers leave 8 MiB apiece, on the same arithmetic.
         let four = Parallelism::workers(4, 64 << 20);
-        assert_eq!(derived_source_span(charge, four, stated), 8 << 20);
+        assert_eq!(derived(four, stated), 8 << 20);
         assert_eq!(seated(four, 8 << 20), 4);
 
         // Eight readers leave nothing, so the span stops at the floor and the
         // shortfall is the count's: 9 MiB apiece affords seven of the eight.
         let eight = Parallelism::workers(8, 64 << 20);
-        assert_eq!(derived_source_span(charge, eight, stated), MIN_SOURCE_SPAN);
-        assert_eq!(seated(eight, MIN_SOURCE_SPAN), 7);
+        assert_eq!(derived(eight, stated), chunk);
+        assert_eq!(seated(eight, chunk), 7);
 
         // A budget under one reader's own charge cannot go below the floor
         // either — `AllocationBelowFloor` is what names that arrangement.
         let starved = Parallelism::workers(8, 1 << 20);
-        assert_eq!(derived_source_span(charge, starved, stated), MIN_SOURCE_SPAN);
+        assert_eq!(derived(starved, stated), chunk);
 
         // **It only ever moves down.** A caller stating less than the floor is
         // stating a batch size, and gets it.
-        assert_eq!(derived_source_span(charge, eight, 4096), 4096);
-        assert_eq!(derived_source_span(charge, two, MIN_SOURCE_SPAN), MIN_SOURCE_SPAN);
+        assert_eq!(derived(eight, 4096), 4096);
+        assert_eq!(derived(two, chunk), chunk);
+    }
+
+    /// **The floor is the chunk this caller announced, not the shipped one**
+    /// (`docs/design/decisions.md`, "D84"): the pin is the span rounded out to
+    /// what the source retains, and what it retains is what the replay loop
+    /// asked it to read in (`crate::scan::ScanOptions::chunk_size_bytes`).
+    ///
+    /// The shape is `--chunk-size 64k` on a plain source, whose per-worker
+    /// footprint is eight of whatever chunk it was told to read
+    /// (`crate::io::PLAIN_PARTITION_CHUNKS`), against a budget of exactly what
+    /// the readers asked for cost — so the room left for a span is nothing and
+    /// the floor is the whole answer. The two floors differ by a factor of
+    /// sixteen there, and so does what the budget then seats.
+    #[test]
+    fn the_floor_is_one_announced_read_chunk_and_a_small_one_buys_readers() {
+        let chunk = 64 << 10;
+        let unit = 8 * chunk as u64;
+        let charge = WorkerMemory::per_worker(unit);
+        let stated = 64 << 20;
+        // Eight readers of `unit` inside eight units: the count is afforded at
+        // no span at all, which is where the floor decides.
+        let eight = Parallelism::workers(8, 8 * unit);
+        let seated = |span: usize| worker_count(eight, charge.plus_per_worker(span as u64));
+
+        let span = derived_source_span(charge, eight, stated, chunk);
+        assert_eq!(span, chunk, "the floor is the announced chunk");
+        assert_eq!(seated(span), 7, "which is what the budget then seats");
+
+        // What the shipped constant would have floored at, and what it cost:
+        // a span sixteen times the unit the source actually retains, and five
+        // of the seven readers declined for bytes no batch pins.
+        let shipped = derived_source_span(charge, eight, stated, SCAN_CHUNK_DEFAULT_SIZE_BYTES);
+        assert_eq!(shipped, SCAN_CHUNK_DEFAULT_SIZE_BYTES);
+        assert_eq!(seated(shipped), 2);
+
+        // **A chunk larger than the shipped one floors above it**, the other
+        // direction of the same defect: the span is rounded out to the chunk
+        // whatever the chunk says, so narrowing below it buys nothing.
+        let big = 4 << 20;
+        let charge = WorkerMemory::per_worker(8 * big as u64);
+        let eight = Parallelism::workers(8, 8 * 8 * big as u64);
+        assert_eq!(derived_source_span(charge, eight, stated, big), big);
     }
 
     /// The throttle's whole rule, over measured quantities rather than a
