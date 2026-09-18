@@ -477,7 +477,12 @@ every byte this run read is suspect.
 
 This phase is the crate's remaining consumer, publication having been gated on
 two real ones vetting the interface and the statistics phase turning out to make
-no call into it.
+no call into it. **What that vetting covers narrows with D20**: after 14.8
+nothing here holds an `xz_seek::Reader` at all, so what this consumer exercises
+is the walk machine, `Layout` and the block handle, and the crate's own
+synchronous driver over them is left to its own tests. Keeping a path we had
+just found redundant, in order to exercise a convenience wrapper, would be the
+wrong way round; what is given up is stated rather than assumed.
 
 **The composition is not free, which 14.5 established by reading the code.**
 This entry said it was, on the strength of `XzSource` wrapping a
@@ -671,6 +676,52 @@ source has none.
 third selector, `--strict-identity=path`, rather than by changing what `location`
 means.
 
+### D20 — One mechanism reads inside a block, with two sources, and its window is charged
+
+A read landing at an arbitrary offset inside a block is served two ways today:
+by `xz_seek::Reader::read_at` where the stated budget cannot hold a decoded
+block, and by a decoded block's own slice where it can. The first exists only
+because a local file can be pulled from, and a remote source cannot be. So 14.7
+moves it: **one mechanism, `xz-seek`'s resumable block handle, with the source
+being the difference** — a `File` locally, which the crate pulls from, and a
+`Window` over the block's compressed range remotely, which we fetch. How bytes
+reach a decoder is a property of the transport and is the one asymmetry worth
+keeping; *what got verified* is not, and today it differs, `Verify::Full`
+draining a partly-read block for the local path while the handle makes
+completion a call we make.
+
+**Locally the crate pulls and nothing is materialized**, which is what
+`CompressedSource` is for and which keeps the charge below a remote-only term.
+The cost is that the window-fed branch would have no local twin to disagree
+with, so a window-fed local path is asked of `xz-seek` **for tests alone** —
+the shape its own declining wrapper already sets, putting the same bytes through
+both branches so a divergence surfaces as the right disagreement rather than as
+two sources differing.
+
+**The parallelism this does not take.** The streaming arm advises one partition
+because one reader sits behind a mutex (`pgdump_query/src/io.rs`), and per-reader
+handles would let several decoders run where the blocks they decode would not
+fit. That is a throughput claim and this phase produces no figures ("Scope"), so
+the advice is unchanged here and the gain is `KD35`, owned by the phase that
+takes the figure. It also binds upstream: the handle must stay usable N at a time
+for that phase to exist at all, which is why `BlockRead` is asked to be `Send`
+and to borrow nothing (D13).
+
+**A block is always completed, and that is not a knob.** Completion compares the
+check by draining the block's remainder, which is what `Verify::Full` already
+does for the path being replaced — so always-completing is today's guarantee
+carried over, not a new cost. What is new is only that the call is ours, and a
+flag to skip it would have silently weaker verification as its failure mode. A
+reader that touches a few kilobytes of a large block pays a decode of the rest;
+if that ever shows up in a profile it becomes a figure and a decision then.
+
+**The compressed window is charged against the stated budget**, not booked as
+unpooled. `BlockTask::compressed_range()` gives its length before the fetch, so
+it is a term we can price exactly — unlike an in-flight body of unknown length,
+which is what `MEMORY_UNPOOLED_BOUND` was left to absorb. A term that can be
+priced and is not is the falsification of that bound rather than an instance of
+it.
+
 ## How it is sliced, and why in that order
 
 The rows are [`../status/STATUS.md`](../status/STATUS.md)'s checklist; the
@@ -698,3 +749,11 @@ agree with it.
 **The remote work then goes bytes, identity, compression** — a plain dump read
 end to end, then what the cache records about it, then the `.xz` composition —
 each row being a thing that can be demonstrated whole against the oracle.
+
+**The local path migrates last, against this phase's other ordering rule.**
+Proving semantics on the provider we control absolutely is why the identity work
+went that way round, and it does not bind D20's mechanism swap, which has no
+semantics of its own to pin: what binds instead is that a tested path is never
+migrated onto a mechanism that has not yet run anywhere. So 14.7 proves the
+handle where no alternative exists, and 14.8 moves the local path onto one
+already in use.

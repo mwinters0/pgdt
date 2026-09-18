@@ -2507,6 +2507,14 @@ impl XzSource {
             // however many readers a caller runs, so the decoder is a fixed
             // cost of the source rather than of a concurrent reader
             // ([`Partitioning::partition_bytes`]).
+            //
+            // Deficiency register: `deficiency: KD35` — one partition is what
+            // the mutex admits, not what the budget affords: a decoder retains
+            // far less than a decoded block, so several would fit where the
+            // blocks they decode do not, and the budget that sends a file down
+            // this arm is exactly the one that would benefit. **(c) unowned**;
+            // closing it means a per-reader decode handle here and a figure
+            // over the count, and the figure is the half this cannot skip.
             return Partitioning::single(chunk_bytes);
         };
         let covering = table.blocks_in(range.clone());

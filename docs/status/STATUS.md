@@ -118,7 +118,15 @@ what is delivered.
   **Waits on `xz-seek`'s `P9`** — the sans-IO walk, the resumable block decode
   and the sourceless handle — taken whole rather than slice by slice: we review
   the standing once every slice has landed, and re-vendor after the wrap and
-  keystone our approval releases (D13).
+  keystone our approval releases (D13). **The review is a session's**, which
+  approves where it has no major concern and grills what it does with the
+  maintainer rather than deciding it.
+
+- [ ] **14.8** The local small-budget read moves onto the block handle: one
+  mechanism for a read inside a block on both providers, the source being the
+  difference, and the streaming arm's one-partition advice unchanged, the gain
+  from raising it being a figure this phase does not take (D20). Admitted after
+  spec time, and ordered after 14.7 for the reason its spec gives.
 
 ## Not started
 
@@ -166,7 +174,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD34 -->
+rather than being deleted. <!-- deficiency-watermark: KD35 -->
 **`KD1`–`KD34` are allocated, and nothing at or below `KD34` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -218,8 +226,8 @@ a phase nobody has sliced.
 
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
   wherever the save throttle's gate does not close it — which is every
-  `--dqcache none` scan, since a no-op save leaves nothing to amortize: 19.3 s
-  for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of blocks
+  `--dqcache none` scan, since a no-op save leaves nothing to amortize.
+  **(c) unowned**; promoted by a dump with thousands of blocks
   scanned under `--dqcache none`. Detail: `pgdump_query/src/stream.rs`.
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
@@ -267,8 +275,8 @@ a phase nobody has sliced.
 - **KD17** — a plain typed `query` is flat at 1.02× across the whole `--jobs`
   axis: the sub-streams it plans never run concurrently, total CPU staying
   under one core. The named suspect — `POOL_DEPTH` clamping the chunk pool —
-  moved no cell by more than 0.8% in a probe build that lifts it, so what
-  serializes them is unidentified. **(c) unowned**; promoted by a phase that
+  moved no cell measurably in a probe build that lifts it, so what serializes
+  them is unidentified. **(c) unowned**; promoted by a phase that
   takes up plain-source extraction throughput, since no defaults change reaches
   it. Detail: `pgdump_query/src/stream.rs`.
 
@@ -366,6 +374,13 @@ a phase nobody has sliced.
   the allowance the box resolved, which a user cannot predict. **(b) owned by
   P23**, whose remedy is a granularity derived from the dump's length. Detail:
   `pgdump_query/src/gather.rs`.
+
+- **KD35** — a budget too small for a decoded block is read serially: the
+  streaming arm advises one partition because one `xz_seek::Reader` sits behind
+  a mutex, where a decoder retains far less than the block it decodes and
+  several would fit. **(c) unowned**; promoted by a phase taking up compressed
+  scan throughput, which is also what would take the figure. Detail:
+  `pgdump_query/src/io.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
