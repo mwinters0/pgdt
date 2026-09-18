@@ -182,6 +182,17 @@ containing form of `supply` is the one a remote driver is written against. That
 is exactly the network tuning this phase has deferred, and the entry is owned by
 the phase that takes that up.
 
+**One fetch a stream is a floor, not a cost still looking for a remedy.** A
+stream's header is adjacent to its predecessor's padding, footer and index, so
+one read straddling that boundary answers all but the request that first touches
+it; and which request that is can be changed but not removed, because the
+distance to the next boundary is only knowable from the index just read and is
+not guessable. So no rearrangement of what the walk emits gets below one round
+trip a stream — only prediction would, and prediction is what was refuted above.
+The deficiency is therefore open at the optimum for a driver that fetches what it
+is asked for, and what would beat it is not a better driver but the forward
+table build, which stops paying separately for the walk at all.
+
 *Rejected: a speculative fetch at a guessed stream stride, verified by footer
 magic.* This was the remedy named here until `xz-seek`'s `9.1` drove the walk's
 request sequence over the koji download and confirmed none of its guesses, at
