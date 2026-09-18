@@ -19,7 +19,9 @@
 
 use std::cmp::Ordering;
 
-use pgdump_query::{SCAN_CHUNK_DEFAULT_SIZE_BYTES, STATISTICS_GROUP_DEFAULT_SIZE_BYTES, DICTIONARY_ENTRY_MAX_BYTES};
+use pgdump_query::{
+    DICTIONARY_ENTRY_MAX_BYTES, SCAN_CHUNK_DEFAULT_SIZE_BYTES, STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
+};
 
 mod common;
 use common::{VERSIONS, statistics_fixture};

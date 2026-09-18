@@ -42,8 +42,8 @@ pub use io::{
     discover_memory_limit_in, open_local, statistics_allowance,
 };
 pub use map::{
-    DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, SPAN_STORED_TEXT_MAX_BYTES, TilingIssue,
-    TocHeader, attach_text, build_map, check_tiling,
+    DataBlock, InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText,
+    TilingIssue, TocHeader, attach_text, build_map, check_tiling,
 };
 pub use pgtype::{
     CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare,
@@ -57,15 +57,16 @@ pub use preamble::{
 pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
-    Cancellation, ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart,
-    SCAN_CHUNK_DEFAULT_SIZE_BYTES, SCAN_LINE_DEFAULT_MAX_BYTES, Event, LargeObjectEnd,
-    LargeObjectStart, Line, Row, ScanOptions, scan,
+    Cancellation, ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd,
+    LargeObjectStart, Line, Row, SCAN_CHUNK_DEFAULT_SIZE_BYTES, SCAN_LINE_DEFAULT_MAX_BYTES,
+    ScanOptions, scan,
 };
 pub use statistics::{
-    BlockGathered, BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
-    STATISTICS_GROUP_DEFAULT_SIZE_BYTES, STATISTICS_GROUP_DEFAULT_MIN_ROWS, DICTIONARY_MAX_ENTRIES, GroupSizing,
-    RowGroup, BLOCK_MAX_STATISTICS_GROUPS, DICTIONARY_ENTRY_MAX_BYTES, Sortedness, StatisticsBackfill,
-    StatisticsHeld, StatisticsRequest, StatisticsSelection, StatisticsTarget, StatisticsTerms,
+    BLOCK_MAX_STATISTICS_GROUPS, BlockGathered, BlockStatistics, Bounds, ColumnBounds,
+    ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
+    GroupSizing, RowGroup, STATISTICS_GROUP_DEFAULT_MIN_ROWS, STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
+    Sortedness, StatisticsBackfill, StatisticsHeld, StatisticsRequest, StatisticsSelection,
+    StatisticsTarget, StatisticsTerms,
 };
 pub use stream::{
     BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream,

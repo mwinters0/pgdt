@@ -887,9 +887,11 @@ enum Stop {
 /// a filter no order closes has no entry.
 #[tokio::test]
 async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
-    let (_dir, dump, index) =
-        gathered(&statistics_fixture(16, "default"), pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES)
-            .await;
+    let (_dir, dump, index) = gathered(
+        &statistics_fixture(16, "default"),
+        pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
+    )
+    .await;
     let block = index.blocks_for("public.ordered").next().unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
     let source = Recording {
@@ -1053,9 +1055,11 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
 /// resumes into the stopping row, and stops there again.
 #[tokio::test]
 async fn a_stopped_stream_resumes_to_the_same_rows() {
-    let (_dir, dump, _index) =
-        gathered(&statistics_fixture(16, "default"), pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES)
-            .await;
+    let (_dir, dump, _index) = gathered(
+        &statistics_fixture(16, "default"),
+        pgdump_query::STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
+    )
+    .await;
     let source = LocalFileSource::open(&dump).unwrap();
     let cache = CacheMode::Enabled(cache::colocated_path(&dump));
     let filter = Expr::Term(term("id", PredicateOp::Le, Some("19")));

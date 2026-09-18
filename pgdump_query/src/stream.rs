@@ -55,7 +55,7 @@ use crate::batch::{
     MIN_SOURCE_SPAN, QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names,
 };
 use crate::cache::{CacheLoad, CacheMode};
-use crate::copy::{CopyHeader, COPY_TEXT_DELIMITER, RawRow, RowSplit, validated_prefix};
+use crate::copy::{COPY_TEXT_DELIMITER, CopyHeader, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::gather;
 use crate::index::{

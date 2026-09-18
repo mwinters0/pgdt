@@ -51,10 +51,10 @@ use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
 use crate::statistics::{
-    BlockGathered, BlockObserver, BlockStatistics, Bounds, STATISTICS_ACCOUNT_CHARGE_STEP, Charge, ColumnBounds,
-    ColumnDictionary, ColumnStatistics, DICTIONARY_MAX_ENTRIES, GroupSizing, RowGroup, DICTIONARY_ENTRY_MAX_BYTES,
-    Sortedness, StatisticsAccount, StatisticsBackfill, StatisticsRequest, Term, max_rows_group,
-    min_rows_group, text_heap, vec_heap,
+    BlockGathered, BlockObserver, BlockStatistics, Bounds, Charge, ColumnBounds, ColumnDictionary,
+    ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, GroupSizing, RowGroup,
+    STATISTICS_ACCOUNT_CHARGE_STEP, Sortedness, StatisticsAccount, StatisticsBackfill,
+    StatisticsRequest, Term, max_rows_group, min_rows_group, text_heap, vec_heap,
 };
 
 /// The observer for one block, or `None` when `request` tracks nothing in it,
@@ -1501,8 +1501,11 @@ fn merge_adjacent<T: Default>(items: &mut Vec<T>, mut merge: impl FnMut(T, T) ->
 /// cap, otherwise a prefix below and a successor above.
 fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bounds> {
     let fits = |c: &Clipped| c.whole && c.head.len() <= DICTIONARY_ENTRY_MAX_BYTES;
-    let lower =
-        if fits(&min) { min.head } else { text_prefix(&min.head, DICTIONARY_ENTRY_MAX_BYTES).to_owned() };
+    let lower = if fits(&min) {
+        min.head
+    } else {
+        text_prefix(&min.head, DICTIONARY_ENTRY_MAX_BYTES).to_owned()
+    };
     if fits(&max) {
         return Some(Bounds { min: lower, max: max.head, max_exact: true });
     }
@@ -1952,7 +1955,10 @@ mod tests {
                     continue;
                 };
                 bounded += 1;
-                assert!(b.min.len() <= DICTIONARY_ENTRY_MAX_BYTES && b.max.len() <= DICTIONARY_ENTRY_MAX_BYTES);
+                assert!(
+                    b.min.len() <= DICTIONARY_ENTRY_MAX_BYTES
+                        && b.max.len() <= DICTIONARY_ENTRY_MAX_BYTES
+                );
                 let low = ValueKey::of(kind, &b.min).expect("a stored min keys");
                 let high = ValueKey::of(kind, &b.max).expect("a stored max keys");
                 for v in group {

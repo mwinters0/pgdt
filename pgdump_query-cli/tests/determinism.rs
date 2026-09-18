@@ -40,7 +40,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pgdump_query::{ByteRangeSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES, LocalFileSource};
+use pgdump_query::{ByteRangeSource, LocalFileSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
 
 mod common;
 use common::{all_fixtures, run, stderr_of};

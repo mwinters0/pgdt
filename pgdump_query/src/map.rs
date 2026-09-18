@@ -274,7 +274,8 @@ pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Re
         // Capped at what the run's spans can store between them, so a
         // multi-gigabyte `Unparsed` region is never pulled into memory whole
         // (`KD31`).
-        let want = (run_end - run_start).min(((j - i + 1) * SPAN_STORED_TEXT_MAX_BYTES) as u64) as usize;
+        let want =
+            (run_end - run_start).min(((j - i + 1) * SPAN_STORED_TEXT_MAX_BYTES) as u64) as usize;
         let bytes = source.read_range(run_start, want).await?;
         for span in &mut spans[i..=j] {
             let from = (span.start - run_start) as usize;

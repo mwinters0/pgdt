@@ -490,7 +490,7 @@ async fn data_and_unscanned_spans_store_no_text() {
 /// the file.
 #[tokio::test]
 async fn text_over_the_cap_is_truncated_and_marked() {
-    use pgdump_query::{Span, SPAN_STORED_TEXT_MAX_BYTES, attach_text};
+    use pgdump_query::{SPAN_STORED_TEXT_MAX_BYTES, Span, attach_text};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("big.sql");

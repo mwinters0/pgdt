@@ -680,8 +680,11 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let cancel = Arc::new(Cancellation::new());
     let tripping =
         CancelsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
-    let options =
-        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let options = ScanOptions {
+        chunk_size_bytes: 1,
+        cancel: Some(Arc::clone(&cancel)),
+        ..ScanOptions::default()
+    };
 
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
     assert!(run.interrupted, "a cancelled scan says so");
@@ -724,8 +727,11 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 
     let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
-    let options =
-        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let options = ScanOptions {
+        chunk_size_bytes: 1,
+        cancel: Some(Arc::clone(&cancel)),
+        ..ScanOptions::default()
+    };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::ALL).await.unwrap();
     assert!(run.interrupted, "a cancelled back-fill says so");
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
@@ -870,8 +876,11 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 
     let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
-    let options =
-        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let options = ScanOptions {
+        chunk_size_bytes: 1,
+        cancel: Some(Arc::clone(&cancel)),
+        ..ScanOptions::default()
+    };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
 
     assert!(run.interrupted);
@@ -910,8 +919,11 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
 
     let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
-    let options =
-        ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let options = ScanOptions {
+        chunk_size_bytes: 1,
+        cancel: Some(Arc::clone(&cancel)),
+        ..ScanOptions::default()
+    };
     let run = map_file(&tripping, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
     assert!(run.interrupted, "{label}");
 

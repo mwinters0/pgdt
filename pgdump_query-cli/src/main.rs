@@ -14,12 +14,11 @@ use pgdump_query::cache::{CacheClaim, CacheEnvelope, CacheMode, CacheStatus, Com
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan,
-    STATISTICS_GROUP_DEFAULT_MIN_ROWS,
-    DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan,
-    Parallelism, Predicate, PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span,
-    SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open_local,
-    preamble_only, render_field_into,
+    ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
+    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Parallelism, Predicate,
+    PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS, ScanOptions,
+    Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind,
+    open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
