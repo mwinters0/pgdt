@@ -19,17 +19,20 @@
 //!
 //! **The dump file's identity is checked, not assumed**
 //! (`docs/design/decisions.md`, "D21"). Every cache records the source's
-//! *stored* size and mtime as observed at save time — bytes on the device,
-//! not the addressable (possibly decompressed) length; [`load`] re-observes
-//! the live source and compares. A stored-size mismatch means every byte
-//! offset in the cache could be wrong, so the cache is unusable. An mtime
-//! mismatch does **not** invalidate it by default: it is surfaced on
-//! [`CacheStatus::Valid`] as a [`WeakIdentity`], and [`CacheMode::load`]
-//! turns it into a
-//! [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the loaded
-//! index, recomputed on every load and never persisted. A caller that asked
-//! for [`StrictIdentity::time`] is refused instead — there, or at
-//! [`CacheMode::strict_identity_refusal`] where it read the status itself.
+//! *stored* size and modification signal as observed at save time — bytes on
+//! the device, not the addressable (possibly decompressed) length — and, for a
+//! source that was fetched from somewhere, **where it came from** and the
+//! server's entity tag
+//! (`docs/design/roadmap-P14-remote-input.md`, "D18", "D19"); [`load`]
+//! re-observes the live source and compares. A stored-size mismatch means
+//! every byte offset in the cache could be wrong, so the cache is unusable.
+//! Neither weak signal invalidates it by default: they are surfaced on
+//! [`CacheStatus::Valid`] as a [`WeakIdentity`] and an [`OriginMatch`], and
+//! [`CacheMode::load`] turns each into a warning on the loaded index,
+//! recomputed on every load and never persisted. A caller that asked for
+//! [`StrictIdentity::time`] or [`StrictIdentity::location`] is refused
+//! instead — there, or at [`CacheMode::strict_identity_refusal`] where it read
+//! the status itself.
 //!
 //! **Two different questions hide under one word.** *Between* runs a moved,
 //! copied or touched dump is a different weak identity holding the same
@@ -70,19 +73,22 @@ use crate::{Error, Result};
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
 /// unusable as one of another shape.
-pub(crate) const CACHE_FORMAT_VERSION: u32 = 22;
+pub(crate) const CACHE_FORMAT_VERSION: u32 = 23;
 
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.
 ///
-/// **Opaque, not a struct** (`docs/design/decisions.md`, "D21"): a future
-/// variant carries whatever evidence its own kind of source has (an ETag is
-/// not a `SystemTime`). One variant today; a call site reads the fields
-/// through the variant it matches, never through a shared accessor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// **Opaque, not a struct** (`docs/design/decisions.md`, "D21"): each variant
+/// carries whatever evidence its own kind of source has, an ETag not being a
+/// `SystemTime` and a local file having no origin at all
+/// (`docs/design/roadmap-P14-remote-input.md`, "D18", "D19"). What the three
+/// comparisons below read is a *signal* — origin, modification, stored size —
+/// rather than a variant, so a pairing of two kinds is compared rather than
+/// refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum SourceIdentity {
-    /// Backed by [`ByteRangeSource::stored_size`]/`modified` — every source
-    /// today, decompressing or not.
+    /// Backed by [`ByteRangeSource::stored_size`]/`modified` — a source that
+    /// was not fetched from anywhere, decompressing or not.
     LocalFile {
         stored_size: u64,
         /// `(seconds, nanoseconds)` since the Unix epoch: L1's own on-disk
@@ -90,36 +96,122 @@ enum SourceIdentity {
         /// source exposed no mtime.
         mtime: Option<(u64, u32)>,
     },
+    /// An object fetched from somewhere, which records two things a file does
+    /// not: **where it came from**, which is what
+    /// [`StrictIdentity::location`] binds, and the server's **entity tag**,
+    /// which is the stronger of the two modification signals
+    /// [`StrictIdentity::time`] binds.
+    Remote {
+        origin: String,
+        etag: Option<String>,
+        /// `Last-Modified`, in [`SourceIdentity::LocalFile`]'s on-disk
+        /// vocabulary. `None` where the server sent none — which is what a
+        /// substituted epoch is read as (`crate::io`'s `weak_identity`).
+        last_modified: Option<(u64, u32)>,
+        stored_size: u64,
+    },
 }
 
 impl SourceIdentity {
     async fn observe(source: &dyn ByteRangeSource) -> Result<Self> {
         let stored_size = source.stored_size().await?;
-        let mtime = source
+        let modified = source
             .modified()
             .await?
             .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default())
             .map(|d| (d.as_secs(), d.subsec_nanos()));
-        Ok(SourceIdentity::LocalFile { stored_size, mtime })
+        // A source that was fetched from somewhere says so; every other one
+        // records no origin, which is the decision rather than a gap
+        // (`ByteRangeSource::remote_identity`).
+        Ok(match source.remote_identity() {
+            Some(remote) => SourceIdentity::Remote {
+                origin: remote.origin().to_string(),
+                etag: remote.etag().map(ToOwned::to_owned),
+                last_modified: modified,
+                stored_size,
+            },
+            None => SourceIdentity::LocalFile { stored_size, mtime: modified },
+        })
+    }
+
+    /// Bytes as stored — the half that refuses (`docs/design/decisions.md`,
+    /// "D20").
+    fn stored_size(&self) -> u64 {
+        match self {
+            SourceIdentity::LocalFile { stored_size, .. }
+            | SourceIdentity::Remote { stored_size, .. } => *stored_size,
+        }
+    }
+
+    /// The modification time this identity carries, as a `SystemTime`: L1's
+    /// on-disk `(seconds, nanoseconds)` is backed out at the boundary, so
+    /// what leaves this module is what the trait answered and what an
+    /// embedder formats.
+    fn modified(&self) -> Option<SystemTime> {
+        let stamp = match self {
+            SourceIdentity::LocalFile { mtime, .. }
+            | SourceIdentity::Remote { last_modified: mtime, .. } => *mtime,
+        };
+        stamp.map(|(s, n)| UNIX_EPOCH + Duration::new(s, n))
+    }
+
+    /// The server's entity tag, where this identity has one at all.
+    fn etag(&self) -> Option<&str> {
+        match self {
+            SourceIdentity::LocalFile { .. } => None,
+            SourceIdentity::Remote { etag, .. } => etag.as_deref(),
+        }
+    }
+
+    /// Where the object was fetched from, or `None` for a source that was not
+    /// fetched from anywhere (D19).
+    fn origin(&self) -> Option<&str> {
+        match self {
+            SourceIdentity::LocalFile { .. } => None,
+            SourceIdentity::Remote { origin, .. } => Some(origin),
+        }
     }
 
     /// What the weak half of this identity says against `live`'s — the half
     /// that warns rather than refuses (see the module docs). **The answer
     /// keeps what was compared**, so a caller refusing on it states what it
     /// saw rather than only that it looked.
+    ///
+    /// **The strongest signal both sides carry decides it.** An entity tag is
+    /// the server's own statement about which version of the object this is,
+    /// so where both sides have one it settles the question and a
+    /// `Last-Modified` disagreeing with it is not consulted; where either
+    /// side has none, the modification time is what is left
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
     fn weak_against(&self, live: &Self) -> WeakIdentity {
-        let (
-            SourceIdentity::LocalFile { mtime: cached, .. },
-            SourceIdentity::LocalFile { mtime: live, .. },
-        ) = (self, live);
-        // Back out of L1's on-disk `(seconds, nanoseconds)` at the boundary:
-        // what leaves this module is a `SystemTime`, which is what the trait
-        // answered and what an embedder formats.
-        let at = |m: &Option<(u64, u32)>| m.map(|(s, n)| UNIX_EPOCH + Duration::new(s, n));
-        match (at(cached), at(live)) {
+        if let (Some(cached), Some(live)) = (self.etag(), live.etag()) {
+            return if cached == live {
+                WeakIdentity::Agrees
+            } else {
+                WeakIdentity::TagDiffers { cached: cached.to_string(), live: live.to_string() }
+            };
+        }
+        match (self.modified(), live.modified()) {
             (Some(cached), Some(live)) if cached == live => WeakIdentity::Agrees,
             (Some(cached), Some(live)) => WeakIdentity::Differs { cached, live },
             (cached, live) => WeakIdentity::Absent { cached, live },
+        }
+    }
+
+    /// What this identity's origin says against `live`'s — the second
+    /// advisory answer, and the one [`StrictIdentity::location`] binds
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+    ///
+    /// **Two sources that were both fetched from nowhere agree**, which is
+    /// what makes `location` inert on a local file rather than a refusal
+    /// nobody asked for (D19).
+    fn origin_against(&self, live: &Self) -> OriginMatch {
+        match (self.origin(), live.origin()) {
+            (cached, live) if cached == live => OriginMatch::Agrees,
+            (cached, live) => OriginMatch::Differs {
+                cached: cached.map(ToOwned::to_owned),
+                live: live.map(ToOwned::to_owned),
+            },
         }
     }
 
@@ -127,18 +219,57 @@ impl SourceIdentity {
     /// what moved — [`Error::SourceChangedWhileRead`]'s evidence clause.
     /// Never called where the two are equal, so it is never empty.
     fn differences(&self, live: &Self) -> String {
-        let (
-            SourceIdentity::LocalFile { stored_size: was, mtime: was_mtime },
-            SourceIdentity::LocalFile { stored_size: now, mtime: now_mtime },
-        ) = (self, live);
         let mut said = Vec::new();
+        let (was, now) = (self.stored_size(), live.stored_size());
         if was != now {
             said.push(format!("its stored size went from {was} to {now} byte(s)"));
         }
-        if was_mtime != now_mtime {
+        if self.modified() != live.modified() {
             said.push("its modification time moved".to_string());
         }
+        if self.etag() != live.etag() {
+            said.push("the server's entity tag for it changed".to_string());
+        }
+        if !matches!(self.origin_against(live), OriginMatch::Agrees) {
+            said.push("it is no longer the same origin".to_string());
+        }
         said.join(" and ")
+    }
+}
+
+/// What the origin recorded in a cache said against the live source's — the
+/// second half of what a cache load compares, beside [`WeakIdentity`]
+/// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+///
+/// **Advisory by default and only two states**, where the modification signal
+/// has three: an absent origin is not silence, it is the positive statement
+/// that a source was not fetched from anywhere, so two of them agree and
+/// [`StrictIdentity::location`] binds nothing on a local file (D19).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OriginMatch {
+    /// Both were fetched from the same place, or neither was fetched at all.
+    Agrees,
+    /// They differ — advisory by default
+    /// ([`crate::diagnostic::DiagnosticKind::CacheOriginChanged`]) — with
+    /// each side's, `None` for a source that records none.
+    Differs { cached: Option<String>, live: Option<String> },
+}
+
+impl OriginMatch {
+    /// Why [`StrictIdentity::location`] is not met, or `None` where it is —
+    /// the clause [`Error::StrictIdentityUnmet`] carries, naming the two
+    /// origins it compared.
+    fn unmet(&self) -> Option<String> {
+        let OriginMatch::Differs { cached, live } = self else { return None };
+        let named = |origin: &Option<String>| match origin {
+            Some(origin) => format!("`{origin}`"),
+            None => "a source fetched from nowhere".to_string(),
+        };
+        Some(format!(
+            "the cache was written for {}, and this run reads {}",
+            named(cached),
+            named(live)
+        ))
     }
 }
 
@@ -152,10 +283,16 @@ impl SourceIdentity {
 ///
 /// **Each state carries what was compared**, so the refusal built from it
 /// states the evidence and not only the verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WeakIdentity {
     /// The cache's recorded modification signal is the source's.
     Agrees,
+    /// Both sides carry an entity tag and the two differ — the server's own
+    /// statement that this is a different version of the object, which
+    /// outranks whatever `Last-Modified` says
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D5"). Advisory by
+    /// default, exactly as [`WeakIdentity::Differs`] is.
+    TagDiffers { cached: String, live: String },
     /// They differ — advisory by default
     /// ([`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`]) — with the
     /// time the cache recorded and the one the live source now reports.
@@ -170,13 +307,17 @@ impl WeakIdentity {
     /// Why [`StrictIdentity::time`] is not met, or `None` where it is — the
     /// clause [`Error::StrictIdentityUnmet`] carries, naming the times it
     /// compared.
-    fn unmet(self) -> Option<String> {
+    fn unmet(&self) -> Option<String> {
         match self {
             WeakIdentity::Agrees => None,
+            WeakIdentity::TagDiffers { cached, live } => Some(format!(
+                "the server's entity tag for it has changed since — the cache recorded {cached}, \
+                 the source now reports {live}"
+            )),
             WeakIdentity::Differs { cached, live } => Some(format!(
                 "its modification time has moved since — the cache recorded {}, the source now reports {}",
-                epoch_stamp(cached),
-                epoch_stamp(live)
+                epoch_stamp(*cached),
+                epoch_stamp(*live)
             )),
             // The fourth pairing is not a state `weak_against` builds, and it
             // falls in with `(None, None)` rather than being refuted here:
@@ -184,11 +325,11 @@ impl WeakIdentity {
             WeakIdentity::Absent { cached, live } => Some(match (cached, live) {
                 (Some(cached), None) => format!(
                     "the source carries no modification time to compare with the {} the cache recorded",
-                    epoch_stamp(cached)
+                    epoch_stamp(*cached)
                 ),
                 (None, Some(live)) => format!(
                     "the cache carries no modification time to compare with the source's {}",
-                    epoch_stamp(live)
+                    epoch_stamp(*live)
                 ),
                 _ => "neither it nor the source carries a modification time to compare".to_string(),
             }),
@@ -250,8 +391,9 @@ impl StrictIdentity {
         self.time
     }
 
-    /// Whether the origin a cache was written for binds. A local cache
-    /// records no origin, so this binds nothing here yet.
+    /// Whether the origin a cache was written for binds
+    /// ([`OriginMatch`]). A local cache records no origin, so two local runs
+    /// always agree and this binds nothing there.
     pub fn location(self) -> bool {
         self.location
     }
@@ -296,7 +438,14 @@ pub struct SourceWatch {
 impl SourceWatch {
     /// Observe `source`'s identity as this run's baseline, before it has read
     /// anything it would have to distrust.
+    /// **The source is told whether the in-flight identity binds**, because on
+    /// a provider that can have the server do the comparing the check is a
+    /// precondition on every request rather than this watch's own re-read, and
+    /// `--strict-identity=none` has to reach both
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D11",
+    /// [`ByteRangeSource::hint_in_flight_identity`]).
     pub async fn open(source: &dyn ByteRangeSource, strict: StrictIdentity) -> Result<Self> {
+        source.hint_in_flight_identity(strict.in_flight());
         Ok(Self { baseline: SourceIdentity::observe(source).await?, strict })
     }
 
@@ -426,6 +575,32 @@ pub struct CacheEnvelope {
     identity: SourceIdentity,
 }
 
+/// What a load says about a cache's identity without refusing it: a
+/// modification signal that moved, an origin that is not this run's, or both.
+///
+/// **Recomputed on every load and never persisted**, exactly as the coverage
+/// diagnostics are (see the module docs). A caller that binds either term is
+/// refused by [`CacheMode::strict_identity_refusal`] instead and never reaches
+/// here.
+///
+/// Public for that method's reason, and it is the same caller: one that
+/// *reports* what a cache holds reads the full [`CacheStatus`] through
+/// [`load`] and so never passes through [`CacheMode::load`], where both of
+/// these are pushed. Writing the routing out a second time there is what this
+/// exists to prevent.
+pub fn advisory_identity_diagnostics(
+    weak: &WeakIdentity,
+    origin: &OriginMatch,
+) -> impl Iterator<Item = Diagnostic> {
+    let moved = match weak {
+        WeakIdentity::Agrees | WeakIdentity::Absent { .. } => None,
+        WeakIdentity::Differs { .. } => Some(Diagnostic::cache_mtime_changed()),
+        WeakIdentity::TagDiffers { .. } => Some(Diagnostic::cache_entity_tag_changed()),
+    };
+    let elsewhere = !matches!(origin, OriginMatch::Agrees);
+    moved.into_iter().chain(elsewhere.then(Diagnostic::cache_origin_changed))
+}
+
 /// The default cache location when no explicit path is given:
 /// `<dump-path>.dqcache`.
 pub fn colocated_path(dump_path: &Path) -> PathBuf {
@@ -469,8 +644,9 @@ pub enum CacheStatus {
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
     /// A usable cache whose `index.scanned_through` reaches the file's
     /// recorded size — the whole file is mapped. `weak` is what the source's
-    /// current mtime says against the one recorded at save time, which does
-    /// not itself make the cache unusable (see the module docs).
+    /// current modification signal says against the one recorded at save time
+    /// and `origin` what its origin says against the recorded one, neither of
+    /// which itself makes the cache unusable (see the module docs).
     /// `total_size` is [`CacheFile::total_size`]: a reporting caller
     /// states coverage against it, and a cache-only caller has no live source
     /// to stat. `compression` is the container's shape where one sits under
@@ -481,6 +657,7 @@ pub enum CacheStatus {
     Valid {
         index: DumpIndex,
         weak: WeakIdentity,
+        origin: OriginMatch,
         total_size: u64,
         compression: Option<CompressionShape>,
         envelope: CacheEnvelope,
@@ -499,6 +676,7 @@ pub enum CacheStatus {
     Incomplete {
         index: DumpIndex,
         weak: WeakIdentity,
+        origin: OriginMatch,
         total_size: u64,
         compression: Option<CompressionShape>,
         envelope: CacheEnvelope,
@@ -555,16 +733,13 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
         Err(status) => return Ok(status),
     };
     let live = SourceIdentity::observe(source).await?;
-    // One variant today, so both patterns are irrefutable; a future
-    // `Remote` variant is matched explicitly rather than through a shared
-    // accessor — see `SourceIdentity`'s docs.
-    let SourceIdentity::LocalFile { stored_size: cached_stored_size, .. } = file.identity;
-    let SourceIdentity::LocalFile { stored_size: live_stored_size, .. } = live;
+    let (cached_stored_size, live_stored_size) = (file.identity.stored_size(), live.stored_size());
     if cached_stored_size != live_stored_size {
         return Ok(CacheStatus::SourceChanged { cached_stored_size, live_stored_size });
     }
     let weak = file.identity.weak_against(&live);
-    Ok(status_from_file(file, weak))
+    let origin = file.identity.origin_against(&live);
+    Ok(status_from_file(file, weak, origin))
 }
 
 /// Read and envelope-check the cache at `path`, shared by [`load`] and
@@ -644,9 +819,7 @@ pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
     let Ok(file) = read_cache_file(cache_path)? else {
         return Ok(CacheClaim::Compression(KnownCompression::Unknown));
     };
-    // One variant today; a future one is matched through the variant rather
-    // than a shared accessor — see [`SourceIdentity`].
-    let SourceIdentity::LocalFile { stored_size, .. } = file.identity;
+    let stored_size = file.identity.stored_size();
     // The index is decoded only to be dropped, its statistics freed as they
     // were decoded: inside a statistics scope (`crate::instrument`).
     let CacheFile { compression, index, .. } = file;
@@ -681,13 +854,14 @@ fn drop_attributed(mut index: DumpIndex) {
 
 /// Load a cache from `path` with no live source to check it against — the
 /// cache-only counterpart to [`load`] (`docs/design/decisions.md`,
-/// "The compressed source and the cache"). With no mtime to compare, `weak`
-/// is always [`WeakIdentity::Agrees`] here; "unverified, historical" is a
+/// "The compressed source and the cache"). With no live source to compare
+/// against, `weak` and `origin` are always the agreeing answer here;
+/// "unverified, historical" is a
 /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed by
 /// [`CacheMode::load_offline`] instead.
 pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
     match read_cache_file(path)? {
-        Ok(file) => Ok(status_from_file(file, WeakIdentity::Agrees)),
+        Ok(file) => Ok(status_from_file(file, WeakIdentity::Agrees, OriginMatch::Agrees)),
         Err(status) => Ok(status),
     }
 }
@@ -699,7 +873,7 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
 /// recomputed either way. Reads [`CacheFile::total_size`] rather than
 /// re-deriving one from a live source: by this point the stored sizes are
 /// known equal wherever a live source exists, and `load_offline` has none.
-fn status_from_file(file: CacheFile, weak: WeakIdentity) -> CacheStatus {
+fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) -> CacheStatus {
     let total_size = file.total_size;
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
@@ -720,9 +894,9 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity) -> CacheStatus {
         identity: file.identity,
     };
     if index.is_complete(total_size) {
-        CacheStatus::Valid { index, weak, total_size, compression, envelope }
+        CacheStatus::Valid { index, weak, origin, total_size, compression, envelope }
     } else {
-        CacheStatus::Incomplete { index, weak, total_size, compression, envelope }
+        CacheStatus::Incomplete { index, weak, origin, total_size, compression, envelope }
     }
 }
 
@@ -851,14 +1025,32 @@ impl CacheMode {
         CacheMode::Enabled { path: path.into(), strict: StrictIdentity::ADVISORY }
     }
 
-    /// Resolve a `--dqcache`-style argument against `dump_path`: `None`
-    /// selects the colocated default (`<dump_path>.dqcache`), the literal
-    /// path `none` disables the cache, and any other path is used as-is.
-    pub fn resolve(dump_path: &Path, cache_path: Option<&Path>) -> CacheMode {
+    /// Resolve a `--dqcache`-style argument against the source it is for:
+    /// `None` selects the default, the literal path `none` disables the
+    /// cache, and any other path is used as-is.
+    ///
+    /// **The default is the name of the dump plus `.dqcache`, and only where
+    /// it sits differs.** A local dump's cache sits *beside* it, so the
+    /// pairing is the filesystem's. An object fetched over a network has no
+    /// beside, so its cache is named after the URL's last path segment and
+    /// sits in the working directory — predictable by reading the URL, where
+    /// a hashed name would not be
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+    ///
+    /// *Consequence, stated rather than defended away:* two same-named dumps
+    /// of equal stored size from different hosts, read in one working
+    /// directory, read each other's map. The default path is what makes that
+    /// reachable; the origin the cache records is what makes it visible
+    /// ([`OriginMatch`]).
+    pub fn resolve(origin: &Origin, cache_path: Option<&Path>) -> CacheMode {
         match cache_path {
-            None => CacheMode::enabled(colocated_path(dump_path)),
             Some(p) if p == Path::new("none") => CacheMode::DISABLED,
             Some(p) => CacheMode::enabled(p),
+            // A remote origin always names an object: a URL that names none is
+            // refused when the origin is built, so there is no third case.
+            None => CacheMode::enabled(colocated_path(
+                origin.local_path().unwrap_or(Path::new(origin.remote_name().unwrap_or_default())),
+            )),
         }
     }
 
@@ -914,16 +1106,14 @@ impl CacheMode {
                 CacheStatus::SourceChanged { cached_stored_size, live_stored_size } => {
                     CacheLoad::SourceChanged { cached_stored_size, live_stored_size }
                 }
-                CacheStatus::Valid { mut index, weak, .. }
-                | CacheStatus::Incomplete { mut index, weak, .. } => {
-                    if let Some(refusal) = self.strict_identity_refusal(weak) {
+                CacheStatus::Valid { mut index, weak, origin, .. }
+                | CacheStatus::Incomplete { mut index, weak, origin, .. } => {
+                    if let Some(refusal) = self.strict_identity_refusal(&weak, &origin) {
                         return Err(refusal);
                     }
                     // Reported rather than acted on: too weak to invalidate,
                     // and recomputed on every load (see the module docs).
-                    if matches!(weak, WeakIdentity::Differs { .. }) {
-                        index.diagnostics.push(Diagnostic::cache_mtime_changed());
-                    }
+                    index.diagnostics.extend(advisory_identity_diagnostics(&weak, &origin));
                     CacheLoad::Index(index)
                 }
             }),
@@ -946,12 +1136,22 @@ impl CacheMode {
     /// no cache to compare, and [`CacheMode::Offline`] has no live source, so
     /// its identity is null rather than absent and a selection never reaches
     /// it.
-    pub fn strict_identity_refusal(&self, weak: WeakIdentity) -> Option<Error> {
+    pub fn strict_identity_refusal(
+        &self,
+        weak: &WeakIdentity,
+        origin: &OriginMatch,
+    ) -> Option<Error> {
         let CacheMode::Enabled { path, strict } = self else { return None };
-        if !strict.time() {
-            return None;
-        }
-        weak.unmet().map(|unmet| Error::StrictIdentityUnmet { path: path.clone(), unmet })
+        // One selector at a time, in the order they are written: a run that
+        // bound both and fails both is told about the modification signal
+        // first, there being no second sentence to print after a refusal.
+        let unmet = [
+            strict.time().then(|| ("time", weak.unmet())),
+            strict.location().then(|| ("location", origin.unmet())),
+        ];
+        unmet.into_iter().flatten().find_map(|(term, unmet)| {
+            unmet.map(|unmet| Error::StrictIdentityUnmet { path: path.clone(), term, unmet })
+        })
     }
 
     /// The refusal a scan entry point answers [`CacheLoad::SourceChanged`]

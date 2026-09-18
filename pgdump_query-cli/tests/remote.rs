@@ -421,14 +421,166 @@ fn query_over_a_url_streams_the_same_rows_a_local_query_streams() {
     assert_eq!(remote, local);
 }
 
+// ---------------------------------------------------------------------------
+// The derived cache path, and the origin it records (D4, D18, D19)
+// ---------------------------------------------------------------------------
+
+/// Run `pgdq` with `dir` as the working directory — which is where a remote
+/// dump's default cache goes, there being no place beside the object for one
+/// to sit.
+fn run_in(dir: &tempfile::TempDir, args: &[&str]) -> std::process::Output {
+    common::pgdq().current_dir(dir.path()).args(args).output().expect("the pgdq binary runs")
+}
+
+fn run_ok_in(dir: &tempfile::TempDir, args: &[&str]) -> String {
+    let out = run_in(dir, args);
+    assert!(out.status.success(), "pgdq {args:?} failed: {}", stderr_of(&out));
+    String::from_utf8(out.stdout).expect("pgdq writes UTF-8")
+}
+
 #[test]
-fn a_remote_source_with_no_dqcache_asks_for_one_rather_than_deriving_a_name() {
+fn a_url_naming_no_object_is_refused_by_name() {
+    for url in ["http://example.com", "http://example.com/", "https://example.com/dumps/"] {
+        let err = Origin::resolve(url).unwrap_err().to_string();
+        assert!(err.contains("names no object"), "{url}: {err}");
+    }
+}
+
+#[test]
+fn a_remote_cache_defaults_to_the_urls_last_segment_in_the_working_directory() {
     let oracle = serving_dump();
-    let out = run(&["parse", "--source", &oracle.url()]);
-    assert!(!out.status.success());
-    let err = stderr_of(&out);
-    assert!(err.contains("--dqcache <path>"), "{err}");
-    assert!(err.contains(&oracle.url()), "{err}");
+    let dir = tempfile::tempdir().unwrap();
+    let said = run_ok_in(&dir, &["parse", "--source", &oracle.url()]);
+
+    // Predictable by reading the URL: `…/dump.sql` becomes `./dump.sql.dqcache`.
+    assert!(said.contains("wrote cache to dump.sql.dqcache"), "{said}");
+    assert!(dir.path().join("dump.sql.dqcache").exists(), "{:?}", std::fs::read_dir(dir.path()));
+
+    // And the run that follows reads it: `info` never scans, so a report of
+    // this dump's tables can only have come from the cache just written.
+    let report = run_ok_in(&dir, &["info", "--source", &oracle.url()]);
+    assert!(report.contains("public.widgets"), "{report}");
+}
+
+#[test]
+fn two_hosts_serving_the_same_name_share_a_cache_and_the_origin_says_so() {
+    // The consequence D4 states rather than defends away: two same-named
+    // dumps of equal stored size from different hosts, cached in one working
+    // directory, read each other's map. The default path is what makes that
+    // reachable; the recorded origin is what makes it visible.
+    let here = serving_dump();
+    let elsewhere = serving_dump();
+    let dir = tempfile::tempdir().unwrap();
+    run_ok_in(&dir, &["parse", "--source", &here.url()]);
+
+    let report = run_ok_in(&dir, &["info", "--source", &elsewhere.url()]);
+    assert!(report.contains("public.widgets"), "the cache is still read: {report}");
+    assert!(report.contains("fetched from somewhere else"), "and the origin is reported: {report}");
+
+    // `location` promotes that to a refusal, naming both origins.
+    let refused =
+        run_in(&dir, &["info", "--source", &elsewhere.url(), "--strict-identity=location"]);
+    assert!(!refused.status.success());
+    let said = stderr_of(&refused);
+    assert!(said.contains(&here.url()) && said.contains(&elsewhere.url()), "{said}");
+}
+
+#[test]
+fn a_cache_recorded_against_another_object_names_the_url_that_refused_it() {
+    // The cache path is derived, so "the cache at dump.sql.dqcache" does not
+    // say which `dump.sql` this run asked for.
+    let here = serving_dump();
+    let mut longer = dump_bytes();
+    longer.extend_from_slice(b"\n-- one more byte\n");
+    let elsewhere = Oracle::serving(longer).start();
+    let dir = tempfile::tempdir().unwrap();
+    run_ok_in(&dir, &["parse", "--source", &here.url()]);
+
+    let refused = run_in(&dir, &["parse", "--source", &elsewhere.url()]);
+    assert!(!refused.status.success());
+    let said = stderr_of(&refused);
+    assert!(said.contains(&format!("Error: {}: the cache at", elsewhere.url())), "{said}");
+    assert!(said.contains("dump.sql.dqcache"), "the cache is still named: {said}");
+}
+
+// ---------------------------------------------------------------------------
+// The precondition on every ranged GET (D10, D11)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn every_ranged_get_after_the_probe_pins_the_object() {
+    let oracle = serving_dump();
+    let source = source_of(&oracle.url()).await;
+    source.read_range(0, 32).await.unwrap();
+    source.read_range(64, 32).await.unwrap();
+
+    let requests = oracle.requests();
+    assert_eq!(requests.len(), 3, "{requests:?}");
+    // The probe establishes the baseline, so it carries none; every read after
+    // it does, which is a cadence the local provider cannot afford.
+    assert_eq!(requests[0].header("if-match"), None, "{requests:?}");
+    for request in &requests[1..] {
+        assert_eq!(request.header("if-match"), Some(oracle.etag()), "{request:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_object_rewritten_under_a_read_is_refused_by_the_server() {
+    let oracle = Oracle::serving(dump_bytes()).etag_changing_after(1).start();
+    let source = source_of(&oracle.url()).await;
+    let err = source.read_range(0, 32).await.unwrap_err();
+    assert!(
+        matches!(err, pgdump_query::Error::SourceChangedWhileRead { .. }),
+        "a 412 is the remote analogue of an `fstat` that moved, not a network fault: {err:?}"
+    );
+    let said = err.to_string();
+    assert!(said.contains("nothing was saved and no cache was removed"), "{said}");
+}
+
+#[tokio::test]
+async fn a_server_sending_no_entity_tag_is_pinned_by_its_modification_time() {
+    let oracle = Oracle::serving(dump_bytes()).without_etag().start();
+    let source = source_of(&oracle.url()).await;
+    source.read_range(0, 32).await.unwrap();
+    let requests = oracle.requests();
+    assert_eq!(requests[0].header("if-unmodified-since"), None, "the probe is the baseline");
+    assert!(requests[1].header("if-unmodified-since").is_some(), "{requests:?}");
+
+    // And it refuses when the object moves on: the oracle serves a newer
+    // `Last-Modified` from the moment its version changes.
+    let oracle = Oracle::serving(dump_bytes()).without_etag().etag_changing_after(1).start();
+    let source = source_of(&oracle.url()).await;
+    let err = source.read_range(0, 32).await.unwrap_err();
+    assert!(matches!(err, pgdump_query::Error::SourceChangedWhileRead { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_server_that_states_neither_validator_is_read_unpinned() {
+    // `object_store` substitutes the epoch for an absent `Last-Modified`
+    // (`docs/design/runtime-invariants.md`, "RT16"), so asking a server to
+    // confirm nothing has changed since 1970 would refuse every read.
+    let oracle = Oracle::serving(dump_bytes()).without_etag().without_last_modified().start();
+    let source = source_of(&oracle.url()).await;
+    assert_eq!(source.read_range(0, 32).await.unwrap().len(), 32);
+    for request in &oracle.requests() {
+        assert_eq!(request.header("if-match"), None, "{request:?}");
+        assert_eq!(request.header("if-unmodified-since"), None, "{request:?}");
+    }
+}
+
+#[test]
+fn strict_identity_none_stops_pinning_the_object() {
+    // The only opt-out, and the whole of what it buys: a scan whose object is
+    // rewritten under it reads on instead of stopping.
+    let oracle = Oracle::serving(dump_bytes()).etag_changing_after(1).start();
+    let dir = tempfile::tempdir().unwrap();
+    let bound = run_in(&dir, &["parse", "--source", &oracle.url()]);
+    assert!(!bound.status.success(), "{}", stderr_of(&bound));
+    assert!(stderr_of(&bound).contains("while it was being read"), "{}", stderr_of(&bound));
+
+    let oracle = Oracle::serving(dump_bytes()).etag_changing_after(1).start();
+    let dir = tempfile::tempdir().unwrap();
+    run_ok_in(&dir, &["parse", "--source", &oracle.url(), "--strict-identity=none"]);
 }
 
 #[test]

@@ -1029,12 +1029,20 @@ pub async fn map_file(
         .filter(|block| block.statistics.is_some())
         .map(|b| b.header_offset)
         .collect();
-    // The one diagnostic about the cache *file* rather than about the map;
-    // everything else the load computed is recomputed below.
+    // The diagnostics about the cache *file* rather than about the map — what
+    // the load said about its identity; everything else it computed is
+    // recomputed below.
     let carried: Vec<Diagnostic> = index
         .diagnostics
         .drain(..)
-        .filter(|d| d.kind == DiagnosticKind::CacheMtimeChanged)
+        .filter(|d| {
+            matches!(
+                d.kind,
+                DiagnosticKind::CacheMtimeChanged
+                    | DiagnosticKind::CacheEntityTagChanged
+                    | DiagnosticKind::CacheOriginChanged
+            )
+        })
         .collect();
     let resumed_from = index.scanned_through.min(size);
 

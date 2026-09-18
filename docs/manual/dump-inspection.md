@@ -170,10 +170,9 @@ and `parse` builds a fresh one.
 `--source` takes a URL as readily as a path, on all three commands:
 
 ```sh
-pgdq parse --source https://example.com/dumps/mydump.sql --dqcache mydump.dqcache
-pgdq info  --source https://example.com/dumps/mydump.sql --dqcache mydump.dqcache
-pgdq query --source https://example.com/dumps/mydump.sql --dqcache mydump.dqcache \
-           --table public.widgets
+pgdq parse --source https://example.com/dumps/mydump.sql
+pgdq info  --source https://example.com/dumps/mydump.sql
+pgdq query --source https://example.com/dumps/mydump.sql --table public.widgets
 ```
 
 Nothing is downloaded whole. pgdq asks the server for the byte ranges it
@@ -182,9 +181,20 @@ bytes rather than the file. **The server has to support ranged requests**; one
 that ignores `Range` and answers with the whole object is refused by name,
 before any of it is fetched.
 
-**Name the cache yourself.** With a local dump the cache goes beside it by
-default; a URL has no "beside", so pass `--dqcache <path>` — or, where the
-command allows it, `--dqcache none`.
+**The cache goes in the working directory.** With a local dump it sits beside
+the file; a URL has no "beside", so the default is the URL's last path segment
+plus `.dqcache`, in whatever directory you ran the command from —
+`https://example.com/dumps/mydump.sql` becomes `./mydump.dqcache`. `--dqcache
+<path>` states somewhere else, and `--dqcache none` turns it off where the
+command allows. A URL that names no object — a bare host, or a path ending in
+`/` — is refused: there is no dump named there to read.
+
+That default means two same-named dumps from **different hosts**, read in one
+directory, share a cache file. If their sizes differ the second run refuses,
+naming the URL it refused for; if they match, it reads the first one's map and
+says on stderr that the cache was written for a dump fetched from somewhere
+else. `--strict-identity=location` turns that warning into a refusal, and
+`--dqcache <path>` keeps them apart in the first place.
 
 **No credentials are sent, ever.** A URL carrying `user:password@` is refused
 rather than quietly stripped, so nobody is left believing a password went out.
@@ -228,12 +238,15 @@ flag on its own means `time,location`:
 pgdq query --source mydump.sql --table public.widgets --strict-identity=time
 ```
 
-- **`time`** binds the modification time. A cache written against a different
-  one stops the run instead of reporting it — and so does a source that has no
-  modification time to offer at all, since the honest answer there is that it
+- **`time`** binds the modification signal: a local file's modification time,
+  and for a URL the server's `Last-Modified` and its `ETag`, the tag deciding
+  it wherever both the cache and the server have one. A cache written against a
+  different signal stops the run instead of reporting it — and so does a source
+  that has none to offer at all, since the honest answer there is that it
   cannot give the guarantee you asked for.
-- **`location`** binds where a source was fetched from. A local file was not
-  fetched from anywhere, so this binds nothing today.
+- **`location`** binds where a source was fetched from — the URL a remote cache
+  records. A local file was not fetched from anywhere and records no origin, so
+  two local runs always agree and this binds nothing there.
 - **`none`** binds nothing at all, and is the only way to turn off the check
   below.
 
@@ -251,7 +264,10 @@ usually the same bytes in a new place, but *during* a run, bytes changing
 underneath a read that has already returned some of them cannot produce a right
 answer — the map or the rows would be mixed from two versions of the file. So
 pgdq checks as it banks the cache, and once more when the run finishes, and
-stops if the file moved:
+stops if the file moved. **Over HTTP the server does the checking**, on every
+request: each ranged GET names the version the run opened on, so an object
+rewritten mid-scan is refused on the first read after it happens rather than at
+the next save.
 
 ```
 $ pgdq parse --source mydump.sql

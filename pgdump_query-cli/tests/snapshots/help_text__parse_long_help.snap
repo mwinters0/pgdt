@@ -91,9 +91,10 @@ Options:
           `time`, `location` and `none`; the flag alone is `time,location`. Left unstated, they are
           advisory: a dump that was moved, copied or touched since it was parsed is read with a
           warning, because data moves and none of these signals proves the bytes changed. `time`
-          binds the modification time, so a cache written against another one — or a source that
-          offers none at all — stops the run instead. `location` binds where a source was fetched
-          from, which a local file does not have, so it binds nothing yet.
+          binds the modification signal — an mtime, or a server's `Last-Modified` and `ETag` — so a
+          cache written against another one, or a source that offers none at all, stops the run
+          instead. `location` binds the origin a remote cache records, which a local file was not
+          fetched from, so it binds nothing there.
           
           **A source that changes while it is being read is an error whatever this says**, because
           bytes moving underneath a read that has already returned some of them cannot produce a

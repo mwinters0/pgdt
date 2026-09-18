@@ -361,17 +361,17 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
 
 #[test]
 fn cache_mode_resolves_default_explicit_and_disabled() {
-    let dump = Path::new("/a/b/dump.sql");
+    let dump = Origin::local("/a/b/dump.sql");
 
     assert_eq!(
-        CacheMode::resolve(dump, None),
+        CacheMode::resolve(&dump, None),
         CacheMode::enabled(PathBuf::from("/a/b/dump.sql.dqcache"))
     );
     assert_eq!(
-        CacheMode::resolve(dump, Some(Path::new("/other/path.dqcache"))),
+        CacheMode::resolve(&dump, Some(Path::new("/other/path.dqcache"))),
         CacheMode::enabled(PathBuf::from("/other/path.dqcache"))
     );
-    assert_eq!(CacheMode::resolve(dump, Some(Path::new("none"))), CacheMode::DISABLED);
+    assert_eq!(CacheMode::resolve(&dump, Some(Path::new("none"))), CacheMode::DISABLED);
 }
 
 #[tokio::test]
@@ -385,7 +385,7 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     cache::save(&path, &source, &index).await.unwrap();
     assert!(path.exists());
 
-    let mode = CacheMode::resolve(&dump, Some(Path::new("none")));
+    let mode = CacheMode::resolve(&Origin::local(&dump), Some(Path::new("none")));
     assert_eq!(mode, CacheMode::DISABLED);
 
     // The existing valid cache at the colocated path is ignored, not read —

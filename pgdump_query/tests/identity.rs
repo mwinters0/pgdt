@@ -18,10 +18,12 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use futures::StreamExt;
-use pgdump_query::cache::{CacheMode, SourceWatch, StrictIdentity};
+use pgdump_query::cache::{
+    CacheMode, CacheStatus, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
+};
 use pgdump_query::{
-    ByteRangeSource, Error, LocalFileSource, QueryOptions, Result, ScanOptions, StatisticsRequest,
-    cache, map_file, preamble_only, table_stream,
+    ByteRangeSource, DiagnosticKind, Error, LocalFileSource, QueryOptions, Result, ScanOptions,
+    StatisticsRequest, cache, map_file, preamble_only, table_stream,
 };
 
 mod common;
@@ -404,4 +406,211 @@ async fn location_binds_nothing_on_a_local_source() {
     )
     .await
     .expect("`location` alone binds nothing a local source has");
+}
+
+// ---------------------------------------------------------------------------
+// A source that was fetched from somewhere (`docs/design/roadmap-P14-remote-input.md`,
+// "D4", "D5", "D18", "D19")
+// ---------------------------------------------------------------------------
+
+/// A source that reports having been fetched from an origin, with a stated
+/// entity tag — every `ByteRangeSource` may, so the identity rules below are
+/// pinned here with no server in the way. The bytes and the stored size are a
+/// real local file's throughout, which is what keeps the *refusing* half of
+/// identity out of these tests.
+struct Fetched {
+    inner: LocalFileSource,
+    origin: String,
+    etag: Option<String>,
+    /// What `modified` answers, so a test can make the modification time
+    /// agree while the tag does not.
+    modified: Option<SystemTime>,
+}
+
+impl Fetched {
+    fn new(path: &std::path::Path, origin: &str, etag: Option<&str>) -> Self {
+        Self {
+            inner: LocalFileSource::open(path).unwrap(),
+            origin: origin.to_string(),
+            etag: etag.map(ToOwned::to_owned),
+            modified: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_784_764_800)),
+        }
+    }
+}
+
+impl ByteRangeSource for Fetched {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        self.inner.read_range(offset, len)
+    }
+
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        self.inner.size()
+    }
+
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        Box::pin(async move { Ok(self.modified) })
+    }
+
+    fn remote_identity(&self) -> Option<pgdump_query::RemoteIdentity> {
+        Some(pgdump_query::RemoteIdentity::new(self.origin.clone(), self.etag.clone()))
+    }
+}
+
+/// Map `dump` through `source`, saving to `path` under `strict`.
+async fn mapped(
+    source: &dyn ByteRangeSource,
+    path: &std::path::Path,
+    strict: StrictIdentity,
+) -> Result<()> {
+    map_file(
+        source,
+        &ScanOptions::default(),
+        &CacheMode::enabled(path).with_strict_identity(strict),
+        &StatisticsRequest::NONE,
+    )
+    .await
+    .map(drop)
+}
+
+/// A cache written for one origin and read against another is **advisory**:
+/// the map loads, and the difference is a warning
+/// (`docs/design/roadmap-P14-remote-input.md`, "D4"). The same stored size is
+/// what makes the case reachable at all — two same-named dumps of equal size
+/// from different hosts is exactly the collision the derived cache path
+/// admits.
+#[tokio::test]
+async fn a_cache_written_for_another_origin_loads_with_a_warning() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let here = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
+    mapped(&here, &path, StrictIdentity::ADVISORY).await.unwrap();
+
+    let elsewhere = Fetched::new(&dump, "https://two.example/koji.dump", Some("\"abc\""));
+    let status = cache::load(&path, &elsewhere).await.unwrap();
+    let CacheStatus::Valid { origin, weak, .. } = status else {
+        panic!("an origin difference must not invalidate the cache, got {status:?}")
+    };
+    assert_eq!(weak, WeakIdentity::Agrees, "the entity tag is unchanged");
+    let OriginMatch::Differs { cached, live } = origin else {
+        panic!("the two origins differ, got {origin:?}")
+    };
+    assert_eq!(cached.as_deref(), Some("https://one.example/koji.dump"));
+    assert_eq!(live.as_deref(), Some("https://two.example/koji.dump"));
+
+    // And the advisory answer reaches a scan as a diagnostic rather than
+    // stopping it.
+    let run = map_file(
+        &elsewhere,
+        &ScanOptions::default(),
+        &CacheMode::enabled(&path),
+        &StatisticsRequest::NONE,
+    )
+    .await
+    .expect("advisory by default");
+    assert!(
+        run.index.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheOriginChanged),
+        "{:?}",
+        run.index.diagnostics
+    );
+}
+
+/// `--strict-identity=location` promotes that diagnostic to a refusal, and the
+/// refusal names both origins rather than only the verdict.
+#[tokio::test]
+async fn location_refuses_a_cache_written_for_another_origin() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let here = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
+    mapped(&here, &path, StrictIdentity::ADVISORY).await.unwrap();
+
+    let elsewhere = Fetched::new(&dump, "https://two.example/koji.dump", Some("\"abc\""));
+    let err = mapped(&elsewhere, &path, StrictIdentity::binding(false, true)).await.unwrap_err();
+    let Error::StrictIdentityUnmet { term, unmet, .. } = &err else {
+        panic!("`location` refuses a differing origin, got {err:?}")
+    };
+    assert_eq!(*term, "location");
+    assert!(unmet.contains("one.example"), "{unmet}");
+    assert!(unmet.contains("two.example"), "{unmet}");
+}
+
+/// A cache written for a source that was fetched from nowhere, read against
+/// one that was, differs in origin — one side records none, which is a
+/// statement rather than silence (D19).
+#[tokio::test]
+async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let local = LocalFileSource::open(&dump).unwrap();
+    mapped(&local, &path, StrictIdentity::ADVISORY).await.unwrap();
+
+    let fetched = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
+    let status = cache::load(&path, &fetched).await.unwrap();
+    let CacheStatus::Valid { origin, .. } = status else { panic!("still usable, got {status:?}") };
+    assert_eq!(
+        origin,
+        OriginMatch::Differs {
+            cached: None,
+            live: Some("https://one.example/koji.dump".to_string())
+        }
+    );
+}
+
+/// The entity tag is the stronger of the two modification signals, so where
+/// both sides carry one it settles the question — here saying the object
+/// changed while the modification time says it did not
+/// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+#[tokio::test]
+async fn an_entity_tag_outranks_a_modification_time_that_agrees_with_nothing() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let first = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
+    mapped(&first, &path, StrictIdentity::ADVISORY).await.unwrap();
+
+    // Same origin, same `Last-Modified`, a tag the server has changed.
+    let second = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"def\""));
+    let status = cache::load(&path, &second).await.unwrap();
+    let CacheStatus::Valid { weak, origin, .. } = status else {
+        panic!("a tag difference must not invalidate the cache, got {status:?}")
+    };
+    assert_eq!(origin, OriginMatch::Agrees);
+    assert_eq!(
+        weak,
+        WeakIdentity::TagDiffers { cached: "\"abc\"".to_string(), live: "\"def\"".to_string() }
+    );
+
+    let err = mapped(&second, &path, StrictIdentity::binding(true, false)).await.unwrap_err();
+    let Error::StrictIdentityUnmet { term, unmet, .. } = &err else {
+        panic!("`time` binds the entity tag too, got {err:?}")
+    };
+    assert_eq!(*term, "time");
+    assert!(unmet.contains("entity tag"), "{unmet}");
+}
+
+/// Where either side carries no tag, the modification time is what is left —
+/// so a source whose server stopped sending tags is still compared rather
+/// than being treated as silent.
+#[tokio::test]
+async fn a_missing_entity_tag_falls_back_to_the_modification_time() {
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let tagged = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
+    mapped(&tagged, &path, StrictIdentity::ADVISORY).await.unwrap();
+
+    let mut untagged = Fetched::new(&dump, "https://one.example/koji.dump", None);
+    let status = cache::load(&path, &untagged).await.unwrap();
+    assert!(
+        matches!(status, CacheStatus::Valid { weak: WeakIdentity::Agrees, .. }),
+        "the two `Last-Modified`s agree, got {status:?}"
+    );
+
+    untagged.modified = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_784_768_400));
+    let status = cache::load(&path, &untagged).await.unwrap();
+    assert!(
+        matches!(status, CacheStatus::Valid { weak: WeakIdentity::Differs { .. }, .. }),
+        "the times differ, got {status:?}"
+    );
 }

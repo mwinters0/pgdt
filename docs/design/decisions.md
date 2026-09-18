@@ -145,14 +145,14 @@ both refusals with one tail. A back-fill meeting a block that no longer ends whe
 `CachedBlockChanged`: stored, its statistics contradict the offsets beside them; skipped, the
 back-fill goes on for a file it knows was rewritten; re-mapped, cache data is replaced unasked.
 
-### D21 Identity is `stored_size()` plus a weak mtime, in an opaque enum
+### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
 `stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first;
-`SourceIdentity` is matched through its variant because the next source has an ETag, and
-`CompressionIndex` is `ContainerKind`'s sibling, `Plain` honest for a compressed source with
-`total_size` its own field. **Two questions, split by tense.** Between runs a weak signal is
-advisory — `WeakIdentity`, reported as `CacheMtimeChanged` and never persisted — and binds only
-under `StrictIdentity::time`, absence included; during one, `SourceWatch` re-reads the already-open
-descriptor at the save's cadence (D62) and at run end, aborting without saving or removing anything.
+`SourceIdentity`'s variants are read through signal accessors, so two kinds compare rather than
+refuse; `CompressionIndex` is `ContainerKind`'s sibling, `Plain` honest for a compressed source with
+`total_size` its own field. **Two questions, split by tense.** Between runs a weak signal —
+modification, and where a source was fetched from — is advisory, reported and never persisted, and
+binds under its own `StrictIdentity` term alone, absence included; during one, `SourceWatch` re-reads
+the open descriptor at the save's cadence (D62) and at run end, aborting without saving or removing.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;

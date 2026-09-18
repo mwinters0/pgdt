@@ -48,13 +48,31 @@ pub enum DiagnosticKind {
     /// `crate::map`, never a property of the input
     /// (`docs/design/decisions.md`, "D30").
     TilingBroken { issues: Vec<TilingIssue> },
-    /// A loaded cache recorded a different mtime than the source now has.
-    /// Not an invalidation by default (`docs/design/decisions.md`, "D21"); a
-    /// caller that asked for `crate::cache::StrictIdentity::time` is refused
-    /// instead of being handed this. A *size* mismatch is an invalidation
-    /// either way, and never reaches this channel because the cache is
-    /// discarded outright.
+    /// A loaded cache recorded a different modification *time* than the source
+    /// now has — an mtime locally, a `Last-Modified` remotely. Not an
+    /// invalidation by default (`docs/design/decisions.md`, "D21"); a caller
+    /// that asked for `crate::cache::StrictIdentity::time` is refused instead
+    /// of being handed this. A *size* mismatch is an invalidation either way,
+    /// and never reaches this channel because the cache is discarded outright.
     CacheMtimeChanged,
+    /// The stronger half of the same signal: both sides carry a server's
+    /// **entity tag** and the two differ, which is the server's own statement
+    /// that this is a different version of the object. Its own kind rather
+    /// than [`DiagnosticKind::CacheMtimeChanged`]'s wording widened, because a
+    /// local dump has no such tag and a message about one would be noise
+    /// there. Bound by the same selector
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    CacheEntityTagChanged,
+    /// A loaded cache was written for a different **origin** than this run
+    /// reads — where the object was fetched from, which a local source has
+    /// none of. Advisory by the same rule the signal above is
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D4"); a caller that asked
+    /// for `crate::cache::StrictIdentity::location` is refused instead.
+    ///
+    /// It is what makes the working-directory default cache path's one
+    /// collision visible: two same-named dumps of equal stored size from
+    /// different hosts read in one directory.
+    CacheOriginChanged,
     /// How much of the map is attributed to a TOC entry: `attributed` spans
     /// out of `spans` total — a follow-on statement that inherited its
     /// governing entry's header (`crate::map::Span::toc_owned` is `false`)
@@ -101,6 +119,20 @@ impl Diagnostic {
     /// binds the signal.
     pub fn cache_mtime_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
+    }
+
+    /// Public for [`Diagnostic::cache_mtime_changed`]'s reason, and pushed by
+    /// the same callers: both sides' entity tags differ
+    /// (`crate::cache::WeakIdentity::TagDiffers`).
+    pub fn cache_entity_tag_changed() -> Self {
+        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheEntityTagChanged }
+    }
+
+    /// Public for [`Diagnostic::cache_mtime_changed`]'s reason, and pushed by
+    /// the same callers: a cache written for another origin than this run
+    /// reads (`crate::cache::OriginMatch`).
+    pub fn cache_origin_changed() -> Self {
+        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
     }
 
     pub(crate) fn toc_coverage(attributed: usize, spans: usize) -> Self {

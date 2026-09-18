@@ -12,7 +12,6 @@ use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 use pgdump_query::cache::{
     CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape, StrictIdentity,
-    WeakIdentity,
 };
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
@@ -499,10 +498,11 @@ struct IdentityArgs {
     /// `time,location`. Left unstated, they are advisory: a dump that was
     /// moved, copied or touched since it was parsed is read with a warning,
     /// because data moves and none of these signals proves the bytes changed.
-    /// `time` binds the modification time, so a cache written against another
-    /// one — or a source that offers none at all — stops the run instead.
-    /// `location` binds where a source was fetched from, which a local file
-    /// does not have, so it binds nothing yet.
+    /// `time` binds the modification signal — an mtime, or a server's
+    /// `Last-Modified` and `ETag` — so a cache written against another one, or
+    /// a source that offers none at all, stops the run instead.
+    /// `location` binds the origin a remote cache records, which a local file
+    /// was not fetched from, so it binds nothing there.
     ///
     /// **A source that changes while it is being read is an error whatever
     /// this says**, because bytes moving underneath a read that has already
@@ -699,9 +699,11 @@ enum Command {
         /// anything.
         #[arg(long)]
         source: Option<String>,
-        /// Cache file path, defaulting to the colocated `<source>.dqcache`.
-        /// Required when `--source` is omitted — that is the cache-only entry
-        /// point, and there is nothing else to answer from.
+        /// Cache file path, defaulting to the dump's name plus `.dqcache`:
+        /// beside a local dump, and for a URL in the working directory, named
+        /// after the URL's last path segment. Required when `--source` is
+        /// omitted — that is the cache-only entry point, and there is nothing
+        /// else to answer from.
         #[arg(long, required_unless_present = "source")]
         dqcache: Option<PathBuf>,
         /// Also report each `COPY` block's byte offsets and, per column that
@@ -1259,13 +1261,23 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
     })
 }
 
-/// **Name the source on the one refusal that is about it.** The library
-/// detects a source moving underneath a run wherever the check is cheapest
-/// and has no name for what it was reading; the user typed one, and their
-/// next move is either to re-run against a settled file or to ask what is
-/// rewriting it (`docs/design/decisions.md`, "D20").
+/// **Name the source on the two refusals that are about it.** The library
+/// detects a source moving underneath a run wherever the check is cheapest,
+/// and refuses a cache written for another file from inside the cache
+/// machinery; neither place has a name for what was being read, and the user
+/// typed one (`docs/design/decisions.md`, "D20").
+///
+/// The second matters most where the cache path was *derived*: a remote
+/// dump's default cache is named after the URL's last path segment and sits
+/// in the working directory, so "the cache at `koji.dump.dqcache`" does not
+/// say which `koji.dump` this run asked for
+/// (`docs/design/roadmap-P14-remote-input.md`, "D4", "D18").
 fn naming_the_source(err: pgdump_query::Error, source: &Origin) -> anyhow::Error {
-    if matches!(err, pgdump_query::Error::SourceChangedWhileRead { .. }) {
+    if matches!(
+        err,
+        pgdump_query::Error::SourceChangedWhileRead { .. }
+            | pgdump_query::Error::CacheSourceMismatch { .. }
+    ) {
         return anyhow::anyhow!("{source}: {err}");
     }
     err.into()
@@ -1542,8 +1554,8 @@ async fn main() -> Result<()> {
             // Reject `--dqcache none` up front, before paying for a scan we
             // won't be allowed to persist.
             let origin = Origin::resolve(&file)?;
-            let mode =
-                cache_mode(&origin, dqcache.as_deref())?.with_strict_identity(identity.resolve());
+            let mode = CacheMode::resolve(&origin, dqcache.as_deref())
+                .with_strict_identity(identity.resolve());
             let path = mode
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
@@ -1673,8 +1685,8 @@ async fn main() -> Result<()> {
             // it interpolates the user's own `--source` path, which the
             // library error does not have.
             let origin = Origin::resolve(&file)?;
-            let mode =
-                cache_mode(&origin, dqcache.as_deref())?.with_strict_identity(identity.resolve());
+            let mode = CacheMode::resolve(&origin, dqcache.as_deref())
+                .with_strict_identity(identity.resolve());
             let path = mode
                 .require_enabled("info")
                 .with_context(|| {
@@ -1699,11 +1711,16 @@ async fn main() -> Result<()> {
                 }
             };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
-            let (mut index, weak, total_size, compression, envelope) = match status {
-                CacheStatus::Valid { index, weak, total_size, compression, envelope }
-                | CacheStatus::Incomplete { index, weak, total_size, compression, envelope } => {
-                    (index, weak, total_size, compression, envelope)
-                }
+            let (mut index, weak, cache_origin, total_size, compression, envelope) = match status {
+                CacheStatus::Valid { index, weak, origin, total_size, compression, envelope }
+                | CacheStatus::Incomplete {
+                    index,
+                    weak,
+                    origin,
+                    total_size,
+                    compression,
+                    envelope,
+                } => (index, weak, origin, total_size, compression, envelope),
                 unusable => {
                     anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&origin)))
                 }
@@ -1712,15 +1729,17 @@ async fn main() -> Result<()> {
             // `CacheMode::load`, so it asks for that method's check by name;
             // the selection means here what it means on the commands that
             // scan (`docs/design/decisions.md`, "D21").
-            if let Some(refusal) = mode.strict_identity_refusal(weak) {
+            if let Some(refusal) = mode.strict_identity_refusal(&weak, &cache_origin) {
                 return Err(refusal.into());
             }
-            // Reported rather than acted on: between runs the weak signal is
-            // advisory unless a selection binds it
-            // (`docs/design/decisions.md`, "D21").
-            if matches!(weak, WeakIdentity::Differs { .. }) {
-                index.diagnostics.push(Diagnostic::cache_mtime_changed());
-            }
+            // Reported rather than acted on: between runs the weak signals are
+            // advisory unless a selection binds them
+            // (`docs/design/decisions.md`, "D21";
+            // `docs/design/roadmap-P14-remote-input.md`, "D4"). Asked for by
+            // name, for the same reason the refusal above is.
+            index
+                .diagnostics
+                .extend(pgdump_query::cache::advisory_identity_diagnostics(&weak, &cache_origin));
             report(&index, total_size, compression, &envelope, detail, map, json)?;
         }
         Command::Query {
@@ -1741,8 +1760,8 @@ async fn main() -> Result<()> {
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
             let origin = Origin::resolve(&file)?;
-            let mode =
-                cache_mode(&origin, dqcache.as_deref())?.with_strict_identity(identity.resolve());
+            let mode = CacheMode::resolve(&origin, dqcache.as_deref())
+                .with_strict_identity(identity.resolve());
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
@@ -1967,27 +1986,6 @@ enum Opened {
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
 }
 
-/// Where this run's cache goes, given what the user typed.
-///
-/// `--dqcache` states it, and `none` disables it. Omitted, the default is
-/// beside the dump — which is a place only a local file has, the pairing being
-/// the filesystem's. A remote source is therefore **asked** for the path
-/// rather than having one derived from the URL, until the rule that derives
-/// one lands (`docs/design/roadmap-P14-remote-input.md`, "D4").
-fn cache_mode(origin: &Origin, dqcache: Option<&Path>) -> Result<CacheMode> {
-    match (dqcache, origin.local_path()) {
-        // `resolve` reads the dump path only for the colocated default, so a
-        // stated path settles it whatever the origin is.
-        (Some(_), _) | (None, Some(_)) => {
-            Ok(CacheMode::resolve(origin.local_path().unwrap_or(Path::new("")), dqcache))
-        }
-        (None, None) => anyhow::bail!(
-            "{origin} has no file beside it for the cache to sit next to, so name one: \
-             `--dqcache <path>`, or `--dqcache none` where the command allows it"
-        ),
-    }
-}
-
 /// Open `file`, handing recognition whatever the cache at `cache` says about
 /// its compression layer, so an `.xz` source is built from the seek table a
 /// previous walk already produced instead of re-walking the file's stream
@@ -2035,9 +2033,10 @@ async fn open_for_scan(
 ) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
     match open_with_cache(origin, cache).await? {
         Opened::Source(source) => Ok(source),
-        Opened::SourceChanged { cached_stored_size, live_stored_size } => {
-            Err(cache.source_mismatch(cached_stored_size, live_stored_size).into())
-        }
+        Opened::SourceChanged { cached_stored_size, live_stored_size } => Err(naming_the_source(
+            cache.source_mismatch(cached_stored_size, live_stored_size),
+            origin,
+        )),
     }
 }
 
@@ -2754,6 +2753,8 @@ fn diagnostic_message(kind: &DiagnosticKind) -> String {
             issues.len()
         ),
         DiagnosticKind::CacheMtimeChanged => "the dump file's mtime has changed since the cache was saved (size still matches, so the cache was kept)".to_string(),
+        DiagnosticKind::CacheEntityTagChanged => "the server's entity tag for the dump has changed since the cache was saved (size still matches, so the cache was kept)".to_string(),
+        DiagnosticKind::CacheOriginChanged => "the cache was written for a dump fetched from somewhere else (size still matches, so the cache was kept)".to_string(),
         DiagnosticKind::TocCoverage { attributed, spans } => {
             format!("TOC coverage: {attributed}/{spans} span(s) attributed to a TOC entry")
         }
@@ -2906,7 +2907,7 @@ mod tests {
     /// no name for what it was reading; every other error keeps its own
     /// words, so the mapping is one arm and a fall-through.
     #[test]
-    fn only_the_in_flight_refusal_is_given_the_sources_name() {
+    fn only_the_refusals_about_a_source_are_given_its_name() {
         let origin = Origin::local("/tmp/koji.dump");
         let moved = pgdump_query::Error::SourceChangedWhileRead {
             differences: "its modification time moved".into(),
@@ -2914,6 +2915,18 @@ mod tests {
         let said = naming_the_source(moved, &origin).to_string();
         assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
         assert!(said.contains("while it was being read"), "{said}");
+
+        // The cache names itself; what it cannot name is the dump it was
+        // checked against, which is the whole point where the path was
+        // derived from a URL.
+        let mismatched = pgdump_query::Error::CacheSourceMismatch {
+            path: PathBuf::from("koji.dump.dqcache"),
+            cached_stored_size: 10,
+            live_stored_size: 11,
+        };
+        let said = naming_the_source(mismatched, &origin).to_string();
+        assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
+        assert!(said.contains("koji.dump.dqcache"), "the cache is still named: {said}");
 
         let other = pgdump_query::Error::CacheDisabled { operation: "parse" };
         let verbatim = other.to_string();

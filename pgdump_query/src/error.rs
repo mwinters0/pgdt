@@ -102,15 +102,16 @@ pub enum Error {
     /// be. Absence is a failure under a selected term: silence is what strict
     /// identity exists to refuse.
     ///
-    /// `unmet` names the modification times that were compared, not only the
-    /// verdict, so the refusal can be checked against the file without a
-    /// second run: `crate::cache::WeakIdentity` carries them out of the
-    /// comparison for it.
+    /// `term` is which selector was not met — `time` or `location` — and
+    /// `unmet` names what was compared, not only the verdict, so the refusal
+    /// can be checked against the file without a second run:
+    /// `crate::cache::WeakIdentity` and `crate::cache::OriginMatch` carry the
+    /// evidence out of their comparisons for it.
     #[error(
-        "the cache at {} cannot be trusted under `--strict-identity=time`: {unmet} — drop the flag to treat the modification time as advisory, or parse again",
+        "the cache at {} cannot be trusted under `--strict-identity={term}`: {unmet} — drop `{term}` from the selection to treat that signal as advisory, or parse again",
         path.display()
     )]
-    StrictIdentityUnmet { path: PathBuf, unmet: String },
+    StrictIdentityUnmet { path: PathBuf, term: &'static str, unmet: String },
     /// A block re-read for the statistics it lacks did not end where the
     /// map records it ending, so the source was rewritten at the same stored
     /// size — which the cache's identity check cannot see

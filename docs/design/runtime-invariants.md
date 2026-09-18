@@ -35,7 +35,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md), "The seekable-xz
 crate is xz-only on purpose, and generalizing it was rejected").
 
-**`RT1`–`RT17` are allocated**, and nothing at or below `RT17` is reused.
+**`RT1`–`RT18` are allocated**, and nothing at or below `RT18` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -935,3 +935,40 @@ cargo test -p pgdump_query-cli --test remote
 
 The first must print `0` for the shipped feature set; the second exercises the
 path on a `current_thread` runtime.
+
+## RT18 — a `GetOptions` precondition is sent, and a 412 comes back as a terminal `Precondition`
+
+**Claim.** `object_store` 0.14.2's HTTP backend sends `GetOptions::if_match` as
+`If-Match` and `GetOptions::if_unmodified_since` as `If-Unmodified-Since` on
+the ranged GET it makes, and a `412 Precondition Failed` arrives as
+`Error::Precondition` — **not retried**, so it costs one round trip rather than
+the retry schedule. `if_match` takes precedence over `if_unmodified_since`
+where both are set.
+
+**Proof.** `object_store` 0.14.2, `src/client/mod.rs`'s `GetBuilder::send`
+writes both headers from the options; `src/client/retry.rs` maps
+`StatusCode::PRECONDITION_FAILED` to `crate::Error::Precondition` in the
+terminal-error conversion rather than in the retry arm. `check_preconditions`
+in `src/lib.rs` documents the same precedence for the stores that evaluate it
+client-side.
+
+**Scope limit.** The *sending* is claimed, and the mapping of the status the
+server returns. Whether a given server honours a conditional header is the
+server's business — a store that ignores `If-Match` answers 200 and this
+project cannot tell.
+
+**Verified against:** `object_store` 0.14.2 (source read; observed against the
+oracle's `etag_changing_after` and `without_etag` knobs).
+
+**Relied on by:**
+[`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D10" and "D11" —
+the in-flight identity check on a remote source *is* this precondition, so a
+header that was not sent would leave a remote run with no such check at all,
+silently.
+
+**Re-verify:**
+
+```sh
+cargo test -p pgdump_query-cli --test remote every_ranged_get_after_the_probe_pins_the_object
+cargo test -p pgdump_query-cli --test remote an_object_rewritten_under_a_read_is_refused_by_the_server
+```

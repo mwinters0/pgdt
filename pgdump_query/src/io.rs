@@ -11,6 +11,8 @@ use std::time::SystemTime;
 use bytes::Bytes;
 
 #[cfg(feature = "http")]
+use std::sync::atomic::AtomicBool;
+#[cfg(feature = "http")]
 use std::time::{Duration, UNIX_EPOCH};
 
 #[cfg(feature = "http")]
@@ -184,6 +186,63 @@ pub trait ByteRangeSource: Send + Sync {
     /// request has no such bound and takes the signal so it can drop the
     /// request in flight (`docs/design/decisions.md`, "D26").
     fn hint_cancellation(&self, _cancel: Arc<Cancellation>) {}
+    /// Where this source was fetched from and which version of the object it
+    /// is reading — the half of a cache's identity a source reached over a
+    /// network has and a file does not
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D18").
+    ///
+    /// **`None` is a statement, not a gap**: a local cache records no origin,
+    /// because its default path sits *beside* the dump, so the pairing is the
+    /// filesystem's rather than a name we derived, and
+    /// `crate::cache::StrictIdentity::location` binds nothing there
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D19").
+    fn remote_identity(&self) -> Option<RemoteIdentity> {
+        None
+    }
+    /// Whether a source that changes under an in-flight read must fail this
+    /// run — announced by `crate::cache::SourceWatch` beside the other hints,
+    /// for a source that enforces it at a finer cadence than the watch's own.
+    ///
+    /// **Advisory, and it defaults to doing nothing**: a local file is
+    /// re-checked by the watch itself, which holds the same answer. A source
+    /// whose server can do the comparing pins the object on every request
+    /// instead, and this is the only thing that turns that off
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D11").
+    ///
+    /// **It is announced late, so the default must be the binding one.** A
+    /// read taken before the watch opens — an origin probe, a cache claim —
+    /// has never heard it.
+    fn hint_in_flight_identity(&self, _binds: bool) {}
+}
+
+/// Where a source was fetched from and which version of it is being read:
+/// [`ByteRangeSource::remote_identity`]'s answer, and the two fields a
+/// remote cache records that a local one has no equivalent of
+/// (`docs/design/roadmap-P14-remote-input.md`, "D18").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteIdentity {
+    origin: String,
+    etag: Option<String>,
+}
+
+impl RemoteIdentity {
+    /// Build one from where the object is and what the server called this
+    /// version of it.
+    pub fn new(origin: impl Into<String>, etag: Option<String>) -> Self {
+        Self { origin: origin.into(), etag }
+    }
+
+    /// Where the object was fetched from, as a message names it — the URL,
+    /// with no credential in it, [`Origin`]'s own display form.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// The server's entity tag for this version of the object, `None` where
+    /// it sent none. Opaque: it is compared, never parsed.
+    pub fn etag(&self) -> Option<&str> {
+        self.etag.as_deref()
+    }
 }
 
 /// Whether a read loop's acquisitions may be made to **wait** for a pooled
@@ -2864,6 +2923,12 @@ impl Origin {
                  presigned URL, whose signature rides in the query string",
             ));
         }
+        if remote_name_of(url).is_none() {
+            return Err(refuse(
+                "it names no object — a bare host, or a path ending in `/`, is a place rather \
+                 than a dump, and there is nothing there to read or to name a cache after",
+            ));
+        }
         let object = RemoteObject::open(url.clone(), read_timeout)?;
         Ok(Self {
             location: Location::Remote(Arc::new(object)),
@@ -2920,6 +2985,23 @@ impl Origin {
             Location::LocalFile(path) => Some(path),
             #[cfg(feature = "http")]
             Location::Remote(_) => None,
+        }
+    }
+
+    /// What the object this origin names is called, for a caller deriving a
+    /// file name from it: a URL's **last path segment**, exactly as written
+    /// there — the working-directory cache name a remote dump gets, there
+    /// being no place beside it for one to sit
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+    ///
+    /// `None` for a local file, whose caller has [`Origin::local_path`] and
+    /// the colocated rule. A remote origin always has one: a URL that names
+    /// no object is refused when the origin is built.
+    pub fn remote_name(&self) -> Option<&str> {
+        match &self.location {
+            Location::LocalFile(_) => None,
+            #[cfg(feature = "http")]
+            Location::Remote(object) => remote_name_of(&object.url),
         }
     }
 
@@ -3125,6 +3207,14 @@ pub const REMOTE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 struct RemoteObject {
     url: url::Url,
     store: object_store::http::HttpStore,
+    /// What the probe's response said the object was: kept whole rather than
+    /// projected, because the precondition every later request carries is
+    /// built from the validators **as the server stated them**
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D11"), and a date
+    /// round-tripped through a [`SystemTime`] is a second spelling of one of
+    /// them. Set by [`RemoteObject::probe`], which [`Origin::probe`] runs at
+    /// most once.
+    meta: std::sync::OnceLock<object_store::ObjectMeta>,
 }
 
 #[cfg(feature = "http")]
@@ -3146,7 +3236,40 @@ impl RemoteObject {
             .with_client_options(options)
             .build()
             .map_err(|e| remote_failure(&url, &e))?;
-        Ok(Self { url, store })
+        Ok(Self { url, store, meta: std::sync::OnceLock::new() })
+    }
+
+    /// The identity precondition a ranged GET carries, so that an object
+    /// rewritten mid-scan comes back as a refusal instead of as bytes from
+    /// two versions of the file mixed together
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D10").
+    ///
+    /// **The server does the comparing**, which is why the cadence is every
+    /// request here where it is every cache save locally: the check rides on
+    /// a request the read was already making (D11).
+    ///
+    /// The entity tag is preferred, and `If-Unmodified-Since` is the fallback
+    /// for a server that sends none. A `Last-Modified` this build reads as
+    /// absence is not sent — `object_store` substitutes the epoch for a
+    /// response that carries none (`docs/design/runtime-invariants.md`,
+    /// "RT16"), and asking a server to confirm that nothing has changed since
+    /// 1970 refuses every read.
+    fn precondition(&self) -> object_store::GetOptions {
+        let mut options = object_store::GetOptions::default();
+        let Some(meta) = self.meta.get() else { return options };
+        match &meta.e_tag {
+            Some(tag) => options.if_match = Some(tag.clone()),
+            None => {
+                let stated = weak_identity(
+                    meta.last_modified.timestamp(),
+                    meta.last_modified.timestamp_subsec_nanos(),
+                );
+                if stated.is_some() {
+                    options.if_unmodified_since = Some(meta.last_modified);
+                }
+            }
+        }
+        options
     }
 
     /// The object a request addresses: the store's own base URL with nothing
@@ -3178,7 +3301,11 @@ impl RemoteObject {
             got.meta.last_modified.timestamp(),
             got.meta.last_modified.timestamp_subsec_nanos(),
         );
+        // Kept before the body is drained, so a probe that fails to read its
+        // own bytes leaves no validators for a later request to pin against.
+        let meta = got.meta.clone();
         let leading = got.bytes().await.map_err(|e| remote_failure(&self.url, &e))?;
+        let _ = self.meta.set(meta);
         Ok(OriginProbe { stored_size, modified, leading: leading.to_vec() })
     }
 }
@@ -3199,6 +3326,16 @@ fn weak_identity(seconds: i64, nanos: u32) -> Option<SystemTime> {
         return None;
     }
     u64::try_from(seconds).ok().map(|s| UNIX_EPOCH + Duration::new(s, nanos))
+}
+
+/// A URL's last path segment, or `None` where it has none — a bare host, or a
+/// path ending in `/`. Left exactly as the URL spells it, percent-escapes
+/// included: the point of the derived cache name is that a user can predict it
+/// by reading the URL (`docs/design/roadmap-P14-remote-input.md`, "D4"), and a
+/// decoded segment can hold a path separator where the written one cannot.
+#[cfg(feature = "http")]
+fn remote_name_of(url: &url::Url) -> Option<&str> {
+    url.path_segments()?.next_back().filter(|segment| !segment.is_empty())
 }
 
 /// A URL as a message may print it: with any username and password taken out.
@@ -3244,20 +3381,32 @@ pub struct RemoteSource {
     object: Arc<RemoteObject>,
     size: u64,
     modified: Option<SystemTime>,
+    /// What the server called this version of the object at the probe — the
+    /// half of a remote cache's identity a file has no equivalent of
+    /// ([`ByteRangeSource::remote_identity`]).
+    etag: Option<String>,
     /// The caller's ask that reading stop, where one has been announced
     /// ([`ByteRangeSource::hint_cancellation`]). Behind a lock because a hint
     /// arrives through `&self`, as every other hint does.
     cancel: Mutex<Option<Arc<Cancellation>>>,
+    /// Whether every ranged GET pins the object to the version the probe saw
+    /// ([`ByteRangeSource::hint_in_flight_identity`]). **It starts bound**:
+    /// the hint arrives once a run has opened its watch, and a read taken
+    /// before then must already be pinned.
+    precondition: AtomicBool,
 }
 
 #[cfg(feature = "http")]
 impl RemoteSource {
     fn new(object: Arc<RemoteObject>, probe: &OriginProbe) -> Self {
+        let etag = object.meta.get().and_then(|meta| meta.e_tag.clone());
         Self {
             object,
             size: probe.stored_size(),
             modified: probe.modified(),
+            etag,
             cancel: Mutex::new(None),
+            precondition: AtomicBool::new(true),
         }
     }
 
@@ -3266,19 +3415,44 @@ impl RemoteSource {
         &self.object.url
     }
 
+    /// What a failed request means, named against the URL it is about.
+    ///
+    /// **A refused precondition is the one failure that is not about the
+    /// network**: the server has just said the object is no longer the one
+    /// this run opened on, which is exactly what a local `fstat` finds and is
+    /// reported in the same words, remedies included
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D10", "D12"). Everything
+    /// else is [`Error::Remote`].
+    fn failed(&self, error: &object_store::Error) -> Error {
+        match error {
+            object_store::Error::Precondition { .. } => Error::SourceChangedWhileRead {
+                differences: "the server refused a read of the version this run opened on"
+                    .to_string(),
+            },
+            other => remote_failure(&self.object.url, other),
+        }
+    }
+
     /// One ranged GET, and exactly `len` bytes back.
+    ///
+    /// **The request pins the object to the version the probe saw**, unless a
+    /// caller has said the in-flight identity does not bind, so a rewrite
+    /// mid-scan is a refusal on the first read after it rather than bytes from
+    /// two files ([`RemoteObject::precondition`]).
     async fn get(&self, offset: u64, len: usize) -> Result<Bytes> {
-        let options = object_store::GetOptions {
-            range: Some(object_store::GetRange::Bounded(offset..offset + len as u64)),
-            ..Default::default()
+        let mut options = if self.precondition.load(Ordering::Relaxed) {
+            self.object.precondition()
+        } else {
+            object_store::GetOptions::default()
         };
+        options.range = Some(object_store::GetRange::Bounded(offset..offset + len as u64));
         let got = self
             .object
             .store
             .get_opts(&self.object.object(), options)
             .await
-            .map_err(|e| remote_failure(&self.object.url, &e))?;
-        let bytes = got.bytes().await.map_err(|e| remote_failure(&self.object.url, &e))?;
+            .map_err(|e| self.failed(&e))?;
+        let bytes = got.bytes().await.map_err(|e| self.failed(&e))?;
         // A server answering a *prefix* of the range it was asked for is a
         // legal response and a different fault: `object_store` compares the
         // `Content-Range` it got against the one it asked for and refuses
@@ -3338,6 +3512,22 @@ impl ByteRangeSource for RemoteSource {
 
     fn hint_cancellation(&self, cancel: Arc<Cancellation>) {
         *self.cancel.lock().unwrap() = Some(cancel);
+    }
+
+    /// The URL and the entity tag, which is what a remote cache records
+    /// beyond the size and modification time every source answers.
+    fn remote_identity(&self) -> Option<RemoteIdentity> {
+        // The same string `Origin`'s `Display` prints, which is what a
+        // refusal naming an origin has to match; a URL carrying a credential
+        // never reaches here, `Origin::remote` having refused it.
+        Some(RemoteIdentity::new(self.object.url.to_string(), self.etag.clone()))
+    }
+
+    /// **The only thing that stops pinning the object**, which is what
+    /// `--strict-identity=none` reaches
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    fn hint_in_flight_identity(&self, binds: bool) {
+        self.precondition.store(binds, Ordering::Relaxed);
     }
 }
 

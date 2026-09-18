@@ -695,11 +695,23 @@ last_modified, stored_size }`**: the origin is D4's, the ETag and `Last-Modified
 are the weak signals D5 governs, and the stored size is what still refuses.
 
 D20's refusal keeps **one wording**: `Error::CacheSourceMismatch`'s two sizes are
-unchanged, because the size check works identically over a remote source, and its
-`path` generalizes to **the source's display form** — a path locally, the URL
-remotely. The inbox's alternative, a second refusal beside the first for an
-identity with nothing numeric in it, is refused: the numeric part is not missing,
-only the field that named the file.
+unchanged, because the size check works identically over a remote source. The
+inbox's alternative, a second refusal beside the first for an identity with
+nothing numeric in it, is refused: the numeric part is not missing.
+
+*Corrected at 14.6, this entry having described a field the code does not have.*
+`CacheSourceMismatch`'s `path` is the **cache's** path, not the dump's
+(`pgdump_query/src/cache.rs`, `CacheMode::source_mismatch`, which reads it out of
+`CacheMode::Enabled`), so nothing there generalizes to a source's display form
+and the refusal already named the same thing on both providers. What is missing
+is the **source's** name, which matters here because the cache path is now
+*derived*: "the cache at `mydump.dqcache`" does not say which `mydump` a run
+asked for. The CLI adds it, in `main.rs`'s `naming_the_source`, which is where
+the in-flight refusal's name already comes from and is the division 14.3
+recorded
+([`roadmap-P14.3-in-flight-identity-notes.md`](roadmap-P14.3-in-flight-identity-notes.md),
+"Negative results"). Nothing was added to `ByteRangeSource` to carry a name into
+the library.
 
 ### D19 — Origin is a remote concept; a local source records none
 
