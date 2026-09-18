@@ -100,5 +100,8 @@ Run it after rewriting a heading.
   fact is stated once, in one place, and cited everywhere else; a number is
   stated only in `measurements.md`. If something is worth keeping as history,
   the maintainer will ask.
+- **We do not make design decisions based on implementation cost** — we
+  shouldn't reinvent available wheels, but the elegance and correctness of our
+  final 1.0 design is all that matters.
 - **Memories** go in this project, not user memory; development may move
   machines.

@@ -170,9 +170,13 @@ holds with round trips in place of a decode.
 motivates the phase: the dumps that are actually shipped around arrive
 compressed, koji's included, and the warm case already works.
 
-The cold walk earns a **known deficiency** rather than a fix here. Its remedy —
-concurrent, coalesced prefetch of the footers — is exactly the network tuning
-this phase has deferred, and the entry is owned by the phase that takes that up.
+The cold walk earns a **known deficiency** rather than a fix here. Its remedy is
+a **speculative** fetch at a guessed stream stride, verified by footer magic: the
+walk is a strictly sequential backward chain, so neither coalescing nor
+concurrency buys anything on its own
+([`../status/history/2026-09-18.md`](../status/history/2026-09-18.md)). That is
+exactly the network tuning this phase has deferred, and the entry is owned by the
+phase that takes that up.
 
 ### D2 — An **origin** answers the cheap questions before any source is constructed
 
@@ -469,7 +473,7 @@ every byte this run read is suspect.
   re-run against a settled file or to ask why their pipeline rewrites dumps in
   place.
 
-### D13 — `xz-seek` is vetted here and published after gzip and zstd
+### D13 — `xz-seek` is vetted here, and the seam is fixed upstream rather than bridged here
 
 This phase is the crate's remaining consumer, publication having been gated on
 two real ones vetting the interface and the statistics phase turning out to make
@@ -480,17 +484,30 @@ This entry said it was, on the strength of `XzSource` wrapping a
 `ByteRangeSource`; it does not. `XzSource` holds an
 `xz_seek::Reader<std::fs::File>` (`pgdump_query/src/io.rs`), and the crate reads
 through `CompressedSource` (`vendor/xz-seek/src/source.rs`), a **synchronous**
-positional trait, where `ByteRangeSource` is async. So remote `.xz` needs a
-bridge between the two, written here, and is 14.7's real work rather than its
-free consequence. What the crate's requirement never to open files does buy is
-that the bridge is ours alone: `Reader<S>` is generic over the source, so no new
-call into the crate and no new signature is needed for one to be handed a remote
-object.
+positional trait, where `ByteRangeSource` is async.
 
-So **this phase vets and does not publish.** Anything awkward found over ranged
-GETs is fixed upstream in that repo and re-vendored by
-`scripts/vendor_xz_seek.py`, which is the existing route; the vendored read-only
-copy stays as [`decisions.md`](decisions.md), "D14" left it.
+**What that costs is not fetch policy, and 14.7 writes no bridge.** The crate's
+backfill window is a floor on what its walk *requests*, not a ceiling on what a
+caller may fetch, so a caching `CompressedSource` of ours could coalesce and
+speculate underneath it today. What is irreducible is that nothing can `await`
+inside `read_at`. The seam a remote source needs is therefore sans-IO, and it
+belongs in the crate, which already states that contract for a block:
+`BlockTask` carries a resolved check and decodes out of a caller's `Window`, so
+the block path needs no source of ours at all.
+
+**The crate is taking that as its own phase** — a caller-driven footer walk
+constructed with the file size, a resumable block decode rooted on `BlockTask`
+rather than on its private incremental form, and a sourceless handle for the
+queries that touch no bytes. `CompressedSource` is unchanged by all three, and
+our `Origin` probe already holds what the walk needs to start: the stored size it
+is constructed with, and the leading magic that is its first request
+([`../status/history/2026-09-18.md`](../status/history/2026-09-18.md)).
+
+**14.7 waits for that phase whole**, not slice by slice, and no intermediate
+state is vendored. The message it waits on is *every slice has landed*: that
+phase stays open across our review, and wraps and keystones on our approval,
+after which `scripts/vendor_xz_seek.py` re-syncs and 14.7 proceeds. The vendored
+read-only copy stays as [`decisions.md`](decisions.md), "D14" left it.
 
 **Publication waits for gzip and zstd** — for all three codecs to be supported
 and to sit well together in one codebase — which is the maintainer's condition
@@ -505,16 +522,15 @@ that tunes the network with more than one backend to tune against:
 - The **pre-fetched `Window` composition** and the decode-out-of-a-window trade —
   priced and refused for a local file, and reversing over ranged GETs where the
   saving is a round trip per block rather than a `pread` out of page cache.
-- The **fetch policy**: whether this project takes the fetch entirely, issuing
-  its own concurrent coalesced GETs and reducing `xz-seek` to a CPU-side decoder,
-  or prefetches underneath the crate's single ascending fetcher.
+- The **fetch policy**. *That* this project takes the fetch entirely is settled
+  by D13; what is left to tune is its concurrency, coalescing and speculation.
 - The **ranged-GET partition size**, which is a property of the network rather
   than of the file, and which multiplies with an `XzSource`'s block boundaries
   rather than being overridden by them.
 - **`MEMORY_UNPOOLED_BOUND`**, which this source is the first that could falsify,
   an in-flight HTTP body being held outside every pool this crate owns.
-- The **cold footer walk** of D1, whose remedy is concurrent coalesced prefetch
-  of the stream footers.
+- The **cold footer walk** of D1, whose remedy is a speculative fetch at a
+  guessed stream stride.
 
 ### D14 — The remote source is part of the library's public surface
 
