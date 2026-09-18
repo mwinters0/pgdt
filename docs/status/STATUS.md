@@ -102,7 +102,10 @@ what is delivered.
   pinned, URL and `file://` handling with credentials and non-HTTP schemes
   refused by name, the client defaults, the conservative trait answers, the
   public constructor, and network failure as an error naming the URL (D3, D7–D9,
-  D14, D15, D17). Adds the `RT<n>` entries its decisions depend on.
+  D14, D15, D17). The oracle gains an eighth knob, a stalled origin, and the
+  client deadline and the cancellation race are asserted against it rather than
+  left unproducible (D6, D9, D16). Adds the `RT<n>` entries its decisions depend
+  on.
 - [ ] **14.6** Remote identity and the remote cache: `SourceIdentity::Remote`,
   the URL-basename default cache path, the origin recorded and reported
   advisorily, the precondition on every ranged GET, and `CacheSourceMismatch`
@@ -374,17 +377,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The oracle owns an HTTP server instead of depending on one.**
-  [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-  "D6" describes the instrument as "a dev-dependency, deterministic, no
-  container, no `mise` tool"; 14.4 landed it as 455 lines of `std` (681 with
-  its rustdoc) in `pgdump_query-cli/tests/common/oracle.rs`, no dependency at
-  all. The
-  reasoning is in that slice's notes — the knobs are all protocol *violations*,
-  and a correct server library is built to prevent the exact thing they have to
-  emit — but the list D6 wrote reads as costs it was willing to pay rather than
-  as permission to pay none, and what a codebase writes itself versus depends on
-  is the maintainer's call. Reconsidering replaces the module; the twenty tests
-  in `tests/oracle.rs` assert against bytes on a socket and mostly stand either
-  way. It binds 14.5–14.7, which are all written against this surface.

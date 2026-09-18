@@ -69,4 +69,5 @@ table as a work queue.
 | M115 | 2026-09-18 | `cargo fmt` run over the tree, red since `2e8bd7b` pushed renamed identifiers past the column limit, so the standing check a session runs is green again rather than read against a baseline |  | [2026-09-18](../status/history/2026-09-18.md) |
 | M116 |  | `--strict-identity` on `pgdq info`, refusing a bound-but-moved signal as `parse` and `query` do, with `requires = "source"` making the flag a usage error in cache-only mode, whose identity is null |  | [2026-09-18](../status/history/2026-09-18.md) |
 | M117 |  | `StrictIdentityUnmet` names the expected and actual modification times rather than a fixed clause: `weak_against` compares both values and keeps neither, so the refusal states its reason but not what it saw |  | [2026-09-18](../status/history/2026-09-18.md) |
+| M118 |  | An opt-in conformance test reading a fixture end to end from a real static origin, gated on an env var unset by default so CI and every other checkout pass without it — the one question the bespoke oracle cannot answer, whether we misread HTTP the same way twice |  | [2026-09-18](../status/history/2026-09-18.md) |
 

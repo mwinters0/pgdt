@@ -273,14 +273,49 @@ re-implementing it, and the flag only sets it.
 
 **The interesting failures are all server behaviours**, not our arithmetic: a
 server that ignores `Range`, one whose ETag changes between the probe and the
-read, one that short-reads, one that fails mid-body, one that 404s mid-scan. None
-is reachable against a well-behaved server, which makes "serve a fixture over
-nginx" the weakest available test. So the oracle is a **small HTTP server inside
-the test binary**, serving the existing fixtures over loopback with a knob per
-misbehaviour: a dev-dependency, deterministic, no container, no `mise` tool, and
-the only instrument that can produce the failures this phase has to get right.
+read, one that short-reads, one that fails mid-body, one that 404s mid-scan, one
+that accepts the connection and then stalls. None is reachable against a
+well-behaved server, which makes "serve a fixture over nginx" the weakest
+available test. So the oracle is a **small HTTP server inside the test binary**,
+serving the existing fixtures over loopback with a knob per misbehaviour:
+deterministic, no dependency, no container, no `mise` tool, and the only
+instrument that can produce the failures this phase has to get right.
 `object_store`'s in-memory store sits beside it for unit-level seams and is not
 the oracle — it never speaks HTTP.
+
+**The stall is the knob D9 and D16 are written against**, and it lands with the
+source that first meets it. D9 keeps the crate's 30-second total deadline and its
+ten retries under a three-minute retry deadline; D16 reworked cancellation into
+an awaitable form because a Ctrl-C under those retries waits that long. Neither
+condition is reachable by truncating a body — a stalled origin answers slowly or
+not at all, which is what a deadline and a cancellation race are timed against.
+
+*Rejected: an off-the-shelf origin*, container or pinned binary, with a proxy for
+the transport failures. Two knobs cannot be emitted by anything that ships: an
+**honest short 206**, whose `Content-Range` describes the smaller span it
+actually sent, and a **declared `Content-Length` the body then contradicts**,
+which is what a correct server is built to prevent and which no byte-cutting
+proxy can produce, being unable to rewrite the header it truncates under. So
+socket-level code exists either way — and once it does, the **control must be the
+same implementation as the treatment**: a knob-off oracle is a correct origin,
+and reading a misbehaving case against a *different* server's baseline credits
+the knob with what may be the implementation. `Oracle::requests()` is the other
+half, since D2's "the probe cost one round trip" and D11's "the precondition rode
+on every ranged GET" are assertions about the request stream, which off the shelf
+becomes access-log parsing. **It generalizes to nothing** — the justification is
+those two behaviours and the shared control, not a preference for writing over
+depending.
+
+*Rejected: a mock-server dev-dependency* (`wiremock`, `httpmock`), which is what
+this entry first described. It reaches every knob but the contradicted
+`Content-Length`, and its responder still hand-writes the `Range` parsing and
+slicing, so it trades the HTTP framing for a second server implementation in a
+workspace whose one binary is about to gain `object_store`'s.
+
+**Reopens:** the risk a bespoke oracle carries is that it encodes our own
+misreading of HTTP, which no knob can surface. That is answered by an **opt-in**
+conformance test against a real static origin, absent from the default suite —
+[`out-of-band.md`](out-of-band.md), `M118`.
 
 **The feature is `http`, default-off in the library and enabled by the CLI.**
 Default-on was considered and refused on the measured cost: 120 crates and an

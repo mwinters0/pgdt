@@ -50,14 +50,9 @@ sliced, and why in that order").
 
 ## Negative results
 
-- **No HTTP crate was taken as a dev-dependency.** `hyper`, `axum` and
-  `tiny_http` would each have made the server shorter, and each would have put a
-  second HTTP implementation in the lockfile of a workspace whose one shipped
-  binary is about to gain `object_store`'s. The behaviours this oracle exists to
-  produce are all *violations*, and a correct server library is the wrong shape
-  for emitting them — a declared `Content-Length` that the body then contradicts
-  is precisely what a well-written one prevents. Four hundred and fifty lines
-  of `std` is the cheaper thing to own.
+- **No HTTP crate was taken as a dev-dependency**, and the maintainer's review
+  of that call kept it: the reasoning and both rejected alternatives are
+  [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D6".
 - **The self-tests do not go through `object_store`**, and that is the point
   rather than an accident of ordering: an instrument checked with the thing it
   judges agrees with it by construction. So `common::oracle`'s `raw_get` /
