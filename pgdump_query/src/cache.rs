@@ -28,7 +28,8 @@
 //! turns it into a
 //! [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the loaded
 //! index, recomputed on every load and never persisted. A caller that asked
-//! for [`StrictIdentity::time`] is refused there instead.
+//! for [`StrictIdentity::time`] is refused instead — there, or at
+//! [`CacheMode::strict_identity_refusal`] where it read the status itself.
 //!
 //! **Two different questions hide under one word.** *Between* runs a moved,
 //! copied or touched dump is a different weak identity holding the same
@@ -863,10 +864,12 @@ impl CacheMode {
     /// *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`], as
     /// `pgdq info` does. Neither the four unusable statuses nor the caller's
-    /// own opt-out is collapsed: each arrives as its own variant.
+    /// own opt-out is collapsed: each arrives as its own variant, and such a
+    /// caller asks [`CacheMode::strict_identity_refusal`] for the check this
+    /// method makes inline.
     pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<CacheLoad> {
         match self {
-            CacheMode::Enabled { path, strict } => Ok(match load(path, source).await? {
+            CacheMode::Enabled { path, .. } => Ok(match load(path, source).await? {
                 CacheStatus::Missing => CacheLoad::Missing,
                 CacheStatus::Unreadable => CacheLoad::Unreadable,
                 CacheStatus::UnsupportedVersion => CacheLoad::UnsupportedVersion,
@@ -875,10 +878,8 @@ impl CacheMode {
                 }
                 CacheStatus::Valid { mut index, weak, .. }
                 | CacheStatus::Incomplete { mut index, weak, .. } => {
-                    if strict.time()
-                        && let Some(unmet) = weak.unmet()
-                    {
-                        return Err(Error::StrictIdentityUnmet { path: path.clone(), unmet });
+                    if let Some(refusal) = self.strict_identity_refusal(weak) {
+                        return Err(refusal);
                     }
                     // Reported rather than acted on: too weak to invalidate,
                     // and recomputed on every load (see the module docs).
@@ -893,6 +894,26 @@ impl CacheMode {
                 "a live dump source requires CacheMode::Enabled or CacheMode::Disabled, not Offline",
             )),
         }
+    }
+
+    /// The refusal [`CacheMode::load`] makes on `weak`, or `None` where this
+    /// mode binds nothing that `weak` fails — exposed because a caller that
+    /// *reports* what a cache holds reads the full [`CacheStatus`] through
+    /// [`load`] and so never passes through `load`'s own check
+    /// (`pgdq info`). The comparison stays here rather than at that caller,
+    /// so one selection means one thing on every command
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    ///
+    /// Only [`CacheMode::Enabled`] can refuse: [`CacheMode::Disabled`] loads
+    /// no cache to compare, and [`CacheMode::Offline`] has no live source, so
+    /// its identity is null rather than absent and a selection never reaches
+    /// it.
+    pub fn strict_identity_refusal(&self, weak: WeakIdentity) -> Option<Error> {
+        let CacheMode::Enabled { path, strict } = self else { return None };
+        if !strict.time() {
+            return None;
+        }
+        weak.unmet().map(|unmet| Error::StrictIdentityUnmet { path: path.clone(), unmet })
     }
 
     /// The refusal a scan entry point answers [`CacheLoad::SourceChanged`]

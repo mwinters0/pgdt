@@ -31,8 +31,8 @@ in the same change, and the manual gains
   itself rather than the set checking once, since each is a reader that ends.
 - **`WeakIdentity` replaced `CacheStatus`'s `mtime_changed` bool** because
   `time` refuses on two of its three states: absence is a failure, and a `bool`
-  cannot say "neither side has one". `pgdq info` reads it and keeps reporting
-  rather than refusing.
+  cannot say "neither side has one". `pgdq info` reads it and reports, unless a
+  selection binds it (`M116`).
 - **`StrictIdentity::location` is parsed, carried and read by nothing.** A local
   cache records no origin (spec D19), so it binds nothing until 14.6 gives one.
   `location_binds_nothing_on_a_local_source` pins that as a property rather than
@@ -50,10 +50,9 @@ in the same change, and the manual gains
 - **`pgdq info` shipped without `--strict-identity`, and the review reversed
   that.** The slice put the flag on `parse` and `query` alone, reasoning that
   `info` reports rather than scans. The maintainer settled it the other way —
-  one flag with one meaning on every command — and the flag is owed to `info`
-  under `M116`, refusing exactly as the other two do and requiring `--source`,
-  cache-only mode having a null identity nothing can check
-  ([2026-09-18](../status/history/2026-09-18.md)).
+  one flag with one meaning on every command — and `M116` gave `info` the flag,
+  which is why the refusal is `CacheMode::strict_identity_refusal` rather than
+  inline in `CacheMode::load` ([2026-09-18](../status/history/2026-09-18.md)).
 - **No `RT<n>` was added for the descriptor-keeps-its-inode property.** The spec
   names the `RT` entries this phase owes and they are all `object_store`'s;
   this one is POSIX and is established here by a test that renames a file over

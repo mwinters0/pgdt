@@ -96,6 +96,10 @@ Options:
           bytes moving underneath a read that has already returned some of them cannot produce a
           right answer; `none` is the only way to turn that into a warning, and it turns off
           everything else too.
+          
+          It asks one question of every command, and needs a source to ask it of, so stating it
+          without `--source` — `info` answering from the cache alone, whose identity is not
+          unreadable but absent — is a usage error.
 
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads

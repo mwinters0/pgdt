@@ -191,6 +191,12 @@ pgdq query --source mydump.sql --table public.widgets --strict-identity=time
 - **`none`** binds nothing at all, and is the only way to turn off the check
   below.
 
+The flag asks the same question of all three commands, so `info` stops too
+rather than reporting — the refusal names the cache and what failed, which is
+more than the diagnostic says. It does need a source to ask about: cache-only
+`info`, with no `--source`, is answering from the cache alone and there is no
+identity there to bind, so the flag is refused as a usage error.
+
 **A file that changes while pgdq is reading it is an error whatever you pass.**
 That is a different question from the one above: between runs, a moved file is
 usually the same bytes in a new place, but *during* a run, bytes changing
@@ -928,8 +934,8 @@ public.events (98765 rows)
   or object: how much of the map is explained by `pg_dump`'s own per-object
   comments (`TOC coverage`), a cache whose recorded mtime no longer matches
   the file's (still used — mtime alone isn't reliable enough to invalidate
-  on, and `info` reports it rather than refusing whatever else you pass; see
-  "`--strict-identity`" above for the commands that can be told to stop), or,
+  on, so it is reported unless you pass `--strict-identity=time`, which stops
+  the run instead; see "`--strict-identity`" above), or,
   in cache-only mode below, a reminder that you're looking at historical data. Nothing appears here on an unremarkable run beyond the
   coverage figure.
 - **`roles`/`tablespaces`** list every role and tablespace the scan found

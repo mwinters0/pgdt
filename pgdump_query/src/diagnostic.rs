@@ -96,8 +96,9 @@ impl Diagnostic {
     /// [`crate::cache::CacheStatus`] itself rather than going through
     /// [`crate::cache::CacheMode::load`] still has to turn a
     /// [`crate::cache::WeakIdentity::Differs`] into this warning. `pgdq info`
-    /// is that caller, and deliberately has no strictness of its own: it
-    /// reports what the cache holds rather than refusing to.
+    /// is that caller: it reports what the cache holds, unless the selection
+    /// it asked [`crate::cache::CacheMode::strict_identity_refusal`] about
+    /// binds the signal.
     pub fn cache_mtime_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
     }

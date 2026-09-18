@@ -1,0 +1,80 @@
+//! `--strict-identity` on `pgdq info`: one flag, one meaning on every command
+//! (`docs/design/roadmap-P14-remote-input.md`, "D5").
+//!
+//! `info` is the command that *reports* — it reads the whole `CacheStatus`
+//! rather than going through `CacheMode::load`, where the refusal for the two
+//! commands that scan lives — so the two cases below are the ones nothing else
+//! in the tree can observe: that a bound-but-moved signal stops the report, and
+//! that the flag is a usage error where there is no source to bind it to.
+//! `pgdump_query/tests/identity.rs` pins what the refusal itself compares; this
+//! file pins that `info` asks for it.
+
+use std::time::{Duration, SystemTime};
+
+mod common;
+use common::{fixture, run, run_ok, stderr_of};
+
+/// A writable copy of a real dump, so a test can move its modification time.
+fn sandboxed() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::copy(fixture("16/edge_cases/create.sql"), &dump).unwrap();
+    (dir, dump)
+}
+
+/// Move the dump's modification time an hour on, leaving every byte alone —
+/// the ambiguous case the default is advisory about and `time` refuses.
+fn touch_forward(dump: &std::path::Path) {
+    let future = SystemTime::now() + Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(dump).unwrap().set_modified(future).unwrap();
+}
+
+/// `pgdq info --strict-identity=time` refuses a cache whose modification
+/// signal has moved, and says which cache and why — a refusal *is* the
+/// explanation, so the reporting command loses nothing by being able to stop.
+/// Without the flag the same run reports.
+#[test]
+fn info_refuses_a_moved_signal_under_strict_time_and_reports_without_it() {
+    let (_dir, dump) = sandboxed();
+    let dump = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", dump]);
+
+    // Strict first: a `parse` re-run would re-record the mtime it now sees,
+    // and `info` never writes, so the order here is only about the cache
+    // staying the one `parse` wrote.
+    run_ok(&["info", "--source", dump, "--strict-identity=time"]);
+
+    touch_forward(std::path::Path::new(dump));
+    let refused = run(&["info", "--source", dump, "--strict-identity=time"]);
+    assert!(!refused.status.success(), "`time` binds the modification time on `info` too");
+    let said = stderr_of(&refused);
+    assert!(said.contains("dump.sql.dqcache"), "it names the cache it refused: {said}");
+    assert!(said.contains("modification time has moved"), "and why: {said}");
+
+    // The default is unchanged: the same moved signal is reported.
+    let reported = run_ok(&["info", "--source", dump]);
+    assert!(
+        reported.contains("mtime has changed since the cache was saved"),
+        "without the flag the moved signal is a diagnostic: {reported}"
+    );
+}
+
+/// Cache-only `info` has no source at all, so its identity is *null* rather
+/// than absent: asking for a guarantee about a source nobody named is
+/// malformed, not a refusal. clap answers it, before anything is opened.
+#[test]
+fn strict_identity_without_a_source_is_a_usage_error() {
+    let (_dir, dump) = sandboxed();
+    let dump = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", dump]);
+    let cache = format!("{dump}.dqcache");
+
+    // The same invocation is fine without the flag — cache-only mode is the
+    // supported entry point, and it is the *flag* that is refused.
+    run_ok(&["info", "--dqcache", &cache]);
+
+    let refused = run(&["info", "--dqcache", &cache, "--strict-identity=time"]);
+    assert!(!refused.status.success(), "the flag needs a source to bind");
+    let said = stderr_of(&refused);
+    assert!(said.contains("--source"), "and the usage error names what is missing: {said}");
+}

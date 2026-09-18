@@ -489,8 +489,8 @@ fn parse_memory(text: &str) -> std::result::Result<u64, String> {
     }
 }
 
-/// Which weak identity signals a command asks to *bind*, shared by the two
-/// commands that read a dump against a cache
+/// Which weak identity signals a command asks to *bind*, shared by every
+/// command that reads a dump against a cache
 /// (`docs/design/decisions.md`, "D21").
 #[derive(Args)]
 struct IdentityArgs {
@@ -508,12 +508,17 @@ struct IdentityArgs {
     /// this says**, because bytes moving underneath a read that has already
     /// returned some of them cannot produce a right answer; `none` is the only
     /// way to turn that into a warning, and it turns off everything else too.
+    ///
+    /// It asks one question of every command, and needs a source to ask it
+    /// of, so stating it without `--source` — `info` answering from the cache
+    /// alone, whose identity is not unreadable but absent — is a usage error.
     #[arg(
         long,
         value_name = "TERMS",
         require_equals = true,
         num_args = 0..=1,
         default_missing_value = "time,location",
+        requires = "source",
         value_parser = parse_strict_identity
     )]
     strict_identity: Option<StrictIdentity>,
@@ -725,6 +730,8 @@ enum Command {
         /// full.
         #[arg(long)]
         json: bool,
+        #[command(flatten)]
+        identity: IdentityArgs,
     },
     /// Stream a table's rows, optionally projected to named columns and
     /// filtered by a boolean expression over single-column predicates.
@@ -1613,7 +1620,7 @@ async fn main() -> Result<()> {
             println!();
             println!("wrote cache to {}", path.display());
         }
-        Command::Info { source: file, dqcache, detail, map, json } => {
+        Command::Info { source: file, dqcache, detail, map, json, identity } => {
             if json && (detail || map) {
                 anyhow::bail!(
                     "--json already carries everything --detail/--map would add — drop one of them"
@@ -1622,7 +1629,8 @@ async fn main() -> Result<()> {
             let Some(file) = file else {
                 // Cache-only mode (`docs/design/decisions.md`, "D22"): no
                 // live dump file at all, so clap already required
-                // `--dqcache` for us.
+                // `--dqcache` for us — and refused `--strict-identity`, which
+                // has nothing here to bind.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
                 return info_offline(&path, detail, map, json).await;
             };
@@ -1631,7 +1639,8 @@ async fn main() -> Result<()> {
             // out. Formed here rather than in `Error::CacheDisabled` because
             // it interpolates the user's own `--source` path, which the
             // library error does not have.
-            let mode = CacheMode::resolve(&file, dqcache.as_deref());
+            let mode = CacheMode::resolve(&file, dqcache.as_deref())
+                .with_strict_identity(identity.resolve());
             let path = mode
                 .require_enabled("info")
                 .with_context(|| {
@@ -1665,6 +1674,13 @@ async fn main() -> Result<()> {
                 }
                 unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
             };
+            // `info` reads the whole status rather than going through
+            // `CacheMode::load`, so it asks for that method's check by name;
+            // the selection means here what it means on the commands that
+            // scan (`docs/design/decisions.md`, "D21").
+            if let Some(refusal) = mode.strict_identity_refusal(weak) {
+                return Err(refusal.into());
+            }
             // Reported rather than acted on: between runs the weak signal is
             // advisory unless a selection binds it
             // (`docs/design/decisions.md`, "D21").
