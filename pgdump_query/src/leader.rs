@@ -675,12 +675,19 @@ async fn scan_partition(
 mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
 
     use super::*;
     use crate::io::{LocalFileSource, Parallelism};
     use crate::map::{Builder, DataBlock, SpanBody};
-    use crate::scan::ChunkCarry;
+    use crate::scan::{Cancellation, ChunkCarry};
+
+    /// A cancellation already asked for, so the scan under it stops at its
+    /// first poll rather than at a moment a test would have to arrange.
+    fn cancelled() -> Arc<Cancellation> {
+        let cancel = Arc::new(Cancellation::new());
+        cancel.cancel();
+        cancel
+    }
 
     /// One `COPY` block as the **serial** pass states it: the reference every
     /// split below is checked against.
@@ -1255,8 +1262,7 @@ mod tests {
         let size = file.len() as u64;
         let block = &reference(&file)[0];
         let source = LocalFileSource::open(&path).unwrap();
-        let options =
-            ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..scheduled(&source, 4) };
+        let options = ScanOptions { cancel: Some(cancelled()), ..scheduled(&source, 4) };
         let got = scan_region(
             &source,
             &options,

@@ -190,7 +190,7 @@ one and the question would be settled by default rather than deliberately.
 
 ## A scan is cancellable, and the library's answer to a cancelled *query* is an error
 
-**Fact.** `ScanOptions::cancel: Option<Arc<AtomicBool>>` (default `None`) stops
+**Fact.** `ScanOptions::cancel: Option<Arc<Cancellation>>` (default `None`) stops
 a mapping scan cooperatively — read once per chunk and at every completed
 `COPY` block. `stream::map_file` reports it as `MapRun::interrupted` and the
 cache holds everything up to the last watermark the save throttle's gate opened
@@ -209,10 +209,11 @@ complete one.
 on a local file and neither is on `object_store`: a ranged GET against remote
 storage can take seconds and can hang, and the preamble prepass — an
 uncancellable region today — is the *first* thing a cold query does, and since
-9.5.1 the first thing a cold `parse` does too. So the
-phase has to decide whether remote I/O gets its own cancellation (a timeout, or
-a cancel token passed into the source) rather than inheriting a flag the read
-path never checks.
+9.5.1 the first thing a cold `parse` does too. Half of that is now settled:
+`Cancellation` carries an awaitable signal beside the bit, so a source *can*
+give up a request in flight rather than inherit a flag the read path never
+checks (`decisions.md`, "D26"). What is left for this phase is the preamble
+prepass, which honours neither half.
 
 **Why P6 cares.** Both embedding surfaces have their own cancellation
 idiom and neither is this flag: a DataFusion `TableProvider`'s stream is

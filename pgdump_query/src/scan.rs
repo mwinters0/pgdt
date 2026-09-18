@@ -20,11 +20,15 @@
 //!   block only a line matching the full `COPY ... FROM stdin;` grammar, or a
 //!   bare `BEGIN;` opening the large-object region, is structural.
 
+use std::future::Future;
 use std::ops::ControlFlow;
+use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
+use futures::future::{Either, select};
+use tokio::sync::Notify;
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
 use crate::io::{ByteRangeSource, Parallelism, WaitPolicy, memory_budget_display};
@@ -493,6 +497,82 @@ pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;
 /// ([`ScanOptions::max_line_bytes`]).
 pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
 
+/// A caller's ask that a scan stop, in both the forms a reader consumes it
+/// in: a bit to poll and a signal to await.
+///
+/// The polled bit is what the mapping loops read once per chunk or leader
+/// window, and it is the whole mechanism for a reader whose wait is a
+/// `pread` — tens of milliseconds, bounded by the read already in flight. A
+/// reader whose wait is a network request has no such bound: its in-flight
+/// call can sit inside a retry schedule for minutes, and polling at the far
+/// side of it is a program that does not answer. So the same object carries a
+/// signal such a reader can select on and **drop** the request rather than
+/// wait it out (`docs/design/decisions.md`, "D26").
+///
+/// Both halves report the same one-way transition — once cancelled, always
+/// cancelled — so a reader may use either or both, and which it uses is a
+/// property of what it is waiting on rather than of what the caller asked for.
+#[derive(Debug, Default)]
+pub struct Cancellation {
+    flag: AtomicBool,
+    signal: Notify,
+}
+
+impl Cancellation {
+    /// A cancellation nobody has asked for yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ask every reader holding this to stop. Idempotent, and never blocks:
+    /// it is called from a signal-handling task, and from a source's own read
+    /// path in the tests.
+    ///
+    /// The `SeqCst` store is what [`Cancellation::cancelled`]'s registration
+    /// is ordered against; the polled side needs nothing so strong.
+    pub fn cancel(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+        self.signal.notify_waiters();
+    }
+
+    /// Whether cancellation has been asked for. `Relaxed` is the right
+    /// ordering: the bit guards nothing but itself — the reader's response is
+    /// to finish the chunk it already holds and save the index it already
+    /// owns — so nothing is published through it.
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+
+    /// Resolves once [`Cancellation::cancel`] has been called, at once if it
+    /// already has.
+    ///
+    /// The waiter is registered *before* the bit is read, which is what makes
+    /// this race-free against a `cancel` landing between the two: a cancel
+    /// wholly before the registration is seen by the load, and one after it
+    /// wakes a waiter that is already there.
+    pub async fn cancelled(&self) {
+        let mut signalled = pin!(self.signal.notified());
+        signalled.as_mut().enable();
+        if self.flag.load(Ordering::SeqCst) {
+            return;
+        }
+        signalled.await;
+    }
+
+    /// Run `work` until it finishes or this is cancelled, whichever happens
+    /// first. `None` is the cancellation, and `work` is **dropped where it
+    /// stood** — which is how a reader gives up a request in flight instead
+    /// of waiting for the answer it no longer wants.
+    pub async fn until_cancelled<F: Future>(&self, work: F) -> Option<F::Output> {
+        let work = pin!(work);
+        let cancelled = pin!(self.cancelled());
+        match select(work, cancelled).await {
+            Either::Left((done, _)) => Some(done),
+            Either::Right(((), _)) => None,
+        }
+    }
+}
+
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -505,9 +585,9 @@ pub struct ScanOptions {
     /// between a malformed input and unbounded memory growth. Defaults to
     /// [`SCAN_LINE_DEFAULT_MAX_BYTES`].
     pub max_line_bytes: usize,
-    /// Cooperative cancellation: set this flag from another task and the
-    /// mapping loop stops at the next chunk boundary, persists what it holds
-    /// and reports that it was interrupted
+    /// Cooperative cancellation: call [`Cancellation::cancel`] from another
+    /// task and the mapping loop stops at the next chunk boundary, persists
+    /// what it holds and reports that it was interrupted
     /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
     ///
     /// Chunk granularity — a window of pieces while the leader holds a region
@@ -516,7 +596,11 @@ pub struct ScanOptions {
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
     /// built on it ignore it (`docs/design/decisions.md`, "D26").
-    pub cancel: Option<Arc<AtomicBool>>,
+    ///
+    /// A source may also hold a clone of this and await
+    /// [`Cancellation::cancelled`], which is what bounds a stop by the request
+    /// in flight rather than by the loop's next poll.
+    pub cancel: Option<Arc<Cancellation>>,
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code
     /// path this build has rather than a pool of one
@@ -560,12 +644,10 @@ impl Default for ScanOptions {
 }
 
 impl ScanOptions {
-    /// Whether a caller has asked this scan to stop. `Relaxed` is the right
-    /// ordering: the flag guards nothing but itself — the reader's response
-    /// is to finish the chunk it already holds and save the index it already
-    /// owns — so nothing is published through it.
+    /// Whether a caller has asked this scan to stop — the polled half of
+    /// [`ScanOptions::cancel`], read once per chunk or leader window.
     pub fn cancelled(&self) -> bool {
-        self.cancel.as_ref().is_some_and(|flag| flag.load(Ordering::Relaxed))
+        self.cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled())
     }
 }
 
@@ -878,5 +960,79 @@ mod tests {
                 "chunk_size {chunk_size} gave {err:?}"
             );
         }
+    }
+
+    /// A guard that records its own drop, so a test can assert that a future
+    /// given up on was released rather than merely left unpolled.
+    struct DropFlag(Arc<AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The signal reports a cancellation that landed **before** anyone waited
+    /// on it: a reader that reaches its await after the ask must not wait for
+    /// a second one that will never come.
+    #[tokio::test]
+    async fn the_signal_resolves_at_once_for_a_cancellation_already_asked_for() {
+        let cancel = Cancellation::new();
+        assert!(!cancel.is_cancelled());
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        cancel.cancelled().await;
+    }
+
+    /// And it reports one that lands **while** a waiter is registered, which
+    /// is the ordinary case: the waiter is parked before `cancel` is called.
+    #[tokio::test]
+    async fn a_registered_waiter_is_woken_by_a_later_cancel() {
+        let cancel = Cancellation::new();
+        tokio::join!(cancel.cancelled(), async {
+            assert!(!cancel.is_cancelled(), "the waiter parks before the ask");
+            cancel.cancel();
+        });
+    }
+
+    /// `cancel` is idempotent, and the polled bit is one-way.
+    #[tokio::test]
+    async fn cancelling_twice_says_the_same_thing() {
+        let cancel = Cancellation::new();
+        cancel.cancel();
+        cancel.cancel();
+        assert!(cancel.is_cancelled());
+        cancel.cancelled().await;
+    }
+
+    /// Work that finishes before anyone cancels is handed back whole.
+    #[tokio::test]
+    async fn until_cancelled_yields_work_that_finished_first() {
+        let cancel = Cancellation::new();
+        assert_eq!(cancel.until_cancelled(async { 7u8 }).await, Some(7));
+        assert!(!cancel.is_cancelled(), "asking nothing cancels nothing");
+    }
+
+    /// **The point of the awaitable form.** Work that never finishes is given
+    /// up on at the cancellation *and dropped there* — which is what lets a
+    /// reader release a request in flight instead of waiting out whatever
+    /// deadline sits under it.
+    #[tokio::test]
+    async fn until_cancelled_drops_the_work_it_gave_up_on() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let guard = DropFlag(Arc::clone(&dropped));
+        let forever = async move {
+            let _guard = guard;
+            std::future::pending::<u8>().await
+        };
+
+        let cancel = Cancellation::new();
+        let (given_up, ()) = tokio::join!(cancel.until_cancelled(forever), async {
+            assert!(!dropped.load(Ordering::SeqCst), "still in flight before the ask");
+            cancel.cancel();
+        });
+
+        assert_eq!(given_up, None, "cancellation, not an answer");
+        assert!(dropped.load(Ordering::SeqCst), "the request in flight was released");
     }
 }

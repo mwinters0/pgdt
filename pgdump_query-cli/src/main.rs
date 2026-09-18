@@ -3,7 +3,7 @@ use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
@@ -14,7 +14,8 @@ use pgdump_query::cache::{CacheClaim, CacheEnvelope, CacheMode, CacheStatus, Com
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, STATISTICS_GROUP_DEFAULT_MIN_ROWS,
+    ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan,
+    STATISTICS_GROUP_DEFAULT_MIN_ROWS,
     DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan,
     Parallelism, Predicate, PredicateOp, QueryOptions, Recognized, ScanOptions, Severity, Span,
     SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind, open_local,
@@ -1313,7 +1314,7 @@ fn resume_notice(resumed_from: u64, size: u64, backfilled: usize) -> Option<Stri
 ///
 /// Returns the cell the exit code is read from: `0` until a signal lands,
 /// then that signal's number.
-fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
+fn install_interrupt_guard(cancel: Arc<Cancellation>) -> Result<Arc<AtomicI32>> {
     use tokio::signal::unix::{SignalKind, signal};
 
     let signalled = Arc::new(AtomicI32::new(0));
@@ -1327,7 +1328,7 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
                 // A non-zero previous value means the other handler, or this
                 // one, has already asked the scan to stop.
                 let already = signalled.swap(number, Ordering::SeqCst);
-                cancel.store(true, Ordering::SeqCst);
+                cancel.cancel();
                 if already != 0 {
                     std::process::exit(128 + number);
                 }
@@ -1462,7 +1463,7 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             let size = source.size().await?;
-            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel = Arc::new(Cancellation::new());
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };

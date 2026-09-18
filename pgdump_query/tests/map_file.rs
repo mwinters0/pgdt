@@ -17,16 +17,24 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
 use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, DumpIndex, LocalFileSource, Parallelism, QueryOptions,
-    ScanOptions, StatisticsRequest, build_index, cache, map_file, preamble_only, table_stream,
+    ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, DumpIndex, LocalFileSource, Parallelism,
+    QueryOptions, ScanOptions, StatisticsRequest, build_index, cache, map_file, preamble_only,
+    table_stream,
 };
+
+/// A cancellation already asked for, so the scan under it stops at its first
+/// poll rather than at a moment a test would have to arrange.
+fn already_cancelled() -> Arc<Cancellation> {
+    let cancel = Arc::new(Cancellation::new());
+    cancel.cancel();
+    cancel
+}
 
 /// A private copy of `tests/data/edge_cases.sql` in a fresh tempdir, so each
 /// test may freely write the colocated `.dqcache` beside it — same fixture and
@@ -432,7 +440,7 @@ async fn a_full_scan_recovers_every_databases_ddl() {
 struct CancelsPast<'a> {
     inner: &'a LocalFileSource,
     trip: u64,
-    cancel: Arc<AtomicBool>,
+    cancel: Arc<Cancellation>,
 }
 
 impl ByteRangeSource for CancelsPast<'_> {
@@ -444,7 +452,7 @@ impl ByteRangeSource for CancelsPast<'_> {
         Box<dyn std::future::Future<Output = pgdump_query::Result<bytes::Bytes>> + Send + '_>,
     > {
         if offset >= self.trip {
-            self.cancel.store(true, Ordering::SeqCst);
+            self.cancel.cancel();
         }
         self.inner.read_range(offset, len)
     }
@@ -509,7 +517,7 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip: data_offset, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 64,
@@ -669,7 +677,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(Cancellation::new());
     let tripping =
         CancelsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
     let options =
@@ -714,7 +722,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert!(blocks > 2, "sanity: blocks are left after the second");
     let second = bare.index.blocks().nth(1).unwrap().data_offset;
 
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
     let options =
         ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
@@ -759,8 +767,7 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
-    let options =
-        ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..ScanOptions::default() };
+    let options = ScanOptions { cancel: Some(already_cancelled()), ..ScanOptions::default() };
     let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
 
     assert!(run.interrupted);
@@ -788,8 +795,7 @@ async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
-    let options =
-        ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..ScanOptions::default() };
+    let options = ScanOptions { cancel: Some(already_cancelled()), ..ScanOptions::default() };
     let mut stream =
         table_stream(&source, "public.widgets", options, QueryOptions::default(), None, mode);
     let err = stream.next().await.expect("the stream yields once").expect_err("cancelled");
@@ -862,7 +868,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let trip = eager.blocks().nth(1).expect("the fixture has two blocks").end_offset;
 
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
     let options =
         ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
@@ -902,7 +908,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
         .unwrap_or_else(|| panic!("{label}: {second} has blocks"))
         .end_offset;
 
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
     let options =
         ScanOptions { chunk_size_bytes: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };

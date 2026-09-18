@@ -77,10 +77,11 @@ in order. Each lands its notes doc, its manual text and its register entries in
 the same change ([`../process.md`](../process.md), "The loop"); the rows say only
 what is delivered.
 
-- [ ] **14.1** Cancellation gains an awaitable form beside the polled flag, so a
+- [x] **14.1** Cancellation gains an awaitable form beside the polled flag, so a
   read in flight can be dropped rather than waited out (D16). No remote code;
   amends [`../design/decisions.md`](../design/decisions.md), "D26", which
   describes a polled flag.
+  [notes](../design/roadmap-P14.1-cancellation-notes.md)
 - [ ] **14.2** The **origin**: the pre-source probe that answers stored size,
   weak identity and leading magic bytes before any source is built, `cache::claim`
   consuming it instead of a `&Path`, and recognition told what it holds rather

@@ -57,8 +57,9 @@ pub use preamble::{
 pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
-    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
-    SCAN_LINE_DEFAULT_MAX_BYTES, Event, LargeObjectEnd, LargeObjectStart, Line, Row, ScanOptions, scan,
+    Cancellation, ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart,
+    SCAN_CHUNK_DEFAULT_SIZE_BYTES, SCAN_LINE_DEFAULT_MAX_BYTES, Event, LargeObjectEnd,
+    LargeObjectStart, Line, Row, ScanOptions, scan,
 };
 pub use statistics::{
     BlockGathered, BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics,
