@@ -44,7 +44,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bincode::error::{DecodeError, EncodeError};
 use serde::{Deserialize, Serialize};
@@ -104,16 +104,22 @@ impl SourceIdentity {
     }
 
     /// What the weak half of this identity says against `live`'s — the half
-    /// that warns rather than refuses (see the module docs).
+    /// that warns rather than refuses (see the module docs). **The answer
+    /// keeps what was compared**, so a caller refusing on it states what it
+    /// saw rather than only that it looked.
     fn weak_against(&self, live: &Self) -> WeakIdentity {
         let (
             SourceIdentity::LocalFile { mtime: cached, .. },
             SourceIdentity::LocalFile { mtime: live, .. },
         ) = (self, live);
-        match (cached, live) {
-            (None, _) | (_, None) => WeakIdentity::Absent,
-            (cached, live) if cached != live => WeakIdentity::Differs,
-            _ => WeakIdentity::Agrees,
+        // Back out of L1's on-disk `(seconds, nanoseconds)` at the boundary:
+        // what leaves this module is a `SystemTime`, which is what the trait
+        // answered and what an embedder formats.
+        let at = |m: &Option<(u64, u32)>| m.map(|(s, n)| UNIX_EPOCH + Duration::new(s, n));
+        match (at(cached), at(live)) {
+            (Some(cached), Some(live)) if cached == live => WeakIdentity::Agrees,
+            (Some(cached), Some(live)) => WeakIdentity::Differs { cached, live },
+            (cached, live) => WeakIdentity::Absent { cached, live },
         }
     }
 
@@ -143,29 +149,61 @@ impl SourceIdentity {
 /// refuses on two of them.** A source that offers no modification signal at
 /// all and a cache that recorded none agree on nothing: they are silent, and
 /// silence is exactly what a caller asking for a guarantee is refused on.
+///
+/// **Each state carries what was compared**, so the refusal built from it
+/// states the evidence and not only the verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeakIdentity {
     /// The cache's recorded modification signal is the source's.
     Agrees,
     /// They differ — advisory by default
-    /// ([`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`]).
-    Differs,
-    /// One side has no modification signal, so there is nothing to compare.
-    Absent,
+    /// ([`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`]) — with the
+    /// time the cache recorded and the one the live source now reports.
+    Differs { cached: SystemTime, live: SystemTime },
+    /// One side has no modification signal, so there is nothing to compare;
+    /// at least one of the two is `None`. Whatever the other side offered
+    /// travels all the same, so a refusal can name which one is silent.
+    Absent { cached: Option<SystemTime>, live: Option<SystemTime> },
 }
 
 impl WeakIdentity {
     /// Why [`StrictIdentity::time`] is not met, or `None` where it is — the
-    /// clause [`Error::StrictIdentityUnmet`] carries.
-    fn unmet(self) -> Option<&'static str> {
+    /// clause [`Error::StrictIdentityUnmet`] carries, naming the times it
+    /// compared.
+    fn unmet(self) -> Option<String> {
         match self {
             WeakIdentity::Agrees => None,
-            WeakIdentity::Differs => Some("its modification time has moved since"),
-            WeakIdentity::Absent => {
-                Some("neither it nor the source carries a modification time to compare")
-            }
+            WeakIdentity::Differs { cached, live } => Some(format!(
+                "its modification time has moved since — the cache recorded {}, the source now reports {}",
+                epoch_stamp(cached),
+                epoch_stamp(live)
+            )),
+            // The fourth pairing is not a state `weak_against` builds, and it
+            // falls in with `(None, None)` rather than being refuted here:
+            // this clause is a message, not the place to assert an invariant.
+            WeakIdentity::Absent { cached, live } => Some(match (cached, live) {
+                (Some(cached), None) => format!(
+                    "the source carries no modification time to compare with the {} the cache recorded",
+                    epoch_stamp(cached)
+                ),
+                (None, Some(live)) => format!(
+                    "the cache carries no modification time to compare with the source's {}",
+                    epoch_stamp(live)
+                ),
+                _ => "neither it nor the source carries a modification time to compare".to_string(),
+            }),
         }
     }
+}
+
+/// A modification time as a refusal states it: seconds and nanoseconds since
+/// the Unix epoch. That rather than a calendar date because nothing this
+/// crate links can render one, and the value is what `date -d @<n>` takes. A
+/// time before the epoch, which no source here has offered, reads as the
+/// epoch itself.
+fn epoch_stamp(t: SystemTime) -> String {
+    let since = t.duration_since(UNIX_EPOCH).unwrap_or_default();
+    format!("{}.{:09}", since.as_secs(), since.subsec_nanos())
 }
 
 /// Which weak identity signals a caller has asked to *bind*, and whether a
@@ -883,7 +921,7 @@ impl CacheMode {
                     }
                     // Reported rather than acted on: too weak to invalidate,
                     // and recomputed on every load (see the module docs).
-                    if weak == WeakIdentity::Differs {
+                    if matches!(weak, WeakIdentity::Differs { .. }) {
                         index.diagnostics.push(Diagnostic::cache_mtime_changed());
                     }
                     CacheLoad::Index(index)

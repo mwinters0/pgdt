@@ -343,7 +343,10 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
 
     match cache::load(&path, &source).await.unwrap() {
         CacheStatus::Valid { index: loaded, weak, .. } => {
-            assert_eq!(weak, WeakIdentity::Differs);
+            let WeakIdentity::Differs { cached, live } = weak else {
+                panic!("a moved mtime differs, got {weak:?}")
+            };
+            assert!(cached < live, "the comparison keeps both times it saw: {cached:?} {live:?}");
             // Diagnostics are recomputed on load rather than restored, and
             // `build_index`'s own are the same pure function of the same
             // spans, so the two agree without either being persisted.

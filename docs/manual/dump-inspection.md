@@ -192,8 +192,10 @@ pgdq query --source mydump.sql --table public.widgets --strict-identity=time
   below.
 
 The flag asks the same question of all three commands, so `info` stops too
-rather than reporting — the refusal names the cache and what failed, which is
-more than the diagnostic says. It does need a source to ask about: cache-only
+rather than reporting — the refusal names the cache, what failed and the two
+modification times it compared (seconds and nanoseconds since the Unix epoch,
+which `date -d @<seconds>` reads back), which is more than the diagnostic
+says. It does need a source to ask about: cache-only
 `info`, with no `--source`, is answering from the cache alone and there is no
 identity there to bind, so the flag is refused as a usage error.
 

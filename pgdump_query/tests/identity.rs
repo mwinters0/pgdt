@@ -249,15 +249,26 @@ async fn a_dump_replaced_by_rename_under_an_open_source_is_not_a_change() {
     assert!(run.index.blocks().next().is_some(), "it read the dump, not the replacement");
 }
 
+/// Seconds and nanoseconds since the Unix epoch, as
+/// `Error::StrictIdentityUnmet` spells a modification time — the one
+/// rendering the library can give, nothing it links carrying a calendar.
+fn epoch_stamp(t: SystemTime) -> String {
+    let since = t.duration_since(std::time::UNIX_EPOCH).unwrap();
+    format!("{}.{:09}", since.as_secs(), since.subsec_nanos())
+}
+
 /// `--strict-identity=time` promotes the advisory modification-time
 /// diagnostic to a refusal, and **absence is a failure under it**: a source
 /// that offers no modification time cannot give the guarantee that was asked
-/// for, and silence is what strict identity exists to refuse.
+/// for, and silence is what strict identity exists to refuse. Either way the
+/// clause names what it *saw* — the times compared, or which side is silent —
+/// so the refusal can be checked against the file without a second run.
 #[tokio::test]
 async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
+    let recorded = std::fs::metadata(&dump).unwrap().modified().unwrap();
     map_file(
         &source,
         &ScanOptions::default(),
@@ -269,6 +280,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
 
     let future = SystemTime::now() + Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
+    let moved = std::fs::metadata(&dump).unwrap().modified().unwrap();
 
     // Strict first: a run that reads the cache saves it again, recording the
     // mtime it now sees, so the advisory case would otherwise settle the very
@@ -283,6 +295,10 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         panic!("the strict refusal, got {err:?}")
     };
     assert!(unmet.contains("has moved since"), "it says which way it failed: {unmet}");
+    assert!(
+        unmet.contains(&epoch_stamp(recorded)) && unmet.contains(&epoch_stamp(moved)),
+        "it names the time the cache recorded and the one the source now reports: {unmet}"
+    );
 
     // The default reads it: the mtime is advisory and the map is reused.
     let source = LocalFileSource::open(&dump).unwrap();
@@ -321,6 +337,43 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         panic!("the strict refusal, got {err:?}")
     };
     assert!(unmet.contains("modification time to compare"), "it names the silence: {unmet}");
+    assert!(
+        unmet.contains("neither it nor the source"),
+        "with both sides silent it says so rather than blaming one: {unmet}"
+    );
+
+    // Silence on *one* side: a cache written from a source that had an mtime,
+    // read back through one that offers none. The clause says which side went
+    // quiet and names the time the other one has.
+    let (_dir, dump) = sandboxed();
+    let path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let recorded = std::fs::metadata(&dump).unwrap().modified().unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &CacheMode::enabled(&path),
+        &StatisticsRequest::NONE,
+    )
+    .await
+    .unwrap();
+    let silent = Shifting::silent(dump);
+    let err = map_file(
+        &silent,
+        &ScanOptions::default(),
+        &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false)),
+        &StatisticsRequest::NONE,
+    )
+    .await
+    .expect_err("a source that has gone silent cannot give the guarantee either");
+    let Error::StrictIdentityUnmet { unmet, .. } = &err else {
+        panic!("the strict refusal, got {err:?}")
+    };
+    assert!(
+        unmet.contains("the source carries no modification time")
+            && unmet.contains(&epoch_stamp(recorded)),
+        "it names the silent side and the time the other one kept: {unmet}"
+    );
 }
 
 /// `location` binds where a source was fetched from, and a local cache

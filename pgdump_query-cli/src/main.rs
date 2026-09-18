@@ -1684,7 +1684,7 @@ async fn main() -> Result<()> {
             // Reported rather than acted on: between runs the weak signal is
             // advisory unless a selection binds it
             // (`docs/design/decisions.md`, "D21").
-            if weak == WeakIdentity::Differs {
+            if matches!(weak, WeakIdentity::Differs { .. }) {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
             report(&index, total_size, compression, &envelope, detail, map, json)?;

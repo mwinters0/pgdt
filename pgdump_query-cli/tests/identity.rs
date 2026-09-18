@@ -50,6 +50,10 @@ fn info_refuses_a_moved_signal_under_strict_time_and_reports_without_it() {
     let said = stderr_of(&refused);
     assert!(said.contains("dump.sql.dqcache"), "it names the cache it refused: {said}");
     assert!(said.contains("modification time has moved"), "and why: {said}");
+    assert!(
+        said.contains("the cache recorded") && said.contains("the source now reports"),
+        "and what it saw, not only that it looked: {said}"
+    );
 
     // The default is unchanged: the same moved signal is reported.
     let reported = run_ok(&["info", "--source", dump]);
