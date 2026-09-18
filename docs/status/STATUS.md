@@ -377,20 +377,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`M112` condensed today's own dated entry to land under the 120-line cap.**
-  `history/2026-09-18.md` stood at 118 lines, and the `M112` section it is owed
-  as its notes would not fit. Rather than raise a cap — which no session may do
-  ([`../process.md`](../process.md), "Repointing") — the oracle section's
-  account of *why* the oracle stays bespoke was cut to a pointer, on the ground
-  that the same session had already filed the whole argument, both rejected
-  alternatives included, in
-  [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-  "D6", and that a standing document carries the conclusion and a citation, not
-  the reasoning. What is uncomfortable about it is that the process treats a
-  dated entry as write-once elsewhere — a repoint "never rewrites a dated
-  entry" — and this was a later session rewriting another's prose, even inside
-  the same day. Reconsidering means either saying that a day's file may be
-  condensed by the sessions writing it (and nothing changes), or that it may
-  not, in which case the cap needs a different answer: a second file for a busy
-  day, or a smaller ledger-row notes convention than a history section.

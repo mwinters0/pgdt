@@ -10,7 +10,8 @@ five hundred lines a day and the dated entries ran ten times their stated
 length. Both halves are mechanical, so both are here:
 
 * **The caps.** `decisions.md` at its line cap and seven lines an entry; a
-  dated entry, from the day the cap was adopted, at about a hundred lines;
+  dated entry, from the day the cap was adopted, at the length
+  `docs/status/history/README.md` states;
   `CLAUDE.md`, `docs/process.md` and each skill at the sizes that keep
   orientation cheap. Adding under a full one means striking; a session never
   raises a cap to fit what it is landing, and only the maintainer moves one.
@@ -50,9 +51,11 @@ REPO = Path(__file__).resolve().parent.parent
 #: The register's caps: `docs/process.md`, "The decision register".
 REGISTER_LINES = 550
 ENTRY_LINES = 7
-#: "About a hundred lines" (`docs/status/history/README.md`), read as this many,
-#: and held only for entries dated after the day the cap was adopted.
-HISTORY_LINES = 120
+#: The one statement of this is `docs/status/history/README.md`; this is that
+#: number, held only for entries dated after the day the cap was adopted. Raised
+#: from 120 on 2026-09-18 (`docs/status/history/2026-09-18.md`), by the
+#: maintainer, a day's file being open to its own sessions to condense.
+HISTORY_LINES = 200
 HISTORY_CAP_FROM = "2026-09-13"
 #: Orientation is what the read-triggers pull into context, so these are the
 #: caps that decide what a session costs before it has done anything.

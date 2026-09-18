@@ -149,13 +149,16 @@ two registers.
 future session should pick up mid-work, and a discovery that changed the plan.
 Not a changelog, not a diary; full rules in `docs/status/history/README.md`.
 
-- **An entry is short** — about a hundred lines of pointers and settled facts.
+- **An entry is short** — pointers and settled facts, under the cap its own
+  check asserts.
   Reasoning that must outlive the day goes beside its mechanism; evidence is a
   figure, a test, an invariant or a `runs/` artifact, cited from here.
 - **Write the end state, not the path to it**: no supposition-then-correction
   chains, no "resolved:"/"original note:" pairs, no in-progress status that has
   since resolved. One that has become actively misleading is corrected.
-- **An entry carries yesterday's truth** and is not maintained, so a pointer
+- **An entry carries yesterday's truth** once its day ends — until then the
+  sessions writing it may condense it, and a later session may not touch it at
+  all. It is not maintained, so a pointer
   that has outlived its target is not a defect; one that **never** resolved is a
   typo like any other. **Entries are deleted at each keystone**, once nothing
   outside `history/` cites them; a live doc needing a fact takes the fact.
@@ -229,7 +232,7 @@ the record has grown rather than by phase boundaries.
 
 - **A cap is a check.** Everything that accretes has a ceiling asserted by
   `scripts/repoint.py`: the register's line and entry caps, a dated entry at
-  about a hundred lines, `CLAUDE.md`, this document and each skill at the
+  its stated length, `CLAUDE.md`, this document and each skill at the
   sizes that keep orientation cheap, no measured number in the register or in
   `STATUS.md`'s capability table, no phase provenance in a source comment.
   Adding under a full cap means striking; a session never raises one to fit

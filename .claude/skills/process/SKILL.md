@@ -31,7 +31,7 @@ Every one of these is in the *same* change as the code, never a follow-up.
 4. **The phase spec left untouched** — progress never goes there; the spec
    changes only when a *decision* does, with the reasoning in a history entry.
 5. **A history entry** only for a pickup point or a discovery that changed the
-   plan, never routine progress, and **short**: about a hundred lines of pointers
+   plan, never routine progress, and **short**: under its cap, of pointers
    and settled facts, reasoning filed beside its mechanism, evidence cited.
 6. **An invariants-register entry** if the slice made a decision depend on
    external behaviour not already recorded there.

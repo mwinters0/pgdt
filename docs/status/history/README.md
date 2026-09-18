@@ -10,8 +10,12 @@ Dated notes, for two purposes only:
   invariant, or a `runs/` artifact, cited from there. The entry here points at
   those. It is not where reasoning lives.
 
-**A day's entry is short** — pointers and settled facts, about a hundred lines
-at most; `scripts/repoint.py` holds entries dated after 2026-09-13 to it. Reasoning that must outlive the day goes beside its mechanism.
+**A day's entry is short** — pointers and settled facts, **200 lines at most**.
+This is the cap's one statement; `scripts/repoint.py` asserts it, against
+entries dated after 2026-09-13, and everything else cites it rather than
+repeating the number. Reasoning that must outlive the day goes beside its
+mechanism, which is what keeps a day under the cap when several sessions write
+it.
 
 **Entries are deleted at each keystone** once nothing outside this directory
 cites them; git holds them. A live document that needs a fact from an entry
@@ -51,9 +55,19 @@ to narrate *how*.
 
 An entry says what was true on its date and is not maintained afterwards.
 Comparing it against today is what `git log` is for, and that is the property
-that makes writing one affordable: it is written in a single pass, as the day's
-settled facts, without classifying each sentence against a future that has not
-happened.
+that makes writing one affordable: it is written as the day's settled facts,
+without classifying each sentence against a future that has not happened.
+
+**"Afterwards" is the operative word: a day's file is open until its day ends.**
+While it is open, any session writing it may condense what is already there —
+cutting an argument to a pointer once it has been filed beside its mechanism,
+merging two sections that turned out to be one fact — and is expected to, since
+that is how several sessions' worth of a day fits the cap without anyone raising
+it. What is forbidden is a **later** session editing a **closed** day: that is
+the rule a repoint obeys ([`../../process.md`](../../process.md), "Repointing"),
+a keystone obeys (same, "What a keystone review must not do") and "Supersede
+rather than append" above states. Condensing today is writing it; rewriting
+yesterday is falsifying it.
 
 **So a citation in a dated entry is a statement about the day it was written,
 not a live pointer.** Its target may since have been renamed or deleted — a
