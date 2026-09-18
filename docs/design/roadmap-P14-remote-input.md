@@ -182,13 +182,21 @@ containing form of `supply` is the one a remote driver is written against. That
 is exactly the network tuning this phase has deferred, and the entry is owned by
 the phase that takes that up.
 
-**One fetch a stream is a floor, not a cost still looking for a remedy.** A
-stream's header is adjacent to its predecessor's padding, footer and index, so
-one read straddling that boundary answers all but the request that first touches
-it; and which request that is can be changed but not removed, because the
-distance to the next boundary is only knowable from the index just read and is
-not guessable. So no rearrangement of what the walk emits gets below one round
-trip a stream — only prediction would, and prediction is what was refuted above.
+**One fetch a stream is a floor on a file with no stride, not a cost still
+looking for a remedy.** A stream's header is adjacent to its predecessor's
+padding, footer and index, so one read straddling that boundary answers all but
+the request that first touches it; and which request that is can be changed but
+not removed, because the distance to the next boundary is knowable only from the
+index just read. So no rearrangement of what the walk emits gets below one round
+trip a stream, and 14.7 should take that fetch: every cold path that pays the
+walk goes on to read the whole file — `parse` scans to persist, a `query` with
+no cache scans too — so its round trips precede a transfer of the same order.
+Only prediction would beat the floor, which is why it is conditional on
+the paragraph above and not absolute: it is the *rejected* alternative's
+hypothetical producer — one padding its streams to a compressed boundary — that
+would break it, and such a file would be worth speculating on after all. The
+half of this that is measured rather than argued is that no such stride is
+present here.
 The deficiency is therefore open at the optimum for a driver that fetches what it
 is asked for, and what would beat it is not a better driver but the forward
 table build, which stops paying separately for the walk at all.
