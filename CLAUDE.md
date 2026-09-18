@@ -94,6 +94,8 @@ Run it after rewriting a heading.
 - **The library never replaces cache data automatically** — see
   `decisions.md`'s cache entry before touching a cache path.
 - **A build carrying `introspect` is never timed.**
+- **Find code with `graft`, not `grep`** — `graft ask "<q>" --source`;
+  [`.claude/skills/graft/SKILL.md`](.claude/skills/graft/SKILL.md) has the rest.
 - **Document what _is_, not what _was_**, inside `docs/status/history/` too. A
   fact is stated once, in one place, and cited everywhere else; a number is
   stated only in `measurements.md`. If something is worth keeping as history,
