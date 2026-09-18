@@ -629,9 +629,13 @@ fn an_interrupt_during_a_remote_read_is_answered_at_once_and_exits_by_signal() {
     let err = String::from_utf8_lossy(&out.stderr);
     // The words a *local* interrupt uses: the dropped read is the interrupt
     // arriving by another door, not a failure of its own
-    // (`docs/design/decisions.md`, "D26").
-    assert!(err.contains("interrupted at byte"), "{err}");
-    assert!(err.contains("holds the scan so far"), "{err}");
+    // (`docs/design/decisions.md`, "D26"). The stall is the prepass's own
+    // read, so this is the nothing-banked branch: no cache is written, so
+    // none is named, and the re-run starts rather than continues.
+    assert!(err.contains("interrupted at byte 0"), "{err}");
+    assert!(err.contains("nothing was scanned or written"), "{err}");
+    assert!(!err.contains(&cache), "no cache was written, so none is named: {err}");
+    assert!(!std::path::Path::new(&cache).exists(), "and none is on disk");
     assert!(err.contains(&oracle.url()), "{err}");
 }
 

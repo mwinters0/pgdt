@@ -1608,6 +1608,16 @@ async fn main() -> Result<()> {
                         "re-run `pgdq parse --source {origin}` with the same statistics flags to \
                          continue"
                     );
+                } else if run.index.scanned_through == 0 {
+                    // Nothing was banked, so there is no file to name and
+                    // nothing to continue from: the interrupt landed before
+                    // the first watermark, and the preamble prepass holds its
+                    // spans aside until they are whole, so no cache was
+                    // written (`docs/design/decisions.md`, "D26"). Naming one
+                    // here would send a reader to a file that may not exist,
+                    // and "continue" would promise a resume from byte 0.
+                    eprintln!("interrupted at byte 0 of {size} — nothing was scanned or written");
+                    eprintln!("re-run `pgdq parse --source {origin}` to scan from the start");
                 } else {
                     eprintln!(
                         "interrupted at byte {} of {size} — the cache at {} holds the scan so far",

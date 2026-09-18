@@ -61,6 +61,11 @@ interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.dqcac
 re-run `pgdq parse --source koji.dump` to continue
 ```
 
+An interrupt that arrives before the first banking says so instead — `nothing
+was scanned or written`, and the re-run it suggests starts from the beginning
+rather than continuing. No cache file is left behind in that case, so nothing
+is named.
+
 A clean stop loses whatever the scan has done since it last banked, which is
 the block it was reading plus any that finished in the moment before the
 signal. A **second** Ctrl-C exits immediately without waiting for the write,

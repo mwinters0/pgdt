@@ -43,12 +43,12 @@ code catching up to it.
   source cancels by failing" was the alternative; the error variant and the
   flag already say it between them, and a source that answers a cancellation
   any other way is served by the same predicate.
-- **A cancelled preamble prepass banks nothing but still saves.**
-  [`decisions.md`](decisions.md), "D26" refuses a half-read preamble, so the
-  run returns the map it started from — and saves it, so that `parse`'s "the
-  cache at … holds the scan so far" is true of a run that had no cache before.
-  The alternative, returning without saving, makes that sentence a lie on the
-  one path that can reach it with nothing on disk.
+- **A cancelled preamble prepass banks nothing and saves nothing.** The slice
+  landed the save, to keep `parse`'s "the cache at … holds the scan so far"
+  true of a run that had no cache before; `M121` reversed it, the sentence
+  being the slice's own wording and the save costing a cache describing zero
+  bytes that a later resume can refuse. The sentence gained a nothing-banked
+  branch instead.
 - **The evidence is a pair, not a single test.**
   `map_file::a_dropped_read_is_the_same_interrupt_as_the_flag` trips at the
   same offset as `a_cancelled_map_file_reports_it_and_banks_what_it_scanned`

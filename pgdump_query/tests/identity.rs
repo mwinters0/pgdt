@@ -13,6 +13,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -22,8 +23,9 @@ use pgdump_query::cache::{
     CacheMode, CacheStatus, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
 };
 use pgdump_query::{
-    ByteRangeSource, DiagnosticKind, Error, LocalFileSource, QueryOptions, Result, ScanOptions,
-    StatisticsRequest, cache, map_file, preamble_only, table_stream,
+    ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, DiagnosticKind, Error, LocalFileSource,
+    Parallelism, Partitioning, QueryOptions, Result, ScanOptions, StatisticsRequest, cache,
+    map_file, preamble_only, table_stream,
 };
 
 mod common;
@@ -32,8 +34,9 @@ use common::{edge_cases, sandboxed_edge_cases as sandboxed};
 /// A source whose identity moves under the run reading it: the first
 /// `observations` answers about `stored_size`/`modified` are the file's, and
 /// every one after that reports the file a second later. Reads are the real
-/// file's throughout, which is the point — the bytes a run has already
-/// returned are exactly what a changed identity condemns.
+/// file's unless [`Shifting::dropping`] asked otherwise, which is the point —
+/// the bytes a run has already returned are exactly what a changed identity
+/// condemns.
 struct Shifting {
     inner: LocalFileSource,
     observations: usize,
@@ -41,6 +44,11 @@ struct Shifting {
     /// Answer `None` for the modification time rather than a moving one — the
     /// source that cannot give the guarantee `StrictIdentity::time` asks for.
     silent: bool,
+    /// Where a read is dropped in flight instead of returning bytes, the way
+    /// a source whose wait is a request answers a cancellation
+    /// (`docs/design/decisions.md`, "D26"). `None` for a source that always
+    /// delivers, which is every other test here.
+    dropping: Option<(u64, Arc<Cancellation>)>,
 }
 
 impl Shifting {
@@ -50,11 +58,19 @@ impl Shifting {
             observations,
             seen: AtomicUsize::new(0),
             silent: false,
+            dropping: None,
         }
     }
 
     fn silent(path: PathBuf) -> Self {
         Self { silent: true, ..Self::new(path, usize::MAX) }
+    }
+
+    /// The same moving identity, over a source that answers a cancellation by
+    /// abandoning every read at or past `trip` — so the run ends through
+    /// `stream::cancelled_read` rather than through a polled check point.
+    fn dropping(path: PathBuf, observations: usize, trip: u64, cancel: Arc<Cancellation>) -> Self {
+        Self { dropping: Some((trip, cancel)), ..Self::new(path, observations) }
     }
 
     /// Whether this observation is past the point the identity moves. Counted
@@ -70,11 +86,35 @@ impl ByteRangeSource for Shifting {
         offset: u64,
         len: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        if let Some((trip, cancel)) = &self.dropping
+            && offset >= *trip
+        {
+            cancel.cancel();
+            return Box::pin(std::future::ready(Err(Error::ScanCancelled {
+                scanned_through: offset,
+            })));
+        }
         self.inner.read_range(offset, len)
     }
 
     fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
         self.inner.size()
+    }
+
+    /// The three the leader reads, forwarded so a scan through this wrapper
+    /// is cut exactly as it would be through the file itself — the default
+    /// `partitions` declines to advise, and a source that declines is never
+    /// split, so a dropped read would never reach a worker.
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+
+    fn partitions(&self, range: std::ops::Range<u64>) -> Partitioning {
+        self.inner.partitions(range)
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
     }
 
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
@@ -222,6 +262,59 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     let err = preamble_only(&shifting, &ScanOptions::default(), &CacheMode::enabled(&path))
         .await
         .expect_err("a preamble-only run over a complete cache is checked too");
+    assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
+}
+
+/// **A run ended by a dropped read is checked too.** The interrupt arriving
+/// by another door is still an interrupt (`stream::cancelled_read`), and the
+/// two arms that catch one leave `map_file` without passing the end-of-run
+/// check the polled path takes — so each asks the source itself. Under
+/// `--dqcache none` there is no save to inherit the question from, which is
+/// the case this pins; with a cache enabled the save asks it anyway, except
+/// in the prepass, which saves nothing at all
+/// (`map_file::a_dropped_read_inside_the_prepass_banks_and_writes_nothing`).
+///
+/// Both arms, because only one of them is reachable at a time: a read the
+/// mapping pass makes itself is caught at a check point of its own, so what
+/// unwinds out of it is a read the **leader** dispatched. That wants a source
+/// advising a partitioning, which is why the second half wraps one that
+/// forwards `partitions`.
+#[tokio::test]
+async fn a_run_ended_by_a_dropped_read_is_checked_too() {
+    let (_dir, dump) = sandboxed();
+
+    // Every read drops, so the interrupt lands on the prepass's first one.
+    let cancel = Arc::new(Cancellation::new());
+    let shifting = Shifting::dropping(dump, 1, 0, Arc::clone(&cancel));
+    let options = ScanOptions { cancel: Some(cancel), ..ScanOptions::default() };
+    let err = map_file(&shifting, &options, &CacheMode::DISABLED, &StatisticsRequest::NONE)
+        .await
+        .expect_err("a dropped prepass read still says the file moved");
+    assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
+
+    // And a read the leader dispatched, which unwinds out of the mapping pass
+    // rather than being caught inside it. One `COPY` block, the trip on its
+    // first data byte — which is the leader's own first read.
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("wide.sql");
+    let mut file = b"COPY public.t (a) FROM stdin;\n".to_vec();
+    let data_offset = file.len() as u64;
+    for i in 0..2000 {
+        file.extend_from_slice(format!("{i}\n").as_bytes());
+    }
+    file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &file).unwrap();
+    let cancel = Arc::new(Cancellation::new());
+    let shifting = Shifting::dropping(dump, 1, data_offset, Arc::clone(&cancel));
+    let options = ScanOptions {
+        chunk_size_bytes: 64,
+        cancel: Some(cancel),
+        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
+        ..ScanOptions::default()
+    };
+    let err = map_file(&shifting, &options, &CacheMode::DISABLED, &StatisticsRequest::NONE)
+        .await
+        .expect_err("a dropped region read still says the file moved");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
 }
 

@@ -717,9 +717,10 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
 
 /// **The interrupt guard.** A cancelled scan is not an error and not a lie: it
 /// reports `interrupted`, the index it returns stops at the last **spliced**
-/// watermark, and the cache on disk holds exactly that — every exit but an
-/// error saves unconditionally, so what is on disk is never behind what is in
-/// hand.
+/// watermark, and the cache on disk holds exactly that — every exit holding a
+/// watermark saves, so what is on disk is never behind what is in hand. (The
+/// one exit that holds none writes nothing at all:
+/// `a_dropped_read_inside_the_prepass_banks_and_writes_nothing`.)
 ///
 /// The flag trips one byte past the first block's end, with one-byte reads so
 /// that offset is a read boundary: the block's `CopyEnd` has been processed,
@@ -813,6 +814,45 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     assert!(!resumed.interrupted);
     assert_eq!(resumed.resumed_from, first_block_end);
     assert_matches_eager(&resumed.index, &eager, "resumed from a dropped read");
+}
+
+/// **A read dropped inside the preamble prepass banks nothing and writes
+/// nothing.** The prepass holds every span aside until it is whole
+/// (`docs/design/decisions.md`, "D26"), so the arm that catches its dropped
+/// read has an index describing zero bytes in hand; saving that would leave a
+/// cache claiming a size the file had at that instant, which a resume against
+/// a file still being written then refuses outright. The counterpart is
+/// `a_scan_cancelled_before_it_starts_maps_only_the_preamble`, where the
+/// prepass *completed* and the cache it wrote is a real resume point — the
+/// difference being whether there was anything to bank, not which provider
+/// raised the interrupt.
+#[tokio::test]
+async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
+    let (_dir, dump) = sandboxed();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::enabled(cache_path.clone());
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    // Every read drops, so the first one the prepass makes is the interrupt.
+    let cancel = Arc::new(Cancellation::new());
+    let dropping = DropsPast { inner: &source, trip: 0, cancel: Arc::clone(&cancel) };
+    let options = ScanOptions { cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+
+    let run = map_file(&dropping, &options, &mode, &StatisticsRequest::NONE)
+        .await
+        .expect("a dropped read is an interrupted run, not an error");
+    assert!(run.interrupted, "a dropped prepass read says so");
+    assert_eq!(run.index.scanned_through, 0, "nothing was banked");
+    assert!(run.index.metadata.is_none(), "and no half-read preamble came back");
+    assert!(!cache_path.exists(), "with nothing to bank, no cache is written at all");
+
+    // And the next run is a cold scan, not a resume onto an empty prefix.
+    let resumed =
+        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
+    assert!(!resumed.interrupted);
+    assert_eq!(resumed.resumed_from, 0);
+    assert_matches_eager(&resumed.index, &eager, "scanned cold after a dropped prepass read");
 }
 
 /// **A read dropped inside the back-fill is the back-fill's own interrupt.**

@@ -1114,8 +1114,16 @@ pub async fn map_file(
                 index.scanned_through = preamble_end;
                 cache.save(&watch, source, &index).await?;
             }
+            // **Nothing to bank, so nothing is written.** The prepass holds
+            // every span aside until it is whole, and this arm is reached
+            // only from a cold start, so a save here would write a map
+            // describing zero bytes — or strip an existing empty one of the
+            // identity diagnostics `carried` has already drained — and either
+            // can then refuse the resume it invited through
+            // `Error::CacheSourceMismatch`. The source is asked directly,
+            // there being no save left to ride ([`crate::cache::SourceWatch`]).
             Err(e) if cancelled_read(&e, scan_options) => {
-                cache.save(&watch, source, &index).await?;
+                watch.check(source).await?;
                 return Ok(interrupted_run(index, resumed_from, &account));
             }
             Err(e) => return Err(e),
@@ -1139,8 +1147,14 @@ pub async fn map_file(
         // The interrupt arriving by another door ([`cancelled_read`]). The
         // pass's own check points save before they return and an unwinding
         // read has not, so the bank happens here, at the watermark the map
-        // was already consistent at.
+        // was already consistent at. **The check is this arm's own**: an
+        // enabled save makes the same one before it writes, and a disabled
+        // cache makes none at all, so leaving it to the save is how a
+        // `--dqcache none` run reached the interrupt below unverified. Only a
+        // read the leader dispatched unwinds this far; every other one the
+        // pass makes is caught at a check point of its own.
         Err(e) if cancelled_read(&e, scan_options) => {
+            watch.check(source).await?;
             cache.save(&watch, source, &index).await?;
             return Ok(interrupted_run(index, resumed_from, &account));
         }
