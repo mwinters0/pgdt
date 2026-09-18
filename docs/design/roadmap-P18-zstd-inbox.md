@@ -143,12 +143,16 @@ table is held twice, and the walk runs before the budget does").
 
 **Fact.** The `.xz` addressing layer is still a frozen vendored read-only copy
 under `vendor/xz-seek/` rather than a published crate
-([`decisions.md`](decisions.md), "D14"). Publication was gated on two real
-consumers vetting its interface; the row-group statistics phase turned out to
-make no call into it, and P14 (remote input) turned out to need none either — an
-`XzSource` wraps a `ByteRangeSource`, so a remote source composes with no new
-signature. **The maintainer's condition is now explicit: publish once gzip and
-zstd are supported and all three codecs play nicely in the same codebase.**
+([`decisions.md`](decisions.md), "D14"). **The maintainer's condition is
+explicit: publish once gzip and zstd are supported and all three codecs play
+nicely in the same codebase.** A "two real consumers vetting the interface"
+gate was recorded here too, and that crate carries no such condition in its own
+record; the row-group statistics phase did turn out to make no call into it.
+
+P14 turned out to need a real change rather than none: a remote source does not
+compose for free, because that crate's positional trait is synchronous and ours
+is async, and the seam was fixed upstream rather than bridged here
+([`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D13").
 
 **Why this phase cares.** This phase is the last of the three. When its codec
 lands, the condition is satisfiable for the first time, so the publication call —

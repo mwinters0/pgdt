@@ -114,7 +114,7 @@ what is delivered.
   naming a source rather than a path (D4, D11, D18, D19).
 - [ ] **14.7** Remote `.xz`: the composition, the cold footer walk announced at
   open with its remedies, a `KD<k>` for it owned by the phase that tunes the
-  network, and the vetting `xz-seek`'s publication was gated on (D1, D13).
+  network, and the vetting this project owes that crate (D1, D13).
   **Waits on `xz-seek`'s `P9`** — the sans-IO walk, the resumable block decode
   and the sourceless handle — taken whole rather than slice by slice: we review
   the standing once every slice has landed, and re-vendor after the wrap and

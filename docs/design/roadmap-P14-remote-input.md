@@ -475,14 +475,22 @@ every byte this run read is suspect.
 
 ### D13 — `xz-seek` is vetted here, and the seam is fixed upstream rather than bridged here
 
-This phase is the crate's remaining consumer, publication having been gated on
-two real ones vetting the interface and the statistics phase turning out to make
-no call into it. **What that vetting covers narrows with D20**: after 14.8
-nothing here holds an `xz_seek::Reader` at all, so what this consumer exercises
-is the walk machine, `Layout` and the block handle, and the crate's own
-synchronous driver over them is left to its own tests. Keeping a path we had
-just found redundant, in order to exercise a convenience wrapper, would be the
-wrong way round; what is given up is stated rather than assumed.
+This phase is the crate's remaining consumer, the statistics phase having turned
+out to make no call into it.
+
+**The "two real consumers" gate was ours, not theirs.** That crate's record
+carries no such condition — not in its standing decisions, not in its register,
+not in its frozen handoff — which its maintainer's session reported on reading
+them. So nothing there is narrowed by what we stop calling, and the only written
+condition is our own maintainer's: publish once gzip and zstd are supported.
+
+**What this consumer exercises narrows with D20** all the same: after 14.8
+nothing here holds an `xz_seek::Reader`, so we vet the walk machine, `Layout`
+and the block handle. That driver keeps consumers of its own — their CLI, their
+differential sweep against `xz -dc`, and two of their figures — so what changes
+is that *our* review stops exercising it, which is worth stating rather than
+assuming. Keeping a path we had just found redundant in order to exercise a
+convenience wrapper would be the wrong way round.
 
 **The composition is not free, which 14.5 established by reading the code.**
 This entry said it was, on the strength of `XzSource` wrapping a
@@ -693,10 +701,11 @@ completion a call we make.
 **Locally the crate pulls and nothing is materialized**, which is what
 `CompressedSource` is for and which keeps the charge below a remote-only term.
 The cost is that the window-fed branch would have no local twin to disagree
-with, so a window-fed local path is asked of `xz-seek` **for tests alone** —
-the shape its own declining wrapper already sets, putting the same bytes through
-both branches so a divergence surfaces as the right disagreement rather than as
-two sources differing.
+with, so a local file's block is put through the window-fed path **in tests
+alone** — the shape that crate's own lending axis already takes, so a divergence
+surfaces as the right disagreement rather than as two sources differing. It
+needs nothing of them: `BlockTask::compressed_range()` and `Window::new` are
+public, and their own phase owes the same agreement as evidence.
 
 **The parallelism this does not take.** The streaming arm advises one partition
 because one reader sits behind a mutex (`pgdump_query/src/io.rs`), and per-reader
