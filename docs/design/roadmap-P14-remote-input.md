@@ -171,12 +171,30 @@ motivates the phase: the dumps that are actually shipped around arrive
 compressed, koji's included, and the warm case already works.
 
 The cold walk earns a **known deficiency** rather than a fix here. Its remedy is
-a **speculative** fetch at a guessed stream stride, verified by footer magic: the
+a **straddling window**: one read per stream, positioned backward from the
+pending request and sized to cover what the walk asks for next, which answers
+three of the walk's four per-stream requests and leaves one fetch a stream. The
 walk is a strictly sequential backward chain, so neither coalescing nor
 concurrency buys anything on its own
-([`../status/history/2026-09-18.md`](../status/history/2026-09-18.md)). That is
-exactly the network tuning this phase has deferred, and the entry is owned by the
-phase that takes that up.
+([`../status/history/2026-09-18.md`](../status/history/2026-09-18.md)), and the
+window is what `xz-seek`'s own synchronous driver already does — which is why the
+containing form of `supply` is the one a remote driver is written against. That
+is exactly the network tuning this phase has deferred, and the entry is owned by
+the phase that takes that up.
+
+*Rejected: a speculative fetch at a guessed stream stride, verified by footer
+magic.* This was the remedy named here until `xz-seek`'s `9.1` drove the walk's
+request sequence over the koji download and confirmed none of its guesses, at
+any depth or slack it tried, while costing an extra fetch per stream; the hit
+rate it moved was the noise it rode on. The file has no stride to have guessed,
+and the reason generalises past this file: a parallel `xz` chunks its *input*,
+so what a multistream producer holds constant is the uncompressed stream size —
+koji's download is uniform in it, which is what lets
+`scripts/generate_xz_input.py` take a stream-aligned prefix of a stated
+plaintext size — while the walk addresses compressed space, where that constant
+arrives divided by a ratio that varies with the content. A stride hypothesis is
+not approximately wrong there, it is the wrong kind of model. A producer padding
+each stream to a compressed boundary would have one, and we know of none.
 
 ### D2 — An **origin** answers the cheap questions before any source is constructed
 
@@ -542,8 +560,8 @@ that tunes the network with more than one backend to tune against:
   rather than being overridden by them.
 - **`MEMORY_UNPOOLED_BOUND`**, which this source is the first that could falsify,
   an in-flight HTTP body being held outside every pool this crate owns.
-- The **cold footer walk** of D1, whose remedy is a speculative fetch at a
-  guessed stream stride.
+- The **cold footer walk** of D1, whose remedy is the straddling window, and
+  whose residual cost is one fetch a stream.
 
 ### D14 — The remote source is part of the library's public surface
 
