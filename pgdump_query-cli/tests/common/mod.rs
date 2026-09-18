@@ -10,6 +10,13 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The oracle: a misbehaving HTTP origin server, in-process
+/// (`docs/design/roadmap-P14-remote-input.md`, "D6"). It sits here rather than
+/// in its own test file for the reason this module exists at all — the remote
+/// slices that follow each need it, and a `tests/*.rs` file cannot import
+/// another one.
+pub mod oracle;
+
 /// The built `pgdq` binary, ready to take arguments. Cargo hands us the exact
 /// path, so this never resolves through `PATH` and never runs a stale install.
 pub fn pgdq() -> Command {

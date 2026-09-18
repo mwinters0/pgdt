@@ -92,10 +92,11 @@ what is delivered.
   as a failure, and an abort that saves nothing and deletes nothing (D5,
   D10–D12). `location` is inert until 14.6 gives it an origin.
   [notes](../design/roadmap-P14.3-in-flight-identity-notes.md)
-- [ ] **14.4** The oracle: an HTTP server inside the test binary serving fixtures
+- [x] **14.4** The oracle: an HTTP server inside the test binary serving fixtures
   over loopback, with a knob per misbehaviour — range ignored, ETag changed
   mid-run, short read, mid-body failure, mid-scan 404 — and its own tests proving
   it misbehaves as asked (D6). No subject yet, deliberately.
+  [notes](../design/roadmap-P14.4-oracle-notes.md)
 - [ ] **14.5** The remote source over a plain dump, end to end:
   `parse`/`query`/`info --source https://…`, the `http` feature and `cmake`
   pinned, URL and `file://` handling with credentials and non-HTTP schemes
@@ -373,3 +374,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The oracle owns an HTTP server instead of depending on one.**
+  [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
+  "D6" describes the instrument as "a dev-dependency, deterministic, no
+  container, no `mise` tool"; 14.4 landed it as 455 lines of `std` (681 with
+  its rustdoc) in `pgdump_query-cli/tests/common/oracle.rs`, no dependency at
+  all. The
+  reasoning is in that slice's notes — the knobs are all protocol *violations*,
+  and a correct server library is built to prevent the exact thing they have to
+  emit — but the list D6 wrote reads as costs it was willing to pay rather than
+  as permission to pay none, and what a codebase writes itself versus depends on
+  is the maintainer's call. Reconsidering replaces the module; the twenty tests
+  in `tests/oracle.rs` assert against bytes on a socket and mostly stand either
+  way. It binds 14.5–14.7, which are all written against this surface.
