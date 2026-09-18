@@ -2903,11 +2903,11 @@ impl Origin {
     /// [`Origin::remote`] with the liveness deadline stated rather than taken
     /// from [`REMOTE_READ_TIMEOUT`].
     ///
-    /// It exists because a deadline nothing can produce is a deadline nothing
-    /// checks: the shipped value is minutes of wall clock to a test, so the
-    /// assertion that a stalled origin is abandoned and retried — rather than
-    /// waited out — is made through this
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D9").
+    /// **A knob the library offers and the CLI does not**: what a person at a
+    /// terminal must state is governed, and an embedder on a link this project
+    /// has never seen is not that person
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D9"). The stalled-origin
+    /// assertion is its first user rather than its reason.
     #[cfg(feature = "http")]
     pub fn remote_with_read_timeout(url: &url::Url, read_timeout: Duration) -> Result<Self> {
         let refuse = |why: &str| Error::SourceNotReadable {

@@ -114,6 +114,14 @@ what is delivered.
   precondition's own external behaviour, and corrects D18, which described a
   field the code does not have.
   [notes](../design/roadmap-P14.6-remote-identity-notes.md)
+- [ ] **14.9** A cancelled remote read becomes an interrupted run, not an error:
+  `map_forward` reads a cancel-flagged `ScanCancelled` from a read as the
+  interrupt arriving by another door, splices and saves at the last safe
+  watermark as a local stop at a block close does, and both providers return
+  `MapRun { interrupted: true }`; `main.rs`'s translating arm deletes itself
+  ([`../design/decisions.md`](../design/decisions.md), "D26"). Admitted after
+  spec time, so it takes the next free number, and ordered here rather than
+  last: it is upstream of what 14.7 composes and does not share 14.7's wait.
 - [ ] **14.7** Remote `.xz`: the composition, the cold footer walk announced at
   open with its remedies, a `KD<k>` for it owned by the phase that tunes the
   network, and the vetting this project owes that crate (D1, D13).
@@ -401,40 +409,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`Origin::remote_with_read_timeout` is public so that the client deadline can
-  be asserted.** `REMOTE_READ_TIMEOUT` is 30 s and the retry schedule around it
-  runs to three minutes, so a test at the shipped value cannot produce the
-  deadline; 14.5's row asks for it to be asserted rather than left
-  unproducible, and a second constructor is what makes the stalled origin
-  observable in a fifth of a second. The alternatives were a shipped value
-  chosen to be testable, or no assertion. Reconsidering means either dropping
-  the constructor and the assertion together, or accepting it as surface P6
-  inherits ([`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-  "D9" and "D14").
-
-- **`Error::CacheSourceMismatch` did not gain a field, and the phase spec's
-  "D18" was corrected instead.** That entry said the refusal's `path` would
-  generalize to the source's display form; the field is the **cache's** path
-  and always was (`pgdump_query/src/cache.rs`, `CacheMode::source_mismatch`,
-  reading it out of `CacheMode::Enabled`), so there was nothing there to
-  generalize. What the row wanted is still delivered — the CLI's
-  `naming_the_source` now puts the origin in front of this refusal as it
-  already did for the in-flight one, which matters because the remote cache
-  path is derived and "the cache at `mydump.dqcache`" does not say which
-  `mydump`. Reconsidering means carrying the source's name into the library
-  instead, which needs a name on `ByteRangeSource` that 14.3 deliberately did
-  not add ([`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-  "D18").
-
-- **A cancelled remote read ends the run as an error, not as an interrupted
-  scan.** The cancellation reaches the source as
-  `ByteRangeSource::hint_cancellation`, announced beside the other hints, and a
-  dropped request comes back as `Error::ScanCancelled`; `pgdq parse` translates
-  that into the interrupted report and a 128+signal exit, so the user sees what
-  a local Ctrl-C shows. What it is *not* is `MapStop::Interrupted`, so the run
-  makes no final save — the cache holds the scan to its last throttled one. The
-  alternative teaches every read loop to read a cancelled read as a graceful
-  stop, which is a rework of tested core paths an unattended session should not
-  make on a judgement call ([`../process.md`](../process.md), "Working
-  unattended"). Reconsidering moves the translation from the CLI into the loops
-  and gives a remote `parse` the same final save a local one gets.

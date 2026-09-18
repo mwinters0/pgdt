@@ -180,8 +180,9 @@ A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; 
 and back-fill are the drivers with a partial result to keep. The preamble scan ignores the flag: a
 stop there is indistinguishable from reaching the first `COPY` header and would cache as complete.
 `Cancellation` carries a signal beside the polled bit, so a reader waiting on a request rather than
-a `pread` drops it instead of polling past a retry schedule; polled call sites are unchanged, and
-the tests pin the given-up future's drop. Rejected: polling alone, which bounds a Ctrl-C by retries.
+a `pread` drops it instead of polling past a retry schedule; the tests pin the given-up future's
+drop. **The shape follows the run, not the provider**: one with nothing to bank errors, one that
+persists returns an interrupted run. Rejected: polling alone, which bounds a Ctrl-C by retries.
 
 ### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with

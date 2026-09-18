@@ -287,7 +287,10 @@ const FIRST_READ: usize = 2;
 async fn a_stalled_request_is_abandoned_and_retried_rather_than_waited_out() {
     // The shipped read timeout is minutes of wall clock to a test, so the
     // deadline is asserted through a stated one — the same setting, valued
-    // where it can be produced.
+    // where it can be produced. **Not `start_paused`**: the oracle is a
+    // blocking server on real time, so a virtual-time client sees every real
+    // server delay as infinite and the retry this needs to succeed would race
+    // the crate's three-minute deadline.
     let oracle = Oracle::serving(dump_bytes()).stalling_request(FIRST_READ, STALL).start();
     let origin = Origin::remote_with_read_timeout(&oracle.url().parse().unwrap(), ms(150)).unwrap();
     let source = match open(&origin, KnownCompression::Unknown).await.unwrap() {

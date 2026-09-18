@@ -67,9 +67,12 @@ in the same change, and the manual gains
   library raises `SourceChangedWhileRead` from inside the save, where the only
   name in hand is the *cache*'s; `main.rs`'s `naming_the_source` puts the
   `Origin` the user typed in front of it, which is the same division
-  `cache_written_for_another_file` already uses. 14.6 generalizes
-  `CacheSourceMismatch`'s `path` to a source's display form and may fold this
-  in; nothing was added to `ByteRangeSource` to pre-empt it.
+  `cache_written_for_another_file` already uses. Nothing was added to
+  `ByteRangeSource` to pre-empt it. *The expectation that 14.6 would generalize
+  `CacheSourceMismatch`'s `path` to a source's display form was false*: that
+  field is the cache's path, so 14.6 put the same division in front of that
+  refusal too ([`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
+  "D18").
 - **The per-read `fstat` rejection stays in the phase spec.**
   [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D11" holds it;
   the register is two lines under its cap and D21 carries the conclusion, so the

@@ -433,10 +433,15 @@ change is a manifest line.
   errors. Changing it is tuning.
 - **`http1_only` is left true**, on the crate's own measurement.
 
-**None of these becomes a flag.** [`roadmap.md`](roadmap.md), "Two tunables fit
-pgdq to hardware" governs what a person must state; a timeout knob is scope here,
-and the phase that tunes the network is where one would be justified by a reading
-rather than by a preference.
+**None of these becomes a flag, and the line is drawn at the CLI rather than at
+the library.** [`roadmap.md`](roadmap.md), "Two tunables fit pgdq to hardware"
+governs what a person at a terminal must state; a timeout knob is out of scope
+there, and the phase that tunes the network is where one would be justified by a
+reading rather than by a preference. **An embedder may state the read timeout**,
+through a constructor beside the URL one — the same shape D14 gives the rest of
+this surface, and the read timeout is the only one of the four settings that is
+ours to offer. Publishing `REMOTE_READ_TIMEOUT` while offering no way to state
+another is the position that would need defending.
 
 ### D10 — A source that changes under an in-flight read is an error, on every provider
 
@@ -595,8 +600,10 @@ dispatching entry point over the origin sits above both.
 is scheduled after this one precisely because it commits to the I/O layer beneath
 it ([`roadmap.md`](roadmap.md), "P6 — Embeddable engine story"); an embedder who
 can reach a remote dump only by shelling out to `pgdq` has been handed half a
-library. The cost is that this phase commits to a surface P6 will live with,
-which is the ordinary price of going first.
+library. The cost is that this phase fixes the **shape** P6 builds on — those
+four items — which is the ordinary price of going first. It is not a stability
+promise about the items beneath them: pre-1.0 this project makes none, so "P6
+would inherit it" is no argument against adding one.
 
 ### D15 — A network failure is an error, and the save throttle is what makes it tolerable
 
@@ -712,6 +719,18 @@ recorded
 ([`roadmap-P14.3-in-flight-identity-notes.md`](roadmap-P14.3-in-flight-identity-notes.md),
 "Negative results"). Nothing was added to `ByteRangeSource` to carry a name into
 the library.
+
+*Rejected, on review: carrying the name in the library after all.* `CacheMode::resolve`
+takes the `&Origin`, so `CacheMode::Enabled` could hold its display form and the
+refusal could name the source for every caller without `ByteRangeSource` learning
+anything — the cost of the entry's framing being stale. It is still refused: the
+name is wanted by whoever renders the error **to a person**, and every library
+caller reached the scan through an `Origin` it built and still holds, so this
+buys an embedder what it has. The price would be a cache type carrying a source
+fact, `None` on the `CacheMode::enabled` construction path. What the review
+affirmed is narrower than "the CLI is good enough" — the derived cache path makes
+that clause **load-bearing** where it was a nicety, since "the cache at
+`mydump.dqcache`" no longer implies which `mydump` was asked for.
 
 ### D19 — Origin is a remote concept; a local source records none
 
