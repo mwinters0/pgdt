@@ -31,7 +31,7 @@ async fn drain(
 ) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::Disabled);
+        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
         rows.extend(rows_of(&batch));
@@ -150,7 +150,7 @@ async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
             ..Default::default()
         },
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
     stream.comparison_notes().iter().map(|n| n.message()).collect()
@@ -631,7 +631,7 @@ async fn a_nested_column_announces_each_diverging_position() {
             ..Default::default()
         },
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
     let notes = stream.comparison_notes();
@@ -719,7 +719,7 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
             ScanOptions::default(),
             options,
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         )
     };
     for op in [PredicateOp::Lt, PredicateOp::Ge, PredicateOp::Eq, PredicateOp::Ne] {
@@ -763,7 +763,7 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
         ScanOptions::default(),
         options,
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let batch = stream.next().await.unwrap().unwrap();
     assert_eq!(rows_of(&batch), [[Some("1".to_string())]]);
@@ -942,7 +942,7 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
                 ..Default::default()
             },
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         while stream.next().await.transpose().unwrap().is_some() {}
         let notes = stream.comparison_notes();
@@ -1011,7 +1011,7 @@ async fn a_collated_column_is_judged_by_its_clause() {
                 ..Default::default()
             },
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         while stream.next().await.transpose().unwrap().is_some() {}
         let notes = stream.comparison_notes();
@@ -1071,7 +1071,7 @@ async fn an_agreeing_comparison_reports_nothing() {
             ..Default::default()
         },
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
     assert!(stream.comparison_notes().is_empty());
@@ -1094,7 +1094,7 @@ async fn a_resume_token_does_not_cross_two_ordering_operators() {
         ScanOptions::default(),
         options(PredicateOp::Gt),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     stream.next().await.transpose().unwrap();
     let token = stream.resume_token();
@@ -1105,7 +1105,7 @@ async fn a_resume_token_does_not_cross_two_ordering_operators() {
         ScanOptions::default(),
         options(PredicateOp::Ge),
         Some(token),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let err = resumed.next().await.unwrap().unwrap_err();
     assert!(matches!(err, Error::ResumeQueryMismatch), "{err:?}");
@@ -1202,7 +1202,7 @@ async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
                 ..Default::default()
             },
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         while stream.next().await.transpose().unwrap().is_some() {}
         stream.comparison_notes()
@@ -1235,7 +1235,7 @@ async fn a_column_with_no_registered_comparison_announces_its_equality() {
             ..Default::default()
         },
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
     let notes = stream.comparison_notes();

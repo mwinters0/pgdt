@@ -10,7 +10,10 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use pgdump_query::cache::{CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape};
+use pgdump_query::cache::{
+    CacheClaim, CacheEnvelope, CacheMode, CacheStatus, CompressionShape, StrictIdentity,
+    WeakIdentity,
+};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
@@ -485,6 +488,71 @@ fn parse_memory(text: &str) -> std::result::Result<u64, String> {
     }
 }
 
+/// Which weak identity signals a command asks to *bind*, shared by the two
+/// commands that read a dump against a cache
+/// (`docs/design/decisions.md`, "D21").
+#[derive(Args)]
+struct IdentityArgs {
+    /// Which weak signs of a source's identity must hold, as a comma-separated
+    /// selection of `time`, `location` and `none`; the flag alone is
+    /// `time,location`. Left unstated, they are advisory: a dump that was
+    /// moved, copied or touched since it was parsed is read with a warning,
+    /// because data moves and none of these signals proves the bytes changed.
+    /// `time` binds the modification time, so a cache written against another
+    /// one — or a source that offers none at all — stops the run instead.
+    /// `location` binds where a source was fetched from, which a local file
+    /// does not have, so it binds nothing yet.
+    ///
+    /// **A source that changes while it is being read is an error whatever
+    /// this says**, because bytes moving underneath a read that has already
+    /// returned some of them cannot produce a right answer; `none` is the only
+    /// way to turn that into a warning, and it turns off everything else too.
+    #[arg(
+        long,
+        value_name = "TERMS",
+        require_equals = true,
+        num_args = 0..=1,
+        default_missing_value = "time,location",
+        value_parser = parse_strict_identity
+    )]
+    strict_identity: Option<StrictIdentity>,
+}
+
+impl IdentityArgs {
+    /// What the library is told, which is the default where nothing was
+    /// stated.
+    fn resolve(&self) -> StrictIdentity {
+        self.strict_identity.unwrap_or_default()
+    }
+}
+
+/// A `--strict-identity` selection. `none` is exclusive: it turns every term
+/// off, the in-flight check included, so naming it beside another term is a
+/// contradiction rather than an override.
+fn parse_strict_identity(text: &str) -> std::result::Result<StrictIdentity, String> {
+    let mut time = false;
+    let mut location = false;
+    let mut none = false;
+    for term in text.split(',') {
+        match term.trim() {
+            "time" => time = true,
+            "location" => location = true,
+            "none" => none = true,
+            "" => return Err("an empty term; write `time`, `location` or `none`".into()),
+            other => {
+                return Err(format!("`{other}` is not one of `time`, `location` and `none`"));
+            }
+        }
+    }
+    match (none, time || location) {
+        (true, true) => {
+            Err("`none` turns every term off, so it cannot be combined with one".into())
+        }
+        (true, false) => Ok(StrictIdentity::NONE),
+        (false, _) => Ok(StrictIdentity::binding(time, location)),
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Scan a dump file and build the structure cache — the only command
@@ -602,6 +670,8 @@ enum Command {
             conflicts_with_all = ["preamble_only", "statistics_group_size"]
         )]
         statistics_max_rows: Option<u64>,
+        #[command(flatten)]
+        identity: IdentityArgs,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -773,6 +843,8 @@ enum Command {
         /// find one in data left unread.
         #[arg(long, value_name = "USE", value_enum, default_value_t)]
         statistics: QueryStatistics,
+        #[command(flatten)]
+        identity: IdentityArgs,
         #[command(flatten)]
         parallel: ParallelArgs,
     },
@@ -1173,6 +1245,18 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
     })
 }
 
+/// **Name the source on the one refusal that is about it.** The library
+/// detects a source moving underneath a run wherever the check is cheapest
+/// and has no name for what it was reading; the user typed one, and their
+/// next move is either to re-run against a settled file or to ask what is
+/// rewriting it (`docs/design/decisions.md`, "D20").
+fn naming_the_source(err: pgdump_query::Error, source: &Origin) -> anyhow::Error {
+    if matches!(err, pgdump_query::Error::SourceChangedWhileRead { .. }) {
+        return anyhow::anyhow!("{source}: {err}");
+    }
+    err.into()
+}
+
 /// Add [`quoted_name_note`] to the one library refusal that can carry it —
 /// the failure is loud either way; the note adds *why* the name was not
 /// found.
@@ -1425,6 +1509,7 @@ async fn main() -> Result<()> {
             statistics_group_size,
             statistics_min_rows,
             statistics_max_rows,
+            identity,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
@@ -1437,7 +1522,8 @@ async fn main() -> Result<()> {
             // `parse` scans to persist (`docs/design/decisions.md`, "D61").
             // Reject `--dqcache none` up front, before paying for a scan we
             // won't be allowed to persist.
-            let mode = CacheMode::resolve(&file, dqcache.as_deref());
+            let mode = CacheMode::resolve(&file, dqcache.as_deref())
+                .with_strict_identity(identity.resolve());
             let path = mode
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
@@ -1455,7 +1541,9 @@ async fn main() -> Result<()> {
             parallel.announce();
             if preamble_only_flag {
                 let (metadata, diagnostics) =
-                    preamble_only(source.as_ref(), &scan_options(read, &parallel), &mode).await?;
+                    preamble_only(source.as_ref(), &scan_options(read, &parallel), &mode)
+                        .await
+                        .map_err(|e| naming_the_source(e, &origin))?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -1467,8 +1555,9 @@ async fn main() -> Result<()> {
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
-            let run =
-                pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics).await?;
+            let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)
+                .await
+                .map_err(|e| naming_the_source(e, &origin))?;
             introspect::statistics_returned(&run.statistics);
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both
@@ -1563,18 +1652,18 @@ async fn main() -> Result<()> {
                 }
             };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
-            let (mut index, mtime_changed, total_size, compression, envelope) = match status {
-                CacheStatus::Valid { index, mtime_changed, total_size, compression, envelope }
-                | CacheStatus::Incomplete {
-                    index,
-                    mtime_changed,
-                    total_size,
-                    compression,
-                    envelope,
-                } => (index, mtime_changed, total_size, compression, envelope),
+            let (mut index, weak, total_size, compression, envelope) = match status {
+                CacheStatus::Valid { index, weak, total_size, compression, envelope }
+                | CacheStatus::Incomplete { index, weak, total_size, compression, envelope } => {
+                    (index, weak, total_size, compression, envelope)
+                }
                 unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
             };
-            if mtime_changed {
+            // **`info` reports rather than refuses**, so it has no
+            // `--strict-identity` of its own: it never scans, so there is no
+            // in-flight window, and its whole job is to say what the cache
+            // holds — which includes saying that the modification time moved.
+            if weak == WeakIdentity::Differs {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
             report(&index, total_size, compression, &envelope, detail, map, json)?;
@@ -1592,10 +1681,12 @@ async fn main() -> Result<()> {
             chunk_size,
             max_line_bytes,
             statistics,
+            identity,
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
-            let mode = CacheMode::resolve(&file, dqcache.as_deref());
+            let mode = CacheMode::resolve(&file, dqcache.as_deref())
+                .with_strict_identity(identity.resolve());
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
@@ -1627,6 +1718,14 @@ async fn main() -> Result<()> {
             let source = open_for_scan(&origin, &mode).await?;
             let parallel = stated.resolve(source.as_ref());
             parallel.announce();
+            // Both refusals a query can raise that want more than the
+            // library's own words: one adds a note, the other a name.
+            let report = |err: pgdump_query::Error| match err {
+                pgdump_query::Error::SourceChangedWhileRead { .. } => {
+                    naming_the_source(err, &origin)
+                }
+                other => name_taken_verbatim(other),
+            };
             let mut header_printed = false;
             let mut any_batch = false;
             let mut rows = 0u64;
@@ -1659,7 +1758,7 @@ async fn main() -> Result<()> {
                 mode,
             )
             .await
-            .map_err(name_taken_verbatim)?;
+            .map_err(&report)?;
             // Known from the plan alone, before any block is read — unlike
             // `announce_comparisons` below, which waits on the first
             // resolved schema.
@@ -1775,7 +1874,7 @@ async fn main() -> Result<()> {
             // held now is the earliest error in the file. Raised after the
             // rows before it have printed.
             if let Some((_, err)) = failed {
-                return Err(name_taken_verbatim(err));
+                return Err(report(err));
             }
             // A query that matched a block but selected no rows still
             // resolved a schema, so the announcement is owed either way.
@@ -1826,8 +1925,8 @@ enum Opened {
 /// comparison itself stays in `cache::claim` (D20).
 async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
     let claimed_by = match cache {
-        CacheMode::Enabled(path) => Some(path.as_path()),
-        CacheMode::Disabled | CacheMode::Offline(_) => None,
+        CacheMode::Enabled { path, .. } => Some(path.as_path()),
+        CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
     };
     let known = match claimed_by {
         Some(path) => match pgdump_query::cache::claim(path, origin).await? {
@@ -2703,6 +2802,64 @@ mod tests {
     use arrow::datatypes::{Field, Fields};
     use std::sync::Arc;
 
+    /// The `--strict-identity` grammar, both ways: what a selection binds, and
+    /// that `none` is exclusive rather than an override — naming it beside a
+    /// term is a contradiction, and a contradiction is refused rather than
+    /// resolved (`docs/design/decisions.md`, "D60" is the precedent for
+    /// refusing at the flag).
+    #[test]
+    fn the_strict_identity_selection_is_read_and_its_contradictions_refused() {
+        let binds = |text: &str| parse_strict_identity(text).unwrap();
+        assert_eq!(binds("time"), StrictIdentity::binding(true, false));
+        assert_eq!(binds("location"), StrictIdentity::binding(false, true));
+        assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
+        assert_eq!(binds("location, time"), StrictIdentity::binding(true, true));
+        assert_eq!(binds("none"), StrictIdentity::NONE);
+        // The in-flight check is on under every selection but `none`.
+        assert!(binds("time").in_flight() && binds("location").in_flight());
+        assert!(!binds("none").in_flight());
+        // What the bare flag means, read off the value clap substitutes.
+        assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
+
+        assert!(parse_strict_identity("none,time").is_err(), "`none` is exclusive");
+        assert!(parse_strict_identity("path").is_err(), "an unknown term names the three");
+        assert!(parse_strict_identity("time,").is_err(), "an empty term is not silence");
+        assert!(parse_strict_identity("").is_err());
+    }
+
+    /// **The source's name is the CLI's to add.** The library detects a
+    /// source moving underneath a run wherever the check is cheapest and has
+    /// no name for what it was reading; every other error keeps its own
+    /// words, so the mapping is one arm and a fall-through.
+    #[test]
+    fn only_the_in_flight_refusal_is_given_the_sources_name() {
+        let origin = Origin::local("/tmp/koji.dump");
+        let moved = pgdump_query::Error::SourceChangedWhileRead {
+            differences: "its modification time moved".into(),
+        };
+        let said = naming_the_source(moved, &origin).to_string();
+        assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
+        assert!(said.contains("while it was being read"), "{said}");
+
+        let other = pgdump_query::Error::CacheDisabled { operation: "parse" };
+        let verbatim = other.to_string();
+        assert_eq!(naming_the_source(other, &origin).to_string(), verbatim);
+    }
+
+    /// The bare flag is `time,location`, stated once — in the attribute — and
+    /// read back here so the doc comment above it cannot drift from it.
+    #[test]
+    fn the_bare_strict_identity_flag_binds_both_terms() {
+        let cli = Cli::try_parse_from(["pgdq", "parse", "--source", "d.sql", "--strict-identity"])
+            .expect("the flag takes no value");
+        let Command::Parse { identity, .. } = cli.command else { panic!("parse") };
+        assert_eq!(identity.resolve(), StrictIdentity::binding(true, true));
+
+        let cli = Cli::try_parse_from(["pgdq", "parse", "--source", "d.sql"]).unwrap();
+        let Command::Parse { identity, .. } = cli.command else { panic!("parse") };
+        assert_eq!(identity.resolve(), StrictIdentity::ADVISORY);
+    }
+
     /// Every numeric flag on every command, classified — the check behind
     /// `docs/design/roadmap.md`, "Two tunables fit pgdq to hardware: memory and
     /// parallelism".
@@ -2741,6 +2898,7 @@ mod tests {
         "DQCACHE",
         "FILTER",
         "SCHEMA_MODE",
+        "TERMS",
     ];
 
     /// The classification the two-tunable rule is checked against. Adding a

@@ -51,6 +51,33 @@ pub enum Error {
         path.display()
     )]
     CacheSourceMismatch { path: PathBuf, cached_stored_size: u64, live_stored_size: u64 },
+    /// The source changed while this run was reading it, so every byte the
+    /// run has already read is suspect and a map or row set built from them
+    /// could mix two versions of the file. Raised by
+    /// [`crate::cache::SourceWatch`] — at a cache save and once when the run
+    /// finishes — and an abort rather than a diagnostic on every provider,
+    /// `crate::cache::StrictIdentity::NONE` being the only opt-out.
+    ///
+    /// **Nothing is saved and nothing is removed**: the check says when the
+    /// change was *detected*, never when it happened, so this run's partial
+    /// map and statistics are dropped, and the cache already on disk — which
+    /// describes the file as it was — is left exactly as it is
+    /// (`docs/design/decisions.md`, "D20").
+    #[error(
+        "the dump changed while it was being read — {differences} — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or pass `--strict-identity=none` to read it anyway"
+    )]
+    SourceChangedWhileRead { differences: String },
+    /// A weak identity signal the caller asked to *bind* does not hold, or
+    /// cannot be had at all. Raised by `crate::cache::CacheMode::load` under
+    /// `crate::cache::StrictIdentity::time`, where the advisory
+    /// `crate::diagnostic::DiagnosticKind::CacheMtimeChanged` would otherwise
+    /// be. Absence is a failure under a selected term: silence is what strict
+    /// identity exists to refuse.
+    #[error(
+        "the cache at {} cannot be trusted under `--strict-identity=time`: {unmet} — drop the flag to treat the modification time as advisory, or parse again",
+        path.display()
+    )]
+    StrictIdentityUnmet { path: PathBuf, unmet: &'static str },
     /// A block re-read for the statistics it lacks did not end where the
     /// map records it ending, so the source was rewritten at the same stored
     /// size — which the cache's identity check cannot see

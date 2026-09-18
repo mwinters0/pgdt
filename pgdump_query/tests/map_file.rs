@@ -75,7 +75,7 @@ async fn a_cold_map_file_matches_build_index() {
             let dump = dir.path().join("dump.sql");
             std::fs::copy(&fixture, &dump).unwrap();
             let source = LocalFileSource::open(&dump).unwrap();
-            let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+            let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
             let run = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
                 .await
@@ -125,7 +125,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                     let label =
                         format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");
                     let mode =
-                        CacheMode::Enabled(dir.path().join(format!("{chunk_size}-{jobs}.dqcache")));
+                        CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.dqcache")));
                     let options = ScanOptions {
                         chunk_size_bytes: chunk_size,
                         parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
@@ -150,7 +150,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let size = source.size().await.unwrap();
-    let mode = CacheMode::Enabled(cache_path.clone());
+    let mode = CacheMode::enabled(cache_path.clone());
 
     // A cold query stops once `widgets` is settled, well short of EOF.
     let mut stream = table_stream(
@@ -227,7 +227,7 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     let dump = block_rich(dir.path(), 40);
     let source = LocalFileSource::open(&dump).unwrap();
     let size = source.size().await.unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let mut stream = table_stream(
         &source,
@@ -266,7 +266,7 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
 async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     let (_dir, dump) = sandboxed();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
     let CacheLoad::Index(preamble_cache) = mode.load(&source).await.unwrap() else {
@@ -292,7 +292,7 @@ async fn a_complete_cache_is_reported_without_rescanning() {
     let (_dir, dump) = sandboxed();
     let source = LocalFileSource::open(&dump).unwrap();
     let size = source.size().await.unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let first = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
         .await
@@ -370,7 +370,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let size = source.size().await.unwrap();
-    let mode = CacheMode::Enabled(cache_path.clone());
+    let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
@@ -417,7 +417,7 @@ async fn a_full_scan_recovers_every_databases_ddl() {
         std::fs::write(&dump, format!("{content}{}", content.replace("pgdq_fixture", "pgdq_2")))
             .unwrap();
         let source = LocalFileSource::open(&dump).unwrap();
-        let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
         let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE)
             .await
@@ -515,7 +515,7 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let dump = dir.path().join("dump.sql");
     std::fs::write(&dump, &file).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: &source, trip: data_offset, cancel: Arc::clone(&cancel) };
@@ -634,7 +634,7 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
     let dump = dir.path().join("dump.sql");
     std::fs::write(&dump, &file).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Disabled;
+    let mode = CacheMode::DISABLED;
 
     let failing = FailsOutOfOrder { inner: &source, fail_at: data_offset };
     let options = ScanOptions {
@@ -671,7 +671,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let size = source.size().await.unwrap();
-    let mode = CacheMode::Enabled(cache_path.clone());
+    let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
@@ -718,7 +718,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache_path.clone());
+    let mode = CacheMode::enabled(cache_path.clone());
     let bare =
         map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::NONE).await.unwrap();
     let blocks = bare.index.blocks().count();
@@ -749,7 +749,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert!(!resumed.interrupted);
     assert_eq!((resumed.lacking_statistics, resumed.backfilled), (blocks - 1, blocks - 1));
     let straight =
-        map_file(&source, &ScanOptions::default(), &CacheMode::Disabled, &StatisticsRequest::ALL)
+        map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &StatisticsRequest::ALL)
             .await
             .unwrap();
     assert_eq!(resumed.index.spans, straight.index.spans);
@@ -771,7 +771,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let (_dir, dump) = sandboxed();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let options = ScanOptions { cancel: Some(already_cancelled()), ..ScanOptions::default() };
     let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE).await.unwrap();
@@ -799,7 +799,7 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
 async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
     let (_dir, dump) = sandboxed();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let options = ScanOptions { cancel: Some(already_cancelled()), ..ScanOptions::default() };
     let mut stream =
@@ -869,7 +869,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     )
     .unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let trip = eager.blocks().nth(1).expect("the fixture has two blocks").end_offset;
@@ -908,7 +908,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 /// so the boundary has been crossed exactly twice when the cache is banked.
 async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let source = LocalFileSource::open(dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(dump));
+    let mode = CacheMode::enabled(cache::colocated_path(dump));
 
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let trip = eager
@@ -999,7 +999,7 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
         let index = map_file(
             &source,
             &ScanOptions::default(),
-            &CacheMode::Disabled,
+            &CacheMode::DISABLED,
             &StatisticsRequest::NONE,
         )
         .await

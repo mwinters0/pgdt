@@ -33,7 +33,9 @@ pub trait ByteRangeSource: Send + Sync {
     /// Last-modified time, if the source exposes one — `object_store`'s
     /// `head` carries this too. `None` rather than an error for a source that
     /// genuinely has no notion of one; the structure cache treats an absent
-    /// mtime as nothing to compare against, never as a mismatch. See
+    /// mtime as nothing to compare against rather than as a mismatch, except
+    /// under `crate::cache::StrictIdentity::time`, where a source that can
+    /// offer no such signal is refused. See
     /// `docs/design/decisions.md`, "D21".
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
     /// Bytes as stored on the device — what a `stat` reports — as opposed to

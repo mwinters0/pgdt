@@ -142,7 +142,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    map_file(&source, &options, &CacheMode::Disabled, &StatisticsRequest::ALL).await.unwrap();
+    map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::ALL).await.unwrap();
     // `policies()` collapses consecutive repeats, so the sequence alternates by
     // construction and what is left to check is its ends and its length.
     let policies = source.policies();
@@ -158,7 +158,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    map_file(&source, &options, &CacheMode::Disabled, &StatisticsRequest::ALL).await.unwrap();
+    map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::ALL).await.unwrap();
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait], "every region was declined");
 }
 
@@ -176,7 +176,7 @@ async fn a_query_grants_no_wait_in_either_loop() {
         ScanOptions::default(),
         QueryOptions::default(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut rows = 0usize;
     while let Some(batch) = stream.next().await {

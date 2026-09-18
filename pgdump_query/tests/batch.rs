@@ -27,7 +27,7 @@ async fn collect(
     let mut batch_sizes = Vec::new();
     let mut rows = Vec::new();
 
-    read_table(&source, table, scan_options, batch_options, CacheMode::Disabled, |batch| {
+    read_table(&source, table, scan_options, batch_options, CacheMode::DISABLED, |batch| {
         batch_sizes.push(batch.num_rows());
         rows.extend(rows_of(&batch));
         ControlFlow::Continue(())
@@ -69,7 +69,7 @@ async fn collect_with_expr(
         table,
         &ScanOptions::default(),
         &QueryOptions { filter, ..Default::default() },
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
         |batch| {
             rows.extend(rows_of(&batch));
             ControlFlow::Continue(())
@@ -290,7 +290,7 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         ScanOptions::default(),
         options.clone(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     stream.next().await.unwrap().unwrap();
     let token = stream.resume_token();
@@ -302,7 +302,7 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         ScanOptions::default(),
         QueryOptions { filter: Expr::all([one.clone(), two]), ..options.clone() },
         Some(token.clone()),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     assert!(matches!(wrong.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
 
@@ -318,7 +318,7 @@ async fn a_resume_token_covers_the_whole_conjunction() {
             ..options.clone()
         },
         Some(token.clone()),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     assert!(matches!(reshaped.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
 
@@ -328,7 +328,7 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         ScanOptions::default(),
         options,
         Some(token),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     assert!(resumed.next().await.unwrap().is_ok(), "the same conjunction resumes");
 }
@@ -365,7 +365,7 @@ async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
             ScanOptions::default(),
             options,
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         let mut ids = Vec::new();
         while let Some(batch) = stream.next().await {
@@ -466,7 +466,7 @@ async fn header_without_column_list_gets_placeholder_schema() {
         "public.no_column_list",
         &ScanOptions::default(),
         &QueryOptions::default(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
         |batch| {
             batches.push(batch);
             ControlFlow::Continue(())
@@ -614,7 +614,7 @@ async fn stops_early_on_break() {
         "public.widgets",
         &ScanOptions::default(),
         &options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
         |_| {
             batches += 1;
             ControlFlow::Break(())
@@ -641,7 +641,7 @@ async fn resume_token_from_break_continues_correctly() {
         "public.widgets",
         &ScanOptions::default(),
         &options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
         |batch| {
             rows.extend(rows_of(&batch));
             ControlFlow::Break(())
@@ -657,7 +657,7 @@ async fn resume_token_from_break_continues_correctly() {
         ScanOptions::default(),
         options,
         Some(token),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     use futures::StreamExt;
     while let Some(batch) = resumed.next().await {

@@ -76,7 +76,7 @@ async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
     let source = LocalFileSource::open(path).unwrap();
     let options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
     let mut out = Vec::new();
-    read_table(&source, table, &ScanOptions::default(), &options, CacheMode::Disabled, |batch| {
+    read_table(&source, table, &ScanOptions::default(), &options, CacheMode::DISABLED, |batch| {
         let index = batch.schema().index_of(column).expect("column is in the COPY header");
         for row in 0..batch.num_rows() {
             // `Strings` mode resolves every column `Utf8View`/`Scalar`,
@@ -396,7 +396,7 @@ mod oracle {
     async fn types_of(major: u32) -> Vec<TypeDef> {
         let source = LocalFileSource::open(fixture(major, "types/default.sql")).unwrap();
         let (metadata, _) =
-            preamble_only(&source, &ScanOptions::default(), &CacheMode::Disabled).await.unwrap();
+            preamble_only(&source, &ScanOptions::default(), &CacheMode::DISABLED).await.unwrap();
         metadata.databases.into_iter().next().expect("a dump names a database").types
     }
 

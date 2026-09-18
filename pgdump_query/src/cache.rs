@@ -23,10 +23,20 @@
 //! not the addressable (possibly decompressed) length; [`load`] re-observes
 //! the live source and compares. A stored-size mismatch means every byte
 //! offset in the cache could be wrong, so the cache is unusable. An mtime
-//! mismatch does **not** invalidate it: it is surfaced on
-//! [`CacheStatus::Valid`], and [`CacheMode::load`] turns it into a
+//! mismatch does **not** invalidate it by default: it is surfaced on
+//! [`CacheStatus::Valid`] as a [`WeakIdentity`], and [`CacheMode::load`]
+//! turns it into a
 //! [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the loaded
-//! index, recomputed on every load and never persisted.
+//! index, recomputed on every load and never persisted. A caller that asked
+//! for [`StrictIdentity::time`] is refused there instead.
+//!
+//! **Two different questions hide under one word.** *Between* runs a moved,
+//! copied or touched dump is a different weak identity holding the same
+//! bytes, which is what the advisory default is right for. *During* a run a
+//! source whose identity changes is bytes moving underneath a read that has
+//! already returned some of them, which no answer survives — so that is an
+//! error by default, whatever the selection, and [`SourceWatch`] is the
+//! mechanism.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -90,6 +100,181 @@ impl SourceIdentity {
             .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default())
             .map(|d| (d.as_secs(), d.subsec_nanos()));
         Ok(SourceIdentity::LocalFile { stored_size, mtime })
+    }
+
+    /// What the weak half of this identity says against `live`'s — the half
+    /// that warns rather than refuses (see the module docs).
+    fn weak_against(&self, live: &Self) -> WeakIdentity {
+        let (
+            SourceIdentity::LocalFile { mtime: cached, .. },
+            SourceIdentity::LocalFile { mtime: live, .. },
+        ) = (self, live);
+        match (cached, live) {
+            (None, _) | (_, None) => WeakIdentity::Absent,
+            (cached, live) if cached != live => WeakIdentity::Differs,
+            _ => WeakIdentity::Agrees,
+        }
+    }
+
+    /// How a run that started from this identity and now sees `live` says
+    /// what moved — [`Error::SourceChangedWhileRead`]'s evidence clause.
+    /// Never called where the two are equal, so it is never empty.
+    fn differences(&self, live: &Self) -> String {
+        let (
+            SourceIdentity::LocalFile { stored_size: was, mtime: was_mtime },
+            SourceIdentity::LocalFile { stored_size: now, mtime: now_mtime },
+        ) = (self, live);
+        let mut said = Vec::new();
+        if was != now {
+            said.push(format!("its stored size went from {was} to {now} byte(s)"));
+        }
+        if was_mtime != now_mtime {
+            said.push("its modification time moved".to_string());
+        }
+        said.join(" and ")
+    }
+}
+
+/// What the weak half of identity said when a cache was checked against the
+/// live source it was written for (`docs/design/decisions.md`, "D21").
+///
+/// **Three states rather than a `bool`, because [`StrictIdentity::time`]
+/// refuses on two of them.** A source that offers no modification signal at
+/// all and a cache that recorded none agree on nothing: they are silent, and
+/// silence is exactly what a caller asking for a guarantee is refused on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeakIdentity {
+    /// The cache's recorded modification signal is the source's.
+    Agrees,
+    /// They differ — advisory by default
+    /// ([`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`]).
+    Differs,
+    /// One side has no modification signal, so there is nothing to compare.
+    Absent,
+}
+
+impl WeakIdentity {
+    /// Why [`StrictIdentity::time`] is not met, or `None` where it is — the
+    /// clause [`Error::StrictIdentityUnmet`] carries.
+    fn unmet(self) -> Option<&'static str> {
+        match self {
+            WeakIdentity::Agrees => None,
+            WeakIdentity::Differs => Some("its modification time has moved since"),
+            WeakIdentity::Absent => {
+                Some("neither it nor the source carries a modification time to compare")
+            }
+        }
+    }
+}
+
+/// Which weak identity signals a caller has asked to *bind*, and whether a
+/// source that changes under an in-flight read is an error.
+///
+/// **The default is today's stance**: the weak signals are advisory *between*
+/// runs — data moves, and a dump copied or touched is a different weak
+/// identity holding the same bytes — while a source that changes *during* a
+/// run is an error, which is [`SourceWatch`]. What still refuses either way is
+/// the stored size (`docs/design/decisions.md`, "D20"), which is not a weak
+/// signal and is not selectable.
+///
+/// It rides on [`CacheMode`] beside the path because the library owns the
+/// refusal: an embedder gets the same comparison without re-implementing it,
+/// and `pgdq`'s `--strict-identity` only sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StrictIdentity {
+    time: bool,
+    location: bool,
+    in_flight: bool,
+}
+
+impl StrictIdentity {
+    /// The default: nothing weak binds between runs, and a source that
+    /// changes under an in-flight read is still an error.
+    pub const ADVISORY: Self = Self { time: false, location: false, in_flight: true };
+    /// Nothing binds at all, the in-flight check included — `pgdq
+    /// --strict-identity=none`. The only way to turn that check off, because
+    /// it is not a question of whether to trust a weak signal but of whether
+    /// a read whose bytes changed underneath it may be believed.
+    pub const NONE: Self = Self { time: false, location: false, in_flight: false };
+
+    /// Bind the selected terms. The in-flight check is on: it is not one of
+    /// the selectors.
+    pub const fn binding(time: bool, location: bool) -> Self {
+        Self { time, location, in_flight: true }
+    }
+
+    /// Whether the modification signals bind — the local mtime, and remotely
+    /// `Last-Modified` and the ETag. Under it, **absence is a failure**: a
+    /// source that can offer no such signal cannot give the guarantee that
+    /// was asked for.
+    pub fn time(self) -> bool {
+        self.time
+    }
+
+    /// Whether the origin a cache was written for binds. A local cache
+    /// records no origin, so this binds nothing here yet.
+    pub fn location(self) -> bool {
+        self.location
+    }
+
+    /// Whether a source that changes under an in-flight read aborts the run
+    /// rather than merely warning ([`SourceWatch`]).
+    pub fn in_flight(self) -> bool {
+        self.in_flight
+    }
+}
+
+impl Default for StrictIdentity {
+    fn default() -> Self {
+        Self::ADVISORY
+    }
+}
+
+/// The source's identity as a run first observed it, re-read wherever asking
+/// is cheap, so that bytes changing underneath a read that has already
+/// returned some of them stop the run instead of producing a map or a row set
+/// mixed from two versions of the file.
+///
+/// **It reads the source, not the path.** The comparison is made through the
+/// `ByteRangeSource` this run is already holding, which for a local file is an
+/// `fstat` on the descriptor it opened: that detects the dangerous case — the
+/// file modified in place, truncated or rewritten — and ignores the harmless
+/// one, a file replaced by rename, where the descriptor goes on reading the
+/// intact inode. It is deliberately *not* [`crate::Origin`]'s probe, which is
+/// taken before the run and re-opens the path.
+///
+/// **The cadence follows the cost of asking.** Locally the check rides the
+/// cache save, which is already throttled (`docs/design/decisions.md`, "D62"),
+/// so nothing is added to the read loop; a run that never saves — a disabled
+/// cache, or a warm query answered wholly from the cache — is checked once,
+/// when it finishes. Writing the rule as uniform would be false.
+#[derive(Debug)]
+pub struct SourceWatch {
+    baseline: SourceIdentity,
+    strict: StrictIdentity,
+}
+
+impl SourceWatch {
+    /// Observe `source`'s identity as this run's baseline, before it has read
+    /// anything it would have to distrust.
+    pub async fn open(source: &dyn ByteRangeSource, strict: StrictIdentity) -> Result<Self> {
+        Ok(Self { baseline: SourceIdentity::observe(source).await?, strict })
+    }
+
+    /// Re-observe `source` and compare. A change is
+    /// [`Error::SourceChangedWhileRead`] unless [`StrictIdentity::NONE`] was
+    /// asked for, where it is a warning on the status channel instead.
+    pub async fn check(&self, source: &dyn ByteRangeSource) -> Result<()> {
+        let live = SourceIdentity::observe(source).await?;
+        if live == self.baseline {
+            return Ok(());
+        }
+        let differences = self.baseline.differences(&live);
+        if self.strict.in_flight() {
+            return Err(Error::SourceChangedWhileRead { differences });
+        }
+        tracing::warn!(differences, "source changed while it was being read");
+        Ok(())
     }
 }
 
@@ -244,10 +429,10 @@ pub enum CacheStatus {
     /// carried: they are the evidence a reporting caller states.
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
     /// A usable cache whose `index.scanned_through` reaches the file's
-    /// recorded size — the whole file is mapped. `mtime_changed` is `true`
-    /// when the source's current mtime differs from the one recorded at save
-    /// time, which does not itself make the cache unusable (see the module
-    /// docs). `total_size` is [`CacheFile::total_size`]: a reporting caller
+    /// recorded size — the whole file is mapped. `weak` is what the source's
+    /// current mtime says against the one recorded at save time, which does
+    /// not itself make the cache unusable (see the module docs).
+    /// `total_size` is [`CacheFile::total_size`]: a reporting caller
     /// states coverage against it, and a cache-only caller has no live source
     /// to stat. `compression` is the container's shape where one sits under
     /// these offsets and `None` for a plain file — read off the persisted
@@ -256,7 +441,7 @@ pub enum CacheStatus {
     /// persists, for a caller exporting it ([`CacheEnvelope`]).
     Valid {
         index: DumpIndex,
-        mtime_changed: bool,
+        weak: WeakIdentity,
         total_size: u64,
         compression: Option<CompressionShape>,
         envelope: CacheEnvelope,
@@ -274,7 +459,7 @@ pub enum CacheStatus {
     /// [`Valid`](CacheStatus::Valid)'s and mean the same thing.
     Incomplete {
         index: DumpIndex,
-        mtime_changed: bool,
+        weak: WeakIdentity,
         total_size: u64,
         compression: Option<CompressionShape>,
         envelope: CacheEnvelope,
@@ -334,14 +519,13 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
     // One variant today, so both patterns are irrefutable; a future
     // `Remote` variant is matched explicitly rather than through a shared
     // accessor — see `SourceIdentity`'s docs.
-    let SourceIdentity::LocalFile { stored_size: cached_stored_size, mtime: cached_mtime } =
-        file.identity;
-    let SourceIdentity::LocalFile { stored_size: live_stored_size, mtime: live_mtime } = live;
+    let SourceIdentity::LocalFile { stored_size: cached_stored_size, .. } = file.identity;
+    let SourceIdentity::LocalFile { stored_size: live_stored_size, .. } = live;
     if cached_stored_size != live_stored_size {
         return Ok(CacheStatus::SourceChanged { cached_stored_size, live_stored_size });
     }
-    let mtime_changed = cached_mtime != live_mtime;
-    Ok(status_from_file(file, mtime_changed))
+    let weak = file.identity.weak_against(&live);
+    Ok(status_from_file(file, weak))
 }
 
 /// Read and envelope-check the cache at `path`, shared by [`load`] and
@@ -458,13 +642,13 @@ fn drop_attributed(mut index: DumpIndex) {
 
 /// Load a cache from `path` with no live source to check it against — the
 /// cache-only counterpart to [`load`] (`docs/design/decisions.md`,
-/// "The compressed source and the cache"). With no mtime to compare,
-/// `mtime_changed` is always `false` here; "unverified, historical" is a
+/// "The compressed source and the cache"). With no mtime to compare, `weak`
+/// is always [`WeakIdentity::Agrees`] here; "unverified, historical" is a
 /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed by
 /// [`CacheMode::load_offline`] instead.
 pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
     match read_cache_file(path)? {
-        Ok(file) => Ok(status_from_file(file, false)),
+        Ok(file) => Ok(status_from_file(file, WeakIdentity::Agrees)),
         Err(status) => Ok(status),
     }
 }
@@ -476,7 +660,7 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
 /// recomputed either way. Reads [`CacheFile::total_size`] rather than
 /// re-deriving one from a live source: by this point the stored sizes are
 /// known equal wherever a live source exists, and `load_offline` has none.
-fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
+fn status_from_file(file: CacheFile, weak: WeakIdentity) -> CacheStatus {
     let total_size = file.total_size;
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
@@ -497,9 +681,9 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
         identity: file.identity,
     };
     if index.is_complete(total_size) {
-        CacheStatus::Valid { index, mtime_changed, total_size, compression, envelope }
+        CacheStatus::Valid { index, weak, total_size, compression, envelope }
     } else {
-        CacheStatus::Incomplete { index, mtime_changed, total_size, compression, envelope }
+        CacheStatus::Incomplete { index, weak, total_size, compression, envelope }
     }
 }
 
@@ -521,6 +705,10 @@ struct CacheFileRef<'a> {
 /// current stored size/mtime plus its addressable length for [`load`] to
 /// check next time. Propagates I/O failures as `Error::Io` rather than
 /// swallowing them — see the module docs.
+///
+/// **This is the writer, not the run's save**: the in-flight identity check a
+/// scan makes rides [`CacheMode::save`], which is what every scan entry point
+/// calls ([`SourceWatch`]).
 ///
 /// **The index is encoded straight into a file beside `path`, which is then
 /// renamed over it** (`docs/design/decisions.md`, "D78"), so no encoded copy
@@ -588,45 +776,84 @@ fn beside(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// How a caller wants the structure cache handled for one operation.
-/// Constructed via [`CacheMode::resolve`].
+/// How a caller wants the structure cache handled for one operation, and
+/// which identity signals bind while it does. Constructed via
+/// [`CacheMode::resolve`], [`CacheMode::enabled`] or [`CacheMode::DISABLED`],
+/// each of which leaves [`StrictIdentity::ADVISORY`];
+/// [`CacheMode::with_strict_identity`] is what states anything else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheMode {
     /// Read/write the cache at this path (the colocated default, or an
     /// explicit path).
-    Enabled(PathBuf),
+    Enabled { path: PathBuf, strict: StrictIdentity },
     /// The caller explicitly opted out: any existing file at what would
     /// otherwise be the resolved location is ignored, and a fresh scan is
-    /// not persisted.
-    Disabled,
+    /// not persisted. **It still carries a strictness**, because a run that
+    /// writes no cache is still a run that can have the file rewritten
+    /// underneath it ([`SourceWatch`]).
+    Disabled { strict: StrictIdentity },
     /// No live dump source at all — answer strictly from the cache at this
     /// path (`docs/design/decisions.md`,
     /// "The compressed source and the cache"). Never constructed by
     /// [`CacheMode::resolve`]; a caller builds it directly (`pgdq info` with
     /// no `--source`). Every method below that takes a live `source` rejects
     /// it as a caller-contract violation, and [`load_offline`] rejects
-    /// `Enabled`/`Disabled` the other way.
+    /// `Enabled`/`Disabled` the other way. It carries no strictness: with no
+    /// source there is nothing to compare against.
     Offline(PathBuf),
 }
 
 impl CacheMode {
+    /// A disabled cache at the default strictness.
+    pub const DISABLED: CacheMode = CacheMode::Disabled { strict: StrictIdentity::ADVISORY };
+
+    /// The cache at `path`, at the default strictness.
+    pub fn enabled(path: impl Into<PathBuf>) -> CacheMode {
+        CacheMode::Enabled { path: path.into(), strict: StrictIdentity::ADVISORY }
+    }
+
     /// Resolve a `--dqcache`-style argument against `dump_path`: `None`
     /// selects the colocated default (`<dump_path>.dqcache`), the literal
     /// path `none` disables the cache, and any other path is used as-is.
     pub fn resolve(dump_path: &Path, cache_path: Option<&Path>) -> CacheMode {
         match cache_path {
-            None => CacheMode::Enabled(colocated_path(dump_path)),
-            Some(p) if p == Path::new("none") => CacheMode::Disabled,
-            Some(p) => CacheMode::Enabled(p.to_path_buf()),
+            None => CacheMode::enabled(colocated_path(dump_path)),
+            Some(p) if p == Path::new("none") => CacheMode::DISABLED,
+            Some(p) => CacheMode::enabled(p),
+        }
+    }
+
+    /// State which identity signals bind. [`CacheMode::Offline`] has no live
+    /// source to compare against and is returned unchanged.
+    pub fn with_strict_identity(self, strict: StrictIdentity) -> CacheMode {
+        match self {
+            CacheMode::Enabled { path, .. } => CacheMode::Enabled { path, strict },
+            CacheMode::Disabled { .. } => CacheMode::Disabled { strict },
+            CacheMode::Offline(path) => CacheMode::Offline(path),
+        }
+    }
+
+    /// Which identity signals this mode binds — [`StrictIdentity::ADVISORY`]
+    /// for the cache-only mode, which checks nothing.
+    pub fn strict_identity(&self) -> StrictIdentity {
+        match self {
+            CacheMode::Enabled { strict, .. } | CacheMode::Disabled { strict } => *strict,
+            CacheMode::Offline(_) => StrictIdentity::ADVISORY,
         }
     }
 
     /// Load the cache this mode points at, turning the
-    /// [`CacheStatus::Valid::mtime_changed`] bit into a
+    /// [`CacheStatus::Valid::weak`] answer into a
     /// [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the index
     /// (see the module docs). A disabled cache always
     /// yields [`CacheLoad::Disabled`], even if a file sits at what would
     /// otherwise be its resolved location.
+    ///
+    /// **Under [`StrictIdentity::time`] the same answer is a refusal**, and
+    /// the only outcome of this method that is an `Err` rather than a
+    /// [`CacheLoad`]: the caller asked for a guarantee, so a cache whose
+    /// modification signal has moved — or a source that can offer none at all
+    /// — stops the run instead of carrying a diagnostic nobody has to read.
     ///
     /// `Incomplete` is treated exactly like `Valid` — both are
     /// [`CacheLoad::Index`] — because every caller of this method
@@ -639,24 +866,29 @@ impl CacheMode {
     /// own opt-out is collapsed: each arrives as its own variant.
     pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<CacheLoad> {
         match self {
-            CacheMode::Enabled(path) => Ok(match load(path, source).await? {
+            CacheMode::Enabled { path, strict } => Ok(match load(path, source).await? {
                 CacheStatus::Missing => CacheLoad::Missing,
                 CacheStatus::Unreadable => CacheLoad::Unreadable,
                 CacheStatus::UnsupportedVersion => CacheLoad::UnsupportedVersion,
                 CacheStatus::SourceChanged { cached_stored_size, live_stored_size } => {
                     CacheLoad::SourceChanged { cached_stored_size, live_stored_size }
                 }
-                CacheStatus::Valid { mut index, mtime_changed, .. }
-                | CacheStatus::Incomplete { mut index, mtime_changed, .. } => {
+                CacheStatus::Valid { mut index, weak, .. }
+                | CacheStatus::Incomplete { mut index, weak, .. } => {
+                    if strict.time()
+                        && let Some(unmet) = weak.unmet()
+                    {
+                        return Err(Error::StrictIdentityUnmet { path: path.clone(), unmet });
+                    }
                     // Reported rather than acted on: too weak to invalidate,
                     // and recomputed on every load (see the module docs).
-                    if mtime_changed {
+                    if weak == WeakIdentity::Differs {
                         index.diagnostics.push(Diagnostic::cache_mtime_changed());
                     }
                     CacheLoad::Index(index)
                 }
             }),
-            CacheMode::Disabled => Ok(CacheLoad::Disabled),
+            CacheMode::Disabled { .. } => Ok(CacheLoad::Disabled),
             CacheMode::Offline(_) => Err(Error::CacheModeMismatch(
                 "a live dump source requires CacheMode::Enabled or CacheMode::Disabled, not Offline",
             )),
@@ -672,12 +904,12 @@ impl CacheMode {
     /// answer the caller-contract error.
     pub fn source_mismatch(&self, cached_stored_size: u64, live_stored_size: u64) -> Error {
         match self {
-            CacheMode::Enabled(path) => Error::CacheSourceMismatch {
+            CacheMode::Enabled { path, .. } => Error::CacheSourceMismatch {
                 path: path.clone(),
                 cached_stored_size,
                 live_stored_size,
             },
-            CacheMode::Disabled | CacheMode::Offline(_) => Error::CacheModeMismatch(
+            CacheMode::Disabled { .. } | CacheMode::Offline(_) => Error::CacheModeMismatch(
                 "a source mismatch is only reachable from CacheMode::Enabled",
             ),
         }
@@ -707,7 +939,7 @@ impl CacheMode {
                 }
                 Ok(status)
             }
-            CacheMode::Enabled(_) | CacheMode::Disabled => {
+            CacheMode::Enabled { .. } | CacheMode::Disabled { .. } => {
                 Err(Error::CacheModeMismatch("cache-only access requires CacheMode::Offline"))
             }
         }
@@ -716,11 +948,28 @@ impl CacheMode {
     /// Persist `index` per this mode. A disabled cache is a no-op — nothing
     /// is written, by design. A caller whose operation exists to populate the
     /// cache rejects a disabled mode up front with
-    /// [`CacheMode::require_enabled`] instead of relying on this.
-    pub async fn save(&self, source: &dyn ByteRangeSource, index: &DumpIndex) -> Result<()> {
+    /// [`CacheMode::require_enabled`] instead of relying on this. `watch` is
+    /// what an enabled save checks before it writes ([`save`]).
+    pub async fn save(
+        &self,
+        watch: &SourceWatch,
+        source: &dyn ByteRangeSource,
+        index: &DumpIndex,
+    ) -> Result<()> {
         match self {
-            CacheMode::Enabled(path) => save(path, source, index).await,
-            CacheMode::Disabled => Ok(()),
+            CacheMode::Enabled { path, .. } => {
+                // **The check precedes the write** and is the whole of D12's
+                // "saves nothing": a run whose source moved underneath it
+                // writes no partial map and no statistics, and leaves
+                // whatever is already at `path` exactly as it is
+                // (`docs/design/decisions.md`, "D20").
+                watch.check(source).await?;
+                save(path, source, index).await
+            }
+            // **No check here**: a disabled cache writes nothing, so there is
+            // no save for one to ride, and this run's one check is the one its
+            // entry point makes when it finishes ([`SourceWatch`]).
+            CacheMode::Disabled { .. } => Ok(()),
             CacheMode::Offline(_) => {
                 Err(Error::CacheModeMismatch("cache-only mode never has a fresh scan to persist"))
             }
@@ -733,8 +982,8 @@ impl CacheMode {
     /// discovered when a write silently no-ops.
     pub fn require_enabled(&self, operation: &'static str) -> Result<&Path> {
         match self {
-            CacheMode::Enabled(path) => Ok(path),
-            CacheMode::Disabled => Err(Error::CacheDisabled { operation }),
+            CacheMode::Enabled { path, .. } => Ok(path),
+            CacheMode::Disabled { .. } => Err(Error::CacheDisabled { operation }),
             CacheMode::Offline(_) => Err(Error::CacheModeMismatch(
                 "cache-only mode has no live source to scan and persist",
             )),
@@ -789,7 +1038,7 @@ mod tests {
             let run = map_file(
                 source,
                 &ScanOptions::default(),
-                &CacheMode::Disabled,
+                &CacheMode::DISABLED,
                 &StatisticsRequest::default(),
             )
             .await

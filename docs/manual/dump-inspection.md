@@ -165,6 +165,55 @@ cache that does not describe this file describes some *other* file, and
 scanning would write over it. Delete it, or point `--dqcache` somewhere else,
 and `parse` builds a fresh one.
 
+### `--strict-identity`: when a moved file should stop the run
+
+Size is not the only thing pgdq knows about your dump — it also records the
+file's modification time when it writes the cache. By default that time is
+**advisory**: a dump that was copied to another machine, restored from backup
+or simply `touch`ed still has the same bytes, and refusing to read it would be
+refusing a file that is perfectly good. `parse`, `query` and `info` all say so
+and carry on.
+
+`--strict-identity` turns that into a refusal, for a pipeline where the file
+genuinely should not have moved. It takes a comma-separated selection, and the
+flag on its own means `time,location`:
+
+```sh
+pgdq query --source mydump.sql --table public.widgets --strict-identity=time
+```
+
+- **`time`** binds the modification time. A cache written against a different
+  one stops the run instead of reporting it — and so does a source that has no
+  modification time to offer at all, since the honest answer there is that it
+  cannot give the guarantee you asked for.
+- **`location`** binds where a source was fetched from. A local file was not
+  fetched from anywhere, so this binds nothing today.
+- **`none`** binds nothing at all, and is the only way to turn off the check
+  below.
+
+**A file that changes while pgdq is reading it is an error whatever you pass.**
+That is a different question from the one above: between runs, a moved file is
+usually the same bytes in a new place, but *during* a run, bytes changing
+underneath a read that has already returned some of them cannot produce a right
+answer — the map or the rows would be mixed from two versions of the file. So
+pgdq checks as it banks the cache, and once more when the run finishes, and
+stops if the file moved:
+
+```
+$ pgdq parse --source mydump.sql
+Error: mydump.sql: the dump changed while it was being read — its stored size went from 4096 to 8192 byte(s) — so nothing was saved and no cache was removed
+```
+
+**Nothing is saved and nothing is deleted.** The check says when the change was
+noticed, never when it happened, so everything the run read is suspect and none
+of it is written down; the cache already on disk describes the file as it was
+and is left exactly as it is. Re-run once the file has settled, or pass
+`--strict-identity=none` to get a warning instead of a stop.
+
+A dump replaced by *rename* — the usual way a pipeline publishes a new one — is
+not this case: pgdq goes on reading the file it opened, finishes the run it
+started, and the new file is picked up by the next one.
+
 ### `--chunk-size`: you almost certainly do not need it
 
 `parse` and `query` read the dump in 1 MiB pieces. `--chunk-size <bytes>`
@@ -879,8 +928,9 @@ public.events (98765 rows)
   or object: how much of the map is explained by `pg_dump`'s own per-object
   comments (`TOC coverage`), a cache whose recorded mtime no longer matches
   the file's (still used — mtime alone isn't reliable enough to invalidate
-  on), or, in cache-only mode below, a reminder that you're looking at
-  historical data. Nothing appears here on an unremarkable run beyond the
+  on, and `info` reports it rather than refusing whatever else you pass; see
+  "`--strict-identity`" above for the commands that can be told to stop), or,
+  in cache-only mode below, a reminder that you're looking at historical data. Nothing appears here on an unremarkable run beyond the
   coverage figure.
 - **`roles`/`tablespaces`** list every role and tablespace the scan found
   referenced anywhere — an object's owner, a `GRANT`/`REVOKE`, a non-default

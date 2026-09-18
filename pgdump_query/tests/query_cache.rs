@@ -142,7 +142,7 @@ async fn non_matching_cached_blocks_cost_zero_bytes() {
         &counting,
         "public.empty_table",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path),
+        CacheMode::enabled(cache_path),
     )
     .await;
 
@@ -167,7 +167,7 @@ async fn replay_matches_a_fresh_scan() {
         &source,
         "public.widgets",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
     assert_eq!(widgets, widgets_expected());
@@ -176,7 +176,7 @@ async fn replay_matches_a_fresh_scan() {
         &source,
         "public.no_column_list",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path),
+        CacheMode::enabled(cache_path),
     )
     .await;
     assert_eq!(
@@ -185,14 +185,14 @@ async fn replay_matches_a_fresh_scan() {
     );
 }
 
-/// `CacheMode::Disabled` is a byte-for-byte regression no-op: same output as
+/// `CacheMode::DISABLED` is a byte-for-byte regression no-op: same output as
 /// plain streaming, and it never leaves a cache file behind.
 #[tokio::test]
 async fn disabled_cache_is_a_noop() {
     let (_dir, dump) = sandboxed_edge_cases();
     let source = LocalFileSource::open(&dump).unwrap();
 
-    let rows = drain(&source, "public.widgets", QueryOptions::default(), CacheMode::Disabled).await;
+    let rows = drain(&source, "public.widgets", QueryOptions::default(), CacheMode::DISABLED).await;
     assert_eq!(rows, widgets_expected());
     assert!(!cache::colocated_path(&dump).exists());
 }
@@ -213,13 +213,13 @@ async fn a_cold_query_maps_up_to_its_target_and_stops() {
         &source,
         "public.widgets",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
     assert_eq!(rows, widgets_expected());
 
     let CacheLoad::Index(index) =
-        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+        CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
     else {
         panic!("a cache was written")
     };
@@ -243,12 +243,12 @@ async fn scan_extent_full_maps_the_whole_file_from_a_query() {
         &source,
         "public.widgets",
         QueryOptions { scan_extent: ScanExtent::Full, ..Default::default() },
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
     assert_eq!(rows, widgets_expected(), "the row set is the same either way");
 
-    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    let CacheLoad::Index(index) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
         panic!("a cache was written")
     };
@@ -277,11 +277,11 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
         &source,
         "objects.widgets",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
     let CacheLoad::Index(index) =
-        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+        CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
     else {
         panic!("a cache was written")
     };
@@ -297,10 +297,10 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
         &source,
         "objects.widgets",
         QueryOptions { scan_extent: ScanExtent::Full, ..Default::default() },
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
-    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    let CacheLoad::Index(index) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
         panic!("a cache was written")
     };
@@ -334,7 +334,7 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
             ScanOptions::default(),
             QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
             None,
-            CacheMode::Enabled(cache_path.clone()),
+            CacheMode::enabled(cache_path.clone()),
         );
         // `widgets` is the second block in the file; pulling two of its six
         // one-row batches stops well before its own `CopyEnd`.
@@ -344,7 +344,7 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
     }
 
     let CacheLoad::Index(index) =
-        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+        CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
     else {
         panic!("partial progress was persisted")
     };
@@ -363,7 +363,7 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
         &source,
         "public.no_column_list",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path),
+        CacheMode::enabled(cache_path),
     )
     .await;
     assert_eq!(
@@ -389,7 +389,7 @@ async fn interrupted_scan_still_captures_the_first_database_preamble() {
             ScanOptions::default(),
             QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
             None,
-            CacheMode::Enabled(cache_path.clone()),
+            CacheMode::enabled(cache_path.clone()),
         );
         // One row of `widgets` (the second real block) is enough to prove
         // the point without waiting on any block, let alone the file, to
@@ -398,7 +398,7 @@ async fn interrupted_scan_still_captures_the_first_database_preamble() {
     }
 
     let CacheLoad::Index(index) =
-        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+        CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
     else {
         panic!("progress was persisted")
     };
@@ -425,11 +425,11 @@ async fn no_duplication_on_repeat_queries() {
         &source,
         "public.widgets",
         QueryOptions { scan_extent: ScanExtent::Full, ..Default::default() },
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
     let CacheLoad::Index(before) =
-        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+        CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
     else {
         panic!("the first query wrote a cache")
     };
@@ -438,11 +438,11 @@ async fn no_duplication_on_repeat_queries() {
         &source,
         "public.no_column_list",
         QueryOptions::default(),
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     )
     .await;
     let CacheLoad::Index(after) =
-        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+        CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
     else {
         panic!("the second query left a cache")
     };
@@ -493,11 +493,11 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
                 &source,
                 "public.widgets",
                 QueryOptions::default(),
-                CacheMode::Enabled(cache_path.clone()),
+                CacheMode::enabled(cache_path.clone()),
             )
             .await;
             let CacheLoad::Index(cold) =
-                CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+                CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
             else {
                 panic!("{label}: the cold query wrote a cache")
             };
@@ -509,11 +509,11 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
                 &source,
                 "public.no_column_list",
                 QueryOptions::default(),
-                CacheMode::Enabled(cache_path.clone()),
+                CacheMode::enabled(cache_path.clone()),
             )
             .await;
             let CacheLoad::Index(warm) =
-                CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+                CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
             else {
                 panic!("{label}: the warm query left a cache")
             };
@@ -526,11 +526,11 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
                 &source,
                 "public.widgets",
                 QueryOptions { scan_extent: ScanExtent::Full, ..Default::default() },
-                CacheMode::Enabled(cache_path.clone()),
+                CacheMode::enabled(cache_path.clone()),
             )
             .await;
             let CacheLoad::Index(full) =
-                CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+                CacheMode::enabled(cache_path.clone()).load(&source).await.unwrap()
             else {
                 panic!("{label}: the full query left a cache")
             };
@@ -566,7 +566,7 @@ async fn a_resumed_query_leaves_a_tiling_index() {
             ScanOptions::default(),
             QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
             None,
-            CacheMode::Enabled(cache_path.clone()),
+            CacheMode::enabled(cache_path.clone()),
         );
         stream.next().await.unwrap().unwrap();
         stream.resume_token()
@@ -578,7 +578,7 @@ async fn a_resumed_query_leaves_a_tiling_index() {
         ScanOptions::default(),
         QueryOptions::default(),
         Some(token),
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     );
     let mut rows = Vec::new();
     while let Some(batch) = resumed.next().await {
@@ -586,7 +586,7 @@ async fn a_resumed_query_leaves_a_tiling_index() {
     }
     assert_eq!(rows, widgets_expected()[1..], "the rows the first stream hadn't delivered");
 
-    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    let CacheLoad::Index(index) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
         panic!("the resumed query left a cache")
     };

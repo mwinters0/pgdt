@@ -3,8 +3,9 @@
 //!
 //! Two things have no good home in a `Result`: a tiling failure, which is
 //! evidence of a bug in our parser but never a reason to refuse the file, and
-//! a cache mtime mismatch, too weak to invalidate on and with no column or
-//! schema to hang off. The library cannot `eprintln!`, so both are collected
+//! a cache mtime mismatch, too weak by default to invalidate on and with no
+//! column or schema to hang off. The library cannot `eprintln!`, so both are
+//! collected
 //! on [`crate::index::DumpIndex`] and left for a caller to drain.
 //!
 //! **Not persisted.** `DumpIndex::diagnostics` is `#[serde(skip)]`
@@ -48,9 +49,11 @@ pub enum DiagnosticKind {
     /// (`docs/design/decisions.md`, "D30").
     TilingBroken { issues: Vec<TilingIssue> },
     /// A loaded cache recorded a different mtime than the source now has.
-    /// Not an invalidation (`docs/design/decisions.md`, "D21"). A *size*
-    /// mismatch is one instead, and never reaches this channel because the
-    /// cache is discarded outright.
+    /// Not an invalidation by default (`docs/design/decisions.md`, "D21"); a
+    /// caller that asked for `crate::cache::StrictIdentity::time` is refused
+    /// instead of being handed this. A *size* mismatch is an invalidation
+    /// either way, and never reaches this channel because the cache is
+    /// discarded outright.
     CacheMtimeChanged,
     /// How much of the map is attributed to a TOC entry: `attributed` spans
     /// out of `spans` total — a follow-on statement that inherited its
@@ -91,8 +94,10 @@ impl Diagnostic {
 
     /// Public, unlike its siblings: a caller matching on
     /// [`crate::cache::CacheStatus`] itself rather than going through
-    /// [`crate::cache::CacheMode::load`] still has to turn the
-    /// `mtime_changed` bit into this warning. `pgdq info` is that caller.
+    /// [`crate::cache::CacheMode::load`] still has to turn a
+    /// [`crate::cache::WeakIdentity::Differs`] into this warning. `pgdq info`
+    /// is that caller, and deliberately has no strictness of its own: it
+    /// reports what the cache holds rather than refusing to.
     pub fn cache_mtime_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
     }

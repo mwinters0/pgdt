@@ -67,7 +67,7 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
         ..StatisticsRequest::ALL
     };
-    let cache = CacheMode::Enabled(cache::colocated_path(&copy));
+    let cache = CacheMode::enabled(cache::colocated_path(&copy));
     let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
     assert!(!run.interrupted);
     (dir, copy, run.index)
@@ -96,7 +96,7 @@ struct Attempt {
 /// up to the first error.
 async fn attempt(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Attempt {
     let source = LocalFileSource::open(dump).unwrap();
-    let cache = CacheMode::Enabled(cache.to_path_buf());
+    let cache = CacheMode::enabled(cache.to_path_buf());
     let mut streams =
         match table_stream_partitions(&source, table, ScanOptions::default(), options, cache).await
         {
@@ -443,7 +443,7 @@ async fn check_fixture(
     let plain = dir.path().join("plain.dqcache");
     let source = LocalFileSource::open(&dump).unwrap();
     let request = StatisticsRequest::NONE;
-    map_file(&source, &ScanOptions::default(), &CacheMode::Enabled(plain.clone()), &request)
+    map_file(&source, &ScanOptions::default(), &CacheMode::enabled(plain.clone()), &request)
         .await
         .unwrap();
     let gathered_cache = cache::colocated_path(&dump);
@@ -519,7 +519,7 @@ async fn resolves(
 ) -> bool {
     let source = LocalFileSource::open(dump).unwrap();
     let options = QueryOptions { filter: Expr::Term(candidate.clone()), ..base.clone() };
-    let cache = CacheMode::Enabled(cache.to_path_buf());
+    let cache = CacheMode::enabled(cache.to_path_buf());
     table_stream_partitions(&source, table, ScanOptions::default(), options, cache).await.is_ok()
 }
 
@@ -654,7 +654,7 @@ async fn a_pruned_stream_resumes_across_its_gaps() {
         Expr::Term(term("id", PredicateOp::Eq, Some("300"))),
     ]);
     let source = LocalFileSource::open(&dump).unwrap();
-    let cache = CacheMode::Enabled(cache::colocated_path(&dump));
+    let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let ids = |batch: &RecordBatch| {
         let column = arrow::array::AsArray::as_primitive::<arrow::datatypes::Int32Type>(
             batch.column(0).as_ref(),
@@ -774,7 +774,7 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         inner: LocalFileSource::open(&dump).unwrap(),
         starts: std::sync::Mutex::new(Vec::new()),
     };
-    let cache = CacheMode::Enabled(cache::colocated_path(&dump));
+    let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let scan = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let assert_undeep = |what: &str| {
         let starts = std::mem::take(&mut *source.starts.lock().unwrap());
@@ -898,7 +898,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         inner: LocalFileSource::open(&dump).unwrap(),
         starts: std::sync::Mutex::new(Vec::new()),
     };
-    let cache = CacheMode::Enabled(cache::colocated_path(&dump));
+    let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let scan = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
     let single = |column, op, value| Expr::Term(term(column, op, Some(value)));
 
@@ -1061,7 +1061,7 @@ async fn a_stopped_stream_resumes_to_the_same_rows() {
     )
     .await;
     let source = LocalFileSource::open(&dump).unwrap();
-    let cache = CacheMode::Enabled(cache::colocated_path(&dump));
+    let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let filter = Expr::Term(term("id", PredicateOp::Le, Some("19")));
     for max_rows in [1, 7, 19, 20] {
         let options = QueryOptions {

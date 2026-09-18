@@ -49,7 +49,7 @@ async fn resolved_schema(path: &Path, table: &str) -> pgdump_query::ResolvedSche
         ScanOptions::default(),
         QueryOptions::default(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while let Some(batch) = stream.next().await {
         batch.unwrap();
@@ -65,7 +65,7 @@ async fn try_rows(
     let source = LocalFileSource::open(path).unwrap();
     let options = QueryOptions { schema_mode: mode, ..Default::default() };
     let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::Disabled);
+        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
     let mut out = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
         let plans = stream.resolved_schema().plans;
@@ -401,7 +401,7 @@ async fn nan_numeric_is_a_field_decode_error_naming_its_context() {
             "public.t_numeric",
             &ScanOptions::default(),
             &QueryOptions::default(),
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
             |_| ControlFlow::Continue(()),
         )
         .await
@@ -438,7 +438,7 @@ async fn date_infinity_is_a_field_decode_error_naming_its_context() {
             "public.t_date",
             &ScanOptions::default(),
             &QueryOptions::default(),
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
             |_| ControlFlow::Continue(()),
         )
         .await
@@ -466,7 +466,7 @@ async fn timestamp_infinity_is_a_field_decode_error_naming_its_context() {
             "public.t_timestamp",
             &ScanOptions::default(),
             &QueryOptions::default(),
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
             |_| ControlFlow::Continue(()),
         )
         .await

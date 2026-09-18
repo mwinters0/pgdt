@@ -81,7 +81,7 @@ async fn scan_once(path: &Path) -> u64 {
         "public.perf",
         &ScanOptions::default(),
         &QueryOptions::default(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
         |batch| {
             rows += batch.num_rows() as u64;
             ControlFlow::Continue(())

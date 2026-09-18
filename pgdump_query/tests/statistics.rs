@@ -46,7 +46,7 @@ async fn gathered_with(
     statistics: &StatisticsRequest,
 ) -> DumpIndex {
     let source = LocalFileSource::open(dump).unwrap();
-    let run = map_file(&source, options, &CacheMode::Disabled, statistics).await.unwrap();
+    let run = map_file(&source, options, &CacheMode::DISABLED, statistics).await.unwrap();
     assert!(!run.interrupted);
     run.index
 }
@@ -357,7 +357,7 @@ async fn a_request_stating_none_gathers_nothing() {
 async fn statistics_round_trip_through_the_cache() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "statistics.sql");
     let source = LocalFileSource::open(&dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+    let mode = CacheMode::enabled(cache::colocated_path(&dump));
     let wanted = request(StatisticsSelection::All, SMALL_GROUP);
     let index = map_file(&source, &ScanOptions::default(), &mode, &wanted).await.unwrap().index;
     let clone = index.clone();
@@ -488,7 +488,7 @@ async fn mapped_into_cache(
     statistics: &StatisticsRequest,
 ) -> MapRun {
     let source = LocalFileSource::open(dump).unwrap();
-    let mode = CacheMode::Enabled(cache::colocated_path(dump));
+    let mode = CacheMode::enabled(cache::colocated_path(dump));
     let run = map_file(&source, options, &mode, statistics).await.unwrap();
     assert!(!run.interrupted);
     run
@@ -908,7 +908,7 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
     let (mut blocks, mut merged) = (0, 0);
     for fixture in common::all_fixtures() {
         let source = LocalFileSource::open(&fixture).unwrap();
-        let (options, mode) = (ScanOptions::default(), CacheMode::Disabled);
+        let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
         let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
@@ -988,7 +988,7 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
     let (mut blocks, mut coarsened) = (0, 0);
     for fixture in common::all_fixtures() {
         let source = LocalFileSource::open(&fixture).unwrap();
-        let (options, mode) = (ScanOptions::default(), CacheMode::Disabled);
+        let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
         let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
@@ -1057,7 +1057,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     let dump = dir.path().join("rewritten.sql");
     let cache_path = dir.path().join("elsewhere").join("rewritten.dqcache");
     std::fs::create_dir(cache_path.parent().unwrap()).unwrap();
-    let mode = CacheMode::Enabled(cache_path.clone());
+    let mode = CacheMode::enabled(cache_path.clone());
     let before = "COPY public.t (a) FROM stdin;\n11\n2\n\\.\nSELECT 1;\n";
     let after = "COPY public.t (a) FROM stdin;\n1\n\\.\n22\nSELECT 1;\n";
     assert_eq!(before.len(), after.len());
@@ -1144,7 +1144,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
     // The control: no allowance, so nothing declines, and the peak the
     // account reached gathering the whole block.
     let free =
-        map_file(&source, &ScanOptions::default(), &CacheMode::Disabled, &wanted).await.unwrap();
+        map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &wanted).await.unwrap();
     assert_eq!(free.declined_statistics, 0, "an unbounded pass declines nothing");
     let reference = statistics(block(&free.index, "public.t")).clone();
     let allowance = free.statistics.peak / 4;
@@ -1153,7 +1153,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
     for jobs in [1, 4] {
         let (_cache_dir, dump) = sandboxed(&dump, "long_block.sql");
         let source = LocalFileSource::open(&dump).unwrap();
-        let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let tight = ScanOptions {
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
             statistics_allowance_bytes: Some(allowance),

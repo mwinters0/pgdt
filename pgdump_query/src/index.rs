@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
-use crate::cache::{CacheLoad, CacheMode};
+use crate::cache::{CacheLoad, CacheMode, SourceWatch};
 use crate::copy::CopyHeader;
 use crate::diagnostic::Diagnostic;
 use crate::io::ByteRangeSource;
@@ -398,6 +398,7 @@ pub async fn preamble_only(
     options: &ScanOptions,
     cache: &CacheMode,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
+    let watch = SourceWatch::open(source, cache.strict_identity()).await?;
     let mut base_index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
         // Four reasons to start cold: there is no map to build forward from
@@ -440,8 +441,12 @@ pub async fn preamble_only(
         }
         base_index.spans.extend(spans);
         attach_text(source, &mut base_index.spans).await?;
-        cache.save(source, &base_index).await?;
+        cache.save(&watch, source, &base_index).await?;
     }
+    // A preamble-only run over a complete cache saves nothing, so this is
+    // where it says the file did not move underneath it
+    // (`crate::cache::SourceWatch`).
+    watch.check(source).await?;
     // A complete cache already carries this diagnostic, computed by
     // `cache::status_from_file` off the persisted table — so this is
     // idempotent rather than gated on `!known`, which would miss a cache

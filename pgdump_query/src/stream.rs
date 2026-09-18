@@ -54,7 +54,9 @@ use futures::{Stream, StreamExt};
 use crate::batch::{
     MIN_SOURCE_SPAN, QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names,
 };
-use crate::cache::{CacheLoad, CacheMode};
+#[cfg(test)]
+use crate::cache::StrictIdentity;
+use crate::cache::{CacheLoad, CacheMode, SourceWatch};
 use crate::copy::{COPY_TEXT_DELIMITER, CopyHeader, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::gather;
@@ -440,6 +442,7 @@ async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
+    watch: &SourceWatch,
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
     statistics: &StatisticsRequest,
@@ -509,7 +512,7 @@ async fn map_forward(
         // `index` is consistent at the last *spliced* watermark whatever the
         // buffer holds, so the save needs no snapshot logic of its own.
         if scan_options.cancelled() {
-            cache.save(source, index).await?;
+            cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);
         }
         let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
@@ -615,6 +618,7 @@ async fn map_forward(
                                     source,
                                     scan_options,
                                     cache,
+                                    watch,
                                     index,
                                     &mut builder,
                                     &mut throttle,
@@ -656,7 +660,7 @@ async fn map_forward(
                             // this block is known. `index` is consistent at
                             // the last spliced watermark, which is before it.
                             RegionScan::Cancelled => {
-                                cache.save(source, index).await?;
+                                cache.save(watch, source, index).await?;
                                 return Ok(MapStop::Interrupted);
                             }
                         }
@@ -673,6 +677,7 @@ async fn map_forward(
                             source,
                             scan_options,
                             cache,
+                            watch,
                             index,
                             &mut builder,
                             &mut throttle,
@@ -743,7 +748,7 @@ async fn map_forward(
     attach_text(source, &mut index.spans).await?;
     index.diagnostics = tiling_diagnostics(&index.spans, size);
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
-    cache.save(source, index).await?;
+    cache.save(watch, source, index).await?;
     // The true end of the file, as opposed to the two early
     // `Ok(MapStop::Reached)`s above that stop a query at its settled target.
     tracing::info!(bytes = size, reached_eof = true, "scan complete");
@@ -802,6 +807,7 @@ async fn close_copy_block(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
+    watch: &SourceWatch,
     index: &mut DumpIndex,
     builder: &mut Builder,
     throttle: &mut SaveThrottle,
@@ -842,7 +848,7 @@ async fn close_copy_block(
     // the map for the next query, so a settled target and an interrupt save
     // whether or not the throttle would have.
     if settled || cancelled || due {
-        throttle.save(cache, source, index).await?;
+        throttle.save(cache, watch, source, index).await?;
     }
     if settled {
         return Ok(BlockClose::Settled);
@@ -897,11 +903,12 @@ impl SaveThrottle {
     async fn save(
         &mut self,
         cache: &CacheMode,
+        watch: &SourceWatch,
         source: &dyn ByteRangeSource,
         index: &DumpIndex,
     ) -> Result<()> {
         let started = Instant::now();
-        cache.save(source, index).await?;
+        cache.save(watch, source, index).await?;
         self.last_cost = started.elapsed();
         self.last_save = Instant::now();
         Ok(())
@@ -991,6 +998,9 @@ pub async fn map_file(
     statistics: &StatisticsRequest,
 ) -> Result<MapRun> {
     let size = source.size().await?;
+    // Taken before anything is read, so every later observation compares
+    // against what this run started from (`crate::cache::SourceWatch`).
+    let watch = SourceWatch::open(source, cache.strict_identity()).await?;
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
         // Four reasons to start cold, spelled out rather than wildcarded
@@ -1044,13 +1054,26 @@ pub async fn map_file(
         index.tablespaces.extend(tablespaces);
         index.scanned_through = preamble_end;
         attach_text(source, &mut index.spans).await?;
-        cache.save(source, &index).await?;
+        cache.save(&watch, source, &index).await?;
     }
 
-    if map_forward(source, scan_options, cache, &mut index, None, statistics, &account, size)
-        .await?
+    if map_forward(
+        source,
+        scan_options,
+        cache,
+        &watch,
+        &mut index,
+        None,
+        statistics,
+        &account,
+        size,
+    )
+    .await?
         == MapStop::Interrupted
     {
+        // The run's own last word, for a run that saved nothing to ride
+        // (`crate::cache::SourceWatch`).
+        watch.check(source).await?;
         let statistics = announce_statistics_held(&account);
         return Ok(MapRun {
             index,
@@ -1072,6 +1095,7 @@ pub async fn map_file(
         source,
         scan_options,
         cache,
+        &watch,
         &mut index,
         statistics,
         &account,
@@ -1081,11 +1105,12 @@ pub async fn map_file(
     .await?;
     let mut declined_statistics = 0;
     if !backfill.interrupted {
-        cache.save(source, &index).await?;
+        cache.save(&watch, source, &index).await?;
         report_density_shortfall(statistics, &index);
         declined_statistics =
             report_statistics_declines(statistics, scan_options.statistics_allowance_bytes, &index);
     }
+    watch.check(source).await?;
     Ok(MapRun {
         index,
         resumed_from,
@@ -1157,6 +1182,7 @@ async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
+    watch: &SourceWatch,
     index: &mut DumpIndex,
     statistics: &StatisticsRequest,
     account: &Arc<StatisticsAccount>,
@@ -1190,8 +1216,8 @@ async fn backfill_statistics(
     // a stated maximum no single read delivers leaves a freshly mapped block
     // lacking, `CacheMode::Disabled` included (see this function's doc).
     let cache_path = match cache {
-        CacheMode::Enabled(path) => Some(path.as_path()),
-        CacheMode::Disabled | CacheMode::Offline(_) => None,
+        CacheMode::Enabled { path, .. } => Some(path.as_path()),
+        CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
     };
     let mut throttle = SaveThrottle::new();
     let mut shortfall_reported = false;
@@ -1219,7 +1245,7 @@ async fn backfill_statistics(
             )
             .await?;
             let Some(gathered) = gathered else {
-                cache.save(source, index).await?;
+                cache.save(watch, source, index).await?;
                 run.interrupted = true;
                 return Ok(run);
             };
@@ -1262,12 +1288,12 @@ async fn backfill_statistics(
         // Both of `map_forward`'s check points, a block's close being the
         // second (`docs/design/decisions.md`, "D63").
         if scan_options.cancelled() && run.reread < run.lacking {
-            cache.save(source, index).await?;
+            cache.save(watch, source, index).await?;
             run.interrupted = true;
             return Ok(run);
         }
         if throttle.due() {
-            throttle.save(cache, source, index).await?;
+            throttle.save(cache, watch, source, index).await?;
         }
     }
     tracing::info!(blocks = run.reread, "statistics back-fill complete");
@@ -2136,6 +2162,7 @@ async fn map_for_query(
     scan_options: &ScanOptions,
     query_options: &QueryOptions,
     cache: &CacheMode,
+    watch: &SourceWatch,
 ) -> Result<MappedTable> {
     let size = source.size().await?;
 
@@ -2180,7 +2207,7 @@ async fn map_for_query(
         index.tablespaces.extend(tablespaces);
         index.scanned_through = index.scanned_through.max(preamble_end);
         attach_text(source, &mut index.spans).await?;
-        cache.save(source, &index).await?;
+        cache.save(watch, source, &index).await?;
     }
     // Pass 1: extend the map until this query's table is settled. No
     // rows come out of this, and nothing is yielded until it returns.
@@ -2198,6 +2225,7 @@ async fn map_for_query(
         source,
         scan_options,
         cache,
+        watch,
         &mut index,
         target,
         &StatisticsRequest::NONE,
@@ -3269,8 +3297,12 @@ pub fn table_stream<'a>(
 
     let inner = try_stream! {
         validate_request(&query_options, resume.as_ref(), fingerprint)?;
+        // Taken before the map is read, so a warm query — which reaches no
+        // save at all — still has something to compare against when it
+        // finishes (`crate::cache::SourceWatch`).
+        let watch = SourceWatch::open(source, cache.strict_identity()).await?;
         let mapped =
-            map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
+            map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await?;
 
         // Pass 2: replay each matching block for its rows, as one segment
         // per kept run. A resumed stream picks up inside this same list, every
@@ -3291,6 +3323,9 @@ pub fn table_stream<'a>(
         while let Some(batch) = rows.next().await {
             yield batch?;
         }
+        // The run's last word: the rows are out, so what this recovers is a
+        // failure naming the cause in place of a silent wrong answer.
+        watch.check(source).await?;
     };
 
     shared.into_stream(Box::pin(inner))
@@ -3338,7 +3373,9 @@ pub async fn table_stream_partitions<'a>(
 ) -> Result<Vec<TableStream<'a>>> {
     validate_request(&query_options, None, 0)?;
     let table = table.to_string();
-    let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache).await?;
+    let watch = Arc::new(SourceWatch::open(source, cache.strict_identity()).await?);
+    let mapped =
+        map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await?;
     let MappedTable { matches, metadata, census } = mapped;
     let mut plan = ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?;
     let (groups, mut plan_notes, span) = plan_partitions(
@@ -3363,8 +3400,21 @@ pub async fn table_stream_partitions<'a>(
             let fingerprint = query_fingerprint(&table, &plan.query_options, Some((index, of)));
             let shared = StreamShared::new(ResumeToken::start(fingerprint))
                 .with_plan_notes(plan_notes.clone());
-            let inner =
-                replay(source, Arc::clone(&plan), segments, shared.clone(), None, fingerprint);
+            let plan = Arc::clone(&plan);
+            let shared_for_stream = shared.clone();
+            // **Once per sub-stream, not once per replay.** Each one is a
+            // reader that ends, and the first to notice aborts; a check that
+            // fired only on the last would let the others report rows read
+            // from a file that had already moved.
+            let watch = Arc::clone(&watch);
+            let inner = try_stream! {
+                let mut rows =
+                    Box::pin(replay(source, plan, segments, shared_for_stream, None, fingerprint));
+                while let Some(batch) = rows.next().await {
+                    yield batch?;
+                }
+                watch.check(source).await?;
+            };
             shared.into_stream(Box::pin(inner))
         })
         .collect())
@@ -3785,7 +3835,8 @@ mod tests {
             "public.t",
             &ScanOptions::default(),
             &query_options,
-            &CacheMode::Disabled,
+            &CacheMode::DISABLED,
+            &SourceWatch::open(&source, StrictIdentity::ADVISORY).await.unwrap(),
         )
         .await
         .unwrap();

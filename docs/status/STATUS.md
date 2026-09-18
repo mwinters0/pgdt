@@ -26,7 +26,7 @@ quotes a number: every figure is in
 | Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working; `money` stays text by decision (`KD13`), and a typed column cannot hold a special value (`KD8`) | `pgtype.rs`, `resolve.rs`, `decode.rs`; D37–D44; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | Full byte-exact file map, every byte in exactly one span, verified over every fixture | working | `map.rs`; D30–D33 |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working; a `--disable-triggers` dump loses data-span attribution (`KD1`) | `map.rs`, `preamble.rs`; D31, D36 |
-| Best-effort structural cache with source-identity checking and cache-only inspection | working; the library never replaces cache data automatically | `cache.rs`; D18–D22 |
+| Best-effort structural cache with source-identity checking and cache-only inspection | working; the library never replaces cache data automatically, a weak signal is advisory between runs unless `--strict-identity` binds it, and a source that changes under an in-flight read aborts a run that then saves and removes nothing | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed, decoded and compared structurally; two shapes stay text (`KD3`) and an array inside a composite is decided optimistically (`KD2`) | `nested.rs`, `pgtype.rs`; D39, D41, D45, D58 |
 | Array shape census | recorded by every mapping pass and read back before a query's first batch | `map.rs`; D35, D43 |
 | CLI `pgdq parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` scans ahead, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdump_query-cli/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
@@ -87,10 +87,11 @@ what is delivered.
   consuming it instead of a `&Path`, and recognition told what it holds rather
   than reading the path (D2). The local source is its only user.
   [notes](../design/roadmap-P14.2-origin-notes.md)
-- [ ] **14.3** In-flight identity on the local source: the check at every cache
+- [x] **14.3** In-flight identity on the local source: the check at every cache
   save and once at run end, `--strict-identity=time,location,none` with absence
   as a failure, and an abort that saves nothing and deletes nothing (D5,
   D10–D12). `location` is inert until 14.6 gives it an origin.
+  [notes](../design/roadmap-P14.3-in-flight-identity-notes.md)
 - [ ] **14.4** The oracle: an HTTP server inside the test binary serving fixtures
   over loopback, with a knob per misbehaviour — range ignored, ETag changed
   mid-run, short read, mid-body failure, mid-scan 404 — and its own tests proving
@@ -372,3 +373,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`pgdq info` was given no `--strict-identity`.** 14.3 put the flag on
+  `parse` and `query` alone. The reasoning: `info` never scans, so it has no
+  in-flight window, and its whole job is to *report* what a cache holds —
+  including that the dump's modification time moved, which it prints as a
+  warning today. A flag that made it refuse would take away the one command
+  that can say why the other two stopped. The spec settles neither way: its D5
+  says the flag "applies to the local file source too", which is about
+  providers rather than commands. Reconsidering means adding the flag to
+  `info` and deciding what it does there — refuse, or print the diagnostic and
+  exit non-zero — and wiring it through `cache::load`, which `info` calls
+  directly rather than through `CacheMode::load`.

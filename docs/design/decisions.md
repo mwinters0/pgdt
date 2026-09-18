@@ -146,10 +146,13 @@ both refusals with one tail. A back-fill meeting a block that no longer ends whe
 back-fill goes on for a file it knows was rewritten; re-mapped, cache data is replaced unasked.
 
 ### D21 Identity is `stored_size()` plus a weak mtime, in an opaque enum
-`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first.
-An mtime mismatch is `CacheMtimeChanged`, never persisted. `SourceIdentity` is matched through its
-variant because the next source has an ETag. `CompressionIndex` is a sibling of `ContainerKind`,
-whose `Plain` is honest for a compressed source; `total_size` is its own field.
+`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first;
+`SourceIdentity` is matched through its variant because the next source has an ETag, and
+`CompressionIndex` is `ContainerKind`'s sibling, `Plain` honest for a compressed source with
+`total_size` its own field. **Two questions, split by tense.** Between runs a weak signal is
+advisory — `WeakIdentity`, reported as `CacheMtimeChanged` and never persisted — and binds only
+under `StrictIdentity::time`, absence included; during one, `SourceWatch` re-reads the already-open
+descriptor at the save's cadence (D62) and at run end, aborting without saving or removing anything.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;
@@ -416,7 +419,7 @@ library, which closes one instance of a size sizing nothing (the CLI refuses it,
 being ambiguous there). Code: `statistics::StatisticsRequest`.
 
 ### D78 Statistics share the cache file, its identity and its `CACHE_FORMAT_VERSION`
-None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21), so
+None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21) so
 a same-size rewrite prunes against its predecessor's, knowingly. Bounds, order and dictionary hold
 only under the declared type and `COLLATE` recorded with them, and changing how a kind orders or
 equates bumps the version. Both ends stream; a save renames its own file over the cache, so no copy

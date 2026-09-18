@@ -5190,7 +5190,7 @@ mod tests {
         async fn types_of(major: u32) -> Vec<TypeDef> {
             let source = LocalFileSource::open(fixture(major, "types/default.sql")).unwrap();
             let (metadata, _) =
-                preamble_only(&source, &ScanOptions::default(), &CacheMode::Disabled)
+                preamble_only(&source, &ScanOptions::default(), &CacheMode::DISABLED)
                     .await
                     .unwrap();
             metadata.databases.into_iter().next().expect("a dump names a database").types

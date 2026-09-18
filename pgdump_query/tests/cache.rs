@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use futures::StreamExt;
-use pgdump_query::cache::{CacheClaim, CacheLoad, CacheMode, CacheStatus};
+use pgdump_query::cache::{
+    CacheClaim, CacheLoad, CacheMode, CacheStatus, SourceWatch, StrictIdentity, WeakIdentity,
+};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
     ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Origin,
@@ -16,6 +18,12 @@ use pgdump_query::{
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+
+/// A watch opened on `source` as it stands, for a test whose subject is the
+/// save rather than the in-flight identity check.
+async fn watching(source: &dyn ByteRangeSource) -> SourceWatch {
+    SourceWatch::open(source, StrictIdentity::ADVISORY).await.unwrap()
+}
 
 #[test]
 fn colocated_path_appends_the_cache_suffix() {
@@ -79,8 +87,12 @@ async fn saved_index_round_trips_exactly() {
     let path = dir.path().join("edge_cases.sql.dqcache");
     cache::save(&path, &source, &index).await.unwrap();
     let loaded = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed, total_size, compression, .. } => {
-            assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
+        CacheStatus::Valid { index, weak, total_size, compression, .. } => {
+            assert_eq!(
+                weak,
+                WeakIdentity::Agrees,
+                "just-saved cache must match the source's current mtime"
+            );
             assert_eq!(total_size, source.size().await.unwrap());
             assert_eq!(compression, None, "a plain source sits under no container");
             index
@@ -107,7 +119,7 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
-    let mode = CacheMode::Enabled(path.clone());
+    let mode = CacheMode::enabled(path.clone());
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
@@ -145,7 +157,7 @@ async fn save_overwrites_an_existing_cache() {
     let total_size = source.size().await.unwrap();
     let CacheStatus::Valid {
         index: loaded,
-        mtime_changed: false,
+        weak: WeakIdentity::Agrees,
         total_size: loaded_size,
         compression: None,
         ..
@@ -212,11 +224,11 @@ async fn cache_mode_load_names_each_unusable_status() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let missing = dir.path().join("nonexistent.dqcache");
-    assert_eq!(CacheMode::Enabled(missing).load(&source).await.unwrap(), CacheLoad::Missing);
+    assert_eq!(CacheMode::enabled(missing).load(&source).await.unwrap(), CacheLoad::Missing);
 
     let foreign = dir.path().join("garbage.dqcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
-    assert_eq!(CacheMode::Enabled(foreign).load(&source).await.unwrap(), CacheLoad::Unreadable);
+    assert_eq!(CacheMode::enabled(foreign).load(&source).await.unwrap(), CacheLoad::Unreadable);
 
     let stale = dir.path().join("stale.dqcache");
     cache::save(&stale, &source, &index).await.unwrap();
@@ -224,7 +236,7 @@ async fn cache_mode_load_names_each_unusable_status() {
     bytes[0] = bytes[0].wrapping_add(1);
     std::fs::write(&stale, &bytes).unwrap();
     assert_eq!(
-        CacheMode::Enabled(stale).load(&source).await.unwrap(),
+        CacheMode::enabled(stale).load(&source).await.unwrap(),
         CacheLoad::UnsupportedVersion
     );
 
@@ -236,7 +248,7 @@ async fn cache_mode_load_names_each_unusable_status() {
     std::fs::write(&grown, &grown_bytes).unwrap();
     let grown_source = LocalFileSource::open(&grown).unwrap();
     assert_eq!(
-        CacheMode::Enabled(path).load(&grown_source).await.unwrap(),
+        CacheMode::enabled(path).load(&grown_source).await.unwrap(),
         CacheLoad::SourceChanged {
             cached_stored_size: source.stored_size().await.unwrap(),
             live_stored_size: grown_source.stored_size().await.unwrap(),
@@ -261,7 +273,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     let source = LocalFileSource::open(&dump).unwrap();
     let cached_stored_size = source.stored_size().await.unwrap();
     let path = cache::colocated_path(&dump);
-    let mode = CacheMode::Enabled(path.clone());
+    let mode = CacheMode::enabled(path.clone());
     map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
     let before = std::fs::read(&path).unwrap();
 
@@ -330,8 +342,8 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
 
     match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index: loaded, mtime_changed, .. } => {
-            assert!(mtime_changed);
+        CacheStatus::Valid { index: loaded, weak, .. } => {
+            assert_eq!(weak, WeakIdentity::Differs);
             // Diagnostics are recomputed on load rather than restored, and
             // `build_index`'s own are the same pure function of the same
             // spans, so the two agree without either being persisted.
@@ -350,13 +362,13 @@ fn cache_mode_resolves_default_explicit_and_disabled() {
 
     assert_eq!(
         CacheMode::resolve(dump, None),
-        CacheMode::Enabled(PathBuf::from("/a/b/dump.sql.dqcache"))
+        CacheMode::enabled(PathBuf::from("/a/b/dump.sql.dqcache"))
     );
     assert_eq!(
         CacheMode::resolve(dump, Some(Path::new("/other/path.dqcache"))),
-        CacheMode::Enabled(PathBuf::from("/other/path.dqcache"))
+        CacheMode::enabled(PathBuf::from("/other/path.dqcache"))
     );
-    assert_eq!(CacheMode::resolve(dump, Some(Path::new("none"))), CacheMode::Disabled);
+    assert_eq!(CacheMode::resolve(dump, Some(Path::new("none"))), CacheMode::DISABLED);
 }
 
 #[tokio::test]
@@ -371,7 +383,7 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     assert!(path.exists());
 
     let mode = CacheMode::resolve(&dump, Some(Path::new("none")));
-    assert_eq!(mode, CacheMode::Disabled);
+    assert_eq!(mode, CacheMode::DISABLED);
 
     // The existing valid cache at the colocated path is ignored, not read —
     // and the reason says so: `Disabled` is about the caller, not about
@@ -381,15 +393,15 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     // Saving under a disabled mode is a no-op: it must not touch whatever is
     // (or isn't) at the would-be colocated path.
     std::fs::write(&path, b"clobbered after the disabled mode was resolved").unwrap();
-    mode.save(&source, &index).await.unwrap();
+    mode.save(&watching(&source).await, &source, &index).await.unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), b"clobbered after the disabled mode was resolved");
 }
 
 #[test]
 fn require_enabled_errors_when_disabled() {
-    assert!(CacheMode::Enabled(PathBuf::from("/x")).require_enabled("parse").is_ok());
+    assert!(CacheMode::enabled(PathBuf::from("/x")).require_enabled("parse").is_ok());
     assert!(matches!(
-        CacheMode::Disabled.require_enabled("parse"),
+        CacheMode::DISABLED.require_enabled("parse"),
         Err(Error::CacheDisabled { operation: "parse" })
     ));
 }
@@ -418,7 +430,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(&dump, &bytes).unwrap();
 
-    let CacheLoad::Index(loaded) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    let CacheLoad::Index(loaded) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
         panic!("an mtime change does not invalidate")
     };
@@ -454,7 +466,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
         .push(Diagnostic { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged });
     pgdump_query::cache::save(&cache_path, &source, &index).await.unwrap();
 
-    let CacheLoad::Index(loaded) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    let CacheLoad::Index(loaded) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
         panic!("the cache this test just saved is usable")
     };
@@ -486,7 +498,7 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
-    let mode = CacheMode::Enabled(path.clone());
+    let mode = CacheMode::enabled(path.clone());
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
@@ -509,14 +521,17 @@ async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
     let offline = CacheMode::Offline(path.clone());
     assert!(matches!(offline.load(&source).await, Err(Error::CacheModeMismatch(_))));
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert!(matches!(offline.save(&source, &index).await, Err(Error::CacheModeMismatch(_))));
+    assert!(matches!(
+        offline.save(&watching(&source).await, &source, &index).await,
+        Err(Error::CacheModeMismatch(_))
+    ));
     assert!(matches!(offline.require_enabled("parse"), Err(Error::CacheModeMismatch(_))));
 
     assert!(matches!(
-        CacheMode::Enabled(path).load_offline().await,
+        CacheMode::enabled(path).load_offline().await,
         Err(Error::CacheModeMismatch(_))
     ));
-    assert!(matches!(CacheMode::Disabled.load_offline().await, Err(Error::CacheModeMismatch(_))));
+    assert!(matches!(CacheMode::DISABLED.load_offline().await, Err(Error::CacheModeMismatch(_))));
 }
 
 /// `load_offline` against a cache that was never fully scanned reports
@@ -529,7 +544,7 @@ async fn load_offline_reports_incomplete_for_a_partial_scan() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
-    let mode = CacheMode::Enabled(path.clone());
+    let mode = CacheMode::enabled(path.clone());
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
     let size = source.size().await.unwrap();
@@ -567,7 +582,7 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
     );
 
     let partial_path = dir.path().join("partial.dqcache");
-    let mode = CacheMode::Enabled(partial_path.clone());
+    let mode = CacheMode::enabled(partial_path.clone());
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
     let status = CacheMode::Offline(partial_path).load_offline().await.unwrap();
     let CacheStatus::Incomplete { index: loaded, .. } = status else {
@@ -645,8 +660,12 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let path = dir.path().join("edge_cases.sql.xz.dqcache");
     cache::save(&path, &xz, &xz_index).await.unwrap();
     match cache::load(&path, &xz).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed, total_size, compression, .. } => {
-            assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
+        CacheStatus::Valid { index, weak, total_size, compression, .. } => {
+            assert_eq!(
+                weak,
+                WeakIdentity::Agrees,
+                "just-saved cache must match the source's current mtime"
+            );
             assert_eq!(total_size, plain.size().await.unwrap());
             assert_eq!(index, plain_index);
             // The shape comes back off the persisted seek table, so a
@@ -738,7 +757,7 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     let non_seekable = xz_compress_single_block(&edge_cases());
     let xz = XzSource::open(non_seekable.path()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let mode = CacheMode::Enabled(dir.path().join("preamble.xz.dqcache"));
+    let mode = CacheMode::enabled(dir.path().join("preamble.xz.dqcache"));
 
     let (_metadata, diagnostics) =
         preamble_only(&xz, &ScanOptions::default(), &mode).await.unwrap();

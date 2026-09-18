@@ -36,7 +36,7 @@ type Rows = Vec<Vec<Option<String>>>;
 /// Every row a serial `table_stream` yields, in file order — the oracle.
 async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOptions) -> Rows {
     let mut stream =
-        table_stream(source, table, ScanOptions::default(), options, None, CacheMode::Disabled);
+        table_stream(source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
     let mut rows = Rows::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
@@ -79,7 +79,7 @@ async fn partitioned_rows(
         table,
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -138,7 +138,7 @@ async fn sub_streams_polled_interleaved_keep_their_own_rows() {
         "public.t_int",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -165,7 +165,7 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
         "public.widgets",
         ScanOptions::default(),
         QueryOptions::default(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -200,7 +200,7 @@ async fn a_budget_bound_worker_count_announces_why() {
         "public.widgets",
         ScanOptions::default(),
         options.clone(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -266,7 +266,7 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -303,7 +303,7 @@ async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -323,7 +323,7 @@ async fn a_budget_that_affords_every_worker_is_silent() {
         "public.t_int",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -423,7 +423,7 @@ async fn batches_sorted_on_their_source_offset_are_the_serial_order() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -477,7 +477,7 @@ async fn a_reported_offset_is_the_start_of_a_row() {
         ScanOptions::default(),
         options,
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
 
     let mut seen = 0usize;
@@ -525,7 +525,7 @@ async fn a_sub_streams_resume_token_is_refused_by_the_whole_stream() {
         "public.t_int",
         ScanOptions::default(),
         options.clone(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -539,7 +539,7 @@ async fn a_sub_streams_resume_token_is_refused_by_the_whole_stream() {
         ScanOptions::default(),
         options,
         Some(token),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     assert!(
         matches!(resumed.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))),
@@ -652,7 +652,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
         "public.widgets",
         ScanOptions::default(),
         options.clone(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -683,7 +683,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -749,7 +749,7 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -809,7 +809,7 @@ async fn a_block_path_that_was_taken_is_silent() {
         "public.widgets",
         ScanOptions::default(),
         affordable.clone(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -821,7 +821,7 @@ async fn a_block_path_that_was_taken_is_silent() {
         "public.widgets",
         ScanOptions::default(),
         affordable.clone(),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -838,7 +838,7 @@ async fn a_block_path_that_was_taken_is_silent() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -887,7 +887,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
         "public.t_int",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();
@@ -954,7 +954,7 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
         "public.t_int",
         ScanOptions::default(),
         options,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     )
     .await
     .unwrap();

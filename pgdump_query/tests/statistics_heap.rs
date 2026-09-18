@@ -67,7 +67,7 @@ fn request(group_size: u64) -> StatisticsRequest {
 
 async fn parse(dump: &Path, options: &ScanOptions, statistics: &StatisticsRequest) -> MapRun {
     let source = LocalFileSource::open(dump).unwrap();
-    let mode = CacheMode::Enabled(pgdump_query::cache::colocated_path(dump));
+    let mode = CacheMode::enabled(pgdump_query::cache::colocated_path(dump));
     let run = map_file(&source, options, &mode, statistics).await.unwrap();
     assert!(!run.interrupted);
     run

@@ -28,7 +28,7 @@ async fn drain(
 ) -> pgdump_query::Result<(Vec<String>, Vec<Vec<Option<String>>>)> {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::Disabled);
+        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
     let mut names = Vec::new();
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
@@ -51,7 +51,7 @@ async fn a_projection_cuts_the_batches_and_the_reported_schema_together() {
         ScanOptions::default(),
         projecting(&["created_at", "id"]),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
@@ -147,7 +147,7 @@ async fn projecting_a_column_away_escapes_its_decode_failure() {
                 ScanOptions::default(),
                 options,
                 None,
-                CacheMode::Disabled,
+                CacheMode::DISABLED,
             );
             let mut rows = Vec::new();
             while let Some(batch) = stream.next().await.transpose()? {
@@ -194,7 +194,7 @@ async fn a_resume_token_belongs_to_the_query_that_made_it() {
         ScanOptions::default(),
         options.clone(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut rows = rows_of(&stream.next().await.unwrap().unwrap());
     let token = stream.resume_token();
@@ -206,7 +206,7 @@ async fn a_resume_token_belongs_to_the_query_that_made_it() {
         ScanOptions::default(),
         QueryOptions { max_rows: 1, max_bytes: None, ..projecting(&["name", "id"]) },
         Some(token.clone()),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     assert!(
         matches!(wrong.next().await, Some(Err(Error::ResumeQueryMismatch))),
@@ -219,7 +219,7 @@ async fn a_resume_token_belongs_to_the_query_that_made_it() {
         ScanOptions::default(),
         options,
         Some(token),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while let Some(batch) = resumed.next().await {
         rows.extend(rows_of(&batch.unwrap()));

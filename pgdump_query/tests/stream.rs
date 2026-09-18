@@ -25,7 +25,7 @@ async fn stream_matches_push_mode_output() {
         ScanOptions::default(),
         QueryOptions::default(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
@@ -49,7 +49,7 @@ async fn resume_continues_without_gap_or_repeat() {
             ScanOptions::default(),
             options.clone(),
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
 
         let mut rows = Vec::new();
@@ -66,7 +66,7 @@ async fn resume_continues_without_gap_or_repeat() {
             ScanOptions::default(),
             options.clone(),
             Some(token),
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         while let Some(batch) = resumed.next().await {
             rows.extend(rows_of(&batch.unwrap()));
@@ -88,7 +88,7 @@ async fn resume_reconstructs_headerless_schema() {
         ScanOptions::default(),
         QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
 
     let first = stream.next().await.unwrap().unwrap();
@@ -102,7 +102,7 @@ async fn resume_reconstructs_headerless_schema() {
         ScanOptions::default(),
         QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
         Some(token),
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let second = resumed.next().await.unwrap().unwrap();
     assert_eq!(
@@ -127,7 +127,7 @@ async fn resume_at_a_block_boundary() {
             ScanOptions::default(),
             options.clone(),
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
 
         let only_batch = stream.next().await.unwrap().unwrap();
@@ -142,7 +142,7 @@ async fn resume_at_a_block_boundary() {
             ScanOptions::default(),
             options,
             Some(token),
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         assert!(resumed.next().await.is_none(), "pg_dump {version}: nothing left after boundary");
     }
@@ -161,7 +161,7 @@ async fn resolved_schema_matches_the_batches_it_describes() {
         ScanOptions::default(),
         batch_options,
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut batches = Vec::new();
     while let Some(batch) = stream.next().await.transpose().unwrap() {
@@ -195,14 +195,14 @@ async fn strings_mode_never_resolves_types() {
         ScanOptions::default(),
         batch_options,
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
     assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::NotDeclared));
 }
 
-/// `--cache-path none` (`CacheMode::Disabled`) disables persistence, not
+/// `--cache-path none` (`CacheMode::DISABLED`) disables persistence, not
 /// typing (`docs/design/decisions.md`, "D36") — the preamble is still scanned fresh, so typing works identically
 /// to `CacheMode::Enabled`, just without leaving a cache file behind.
 #[tokio::test]
@@ -215,7 +215,7 @@ async fn disabled_cache_still_resolves_types() {
         ScanOptions::default(),
         batch_options,
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
@@ -235,7 +235,7 @@ fn blocking_iterator_matches_async_stream() {
         ScanOptions::default(),
         QueryOptions::default(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let iter = BlockingTableIter::new(stream).unwrap();
 
@@ -256,7 +256,7 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
         ScanOptions::default(),
         QueryOptions::default(),
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
@@ -280,7 +280,7 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
             ScanOptions::default(),
             QueryOptions::default(),
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         let err = loop {
             match stream.next().await {
@@ -329,7 +329,7 @@ async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() 
             ScanOptions::default(),
             batch_options,
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         let mut rows = Vec::new();
         while let Some(batch) = stream.next().await {
@@ -367,7 +367,7 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
             ScanOptions::default(),
             typed,
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         let mut typed_rows = Vec::new();
         let mut schema = None;
@@ -393,7 +393,7 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
             ScanOptions::default(),
             strings,
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         let mut rows = Vec::new();
         while let Some(batch) = stream.next().await {
@@ -424,7 +424,7 @@ async fn a_partition_root_name_yields_every_partitions_rows() {
                 ScanOptions::default(),
                 QueryOptions::default(),
                 None,
-                CacheMode::Disabled,
+                CacheMode::DISABLED,
             );
             let mut rows = Vec::new();
             while let Some(batch) = stream.next().await {
@@ -495,7 +495,7 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
         ScanOptions::default(),
         QueryOptions::default(),
         None,
-        CacheMode::Enabled(cache_path.clone()),
+        CacheMode::enabled(cache_path.clone()),
     );
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
@@ -504,7 +504,7 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
     assert_eq!(rows, vec![vec![Some("unrelated".to_string())]]);
 
     use pgdump_query::ByteRangeSource;
-    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    let CacheLoad::Index(index) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
         panic!("the query wrote a cache")
     };
@@ -552,7 +552,7 @@ async fn notes_rows(
         ScanOptions { chunk_size_bytes: chunk_size, ..ScanOptions::default() },
         options,
         None,
-        CacheMode::Disabled,
+        CacheMode::DISABLED,
     );
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
@@ -668,7 +668,7 @@ async fn a_later_blocks_refusal_is_raised_before_any_row() {
             ScanOptions::default(),
             options.clone(),
             None,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         );
         match stream.next().await.expect("the stream opens with the refusal") {
             Ok(batch) => panic!("a row before the refusal: {:?}", rows_of(&batch)),
@@ -681,7 +681,7 @@ async fn a_later_blocks_refusal_is_raised_before_any_row() {
             "public.t",
             ScanOptions::default(),
             partitioned,
-            CacheMode::Disabled,
+            CacheMode::DISABLED,
         )
         .await
         .err()

@@ -111,6 +111,20 @@ Options:
           [default: all]
           [possible values: all, none]
 
+      --strict-identity[=<TERMS>]
+          Which weak signs of a source's identity must hold, as a comma-separated selection of
+          `time`, `location` and `none`; the flag alone is `time,location`. Left unstated, they are
+          advisory: a dump that was moved, copied or touched since it was parsed is read with a
+          warning, because data moves and none of these signals proves the bytes changed. `time`
+          binds the modification time, so a cache written against another one — or a source that
+          offers none at all — stops the run instead. `location` binds where a source was fetched
+          from, which a local file does not have, so it binds nothing yet.
+          
+          **A source that changes while it is being read is an error whatever this says**, because
+          bytes moving underneath a read that has already returned some of them cannot produce a
+          right answer; `none` is the only way to turn that into a warning, and it turns off
+          everything else too.
+
       --jobs <N>
           How many workers pgdq may ask for. Left unstated, the file decides: a plain dump reads
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count
