@@ -194,12 +194,13 @@ fn a_memory_allowance_too_small_declines_the_block_and_only_a_larger_one_rereads
         stderr_of(&out)
     };
 
-    // At and below `1.25 × MEMORY_UNPOOLED_BOUND` the margin ceiling is zero on
-    // its own, so it leaves the statistics nothing whatever the budget: every
-    // block declines, whatever its width. This number is that line exactly —
-    // 320 MiB, where `(a / 100) * 80` truncates to 16 bytes under the bound —
-    // so the assertions below rest on the rounding direction.
-    let tight = ["--memory", "335544320"];
+    // At and below `MEMORY_UNPOOLED_BOUND × 100 / (100 − MEMORY_MARGIN_PERCENT)`
+    // the margin ceiling is zero on its own, so it leaves the statistics
+    // nothing whatever the budget: every block declines, whatever its width.
+    // 300 MiB is well inside that band — the line itself is 320 MiB, and where
+    // it falls is pinned by `pgdump_query::io`'s own unit test — so nothing
+    // here rests on which way `(a / 100) * 80` rounds.
+    let tight = ["--memory", "314572800"];
     let stderr = parse(&tight);
     assert!(stderr.contains("statistics_bytes=0 (stated)"), "{stderr}");
     assert!(stderr.contains("statistics declined"), "{stderr}");

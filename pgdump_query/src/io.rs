@@ -1025,8 +1025,10 @@ fn margin_allowance(allowance: u64) -> u64 {
 /// statistics. At and above it the *ceiling* binds, the count is solved right up
 /// against the number this subtracts from, and statistics get only the slack one
 /// worker's step leaves: a wide host at a high `--jobs` is where every block
-/// declines, not a narrow one. Below `1.25 × MEMORY_UNPOOLED_BOUND` the ceiling
-/// is zero on its own and nothing is ever gathered.
+/// declines, not a narrow one. At or below `MEMORY_UNPOOLED_BOUND × 100 /
+/// (100 − MEMORY_MARGIN_PERCENT)` the ceiling is zero on its own and nothing is
+/// ever gathered. Both lines are arithmetic between the constants and both are
+/// pinned by this module's tests.
 ///
 /// Saturating, so an arrangement whose budget already fills the margin leaves
 /// zero rather than wrapping, and every block declines.
@@ -4755,6 +4757,55 @@ mod tests {
             margin_allowance(crossover + (64 << 20)) < (crossover + (64 << 20)) - MEMORY_RESERVE
         );
         assert!(margin_allowance(4 << 30) < (4 << 30) - MEMORY_RESERVE);
+    }
+
+    /// **What a mapping pass's statistics are left has two bands, and its
+    /// floor is not the margin's** (`docs/design/decisions.md`, "D85"). Both
+    /// lines are arithmetic between the three constants rather than readings,
+    /// and nothing else would notice one of them moving past another.
+    ///
+    /// **Its own zero line is `MEMORY_UNPOOLED_BOUND × 100 / (100 −
+    /// MEMORY_MARGIN_PERCENT)`** — at and below it the ceiling this subtracts
+    /// a budget from is zero on its own, so no allowance there gathers
+    /// anything at any budget, and the line is reached rather than merely
+    /// approached.
+    ///
+    /// **The swap is `the_margin_is_the_tighter_condition_only_above_the_crossover`'s
+    /// crossover read the other way round.** Below it a count is solved
+    /// against the cap, which stands under the ceiling, so `ceiling − cap`
+    /// survives whatever the source charges; above it the count is solved
+    /// against the ceiling itself and a source whose step divides it takes the
+    /// statistics to nothing — a wide allowance, not a narrow one.
+    #[test]
+    fn statistics_are_starved_below_their_own_line_and_unfloored_above_the_crossover() {
+        let zero_line = MEMORY_UNPOOLED_BOUND * 100 / (100 - MEMORY_MARGIN_PERCENT);
+        assert_eq!(zero_line, 320 << 20);
+        assert_eq!(statistics_allowance(zero_line, 0), 0, "at the line, not only under it");
+        assert_eq!(statistics_allowance(zero_line - (1 << 20), 0), 0);
+        assert!(statistics_allowance(zero_line + (1 << 20), 0) > 0, "and positive above it");
+
+        let crossover = 5 * (MEMORY_RESERVE - MEMORY_UNPOOLED_BOUND);
+        let below = crossover - (64 << 20);
+        let above = crossover + (64 << 20);
+
+        // Below the crossover no budget a fit reports can reach the ceiling,
+        // the cap being the tighter of the two: `ceiling − cap` is left at
+        // every per-worker charge, including one too large for a single worker.
+        let floor = margin_allowance(below) - (below - MEMORY_RESERVE);
+        assert!(floor > 0, "an allowance in this band cannot starve statistics");
+        for per_worker in [1u64 << 20, 17 << 20, 64 << 20, 96 << 20, 1 << 30] {
+            let fitted = Parallelism::within(24, Some(WorkerMemory::per_worker(per_worker)), below);
+            let left = statistics_allowance(below, fitted.memory_bytes().unwrap());
+            assert!(left >= floor, "{per_worker} left {left}, under the cap's own floor {floor}");
+        }
+
+        // Above it the ceiling binds instead, so the count is solved right up
+        // against the number this subtracts from and there is no floor left.
+        let ceiling = margin_allowance(above);
+        assert!(ceiling < above - MEMORY_RESERVE, "the ceiling binds here, not the cap");
+        let fitted = Parallelism::within(24, Some(WorkerMemory::per_worker(ceiling / 4)), above);
+        assert_eq!(fitted.jobs(), 4, "four workers is what the ceiling exactly affords");
+        assert_eq!(statistics_allowance(above, fitted.memory_bytes().unwrap()), 0);
     }
 
     /// **Below the reserve the budget goes to zero rather than to a floor**
