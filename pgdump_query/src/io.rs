@@ -10,7 +10,13 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 
-use crate::scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
+#[cfg(feature = "http")]
+use std::time::{Duration, UNIX_EPOCH};
+
+#[cfg(feature = "http")]
+use object_store::ObjectStore as _;
+
+use crate::scan::{Cancellation, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
 use crate::{Error, Result};
 
 /// Minimal async byte-range read abstraction.
@@ -168,6 +174,16 @@ pub trait ByteRangeSource: Send + Sync {
     /// **Advisory, and it defaults to doing nothing** — which is
     /// [`WaitPolicy::NeverWait`]'s behaviour.
     fn hint_wait_policy(&self, _policy: WaitPolicy) {}
+    /// The caller's ask that reading stop, announced beside the other hints
+    /// for a source whose own wait needs it.
+    ///
+    /// **Advisory, and it defaults to doing nothing**, which is right for
+    /// every source whose wait is a `pread`: the read loop's own poll of
+    /// `crate::ScanOptions::cancelled` bounds a stop by tens of milliseconds
+    /// and nothing in the source has to know. A source whose wait is a network
+    /// request has no such bound and takes the signal so it can drop the
+    /// request in flight (`docs/design/decisions.md`, "D26").
+    fn hint_cancellation(&self, _cancel: Arc<Cancellation>) {}
 }
 
 /// Whether a read loop's acquisitions may be made to **wait** for a pooled
@@ -2750,12 +2766,17 @@ pub struct Origin {
     probed: tokio::sync::OnceCell<OriginProbe>,
 }
 
-/// The kinds of place a dump can be. One today, and private: what a caller
-/// reads is [`OriginProbe`], which is the same three answers whichever kind
-/// produced them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The kinds of place a dump can be, and private: what a caller reads is
+/// [`OriginProbe`], which is the same three answers whichever kind produced
+/// them.
+#[derive(Debug)]
 enum Location {
     LocalFile(PathBuf),
+    /// An object a server answers ranged GETs for. It carries the client as
+    /// well as the URL, so the probe's round trip and every later read share
+    /// one connection pool and one configuration.
+    #[cfg(feature = "http")]
+    Remote(Arc<RemoteObject>),
 }
 
 /// What one probe of an [`Origin`] answered.
@@ -2796,12 +2817,112 @@ impl Origin {
         Self { location: Location::LocalFile(path.into()), probed: tokio::sync::OnceCell::new() }
     }
 
+    /// The dump an HTTP server holds at `url`, read over ranged GETs.
+    ///
+    /// **This is where "HTTP only" is enforced rather than merely stated**
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D3"): the scheme must be
+    /// `http` or `https`, and a URL carrying a username or password is refused
+    /// by name rather than silently stripped, so nobody believes a credential
+    /// was sent (D17). A presigned URL needs none — the signature rides in the
+    /// query string, which this preserves.
+    ///
+    /// The client is built here and reading nothing: the first round trip is
+    /// [`Origin::probe`]'s.
+    #[cfg(feature = "http")]
+    pub fn remote(url: &url::Url) -> Result<Self> {
+        Self::remote_with_read_timeout(url, REMOTE_READ_TIMEOUT)
+    }
+
+    /// [`Origin::remote`] with the liveness deadline stated rather than taken
+    /// from [`REMOTE_READ_TIMEOUT`].
+    ///
+    /// It exists because a deadline nothing can produce is a deadline nothing
+    /// checks: the shipped value is minutes of wall clock to a test, so the
+    /// assertion that a stalled origin is abandoned and retried — rather than
+    /// waited out — is made through this
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D9").
+    #[cfg(feature = "http")]
+    pub fn remote_with_read_timeout(url: &url::Url, read_timeout: Duration) -> Result<Self> {
+        let refuse = |why: &str| Error::SourceNotReadable {
+            origin: without_credentials(url),
+            why: why.to_string(),
+        };
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(refuse("only `http:` and `https:` URLs are fetched over the network"));
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(refuse(
+                "it carries a username or password, and this build sends no credentials — use a \
+                 presigned URL, whose signature rides in the query string",
+            ));
+        }
+        let object = RemoteObject::open(url.clone(), read_timeout)?;
+        Ok(Self {
+            location: Location::Remote(Arc::new(object)),
+            probed: tokio::sync::OnceCell::new(),
+        })
+    }
+
+    /// What a `--source` argument names: **a URL first and a path second**
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D3").
+    ///
+    /// `http` and `https` select the network; `file:` is a local path, because
+    /// a user who has seen `--source https://…` work may reasonably conclude
+    /// that a local file now needs `file://`, and being right about how the
+    /// tool works should not be a way to get an error (D17). An empty or
+    /// `localhost` host is this filesystem; any other host is refused by name,
+    /// this build speaking no network file protocol. Every other scheme is
+    /// refused by name, which is what a mistyped one deserves.
+    ///
+    /// **Anything that is not a URL is a path**, exactly as before this phase.
+    #[cfg(feature = "http")]
+    pub fn resolve(argument: &str) -> Result<Self> {
+        let refuse = |why: String| Error::SourceNotReadable { origin: argument.to_string(), why };
+        let Ok(url) = url::Url::parse(argument) else {
+            return Ok(Self::local(argument));
+        };
+        match url.scheme() {
+            "http" | "https" => Self::remote(&url),
+            // `to_file_path` refuses two things, and they are different
+            // mistakes: a host naming another machine, and a path that is not
+            // absolute.
+            "file" => url.to_file_path().map(Self::local).map_err(|()| {
+                refuse(match url.host_str() {
+                    Some(host) if host != "localhost" => format!(
+                        "a `file:` URL names a path on this machine, so its host must be empty \
+                         or `localhost`, not `{host}`"
+                    ),
+                    _ => "a `file:` URL names an absolute path, so its path must begin with `/`"
+                        .to_string(),
+                })
+            }),
+            scheme => Err(refuse(format!(
+                "the `{scheme}:` scheme is not one this build reads — `http:`, `https:` and \
+                 `file:` are, and a path whose first segment holds a colon is \
+                 written `./{argument}`"
+            ))),
+        }
+    }
+
+    /// The path this origin names on this filesystem, or `None` for one that
+    /// is not a file — what a caller deriving a name *beside* the dump needs,
+    /// there being no such place for an object fetched over the network.
+    pub fn local_path(&self) -> Option<&Path> {
+        match &self.location {
+            Location::LocalFile(path) => Some(path),
+            #[cfg(feature = "http")]
+            Location::Remote(_) => None,
+        }
+    }
+
     /// Probe this origin, or hand back the answer a previous call got.
     pub async fn probe(&self) -> Result<&OriginProbe> {
         self.probed
             .get_or_try_init(|| async {
                 match &self.location {
                     Location::LocalFile(path) => probe_local_file(path).await,
+                    #[cfg(feature = "http")]
+                    Location::Remote(object) => object.probe().await,
                 }
             })
             .await
@@ -2813,6 +2934,8 @@ impl std::fmt::Display for Origin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.location {
             Location::LocalFile(path) => write!(f, "{}", path.display()),
+            #[cfg(feature = "http")]
+            Location::Remote(object) => write!(f, "{}", object.url),
         }
     }
 }
@@ -2887,6 +3010,22 @@ pub enum Recognized {
     Mismatch,
 }
 
+/// Open whatever `origin` names, choosing the source kind by where the dump
+/// is and its compression layer by what its first bytes are.
+///
+/// **The entry point above [`open_local`] and [`open_remote`]**, and the one a
+/// caller with an origin in hand wants: the two below it each answer for one
+/// kind of place and refuse the other, so dispatching here is what keeps a
+/// caller from having to know which it has. Every argument and every answer is
+/// the same whichever it dispatches to.
+pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+    match &origin.location {
+        Location::LocalFile(_) => open_local(origin, known).await,
+        #[cfg(feature = "http")]
+        Location::Remote(_) => open_remote(origin, known).await,
+    }
+}
+
 /// Open `origin` as a [`ByteRangeSource`], choosing between
 /// [`LocalFileSource`] and [`XzSource`] by **content**, not by name
 /// (`docs/design/decisions.md`, "D14"): the first six bytes are checked
@@ -2905,8 +3044,22 @@ pub enum Recognized {
 /// fallback. [`KnownCompression::Unknown`] is the no-knowledge case and always
 /// yields a source.
 pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+    // The kind is settled before the probe, so an origin this cannot open is
+    // refused without a round trip being spent on it. The match has a second
+    // arm only where the remote source is compiled in; without it there is one
+    // kind of place and the refusal is unreachable.
+    #[allow(clippy::infallible_destructuring_match)]
+    let path = match &origin.location {
+        Location::LocalFile(path) => path,
+        #[cfg(feature = "http")]
+        Location::Remote(_) => {
+            return Err(Error::SourceNotReadable {
+                origin: origin.to_string(),
+                why: "it is not a file on this filesystem".to_string(),
+            });
+        }
+    };
     let is_xz = origin.probe().await?.leading().starts_with(&XZ_MAGIC);
-    let Location::LocalFile(path) = &origin.location;
     match (is_xz, known) {
         // The saving: a table from a previous walk of this file, validated
         // against the file's length and its own internal consistency without
@@ -2927,6 +3080,291 @@ pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Reco
         }
         (false, KnownCompression::Unknown | KnownCompression::Plain) => {
             Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?)))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The remote source
+//
+// One `ByteRangeSource` over `object_store`'s HTTP backend, and what an
+// `Origin` needs in order to name one. Everything below is behind the `http`
+// feature (`docs/design/roadmap-P14-remote-input.md`, "D6").
+// ---------------------------------------------------------------------------
+
+/// How long a remote request may go without delivering a byte before it is
+/// abandoned.
+///
+/// **It replaces `object_store`'s *total* request timeout**, which limits link
+/// speed rather than liveness: that one counts the response body, so a large
+/// ranged GET over a slow-but-working link fails while still progressing. A read timeout resets on every byte that arrives, so a slow
+/// transfer completes and only a dead connection fails
+/// (`docs/design/roadmap-P14-remote-input.md`, "D9").
+///
+/// **Unmeasured, and chosen rather than tuned**: a link that has delivered
+/// nothing for this long is not a slow link. The phase that tunes the network
+/// is where a reading would replace it.
+#[cfg(feature = "http")]
+pub const REMOTE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A URL and the client that reads it — an [`Origin`]'s remote half.
+///
+/// **The client is built once, here.** The probe and every later read go
+/// through this one store, so they share a connection pool and cannot
+/// disagree about timeouts or retries.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct RemoteObject {
+    url: url::Url,
+    store: object_store::http::HttpStore,
+}
+
+#[cfg(feature = "http")]
+impl RemoteObject {
+    /// Build the client for `url`, whose scheme [`Origin::remote`] has already
+    /// accepted.
+    fn open(url: url::Url, read_timeout: Duration) -> Result<Self> {
+        // Four client settings, three of them the crate's own
+        // (`docs/design/roadmap-P14-remote-input.md`, "D9"): the retry
+        // configuration and `http1_only` are left alone, `allow_http` follows
+        // the scheme the user typed — which is their statement that plaintext
+        // is acceptable — and only the timeout is ours.
+        let options = object_store::ClientOptions::new()
+            .with_timeout_disabled()
+            .with_read_timeout(read_timeout)
+            .with_allow_http(url.scheme() == "http");
+        let store = object_store::http::HttpBuilder::new()
+            .with_url(url.as_str())
+            .with_client_options(options)
+            .build()
+            .map_err(|e| remote_failure(&url, &e))?;
+        Ok(Self { url, store })
+    }
+
+    /// The object a request addresses: the store's own base URL with nothing
+    /// appended, since the store was built from the whole URL. That is the
+    /// form that **preserves a query string**, which is what lets a presigned
+    /// URL work with no credential handling of our own
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D17").
+    fn object(&self) -> object_store::path::Path {
+        object_store::path::Path::default()
+    }
+
+    /// One ranged GET of the leading bytes, answering all three of the probe's
+    /// questions: a 206 carries the object's **total** size in `Content-Range`
+    /// and the response carries the validators beside it
+    /// (`docs/design/runtime-invariants.md`, "RT13"). So the probe is one
+    /// round trip, not a `HEAD` and a `GET`.
+    async fn probe(&self) -> Result<OriginProbe> {
+        let options = object_store::GetOptions {
+            range: Some(object_store::GetRange::Bounded(0..ORIGIN_LEADING_BYTES as u64)),
+            ..Default::default()
+        };
+        let got = self
+            .store
+            .get_opts(&self.object(), options)
+            .await
+            .map_err(|e| remote_failure(&self.url, &e))?;
+        let stored_size = got.meta.size;
+        let modified = weak_identity(
+            got.meta.last_modified.timestamp(),
+            got.meta.last_modified.timestamp_subsec_nanos(),
+        );
+        let leading = got.bytes().await.map_err(|e| remote_failure(&self.url, &e))?;
+        Ok(OriginProbe { stored_size, modified, leading: leading.to_vec() })
+    }
+}
+
+/// What a server's `Last-Modified` is worth as a weak identity: the time it
+/// sent, or `None` where it sent none.
+///
+/// **The Unix epoch reads as absence.** `object_store` substitutes the epoch
+/// where a response carries no `Last-Modified`, so "the server said nothing"
+/// and "the server said 1970-01-01" arrive identically
+/// (`docs/design/runtime-invariants.md`, "RT16"); no dump was modified in
+/// 1970, so reading it as silence is the honest half of that pair. A time
+/// *before* the epoch reads as silence too, for the same reason and with no
+/// second spelling to distinguish.
+#[cfg(feature = "http")]
+fn weak_identity(seconds: i64, nanos: u32) -> Option<SystemTime> {
+    if seconds == 0 && nanos == 0 {
+        return None;
+    }
+    u64::try_from(seconds).ok().map(|s| UNIX_EPOCH + Duration::new(s, nanos))
+}
+
+/// A URL as a message may print it: with any username and password taken out.
+///
+/// The refusal of a credential-carrying URL is the one place a password could
+/// reach a terminal or a redirected log, and echoing one back at a user who
+/// has just been told it will not be sent is the wrong way to say it.
+#[cfg(feature = "http")]
+fn without_credentials(url: &url::Url) -> String {
+    let mut shown = url.clone();
+    // Both setters fail only on a URL that cannot have a host, which one with
+    // an `http` scheme always can. A failure leaves the field as it was, so
+    // the fallback below is the redaction failing safe rather than silently.
+    if shown.set_username("").is_err() || shown.set_password(None).is_err() {
+        return format!("{}://{}", url.scheme(), url.host_str().unwrap_or("(no host)"));
+    }
+    shown.to_string()
+}
+
+/// `object_store`'s wording, named against the URL it is about rather than
+/// surfaced raw (`docs/design/roadmap-P14-remote-input.md`, "D15").
+#[cfg(feature = "http")]
+fn remote_failure(url: &url::Url, error: &object_store::Error) -> Error {
+    Error::Remote { url: url.to_string(), message: error.to_string() }
+}
+
+/// A dump an HTTP server answers ranged GETs for.
+///
+/// **Almost every advisory trait member is left at its default, and that is
+/// the decision rather than an omission**
+/// (`docs/design/roadmap-P14-remote-input.md`, "D7"): one worker, no
+/// partitioning advice, no memory recommendation, no read-size hint — this
+/// source recycles no buffer, so there is nothing for one to size — and an
+/// exact size, which is also the stored size. Each is the conservative answer,
+/// and the phase that tunes the network is where a reading would replace one.
+///
+/// **Size and weak identity come from the origin's probe**, so neither costs a
+/// round trip and the identity a run opens on is the one the cache claim was
+/// settled against.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+pub struct RemoteSource {
+    object: Arc<RemoteObject>,
+    size: u64,
+    modified: Option<SystemTime>,
+    /// The caller's ask that reading stop, where one has been announced
+    /// ([`ByteRangeSource::hint_cancellation`]). Behind a lock because a hint
+    /// arrives through `&self`, as every other hint does.
+    cancel: Mutex<Option<Arc<Cancellation>>>,
+}
+
+#[cfg(feature = "http")]
+impl RemoteSource {
+    fn new(object: Arc<RemoteObject>, probe: &OriginProbe) -> Self {
+        Self {
+            object,
+            size: probe.stored_size(),
+            modified: probe.modified(),
+            cancel: Mutex::new(None),
+        }
+    }
+
+    /// The URL this source reads, which is how a message names it.
+    pub fn url(&self) -> &url::Url {
+        &self.object.url
+    }
+
+    /// One ranged GET, and exactly `len` bytes back.
+    async fn get(&self, offset: u64, len: usize) -> Result<Bytes> {
+        let options = object_store::GetOptions {
+            range: Some(object_store::GetRange::Bounded(offset..offset + len as u64)),
+            ..Default::default()
+        };
+        let got = self
+            .object
+            .store
+            .get_opts(&self.object.object(), options)
+            .await
+            .map_err(|e| remote_failure(&self.object.url, &e))?;
+        let bytes = got.bytes().await.map_err(|e| remote_failure(&self.object.url, &e))?;
+        // A server answering a *prefix* of the range it was asked for is a
+        // legal response and a different fault: `object_store` compares the
+        // `Content-Range` it got against the one it asked for and refuses
+        // before the body is read. What can reach here short is the end of the
+        // object, which a caller reading past it hears about in the words a
+        // local `read_exact_at` would use.
+        if bytes.len() != len {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "{} answered {} byte(s) of the {len} asked for at offset {offset}",
+                    self.object.url,
+                    bytes.len()
+                ),
+            )));
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg(feature = "http")]
+impl ByteRangeSource for RemoteSource {
+    /// **The request is raced against the cancellation rather than polled
+    /// beside it.** A network read's wait is bounded by the retry schedule and
+    /// not by one `pread`, so a reader that only polled would answer a Ctrl-C
+    /// minutes late; losing the race drops the request where it stands
+    /// (`docs/design/decisions.md`, "D26").
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        Box::pin(async move {
+            if len == 0 {
+                return Ok(Bytes::new());
+            }
+            let cancel = self.cancel.lock().unwrap().clone();
+            match cancel {
+                Some(cancel) => match cancel.until_cancelled(self.get(offset, len)).await {
+                    Some(read) => read,
+                    None => Err(Error::ScanCancelled { scanned_through: offset }),
+                },
+                None => self.get(offset, len).await,
+            }
+        })
+    }
+
+    /// The origin's probe answered this, so it costs no round trip and cannot
+    /// disagree with the size the cache claim was settled against.
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        Box::pin(async move { Ok(self.size) })
+    }
+
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        Box::pin(async move { Ok(self.modified) })
+    }
+
+    fn hint_cancellation(&self, cancel: Arc<Cancellation>) {
+        *self.cancel.lock().unwrap() = Some(cancel);
+    }
+}
+
+/// Open `origin`, which must name a remote object, as a [`ByteRangeSource`].
+///
+/// [`open_local`]'s sibling, making the same two choices: the compression
+/// layer is read off the probe's magic bytes, and `known` is checked rather
+/// than believed.
+///
+/// **A remote `.xz` is refused by name rather than read as plain.** This
+/// build's [`XzSource`] opens a path, so the composition is real work and not
+/// a free consequence of the trait; it is the row after this one
+/// (`docs/design/roadmap-P14-remote-input.md`, "D1").
+#[cfg(feature = "http")]
+pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+    let Location::Remote(object) = &origin.location else {
+        return Err(Error::SourceNotReadable {
+            origin: origin.to_string(),
+            why: "it is not a URL, so there is nothing to fetch".to_string(),
+        });
+    };
+    let probe = origin.probe().await?;
+    let is_xz = probe.leading().starts_with(&XZ_MAGIC);
+    match (is_xz, known) {
+        (true, _) => Err(Error::SourceNotReadable {
+            origin: origin.to_string(),
+            why: "it is `.xz`-compressed, and this build reads a compressed dump only from a \
+                  local file — fetch it once and read the copy"
+                .to_string(),
+        }),
+        // "The cache describes a different file", in the one direction a plain
+        // object can be in it: a compression index for bytes that are plain.
+        (false, KnownCompression::Xz(_)) => Ok(Recognized::Mismatch),
+        (false, KnownCompression::Unknown | KnownCompression::Plain) => {
+            Ok(Recognized::Source(Arc::new(RemoteSource::new(Arc::clone(object), probe))))
         }
     }
 }

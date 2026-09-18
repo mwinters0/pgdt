@@ -651,6 +651,15 @@ impl ScanOptions {
     }
 }
 
+/// Hand a source the caller's cancellation where there is one, so a source
+/// whose wait is not a `pread` can drop the read in flight rather than be
+/// polled at the far side of it ([`ByteRangeSource::hint_cancellation`]).
+pub(crate) fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
+    if let Some(cancel) = &options.cancel {
+        source.hint_cancellation(Arc::clone(cancel));
+    }
+}
+
 /// Scan `source` from the beginning, invoking `on_event` for every event.
 ///
 /// The callback may return [`ControlFlow::Break`] to stop early.
@@ -681,6 +690,7 @@ where
     // to keep them inside (`ByteRangeSource::hint_parallelism`).
     source.hint_read_size(options.chunk_size_bytes);
     source.hint_parallelism(options.parallelism);
+    announce_cancellation(source, options);
     // This loop grants no wait (`ByteRangeSource::hint_wait_policy`): the
     // leader's fused worker is the holder that needs the bound and is where
     // one is granted (`crate::leader::scan_region`, and

@@ -636,3 +636,43 @@ specified, alongside whatever else the crate re-exports.
 
 **Origin.** The source's own worker default, 2026-09-09. The trait's
 current shape is [`decisions.md`](decisions.md), "I/O, memory and parallelism".
+
+---
+
+## Remote input is public surface behind a default-off feature, and a cancelled remote read is an error out of `read_range`
+
+**Fact.** A dump can now be read over HTTP. What an embedder reaches is
+`Origin::resolve` (a `--source`-shaped string: URL first, path second),
+`Origin::remote` (a `url::Url`) and `open`, which dispatches over `open_local`
+and `open_remote`; `RemoteSource` is the `ByteRangeSource`. All of it is behind
+`pgdump_query`'s **`http` feature, which is default-off** — 
+`object_store`'s HTTP backend pulls an `aws-lc-sys` C build needing `cmake`,
+which the CLI opts into and a library consumer must too. The remote source
+answers every advisory trait member at its conservative default: one worker, no
+partitioning advice, no memory recommendation.
+
+Two behaviours differ from every source before it. **A cancellation reaches the
+source**, through the new `ByteRangeSource::hint_cancellation`, announced beside
+the other hints wherever `ScanOptions::cancel` is set; the source races its
+request against the signal and **drops it**, returning
+`Error::ScanCancelled { scanned_through }` *from `read_range`*. And **a network
+failure is `Error::Remote { url, message }`**, propagated like any I/O error
+rather than treated as a cancellation.
+
+**Why P6 cares.** It decides three things this does not settle. Whether the
+embedding surfaces name a URL at all, and if so how the feature flag travels —
+a Python wheel and a `TableProvider` crate each have to choose whether to carry
+the C toolchain. Whether the conservative trait answers are the ones a
+`TableProvider` wants, since its `scan` asks for partitions and this source
+declines to advise. And what a cancelled read *means* to each surface: the entry
+above ("A scan is cancellable…") says a `TableStream` is cancelled by dropping
+it and that `ScanCancelled` sits awkwardly in a DataFusion error; a remote read
+now raises that same variant from inside the read path, where the flag used to
+be read only between reads. `pgdq parse` translates it into its interrupted
+report, which is a CLI decision an embedder does not inherit.
+
+**Origin.** P14.5, 2026-09-18. See
+[`roadmap-P14.5-remote-source-notes.md`](roadmap-P14.5-remote-source-notes.md)
+and [`decisions.md`](decisions.md), "D6" and "D26". *Contingent on* the feature
+staying default-off and on the trait answers staying conservative — the phase
+that tunes the network may replace either.

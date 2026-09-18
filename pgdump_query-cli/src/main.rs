@@ -21,7 +21,7 @@ use pgdump_query::{
     DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Origin, Parallelism,
     Predicate, PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS,
     ScanOptions, Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, TypeKind, open_local, preamble_only, render_field_into,
+    StatisticsTarget, TypeKind, open, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -570,9 +570,13 @@ enum Command {
     /// exits 130 — so an interrupted scan is not wasted work. Remove the
     /// cache file to force a scan from byte 0.
     Parse {
-        /// The dump file to scan.
+        /// The dump to scan: a path, or an `http://` or `https://` URL a
+        /// server answers ranged GETs for. A `file://` URL is a path on this
+        /// machine. Any other scheme is refused by name, as is a URL carrying
+        /// a username or password — no credential is ever sent, and a
+        /// presigned URL needs none.
         #[arg(long)]
-        source: PathBuf,
+        source: String,
         /// Cache file path, or `none` to disable the cache. Since `parse`'s
         /// whole purpose is to write the cache, `none` is rejected.
         #[arg(long)]
@@ -688,12 +692,13 @@ enum Command {
     /// unfinished scan is reported for as far as it got, with the coverage
     /// stated at the top.
     Info {
-        /// The dump file the cache belongs to: its size is checked against
-        /// the cache's, so a changed file is caught. Omit it to answer from
-        /// `--dqcache` alone — cache-only mode, which then requires
-        /// `--dqcache` and cannot check anything.
+        /// The dump the cache belongs to — a path or a URL, as `parse`
+        /// takes it: its size is checked against the cache's, so a changed
+        /// source is caught. Omit it to answer from `--dqcache` alone —
+        /// cache-only mode, which then requires `--dqcache` and cannot check
+        /// anything.
         #[arg(long)]
-        source: Option<PathBuf>,
+        source: Option<String>,
         /// Cache file path, defaulting to the colocated `<source>.dqcache`.
         /// Required when `--source` is omitted — that is the cache-only entry
         /// point, and there is nothing else to answer from.
@@ -736,10 +741,11 @@ enum Command {
     /// Stream a table's rows, optionally projected to named columns and
     /// filtered by a boolean expression over single-column predicates.
     Query {
-        /// The dump file to scan. `query` can never answer from a cache
-        /// alone — row data is never cached — so this is always required.
+        /// The dump to scan — a path or a URL, as `parse` takes it. `query`
+        /// can never answer from a cache alone — row data is never cached —
+        /// so this is always required.
         #[arg(long)]
-        source: PathBuf,
+        source: String,
         /// Table name, qualified (`schema.table`) or bare. Taken exactly as
         /// given, like `--column` and unlike a `--filter` term.
         #[arg(long)]
@@ -1535,8 +1541,9 @@ async fn main() -> Result<()> {
             // `parse` scans to persist (`docs/design/decisions.md`, "D61").
             // Reject `--dqcache none` up front, before paying for a scan we
             // won't be allowed to persist.
-            let mode = CacheMode::resolve(&file, dqcache.as_deref())
-                .with_strict_identity(identity.resolve());
+            let origin = Origin::resolve(&file)?;
+            let mode =
+                cache_mode(&origin, dqcache.as_deref())?.with_strict_identity(identity.resolve());
             let path = mode
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
@@ -1548,7 +1555,6 @@ async fn main() -> Result<()> {
             // are announced ahead of it, neither waiting on the file (D64).
             let stated = parallel.discover();
             stated.announce();
-            let origin = Origin::local(&file);
             let source = open_for_scan(&origin, &mode).await?;
             let parallel = stated.resolve(source.as_ref());
             parallel.announce();
@@ -1568,9 +1574,36 @@ async fn main() -> Result<()> {
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options =
                 ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
-            let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode, &statistics)
-                .await
-                .map_err(|e| naming_the_source(e, &origin))?;
+            let run = match pgdump_query::map_file(
+                source.as_ref(),
+                &scan_options,
+                &mode,
+                &statistics,
+            )
+            .await
+            {
+                Ok(run) => run,
+                // A source whose own wait is a network request answers the
+                // interrupt by dropping the request in flight, so a Ctrl-C
+                // arrives here rather than as an interrupted run
+                // (`docs/design/decisions.md`, "D26"). The scan is still
+                // banked to the cache's last save, which is what the throttle
+                // is for, so this reports what a resumable stop reports and
+                // exits the same way.
+                Err(pgdump_query::Error::ScanCancelled { scanned_through })
+                    if signalled.load(Ordering::SeqCst) != 0 =>
+                {
+                    eprintln!(
+                        "interrupted while reading byte {scanned_through} of {size} — the cache at {} \
+                         holds the scan to its last save",
+                        path.display()
+                    );
+                    eprintln!("re-run `pgdq parse --source {origin}` to continue");
+                    introspect::report();
+                    std::process::exit(128 + signalled.load(Ordering::SeqCst));
+                }
+                Err(e) => return Err(naming_the_source(e, &origin)),
+            };
             introspect::statistics_returned(&run.statistics);
             if run.interrupted {
                 // No listing: `pgdq info` is the command that reports. Both
@@ -1587,8 +1620,8 @@ async fn main() -> Result<()> {
                         path.display()
                     );
                     eprintln!(
-                        "re-run `pgdq parse --source {}` with the same statistics flags to continue",
-                        file.display()
+                        "re-run `pgdq parse --source {origin}` with the same statistics flags to \
+                         continue"
                     );
                 } else {
                     eprintln!(
@@ -1596,7 +1629,7 @@ async fn main() -> Result<()> {
                         run.index.scanned_through,
                         path.display()
                     );
-                    eprintln!("re-run `pgdq parse --source {}` to continue", file.display());
+                    eprintln!("re-run `pgdq parse --source {origin}` to continue");
                 }
                 // Exit by signal (130/143), so a script can tell an
                 // interrupt from a failure; `SIGINT` is the fallback.
@@ -1639,16 +1672,16 @@ async fn main() -> Result<()> {
             // out. Formed here rather than in `Error::CacheDisabled` because
             // it interpolates the user's own `--source` path, which the
             // library error does not have.
-            let mode = CacheMode::resolve(&file, dqcache.as_deref())
-                .with_strict_identity(identity.resolve());
+            let origin = Origin::resolve(&file)?;
+            let mode =
+                cache_mode(&origin, dqcache.as_deref())?.with_strict_identity(identity.resolve());
             let path = mode
                 .require_enabled("info")
                 .with_context(|| {
                     format!(
                         "`--dqcache none` cannot be combined with `info`, which never scans — run \
-                         `pgdq parse --source {} --dqcache <path>` to build a cache somewhere \
-                         writable, then pass that same `--dqcache <path>` here",
-                        file.display()
+                         `pgdq parse --source {origin} --dqcache <path>` to build a cache \
+                         somewhere writable, then pass that same `--dqcache <path>` here"
                     )
                 })?
                 .to_path_buf();
@@ -1657,13 +1690,12 @@ async fn main() -> Result<()> {
             // file's leading bytes. This
             // condition keeps `info`'s own sentence, which names the two ways
             // out ahead of the command they enable.
-            let origin = Origin::local(&file);
             let source = match open_with_cache(&origin, &mode).await? {
                 Opened::Source(source) => source,
                 Opened::SourceChanged { cached_stored_size, live_stored_size } => {
                     let changed =
                         CacheStatus::SourceChanged { cached_stored_size, live_stored_size };
-                    anyhow::bail!(unusable_cache_message(&changed, &path, Some(&file)))
+                    anyhow::bail!(unusable_cache_message(&changed, &path, Some(&origin)))
                 }
             };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
@@ -1672,7 +1704,9 @@ async fn main() -> Result<()> {
                 | CacheStatus::Incomplete { index, weak, total_size, compression, envelope } => {
                     (index, weak, total_size, compression, envelope)
                 }
-                unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
+                unusable => {
+                    anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&origin)))
+                }
             };
             // `info` reads the whole status rather than going through
             // `CacheMode::load`, so it asks for that method's check by name;
@@ -1706,8 +1740,9 @@ async fn main() -> Result<()> {
             parallel,
         } => {
             let read = ReadFlags { chunk_size, max_line_bytes };
-            let mode = CacheMode::resolve(&file, dqcache.as_deref())
-                .with_strict_identity(identity.resolve());
+            let origin = Origin::resolve(&file)?;
+            let mode =
+                cache_mode(&origin, dqcache.as_deref())?.with_strict_identity(identity.resolve());
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
@@ -1735,7 +1770,6 @@ async fn main() -> Result<()> {
             // ahead of the open, as `parse` does.
             let stated = parallel.discover();
             stated.announce();
-            let origin = Origin::local(&file);
             let source = open_for_scan(&origin, &mode).await?;
             let parallel = stated.resolve(source.as_ref());
             parallel.announce();
@@ -1906,7 +1940,7 @@ async fn main() -> Result<()> {
             if any_batch {
                 eprintln!("{rows} row(s)");
             } else {
-                eprintln!("no rows found for {table} in {}", file.display());
+                eprintln!("no rows found for {table} in {origin}");
                 if let Some(note) = quoted_name_note("--table", &table) {
                     eprintln!("note: {note}");
                 }
@@ -1931,6 +1965,27 @@ enum Opened {
     /// numbers, `cache::load` would answer [`CacheStatus::SourceChanged`]
     /// with once a source existed.
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+}
+
+/// Where this run's cache goes, given what the user typed.
+///
+/// `--dqcache` states it, and `none` disables it. Omitted, the default is
+/// beside the dump — which is a place only a local file has, the pairing being
+/// the filesystem's. A remote source is therefore **asked** for the path
+/// rather than having one derived from the URL, until the rule that derives
+/// one lands (`docs/design/roadmap-P14-remote-input.md`, "D4").
+fn cache_mode(origin: &Origin, dqcache: Option<&Path>) -> Result<CacheMode> {
+    match (dqcache, origin.local_path()) {
+        // `resolve` reads the dump path only for the colocated default, so a
+        // stated path settles it whatever the origin is.
+        (Some(_), _) | (None, Some(_)) => {
+            Ok(CacheMode::resolve(origin.local_path().unwrap_or(Path::new("")), dqcache))
+        }
+        (None, None) => anyhow::bail!(
+            "{origin} has no file beside it for the cache to sit next to, so name one: \
+             `--dqcache <path>`, or `--dqcache none` where the command allows it"
+        ),
+    }
 }
 
 /// Open `file`, handing recognition whatever the cache at `cache` says about
@@ -1958,7 +2013,7 @@ async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
         },
         None => KnownCompression::Unknown,
     };
-    match open_local(origin, known).await? {
+    match open(origin, known).await? {
         Recognized::Source(source) => Ok(Opened::Source(source)),
         Recognized::Mismatch => {
             let path =
@@ -2028,11 +2083,11 @@ const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
 ///
 /// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
 /// stays exhaustive: a usable status reaching here is a caller bug.
-fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Path>) -> String {
+fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Origin>) -> String {
     // Each arm supplies its own connective and tail, because "no cache at X"
     // and "X is not a pgdq cache" do not join to the same sentence.
     let remedy = |lead: &str, tail: &str| match source {
-        Some(s) => format!(" — {lead}run `pgdq parse --source {}`{tail}", s.display()),
+        Some(s) => format!(" — {lead}run `pgdq parse --source {s}`{tail}"),
         None => String::new(),
     };
     match status {
@@ -2057,12 +2112,10 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
             // first and `parse` then works
             // (`docs/design/decisions.md`, "D20").
             format!(
-                "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
-                 the cache at {} was written), so every offset in the cache could be \
-                 wrong{TWO_WAYS_OUT}, then run `pgdq parse --source {}`",
-                source.display(),
-                path.display(),
-                source.display()
+                "{source} has changed since it was parsed ({live_size} bytes now, {cached_size} \
+                 when the cache at {} was written), so every offset in the cache could be \
+                 wrong{TWO_WAYS_OUT}, then run `pgdq parse --source {source}`",
+                path.display()
             )
         }
         CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {

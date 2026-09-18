@@ -46,7 +46,11 @@ futures = "0.3.34"
 # second one writes into. Nothing in a default build links it.
 libc = { version = "0.2.189", optional = true }
 mimalloc = { version = "0.1.50", optional = true }
-pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
+# `http` on: the remote source is the CLI's, and the oracle tests that judge it
+# live in this crate, so `cargo test --workspace` runs them unconditionally
+# rather than behind feature unification
+# (`docs/design/roadmap-P14-remote-input.md`, "D6").
+pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.145"
 tikv-jemallocator = { version = "0.6.0", optional = true }
@@ -55,7 +59,10 @@ tikv-jemallocator = { version = "0.6.0", optional = true }
 # flavour would only buy reactor threads nothing runs on -- one per visible CPU,
 # each seeding a glibc arena before a byte is read. See `main`, and
 # `docs/design/decisions.md`, "D12".
-tokio = { version = "1.53.1", features = ["rt", "macros", "signal"] }
+# `net` and `time` beside them: the remote source's client needs the IO and
+# time drivers, and this binary declares them rather than inheriting them by
+# feature unification from a dependency that could stop enabling them.
+tokio = { version = "1.53.1", features = ["rt", "macros", "signal", "net", "time"] }
 tracing = "0.1"
 # `fmt` for the subscriber itself; `time` for RFC3339 timestamps
 # (`tracing_subscriber::fmt::time::UtcTime::rfc_3339`), the convention the
@@ -73,11 +80,11 @@ bytes = "1.12.1"
 # `tests/help_text.rs` only. Same version as `pgdump_query`'s, so one
 # `cargo insta review` covers both crates' snapshots.
 insta = "1.48.0"
-pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
+pgdump_query = { version = "0.1.0", path = "../pgdump_query", features = ["http"] }
 tempfile = "3.27.0"
 # `rt` here too, and not only for symmetry: every `#[tokio::test]` in this
 # crate takes the default `current_thread` flavour, and a dev-dependency
 # naming `rt-multi-thread` would unify the feature back onto the binary
 # whenever the test targets are built -- so `cargo test` would stop
 # exercising the feature set the shipped binary is compiled with.
-tokio = { version = "1.53.1", features = ["rt", "macros"] }
+tokio = { version = "1.53.1", features = ["rt", "macros", "net", "time"] }

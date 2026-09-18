@@ -9,6 +9,17 @@ edition.workspace = true
 # it compiles every hook to nothing.
 [features]
 introspect = []
+# The remote source (`io::RemoteSource`) and everything that names a URL.
+# **Default-off**: what `object_store`'s `http` feature drags in, an
+# `aws-lc-sys` C build included, is too much to impose on an embedder that
+# reads local files (`docs/design/roadmap-P14-remote-input.md`, "D6" and "D8",
+# where the tree is counted).
+#
+# `tokio/net` and `tokio/time` are declared here rather than inherited: the
+# backend needs the IO and time drivers at runtime and nothing in its own tree
+# turns them on, so a library built with this feature has a runtime that can
+# drive it.
+http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
 
 [dependencies]
 arrow = { version = "59.2.0", default-features = false }
@@ -24,6 +35,14 @@ bincode = { version = "2", features = ["serde"] }
 bytes = "1.12.1"
 futures = "0.3.34"
 memchr = "2.8.3"
+# `http` only, and `default-features = false` to leave out the `fs` backend:
+# what is wanted is one `HttpStore` over ranged GETs
+# (`docs/design/roadmap-P14-remote-input.md`, "D8"). The `http` feature
+# resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build needing
+# `cmake` — which `mise.toml` pins.
+object_store = { version = "0.14.2", optional = true, default-features = false, features = [
+    "http",
+] }
 # `rc` for `index::CopyBlock::statistics`, held by `Arc` so a map clone copies a
 # reference.
 serde = { version = "1.0.229", features = ["derive", "rc"] }
@@ -37,6 +56,11 @@ tokio = { version = "1.53.1", features = ["rt", "sync"] }
 # completion); the CLI decides whether and how to render them
 # (`docs/design/decisions.md`, "D67").
 tracing = "0.1"
+# `http` only: the same crate `object_store` parses URLs with, so a `Url` this
+# crate builds is the one its backend takes. What reads it is
+# `io::Origin::resolve`, which classifies a `--source` argument
+# (`docs/design/roadmap-P14-remote-input.md`, "D3" and "D17").
+url = { version = "2.5.8", optional = true }
 # A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
 # workspace, not published (`docs/design/decisions.md`, "The compressed
 # source"). The default features (`liblzma`, `fast-checks`) are the manifest's

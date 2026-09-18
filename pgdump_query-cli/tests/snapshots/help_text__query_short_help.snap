@@ -8,8 +8,9 @@ over single-column predicates
 Usage: pgdq query [OPTIONS] --source <SOURCE> --table <TABLE>
 
 Options:
-      --source <SOURCE>            The dump file to scan. `query` can never answer from a cache
-                                   alone — row data is never cached — so this is always required
+      --source <SOURCE>            The dump to scan — a path or a URL, as `parse` takes it. `query`
+                                   can never answer from a cache alone — row data is never cached —
+                                   so this is always required
       --table <TABLE>              Table name, qualified (`schema.table`) or bare. Taken exactly as
                                    given, like `--column` and unlike a `--filter` term
       --dqcache <DQCACHE>          Cache file path, or `none` to ignore any existing cache and

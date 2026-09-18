@@ -13,7 +13,10 @@ Usage: pgdq parse [OPTIONS] --source <SOURCE>
 
 Options:
       --source <SOURCE>
-          The dump file to scan
+          The dump to scan: a path, or an `http://` or `https://` URL a server answers ranged GETs
+          for. A `file://` URL is a path on this machine. Any other scheme is refused by name, as is
+          a URL carrying a username or password — no credential is ever sent, and a presigned URL
+          needs none
 
       --dqcache <DQCACHE>
           Cache file path, or `none` to disable the cache. Since `parse`'s whole purpose is to write

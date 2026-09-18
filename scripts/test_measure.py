@@ -624,7 +624,7 @@ class StatisticsFigures(unittest.TestCase):
         )
         self.assertIn("note: reading stopped early in {} block(s)", cli)
         self.assertIn('eprintln!("{rows} row(s)");', cli)
-        self.assertIn('eprintln!("no rows found for {table} in {}"', cli)
+        self.assertIn('eprintln!("no rows found for {table} in {origin}");', cli)
 
     def _reported(self, **override):
         good = {

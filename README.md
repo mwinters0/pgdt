@@ -43,7 +43,8 @@ Anything unchecked here is considered "TODO" / Future.
         - [ ] lz4
     - File locations
         - [x] local
-        - [ ] http
+        - [x] http / https — ranged requests, nothing downloaded whole; a
+        compressed dump is still read from a local file
         - [ ] object store
 - Postgres Correctness
     - Data types
@@ -76,6 +77,8 @@ What works today:
 - A full byte-exact file map and DDL object inventory.
 - A resumable scan that reports what it has.
 - A best-effort structural cache.
+- Reading a dump straight off an HTTP server, by byte range, with no credential
+  handling — a presigned URL works as it is.
 - Pushdown: column projection and a boolean filter expression — `AND`, `OR`, `NOT` and parens — over
   typed single-column comparisons.
 - Parallel scan (where the input is suitable), with automatic worker count and memory budget

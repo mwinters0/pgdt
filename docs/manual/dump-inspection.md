@@ -165,6 +165,52 @@ cache that does not describe this file describes some *other* file, and
 scanning would write over it. Delete it, or point `--dqcache` somewhere else,
 and `parse` builds a fresh one.
 
+### Reading a dump over HTTP
+
+`--source` takes a URL as readily as a path, on all three commands:
+
+```sh
+pgdq parse --source https://example.com/dumps/mydump.sql --dqcache mydump.dqcache
+pgdq info  --source https://example.com/dumps/mydump.sql --dqcache mydump.dqcache
+pgdq query --source https://example.com/dumps/mydump.sql --dqcache mydump.dqcache \
+           --table public.widgets
+```
+
+Nothing is downloaded whole. pgdq asks the server for the byte ranges it
+actually needs, so a `query` answered from a cache reads one block's worth of
+bytes rather than the file. **The server has to support ranged requests**; one
+that ignores `Range` and answers with the whole object is refused by name,
+before any of it is fetched.
+
+**Name the cache yourself.** With a local dump the cache goes beside it by
+default; a URL has no "beside", so pass `--dqcache <path>` — or, where the
+command allows it, `--dqcache none`.
+
+**No credentials are sent, ever.** A URL carrying `user:password@` is refused
+rather than quietly stripped, so nobody is left believing a password went out.
+For a private object, use a **presigned URL**: the signature rides in the query
+string, which pgdq preserves on every request it makes.
+
+`http://` and `https://` are the schemes read over the network. `file://` is
+accepted too and means a path on this machine, so having learned that
+`--source` takes URLs you are not then wrong about the local case. Every other
+scheme is refused by name. If you have a local file whose first path segment
+contains a colon, write it `./that:file` so it is read as a path.
+
+**A compressed dump is still read from a local file only.** A URL whose bytes
+turn out to be `.xz`-compressed — whatever it is named, recognition being by
+content here as everywhere — is refused by name; fetch it once and read the
+copy.
+
+**A network failure stops the run**, naming the URL and what went wrong. It is
+not treated as an interruption, because nobody asked for it — but a `parse`
+banks its progress to the cache as it goes, so re-running it continues from
+where the last save left off rather than from byte 0.
+
+**This is correctness, not speed.** A remote read uses one reader and the same
+1 MiB requests a local read uses, both of which were chosen against local
+devices. Nothing here is tuned for a network yet.
+
 ### `--strict-identity`: when a moved file should stop the run
 
 Size is not the only thing pgdq knows about your dump — it also records the

@@ -473,10 +473,19 @@ every byte this run read is suspect.
 
 This phase is the crate's remaining consumer, publication having been gated on
 two real ones vetting the interface and the statistics phase turning out to make
-no call into it. In fact the composition costs the crate nothing: `XzSource`
-wraps a `ByteRangeSource` and a remote source is just another one, so remote
-`.xz` needs no new call and no new signature — which is that crate's requirement
-never to open files, paying for itself.
+no call into it.
+
+**The composition is not free, which 14.5 established by reading the code.**
+This entry said it was, on the strength of `XzSource` wrapping a
+`ByteRangeSource`; it does not. `XzSource` holds an
+`xz_seek::Reader<std::fs::File>` (`pgdump_query/src/io.rs`), and the crate reads
+through `CompressedSource` (`vendor/xz-seek/src/source.rs`), a **synchronous**
+positional trait, where `ByteRangeSource` is async. So remote `.xz` needs a
+bridge between the two, written here, and is 14.7's real work rather than its
+free consequence. What the crate's requirement never to open files does buy is
+that the bridge is ours alone: `Reader<S>` is generic over the source, so no new
+call into the crate and no new signature is needed for one to be handed a remote
+object.
 
 So **this phase vets and does not publish.** Anything awkward found over ranged
 GETs is fixed upstream in that repo and re-vendored by

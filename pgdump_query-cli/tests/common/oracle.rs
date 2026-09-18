@@ -4,7 +4,8 @@
 //! The failures a remote source has to get right are all *server* behaviours —
 //! a server that ignores `Range`, one whose validator changes between the probe
 //! and the read, one that answers fewer bytes than were asked for, one that
-//! dies mid-body, one that stops answering mid-scan. None of them is reachable
+//! dies mid-body, one that stops answering mid-scan, one that accepts a
+//! connection and then goes quiet. None of them is reachable
 //! against a well-behaved server, which is why serving a fixture over a real
 //! web server is the weakest instrument available and this is not that.
 //!
@@ -30,11 +31,15 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a connection may sit idle before the oracle abandons it. A test
 /// that wedges fails on its own timeout rather than hanging the suite.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often a stalling connection looks to see whether the oracle has been
+/// dropped. Short enough that a test's teardown is not the thing it waits on.
+const STALL_POLL: Duration = Duration::from_millis(10);
 
 /// The largest request head the oracle will read. Nothing legitimate comes
 /// close; the cap is what stops a malformed client from growing a buffer
@@ -87,6 +92,7 @@ struct Knobs {
     not_found_after: Option<usize>,
     short_range_after: Option<(usize, usize)>,
     truncating_body_after: Option<(usize, usize)>,
+    stalling_request: Option<(usize, Duration)>,
 }
 
 impl Knobs {
@@ -247,6 +253,29 @@ impl OracleBuilder {
         self
     }
 
+    /// On request `ordinal` — 1-based, and that request alone — read the
+    /// request, log it, and then answer **nothing** for `stall`: the origin
+    /// that accepts a connection and goes quiet.
+    ///
+    /// It is the one misbehaviour a truncated body cannot stand in for. A
+    /// liveness deadline and a cancellation are both timed against a *wait*,
+    /// and a failure that arrives promptly ends the wait before either can be
+    /// observed (`docs/design/roadmap-P14-remote-input.md`, "D6").
+    ///
+    /// **Addressed to one request rather than to a suffix, unlike every other
+    /// knob here.** What a stall is used to observe is what the client does
+    /// *next* — abandon the request and ask again — and a suffix knob stalls
+    /// that attempt too, so the recovery it exists to show could never happen.
+    ///
+    /// **The stall ends early when the client hangs up**, which is what a real
+    /// server does and what this one must do: connections are served one at a
+    /// time, so a stall that outlived the client would hold the retry it is
+    /// waiting for. It also ends when the oracle is dropped.
+    pub fn stalling_request(mut self, ordinal: usize, stall: Duration) -> Self {
+        self.knobs.stalling_request = Some((ordinal, stall));
+        self
+    }
+
     /// Bind a loopback port the kernel picks and start serving.
     pub fn start(self) -> Oracle {
         let listener =
@@ -302,12 +331,48 @@ fn answer(stream: &mut TcpStream, state: &Arc<State>) {
     let Some(request) = read_request(stream) else { return };
     state.log.lock().unwrap().push(request.clone());
     let ordinal = state.served.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some((stalled, stall)) = state.knobs.stalling_request
+        && stalled == ordinal
+        && !stall_until_client_leaves(stream, stall, state)
+    {
+        // The client hung up while it was being ignored, so there is nobody
+        // left to answer. The request is in the log all the same — it was
+        // logged before the silence, which is what lets a test see it arrive
+        // while the client is still waiting on it.
+        return;
+    }
     let response = respond(&request, ordinal, state);
     let _ = stream.write_all(&response.head);
     if request.method != "HEAD" {
         let _ = stream.write_all(&response.body);
     }
     let _ = stream.flush();
+}
+
+/// Answer nothing for `stall`, waking every [`STALL_POLL`] to see whether the
+/// client is still there and whether the oracle is being dropped.
+///
+/// `false` where the client closed the connection first — an abandoned
+/// request, which is what a deadline and a cancellation both produce.
+fn stall_until_client_leaves(stream: &mut TcpStream, stall: Duration, state: &Arc<State>) -> bool {
+    let until = Instant::now() + stall;
+    let _ = stream.set_read_timeout(Some(STALL_POLL));
+    let mut byte = [0u8; 1];
+    while Instant::now() < until && !state.stop.load(Ordering::SeqCst) {
+        match stream.read(&mut byte) {
+            // End of stream: the client is gone.
+            Ok(0) => return false,
+            // A well-behaved client sends nothing more; anything that arrives
+            // is not this server's business.
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => return false,
+            // `WouldBlock` and `TimedOut` are both what a read timeout raises,
+            // and they are the ordinary case: the client is still waiting.
+            Err(_) => {}
+        }
+    }
+    let _ = stream.set_read_timeout(Some(CONNECTION_TIMEOUT));
+    true
 }
 
 /// A built response: the status line and headers, then whatever body is to go

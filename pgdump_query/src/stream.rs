@@ -75,7 +75,9 @@ use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::prune::{SortedStop, prune_block};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
-use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
+use crate::scan::{
+    ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
+};
 use crate::statistics::{
     BlockGathered, BlockObserver, BlockStatistics, StatisticsAccount, StatisticsBackfill,
     StatisticsHeld, StatisticsRequest, Term,
@@ -489,6 +491,7 @@ async fn map_forward(
     // may keep buffers inside (`ByteRangeSource::hint_read_size`).
     source.hint_read_size(scan_options.chunk_size_bytes);
     source.hint_parallelism(scan_options.parallelism);
+    announce_cancellation(source, scan_options);
     // **This loop grants no wait** (`docs/design/decisions.md`, "D5"): the
     // leader's fused worker grants it for itself and restores this policy on
     // the way out (`crate::leader::scan_region`).
@@ -1355,11 +1358,13 @@ fn report_statistics_declines(
     declined
 }
 
-/// The three hints every top-level read loop announces before its first read
-/// (`crate::scan::scan`, [`map_forward`]).
+/// The hints every top-level read loop announces before its first read
+/// (`crate::scan::scan`, [`map_forward`]): its chunk length, its budget, the
+/// caller's cancellation where there is one, and that it grants no wait.
 fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
     source.hint_read_size(scan_options.chunk_size_bytes);
     source.hint_parallelism(scan_options.parallelism);
+    announce_cancellation(source, scan_options);
     source.hint_wait_policy(WaitPolicy::NeverWait);
 }
 
@@ -2958,6 +2963,7 @@ fn replay<'a>(
         // passes' parallelism separately because they split differently.
         source.hint_read_size(scan_options.chunk_size_bytes);
         source.hint_parallelism(query_options.parallelism);
+        announce_cancellation(source, scan_options);
         // **The replay loop could not grant a wait**
         // (`docs/design/decisions.md`, "D5"): `RetainedChunks` pins every
         // chunk a batch has taken a `Utf8View` into until that batch flushes,

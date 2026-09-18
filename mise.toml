@@ -1,2 +1,6 @@
 [tools]
+# `aws-lc-sys`, under `object_store`'s `http` feature, is a C build driven by
+# cmake, so a checkout that builds this workspace declares it
+# (`docs/design/roadmap-P14-remote-input.md`, "D8").
+cmake = "latest"
 uv = "latest"

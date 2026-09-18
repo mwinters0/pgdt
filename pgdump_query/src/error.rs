@@ -24,6 +24,34 @@ pub enum Error {
     ColumnCountMismatch { header_offset: u64, row_offset: u64, expected: usize, found: usize },
     #[error("arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
+    /// A `--source` argument names something this build does not read: a URL
+    /// scheme it speaks nothing for, a `file:` URL naming another machine, a
+    /// URL carrying a credential it would have to send, or a place whose kind
+    /// the opener it reached does not serve. Raised by `crate::Origin`'s
+    /// constructors and by `crate::open_local` / `crate::open_remote`, before
+    /// anything is fetched.
+    ///
+    /// **It refuses by name**: `origin` is the argument as the user wrote it
+    /// and `why` says which rule it met, so a mistyped scheme is a sentence
+    /// rather than a fall-through to "no such file"
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D3" and "D17"). The field
+    /// is not called `source`, which `thiserror` reads as an error cause.
+    #[error("{origin} cannot be read: {why}")]
+    SourceNotReadable { origin: String, why: String },
+    /// A request to a remote source failed: a refusal the server made, or a
+    /// transport failure the client's own retries could not ride out. Nobody
+    /// asked for it, so it is an error rather than a cancellation — treating
+    /// one as a cancellation would make `parse` report partial success on a
+    /// dump it could not read.
+    ///
+    /// **No progress is lost that was not already at risk.** The save throttle
+    /// means the cache on disk holds the scan to its last save and a re-run
+    /// resumes from it, so a network failure costs one throttle interval
+    /// rather than the scan (`docs/design/roadmap-P14-remote-input.md`,
+    /// "D15"). What this variant owes is the naming: the URL, and the
+    /// underlying failure rather than the backend's wording alone.
+    #[error("{url}: {message}")]
+    Remote { url: String, message: String },
     /// From `xz_seek`: a walk, a seek, or a block decode failed against an
     /// `.xz`-compressed [`crate::XzSource`]
     /// (`docs/design/decisions.md`, "The compressed source and the cache").

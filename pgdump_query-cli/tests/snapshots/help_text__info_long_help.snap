@@ -11,9 +11,9 @@ Usage: pgdq info [OPTIONS]
 
 Options:
       --source <SOURCE>
-          The dump file the cache belongs to: its size is checked against the cache's, so a changed
-          file is caught. Omit it to answer from `--dqcache` alone — cache-only mode, which then
-          requires `--dqcache` and cannot check anything
+          The dump the cache belongs to — a path or a URL, as `parse` takes it: its size is checked
+          against the cache's, so a changed source is caught. Omit it to answer from `--dqcache`
+          alone — cache-only mode, which then requires `--dqcache` and cannot check anything
 
       --dqcache <DQCACHE>
           Cache file path, defaulting to the colocated `<source>.dqcache`. Required when `--source`

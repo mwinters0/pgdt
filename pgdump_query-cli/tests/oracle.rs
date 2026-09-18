@@ -16,6 +16,10 @@
 
 mod common;
 
+use std::io::Write;
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
+
 use common::oracle::{Oracle, RawResponse, http_date, parse_http_date, raw_get, raw_head};
 
 /// A body long enough that a range is a proper subset of it and short enough
@@ -335,4 +339,68 @@ fn http_dates_round_trip_and_read_as_imf_fixdate() {
     assert_eq!(http_date(784_111_777), "Sun, 06 Nov 1994 08:49:37 GMT");
     assert_eq!(parse_http_date("Sunday, 06-Nov-94 08:49:37 GMT"), None, "obsolete formats are not");
     assert_eq!(parse_http_date("Sun, 06 Nov 1994 08:49:37 UTC"), None, "GMT or nothing");
+}
+
+// ---------------------------------------------------------------------------
+// The stalled origin
+// ---------------------------------------------------------------------------
+
+/// Long enough to be unmistakably a stall against a loopback server that
+/// otherwise answers in microseconds, short enough that the test which waits
+/// it out costs a fifth of a second.
+const STALL: Duration = Duration::from_millis(200);
+
+#[test]
+fn a_stalled_request_is_answered_only_after_the_stall() {
+    let oracle = Oracle::serving(BODY).stalling_request(1, STALL).start();
+    let started = Instant::now();
+    let response = raw_get(&oracle, &["Range: bytes=0-3"]);
+    let waited = started.elapsed();
+
+    assert_status(&response, 206);
+    assert_eq!(response.body, &BODY[..4], "the answer, once it comes, is the right one");
+    assert!(waited >= STALL, "answered in {waited:?}, which is no stall at all");
+}
+
+#[test]
+fn only_the_addressed_request_stalls() {
+    let oracle = Oracle::serving(BODY).stalling_request(2, STALL).start();
+    // A stall addressed to one request rather than to a suffix is what lets a
+    // client's *recovery* be observed, so the requests either side of it must
+    // be answered at once.
+    let before = Instant::now();
+    assert_status(&raw_get(&oracle, &[]), 200);
+    assert!(before.elapsed() < STALL, "the request before the stalled one waited");
+
+    let during = Instant::now();
+    assert_status(&raw_get(&oracle, &[]), 200);
+    assert!(during.elapsed() >= STALL, "the addressed request did not stall");
+
+    let after = Instant::now();
+    assert_status(&raw_get(&oracle, &[]), 200);
+    assert!(after.elapsed() < STALL, "the request after the stalled one waited");
+}
+
+#[test]
+fn a_client_that_hangs_up_mid_stall_frees_the_server_at_once() {
+    // The property the single-threaded server lives or dies by: a client that
+    // gives up on a stalled request is asking for the retry to be served, and
+    // a stall that outlived it would hold that retry behind itself.
+    let oracle = Oracle::serving(BODY).stalling_request(1, Duration::from_secs(30)).start();
+    let mut abandoned = TcpStream::connect(oracle.addr()).unwrap();
+    abandoned
+        .write_all(format!("GET /dump.sql HTTP/1.1\r\nHost: {}\r\n\r\n", oracle.addr()).as_bytes())
+        .unwrap();
+    // Wait for the request to reach the server, so the hang-up lands inside
+    // the stall rather than before it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while oracle.request_count() == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(oracle.request_count(), 1, "the stalled request arrived");
+    drop(abandoned);
+
+    let started = Instant::now();
+    assert_status(&raw_get(&oracle, &[]), 200);
+    assert!(started.elapsed() < Duration::from_secs(5), "the retry waited out the abandoned stall");
 }

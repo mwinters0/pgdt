@@ -13,8 +13,11 @@ surfaces as a process that sized itself wrongly rather than as an error — an O
 kill under an orchestrator, or a scan that took a fifth of the machine it was
 given. The trigger to walk this file is therefore four-sided, and each side has
 its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
-toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), and a **glibc
-release** — the host's or the figures' image's (`RT10` only).
+toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **glibc
+release** — the host's or the figures' image's (`RT10` only) — and an
+**`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
+whose re-verification is a test run against the oracle rather than a
+container).
 
 **It is named for the runtime environment rather than for Linux or for
 cgroups.** The mechanism these entries serve — a process discovering its own
@@ -32,7 +35,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md), "The seekable-xz
 crate is xz-only on purpose, and generalizing it was rejected").
 
-**`RT1`–`RT12` are allocated**, and nothing at or below `RT12` is reused.
+**`RT1`–`RT17` are allocated**, and nothing at or below `RT17` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -765,3 +768,170 @@ cargo test -p pgdump_query-cli --features introspect --test statistics_account -
 
 The first shows the capacity stored; the second holds the capacities to the
 charge; the third holds the bytes to what the allocator was asked for.
+
+## RT13 — a ranged GET's 206 carries the object's whole size, and `object_store` reports that rather than the slice's
+
+**Claim.** `object_store` 0.14.2's HTTP backend, given `GetOptions::range`,
+issues a `Range` request and requires a `206`; from that response's
+`Content-Range` it takes the total after the `/` and **overwrites**
+`ObjectMeta::size` with it, so the metadata returned beside a few bytes
+describes the whole object. `ETag` and `Last-Modified` come back on the same
+response. One ranged GET therefore answers stored size, weak identity and
+leading bytes together.
+
+**Proof.** `object_store` 0.14.2, `src/client/get.rs`: `get_range_meta` parses
+`CONTENT_RANGE` into `ContentRange { range, size }` and assigns
+`meta.size = value.size` under the comment "Update size to reflect the full
+size of the object (#5272)"; `header_meta` reads the validators from the same
+`response.headers`.
+
+**Scope limit.** Nothing is claimed for an unranged GET, for a server that
+answers `200` to a `Range` (which is `RT14`), or for any backend but this one.
+
+**Verified against:** `object_store` 0.14.2 (source read; observed against the
+oracle, `pgdump_query-cli/tests/remote.rs`).
+
+**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
+"D2" — `io::RemoteObject::probe` costs one round trip rather than a `HEAD` and
+a `GET`.
+
+**Re-verify:**
+
+```sh
+cargo test -p pgdump_query-cli --test remote the_origin_probe_costs_one_round_trip
+```
+
+The assertion is on the request log, so a crate that started asking twice fails
+here rather than merely getting slower.
+
+## RT14 — a server that ignores `Range` is refused on the status line, before its body is read
+
+**Claim.** Where a range was asked for and the response is not `206`,
+`object_store` 0.14.2's HTTP backend raises `Error::NotSupported` carrying
+`RangeNotSupported` **from the response's status line**, with the body left
+undrained. There is no fallback to fetching the whole object and slicing it.
+
+**Proof.** `object_store` 0.14.2, `src/http/client.rs`, `GetClient::get_request`
+for the HTTP store: `if has_range && res.status() != StatusCode::PARTIAL_CONTENT`
+returns `crate::Error::NotSupported` before `res` is consumed.
+
+**Scope limit.** It is the status check that is claimed, not what any
+particular server does. A server answering `206` with the wrong span is a
+different case, and is `RT15`.
+
+**Verified against:** `object_store` 0.14.2 (source read; observed against the
+oracle's `ignoring_range` knob, `pgdump_query-cli/tests/remote.rs`).
+
+**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
+"D7" — positioned reads are simply unavailable against such a server, and
+asking for one does not download the object to find that out.
+
+**Re-verify:**
+
+```sh
+cargo test -p pgdump_query-cli --test remote a_range_ignoring_server_is_refused_rather_than_read_whole
+```
+
+## RT15 — a ranged GET delivers exactly the span asked for, or fails
+
+**Claim.** `object_store` 0.14.2's HTTP backend compares the `Content-Range`
+it received against the range it asked for — clamped to the object's size, so
+a request running past the end yields the remainder rather than an error — and
+raises `UnexpectedRange` on any other difference. `Content-Length` is required
+unconditionally, and a body that ends before that length raises a transport
+error rather than returning short. So a `get_opts` that returns `Ok` returns
+every byte of the span, and a caller comparing the length it got against the
+length it asked for is checking the *end of the object*, not the transport.
+
+**Proof.** `object_store` 0.14.2, `src/client/get.rs`: `get_range_meta` calls
+`GetRange::as_range(meta.size)` — `src/util.rs`, whose `Bounded` arm returns
+`r.start..len` where `r.end > len` — and returns
+`GetResultError::UnexpectedRange` where the actual range differs;
+`src/client/mod.rs` disables response compression and the crate's own
+`HeaderConfig` leaves `Content-Length` required, so a short body surfaces as an
+error from the body stream.
+
+**Scope limit.** Nothing is claimed about *which* servers do this; both
+conditions are produced deliberately by the oracle
+([`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D6"), whose
+`short_range_after` and `truncating_body_after` are the two halves.
+
+**Verified against:** `object_store` 0.14.2 (source read; observed against both
+oracle knobs, `pgdump_query-cli/tests/remote.rs`).
+
+**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
+"D7" — `io::RemoteSource::read_range` answers exactly its `len` or errors, as
+`ByteRangeSource` requires of every source.
+
+**Re-verify:**
+
+```sh
+cargo test -p pgdump_query-cli --test remote a_short_206_is_a_fault_rather_than_a_short_read
+cargo test -p pgdump_query-cli --test remote a_body_that_stops_short_of_its_declared_length_is_a_failure
+```
+
+## RT16 — an absent `Last-Modified` is reported as the Unix epoch, not as absence
+
+**Claim.** `ObjectMeta::last_modified` is a `DateTime<Utc>` rather than an
+`Option`, and `object_store` 0.14.2 substitutes the Unix epoch where a response
+carries no `Last-Modified` header. `ETag` is honestly `Option<String>`. So the
+weak identity is asymmetric: one half can say "the server sent none" and the
+other cannot.
+
+**Proof.** `object_store` 0.14.2, `src/client/header.rs`: `header_meta` takes
+`last_modified` from the header where `HeaderConfig::last_modified_required` is
+false and falls back to `DateTime::default()`, which is the epoch; the HTTP
+store sets that flag false in `src/http/client.rs`'s `HEADER_CONFIG`.
+
+**Scope limit.** The substitution is claimed, not that no real server sends a
+1970 date. A dump stamped at the epoch is indistinguishable from one with no
+stamp at all, which is why the reading below is a deliberate choice rather than
+a decoding.
+
+**Verified against:** `object_store` 0.14.2 (source read; observed against the
+oracle's `without_last_modified` knob).
+
+**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
+"D5" — `io::weak_identity` reads the epoch as absence, so a server that says
+nothing is treated as silent rather than as claiming a date.
+
+**Re-verify:**
+
+```sh
+cargo test -p pgdump_query-cli --test remote a_server_sending_no_modification_time_reads_as_silence
+```
+
+## RT17 — the HTTP backend runs on a `current_thread` runtime
+
+**Claim.** Nothing in `object_store` 0.14.2's HTTP path, or in the `reqwest`
+and `hyper` tree beneath it, enables `tokio/rt-multi-thread` or calls
+`tokio::spawn` on the request path: a ranged GET completes on a
+`current_thread` runtime. It does need tokio's IO and time drivers, which a
+binary using it declares for itself.
+
+**Proof.** `object_store` 0.14.2's `Cargo.toml` names `tokio` with no
+`rt-multi-thread`, and its `tokio` feature adds only `dep:tokio` and
+`dep:tracing`; `src/client/retry.rs` and `src/client/get.rs` await
+`tokio::time::sleep` and the response body directly, with no spawn. Observed:
+every assertion in `pgdump_query-cli/tests/remote.rs` runs under
+`#[tokio::test]`, whose flavour is `current_thread`.
+
+**Scope limit.** Multipart upload and the `list` path are not claimed; this
+project calls neither.
+
+**Verified against:** `object_store` 0.14.2, `reqwest` 0.13.5, `hyper` 1.11.1
+(source and lockfile read; observed through the test suite).
+
+**Relied on by:** [`decisions.md`](decisions.md), "D12" — `pgdq` runs one
+`current_thread` runtime and would seed one glibc arena per visible CPU if a
+dependency forced the multi-threaded flavour on it.
+
+**Re-verify:**
+
+```sh
+cargo tree -p pgdump_query-cli -e features -i tokio | grep -c rt-multi-thread
+cargo test -p pgdump_query-cli --test remote
+```
+
+The first must print `0` for the shipped feature set; the second exercises the
+path on a `current_thread` runtime.

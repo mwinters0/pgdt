@@ -37,8 +37,10 @@ pub use io::{
     MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND, MemoryLimit, Origin, OriginProbe,
     Parallelism, PartitionBoundaries, PartitionRead, Partitioning, Recognized, RetainedUnit,
     WaitPolicy, WorkerMemory, XzSource, available_memory, available_memory_in,
-    discover_memory_limit, discover_memory_limit_in, open_local, statistics_allowance,
+    discover_memory_limit, discover_memory_limit_in, open, open_local, statistics_allowance,
 };
+#[cfg(feature = "http")]
+pub use io::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText,
     TilingIssue, TocHeader, attach_text, build_map, check_tiling,
