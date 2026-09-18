@@ -187,7 +187,10 @@ looking for a remedy.** A stream's header is adjacent to its predecessor's
 padding, footer and index, so one read straddling that boundary answers all but
 the request that first touches it; and which request that is can be changed but
 not removed, because the distance to the next boundary is knowable only from the
-index just read. So no rearrangement of what the walk emits gets below one round
+index just read. **What the straddle rests on is `Backfill`'s window reaching
+*back* from the end of the range asked for**, rather than forward from its
+start — the property to re-check when 14.7 re-vendors, `P9` having rewritten
+that code around the walk machine without changing its arithmetic. So no rearrangement of what the walk emits gets below one round
 trip a stream, and 14.7 should take that fetch: every cold path that pays the
 walk goes on to read the whole file — `parse` scans to persist, a `query` with
 no cache scans too — so its round trips precede a transfer of the same order.
