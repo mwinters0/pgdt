@@ -47,11 +47,13 @@ in the same change, and the manual gains
   opted out of run management altogether. The cost is one extra identity
   observation per save, which the throttle already bounds at a small fraction of
   scan time (`decisions.md`, "D62").
-- **`pgdq info` has no `--strict-identity`.** It never scans, so there is no
-  in-flight window, and its job is to *report* what the cache holds — including
-  that the modification time moved. A flag that made it refuse would remove the
-  one command that can tell you why. Filed under STATUS's "Decisions worth
-  another look": nothing in the spec settles it.
+- **`pgdq info` shipped without `--strict-identity`, and the review reversed
+  that.** The slice put the flag on `parse` and `query` alone, reasoning that
+  `info` reports rather than scans. The maintainer settled it the other way —
+  one flag with one meaning on every command — and the flag is owed to `info`
+  under `M116`, refusing exactly as the other two do and requiring `--source`,
+  cache-only mode having a null identity nothing can check
+  ([2026-09-18](../status/history/2026-09-18.md)).
 - **No `RT<n>` was added for the descriptor-keeps-its-inode property.** The spec
   names the `RT` entries this phase owes and they are all `object_store`'s;
   this one is POSIX and is established here by a test that renames a file over

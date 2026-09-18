@@ -373,15 +373,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`pgdq info` was given no `--strict-identity`.** 14.3 put the flag on
-  `parse` and `query` alone. The reasoning: `info` never scans, so it has no
-  in-flight window, and its whole job is to *report* what a cache holds —
-  including that the dump's modification time moved, which it prints as a
-  warning today. A flag that made it refuse would take away the one command
-  that can say why the other two stopped. The spec settles neither way: its D5
-  says the flag "applies to the local file source too", which is about
-  providers rather than commands. Reconsidering means adding the flag to
-  `info` and deciding what it does there — refuse, or print the diagnostic and
-  exit non-zero — and wiring it through `cache::load`, which `info` calls
-  directly rather than through `CacheMode::load`.

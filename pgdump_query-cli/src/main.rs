@@ -1659,10 +1659,9 @@ async fn main() -> Result<()> {
                 }
                 unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
             };
-            // **`info` reports rather than refuses**, so it has no
-            // `--strict-identity` of its own: it never scans, so there is no
-            // in-flight window, and its whole job is to say what the cache
-            // holds — which includes saying that the modification time moved.
+            // Reported rather than acted on: between runs the weak signal is
+            // advisory unless a selection binds it
+            // (`docs/design/decisions.md`, "D21").
             if weak == WeakIdentity::Differs {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
