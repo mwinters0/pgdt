@@ -864,10 +864,11 @@ impl Builder {
             return;
         }
         let text = String::from_utf8_lossy(raw);
-        // Tracked here rather than inside `step`'s mode machine: the marker
-        // is separated from the `COPY` header it describes by a blank line,
-        // which closes whatever comment block held it, so no mode carries it
-        // by the time `on_copy_start` runs.
+        // Tracked here rather than inside `step`'s mode machine: `Mode` has
+        // no field to carry the marker in. The block itself does survive to
+        // the header — a blank line is absorbed without closing a pending
+        // comment (I3), which is what lets `on_copy_start` still read its
+        // `toc` — but the marker line is only one `--` line inside it.
         let trimmed = text.trim();
         if looks_like_toc_name_line(trimmed) {
             self.pending_partition_root = None;

@@ -1,10 +1,11 @@
 //! The file-level diagnostic channel
 //! (`docs/design/decisions.md`, "The file map and the preamble").
 //!
-//! Two things have no good home in a `Result`: a tiling failure, which is
-//! evidence of a bug in our parser but never a reason to refuse the file, and
-//! a cache mtime mismatch, too weak by default to invalidate on and with no
-//! column or schema to hang off. Both are collected on
+//! The founding two had no good home in a `Result`: a tiling failure, which
+//! is evidence of a bug in our parser but never a reason to refuse the file,
+//! and a cache mtime mismatch, too weak by default to invalidate on and with
+//! no column or schema to hang off. [`DiagnosticKind`] has grown past them —
+//! its variants are the list. All are collected on
 //! [`crate::index::DumpIndex`] and left for a caller to drain.
 //!
 //! **This is not the library's only channel, and the division is by kind, not

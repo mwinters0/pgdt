@@ -409,7 +409,7 @@ pair *then* its own `\connect`.
 `pg_dumpall.c`'s `dumpDatabases()` per-database invocation and its
 `postgres`/`template1` special case); koji
 (`pg_dump 16.14`); two concatenated `--create` fixtures
-(`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18);
+(`pgdump_query/tests/common/mod.rs`'s `multidb_fixture`, versions 13/16/18);
 `fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run.
 **Relied on by:** `decisions.md` ("D36", "D69").
 **Re-verify:** `grep -n 'Dumped from database version' -B5

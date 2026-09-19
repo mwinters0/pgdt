@@ -800,10 +800,11 @@ async fn map_forward(
 /// what was asked for, the source's advice not having been read when it fires;
 /// on a query the same fact is a [`PlanNote`] on a `TableStream`.
 ///
-/// **Silence means the leader dispatched the announced count, or declined the
-/// region outright** — a region under one whole partition runs serially and
-/// reports no shortfall ([`crate::leader::Shortfall`]) — and never that every
-/// worker read at once. `flag` keeps one scan-wide fact from printing
+/// **Silence means the leader dispatched the announced count** — and never
+/// that every worker read at once. A decline is *not* silent: the shortfall is
+/// computed before it and returned with it ([`crate::leader::Shortfall`]), so
+/// a region left serial by the budget or by the source still prints. Only
+/// `scan_region`'s own floor is unreported, deliberately. `flag` keeps one scan-wide fact from printing
 /// once per block, which is also why [`crate::leader::Shortfall`] reports no
 /// reason a later block could answer differently.
 fn report_shortfall(flag: &mut bool, shortfall: Option<leader::Shortfall>) {
@@ -1843,7 +1844,9 @@ fn snapshot(
 /// Everything a replay needs that the mapping pass produced, shared unchanged
 /// by every sub-stream of a partitioned replay
 /// (`docs/design/decisions.md`, "D51"). Held behind an `Arc`, `metadata` being
-/// the whole dump's DDL, and never mutated after the mapping pass: the census
+/// the whole dump's DDL, and never mutated once shared with a sub-stream —
+/// `table_stream_partitions` writes the derived span onto `query_options`
+/// after the mapping pass and before the `Arc`: the census
 /// in particular is the union over **every** block the query will replay, so
 /// two partitions of one table cannot resolve its arrays differently
 /// (`docs/design/decisions.md`, "D35").
@@ -2440,7 +2443,8 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
             // is the **pieces**, not the offers: with four offers and three
             // wanted groups the cuts fall after the second and fourth piece.
             // `ceil` rounds that the right way and keeps the picks strictly
-            // increasing, so they need no dedup pass.
+            // increasing, so `cuts.dedup()` below is a no-op on this arm — as
+            // it is on the other, once `want` is clamped to the length.
             (1..=take).map(|j| inside[(j * (inside.len() + 1)).div_ceil(take + 1) - 1]).collect()
         }
     };

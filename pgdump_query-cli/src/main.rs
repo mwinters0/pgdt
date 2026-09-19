@@ -562,9 +562,9 @@ fn parse_strict_identity(text: &str) -> std::result::Result<StrictIdentity, Stri
 #[derive(Subcommand)]
 enum Command {
     /// Scan a dump file and build the structure cache — the only command
-    /// that scans ahead of what was asked and the only one that persists what
-    /// it found (`pgdq info` reports from the cache this leaves; a `query`
-    /// maps what the cache lacks without saving it). Resumes from a matching cache rather than
+    /// that scans ahead of what was asked (`pgdq info` reports from the cache
+    /// this leaves; a `query` maps only what its table needs, but persists
+    /// that as it goes unless told `--dqcache none`). Resumes from a matching cache rather than
     /// restarting, and banks its progress at `COPY` block boundaries as it
     /// goes — including on Ctrl-C, which saves what has been scanned and
     /// exits 130 — so an interrupted scan is not wasted work. Remove the
@@ -2006,7 +2006,7 @@ async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
 
 /// [`open_with_cache`] for the two commands that scan, raising
 /// `Error::CacheSourceMismatch` from `CacheMode::source_mismatch` — the same
-/// constructor the three scan entry points use, so this refusal is
+/// constructor the four scan entry points use, so this refusal is
 /// word-for-word the one it pre-empts. The library still refuses on its own:
 /// this spares the walk, it does not replace the guarantee
 /// (`docs/design/decisions.md`, "D20").

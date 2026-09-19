@@ -78,7 +78,7 @@ pub trait ByteRangeSource: Send + Sync {
         true
     }
     /// The read length this caller is about to ask for over and over — a
-    /// read loop's `ScanOptions::chunk_size`, announced once before the loop
+    /// read loop's `ScanOptions::chunk_size_bytes`, announced once before the loop
     /// starts.
     ///
     /// **Advisory, and it defaults to doing nothing.** One-off-ness is a
@@ -91,9 +91,13 @@ pub trait ByteRangeSource: Send + Sync {
     /// envelope to persist alongside it (`crate::cache::CompressionIndex`
     /// wraps this at save time). See `docs/design/decisions.md`, "D18".
     ///
-    /// `None` by default, right for a source with no compression layer;
-    /// [`XzSource`] returns the table it built while walking the file's stream
-    /// footers at open time. A cloned value rather than a borrow: a caller
+    /// `None` by default, right for a source with no compression layer. Both
+    /// compressed sources answer `Some`, and the table is either the one
+    /// walked for at open ([`XzSource::open`], [`open_remote`]) or the one
+    /// handed in from a cache ([`XzSource::with_table`],
+    /// [`FetchedXzSource::with_table`]), which walks nothing at all —
+    /// that saving being the point (`docs/design/decisions.md`, "D18").
+    /// A cloned value rather than a borrow: a caller
     /// building a `CacheFile` needs to own it across an `await`.
     fn seek_table(&self) -> Option<xz_seek::SeekTable> {
         None
@@ -360,7 +364,7 @@ pub enum RetainedUnit {
 /// `docs/design/decisions.md`, "D8").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PartitionRead {
-    /// `ScanOptions::chunk_size` at a time, repeating until the piece is
+    /// `ScanOptions::chunk_size_bytes` at a time, repeating until the piece is
     /// consumed. A plain file's answer, and **the default, for the reason
     /// [`RetainedUnit::ReadChunk`] is one**: a chunk-sized read is the
     /// announced length, so [`BufferPool::keeps`] pools every buffer a worker
@@ -376,7 +380,7 @@ pub enum PartitionRead {
     /// chunk on the chunked arm.
     ///
     /// **The unit is what bounds the buffer, and it is the source's number
-    /// rather than the cut's.** `crate::leader::scan_region` reads
+    /// rather than the cut's.** `crate::leader::scan_partition` reads
     /// `min(piece, unit)`, so at the shipped width — where a piece *is* one
     /// unit — this is the piece exactly, and above it the buffer is capped at
     /// one unit instead of growing with the width. It does not remove the
@@ -633,7 +637,7 @@ impl Partitioning {
     }
 
     /// How a worker should read one of these partitions — see
-    /// [`PartitionRead`], and `crate::leader::scan_region`, which is the
+    /// [`PartitionRead`], and `crate::leader::run_region`, which is the
     /// one caller that reads it.
     pub fn partition_read(&self) -> PartitionRead {
         self.read
@@ -650,7 +654,7 @@ impl Partitioning {
     }
 
     /// Where a window of `want` partitions starting at `start` ends, never
-    /// past `limit` — the number `crate::leader::scan_region` hands
+    /// past `limit` — the number `crate::leader::run_region` hands
     /// `crate::stream::cut`, and **the cut size, which is not the memory
     /// charge**.
     ///
@@ -840,10 +844,14 @@ impl Parallelism {
     ///
     /// - a discovered limit is carved by [`Parallelism::within`], the same
     ///   arithmetic a stated allowance gets: it caps at `limit −
-    ///   MEMORY_RESERVE`, and `jobs × per_worker` — or
+    ///   MEMORY_RESERVE`, and [`WorkerMemory::at`] evaluated at the count the
+    ///   budget *affords* — or
     ///   [`DEFAULT_MEMORY_BUDGET`] where the caller has no recommendation — is
     ///   taken no higher, and may fall **below**
-    ///   [`DEFAULT_MEMORY_BUDGET`]. The **count** answers to a second
+    ///   [`DEFAULT_MEMORY_BUDGET`]. It is **not** `jobs × per_worker`: the
+    ///   count is the afforded one rather than the asked-for one, and `at`
+    ///   carries the pool's retention term beside the per-reader charge
+    ///   (`docs/design/decisions.md`, "D4"). The **count** answers to a second
     ///   condition: its predicted resident must leave
     ///   [`MEMORY_MARGIN_PERCENT`] of the limit unused ([`margin_allowance`]);
     /// - no limit found caps at half of [`available_memory`], an estimate two
@@ -1394,7 +1402,7 @@ const POOL_DEPTH: usize = 4;
 /// announced as a read size.
 ///
 /// The read path's steady state is chunk-sized — [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`],
-/// tunable through `ScanOptions::chunk_size`. What can be far larger is
+/// tunable through `ScanOptions::chunk_size_bytes`. What can be far larger is
 /// `crate::map::attach_text`'s coalesced span read, which happens once per map
 /// and never again; holding one of those for the rest of a process would trade
 /// what a scan holds resident (`peak-rss`) for an allocation nothing asks for
@@ -1715,9 +1723,13 @@ impl BufferPool {
     /// `slots × POOL_MAX_BYTES` while `held_bytes` reported
     /// `slots × slot_bytes`.
     ///
-    /// **What it costs is a second read unit**, which the plain path does not
-    /// have: it reads [`PartitionRead::Chunked`], so every buffer it takes is
-    /// the announced length. The one two-unit source is [`XzSource`], which
+    /// **What it costs is a second *pooled* read unit**, which the plain path
+    /// does not have: it reads [`PartitionRead::Chunked`], so every buffer its
+    /// read loop takes is the announced length. It does take one other length
+    /// — `crate::map::attach_text`'s run read, which is bounded by the spans
+    /// it is filling rather than by the hint — and this rule is exactly what
+    /// drops that buffer instead of pooling it. The one two-unit source is
+    /// [`XzSource`], which
     /// takes a second pool rather than a second hint
     /// (`docs/design/decisions.md`, "D17").
     fn keeps(&self, len: usize) -> bool {
@@ -1891,7 +1903,7 @@ impl ByteRangeSource for LocalFileSource {
 
     /// **The pool's one non-size rule.** A read loop announcing its chunk size
     /// is what lets a buffer of that length be kept above [`POOL_MAX_BYTES`],
-    /// so a raised `ScanOptions::chunk_size` keeps its pooling instead of
+    /// so a raised `ScanOptions::chunk_size_bytes` keeps its pooling instead of
     /// paying a fresh `calloc` per chunk. The cost is bounded and is the
     /// caller's own number: [`BufferPool::slots`] buffers of the size it asked
     /// for.

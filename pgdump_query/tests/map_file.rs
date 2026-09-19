@@ -11,9 +11,10 @@
 //! **Every scan here gathers nothing** (`StatisticsRequest::NONE`): the eager
 //! producer gathers no statistics to compare against. A gathering scan's
 //! parallel map is compared against a serial one instead, by
-//! `tests/statistics.rs` and `pgdump_query-cli/tests/determinism.rs`. The one
-//! exception is the interrupted statistics back-fill, here for the cancelling
-//! source, whose resumed map is compared against a gathering `map_file`.
+//! `tests/statistics.rs` and `pgdump_query-cli/tests/determinism.rs`. The
+//! exceptions are the back-fill tests, which ask for `StatisticsRequest::ALL`
+//! over a dropping or a cancelling source to see what an interrupted back-fill
+//! banks and reports.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -941,10 +942,12 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 /// What it *does* claim is the preamble. `scan_preamble` ignores the flag
 /// deliberately (`ScanOptions::cancel`): a stop inside it could not be told
 /// from reaching the first `COPY` header, so a truncated preamble would be
-/// cached as a complete one. It is an uncancellable region bounded by its own
-/// length, it runs before `map_forward`'s first flag check, and it banks its
-/// result — so even the most immediate interrupt leaves a cache whose columns
-/// resolve rather than one that reports `not declared` for all of them.
+/// cached as a complete one. It polls no flag and runs before `map_forward`'s
+/// first check, and it banks its result — so even the most immediate *polled*
+/// interrupt leaves a cache whose columns resolve rather than one that reports
+/// `not declared` for all of them. It is not uncancellable: the cancellation
+/// is announced to the source, so a read in flight can be dropped inside it
+/// (`a_dropped_read_inside_the_prepass_banks_and_writes_nothing`).
 #[tokio::test]
 async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let (_dir, dump) = sandboxed();

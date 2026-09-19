@@ -1,7 +1,7 @@
 //! Reads `pg_dump` plain-format output into Arrow batches. The modules are
 //! four layers whose dependencies point one way — bytes and structure, then
-//! PostgreSQL semantics, then Arrow assembly, then query — with this file and
-//! `error` in none (`docs/design/decisions.md`, "D68"; `tests/layering.rs`).
+//! PostgreSQL semantics, then Arrow assembly, then query — with this file,
+//! `error` and `instrument` in none (`docs/design/decisions.md`, "D68"; `tests/layering.rs`).
 
 pub mod batch;
 pub mod cache;

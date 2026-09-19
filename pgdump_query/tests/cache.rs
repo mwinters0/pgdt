@@ -257,12 +257,16 @@ async fn cache_mode_load_names_each_unusable_status() {
     );
 }
 
-/// **The library never replaces cache data automatically.** All three scan
+/// **The library never replaces cache data automatically.** All four scan
 /// entry points refuse a cache that records another file's stored size —
 /// naming the path, what the cache expected and what the source is — rather
 /// than starting cold and overwriting it at their first save
 /// (`docs/design/decisions.md`, "D20"). The other three unusable
 /// statuses still start cold; this is the one that is an error.
+///
+/// **Three of the four are exercised here** — `map_file`, `preamble_only` and
+/// `table_stream`. `table_stream_partitions` reaches the same refusal through
+/// the same `map_for_query`, and nothing below pins it.
 ///
 /// The cache is read back byte for byte afterwards, which is the half that
 /// would fail silently: a refusal that still wrote is indistinguishable from

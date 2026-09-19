@@ -68,8 +68,9 @@ pub enum Error {
     /// A scan was asked to build forward from a cache that does not describe
     /// the source it was handed, so it refuses rather than scanning and
     /// overwriting it (`docs/design/decisions.md`, "D20"). Raised by
-    /// the three scan entry points — `crate::map_file`,
-    /// `crate::table_stream`, `crate::index::preamble_only` — before any byte
+    /// the four scan entry points — `crate::map_file`,
+    /// `crate::table_stream`, `crate::table_stream_partitions` and
+    /// `crate::index::preamble_only` — before any byte
     /// of the dump is read, from
     /// [`crate::cache::CacheLoad::SourceChanged`]'s two sizes plus the path
     /// the mode resolved. It is the one unusable cache outcome that is an

@@ -6215,8 +6215,10 @@ def run_parallel_peak_rss(session: Session) -> str:
             for spec in specs
         )
         + "\n\n**Where a leg goes flat, it is the block pool's slot ceiling that stopped "
-        "growing.** The pool's slots are `clamp((budget - chunk) / unit, 1, "
-        "max(POOL_DEPTH, jobs))`, and it holds one unit below that beside the block "
+        "growing.** The block pool's slots are `clamp((budget - held) / unit, 1, "
+        "max(POOL_DEPTH, jobs))`, where `held` is the chunk pool's own retention — "
+        "`clamp(budget / chunk, 1, POOL_DEPTH) * chunk`, which is `POOL_DEPTH * chunk` "
+        "only once the budget affords four chunk slots. It holds one unit below that beside the block "
         "each reader has in flight. Above four workers the depth term is the stated "
         "`--jobs`, so which term binds is set by the *file's* block size: on the fine "
         "leg the budget term is far above the axis, the depth term binds, and the curve "

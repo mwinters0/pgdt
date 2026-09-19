@@ -72,8 +72,10 @@ pub struct CopyEnd {
 /// One line encountered outside a COPY block that is neither a COPY header
 /// nor part of a dollar-quoted string — DDL, comments, blank lines, or a
 /// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
-/// `crate::preamble` parses into a [`crate::index::DumpMetadata`] and
-/// `crate::map::Builder::feed_line` classifies into spans. A COPY block's data
+/// `crate::map::Builder::feed_line` classifies into spans, using
+/// `crate::preamble`'s grammar. No line reaches `crate::preamble` itself:
+/// [`crate::index::DumpMetadata`] is derived from the finished spans
+/// (`docs/design/decisions.md`, "D34"), never from a second pass. A COPY block's data
 /// rows never reach this arm.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line<'a> {
@@ -478,7 +480,7 @@ impl ChunkCarry {
 /// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
 /// is worst-case-best across the device classes measured
 /// (`docs/design/measurements.md`, "What the read chunk size is worth").
-/// Public and named because it is what [`ScanOptions::chunk_size`] is
+/// Public and named because it is what [`ScanOptions::chunk_size_bytes`] is
 /// compared against and what callers scale from.
 ///
 /// **Raising it costs memory, not pooling.** Every read loop announces the
@@ -595,7 +597,10 @@ pub struct ScanOptions {
     /// [`crate::stream::map_file`]'s two passes alone — the mapping loop and
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
-    /// built on it ignore it (`docs/design/decisions.md`, "D26").
+    /// built on it never read the polled bit
+    /// (`docs/design/decisions.md`, "D26") — but [`scan`] does announce this
+    /// to the source, so a read already in flight can still be dropped and
+    /// arrive as `ScanCancelled`.
     ///
     /// A source may also hold a clone of this and await
     /// [`Cancellation::cancelled`], which is what bounds a stop by the request

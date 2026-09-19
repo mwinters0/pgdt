@@ -189,7 +189,7 @@ before any of it is fetched.
 **The cache goes in the working directory.** With a local dump it sits beside
 the file; a URL has no "beside", so the default is the URL's last path segment
 plus `.dqcache`, in whatever directory you ran the command from —
-`https://example.com/dumps/mydump.sql` becomes `./mydump.dqcache`. `--dqcache
+`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.dqcache`. `--dqcache
 <path>` states somewhere else, and `--dqcache none` turns it off where the
 command allows. A URL that names no object — a bare host, or a path ending in
 `/` — is refused: there is no dump named there to read.

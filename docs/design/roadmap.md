@@ -518,8 +518,9 @@ where the work in front of you would not require them.
   finds `COPY` boundaries in a plain file; an archive reads them from a TOC.
   Keeping "what entries exist and where are their bytes" apart from "decode
   these bytes into rows" is what lets a container layer slot in later.
-- **The cache format is versioned and records what produced it.** A serialized
-  `DumpIndex` carries a format-version field and a container-kind tag, so
+- **The cache format is versioned and records what produced it.** The cache
+  file carries a format-version field and a container-kind tag beside the
+  serialized `DumpIndex`, so
   archive-derived indexes and entry-relative offsets are a later variant rather
   than a breaking change. A cache whose version or kind is not recognised is
   treated as absent, which the "never required for correctness" rule makes

@@ -15,10 +15,10 @@ would otherwise re-litigate, and adding one may mean striking one.
 `Parallelism::default()` is `Serial`; `discover_in` is opt-in and its one caller is the CLI, run on
 purpose. Rejected: `default_workers` read in the library, so silence means concurrency.
 
-### D2 A plain file recommends one worker; a compressed one the machine's cores
+### D2 A plain file recommends one worker; a local compressed one the machine's cores
 On every real device a serial plain scan is device-bound, and each partition reads a chunk-sized
 tail past itself, so splitting adds device bytes. `XzSource` answers `available_parallelism()`
-capped at its block count (`RT7`). Reopens: a parallel plain scan measured on a real device (both
+capped at its block count (`RT7`); a fetched one answers one, the errors being asymmetric. Reopens: a parallel plain scan measured on a real device (both
 parallel figures are warm-tmpfs). Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
 ### D3 The memory constants, and what each one is
@@ -189,8 +189,8 @@ alone, bounding a Ctrl-C by retries; keying on what this run banked, which makes
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
 `str::get`, delimiters being ASCII. The escaped path still validates (`\xNN` synthesizes bytes); the
 bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape;
-the one that stands is `append_view_unchecked` (`batch.rs`), whose bounds and validity both come from
-the `contains` that produced its coordinates (D46).
+the one that stands is `append_view_unchecked` (`batch.rs`), whose bounds come from the `contains`
+that produced its coordinates and whose validity comes from the decode's borrowed arm (D46).
 
 ### D28 One row split, shared unconditionally
 `RowSplit` memoizes field ends for every term and the batcher, extends as deep as asked, and is
@@ -306,7 +306,7 @@ runs on every flush keeping its batcher; any new flush trigger must honour it.
 
 ### D47 `max_source_span` is the only trigger that bounds pinned bytes
 `max_rows` and `max_bytes` count selected rows, which a filter makes sparse.
-The span term is charged only where the source retains by chunk (`KD23`).
+The span term is dropped only where the advice is non-empty and uniformly by-partition (`KD23`).
 Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
@@ -512,10 +512,10 @@ pages are snapshotted with width and bare-flag assertions. Rejected: `long_help`
 ### D68 Four layers, drawn where crate boundaries would go
 L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`, `cache`, `diagnostic`,
 `statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`, `nested`), L3 Arrow assembly
-(`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`); `error`, `lib` in none;
-CLI and embedders above L4. `use` points down or sideways; a module gets a layer before it is
-written (`tests/layering.rs`). Deviations, moved only with a `batch` rework: `read_table` (L4 work)
-and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a crate split (D74).
+(`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`); `error`, `lib` and
+`instrument` in none; CLI and embedders above L4. `use` points down or sideways; a module gets a
+layer before it is written (`tests/layering.rs`). Deviations, moved with a `batch` rework:
+`read_table` (L4 work) and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a split (D74).
 
 ### D74 L1 is Arrow-free and L2 is pure, so a metadata-only crate split off would compile no Arrow
 L1 never names `arrow`; L2 names `arrow::datatypes` only, is synchronous and does no I/O; a decoder

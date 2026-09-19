@@ -1,4 +1,4 @@
-//! `pgdq parse` / `pgdq info` end to end: **`info`
+//! `pgdq parse` / `pgdq info` / `pgdq query` end to end: **`info`
 //! reads, `parse` scans** (`docs/design/decisions.md`, "D61").
 //!
 //! These drive the real binary (`CARGO_BIN_EXE_pgdq`) rather than the library,

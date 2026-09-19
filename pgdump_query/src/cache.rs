@@ -11,7 +11,7 @@
 //! fall back on and has to say what went wrong.
 //!
 //! **The size-mismatched file is the exception.** A cache whose recorded
-//! stored size is not this source's describes some *other* file, so the three
+//! stored size is not this source's describes some *other* file, so the four
 //! scan entry points refuse ([`Error::CacheSourceMismatch`]) rather than
 //! starting cold (`docs/design/decisions.md`, "D20"). Writing is not
 //! best-effort either: [`save`] propagates I/O failures rather than silently
@@ -688,8 +688,8 @@ pub enum CacheStatus {
 /// (`docs/design/decisions.md`, "D22").
 ///
 /// `Disabled` is a statement about the *caller*, with no [`CacheStatus`] to
-/// correspond to; the other four are that status carried across unchanged, so
-/// a caller answers five outcomes. `Valid` and `Incomplete` are one variant
+/// correspond to; the other five are that status carried across unchanged, so
+/// a caller answers six outcomes. `Valid` and `Incomplete` are one variant
 /// here, because a caller holding a live source builds forward from either —
 /// see [`CacheMode::load`].
 ///
@@ -716,7 +716,7 @@ pub enum CacheLoad {
     /// live source does not have, so every byte offset in it could be wrong.
     /// Both numbers travel as the evidence for the claim.
     ///
-    /// **The three scan entry points refuse on this one**, where they start
+    /// **The four scan entry points refuse on this one**, where they start
     /// cold on the other three (`docs/design/decisions.md`, "D20"). The two
     /// sizes are what [`CacheMode::source_mismatch`] turns into
     /// [`Error::CacheSourceMismatch`].
@@ -841,8 +841,11 @@ pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
     }))
 }
 
-/// Drop `index`, each block's statistics — the `Arc` sharing them included —
-/// inside a statistics scope, as their decode was attributed.
+/// Drop each block's statistics — the `Arc` sharing them included — inside a
+/// statistics scope, as their decode was attributed. `index`'s own
+/// allocations are *not* freed in the scope: it is a parameter, so it outlives
+/// the guard and is released once this returns, which is right, their decode
+/// having been attributed to nobody.
 fn drop_attributed(mut index: DumpIndex) {
     let _attributed = StatisticsScope::enter();
     for span in &mut index.spans {
@@ -1074,22 +1077,28 @@ impl CacheMode {
     }
 
     /// Load the cache this mode points at, turning the
-    /// [`CacheStatus::Valid::weak`] answer into a
-    /// [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the index
-    /// (see the module docs). A disabled cache always
+    /// [`CacheStatus::Valid`] identity answers into the advisory diagnostics
+    /// of [`advisory_identity_diagnostics`] on the index — a moved time, a
+    /// changed entity tag, or a different origin (see the module docs). A
+    /// disabled cache always
     /// yields [`CacheLoad::Disabled`], even if a file sits at what would
     /// otherwise be its resolved location.
     ///
-    /// **Under [`StrictIdentity::time`] the same answer is a refusal**, and
-    /// the only outcome of this method that is an `Err` rather than a
-    /// [`CacheLoad`]: the caller asked for a guarantee, so a cache whose
-    /// modification signal has moved — or a source that can offer none at all
-    /// — stops the run instead of carrying a diagnostic nobody has to read.
+    /// **Under a binding [`StrictIdentity`] the same answers are a refusal**:
+    /// the caller asked for a guarantee, so a cache whose modification signal
+    /// has moved, whose origin differs, or a source that can offer neither,
+    /// stops the run instead of carrying a diagnostic nobody has to read.
+    /// `time` and `location` each bind their own half
+    /// ([`CacheMode::strict_identity_refusal`]). It is not this method's only
+    /// `Err`: an [`CacheMode::Offline`] mode is a
+    /// [`Error::CacheModeMismatch`], and [`load`]'s own I/O failures
+    /// propagate.
     ///
     /// `Incomplete` is treated exactly like `Valid` — both are
     /// [`CacheLoad::Index`] — because every caller of this method
-    /// (`crate::stream::map_file`, `crate::stream::table_stream`,
-    /// `crate::index::preamble_only`) builds forward from whatever partial
+    /// (`crate::stream::map_file`, `crate::stream::map_for_query`, which
+    /// serves both `crate::table_stream` and `crate::table_stream_partitions`,
+    /// and `crate::index::preamble_only`) builds forward from whatever partial
     /// map exists (`docs/design/decisions.md`, "D22"). A caller that instead
     /// *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`], as

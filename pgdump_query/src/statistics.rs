@@ -389,7 +389,7 @@ pub enum BlockGathered {
     /// memory is what fits a wide table. Granularity never depends on memory;
     /// whether a block gathers does (`docs/design/decisions.md`, "D85").
     Declined {
-        /// The [`crate::scan::ScanOptions::statistics_allowance`] it declined
+        /// The [`crate::scan::ScanOptions::statistics_allowance_bytes`] it declined
         /// under, which the map records
         /// ([`crate::index::CopyBlock::statistics_declined`]) so that a
         /// back-fill retries it only under a larger one.
@@ -668,7 +668,7 @@ pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 pub(crate) struct StatisticsAccount {
     state: Mutex<AccountState>,
     /// The bytes every statistic alive may hold between them
-    /// ([`crate::scan::ScanOptions::statistics_allowance`]); `None` bounds
+    /// ([`crate::scan::ScanOptions::statistics_allowance_bytes`]); `None` bounds
     /// nothing and declines nothing.
     allowance: Option<u64>,
 }

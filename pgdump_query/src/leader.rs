@@ -1063,7 +1063,7 @@ mod tests {
     }
 
     /// **No first read a worker makes at an offset on a
-    /// `PartitionRead::Chunked` source exceeds `ScanOptions::chunk_size`** — the
+    /// `PartitionRead::Chunked` source exceeds `ScanOptions::chunk_size_bytes`** — the
     /// first read of a piece as much as the tail; a read grown to finish a
     /// longer line is held to `max_line_bytes` alone. It is what keeps every
     /// buffer such a worker takes but a grown one a *pooled* one

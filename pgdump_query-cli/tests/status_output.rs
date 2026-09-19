@@ -1,6 +1,8 @@
 //! `pgdq`'s status output — the `tracing` lines `parse`, `info` and `query`
 //! write to stderr for the two phases worth watching a long run for: an
-//! `.xz` file's seek-table walk, and the scan itself starting and finishing
+//! `.xz` file's seek-table walk, which all three can pay, and the scan itself
+//! starting and finishing, which only `parse` and `query` do — `info` never
+//! scans (`info_announces_no_scan`)
 //! (`docs/design/decisions.md`, "D64"). What only the binary can say is that
 //! the subscriber is actually wired up and that these lines reach real
 //! stderr — the library's own tests exercise the `tracing::info!` call sites
