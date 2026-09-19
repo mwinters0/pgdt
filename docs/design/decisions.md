@@ -105,12 +105,12 @@ stops being a statement about files. Rejected: extension dispatch; a probe cache
 Rejected: a path dependency, which fails `cargo check` without the sibling checkout.
 
 ### D15 A read decodes whole blocks and retains them; reading one in pieces is the fallback
-Whole-block decode, LRU-retained. A file whose largest block the budget cannot hold (plain
-`xz bigfile` is single-block) goes through one live `xz_seek::BlockRead` behind a mutex, kept across
-reads so a forward scan continues; there `partitions()` answers one partition, two readers forcing
-each other's restarts. `XzSource` feeds it a `File`, a `Window` being larger than the chunk it
-spares; `FetchedXzSource`, which pulls from nothing, fetches and charges that window per block. Two
-misses on one block decode it twice (`KD20`): an in-flight map would lock the common case.
+Whole-block decode, LRU-retained. A file whose largest block the budget cannot hold (plain `xz bigfile` is
+single-block) goes through one live `xz_seek::BlockRead` behind a mutex, kept across reads so a forward scan
+continues; there `partitions()` answers one partition, two readers forcing each other's restarts. `XzSource`
+feeds it a `File`, a `Window` being larger than the chunk it spares; `FetchedXzSource` pulls from nothing, so it
+fetches and charges one per block *per read* and keeps none, re-reading a block a scan sits inside (P14's D21
+closes that). Two misses on one block decode it twice (`KD20`): an in-flight map would lock the common case.
 
 ### D16 Block decode is afforded out of the stated budget, keyed on largest block
 `BlockCache::affordable` compares the charge at one reader (unit, chunk, decoder

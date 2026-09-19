@@ -583,8 +583,12 @@ that tunes the network with more than one backend to tune against:
 - The **pre-fetched `Window` composition** and the decode-out-of-a-window trade —
   priced and refused for a local file, and reversing over ranged GETs where the
   saving is a round trip per block rather than a `pread` out of page cache.
+  **Retaining the window a piecewise read already fetched is not this item** and
+  is not deferred: D21 takes it, the deferred trade being whether to fetch a
+  window *ahead* of the read that needs it.
 - The **fetch policy**. *That* this project takes the fetch entirely is settled
   by D13; what is left to tune is its concurrency, coalescing and speculation.
+  **Not re-fetching what the arm still holds is none of those three** (D21).
 - The **ranged-GET partition size**, which is a property of the network rather
   than of the file, and which multiplies with an `XzSource`'s block boundaries
   rather than being overridden by them.
@@ -805,6 +809,40 @@ which is what `MEMORY_UNPOOLED_BOUND` was left to absorb. A term that can be
 priced and is not is the falsification of that bound rather than an instance of
 it.
 
+### D21 — The fetched piecewise arm reads each block once per read, and this phase closes it
+
+D20 priced one wasted decode: "a reader that touches a few kilobytes of a large
+block pays a decode of the rest". `FetchedXzSource::read_in_pieces` pays it **per
+read** instead of once — it fetches the block's whole compressed extent, skips
+from the block's start, fills, and drains the remainder, keeping nothing. So N
+reads inside one block cost N fetches and N whole-block decodes, and a
+single-block file (plain `xz bigfile`, which D15 names as the ordinary shape) is
+a forward scan that re-fetches and re-decodes the file once per chunk. That is
+the cost 14.8 proved unusable for the local arm and did not remove here.
+
+**It is a phase obligation, not a deficiency.** The admission rule would send a
+fix through a new phase, and a `KD<k>` would leave the arm as shipped; both
+answer the process rather than the question. A phase delivering a read path that
+is quadratic on its ordinary input has not delivered it, so the phase reopens and
+closes it in two slices — ordered by whether the charge moves.
+
+**The two costs are separable, and only the second re-prices the arm.** The
+fetch comes from `window()` caching nothing; the decode from `begin`/`complete`
+per read. **Retaining the last window** closes the fetch half inside today's
+pricing: the window is already charged for a read's duration, so retention
+extends a lifetime and not a size, and it holds compressed bytes, which is the
+plaintext this arm exists not to hold. **Keeping the handle across reads** closes
+the decode half and does move the charge, a live `BlockRead` holding its window
+with it across an `await`. The local arm is the precedent for the second and
+`LiveBlock` is its shape; what the fetched one adds is that the window is held
+rather than pulled from.
+
+**Verification is not what differs, and was never the question.** Both arms
+complete every block they read from and move on from, which is D20's clause
+already met — the local one at the seek-away escape, the fetched one per read.
+Closing the decode half moves the fetched arm onto the same moment as a
+consequence, not as its purpose.
+
 ## How it is sliced, and why in that order
 
 The rows are [`../status/STATUS.md`](../status/STATUS.md)'s checklist; the
@@ -840,3 +878,11 @@ semantics of its own to pin: what binds instead is that a tested path is never
 migrated onto a mechanism that has not yet run anywhere. So 14.7 proves the
 handle where no alternative exists, and 14.8 moves the local path onto one
 already in use.
+
+**The fetched arm's cost is then closed cheap half first** (D21). 14.10 retains
+the window, staying inside the charge D20 priced and deciding nothing about what
+may be held across an `await`; 14.11 keeps the handle, which moves the charge and
+is the half whose review has to weigh it. Bundling them would force one review to
+accept a pricing change to get the re-fetch fix ("Size a slice by its review",
+[`../process.md`](../process.md)). The order is falsifiable: 14.10 alone must make
+a forward scan linear in fetches while the decode stays quadratic.
