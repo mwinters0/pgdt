@@ -2485,8 +2485,20 @@ pub enum PlanNoteKind {
     /// **`max_source_span` here is what was charged, not what was stated**:
     /// the span is derived down before the count is cut
     /// ([`derived_source_span`]), so this note beside a
-    /// [`PlanNoteKind::BatchSpanNarrowed`] names that smaller number and what
-    /// is left to raise is the budget.
+    /// [`PlanNoteKind::BatchSpanNarrowed`] names that smaller number and the
+    /// span is not among the levers left.
+    ///
+    /// **Both levers that are left are named, because only one of them always
+    /// works** (`KD32`, as [`PlanNoteKind::BatchSpanNarrowed`] states it too):
+    /// a source recommending no per-reader cost is left on
+    /// `crate::io::DEFAULT_MEMORY_BUDGET` however large an allowance is stated
+    /// (`docs/design/decisions.md`, "D83"), so a message offering the budget
+    /// alone is inert exactly where this fires on a plain one. The other is
+    /// the announced read chunk
+    /// (`crate::scan::ScanOptions::chunk_size_bytes`), which a source cutting
+    /// by it sizes both terms from — `footprint` a fixed multiple of it
+    /// (`crate::io::Partitioning::partition_bytes`) and the span floored on it
+    /// ([`derived_source_span`]).
     ParallelismBudgetLimited {
         requested: usize,
         planned: usize,
@@ -2695,14 +2707,19 @@ impl PlanNote {
                 Some(span) => format!(
                     "asked for up to {requested} sub-stream(s), but a memory budget of \
                      {memory_bytes} byte(s) affords only {planned}: each costs {footprint} \
-                     byte(s) to decode plus {span} byte(s) held by its own batch — raise the \
-                     memory budget to get more, the batch span already being as small as the \
-                     plan will make it"
+                     byte(s) to decode plus {span} byte(s) held by its own batch — the batch \
+                     span is already as small as the plan will make it, so what seats more is \
+                     a smaller read chunk, which a source cutting by one sizes both of those \
+                     terms from; or a larger memory budget, which is not the same as a larger \
+                     allowance on a source that recommends no per-reader cost of its own"
                 ),
                 None => format!(
                     "asked for up to {requested} sub-stream(s), but a memory budget of \
                      {memory_bytes} byte(s) affords only {planned} at {footprint} byte(s) to \
-                     decode each — raise the memory budget to get more"
+                     decode each — what seats more is a smaller read chunk, which a source \
+                     cutting by one sizes that cost from; or a larger memory budget, which is \
+                     not the same as a larger allowance on a source that recommends no \
+                     per-reader cost of its own"
                 ),
             },
             PlanNoteKind::CompressedBlockPathDeclined {
@@ -3730,6 +3747,29 @@ mod tests {
         let charge = WorkerMemory::per_worker(8 * big as u64);
         let eight = Parallelism::workers(8, 8 * 8 * big as u64);
         assert_eq!(derived_source_span(charge, eight, stated, big), big);
+    }
+
+    /// **The count note names a lever a plain source actually has** (`KD32`):
+    /// a source recommending no per-reader cost keeps
+    /// `crate::io::DEFAULT_MEMORY_BUDGET` however large an allowance is
+    /// stated (`docs/design/decisions.md`, "D83"), so a remedy offering the
+    /// budget alone is inert exactly where this note fires on one. Both arms
+    /// are checked, the span-carrying one and the bare, and the second half
+    /// is the premise itself — without it the first half is a string
+    /// asserting its own wording.
+    #[test]
+    fn the_count_note_names_a_lever_a_plain_source_has() {
+        for span in [Some(1 << 20), None] {
+            let note = PlanNote::parallelism_budget_limited(8, 2, 8 << 20, span, 64 << 20);
+            let message = note.message();
+            assert!(message.contains("a smaller read chunk"), "{message}");
+        }
+
+        // What makes the budget clause alone inert: twice the allowance is
+        // the same budget, both of them `DEFAULT_MEMORY_BUDGET`.
+        let budget = |allowance| Parallelism::within(8, None, allowance).memory_bytes();
+        assert_eq!(budget(2 << 30), Some(crate::io::DEFAULT_MEMORY_BUDGET));
+        assert_eq!(budget(4 << 30), budget(2 << 30));
     }
 
     /// **[`PlanNote::budget_bytes`] answers for exactly the notes whose
