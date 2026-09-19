@@ -2499,6 +2499,16 @@ pub enum PlanNoteKind {
     /// by it sizes both terms from — `footprint` a fixed multiple of it
     /// (`crate::io::Partitioning::partition_bytes`) and the span floored on it
     /// ([`derived_source_span`]).
+    ///
+    /// **Both levers buy seats rather than speed, and the sentence says so.**
+    /// The sub-streams a plain typed `query` plans do not run concurrently
+    /// (`KD17`, at [`plan_partitions`]), so a caller who shrinks the chunk to
+    /// seat more pays the per-chunk cost for a count that does not become
+    /// throughput. What that cost *is* on this path is unmeasured — the figure
+    /// pricing a chunk size measures a mapping pass, which does far less work
+    /// per byte (`measurements.md`, `chunk-size`) — so the message names the
+    /// trade and not a direction. Offering a lever without it is how a reader
+    /// spends CPU on a count nothing runs.
     ParallelismBudgetLimited {
         requested: usize,
         planned: usize,
@@ -2710,16 +2720,19 @@ impl PlanNote {
                      byte(s) to decode plus {span} byte(s) held by its own batch — the batch \
                      span is already as small as the plan will make it, so what seats more is \
                      a smaller read chunk, which a source cutting by one sizes both of those \
-                     terms from; or a larger memory budget, which is not the same as a larger \
-                     allowance on a source that recommends no per-reader cost of its own"
+                     terms from, or a larger memory budget, which is not the same as a larger \
+                     allowance on a source that recommends no per-reader cost of its own; both \
+                     buy seats rather than speed, and on a plain source the sub-streams seated \
+                     may not run concurrently at all"
                 ),
                 None => format!(
                     "asked for up to {requested} sub-stream(s), but a memory budget of \
                      {memory_bytes} byte(s) affords only {planned} at {footprint} byte(s) to \
                      decode each — what seats more is a smaller read chunk, which a source \
-                     cutting by one sizes that cost from; or a larger memory budget, which is \
+                     cutting by one sizes that cost from, or a larger memory budget, which is \
                      not the same as a larger allowance on a source that recommends no \
-                     per-reader cost of its own"
+                     per-reader cost of its own; both buy seats rather than speed, and on a \
+                     plain source the sub-streams seated may not run concurrently at all"
                 ),
             },
             PlanNoteKind::CompressedBlockPathDeclined {
@@ -2860,7 +2873,10 @@ fn compressed_block_path_declined(
 /// (`measurements.md`, `parallel-scan-throughput`). The named suspect, `POOL_DEPTH`
 /// clamping the chunk pool, is spent — a probe build lifting it moved no cell
 /// materially — so what serializes them is unidentified. **(c) unowned**;
-/// promoted by a phase taking up plain-source extraction throughput.
+/// promoted by a phase taking up plain-source extraction throughput. **That
+/// reading needs a read-chunk axis on its `query` legs**, which no figure has:
+/// [`PlanNoteKind::ParallelismBudgetLimited`] points a caller at the chunk,
+/// and the only figure pricing one measures a mapping pass.
 ///
 /// Deficiency register: `deficiency: KD23` — the cut here is over a whole
 /// `CopyBlock` rather than through the leader's window, so a piece spans as
@@ -3757,12 +3773,19 @@ mod tests {
     /// are checked, the span-carrying one and the bare, and the second half
     /// is the premise itself — without it the first half is a string
     /// asserting its own wording.
+    ///
+    /// **The lever and what it is worth are asserted together**, because
+    /// naming one without the other is the defect: seating is not throughput
+    /// on a source whose sub-streams do not run concurrently (`KD17`, at
+    /// [`plan_partitions`]).
     #[test]
     fn the_count_note_names_a_lever_a_plain_source_has() {
         for span in [Some(1 << 20), None] {
             let note = PlanNote::parallelism_budget_limited(8, 2, 8 << 20, span, 64 << 20);
             let message = note.message();
             assert!(message.contains("a smaller read chunk"), "{message}");
+            assert!(message.contains("seats rather than speed"), "{message}");
+            assert!(message.contains("may not run concurrently"), "{message}");
         }
 
         // What makes the budget clause alone inert: twice the allowance is

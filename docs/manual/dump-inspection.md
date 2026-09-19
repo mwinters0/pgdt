@@ -340,6 +340,14 @@ reading the same block repeatedly for free; the block size is set when the file 
 (`xz --block-size=`), not when it is read. A file whose blocks leave the budget
 no room for one such reader is read a different way — see `--memory` below.
 
+**A parallel `query` may point you at this flag.** Where the memory budget
+seats fewer sub-streams than `--jobs` asked for, the plan says a smaller read
+chunk is what would seat more. That is true about seats and says nothing about
+speed: on a plain dump the sub-streams a query plans do not run concurrently
+today, so a smaller chunk buys a larger count, the per-chunk cost above, and no
+measured gain. Raising `--memory` instead does not help there either — see
+"`--jobs` and `--memory`".
+
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.
 

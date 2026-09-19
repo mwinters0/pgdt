@@ -472,16 +472,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The count note now points at a smaller read chunk, and no figure says that
-  is faster.** `ParallelismBudgetLimited`'s remedy had to name a lever a plain
-  source has (`M119`) and the announced chunk is the only one; what the clause
-  claims is *seating*, which is arithmetic rather than throughput. But the
-  `chunk-size` figure ([`../design/measurements.md`](../design/measurements.md))
-  prices a chunk below the default above it in CPU, and nothing prices a
-  parallel plain scan on a real device — `KD32`'s own promotion criterion. So a
-  reader following the note may buy sub-streams and lose time. Reconsidering
-  either hedges the clause to name the trade or takes that reading and settles
-  it; [`../manual/dump-inspection.md`](../manual/dump-inspection.md),
-  "`--chunk-size`: you almost certainly do not need it" was left standing on the
-  same ground and would move with it.
