@@ -59,8 +59,14 @@ refuse*; "D15" was **corrected**, its "decodes read through a `File`, not a
   from a source that already exists, which is *after* the walk — and the whole
   point is that the line arrives before. `tracing::warn!` is where the local
   source's own "seek table build started" already goes and reaches all three
-  commands on stderr ([`decisions.md`](decisions.md), "D64"). A diagnostic
-  raised afterwards would name a cost already paid.
+  commands on stderr ([`decisions.md`](decisions.md), "D64"). **Reviewed and
+  affirmed**, and D1 corrected to say so; the division between the two channels
+  is now stated at `crate::diagnostic`'s module header. What the review did
+  *not* affirm is the sentence that followed here — that a diagnostic would
+  only name a cost already paid. The stream count is a property of the file, as
+  `NonSeekableCompressedSource`'s block count is, so it is owed to the
+  diagnostic channel as well; that is `M124`, and the status line is unaffected
+  ([2026-09-19](../status/history/2026-09-19.md)).
 - **`KD36` is `(c) unowned`, not "owned by the phase that tunes the
   network".** The checklist row asked for the latter; a `(b)` stance needs its
   destination to exist in [`roadmap.md`](roadmap.md)'s phase index, and no such
@@ -71,8 +77,14 @@ refuse*; "D15" was **corrected**, its "decodes read through a `File`, not a
   it has no block structure to cut at. A fetched `.xz` does, so the memory
   recommendation is the file's own charge — the same shape
   `XzSource::default_worker_memory` answers — while the worker count stays at
-  the trait's default, concurrency over a network being the tuning this phase
-  defers. Keeping `partitions()` honest is what forced the split:
+  the trait's default. **Reviewed and affirmed, on a reason this doc had
+  wrong**: not that the phase defers network tuning, but that the two errors
+  are asymmetric — too few costs throughput a `--jobs` recovers, too many opens
+  `min(cores, block_count)` connections to a third party's server for a
+  flagless command. Filed beside `FetchedXzSource::default_workers`, since it
+  is what stops a later throughput reading raising the number
+  ([2026-09-19](../status/history/2026-09-19.md)). Keeping `partitions()`
+  honest is what forced the split:
   `stream::compressed_block_path_declined` reads a single partition over a
   seekable table as a decline, so advising one unconditionally would have
   reported every fetched `.xz` run as having declined the block path it was

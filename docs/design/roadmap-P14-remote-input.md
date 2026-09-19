@@ -155,9 +155,12 @@ table the walk does not happen at all — `claim` reads the table and
 and a warm remote query is therefore a cache read, an identity probe and one
 block's bytes. Where there is no cache, the walk is **one ranged GET per stream
 footer**, which is 31,150 round trips on the koji download, and the source
-**announces that at open** through the diagnostic channel, naming what it is
+**announces that at open** on the status channel, naming what it is
 about to cost and the remedies: parse once against a local copy, or keep the
-cache.
+cache. (Specified here as the diagnostic channel, and corrected: a `Diagnostic`
+hangs off a result built from a source that already exists, so it cannot arrive
+before the walk it describes —
+[2026-09-19](../status/history/2026-09-19.md).)
 
 *Rejected: refusing a cold remote walk above some stream count.* A threshold is
 a tuned number, and this phase has said it produces none; worse, it denies a

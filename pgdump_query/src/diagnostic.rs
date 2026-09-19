@@ -4,9 +4,18 @@
 //! Two things have no good home in a `Result`: a tiling failure, which is
 //! evidence of a bug in our parser but never a reason to refuse the file, and
 //! a cache mtime mismatch, too weak by default to invalidate on and with no
-//! column or schema to hang off. The library cannot `eprintln!`, so both are
-//! collected
-//! on [`crate::index::DumpIndex`] and left for a caller to drain.
+//! column or schema to hang off. Both are collected on
+//! [`crate::index::DumpIndex`] and left for a caller to drain.
+//!
+//! **This is not the library's only channel, and the division is by kind, not
+//! by necessity.** A `tracing` line carries cost and progress as a run meets
+//! them — wired to stderr for every command, on by default
+//! (`docs/design/decisions.md`, "D64") — and can therefore speak *before* the
+//! thing it describes happens. A [`Diagnostic`] carries a structured finding
+//! **about the file**, reaches a caller as data rather than as text, and can
+//! only be raised once there is a result to hang it on. A finding that is a
+//! property of the file belongs here even when a status line already said it;
+//! a cost a run is about to pay cannot be here at all.
 //!
 //! **Not persisted.** `DumpIndex::diagnostics` is `#[serde(skip)]`
 //! (`docs/design/decisions.md`, "D34") and recomputed on load.

@@ -420,30 +420,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The cold footer walk is announced on the status channel, not as a
-  `Diagnostic`.** [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-  "D1" says the source announces the walk "at open through the diagnostic
-  channel"; 14.7 used `tracing::warn!` instead, because a `Diagnostic` is
-  carried on a `DumpIndex` or a `CacheStatus` and both are built from a source
-  that already exists — which is after the walk, and the line's whole value is
-  that it arrives before. The reasoning is also D19's: a cost that depends on
-  this run's cache state is not a property of the file that a persisted
-  `DiagnosticKind` can hold. **What reconsidering changes**: the warning does
-  not appear in `pgdq info --json`'s diagnostics, so a caller reading that
-  channel programmatically sees nothing about a walk it is about to pay for.
-  Adding a *post-hoc* diagnostic naming what the walk cost would close that and
-  name a cost already paid.
-
-- **A fetched `.xz` recommends one worker and the file's own memory charge.**
-  [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-  "D7" answers every advisory member conservatively for the *plain* remote
-  source, on the ground that it has no block structure to cut at. A compressed
-  one does, so 14.7 split the pair: `default_workers` stays at one, network
-  concurrency being the tuning this phase defers, while
-  `default_worker_memory` answers the block charge as `XzSource` does, that
-  being a property of the file rather than of the link. **What reconsidering
-  changes**: a flagless remote `.xz` `parse` is serial where the same file read
-  locally uses the machine's cores, so the two providers differ in default
-  throughput on identical bytes — `--jobs` reverses it, and the phase that
-  tunes the network is where a reading would.

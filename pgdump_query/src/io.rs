@@ -3314,11 +3314,20 @@ impl ByteRangeSource for FetchedXzSource {
         Some(self.block_worker_memory()?.at(1))
     }
 
-    /// **One**, which is the trait's own default and this phase's answer for
-    /// everything a fetched source could recommend concurrency for
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D7"). The file's block
-    /// count says what may be cut, not what a network should be asked for at
-    /// once; the phase that tunes the network is where a reading replaces it.
+    /// **One**, where the local twin recommends `min(cores, block_count)` over
+    /// the same bytes ([`XzSource::default_workers`]) — this is the one source
+    /// whose recommendation differs from its local twin's, and the file's
+    /// block count says what may be *cut*, not what a network should be asked
+    /// for at once.
+    ///
+    /// **The reason is not that this phase defers network tuning**, though it
+    /// does (`docs/design/roadmap-P14-remote-input.md`, "D7"): it is that the
+    /// two errors are not symmetric. Recommending too few costs throughput on
+    /// a link, and the caller types `--jobs` to take it back. Recommending too
+    /// many opens `min(cores, block_count)` concurrent connections to a *third
+    /// party's* server for a command that carries no flag saying so. So a
+    /// later reading showing the link underused does not raise this number —
+    /// it argues for raising `--jobs`, which is the caller's to type.
     fn default_workers(&self) -> usize {
         1
     }
@@ -4149,12 +4158,22 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
 /// nothing, because only the user can judge one decode-from-zero. The same
 /// sentence holds with round trips in place of a decode.
 ///
-/// **On the status channel rather than as a `Diagnostic`.** A
-/// `crate::Diagnostic` is carried on a `DumpIndex` or a `CacheStatus`, both of
-/// which are built from a source that exists — which is after the walk, and
-/// the whole point of this line is that it arrives before. The status channel
-/// is where the local source's own "seek table build started" already goes
-/// (`docs/design/decisions.md`, "D64").
+/// **On the status channel rather than as a `Diagnostic`.** The division is
+/// the one `crate::diagnostic`'s module doc draws: `tracing` carries cost and
+/// progress as a run meets them, a `Diagnostic` a structured finding about the
+/// file, drained from a result. This line is the first kind — a
+/// `crate::Diagnostic` rides a `DumpIndex` or a `CacheStatus`, both built from
+/// a source that already exists, which is *after* the walk, and the whole
+/// value of this line is that it arrives before. It is also where the local
+/// source's own "seek table build started" goes
+/// (`docs/design/decisions.md`, "D64"), so both providers announce a walk
+/// alike.
+///
+/// **What it does not reach is a caller draining diagnostics**, `pgdq info
+/// --json` among them. This file's stream count is a property of the file, as
+/// the block count behind
+/// [`crate::diagnostic::DiagnosticKind::NonSeekableCompressedSource`] is, and
+/// nothing on that channel carries it yet.
 ///
 #[cfg(feature = "http")]
 fn announce_remote_walk(origin: &Origin) {
