@@ -826,16 +826,66 @@ answer the process rather than the question. A phase delivering a read path that
 is quadratic on its ordinary input has not delivered it, so the phase reopens and
 closes it in two slices — ordered by whether the charge moves.
 
-**The two costs are separable, and only the second re-prices the arm.** The
-fetch comes from `window()` caching nothing; the decode from `begin`/`complete`
-per read. **Retaining the last window** closes the fetch half inside today's
-pricing: the window is already charged for a read's duration, so retention
-extends a lifetime and not a size, and it holds compressed bytes, which is the
-plaintext this arm exists not to hold. **Keeping the handle across reads** closes
-the decode half and does move the charge, a live `BlockRead` holding its window
-with it across an `await`. The local arm is the precedent for the second and
-`LiveBlock` is its shape; what the fetched one adds is that the window is held
-rather than pulled from.
+**The two costs are separable, and neither moves the charge.** The fetch comes
+from `window()` caching nothing; the decode from `begin`/`complete` per read.
+**Retaining the last window** closes the fetch half, and **keeping the handle
+across reads** closes the decode half, `LiveBlock` being the local arm's
+precedent for the second.
+
+*Neither* re-prices the arm, and the claim that the second does — inherited from
+the closed "Decisions worth another look" entry, which said a live handle "holds
+its window with it, so the charge is re-priced" — is **refuted**:
+`FetchedXzSource::decode_bytes` already counts the decoder plus this file's
+largest window, and the piecewise arm charges `Partitioning::single(chunk_bytes)`,
+the decoder and window being a fixed cost of the source rather than a per-reader
+term. One retained window is the same peak as one transient window; what changes
+is a lifetime, not a size. **The one real constraint is at a block boundary**: a
+retained handle plus a newly fetched window for the next block is momentarily two
+windows where `decode_bytes` counts one, so completing and dropping the outgoing
+handle must precede fetching the next window. That is a rule the implementation
+satisfies, not a charge to restate.
+
+**What separates the two slices is statelessness, which is also what 14.11
+spends.** Today the fetched piecewise arm keeps nothing, so its reads are
+genuinely independent and the arm would serve N partitions; it advises one only
+because `xz_partition_advice` answers `single` wherever no block cache is
+affordable. After 14.11 the arm is forward-only and one partition stops being
+advice and becomes a requirement — the opposite trade from the local case, since
+each read here is a round trip and this is the arm where hiding latency would pay
+most. The per-reader handle that would keep both is `KD35`'s remedy and waits on
+the figure that entry says cannot be skipped, so **14.11 rewrites `KD35`** to
+record that the fetched arm is now mutex-bound and was not before. An option
+spent silently is the failure mode; spent on the record is the intent.
+
+**14.11's property is asserted, not argued.** `Oracle::requests()` already counts
+every ranged GET, so 14.10's half — a forward scan inside one block fetching once
+rather than once per chunk — is pinned by the instrument the phase already has.
+Nothing counts decoder invocations, so 14.11 adds that counter behind
+`introspect`, a build that is never timed ([`../../CLAUDE.md`](../../CLAUDE.md)).
+A slice whose whole deliverable is a cost property must not ship with that
+property unmeasurable.
+
+**Shared means one object over a parameter, never one body over a branch.** The
+convergence D20 asks for is satisfied by a mechanism both arms *instantiate*, not
+by a merged function that tests which provider it is on: a branch on the provider
+is the asymmetry re-entered through the body rather than removed. What the two
+arms genuinely do not share is where a `CompressedSource` comes from — an
+`Arc<File>` the crate pulls from synchronously, against a `Window` that must be
+awaited — and that difference sets their concurrency structure, the local arm
+decoding a whole read inside one `spawn_blocking` where the fetched one returns
+to the runtime between blocks. So the shared thing is the **per-block state
+machine**, generic over `S: xz_seek::CompressedSource` as `fill_from_block`
+already is, with each arm keeping the loop its scheduling requires.
+
+**The larger duplication is the budget policy, and it is none of the above.**
+Six methods are byte-identical between the two sources — `apportion`,
+`charged_chunk_bytes`, `block_worker_memory`, `block_path`, `partitions`,
+`block_decode_bytes` — because there is no provider difference in any of them.
+They are a copy, not a convergence, and two copies of one charge policy stay
+right only until one of them is edited. 14.12 gives them one home as a value both
+sources hold, which is composition and needs no branch at all. It lands **after**
+14.11 because 14.11 changes `FetchedXzSource`'s field set, and extracting against
+a field set still moving is how an extraction gets done twice.
 
 **Verification is not what differs, and was never the question.** Both arms
 complete every block they read from and move on from, which is D20's clause

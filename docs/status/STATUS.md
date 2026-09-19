@@ -148,23 +148,42 @@ what is delivered.
 
 - [ ] **14.10** The fetched piecewise arm stops re-fetching a block it still
   holds: the last window is retained across reads, so a forward scan inside one
-  block fetches it once rather than once per read (D21). Stays inside the charge
-  D20 priced — a window is already charged for a read's duration and holds
-  compressed bytes — so nothing is decided here about what may be held across an
-  `await`. The decode stays quadratic, which is 14.11's, and the split is
-  falsified if it does not. Carries the wording that is true when it lands:
-  `PlanNoteKind::CompressedBlockPathDeclined` says *streaming decoder*, which on
-  this arm still describes a re-decode per read.
+  block fetches it once rather than once per read (D21). The charge does not move
+  — the window is already inside `decode_bytes` and the arm charges the chunk
+  alone — and the arm stays stateless as to decoding, so nothing is decided here
+  about holding a handle across an `await`. Asserted with `Oracle::requests()`,
+  which counts every ranged GET. The decode stays quadratic, which is 14.11's,
+  and the split is falsified if it does not. Carries the wording that is true when
+  it lands: `PlanNoteKind::CompressedBlockPathDeclined` says *streaming decoder*,
+  which on this arm still describes a re-decode per read.
 - [ ] **14.11** The fetched piecewise arm keeps its handle across reads, as the
   local one does, so a block is decoded once rather than once per read and a
-  forward scan of a single-block file costs one decode of the file (D21). This is
-  the half that moves the charge, a live `xz_seek::BlockRead` holding its window
-  with it across an `await`; `LiveBlock` is the shape and the remaining
-  difference is that the window is held rather than pulled from. The fetched arm
-  reaches the local one's completion moment as a consequence, D20's verification
-  clause being met either way. With this the *streaming decoder* wording is honest
-  on both arms again, so it is this row that retires the caveat 14.10 added rather
-  than a ledger item churning the string twice.
+  forward scan of a single-block file costs one decode of the file (D21). The
+  charge does not move; what this spends is the arm's statelessness, so it
+  **rewrites `KD35`** to record that the fetched arm is now mutex-bound and was
+  not before, the per-reader handle that would keep both partitions and cheap
+  reads being that entry's remedy and waiting on its figure. **`LiveBlock` becomes
+  the shared state machine, generic over `S: xz_seek::CompressedSource`** as
+  `fill_from_block` already is, rather than a second copy or one body branching on
+  the provider (D21); each arm keeps the loop its scheduling requires, the local
+  one decoding a read inside one `spawn_blocking` where this one returns to the
+  runtime between blocks. Completing and dropping the outgoing handle precedes
+  fetching the next block's window, or a boundary holds two where `decode_bytes`
+  counts one. Adds a decode counter behind `introspect` — a build that is never
+  timed — so the property is asserted rather than argued, and corrects
+  `xz_partition_advice`'s rustdoc, which explains the single partition by a live
+  handle only the local arm had. The fetched arm reaches the local one's
+  completion moment as a consequence, D20's verification clause being met either
+  way. With this the *streaming decoder* wording is honest on both arms again, so
+  it is this row that retires the caveat 14.10 added rather than a ledger item
+  churning the string twice.
+- [ ] **14.12** The two `.xz` sources stop keeping two copies of one budget
+  policy: `apportion`, `charged_chunk_bytes`, `block_worker_memory`, `block_path`,
+  `partitions` and `block_decode_bytes` are byte-identical between them, with no
+  provider difference in any of them, and become one value both sources hold
+  (D21). Composition, not a branch and not a merged body. Lands after 14.11
+  because that slice changes `FetchedXzSource`'s field set, and extracting against
+  a field set still moving is how an extraction gets done twice.
 
 ## Not started
 
@@ -416,10 +435,10 @@ a phase nobody has sliced.
 - **KD35** — a budget too small for a decoded block is read serially: the
   piecewise arm advises one partition on both providers, where a decoder retains
   far less than the block it decodes and several would fit. What pins the count
-  at one is not the budget — one forward-only handle behind a mutex locally,
-  nothing handing the fetched arm cut points at all. **(c) unowned**; promoted by
-  a phase taking up compressed scan throughput, which is also what would take the
-  figure. Detail: `pgdump_query/src/io.rs`.
+  at one is not the budget — one forward-only handle behind a mutex locally, and
+  nothing handing the fetched arm cut points until `14.11` makes it forward-only
+  too. **(c) unowned**; promoted by a phase taking up compressed scan throughput,
+  which is also what would take the figure. Detail: `pgdump_query/src/io.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
   request at a time, so a cold remote open costs a round trip per stream —
