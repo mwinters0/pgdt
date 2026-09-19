@@ -152,7 +152,9 @@ what is delivered.
   D20 priced — a window is already charged for a read's duration and holds
   compressed bytes — so nothing is decided here about what may be held across an
   `await`. The decode stays quadratic, which is 14.11's, and the split is
-  falsified if it does not.
+  falsified if it does not. Carries the wording that is true when it lands:
+  `PlanNoteKind::CompressedBlockPathDeclined` says *streaming decoder*, which on
+  this arm still describes a re-decode per read.
 - [ ] **14.11** The fetched piecewise arm keeps its handle across reads, as the
   local one does, so a block is decoded once rather than once per read and a
   forward scan of a single-block file costs one decode of the file (D21). This is
@@ -160,7 +162,9 @@ what is delivered.
   with it across an `await`; `LiveBlock` is the shape and the remaining
   difference is that the window is held rather than pulled from. The fetched arm
   reaches the local one's completion moment as a consequence, D20's verification
-  clause being met either way.
+  clause being met either way. With this the *streaming decoder* wording is honest
+  on both arms again, so it is this row that retires the caveat 14.10 added rather
+  than a ledger item churning the string twice.
 
 ## Not started
 
