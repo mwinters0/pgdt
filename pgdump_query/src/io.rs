@@ -2778,9 +2778,9 @@ fn xz_partition_advice(
         // that would benefit. **What pins the count at one differs by
         // provider, and neither reason is the budget**: [`LiveBlock`] is
         // forward-only behind one mutex, so two local readers would force
-        // each other's restarts, while the fetched arm keeps nothing between
-        // reads and so is serial for want of cut points rather than for want
-        // of a lock. **(c) unowned**;
+        // each other's restarts, while the fetched arm keeps a window but no
+        // decode position ([`HeldWindow`]) and so is serial for want of cut
+        // points rather than for want of a lock. **(c) unowned**;
         // closing it means a handle per reader — which `xz_seek::BlockRead`
         // being `Send` and borrowing nothing already allows — and a figure
         // over the count, and the figure is the half this cannot skip.
@@ -3059,7 +3059,8 @@ pub async fn walk_seek_table(
 ///   fills the caller's buffer and compares the block's check when we complete
 ///   it — so what is held is the compressed window and the decoder, never the
 ///   plaintext. [`XzSource`] answers that arm the same way over a file it pulls
-///   from, keeping its handle where this one does not (D20).
+///   from, keeping its handle where this one keeps the window alone (D20,
+///   [`HeldWindow`]).
 ///
 /// **A block is always completed**, which is what compares its check. Reading
 /// a few kilobytes out of a large block therefore pays a decode of the rest —
@@ -3082,6 +3083,9 @@ pub struct FetchedXzSource {
     pool: Arc<BufferPool>,
     /// The block unit, or `None` where this file has no blocks to decode.
     blocks: Option<Arc<BlockCache>>,
+    /// The compressed window the piecewise arm last fetched, or `None` where
+    /// that arm has not run or its last read failed ([`HeldWindow`]).
+    held: Mutex<Option<HeldWindow>>,
     /// What one decode here retains besides the plaintext: the decoder over a
     /// source that **lends** — an `xz_seek::Window` is read through
     /// `slice_at`, so no compressed input chunk is built — plus the largest
@@ -3141,6 +3145,7 @@ impl FetchedXzSource {
             table,
             pool: Arc::new(BufferPool::default()),
             blocks,
+            held: Mutex::new(None),
             decode_bytes,
             budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
             jobs: AtomicUsize::new(1),
@@ -3297,12 +3302,12 @@ impl FetchedXzSource {
     /// (D20). What it holds is the compressed window, the decoder and one chunk
     /// buffer — never the block's plaintext, which is the point.
     ///
-    /// **Nothing is kept between reads here**, where the local twin keeps its
-    /// handle ([`LiveBlock`]): a handle held across an `await` would hold its
-    /// window with it, so keeping one would re-price this arm as well as
-    /// changing what it re-fetches — which is the fetch policy this phase
-    /// defers (`docs/design/roadmap-P14-remote-input.md`, "What this phase
-    /// defers, by name").
+    /// **The window is kept between reads and the decoder is not**
+    /// ([`HeldWindow`]), where the local twin keeps its handle
+    /// ([`LiveBlock`]): a forward scan inside one block fetches that block
+    /// once rather than once per read, while each read still begins,
+    /// skips into and completes its own handle — so a block is still decoded
+    /// once per read (`docs/design/roadmap-P14-remote-input.md`, "D21").
     async fn read_in_pieces(&self, offset: u64, len: usize) -> Result<Bytes> {
         let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
         let covering = self.table.blocks_in(offset..end);
@@ -3310,15 +3315,28 @@ impl FetchedXzSource {
             return Err(xz_short_read());
         }
         let mut out = self.pool.obtain(len);
+        // Taken for this read's duration, so a concurrent read finds an empty
+        // slot and fetches its own window rather than sharing this one —
+        // which is the same number of windows in flight as before this slice.
+        let mut held = self.take_held();
         let mut covered = 0usize;
         for index in covering {
             let task = self.task(index)?;
             let Some((at, from, n)) = piece_of(task.uncompressed_range(), offset, end) else {
                 continue;
             };
-            let window = self.window(&task).await?;
-            let (returned, filled) =
-                tokio::task::spawn_blocking(move || -> Result<(PooledBuffer, usize)> {
+            let window = match held.take_if(|kept| kept.index == index) {
+                Some(kept) => kept.window,
+                None => {
+                    // A window for another block goes **before** the next one
+                    // is fetched: holding both across a boundary would be one
+                    // window more than `decode_bytes` counts (D21).
+                    drop(held.take());
+                    self.window(&task).await?
+                }
+            };
+            let (returned, window, filled) = tokio::task::spawn_blocking(
+                move || -> Result<(PooledBuffer, xz_seek::Window<Bytes>, usize)> {
                     let mut out = out;
                     let mut handle = task.begin(&window)?;
                     let mut skip = [0u8; PIECEWISE_SKIP_CHUNK];
@@ -3330,18 +3348,51 @@ impl FetchedXzSource {
                     // knob: skipping it would make verification silently
                     // weaker than the path it replaces.
                     handle.complete(&window)?;
-                    Ok((out, filled))
-                })
-                .await
-                .map_err(Error::from)??;
+                    Ok((out, window, filled))
+                },
+            )
+            .await
+            .map_err(Error::from)??;
             out = returned;
+            held = Some(HeldWindow { index, window });
             covered += filled;
         }
         if covered != len {
             return Err(xz_short_read());
         }
+        // Past every way out, so a failed read retains nothing — `held` is
+        // dropped on the way out instead, exactly as the local arm drops its
+        // live handle rather than leaving state a later read would have to
+        // reason about.
+        *self.held.lock().unwrap_or_else(|e| e.into_inner()) = held;
         Ok(Bytes::from_owner(out).slice(..len))
     }
+
+    /// The retained window, taken out of its slot.
+    fn take_held(&self) -> Option<HeldWindow> {
+        self.held.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+/// The compressed window the fetched piecewise arm last read out of, and the
+/// block it covers.
+///
+/// **It is the fetch half of what [`LiveBlock`] keeps locally.** That arm's
+/// reads used to be independent to the byte — each fetched its block's whole
+/// compressed extent, decoded through it and dropped it — so a forward scan
+/// inside one block cost a round trip per read and a single-block file was
+/// re-fetched once per chunk (`docs/design/roadmap-P14-remote-input.md`,
+/// "D21").
+///
+/// **No decoder is kept with it**, which is what keeps this inside the charge
+/// already priced: `FetchedXzSource::decode_bytes` counts the decoder plus
+/// this file's largest window, so one retained window is the same peak as one
+/// transient window and only its lifetime differs.
+struct HeldWindow {
+    /// Which block the window covers, whole.
+    index: usize,
+    /// Its compressed extent, as fetched.
+    window: xz_seek::Window<Bytes>,
 }
 
 impl std::fmt::Debug for FetchedXzSource {
@@ -3369,7 +3420,15 @@ impl ByteRangeSource for FetchedXzSource {
                 return Ok(Bytes::new());
             }
             match self.block_path().cloned() {
-                Some(cache) => self.read_by_blocks(offset, len, &cache).await,
+                Some(cache) => {
+                    // This arm holds a block's plaintext beside the window it
+                    // decoded from, so a window the piecewise arm left behind
+                    // would be one more than `decode_bytes` counts — and a
+                    // budget raised mid-run is what reaches here with one
+                    // retained (D21).
+                    drop(self.take_held());
+                    self.read_by_blocks(offset, len, &cache).await
+                }
                 None => self.read_in_pieces(offset, len).await,
             }
         })

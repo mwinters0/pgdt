@@ -2504,6 +2504,15 @@ pub enum PlanNoteKind {
     /// pays too: a declined source advises a single partition and so reads
     /// serially whatever `--jobs` says.
     ///
+    /// **The live handle is the local source's alone for now**: a fetched
+    /// `.xz` begins and completes a handle per read, so a forward read there
+    /// re-decodes its block from the start as a backward one does, and what
+    /// that arm keeps between reads is the compressed window
+    /// (`crate::io::FetchedXzSource::read_in_pieces`). The wording above is
+    /// what a user sees either way — a file decoded as a stream rather than a
+    /// block at a time — and this caveat goes when that arm keeps its handle
+    /// too (`docs/design/roadmap-P14-remote-input.md`, "D21").
+    ///
     /// `max_block_uncompressed` is the file's largest block, `block_count`
     /// says how much seeking the file would otherwise offer, and
     /// `reader_bytes` is what the budget was compared against — stated by the

@@ -94,16 +94,17 @@ refuse*; "D15" was **corrected**, its "decodes read through a `File`, not a
   so a budget below *that* is exceeded exactly as the local streaming
   fallback's is. Not a new deficiency: it is the same shape and the same
   precedent, and it is stated beside `block_path`.
-- **Every read of a block is a re-fetch and a re-decode on the piecewise arm**,
-  not only a re-read: nothing is kept between reads, so N reads inside one block
-  cost N fetches and N whole-block decodes and a forward scan of a single-block
-  file re-reads the file once per chunk. Nothing caches there because what the arm
-  exists to avoid is holding the plaintext — which rules out retaining the
-  *decoded* block and not the compressed window. The phase reopened to close it
-  (`roadmap-P14-remote-input.md`, "D21"); this entry said "a re-read", which read
-  as a random-access cost and is what let the ordinary case look safe. On the whole-block arm the `BlockCache` is shared with
-  the local source and `KD20`'s double decode applies unchanged, which is why
-  no second marker was allocated for it.
+- **Every read of a block was a re-fetch and a re-decode on the piecewise arm**,
+  not only a re-read: this slice kept nothing between reads, so N reads inside one
+  block cost N fetches and N whole-block decodes and a forward scan of a
+  single-block file re-read the file once per chunk. Nothing caches the *plaintext*
+  there, because that is what the arm exists not to hold — which never ruled out
+  retaining the compressed window. The phase reopened to close it
+  (`roadmap-P14-remote-input.md`, "D21"): `14.10` retains the window and `14.11`
+  keeps the handle. This entry said "a re-read", which read as a random-access
+  cost and is what let the ordinary case look safe. On the whole-block arm the
+  `BlockCache` is shared with the local source and `KD20`'s double decode
+  applies unchanged, which is why no second marker was allocated for it.
 - **This source refuses the wait a read loop grants**, alone among them. Every
   other one takes its chunk buffer inside a `spawn_blocking` closure, so a
   `WaitPolicy::MayWait` holder blocks a blocking-pool thread; here the fetch

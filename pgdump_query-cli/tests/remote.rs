@@ -767,6 +767,47 @@ async fn a_remote_xz_read_with_no_room_for_a_block_answers_the_same_bytes() {
 }
 
 #[tokio::test]
+async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
+    // The piecewise arm keeps the window it fetched, so a forward scan inside
+    // one block costs one ranged GET rather than one per read; the window is
+    // dropped when the scan leaves the block, and nothing is cached behind it
+    // — a read going back re-fetches (D21). What it does *not* keep is the
+    // decoder, so each read still decodes its block from the start.
+    let oracle = serving_xz_dump();
+    let source = source_of(&xz_url(&oracle)).await;
+    source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+    let plain = dump_bytes();
+    let table = source.seek_table().expect("a fetched `.xz` source carries its table");
+    let first = table.blocks[0].uncompressed_size as usize;
+    let step = first / 8;
+    assert!(step > 0, "the fixture's blocks hold several reads apiece: {first} byte(s)");
+
+    let fetches = |from: usize| oracle.requests().len() - from;
+    let mark = oracle.requests().len();
+    for read in 0..4usize {
+        let at = read * step;
+        assert_eq!(&source.read_range(at as u64, step).await.unwrap()[..], &plain[at..at + step]);
+    }
+    assert_eq!(fetches(mark), 1, "four reads inside one block, one fetch: {:?}", oracle.requests());
+
+    // Moving on fetches the next block, which is also what proves the window
+    // is released rather than accumulated.
+    let mark = oracle.requests().len();
+    let second = table.blocks[1].uncompressed_offset as usize;
+    assert_eq!(
+        &source.read_range(second as u64, step).await.unwrap()[..],
+        &plain[second..second + step]
+    );
+    assert_eq!(fetches(mark), 1, "the next block is one more fetch");
+
+    // And this is the piecewise arm rather than the block cache: going back
+    // fetches block 0 again, where a retained *block* would answer for free.
+    let mark = oracle.requests().len();
+    assert_eq!(&source.read_range(0, step).await.unwrap()[..], &plain[..step]);
+    assert_eq!(fetches(mark), 1, "nothing is retained behind the last window");
+}
+
+#[tokio::test]
 async fn every_fetch_a_footer_walk_makes_is_pinned_to_the_probes_version() {
     // 14.6's precondition rides on the fetch, so the walk inherits it without
     // knowing it exists (D10, D11).
