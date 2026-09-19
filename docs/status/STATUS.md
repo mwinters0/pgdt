@@ -136,11 +136,15 @@ what is delivered.
   no such phase being in the roadmap's index (D1, D13, D20).
   [notes](../design/roadmap-P14.7-remote-xz-notes.md)
 
-- [ ] **14.8** The local small-budget read moves onto the block handle: one
+- [x] **14.8** The local small-budget read moves onto the block handle: one
   mechanism for a read inside a block on both providers, the source being the
-  difference, and the streaming arm's one-partition advice unchanged, the gain
+  difference, and the piecewise arm's one-partition advice unchanged, the gain
   from raising it being a figure this phase does not take (D20). Admitted after
-  spec time, and ordered after 14.7 for the reason its spec gives.
+  spec time, and ordered after 14.7 for the reason its spec gives. `XzSource`
+  holds an `xz_seek::Layout` and one live `xz_seek::BlockRead` where it held an
+  `xz_seek::Reader`, so nothing in this tree holds one (D13); `KD35` is
+  rewritten onto the handle and stays open.
+  [notes](../design/roadmap-P14.8-block-handle-notes.md)
 
 ## Not started
 
@@ -390,7 +394,7 @@ a phase nobody has sliced.
   `pgdump_query/src/gather.rs`.
 
 - **KD35** — a budget too small for a decoded block is read serially: the
-  streaming arm advises one partition because one `xz_seek::Reader` sits behind
+  piecewise arm advises one partition because one live block handle sits behind
   a mutex, where a decoder retains far less than the block it decodes and
   several would fit. **(c) unowned**; promoted by a phase taking up compressed
   scan throughput, which is also what would take the figure. Detail:
@@ -420,3 +424,20 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The two piecewise arms complete a block at different moments, and only the
+  local one keeps its handle.** 14.8 had to choose, because D20 asks for one
+  mechanism on both providers while a handle begun and completed per read makes
+  a forward scan of a single-block file cost one whole-file decode per chunk
+  read. So `XzSource` keeps a live `xz_seek::BlockRead` across reads and
+  completes a block when it leaves it — `xz_seek::Verify::Full`'s seek-away
+  escape, which is what `Reader::read_at` did for this path — while
+  `FetchedXzSource` still begins and completes one per read, as 14.7 landed it.
+  Both satisfy *every block read from and moved on from is verified*; they
+  differ in how often they say it, and the remote arm re-fetches and re-decodes
+  a block once per chunk read where the local one does not. Reconsidering it
+  means giving the fetched arm the same live handle — which holds its window
+  with it, so the charge is re-priced as well as the fetch count — or taking the
+  local one's away, which is the decode cost above. Either way D20's "what got
+  verified is not [an asymmetry worth keeping]" would be settled rather than
+  half-held.

@@ -618,10 +618,10 @@ impl Partitioning {
     /// retention list is shared and is [`WorkerMemory`]'s second term.
     ///
     /// **The decoder's own retention is a declared number rather than a
-    /// guess**: `xz_seek::Reader::decode_footprint()` is the same whatever
+    /// guess**: `xz_seek::Layout::decode_footprint()` is the same whatever
     /// range is read, so the source charges it once at construction. The table
     /// records only the first block's dictionary per stream, so it is an
-    /// estimate and not a ceiling; what cannot understate is the reader's
+    /// estimate and not a ceiling; what cannot understate is the layout's
     /// `memlimit`, compared against each block's own declared dictionary
     /// before any backend object is built (`docs/design/decisions.md`, "D16").
     pub fn partition_bytes(&self) -> u64 {
@@ -2100,7 +2100,7 @@ impl BlockCache {
     }
 
     /// Whether `budget` admits one such reader — the line that decides between
-    /// block decode and the streaming reader
+    /// block decode and the piecewise arm
     /// (`docs/design/decisions.md`, "D16").
     ///
     /// **It is asked of *one* reader and charges that reader's share of the
@@ -2183,42 +2183,51 @@ impl BlockCache {
 /// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
 /// (`docs/design/decisions.md`, "D14", "D15").
 ///
-/// **Three file handles, deliberately.** `open` walks the file's stream
-/// footers once and hands one handle to the `xz_seek::Reader`, which owns it
-/// for decoding; `stat_file` answers
-/// [`ByteRangeSource::stored_size`]/[`ByteRangeSource::modified`] with a plain
-/// `stat` and must never disturb the decoder's live position to do it; and
-/// `data_file` is what block decodes read their compressed bytes through,
-/// positioned reads only, so a decode running outside the mutex shares no
-/// cursor with anything.
+/// **One file handle, positioned reads only.** Nothing here holds a cursor:
+/// `stat` answers
+/// [`ByteRangeSource::stored_size`]/[`ByteRangeSource::modified`], and every
+/// decode reads its compressed bytes through `pread`, so the handle is shared
+/// by everything and disturbs nothing. It is what `xz_seek` pulls from —
+/// `std::fs::File` is a `CompressedSource` — which is the whole difference
+/// between this source and [`FetchedXzSource`], whose bytes have to be fetched
+/// into a window first (`docs/design/roadmap-P14-remote-input.md`, "D20").
 ///
-/// **A read decodes the blocks it lands in, and the reader behind the mutex is
-/// the fallback.** `xz_seek::BlockTask` is `Copy` and owns everything a decode
-/// needs, so `read_range` takes a task, decodes the block into a slot of its
-/// own [`BlockCache`], and slices the answer out of it — with the mutex held
-/// only long enough to *name* the task, never across the decode. The streaming
-/// `xz_seek::Reader::read_at` path is kept for the one shape block decode
-/// refuses ([`BlockCache::affordable`]).
+/// **Two arms, and the budget picks between them**, as the fetched source's do:
 ///
-/// `Verify::Full` is `xz_seek::Reader::new`'s own default, so nothing here has
-/// to ask for it; a whole-block decode is stronger still, comparing the check
-/// before it returns.
+/// - Where the stated budget holds a whole decoded block, a read decodes the
+///   blocks it lands in into slots of its own [`BlockCache`] and slices the
+///   answer out of them. `xz_seek::BlockTask` is `Copy` and owns everything a
+///   decode needs, and an `xz_seek::Layout` names one without a lock, so
+///   nothing is serialized here at all.
+/// - Where it does not, the block is read **in pieces** through
+///   `xz_seek::BlockRead` — one live handle, kept across reads so a forward
+///   scan continues rather than restarting, which is what
+///   `xz_seek::Reader::read_at` did for this path before ([`LiveBlock`]).
+///
+/// `Verify::Full` is `xz_seek::Builder::new`'s own default, so nothing here has
+/// to ask for it; a whole-block decode compares the check before it returns,
+/// and the piecewise arm compares it when it leaves the block.
 pub struct XzSource {
     path: PathBuf,
-    stat_file: Arc<std::fs::File>,
-    data_file: Arc<std::fs::File>,
-    /// The seek table, aliased beside the reader so that `size()`,
-    /// `seek_table()` and the per-read `blocks_in` lookup take no lock at all.
-    /// The `Arc` is the reader's own ([`XzSource::assembled`]), so this is a
-    /// handle onto one table rather than a second copy of it.
+    /// The file, read positionally and never seeked: `stat` and every decode
+    /// share it, and `Arc<std::fs::File>` is itself an
+    /// `xz_seek::CompressedSource`.
+    file: Arc<std::fs::File>,
+    /// The table, the memory limit, the verification state and the backend as
+    /// one value — everything a decode needs that is not bytes, and the only
+    /// thing that hands out an `xz_seek::BlockTask`. It holds no source and
+    /// needs no lock (`docs/design/roadmap-P14-remote-input.md`, "D13").
+    layout: xz_seek::Layout,
+    /// The layout's own table, aliased rather than copied, so `size()`,
+    /// `seek_table()` and the per-read `blocks_in` lookup read one table.
     table: Arc<xz_seek::SeekTable>,
-    /// The streaming reader: the fallback decode path, and the only thing that
-    /// can hand out an `xz_seek::BlockTask`. Behind a `Mutex` because
-    /// `read_at` takes `&mut self`; the block path holds it for a table lookup
-    /// and no I/O.
-    reader: Arc<Mutex<xz_seek::Reader<std::fs::File>>>,
+    /// The live piecewise decode, or `None` where no read has taken that arm
+    /// yet. Behind a `Mutex` because a handle goes forward only and one
+    /// position cannot serve two readers — which is why that arm advises a
+    /// single partition ([`xz_partition_advice`]).
+    live: Arc<Mutex<Option<LiveBlock>>>,
     /// The chunk unit: what a read spanning more than one block is assembled
-    /// into, and what the fallback path reads into.
+    /// into, and what the piecewise arm fills.
     pool: Arc<BufferPool>,
     /// The block unit, or `None` where this file has no blocks to decode.
     /// Present does not mean *taken*: [`XzSource::block_path`] decides per
@@ -2226,11 +2235,15 @@ pub struct XzSource {
     blocks: Option<Arc<BlockCache>>,
     /// What one decode of this file retains beyond the slot it writes into —
     /// the LZMA2 dictionary, the compressed input chunk and the backend's own
-    /// state (`xz_seek::Reader::decode_footprint`).
+    /// state (`xz_seek::Layout::decode_footprint`).
+    ///
+    /// **The input chunk is in it because this source does not lend**: a
+    /// `std::fs::File` holds nothing, so every decode here builds that buffer,
+    /// where [`FetchedXzSource`] reads out of bytes it already has and charges
+    /// `decoder_bytes` plus the window instead.
     ///
     /// **Read once, at construction**: it is a property of the file and of the
-    /// backend, not of a range, and asking the reader per call would take the
-    /// mutex the block path exists to stay off.
+    /// backend, not of a range.
     decode_bytes: u64,
     /// What the caller stated it may hold, in bytes, across **both** pools —
     /// [`DEFAULT_MEMORY_BUDGET`] until one is announced.
@@ -2261,18 +2274,16 @@ impl XzSource {
         // footer read and earns no line
         // (`docs/design/decisions.md`, "D64").
         tracing::info!(path = %path.display(), "seek table build started");
-        let file = std::fs::File::open(&path)?;
-        let stat_file = Arc::new(file.try_clone()?);
-        let data_file = Arc::new(file.try_clone()?);
-        let reader = xz_seek::Reader::new(file)?;
-        let table = reader.index();
+        let file = Arc::new(std::fs::File::open(&path)?);
+        let stored_size = file.metadata()?.len();
+        let table = xz_seek::SeekTable::from_source(&file)?;
         tracing::info!(
             path = %path.display(),
             streams = table.stream_count(),
             blocks = table.block_count(),
             "seek table build complete",
         );
-        Ok(Self::assembled(path, stat_file, data_file, reader))
+        Self::over(path, file, table, stored_size)
     }
 
     /// Open `path` from a seek table a previous walk of the *same* file
@@ -2288,29 +2299,31 @@ impl XzSource {
     /// rather than a walk.
     pub fn with_table(path: impl AsRef<Path>, table: xz_seek::SeekTable) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = std::fs::File::open(&path)?;
-        let stat_file = Arc::new(file.try_clone()?);
-        let data_file = Arc::new(file.try_clone()?);
-        // `Builder::new()` rather than a configured one: `Reader::new` is the
-        // shortcut through exactly these defaults, so the two constructors
-        // decode identically — `Verify::Full` included.
-        let reader = xz_seek::Builder::new().open_with_table(file, table)?;
-        Ok(Self::assembled(path, stat_file, data_file, reader))
+        let file = Arc::new(std::fs::File::open(&path)?);
+        let stored_size = file.metadata()?.len();
+        Self::over(path, file, table, stored_size)
     }
 
-    /// The one place the two constructors agree: the reader's table is aliased
-    /// so the source's own lookups never take its mutex, and the block pool is
-    /// sized from that table or refused.
+    /// The one place the two constructors agree: the table becomes a
+    /// sourceless `xz_seek::Layout`, the source's own copy is aliased out of
+    /// it, and the block pool is sized from that table or refused.
     ///
-    /// **What the alias buys is every table read outside the reader's lock** —
+    /// **`Builder::new()` rather than a configured one**, and both
+    /// constructors go through it, so a walked file and a cached one decode
+    /// identically — `Verify::Full` included. `stored_size` is the compressed
+    /// file's own length, which is all `Builder::layout` ever wanted a source
+    /// for: it cross-checks the table against the file it claims to describe
+    /// and reads **no bytes**, so a table that does not describe this file is
+    /// `Error::Xz(xz_seek::Error::InvalidTable { .. })` — the error
+    /// [`open_local`] turns into [`Recognized::Mismatch`] rather than a walk.
+    ///
+    /// **What the alias buys is every table read with no lock at all** —
     /// [`ByteRangeSource::size`], [`XzSource::partitions`],
-    /// [`XzSource::default_workers`], and the `blocks_in` span arithmetic
-    /// [`XzSource::read_by_blocks`] does on every read. The block path still
-    /// locks once per cache **miss**, to build a `BlockTask` out of the
-    /// reader's own decode settings ([`XzSource::block`]); a hit takes no
-    /// reader lock, only the retention list's. It costs no second copy:
-    /// `xz_seek::Reader::index_shared` hands
-    /// out the `Arc` the reader itself holds.
+    /// [`XzSource::default_workers`], the `blocks_in` span arithmetic
+    /// [`XzSource::read_by_blocks`] does on every read, and naming the
+    /// `BlockTask` a cache miss decodes. It costs no second copy:
+    /// `xz_seek::Layout::index_shared` hands out the `Arc` the layout itself
+    /// holds.
     ///
     /// **Nothing bills the one copy that is left.** It is unbilled on an
     /// ordering rather than a size: the walk that builds it runs inside
@@ -2323,21 +2336,22 @@ impl XzSource {
     // **(c) unowned**; closing it means a per-source term, which
     // [`WorkerMemory`] does not have. Billing it buys accuracy and no
     // protection, the walk having already happened.
-    fn assembled(
+    fn over(
         path: PathBuf,
-        stat_file: Arc<std::fs::File>,
-        data_file: Arc<std::fs::File>,
-        reader: xz_seek::Reader<std::fs::File>,
-    ) -> Self {
-        let table = reader.index_shared();
+        file: Arc<std::fs::File>,
+        table: xz_seek::SeekTable,
+        stored_size: u64,
+    ) -> Result<Self> {
+        let layout = xz_seek::Builder::new().layout(table, stored_size)?;
+        let table = layout.index_shared();
         let blocks = BlockCache::for_table(&table).map(Arc::new);
-        let decode_bytes = reader.decode_footprint();
+        let decode_bytes = layout.decode_footprint();
         let source = Self {
             path,
-            stat_file,
-            data_file,
+            file,
+            layout,
             table,
-            reader: Arc::new(Mutex::new(reader)),
+            live: Arc::new(Mutex::new(None)),
             pool: Arc::new(BufferPool::default()),
             blocks,
             decode_bytes,
@@ -2347,7 +2361,7 @@ impl XzSource {
         // A source is readable before anything is announced to it, so the two
         // pools are divided at construction rather than at the first hint.
         source.apportion();
-        source
+        Ok(source)
     }
 
     /// Divide the stated budget between the two pools, **chunks first**.
@@ -2438,7 +2452,7 @@ impl XzSource {
     }
 
     /// The block-decode path, or `None` where this read goes through the
-    /// streaming reader: no blocks at all, or a reader the caller's budget
+    /// piecewise arm: no blocks at all, or a reader the caller's budget
     /// cannot afford ([`BlockCache::affordable`]).
     fn block_path(&self) -> Option<&Arc<BlockCache>> {
         let budget = self.budget.load(Ordering::Relaxed) as u64;
@@ -2467,20 +2481,16 @@ impl XzSource {
     fn block(
         index: usize,
         cache: &BlockCache,
-        reader: &Mutex<xz_seek::Reader<std::fs::File>>,
-        file: &std::fs::File,
+        layout: &xz_seek::Layout,
+        file: &Arc<std::fs::File>,
     ) -> Result<Arc<DecodedBlock>> {
         if let Some(hit) = cache.lookup(index) {
             return Ok(hit);
         }
-        // The lock covers a lookup in the seek table and nothing else: a
-        // `BlockTask` is `Copy` and owns its block, its check and the reader's
-        // decode settings, so the decode below runs outside it.
-        let task = {
-            let reader = reader.lock().unwrap_or_else(|e| e.into_inner());
-            reader.block_task(index)
-        }
-        .ok_or_else(xz_short_read)?;
+        // No lock: a `BlockTask` is `Copy` and owns its block, its check and
+        // the layout's decode settings, and a `Layout` names one from the table
+        // alone.
+        let task = layout.block_task(index).ok_or_else(xz_short_read)?;
         let len = usize::try_from(task.uncompressed_len()).map_err(|_| xz_short_read())?;
         // A slot is the file's largest block, so `len` is never above it and a
         // released slot is exactly the length the pool was hinted with.
@@ -2503,8 +2513,8 @@ impl XzSource {
         len: usize,
         table: &xz_seek::SeekTable,
         cache: &BlockCache,
-        reader: &Mutex<xz_seek::Reader<std::fs::File>>,
-        file: &std::fs::File,
+        layout: &xz_seek::Layout,
+        file: &Arc<std::fs::File>,
         chunks: &Arc<BufferPool>,
     ) -> Result<Bytes> {
         let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
@@ -2514,7 +2524,7 @@ impl XzSource {
         }
         if covering.len() == 1 {
             let index = covering.start;
-            let block = Self::block(index, cache, reader, file)?;
+            let block = Self::block(index, cache, layout, file)?;
             let base = table.blocks[index].uncompressed_offset;
             // `blocks_in` answers the block *covering* the start, so `base` is
             // at or below `offset`; the checked form is what keeps a table
@@ -2531,16 +2541,12 @@ impl XzSource {
         let mut out = chunks.obtain(len);
         let mut covered = 0usize;
         for index in covering {
-            let block = Self::block(index, cache, reader, file)?;
+            let block = Self::block(index, cache, layout, file)?;
             let base = table.blocks[index].uncompressed_offset;
-            let from = base.max(offset);
-            let to = (base + block.len as u64).min(end);
-            if to <= from {
+            let Some((at, from, n)) = piece_of(base..base + block.len as u64, offset, end) else {
                 continue;
-            }
-            let at = (from - offset) as usize;
+            };
             let within = (from - base) as usize;
-            let n = (to - from) as usize;
             out.as_mut()[at..at + n].copy_from_slice(&block.bytes()[within..within + n]);
             covered += n;
         }
@@ -2550,29 +2556,126 @@ impl XzSource {
         Ok(Bytes::from_owner(out).slice(..len))
     }
 
-    /// The fallback: one live decode, restarted on a backward seek, serialized
-    /// by the reader's mutex. It is what a file whose largest block does not
-    /// fit the stated budget is read through ([`BlockCache::affordable`]),
-    /// where decoding a block whole would allocate more than the caller
-    /// allowed — up to the whole file, on a single-block one.
-    fn read_streaming(
+    /// A read served **without holding a whole decoded block**: the covering
+    /// blocks are read in pieces through one live `xz_seek::BlockRead`, which
+    /// holds the decoder and the compressed input chunk and never the
+    /// plaintext.
+    ///
+    /// It is what a file whose largest block does not fit the stated budget is
+    /// read through ([`BlockCache::affordable`]), where decoding a block whole
+    /// would allocate more than the caller allowed — up to the whole file, on a
+    /// single-block one — and it is the same mechanism
+    /// [`FetchedXzSource::read_in_pieces`] drives, with a `File` in place of a
+    /// fetched window (`docs/design/roadmap-P14-remote-input.md`, "D20").
+    ///
+    /// **The handle is kept across reads**, which is what makes a forward scan
+    /// cost one decode of the file rather than one per read ([`LiveBlock`]).
+    /// The mutex is therefore held across the decode, and one position cannot
+    /// serve two readers — the single partition [`xz_partition_advice`]'s other
+    /// arm advises.
+    fn read_in_pieces(
         offset: u64,
         len: usize,
-        reader: &Mutex<xz_seek::Reader<std::fs::File>>,
+        table: &xz_seek::SeekTable,
+        layout: &xz_seek::Layout,
+        file: &Arc<std::fs::File>,
+        live: &Mutex<Option<LiveBlock>>,
         chunks: &Arc<BufferPool>,
     ) -> Result<Bytes> {
-        let mut buf = chunks.obtain(len);
-        let mut reader = reader.lock().unwrap_or_else(|e| e.into_inner());
-        // Mirrors `LocalFileSource::read_range`'s `read_exact_at` contract:
-        // `xz_seek::Reader::read_at` is fill-or-EOF, and a short return here
-        // means the file ended before the range this caller asked for, which
-        // every read loop already clamps `len` to avoid.
-        let n = reader.read_at(offset, &mut buf.as_mut()[..len])?;
-        drop(reader);
-        if n != len {
+        let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
+        let covering = table.blocks_in(offset..end);
+        if covering.is_empty() {
             return Err(xz_short_read());
         }
-        Ok(Bytes::from_owner(buf).slice(..len))
+        let mut out = chunks.obtain(len);
+        let mut live = live.lock().unwrap_or_else(|e| e.into_inner());
+        let mut covered = 0usize;
+        for index in covering {
+            let task = layout.block_task(index).ok_or_else(xz_short_read)?;
+            let Some((at, from, n)) = piece_of(task.uncompressed_range(), offset, end) else {
+                continue;
+            };
+            // A failed decode leaves no state the next read can reason about,
+            // exactly as `xz_seek::Reader::read_at` drops its live decode on an
+            // error — and the handle is dropped rather than completed, there
+            // being nothing to verify against.
+            let filled = match LiveBlock::seated(&mut live, index, &task, file, from)
+                .and_then(|handle| fill_from_block(handle, file, &mut out.as_mut()[at..at + n]))
+            {
+                Ok(filled) => filled,
+                Err(e) => {
+                    *live = None;
+                    return Err(e);
+                }
+            };
+            covered += filled;
+        }
+        drop(live);
+        if covered != len {
+            return Err(xz_short_read());
+        }
+        Ok(Bytes::from_owner(out).slice(..len))
+    }
+}
+
+/// The live piecewise decode: one `xz_seek::BlockRead` and the block it sits
+/// in, kept between reads.
+///
+/// **It is `xz_seek::Reader`'s own live decode with the handle held here.** That
+/// reader continued a forward read out of the decode it already had and
+/// restarted the covering block otherwise, which is what keeps a forward scan
+/// of a single-block file linear in the file rather than quadratic in it; the
+/// handle is what carries that property across the mechanism swap
+/// (`docs/design/roadmap-P14-remote-input.md`, "D20").
+///
+/// **Leaving a block completes it**, which is where its check is compared —
+/// `xz_seek::Verify::Full`'s seek-away escape, now a call we make. A block
+/// still live when the source drops is not completed, which is that same
+/// guarantee: dropping a handle part-way compares nothing.
+struct LiveBlock {
+    /// Which block the handle is decoding.
+    index: usize,
+    /// The handle. Forward-only, so it serves a read at or after
+    /// `read.position()` and nothing behind it.
+    read: xz_seek::BlockRead,
+}
+
+impl LiveBlock {
+    /// The handle to serve `from` out of block `index`: the live one where it
+    /// can reach that byte, and a fresh one otherwise.
+    ///
+    /// **Continuing is never dearer than restarting**, so there is no
+    /// arithmetic to do: restarting skips `from − block.start` and continuing
+    /// skips `from − position`, and a live handle's position is never before
+    /// its block's start. That is `xz_seek::Reader`'s own route choice with the
+    /// comparison resolved.
+    fn seated<'a>(
+        live: &'a mut Option<LiveBlock>,
+        index: usize,
+        task: &xz_seek::BlockTask,
+        file: &Arc<std::fs::File>,
+        from: u64,
+    ) -> Result<&'a mut xz_seek::BlockRead> {
+        let resumable = live.as_ref().is_some_and(|l| {
+            l.index == index && !l.read.is_finished() && l.read.position() <= from
+        });
+        if !resumable {
+            if let Some(leaving) = live.take() {
+                // A `--check=none` stream has nothing to compare, so draining
+                // it would decode a block's remainder to verify nothing —
+                // which is the one case `Verify::Full`'s escape also skips.
+                if leaving.read.task().check() == xz_seek::Check::None {
+                    drop(leaving.read);
+                } else {
+                    leaving.read.complete(file)?;
+                }
+            }
+            *live = Some(LiveBlock { index, read: task.begin(file)? });
+        }
+        let handle = &mut live.as_mut().expect("just seated").read;
+        let mut skip = [0u8; PIECEWISE_SKIP_CHUNK];
+        handle.advance_to(file, from, &mut skip)?;
+        Ok(handle)
     }
 }
 
@@ -2586,6 +2689,57 @@ fn xz_short_read() -> Error {
     ))
 }
 
+/// How many uncompressed bytes a piecewise read throws away per decoder call
+/// while skipping to its first wanted byte.
+///
+/// On the stack, so a read that holds no whole block allocates nothing beyond
+/// the buffer it is filling — which is the budget that arm exists to respect —
+/// and large enough that skipping a 24 MiB block is thousands of decoder calls
+/// rather than millions. It is `xz_seek`'s own drain chunk, which sizes the
+/// same skip on the other side of `complete`.
+const PIECEWISE_SKIP_CHUNK: usize = 4096;
+
+/// Which part of a read `block` answers: where in the caller's buffer it lands,
+/// the first uncompressed offset wanted from it, and how many bytes — or `None`
+/// where the two ranges do not actually overlap.
+///
+/// One function because all four of the `.xz` read arms ask it of the same two
+/// ranges, and four copies of the arithmetic can disagree about a boundary.
+fn piece_of(block: Range<u64>, offset: u64, end: u64) -> Option<(usize, u64, usize)> {
+    let from = block.start.max(offset);
+    let to = block.end.min(end);
+    if to <= from {
+        return None;
+    }
+    Some((usize::try_from(from - offset).ok()?, from, usize::try_from(to - from).ok()?))
+}
+
+/// Fill `out` from a block handle already positioned at its first byte.
+///
+/// **This is the mechanism a read inside a block takes on both providers, and
+/// the source is the difference** — a `std::fs::File`, which `xz_seek` pulls
+/// from, or an `xz_seek::Window` over a compressed extent we fetched
+/// (`docs/design/roadmap-P14-remote-input.md`, "D20").
+///
+/// `xz_seek::BlockRead::read` hands over what one decoder call produced rather
+/// than filling, and answers zero at the block's end, so the loop is what turns
+/// it into this crate's fill contract.
+fn fill_from_block<S: xz_seek::CompressedSource>(
+    handle: &mut xz_seek::BlockRead,
+    source: &S,
+    out: &mut [u8],
+) -> Result<usize> {
+    let mut filled = 0usize;
+    while filled < out.len() {
+        let got = handle.read(source, &mut out[filled..])?;
+        if got == 0 {
+            break;
+        }
+        filled += got;
+    }
+    Ok(filled)
+}
+
 /// An `.xz` source's partitioning advice, read off the **read path it took**
 /// rather than off the seek table.
 ///
@@ -2597,13 +2751,13 @@ fn xz_short_read() -> Error {
 /// per-reader term of the [`BlockCache::worker_memory`] whose `at(1)`
 /// [`BlockCache::affordable`] compares a budget against.
 ///
-/// **Streaming fallback** — one partition, whatever the table says: two
-/// workers on different partitions would each force the other's restart
-/// through `xz_seek::Reader::read_at`
-/// (`docs/design/decisions.md`, "D15").
+/// **Piecewise** — one partition, whatever the table says: one live
+/// `xz_seek::BlockRead` goes forward only, so two workers on different
+/// partitions would each force the other's block to be left and begun again
+/// ([`LiveBlock`], and `docs/design/decisions.md`, "D15").
 ///
 /// Taken as a free function over the two pieces of state it reads, so the
-/// fallback arm is assertable against a table that *does* have blocks.
+/// piecewise arm is assertable against a table that *does* have blocks.
 fn xz_partition_advice(
     table: &xz_seek::SeekTable,
     blocks: Option<&BlockCache>,
@@ -2612,8 +2766,8 @@ fn xz_partition_advice(
     range: Range<u64>,
 ) -> Partitioning {
     let Some(cache) = blocks else {
-        // **The streaming arm charges the chunk buffer and not the
-        // decoder**: that path keeps one `xz_seek::Reader` behind a mutex
+        // **The piecewise arm charges the chunk buffer and not the
+        // decoder**: that path keeps one live block handle behind a mutex
         // however many readers a caller runs, so the decoder is a fixed
         // cost of the source rather than of a concurrent reader
         // ([`Partitioning::partition_bytes`]).
@@ -2623,7 +2777,8 @@ fn xz_partition_advice(
         // far less than a decoded block, so several would fit where the
         // blocks they decode do not, and the budget that sends a file down
         // this arm is exactly the one that would benefit. **(c) unowned**;
-        // closing it means a per-reader decode handle here and a figure
+        // closing it means a handle per reader — which `xz_seek::BlockRead`
+        // being `Send` and borrowing nothing already allows — and a figure
         // over the count, and the figure is the half this cannot skip.
         return Partitioning::single(chunk_bytes);
     };
@@ -2634,7 +2789,7 @@ fn xz_partition_advice(
             (start > range.start && start < range.end).then_some(start)
         })
         .collect();
-    // Three statements the streaming arm above does not make, each
+    // Three statements the piecewise arm above does not make, each
     // because a read inside a decoded block is a zero-copy slice of it:
     //
     // - **the retained unit is the partition, not the chunk**, so a caller
@@ -2667,16 +2822,17 @@ impl ByteRangeSource for XzSource {
             if len == 0 {
                 return Ok(Bytes::new());
             }
-            let reader = Arc::clone(&self.reader);
             let chunks = Arc::clone(&self.pool);
             let table = Arc::clone(&self.table);
-            let file = Arc::clone(&self.data_file);
+            let layout = self.layout.clone();
+            let file = Arc::clone(&self.file);
+            let live = Arc::clone(&self.live);
             let blocks = self.block_path().cloned();
             tokio::task::spawn_blocking(move || match blocks {
                 Some(cache) => {
-                    Self::read_by_blocks(offset, len, &table, &cache, &reader, &file, &chunks)
+                    Self::read_by_blocks(offset, len, &table, &cache, &layout, &file, &chunks)
                 }
-                None => Self::read_streaming(offset, len, &reader, &chunks),
+                None => Self::read_in_pieces(offset, len, &table, &layout, &file, &live, &chunks),
             })
             .await
             .map_err(Error::from)?
@@ -2691,7 +2847,7 @@ impl ByteRangeSource for XzSource {
 
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
         Box::pin(async move {
-            let file = Arc::clone(&self.stat_file);
+            let file = Arc::clone(&self.file);
             let mtime =
                 tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
                     .await
@@ -2701,12 +2857,13 @@ impl ByteRangeSource for XzSource {
         })
     }
 
-    /// The compressed file's own on-disk length — a `stat` on the second
-    /// handle, never the stream-index walk [`XzSource::size`] answers from
-    /// memory (`docs/design/decisions.md`, "D21").
+    /// The compressed file's own on-disk length — a `stat` on the handle every
+    /// decode also reads through, never the stream-index walk
+    /// [`XzSource::size`] answers from memory
+    /// (`docs/design/decisions.md`, "D21").
     fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
         Box::pin(async move {
-            let file = Arc::clone(&self.stat_file);
+            let file = Arc::clone(&self.file);
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
                 .map_err(Error::from)?
@@ -2730,7 +2887,7 @@ impl ByteRangeSource for XzSource {
     /// concurrent reader (`docs/design/decisions.md`, "D17").
     ///
     /// A budget too small for a whole block sends every read through the
-    /// streaming reader ([`BlockCache::affordable`]) — the budget is honoured
+    /// piecewise arm ([`BlockCache::affordable`]) — the budget is honoured
     /// rather than exceeded by a slot the pool floors at one.
     fn hint_parallelism(&self, parallelism: Parallelism) {
         self.budget.store(budget_bytes(parallelism), Ordering::Relaxed);
@@ -2800,7 +2957,7 @@ impl ByteRangeSource for XzSource {
     /// `crate::stream::worker_count` and [`Parallelism::fit`] both solve
     /// against to hand back a count. `None` where there is no block path to
     /// buy — a file with no blocks, or one whose largest block is not a length
-    /// on this target — since the streaming reader has no second worker to
+    /// on this target — since the piecewise arm has no second worker to
     /// give at any budget.
     ///
     /// **It is charged at the chunk a scan settles at**
@@ -2815,17 +2972,6 @@ impl ByteRangeSource for XzSource {
         self.block_worker_memory()
     }
 }
-
-/// How many uncompressed bytes [`FetchedXzSource`] throws away per decoder
-/// call while skipping to a read's first byte, and again while completing the
-/// block behind it.
-///
-/// On the stack, so a read that holds no whole block allocates nothing beyond
-/// the buffer it is filling — which is the budget the piecewise arm exists to
-/// respect — and large enough that skipping a 24 MiB block is thousands of
-/// decoder calls rather than millions. It is `xz_seek`'s own drain chunk,
-/// which sizes the same skip on the other side of `complete`.
-const FETCHED_SKIP_CHUNK: usize = 4096;
 
 /// Build an `.xz` file's seek table by driving `xz_seek`'s footer walk over an
 /// **asynchronous** source, and say how many fetches it took.
@@ -2908,9 +3054,8 @@ pub async fn walk_seek_table(
 ///   `xz_seek::BlockRead` — the handle skips forward to the first wanted byte,
 ///   fills the caller's buffer and compares the block's check when we complete
 ///   it — so what is held is the compressed window and the decoder, never the
-///   plaintext. That is the arm with no local twin: a file can be pulled from
-///   and so has `xz_seek::Reader::read_at` to fall back on, and a fetched
-///   source has nothing (D20).
+///   plaintext. [`XzSource`] answers that arm the same way over a file it pulls
+///   from, keeping its handle where this one does not (D20).
 ///
 /// **A block is always completed**, which is what compares its check. Reading
 /// a few kilobytes out of a large block therefore pays a decode of the rest —
@@ -3038,7 +3183,7 @@ impl FetchedXzSource {
     /// compressed window, the decoder and the caller's chunk, which is
     /// [`BlockCache::reader_bytes`] less the block unit. So what declining
     /// saves is the plaintext, and a budget below even that remainder is
-    /// exceeded exactly as the local streaming fallback's is.
+    /// exceeded exactly as the local piecewise arm's is.
     fn block_path(&self) -> Option<&Arc<BlockCache>> {
         let budget = self.budget.load(Ordering::Relaxed) as u64;
         let chunk_bytes = self.charged_chunk_bytes();
@@ -3062,8 +3207,8 @@ impl FetchedXzSource {
     /// The task for block `index`, or the read-past-the-end error.
     ///
     /// **No lock is taken.** An `xz_seek::Layout` answers this from the table
-    /// alone, where a `Reader` has to be borrowed mutably for it — which is
-    /// the mutex [`XzSource::block`] holds for a lookup and no I/O.
+    /// alone, which is why neither source locks anything to name a block
+    /// ([`XzSource::block`]).
     fn task(&self, index: usize) -> Result<xz_seek::BlockTask> {
         self.layout.block_task(index).ok_or_else(xz_short_read)
     }
@@ -3126,14 +3271,10 @@ impl FetchedXzSource {
         for index in covering {
             let block = self.block(index, cache).await?;
             let base = self.table.blocks[index].uncompressed_offset;
-            let from = base.max(offset);
-            let to = (base + block.len as u64).min(end);
-            if to <= from {
+            let Some((at, from, n)) = piece_of(base..base + block.len as u64, offset, end) else {
                 continue;
-            }
-            let at = (from - offset) as usize;
+            };
             let within = (from - base) as usize;
-            let n = (to - from) as usize;
             out.as_mut()[at..at + n].copy_from_slice(&block.bytes()[within..within + n]);
             covered += n;
         }
@@ -3147,11 +3288,17 @@ impl FetchedXzSource {
     /// block is fetched, skipped forward to the first wanted byte, read into
     /// the caller's buffer and completed.
     ///
-    /// This is the arm the local source answers with `xz_seek::Reader::read_at`
-    /// and a fetched source cannot: that path pulls, and pulling is what has no
-    /// transport here (D20). What it holds is the compressed window, the
-    /// decoder and one chunk buffer — never the block's plaintext, which is the
-    /// point.
+    /// It is [`XzSource::read_in_pieces`]'s mechanism over a fetched window
+    /// instead of a file, which is the one asymmetry between the providers
+    /// (D20). What it holds is the compressed window, the decoder and one chunk
+    /// buffer — never the block's plaintext, which is the point.
+    ///
+    /// **Nothing is kept between reads here**, where the local twin keeps its
+    /// handle ([`LiveBlock`]): a handle held across an `await` would hold its
+    /// window with it, so keeping one would re-price this arm as well as
+    /// changing what it re-fetches — which is the fetch policy this phase
+    /// defers (`docs/design/roadmap-P14-remote-input.md`, "What this phase
+    /// defers, by name").
     async fn read_in_pieces(&self, offset: u64, len: usize) -> Result<Bytes> {
         let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
         let covering = self.table.blocks_in(offset..end);
@@ -3162,29 +3309,18 @@ impl FetchedXzSource {
         let mut covered = 0usize;
         for index in covering {
             let task = self.task(index)?;
-            let block = task.uncompressed_range();
-            let from = block.start.max(offset);
-            let to = block.end.min(end);
-            if to <= from {
+            let Some((at, from, n)) = piece_of(task.uncompressed_range(), offset, end) else {
                 continue;
-            }
-            let at = (from - offset) as usize;
-            let n = (to - from) as usize;
+            };
             let window = self.window(&task).await?;
             let (returned, filled) =
                 tokio::task::spawn_blocking(move || -> Result<(PooledBuffer, usize)> {
                     let mut out = out;
                     let mut handle = task.begin(&window)?;
-                    let mut skip = [0u8; FETCHED_SKIP_CHUNK];
+                    let mut skip = [0u8; PIECEWISE_SKIP_CHUNK];
                     handle.advance_to(&window, from, &mut skip)?;
-                    let mut filled = 0usize;
-                    while filled < n {
-                        let got = handle.read(&window, &mut out.as_mut()[at + filled..at + n])?;
-                        if got == 0 {
-                            break;
-                        }
-                        filled += got;
-                    }
+                    let filled =
+                        fill_from_block(&mut handle, &window, &mut out.as_mut()[at..at + n])?;
                     // The check covers the whole block and is compared here,
                     // over a block this reader never held whole. It is not a
                     // knob: skipping it would make verification silently
@@ -4762,11 +4898,11 @@ mod tests {
         assert_eq!(
             streaming.retained_unit(),
             RetainedUnit::ReadChunk,
-            "a streaming read is assembled into a chunk buffer, so chunks are what a batch pins"
+            "a piecewise read is assembled into a chunk buffer, so chunks are what a batch pins"
         );
         // **The read shape is stated apart from both of those**: a
         // block-decoding piece is read whole and copies nothing, while a
-        // streaming read is assembled into a chunk buffer whatever length is
+        // piecewise read is assembled into a chunk buffer whatever length is
         // asked for. The unit the block arm states is the table's own largest
         // block rather than the piece.
         assert_eq!(decoding.partition_read(), PartitionRead::Whole { unit: 4096 });
@@ -5073,9 +5209,9 @@ mod tests {
     /// for what is left of `KD26` (`docs/design/decisions.md`, "D4").
     ///
     /// Two properties, neither checked anywhere else. The **share**:
-    /// `XzSource::assembled` takes the reader's own `Arc` through
-    /// `xz_seek::Reader::index_shared`, so the source's table and the reader's
-    /// are one allocation, and both constructors go through `assembled`. The
+    /// `XzSource::over` takes the layout's own `Arc` through
+    /// `xz_seek::Layout::index_shared`, so the source's table and the layout's
+    /// are one allocation, and both constructors go through `over`. The
     /// **per-entry cost** is a property of a vendored struct, so a re-sync
     /// that grew either entry fails here rather than silently moving a
     /// published number.
@@ -5086,25 +5222,21 @@ mod tests {
 
         let compressed = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
 
-        // The walking constructor: the reader built the table and hands its
-        // own handle out.
+        // The walking constructor: the walk built the table and the layout
+        // hands its own handle out.
         let source = XzSource::open(compressed.path()).unwrap();
         let persisted = source.seek_table().unwrap();
-        {
-            let reader = source.reader.lock().unwrap();
-            assert!(
-                std::ptr::eq(&*source.table, reader.index()),
-                "the source's table must be the reader's own, not a clone of it",
-            );
-        }
+        assert!(
+            std::ptr::eq(&*source.table, source.layout.index()),
+            "the source's table must be the layout's own, not a clone of it",
+        );
 
-        // The cached one: a table handed in is the reader's table too, so the
+        // The cached one: a table handed in is the layout's table too, so the
         // caller's copy is dropped rather than becoming a third.
         let cached = XzSource::with_table(compressed.path(), persisted).unwrap();
-        let reader = cached.reader.lock().unwrap();
         assert!(
-            std::ptr::eq(&*cached.table, reader.index()),
-            "a cached table must be shared with the reader it was handed to",
+            std::ptr::eq(&*cached.table, cached.layout.index()),
+            "a cached table must be shared with the layout it was handed to",
         );
     }
 
@@ -5198,60 +5330,74 @@ mod tests {
         assert!(cache.retained.lock().unwrap().len() <= slots);
     }
 
-    /// **A read served from a retained block never touches the reader**: with
-    /// the reader's mutex held by another thread outright, the read still
-    /// answers. The lock is taken only to name a block's task, and a block
-    /// already decoded needs no task.
+    /// **The block arm takes no lock at all**: with the live piecewise handle's
+    /// mutex held by another thread outright, a block-path read — a cache miss
+    /// as well as a hit — still answers. Naming a `BlockTask` is arithmetic over
+    /// the layout's table, so the only lock this source has belongs to the other
+    /// arm.
     #[tokio::test]
-    async fn a_retained_block_is_read_without_the_reader() {
+    async fn a_block_path_read_is_served_while_the_live_handle_is_held() {
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
+        assert!(source.block_path().is_some(), "4 KiB blocks fit the default budget");
 
-        // Warm the block this read lands in: 9_000..10_000 is inside the
-        // 8_192..12_288 block, so one decode covers both reads.
+        // Warm the block one of the reads below lands in: 9_000..10_000 is
+        // inside the 8_192..12_288 block.
         source.read_range(9_000, 100).await.unwrap();
 
         // Held on a thread of its own rather than across the await, so the
         // guard's lifetime is not entangled with the future being tested.
         let (locked, is_locked) = std::sync::mpsc::channel();
         let (release, released) = std::sync::mpsc::channel();
-        let reader = Arc::clone(&source.reader);
+        let live = Arc::clone(&source.live);
         let holder = std::thread::spawn(move || {
-            let guard = reader.lock().unwrap_or_else(|e| e.into_inner());
+            let guard = live.lock().unwrap_or_else(|e| e.into_inner());
             locked.send(()).unwrap();
             released.recv().unwrap();
             drop(guard);
         });
         is_locked.recv().unwrap();
 
-        let got = source.read_range(9_000, 1_000).await.unwrap();
-        assert_eq!(&got[..], &payload[9_000..10_000]);
+        let hit = source.read_range(9_000, 1_000).await.unwrap();
+        assert_eq!(&hit[..], &payload[9_000..10_000], "a retained block");
+        let miss = source.read_range(100, 200).await.unwrap();
+        assert_eq!(&miss[..], &payload[100..300], "a block decoded for the first time");
 
         release.send(()).unwrap();
         holder.join().unwrap();
     }
 
-    /// Concurrent reads over different blocks all answer their own bytes —
-    /// the property the block path buys, a streaming read running under one
-    /// mutex instead.
+    /// Concurrent reads over different blocks all answer their own bytes, on
+    /// **both** arms: the block path runs them at once, and the piecewise arm
+    /// serializes them behind one live handle whose position each read has to
+    /// leave usable for the next.
+    ///
+    /// The piecewise leg is what a single live decode makes easy to get wrong —
+    /// a read served out of another read's position answers the wrong bytes
+    /// rather than failing — so it is asserted at the same offsets, in the same
+    /// order, under a budget that holds no block.
     #[tokio::test]
     async fn concurrent_reads_each_answer_their_own_bytes() {
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
-        let source = Arc::new(XzSource::open(compressed.path()).unwrap());
+        for budget in [None, Some(1)] {
+            let source = Arc::new(XzSource::open(compressed.path()).unwrap());
+            source.hint_parallelism(Parallelism::Serial { memory_bytes: budget });
+            assert_eq!(source.block_path().is_none(), budget.is_some(), "{budget:?}");
 
-        let mut tasks = Vec::new();
-        for offset in (0..16_000u64).step_by(997) {
-            let source = Arc::clone(&source);
-            tasks.push(tokio::spawn(async move {
-                (offset, source.read_range(offset, 900).await.unwrap())
-            }));
-        }
-        for task in tasks {
-            let (offset, got) = task.await.unwrap();
-            let at = offset as usize;
-            assert_eq!(&got[..], &payload[at..at + 900], "at {offset}");
+            let mut tasks = Vec::new();
+            for offset in (0..16_000u64).step_by(997) {
+                let source = Arc::clone(&source);
+                tasks.push(tokio::spawn(async move {
+                    (offset, source.read_range(offset, 900).await.unwrap())
+                }));
+            }
+            for task in tasks {
+                let (offset, got) = task.await.unwrap();
+                let at = offset as usize;
+                assert_eq!(&got[..], &payload[at..at + 900], "at {offset}, budget {budget:?}");
+            }
         }
     }
 
@@ -5287,7 +5433,7 @@ mod tests {
         // *taken* is the budget's answer, asked again on every read. The
         // decoder's charge is stated here rather than read off a reader — a
         // synthetic table has none — and stands for what
-        // `xz_seek::Reader::decode_footprint` answers on an 8 MiB-dictionary
+        // `xz_seek::Layout::decode_footprint` answers on an 8 MiB-dictionary
         // file.
         const DECODE: u64 = 9_471_776;
         let affordable = |unit: u64, budget: u64| {
@@ -5309,7 +5455,7 @@ mod tests {
         // **The unavoidable terms come off the top**: the blocks alone fit
         // this budget and the file is declined all the same, a reader of it
         // also holding the chunk buffer and the decoder — both of which the
-        // streaming fallback holds too.
+        // piecewise arm holds too.
         assert!(!affordable(24 << 20, 96 << 20));
         // A file with no blocks at all — `xz -c /dev/null` writes one — has no
         // unit to size a slot with, so there is no cache to ask.
@@ -5382,8 +5528,8 @@ mod tests {
                 100,
                 &source.table,
                 &cache,
-                &source.reader,
-                &source.data_file,
+                &source.layout,
+                &source.file,
                 &source.pool,
             )
         };
@@ -5392,15 +5538,15 @@ mod tests {
         assert_eq!(cache.retained.lock().unwrap().len(), 2);
 
         let (tx, rx) = std::sync::mpsc::channel();
-        let (table, blocks, reader, file, chunks) = (
+        let (table, blocks, layout, file, chunks) = (
             Arc::clone(&source.table),
             Arc::clone(&cache),
-            Arc::clone(&source.reader),
-            Arc::clone(&source.data_file),
+            source.layout.clone(),
+            Arc::clone(&source.file),
             Arc::clone(&source.pool),
         );
         std::thread::spawn(move || {
-            let got = XzSource::read_by_blocks(8192, 100, &table, &blocks, &reader, &file, &chunks);
+            let got = XzSource::read_by_blocks(8192, 100, &table, &blocks, &layout, &file, &chunks);
             let _ = tx.send(got.map(|bytes| bytes.to_vec()));
         });
         let third = rx
@@ -5436,10 +5582,10 @@ mod tests {
     }
 
     /// A budget too small for a whole block sends every read through the
-    /// streaming reader, and the bytes are the same either way — the budget
+    /// piecewise arm, and the bytes are the same either way — the budget
     /// changes the path, never the answer.
     #[tokio::test]
-    async fn a_budget_below_the_block_unit_streams_and_still_reads_the_same_bytes() {
+    async fn a_budget_below_the_block_unit_reads_in_pieces_and_still_reads_the_same_bytes() {
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
@@ -5455,11 +5601,83 @@ mod tests {
 
         let got = source.read_range(4000, 5000).await.unwrap();
         assert_eq!(&got[..], &payload[4000..9000]);
+        // Backward inside a block the live handle has already passed, which is
+        // what makes it begin a second handle over the same block.
+        let back = source.read_range(4100, 100).await.unwrap();
+        assert_eq!(&back[..], &payload[4100..4200]);
 
         source.hint_parallelism(Parallelism::default());
         assert!(source.block_path().is_some(), "the default budget takes it back");
         let again = source.read_range(4000, 5000).await.unwrap();
         assert_eq!(&again[..], &payload[4000..9000]);
+    }
+
+    /// **One mechanism, three ways of reaching it, one answer.** A forward scan
+    /// over the same file read through the local whole-block arm, the local
+    /// piecewise arm and the fetched window-fed arm must agree byte for byte:
+    /// the source a block handle pulls from is the only difference between them
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D20"), so a divergence
+    /// surfaces here as a disagreement between two read paths over one byte
+    /// stream rather than between two files.
+    #[tokio::test]
+    async fn the_two_piecewise_arms_and_the_block_arm_read_one_file_alike() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+
+        let whole = XzSource::open(compressed.path()).unwrap();
+        let pieces = XzSource::open(compressed.path()).unwrap();
+        pieces.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        assert!(whole.block_path().is_some() && pieces.block_path().is_none());
+        let (fetched, _) = fetched_xz(compressed.path()).await;
+        fetched.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        assert!(fetched.block_path().is_none(), "the window-fed twin of `pieces`");
+
+        // Chunks that land inside one block, straddle a boundary and span
+        // several, read forward as every real read loop here reads.
+        let mut offset = 0u64;
+        for len in [100usize, 4096, 3000, 5000] {
+            let want = &payload[offset as usize..offset as usize + len];
+            assert_eq!(&whole.read_range(offset, len).await.unwrap()[..], want, "whole {offset}");
+            assert_eq!(&pieces.read_range(offset, len).await.unwrap()[..], want, "pieces {offset}");
+            assert_eq!(
+                &fetched.read_range(offset, len).await.unwrap()[..],
+                want,
+                "fetched {offset}"
+            );
+            offset += len as u64;
+        }
+    }
+
+    /// **The live handle is what keeps a forward scan linear.** A scan that
+    /// reads a block in pieces continues the decode it already has, so the
+    /// handle stays on one block across the reads inside it and moves on once —
+    /// where a handle begun per read would skip from that block's start every
+    /// time.
+    #[tokio::test]
+    async fn a_forward_piecewise_scan_continues_the_decode_it_has() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        assert!(source.block_path().is_none());
+
+        // Four reads inside the first 4 KiB block: the handle advances with
+        // them and never leaves the block.
+        for step in 0..4u64 {
+            let at = step * 1000;
+            let got = source.read_range(at, 1000).await.unwrap();
+            assert_eq!(&got[..], &payload[at as usize..at as usize + 1000]);
+            let live = source.live.lock().unwrap();
+            let live = live.as_ref().expect("the piecewise arm seats a handle");
+            assert_eq!(live.index, 0, "still the first block");
+            assert_eq!(live.read.position(), at + 1000, "the handle is where the read left it");
+        }
+
+        // A read in the next block leaves the first one — which is where its
+        // check is compared — and seats a handle there.
+        source.read_range(4096, 100).await.unwrap();
+        let live = source.live.lock().unwrap();
+        assert_eq!(live.as_ref().expect("a handle").index, 1);
     }
 
     /// The non-seekable shape: one stream, one block, produced by a bare `xz`

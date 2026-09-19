@@ -95,7 +95,7 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
     for extra in [
         vec![],
         // Below this fixture's 512-byte block unit, so no whole block can be
-        // held: the streaming reader, on a file that has boundaries to seek
+        // held: the piecewise arm, on a file that has boundaries to seek
         // by. `--jobs 2` beside it is incidental: a stated budget reaches the
         // source at `--jobs 1` too.
         vec!["--jobs", "2", "--memory", "400"],

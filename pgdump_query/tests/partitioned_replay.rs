@@ -708,7 +708,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
 }
 
 /// A source that declines to be split is not split, whatever `--jobs` says —
-/// the single-block `.xz`, whose streaming fallback would make two readers
+/// the single-block `.xz`, whose piecewise arm would make two readers
 /// each force the other's restart (`docs/design/decisions.md`, "D15"). One
 /// sub-stream, and the same rows.
 #[tokio::test]

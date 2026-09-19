@@ -2496,8 +2496,10 @@ pub enum PlanNoteKind {
     },
     /// The `.xz` source this query reads declined the block-decode path: the
     /// memory budget in force does not afford one block-decoding reader, so it
-    /// reads through the streaming decoder and every **backward** read decodes
-    /// forward from its block's start (`docs/design/decisions.md`, "D15").
+    /// reads each block **in pieces** — the *streaming decoder* this note and
+    /// the manual name, one live `xz_seek::BlockRead` behind a mutex — and
+    /// every **backward** read decodes forward from its block's start
+    /// (`docs/design/decisions.md`, "D15").
     /// Never a reason to refuse the query, though the forward mapping pass
     /// pays too: a declined source advises a single partition and so reads
     /// serially whatever `--jobs` says.
