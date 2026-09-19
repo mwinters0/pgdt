@@ -179,13 +179,18 @@ what is delivered.
   it is this row that retires the caveat 14.10 added rather than a ledger item
   churning the string twice.
   [notes](../design/roadmap-P14.11-kept-handle-notes.md)
-- [ ] **14.12** The two `.xz` sources stop keeping two copies of one budget
+- [x] **14.12** The two `.xz` sources stop keeping two copies of one budget
   policy: `apportion`, `charged_chunk_bytes`, `block_worker_memory`, `block_path`,
   `partitions` and `block_decode_bytes` are byte-identical between them, with no
   provider difference in any of them, and become one value both sources hold
-  (D21). Composition, not a branch and not a merged body. Lands after 14.11
-  because that slice changes `FetchedXzSource`'s field set, and extracting against
-  a field set still moving is how an extraction gets done twice.
+  (D21) — `io::XzBudget`, carrying the two pools, the block unit and the two
+  announced numbers, with the transport reaching it only as the decoder charge
+  its constructor is handed. Composition, not a branch and not a merged body; the
+  two hint bodies and `BlockCache::for_table` went with the six, and nothing the
+  policy answers moved. Landed after 14.11 because that slice changes
+  `FetchedXzSource`'s field set, and extracting against a field set still moving
+  is how an extraction gets done twice.
+  [notes](../design/roadmap-P14.12-one-budget-policy-notes.md)
 
 ## Not started
 

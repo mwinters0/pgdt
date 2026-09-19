@@ -3024,7 +3024,7 @@ class CompressedAccount(unittest.TestCase):
         src = (measure.REPO / "pgdump_query/src/io.rs").read_text()
         self.assertIn(
             "fn default_worker_memory(&self) -> Option<WorkerMemory> {\n"
-            "        self.block_worker_memory()",
+            "        self.budget.block_worker_memory()",
             src,
         )
         self.assertIn(
