@@ -44,7 +44,7 @@ Anything unchecked here is considered "TODO" / Future.
     - File locations
         - [x] local
         - [x] http / https — ranged requests, nothing downloaded whole; a
-        compressed dump is still read from a local file
+        seekable compressed dump is read the same way, a block at a time
         - [ ] object store
 - Postgres Correctness
     - Data types
@@ -70,6 +70,16 @@ Anything unchecked here is considered "TODO" / Future.
     - [ ] Trino
     - [ ] DuckDB
     - [ ] Spark
+- Optimization
+    - Parallelization
+        - [x] Parallel I/O, parallel scan, parallel query (where the input is suitable)
+        - [ ] Perform full `parse` and `query` in one file pass
+    - Auto-configuration
+        - [x] Bare minimum attempt to autoconfig per your machine's CPU / RAM
+        - [ ] Optimal per-machine config
+    - Adaptation to your data
+        - [x] Minimal adaptation to keep memory flat with large files
+        - [ ] Optimal per-dump and per-table config
 
 What works today:
 - Streaming row extraction from plain-format dumps into typed Arrow batches, including arrays, composites,
