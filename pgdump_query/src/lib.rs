@@ -33,11 +33,12 @@ pub use index::{
     ArrayShape, CopyBlock, DumpIndex, PG_ARRAY_MAX_DIMS, build_index, preamble_only, union_census,
 };
 pub use io::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, KnownCompression, LocalFileSource,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, FetchedXzSource, KnownCompression, LocalFileSource,
     MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND, MemoryLimit, Origin, OriginProbe,
     Parallelism, PartitionBoundaries, PartitionRead, Partitioning, Recognized, RemoteIdentity,
     RetainedUnit, WaitPolicy, WorkerMemory, XzSource, available_memory, available_memory_in,
     discover_memory_limit, discover_memory_limit_in, open, open_local, statistics_allowance,
+    walk_seek_table,
 };
 #[cfg(feature = "http")]
 pub use io::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};

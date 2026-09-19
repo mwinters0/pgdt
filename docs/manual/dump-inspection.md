@@ -212,10 +212,16 @@ accepted too and means a path on this machine, so having learned that
 scheme is refused by name. If you have a local file whose first path segment
 contains a colon, write it `./that:file` so it is read as a path.
 
-**A compressed dump is still read from a local file only.** A URL whose bytes
-turn out to be `.xz`-compressed — whatever it is named, recognition being by
-content here as everywhere — is refused by name; fetch it once and read the
-copy.
+**A compressed dump is read over HTTP too.** A URL whose bytes turn out to be
+`.xz` — whatever it is named, recognition being by content here as everywhere —
+is read block by block, fetching each block's compressed bytes and decoding
+them locally. What that costs depends entirely on the cache. With one, a query
+is a cache read, an identity check and one block's bytes. **Without one, the
+first run walks the file's stream footers, and that is one round trip per
+stream**: a dump compressed as thousands of small streams costs thousands of
+requests before any row is read. pgdq says so on stderr before it starts. It is
+paid once — keep the cache the run writes — and if you would rather not pay it
+at all, fetch the file once and parse the local copy.
 
 **A network failure stops the run**, naming the URL and what went wrong. It is
 not treated as an interruption, because nobody asked for it — but a `parse`
@@ -226,9 +232,10 @@ where the last save left off rather than from byte 0.
 flight: that request is dropped where it stands, and the run reports and exits
 exactly as an interrupted local `parse` does.
 
-**This is correctness, not speed.** A remote read uses one reader and the same
-1 MiB requests a local read uses, both of which were chosen against local
-devices. Nothing here is tuned for a network yet.
+**This is correctness, not speed.** A remote read uses one reader by default
+and the same 1 MiB requests a local read uses, both of which were chosen
+against local devices; a compressed one fetches each block's compressed extent
+whole. Nothing here is tuned for a network yet.
 
 ### `--strict-identity`: when a moved file should stop the run
 

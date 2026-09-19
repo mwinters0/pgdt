@@ -22,7 +22,7 @@ use common::oracle::Oracle;
 use common::{fixture, run, run_ok, stderr_of};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, Cancellation, KnownCompression, Origin, Recognized, ScanOptions,
+    ByteRangeSource, Cancellation, KnownCompression, Origin, Parallelism, Recognized, ScanOptions,
     StatisticsRequest, open, open_local,
 };
 
@@ -688,4 +688,190 @@ fn a_scheme_this_build_does_not_read_is_refused_before_anything_is_fetched() {
     assert!(!out.status.success());
     let err = stderr_of(&out);
     assert!(err.contains("`ftp:`"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// A remote `.xz` (D1, D13, D20)
+// ---------------------------------------------------------------------------
+
+/// One `.xz` stream over `bytes`, split into several blocks. `xz` is not
+/// `mise`-pinned, so a missing binary fails loudly here rather than the test
+/// silently skipping (`docs/design/roadmap.md`, "A test may assume the tools
+/// `mise` pins").
+fn xz_stream(bytes: &[u8]) -> Vec<u8> {
+    let mut input = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(&mut input, bytes).unwrap();
+    std::io::Write::flush(&mut input).unwrap();
+    let out = std::process::Command::new("xz")
+        .args(["--block-size=512", "-c"])
+        .arg(input.path())
+        .output()
+        .expect("`xz` is not runnable, so this test cannot build its fixture; install it.");
+    assert!(out.status.success(), "xz failed: {}", String::from_utf8_lossy(&out.stderr));
+    out.stdout
+}
+
+/// The dump every test above serves, compressed as **two concatenated
+/// streams** of several blocks each. That shape is the one D1 is about: the
+/// footer walk is a backward chain costing at least one round trip per
+/// stream, so a file with more than one stream is what makes the walk's cost
+/// visible at all.
+fn xz_dump_bytes() -> Vec<u8> {
+    let body = dump_bytes();
+    let half = body.len() / 2;
+    let mut out = xz_stream(&body[..half]);
+    out.extend_from_slice(&xz_stream(&body[half..]));
+    out
+}
+
+/// An oracle serving that, under a name whose last segment is what the
+/// derived cache is called.
+fn serving_xz_dump() -> Oracle {
+    Oracle::serving(xz_dump_bytes()).start()
+}
+
+fn xz_url(oracle: &Oracle) -> String {
+    oracle.url_for("dump.sql.xz")
+}
+
+#[tokio::test]
+async fn a_remote_xz_source_reads_the_plain_bytes_the_file_holds() {
+    let oracle = serving_xz_dump();
+    let source = source_of(&xz_url(&oracle)).await;
+    let plain = dump_bytes();
+
+    let table = source.seek_table().expect("a fetched `.xz` source carries its table");
+    assert_eq!(table.stream_count(), 2, "the fixture is two concatenated streams");
+    assert!(table.block_count() > 2, "and several blocks: {table:?}");
+    assert_eq!(source.size().await.unwrap(), plain.len() as u64, "the uncompressed length");
+    assert_eq!(
+        source.stored_size().await.unwrap(),
+        oracle.body().len() as u64,
+        "and the stored length is the compressed object's",
+    );
+    assert_eq!(&source.read_range(0, 64).await.unwrap()[..], &plain[..64]);
+    assert_eq!(&source.read_range(900, 700).await.unwrap()[..], &plain[900..1_600]);
+    assert_eq!(&source.read_range(0, plain.len()).await.unwrap()[..], &plain[..]);
+}
+
+#[tokio::test]
+async fn a_remote_xz_read_with_no_room_for_a_block_answers_the_same_bytes() {
+    // The piecewise arm over a real transport: the budget holds no decoded
+    // block, so each one is fetched, skipped into and completed through
+    // `xz_seek::BlockRead` (D20).
+    let oracle = serving_xz_dump();
+    let source = source_of(&xz_url(&oracle)).await;
+    source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+    let plain = dump_bytes();
+    assert_eq!(&source.read_range(900, 700).await.unwrap()[..], &plain[900..1_600]);
+}
+
+#[tokio::test]
+async fn every_fetch_a_footer_walk_makes_is_pinned_to_the_probes_version() {
+    // 14.6's precondition rides on the fetch, so the walk inherits it without
+    // knowing it exists (D10, D11).
+    let oracle = serving_xz_dump();
+    let source = source_of(&xz_url(&oracle)).await;
+    assert!(source.seek_table().is_some());
+
+    let requests = oracle.requests();
+    assert!(requests.len() > 2, "the walk fetched more than the probe: {requests:?}");
+    assert_eq!(requests[0].header("if-match"), None, "the probe establishes the baseline");
+    for request in &requests[1..] {
+        assert_eq!(request.header("if-match"), Some(oracle.etag()), "{request:?}");
+    }
+}
+
+#[test]
+fn parse_over_a_remote_xz_announces_the_walk_before_paying_for_it() {
+    let oracle = serving_xz_dump();
+    let dir = tempfile::tempdir().unwrap();
+    let out = run_in(&dir, &["parse", "--source", &xz_url(&oracle)]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stderr_of(&out);
+
+    // What it is about to cost, and both ways out of it — never a refusal.
+    assert!(said.contains("seek table build started"), "{said}");
+    assert!(said.contains("one round trip per stream"), "{said}");
+    assert!(said.contains("keep the cache"), "{said}");
+    assert!(said.contains("parse a local copy"), "{said}");
+    // And it lands before the walk's own fetches, not after them.
+    let announced = said.find("seek table build started").unwrap();
+    let finished = said.find("seek table build complete").expect("the walk reports what it cost");
+    assert!(announced < finished, "{said}");
+}
+
+#[test]
+fn a_cached_seek_table_spares_a_remote_xz_the_walk_entirely() {
+    // The warm case D1 rests on: with the table in the cache, `info` costs the
+    // origin probe and nothing else — no walk, no scan
+    // (`docs/design/decisions.md`, "D18").
+    let oracle = serving_xz_dump();
+    let dir = tempfile::tempdir().unwrap();
+    let said = run_in(&dir, &["parse", "--source", &xz_url(&oracle)]);
+    assert!(said.status.success(), "{}", stderr_of(&said));
+    assert!(
+        String::from_utf8_lossy(&said.stdout).contains("wrote cache to dump.sql.xz.dqcache"),
+        "{}",
+        String::from_utf8_lossy(&said.stdout),
+    );
+    let after_parse = oracle.request_count();
+    assert!(after_parse > 2, "the cold run walked and scanned: {after_parse}");
+
+    let report = run_ok_in(&dir, &["info", "--source", &xz_url(&oracle)]);
+    assert!(report.contains("public.widgets"), "{report}");
+    assert_eq!(oracle.request_count() - after_parse, 1, "the origin probe, and nothing else");
+}
+
+#[test]
+fn query_over_a_remote_xz_streams_the_same_rows_the_plain_dump_streams() {
+    let oracle = serving_xz_dump();
+    let dump = fixture("16/edge_cases/default.sql");
+    let remote = run_ok(&[
+        "query",
+        "--source",
+        &xz_url(&oracle),
+        "--table",
+        "public.widgets",
+        "--dqcache",
+        "none",
+        "--no-columns",
+    ]);
+    let local = run_ok(&[
+        "query",
+        "--source",
+        dump.to_str().unwrap(),
+        "--table",
+        "public.widgets",
+        "--dqcache",
+        "none",
+        "--no-columns",
+    ]);
+    assert_eq!(remote, local);
+}
+
+#[tokio::test]
+async fn open_remote_reports_a_compression_claim_the_object_contradicts() {
+    // Both directions of "the cache describes a different file" reach a remote
+    // object now that a compressed one can be opened, and each is
+    // `Recognized::Mismatch` rather than a silent fallback — exactly as
+    // `open_local` reads them (`docs/design/decisions.md`, "D18").
+    let compressed = serving_xz_dump();
+    let origin = Origin::resolve(&xz_url(&compressed)).unwrap();
+    assert!(
+        matches!(open(&origin, KnownCompression::Plain).await.unwrap(), Recognized::Mismatch),
+        "a plain claim over `.xz` bytes",
+    );
+
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(&mut file, &xz_dump_bytes()).unwrap();
+    std::io::Write::flush(&mut file).unwrap();
+    let table = pgdump_query::XzSource::open(file.path()).unwrap().seek_table().unwrap();
+
+    let plain = serving_dump();
+    let origin = Origin::resolve(&plain.url()).unwrap();
+    assert!(
+        matches!(open(&origin, KnownCompression::Xz(table)).await.unwrap(), Recognized::Mismatch),
+        "a compression index over plain bytes",
+    );
 }

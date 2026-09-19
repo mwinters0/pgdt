@@ -32,6 +32,19 @@ use crate::{Error, Result};
 /// `Arc<dyn ByteRangeSource>` instead of being generic over the source. See
 /// `docs/design/decisions.md`, "D6".
 pub trait ByteRangeSource: Send + Sync {
+    /// Exactly `len` bytes at `offset`, or an error — **never a short
+    /// answer.** A range running past the end of the source is
+    /// `std::io::ErrorKind::UnexpectedEof`, not the prefix that does exist,
+    /// on every implementation here: `read_exact_at` on a file, a length
+    /// check on a fetched body, and a fill-or-fault decode on the compressed
+    /// ones.
+    ///
+    /// **A driver that is told what to fetch relies on that.**
+    /// `xz_seek::Walk` derives each request from the bytes of the one before
+    /// it and reads a short supply as the file being shorter than the size it
+    /// was constructed with, so a source answering a prefix would make a
+    /// truncated file and a truncated *read* the same event
+    /// ([`walk_seek_table`]).
     fn read_range(
         &self,
         offset: u64,
@@ -2047,7 +2060,7 @@ impl BlockCache {
     /// [`WorkerMemory`]'s second term.
     ///
     /// It is one number with two consumers — [`BlockCache::affordable`] and
-    /// [`XzSource::partition_advice`]. *Rejected:* two statements of the one
+    /// [`xz_partition_advice`]. *Rejected:* two statements of the one
     /// cost, which is how a divisor comes to charge nothing for the decoder.
     fn reader_bytes(&self, chunk_bytes: u64, decode_bytes: u64) -> u64 {
         (self.unit as u64).saturating_add(chunk_bytes).saturating_add(decode_bytes)
@@ -2427,16 +2440,6 @@ impl XzSource {
         &self.path
     }
 
-    /// The error a read past the end of the uncompressed stream is — the same
-    /// `UnexpectedEof` a short `read_exact_at` raises on the plain source, so
-    /// both sources report a caller/source disagreement identically.
-    fn short_read() -> Error {
-        Error::Io(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "xz stream ended before the requested range",
-        ))
-    }
-
     /// The block at `index`, from the retention list or freshly decoded into a
     /// slot of the block pool.
     ///
@@ -2465,8 +2468,8 @@ impl XzSource {
             let reader = reader.lock().unwrap_or_else(|e| e.into_inner());
             reader.block_task(index)
         }
-        .ok_or_else(Self::short_read)?;
-        let len = usize::try_from(task.uncompressed_len()).map_err(|_| Self::short_read())?;
+        .ok_or_else(xz_short_read)?;
+        let len = usize::try_from(task.uncompressed_len()).map_err(|_| xz_short_read())?;
         // A slot is the file's largest block, so `len` is never above it and a
         // released slot is exactly the length the pool was hinted with.
         let mut slot = cache.slot();
@@ -2492,10 +2495,10 @@ impl XzSource {
         file: &std::fs::File,
         chunks: &Arc<BufferPool>,
     ) -> Result<Bytes> {
-        let end = offset.checked_add(len as u64).ok_or_else(Self::short_read)?;
+        let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
         let covering = table.blocks_in(offset..end);
         if covering.is_empty() {
-            return Err(Self::short_read());
+            return Err(xz_short_read());
         }
         if covering.len() == 1 {
             let index = covering.start;
@@ -2507,9 +2510,9 @@ impl XzSource {
             let start = offset
                 .checked_sub(base)
                 .and_then(|at| usize::try_from(at).ok())
-                .ok_or_else(Self::short_read)?;
+                .ok_or_else(xz_short_read)?;
             if start + len > block.len {
-                return Err(Self::short_read());
+                return Err(xz_short_read());
             }
             return Ok(Bytes::from_owner(BlockView(block)).slice(start..start + len));
         }
@@ -2530,78 +2533,9 @@ impl XzSource {
             covered += n;
         }
         if covered != len {
-            return Err(Self::short_read());
+            return Err(xz_short_read());
         }
         Ok(Bytes::from_owner(out).slice(..len))
-    }
-
-    /// This source's partitioning advice, read off the **read path it took**
-    /// rather than off the seek table.
-    ///
-    /// Two answers, and which one applies is `blocks`:
-    ///
-    /// **Block-decoding** — the boundaries are the block starts inside
-    /// `range`, so a partition is a whole number of blocks. A partition costs
-    /// what one concurrent reader holds — [`BlockCache::reader_bytes`], the
-    /// per-reader term of the [`BlockCache::worker_memory`] whose `at(1)`
-    /// [`BlockCache::affordable`] compares a budget against.
-    ///
-    /// **Streaming fallback** — one partition, whatever the table says: two
-    /// workers on different partitions would each force the other's restart
-    /// through `xz_seek::Reader::read_at`
-    /// (`docs/design/decisions.md`, "D15").
-    ///
-    /// Taken as a free function over the two pieces of state it reads, so the
-    /// fallback arm is assertable against a table that *does* have blocks.
-    fn partition_advice(
-        table: &xz_seek::SeekTable,
-        blocks: Option<&BlockCache>,
-        chunk_bytes: u64,
-        decode_bytes: u64,
-        range: Range<u64>,
-    ) -> Partitioning {
-        let Some(cache) = blocks else {
-            // **The streaming arm charges the chunk buffer and not the
-            // decoder**: that path keeps one `xz_seek::Reader` behind a mutex
-            // however many readers a caller runs, so the decoder is a fixed
-            // cost of the source rather than of a concurrent reader
-            // ([`Partitioning::partition_bytes`]).
-            //
-            // Deficiency register: `deficiency: KD35` — one partition is what
-            // the mutex admits, not what the budget affords: a decoder retains
-            // far less than a decoded block, so several would fit where the
-            // blocks they decode do not, and the budget that sends a file down
-            // this arm is exactly the one that would benefit. **(c) unowned**;
-            // closing it means a per-reader decode handle here and a figure
-            // over the count, and the figure is the half this cannot skip.
-            return Partitioning::single(chunk_bytes);
-        };
-        let covering = table.blocks_in(range.clone());
-        let at = covering
-            .filter_map(|i| {
-                let start = table.blocks[i].uncompressed_offset;
-                (start > range.start && start < range.end).then_some(start)
-            })
-            .collect();
-        // Three statements the streaming arm above does not make, each
-        // because a read inside a decoded block is a zero-copy slice of it:
-        //
-        // - **the retained unit is the partition, not the chunk**, so a caller
-        //   adding its span allowance on top would count the partition's
-        //   already-charged bytes twice ([`RetainedUnit`]);
-        // - **a worker reads one of this source's units in one call**, which
-        //   at the shipped cut width is the whole piece
-        //   ([`PartitionRead::Whole`]). The unit is `cache.unit`, read off the
-        //   cache rather than recomputed and non-zero by
-        //   `BlockCache::for_table`'s own guard;
-        // - **the block pool's retention list is stated beside the per-reader
-        //   charge**, which is what lets `crate::stream::worker_count` solve
-        //   for a count rather than divide by one
-        //   ([`BlockCache::worker_memory`]).
-        Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
-            .pooling(cache.unit as u64, POOL_DEPTH)
-            .retaining(RetainedUnit::Partition)
-            .reading(PartitionRead::Whole { unit: cache.unit as u64 })
     }
 
     /// The fallback: one live decode, restarted on a backward seek, serialized
@@ -2624,10 +2558,89 @@ impl XzSource {
         let n = reader.read_at(offset, &mut buf.as_mut()[..len])?;
         drop(reader);
         if n != len {
-            return Err(Self::short_read());
+            return Err(xz_short_read());
         }
         Ok(Bytes::from_owner(buf).slice(..len))
     }
+}
+
+/// The error a read past the end of the uncompressed stream is — the same
+/// `UnexpectedEof` a short `read_exact_at` raises on the plain source, so
+/// both sources report a caller/source disagreement identically.
+fn xz_short_read() -> Error {
+    Error::Io(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        "xz stream ended before the requested range",
+    ))
+}
+
+/// An `.xz` source's partitioning advice, read off the **read path it took**
+/// rather than off the seek table.
+///
+/// Two answers, and which one applies is `blocks`:
+///
+/// **Block-decoding** — the boundaries are the block starts inside
+/// `range`, so a partition is a whole number of blocks. A partition costs
+/// what one concurrent reader holds — [`BlockCache::reader_bytes`], the
+/// per-reader term of the [`BlockCache::worker_memory`] whose `at(1)`
+/// [`BlockCache::affordable`] compares a budget against.
+///
+/// **Streaming fallback** — one partition, whatever the table says: two
+/// workers on different partitions would each force the other's restart
+/// through `xz_seek::Reader::read_at`
+/// (`docs/design/decisions.md`, "D15").
+///
+/// Taken as a free function over the two pieces of state it reads, so the
+/// fallback arm is assertable against a table that *does* have blocks.
+fn xz_partition_advice(
+    table: &xz_seek::SeekTable,
+    blocks: Option<&BlockCache>,
+    chunk_bytes: u64,
+    decode_bytes: u64,
+    range: Range<u64>,
+) -> Partitioning {
+    let Some(cache) = blocks else {
+        // **The streaming arm charges the chunk buffer and not the
+        // decoder**: that path keeps one `xz_seek::Reader` behind a mutex
+        // however many readers a caller runs, so the decoder is a fixed
+        // cost of the source rather than of a concurrent reader
+        // ([`Partitioning::partition_bytes`]).
+        //
+        // Deficiency register: `deficiency: KD35` — one partition is what
+        // the mutex admits, not what the budget affords: a decoder retains
+        // far less than a decoded block, so several would fit where the
+        // blocks they decode do not, and the budget that sends a file down
+        // this arm is exactly the one that would benefit. **(c) unowned**;
+        // closing it means a per-reader decode handle here and a figure
+        // over the count, and the figure is the half this cannot skip.
+        return Partitioning::single(chunk_bytes);
+    };
+    let covering = table.blocks_in(range.clone());
+    let at = covering
+        .filter_map(|i| {
+            let start = table.blocks[i].uncompressed_offset;
+            (start > range.start && start < range.end).then_some(start)
+        })
+        .collect();
+    // Three statements the streaming arm above does not make, each
+    // because a read inside a decoded block is a zero-copy slice of it:
+    //
+    // - **the retained unit is the partition, not the chunk**, so a caller
+    //   adding its span allowance on top would count the partition's
+    //   already-charged bytes twice ([`RetainedUnit`]);
+    // - **a worker reads one of this source's units in one call**, which
+    //   at the shipped cut width is the whole piece
+    //   ([`PartitionRead::Whole`]). The unit is `cache.unit`, read off the
+    //   cache rather than recomputed and non-zero by
+    //   `BlockCache::for_table`'s own guard;
+    // - **the block pool's retention list is stated beside the per-reader
+    //   charge**, which is what lets `crate::stream::worker_count` solve
+    //   for a count rather than divide by one
+    //   ([`BlockCache::worker_memory`]).
+    Partitioning::at(at, cache.reader_bytes(chunk_bytes, decode_bytes))
+        .pooling(cache.unit as u64, POOL_DEPTH)
+        .retaining(RetainedUnit::Partition)
+        .reading(PartitionRead::Whole { unit: cache.unit as u64 })
 }
 
 impl ByteRangeSource for XzSource {
@@ -2733,7 +2746,7 @@ impl ByteRangeSource for XzSource {
     }
 
     fn partitions(&self, range: Range<u64>) -> Partitioning {
-        Self::partition_advice(
+        xz_partition_advice(
             &self.table,
             self.block_path().map(|cache| &**cache),
             self.charged_chunk_bytes(),
@@ -2786,6 +2799,536 @@ impl ByteRangeSource for XzSource {
     /// readers than fit. [`ByteRangeSource::block_decode_bytes`] is this same
     /// shape evaluated at one reader: one statement of what the block path
     /// costs.
+    fn default_worker_memory(&self) -> Option<WorkerMemory> {
+        self.block_worker_memory()
+    }
+}
+
+/// How many uncompressed bytes [`FetchedXzSource`] throws away per decoder
+/// call while skipping to a read's first byte, and again while completing the
+/// block behind it.
+///
+/// On the stack, so a read that holds no whole block allocates nothing beyond
+/// the buffer it is filling — which is the budget the piecewise arm exists to
+/// respect — and large enough that skipping a 24 MiB block is thousands of
+/// decoder calls rather than millions. It is `xz_seek`'s own drain chunk,
+/// which sizes the same skip on the other side of `complete`.
+const FETCHED_SKIP_CHUNK: usize = 4096;
+
+/// Build an `.xz` file's seek table by driving `xz_seek`'s footer walk over an
+/// **asynchronous** source, and say how many fetches it took.
+///
+/// `xz_seek::Walk` is the footer parse with the reads taken out: it hands out
+/// a range and takes the bytes back, holding no borrow and no lifetime, so the
+/// fetch is ours and may `await`. That is the whole reason a dump reached over
+/// the network can be `.xz` at all —
+/// `xz_seek::Reader` pulls through a *synchronous* positional trait, and
+/// nothing can `await` inside it
+/// (`docs/design/roadmap-P14-remote-input.md`, "D13").
+///
+/// `leading` is what the caller already holds of the file's first bytes — an
+/// [`Origin`] probe's, normally. The walk's first request is the six magic
+/// bytes at offset zero, which is exactly what that probe fetched, so a caller
+/// passing them spends no round trip on them. Passing an empty slice is
+/// correct and costs one.
+///
+/// **The count it returns is the file's, not this driver's.** The walk asks for
+/// a footer, an index, a header and at least one padding probe per stream, in a
+/// strictly backward chain where each request's position comes out of the bytes
+/// of the one before it — so neither coalescing nor concurrency buys anything
+/// on its own (`docs/design/roadmap-P14-remote-input.md`, "D1").
+///
+/// Deficiency register: `deficiency: KD36` — this driver fetches exactly what
+/// it is asked for, so a cold walk over a dump compressed as many small streams
+/// is that many round trips before a row is read. The remedy is a **straddling
+/// window**: one read per stream positioned backward from the pending request
+/// and sized to cover what the walk asks for next, which answers three of every
+/// stream's four requests because a stream's header is adjacent to its
+/// predecessor's padding, footer and index. **One fetch a stream is then a
+/// floor, not a cost still looking for a remedy** — the distance to the next
+/// boundary is knowable only from the index just read, and this file family has
+/// no stream stride to predict it from. What would beat the floor is not a
+/// better driver but a forward table build, which stops paying separately for
+/// the walk at all. **(c) unowned**; promoted by a phase that tunes the network,
+/// which is where the fetch policy this source defers belongs, and which is also
+/// what would take the figure.
+pub async fn walk_seek_table(
+    source: &dyn ByteRangeSource,
+    stored_size: u64,
+    leading: &[u8],
+) -> Result<(xz_seek::SeekTable, usize)> {
+    let (mut walk, mut request) = xz_seek::Walk::begin(stored_size);
+    let mut fetches = 0usize;
+    loop {
+        let asked = usize::try_from(request.len()).map_err(|_| xz_short_read())?;
+        let step = if request.start() == 0 && asked <= leading.len() {
+            walk.supply(request, &leading[..asked])?
+        } else {
+            fetches += 1;
+            let bytes = source.read_range(request.start(), asked).await?;
+            walk.supply(request, &bytes)?
+        };
+        match step {
+            xz_seek::Step::Need(next) => request = next,
+            xz_seek::Step::Done(table) => return Ok((table, fetches)),
+        }
+    }
+}
+
+/// A `ByteRangeSource` decoding an `.xz`-compressed dump the bytes of which
+/// have to be **fetched** rather than pulled
+/// (`docs/design/roadmap-P14-remote-input.md`, "D1", "D13").
+///
+/// **The difference from [`XzSource`] is the transport and nothing else.**
+/// There the crate holds a `std::fs::File` and reads through it as it decodes;
+/// here nothing can `await` inside a decode, so this source fetches a block's
+/// whole compressed extent first — `xz_seek::BlockTask::compressed_range`
+/// states it before the fetch — wraps it in an `xz_seek::Window` and decodes
+/// out of that. The uncompressed side is unchanged: the same [`BlockCache`],
+/// the same slot, the same zero-copy slice of a decoded block.
+///
+/// **Two arms, and the budget picks between them.**
+///
+/// - Where the stated budget holds a whole decoded block, a read is served
+///   exactly as [`XzSource`]'s is: decode the block into a pooled slot, retain
+///   it, slice the answer out of it.
+/// - Where it does not, the block is read **in pieces** through
+///   `xz_seek::BlockRead` — the handle skips forward to the first wanted byte,
+///   fills the caller's buffer and compares the block's check when we complete
+///   it — so what is held is the compressed window and the decoder, never the
+///   plaintext. That is the arm with no local twin: a file can be pulled from
+///   and so has `xz_seek::Reader::read_at` to fall back on, and a fetched
+///   source has nothing (D20).
+///
+/// **A block is always completed**, which is what compares its check. Reading
+/// a few kilobytes out of a large block therefore pays a decode of the rest —
+/// today's guarantee on the path this replaces, carried over rather than a new
+/// cost.
+pub struct FetchedXzSource {
+    /// The compressed bytes' transport: every fetch this source makes goes
+    /// through it, so a cancellation, an identity precondition or a network
+    /// failure arrives here in the words that source already uses.
+    source: Arc<dyn ByteRangeSource>,
+    /// The table, the memory limit, the verification state and the backend as
+    /// one value — everything a decode needs that is not bytes. It holds no
+    /// source, which is what lets this type exist (D13).
+    layout: xz_seek::Layout,
+    /// The layout's own table, aliased rather than copied, so `size()`,
+    /// `seek_table()` and the per-read `blocks_in` lookup read one table.
+    table: Arc<xz_seek::SeekTable>,
+    /// The chunk unit: what a read straddling a block boundary is assembled
+    /// into, and what the piecewise arm fills.
+    pool: Arc<BufferPool>,
+    /// The block unit, or `None` where this file has no blocks to decode.
+    blocks: Option<Arc<BlockCache>>,
+    /// What one decode here retains besides the plaintext: the decoder over a
+    /// source that **lends** — an `xz_seek::Window` is read through
+    /// `slice_at`, so no compressed input chunk is built — plus the largest
+    /// window this file's blocks would make us fetch.
+    ///
+    /// **The window is charged rather than booked as unpooled.** Its length is
+    /// known before the fetch, and a term that can be priced and is not is the
+    /// falsification of [`MEMORY_UNPOOLED_BOUND`] rather than an instance of it
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D20").
+    decode_bytes: u64,
+    /// What the caller stated it may hold, across both pools —
+    /// [`DEFAULT_MEMORY_BUDGET`] until one is announced.
+    budget: AtomicUsize,
+    /// The worker ceiling the caller stated, which is the block pool's depth.
+    jobs: AtomicUsize,
+}
+
+impl FetchedXzSource {
+    /// Read `source` as `.xz` from a seek table a previous walk of the *same*
+    /// object produced, **without walking it again**
+    /// (`docs/design/decisions.md`, "D18").
+    ///
+    /// `stored_size` is the compressed object's own length, which the caller
+    /// has from its [`Origin`] probe; `xz_seek` validates the table against it
+    /// and for internal consistency, reading **no bytes**. A table that does
+    /// not describe this object is `Error::Xz(xz_seek::Error::InvalidTable)`,
+    /// which is what [`open_remote`] turns into [`Recognized::Mismatch`]
+    /// rather than a walk.
+    pub fn with_table(
+        source: Arc<dyn ByteRangeSource>,
+        stored_size: u64,
+        table: xz_seek::SeekTable,
+    ) -> Result<Self> {
+        // `Builder::new()` rather than a configured one, for `XzSource`'s
+        // reason: it is the shortcut through exactly the defaults
+        // `Reader::new` takes, `Verify::Full` included, so the two sources
+        // decode identically.
+        let layout = xz_seek::Builder::new().layout(table, stored_size)?;
+        Ok(Self::assembled(source, layout))
+    }
+
+    /// The one place a constructor's pieces are put together: the table is
+    /// aliased out of the layout, the block pool is sized from it or refused,
+    /// and the budget is divided before the first read.
+    fn assembled(source: Arc<dyn ByteRangeSource>, layout: xz_seek::Layout) -> Self {
+        let table = layout.index_shared();
+        let blocks = BlockCache::for_table(&table).map(Arc::new);
+        // The largest window a decode here will hold, beside the decoder the
+        // crate charges over a source that lends. `total_size()` rather than
+        // `unpadded_size` because that is what `compressed_range()` asks for:
+        // a window cut shorter would stop before the block's check.
+        let widest_window = table.blocks.iter().map(|block| block.total_size()).max().unwrap_or(0);
+        let decode_bytes = layout.decoder_bytes().saturating_add(widest_window);
+        let source = Self {
+            source,
+            layout,
+            table,
+            pool: Arc::new(BufferPool::default()),
+            blocks,
+            decode_bytes,
+            budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
+            jobs: AtomicUsize::new(1),
+        };
+        source.apportion();
+        source
+    }
+
+    /// Divide the stated budget between the two pools, chunks first —
+    /// [`XzSource::apportion`]'s rule, and the same one for the same reason.
+    fn apportion(&self) {
+        let budget = self.budget.load(Ordering::Relaxed);
+        let jobs = self.jobs.load(Ordering::Relaxed).max(1);
+        self.pool.set_limits(budget, POOL_DEPTH);
+        if let Some(blocks) = &self.blocks {
+            blocks
+                .pool
+                .set_limits(budget.saturating_sub(self.pool.held_bytes()), POOL_DEPTH.max(jobs));
+        }
+    }
+
+    /// The chunk slot this source's charges are stated against
+    /// ([`XzSource::charged_chunk_bytes`]).
+    fn charged_chunk_bytes(&self) -> u64 {
+        match self.pool.announced_bytes() {
+            Some(len) => len as u64,
+            None => SCAN_CHUNK_DEFAULT_SIZE_BYTES as u64,
+        }
+    }
+
+    /// What concurrent block-decoding readers of this file would cost, whether
+    /// or not the budget admits one — the one composition site, exactly as
+    /// [`XzSource::block_worker_memory`] is.
+    fn block_worker_memory(&self) -> Option<WorkerMemory> {
+        let cache = self.blocks.as_ref()?;
+        Some(cache.worker_memory(self.charged_chunk_bytes(), self.decode_bytes))
+    }
+
+    /// The whole-block arm, or `None` where a read is served in pieces: no
+    /// blocks at all, or a budget that cannot hold one decoded
+    /// ([`BlockCache::affordable`]).
+    ///
+    /// **The piecewise arm is not free of the budget either** — it holds the
+    /// compressed window, the decoder and the caller's chunk, which is
+    /// [`BlockCache::reader_bytes`] less the block unit. So what declining
+    /// saves is the plaintext, and a budget below even that remainder is
+    /// exceeded exactly as the local streaming fallback's is.
+    fn block_path(&self) -> Option<&Arc<BlockCache>> {
+        let budget = self.budget.load(Ordering::Relaxed) as u64;
+        let chunk_bytes = self.charged_chunk_bytes();
+        self.blocks
+            .as_ref()
+            .filter(|cache| cache.affordable(chunk_bytes, self.decode_bytes, budget))
+    }
+
+    /// One block's whole compressed extent, fetched and wrapped in the window
+    /// a decode reads through.
+    ///
+    /// The window refuses every byte outside that range, so a mis-sized fetch
+    /// is an error rather than a byte served silently from somewhere else.
+    async fn window(&self, task: &xz_seek::BlockTask) -> Result<xz_seek::Window<Bytes>> {
+        let extent = task.compressed_range();
+        let len = usize::try_from(extent.end - extent.start).map_err(|_| xz_short_read())?;
+        let bytes = self.source.read_range(extent.start, len).await?;
+        Ok(xz_seek::Window::new(extent.start, self.table.compressed_file_size, bytes))
+    }
+
+    /// The task for block `index`, or the read-past-the-end error.
+    ///
+    /// **No lock is taken.** An `xz_seek::Layout` answers this from the table
+    /// alone, where a `Reader` has to be borrowed mutably for it — which is
+    /// the mutex [`XzSource::block`] holds for a lookup and no I/O.
+    fn task(&self, index: usize) -> Result<xz_seek::BlockTask> {
+        self.layout.block_task(index).ok_or_else(xz_short_read)
+    }
+
+    /// Block `index`, from the retention list or fetched and decoded whole
+    /// into a slot of the block pool.
+    ///
+    /// Deficiency register: two concurrent misses on one block fetch and
+    /// decode it twice, exactly as `KD20` describes for the local source; the
+    /// marker sits there, this being the same shape and not a second one.
+    async fn block(&self, index: usize, cache: &Arc<BlockCache>) -> Result<Arc<DecodedBlock>> {
+        if let Some(hit) = cache.lookup(index) {
+            return Ok(hit);
+        }
+        let task = self.task(index)?;
+        let len = usize::try_from(task.uncompressed_len()).map_err(|_| xz_short_read())?;
+        let window = self.window(&task).await?;
+        // A slot is the file's largest block, so `len` is never above it.
+        let slot = cache.slot();
+        let slot = tokio::task::spawn_blocking(move || -> Result<PooledBuffer> {
+            let mut slot = slot;
+            task.decode_into(&window, &mut slot.as_mut()[..len])?;
+            Ok(slot)
+        })
+        .await
+        .map_err(Error::from)??;
+        let block = Arc::new(DecodedBlock { slot, len });
+        cache.retain(index, Arc::clone(&block));
+        Ok(block)
+    }
+
+    /// A read served by decoding whole blocks — [`XzSource::read_by_blocks`]'s
+    /// arithmetic over fetched windows.
+    async fn read_by_blocks(
+        &self,
+        offset: u64,
+        len: usize,
+        cache: &Arc<BlockCache>,
+    ) -> Result<Bytes> {
+        let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
+        let covering = self.table.blocks_in(offset..end);
+        if covering.is_empty() {
+            return Err(xz_short_read());
+        }
+        if covering.len() == 1 {
+            let index = covering.start;
+            let block = self.block(index, cache).await?;
+            let base = self.table.blocks[index].uncompressed_offset;
+            let start = offset
+                .checked_sub(base)
+                .and_then(|at| usize::try_from(at).ok())
+                .ok_or_else(xz_short_read)?;
+            if start + len > block.len {
+                return Err(xz_short_read());
+            }
+            return Ok(Bytes::from_owner(BlockView(block)).slice(start..start + len));
+        }
+        let mut out = self.pool.obtain(len);
+        let mut covered = 0usize;
+        for index in covering {
+            let block = self.block(index, cache).await?;
+            let base = self.table.blocks[index].uncompressed_offset;
+            let from = base.max(offset);
+            let to = (base + block.len as u64).min(end);
+            if to <= from {
+                continue;
+            }
+            let at = (from - offset) as usize;
+            let within = (from - base) as usize;
+            let n = (to - from) as usize;
+            out.as_mut()[at..at + n].copy_from_slice(&block.bytes()[within..within + n]);
+            covered += n;
+        }
+        if covered != len {
+            return Err(xz_short_read());
+        }
+        Ok(Bytes::from_owner(out).slice(..len))
+    }
+
+    /// A read served **without holding a whole decoded block**: each covering
+    /// block is fetched, skipped forward to the first wanted byte, read into
+    /// the caller's buffer and completed.
+    ///
+    /// This is the arm the local source answers with `xz_seek::Reader::read_at`
+    /// and a fetched source cannot: that path pulls, and pulling is what has no
+    /// transport here (D20). What it holds is the compressed window, the
+    /// decoder and one chunk buffer — never the block's plaintext, which is the
+    /// point.
+    async fn read_in_pieces(&self, offset: u64, len: usize) -> Result<Bytes> {
+        let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
+        let covering = self.table.blocks_in(offset..end);
+        if covering.is_empty() {
+            return Err(xz_short_read());
+        }
+        let mut out = self.pool.obtain(len);
+        let mut covered = 0usize;
+        for index in covering {
+            let task = self.task(index)?;
+            let block = task.uncompressed_range();
+            let from = block.start.max(offset);
+            let to = block.end.min(end);
+            if to <= from {
+                continue;
+            }
+            let at = (from - offset) as usize;
+            let n = (to - from) as usize;
+            let window = self.window(&task).await?;
+            let (returned, filled) =
+                tokio::task::spawn_blocking(move || -> Result<(PooledBuffer, usize)> {
+                    let mut out = out;
+                    let mut handle = task.begin(&window)?;
+                    let mut skip = [0u8; FETCHED_SKIP_CHUNK];
+                    handle.advance_to(&window, from, &mut skip)?;
+                    let mut filled = 0usize;
+                    while filled < n {
+                        let got = handle.read(&window, &mut out.as_mut()[at + filled..at + n])?;
+                        if got == 0 {
+                            break;
+                        }
+                        filled += got;
+                    }
+                    // The check covers the whole block and is compared here,
+                    // over a block this reader never held whole. It is not a
+                    // knob: skipping it would make verification silently
+                    // weaker than the path it replaces.
+                    handle.complete(&window)?;
+                    Ok((out, filled))
+                })
+                .await
+                .map_err(Error::from)??;
+            out = returned;
+            covered += filled;
+        }
+        if covered != len {
+            return Err(xz_short_read());
+        }
+        Ok(Bytes::from_owner(out).slice(..len))
+    }
+}
+
+impl std::fmt::Debug for FetchedXzSource {
+    /// The transport behind it is `dyn`, so what is printable is this file's
+    /// shape and what it may hold.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FetchedXzSource")
+            .field("streams", &self.table.stream_count())
+            .field("blocks", &self.table.block_count())
+            .field("decode_bytes", &self.decode_bytes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ByteRangeSource for FetchedXzSource {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        Box::pin(async move {
+            // A zero-length read covers no blocks, so it is answered here
+            // rather than left to look like a read past the end.
+            if len == 0 {
+                return Ok(Bytes::new());
+            }
+            match self.block_path().cloned() {
+                Some(cache) => self.read_by_blocks(offset, len, &cache).await,
+                None => self.read_in_pieces(offset, len).await,
+            }
+        })
+    }
+
+    /// The uncompressed length, from the seek table — no decode, no fetch.
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        Box::pin(async move { Ok(self.table.uncompressed_size()) })
+    }
+
+    /// The transport's, unchanged: the compression layer moves no file and
+    /// changes no identity (`docs/design/decisions.md`, "D21").
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        self.source.modified()
+    }
+
+    /// The compressed object's own stored length — the transport's `size`,
+    /// never the stream-index total [`FetchedXzSource::size`] answers.
+    fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        self.source.stored_size()
+    }
+
+    fn hint_read_size(&self, len: usize) {
+        self.pool.hint(len);
+        self.apportion();
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.budget.store(budget_bytes(parallelism), Ordering::Relaxed);
+        self.jobs.store(parallelism.jobs(), Ordering::Relaxed);
+        self.apportion();
+    }
+
+    /// **Ignored: this source never takes a wait**, and the reason is where its
+    /// chunk buffer is obtained rather than what the loop promises.
+    ///
+    /// Every other source takes its buffer inside a `spawn_blocking` closure,
+    /// so a `WaitPolicy::MayWait` holder blocks a blocking-pool thread while a
+    /// sibling releases. Here the fetch has to `await`, so the buffer is
+    /// obtained on the runtime's own task — and `BufferPool::obtain` waits on a
+    /// `Condvar`, which on the `current_thread` runtime this project dispatches
+    /// from (`docs/design/decisions.md`, "D12") would block the very thread the
+    /// releasing sibling needs. A wait that should not have been permitted is a
+    /// hang with nothing to measure ([`WaitPolicy::NeverWait`]), so it is
+    /// refused here rather than granted and hoped for.
+    ///
+    /// The cost is the direction that constant is already safe in: the pool
+    /// allocates past its budget rather than blocking, which is memory instead
+    /// of a deadlock. Making the wait available again means obtaining the
+    /// buffer inside the decode's closure, which is a rearrangement this
+    /// phase's "correctness only" scope does not buy anything by.
+    fn hint_wait_policy(&self, _policy: WaitPolicy) {}
+
+    /// Announced to the transport rather than kept here: what a cancellation
+    /// interrupts is the fetch, and a decode between two fetches is bounded by
+    /// one block.
+    fn hint_cancellation(&self, cancel: Arc<Cancellation>) {
+        self.source.hint_cancellation(cancel);
+    }
+
+    /// The transport's, unchanged — the object's identity is the object's,
+    /// whatever is compressed inside it.
+    fn remote_identity(&self) -> Option<RemoteIdentity> {
+        self.source.remote_identity()
+    }
+
+    /// Announced to the transport, which is what carries the precondition on
+    /// every fetch — so every window a walk or a block decode asks for is
+    /// pinned to the version this run opened on, without either knowing
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D10", "D11").
+    fn hint_in_flight_identity(&self, binds: bool) {
+        self.source.hint_in_flight_identity(binds);
+    }
+
+    fn seek_table(&self) -> Option<xz_seek::SeekTable> {
+        Some((*self.table).clone())
+    }
+
+    /// [`xz_partition_advice`], as the local source's is: the cut points are a
+    /// property of the file rather than of the transport, and reading them off
+    /// the arm actually taken is what keeps
+    /// `crate::stream::compressed_block_path_declined` honest here.
+    fn partitions(&self, range: Range<u64>) -> Partitioning {
+        xz_partition_advice(
+            &self.table,
+            self.block_path().map(|cache| &**cache),
+            self.charged_chunk_bytes(),
+            self.decode_bytes,
+            range,
+        )
+    }
+
+    fn block_decode_bytes(&self) -> Option<u64> {
+        Some(self.block_worker_memory()?.at(1))
+    }
+
+    /// **One**, which is the trait's own default and this phase's answer for
+    /// everything a fetched source could recommend concurrency for
+    /// (`docs/design/roadmap-P14-remote-input.md`, "D7"). The file's block
+    /// count says what may be cut, not what a network should be asked for at
+    /// once; the phase that tunes the network is where a reading replaces it.
+    fn default_workers(&self) -> usize {
+        1
+    }
+
+    /// What a reader of *this file* holds, which the transport does not change
+    /// — the same shape [`XzSource::default_worker_memory`] answers, with the
+    /// compressed window folded into the decoder term. It is a recommendation
+    /// about memory rather than about concurrency, so D7's silence on the
+    /// plain remote source — which has no block structure to charge for — does
+    /// not reach it.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         self.block_worker_memory()
     }
@@ -3537,10 +4080,12 @@ impl ByteRangeSource for RemoteSource {
 /// layer is read off the probe's magic bytes, and `known` is checked rather
 /// than believed.
 ///
-/// **A remote `.xz` is refused by name rather than read as plain.** This
-/// build's [`XzSource`] opens a path, so the composition is real work and not
-/// a free consequence of the trait; it is the row after this one
-/// (`docs/design/roadmap-P14-remote-input.md`, "D1").
+/// **A remote `.xz` is read exactly as a local one is**, through
+/// [`FetchedXzSource`] over the plain source rather than through [`XzSource`],
+/// which pulls from a file (`docs/design/roadmap-P14-remote-input.md`, "D1",
+/// "D13"). Where the cache holds the seek table there is no walk at all; where
+/// it does not, the walk is announced before it is paid for
+/// ([`announce_remote_walk`]).
 #[cfg(feature = "http")]
 pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     let Location::Remote(object) = &origin.location else {
@@ -3551,20 +4096,75 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
     };
     let probe = origin.probe().await?;
     let is_xz = probe.leading().starts_with(&XZ_MAGIC);
+    let fetched =
+        || -> Arc<dyn ByteRangeSource> { Arc::new(RemoteSource::new(Arc::clone(object), probe)) };
     match (is_xz, known) {
-        (true, _) => Err(Error::SourceNotReadable {
-            origin: origin.to_string(),
-            why: "it is `.xz`-compressed, and this build reads a compressed dump only from a \
-                  local file — fetch it once and read the copy"
-                .to_string(),
-        }),
-        // "The cache describes a different file", in the one direction a plain
-        // object can be in it: a compression index for bytes that are plain.
-        (false, KnownCompression::Xz(_)) => Ok(Recognized::Mismatch),
+        // The saving, and the reason the cold walk below is worth announcing
+        // rather than refusing: a table from a previous walk of this object
+        // costs no round trip at all (`docs/design/decisions.md`, "D18").
+        (true, KnownCompression::Xz(table)) => {
+            match FetchedXzSource::with_table(fetched(), probe.stored_size(), table) {
+                Ok(source) => Ok(Recognized::Source(Arc::new(source))),
+                Err(Error::Xz(xz_seek::Error::InvalidTable { .. })) => Ok(Recognized::Mismatch),
+                Err(e) => Err(e),
+            }
+        }
+        (true, KnownCompression::Unknown) => {
+            let source = fetched();
+            announce_remote_walk(origin);
+            let (table, fetches) =
+                walk_seek_table(&*source, probe.stored_size(), probe.leading()).await?;
+            tracing::info!(
+                source = %origin,
+                streams = table.stream_count(),
+                blocks = table.block_count(),
+                fetches,
+                "seek table build complete",
+            );
+            Ok(Recognized::Source(Arc::new(FetchedXzSource::with_table(
+                source,
+                probe.stored_size(),
+                table,
+            )?)))
+        }
+        // Both directions of "the cache describes a different file", exactly
+        // as `open_local` reads them.
+        (true, KnownCompression::Plain) | (false, KnownCompression::Xz(_)) => {
+            Ok(Recognized::Mismatch)
+        }
         (false, KnownCompression::Unknown | KnownCompression::Plain) => {
-            Ok(Recognized::Source(Arc::new(RemoteSource::new(Arc::clone(object), probe))))
+            Ok(Recognized::Source(fetched()))
         }
     }
+}
+
+/// Say, **before** it is paid for, what walking a fetched `.xz` file's stream
+/// footers is about to cost, and what the two ways out of it are
+/// (`docs/design/roadmap-P14-remote-input.md`, "D1").
+///
+/// **Not refused, announced.** A threshold above which a cold walk was
+/// rejected would be a tuned number this phase has said it produces none of,
+/// and it would deny a user a command that works; the precedent is exact —
+/// `docs/design/decisions.md`, "D19" warns about a one-block `.xz` and refuses
+/// nothing, because only the user can judge one decode-from-zero. The same
+/// sentence holds with round trips in place of a decode.
+///
+/// **On the status channel rather than as a `Diagnostic`.** A
+/// `crate::Diagnostic` is carried on a `DumpIndex` or a `CacheStatus`, both of
+/// which are built from a source that exists — which is after the walk, and
+/// the whole point of this line is that it arrives before. The status channel
+/// is where the local source's own "seek table build started" already goes
+/// (`docs/design/decisions.md`, "D64").
+///
+#[cfg(feature = "http")]
+fn announce_remote_walk(origin: &Origin) {
+    tracing::warn!(
+        source = %origin,
+        "seek table build started: a fetched `.xz` file's stream footers are walked one \
+         request at a time, which is one round trip per stream — thousands, on a dump \
+         compressed in many small streams. It is paid once: keep the cache this run \
+         writes, or parse a local copy and read that.",
+    );
 }
 
 #[cfg(test)]
@@ -4112,8 +4712,7 @@ mod tests {
         assert!(table.is_seekable(), "the table has boundaries to advise");
 
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
-        let decoding =
-            XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..4 * 4096);
+        let decoding = xz_partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..4 * 4096);
         assert_eq!(decoding.max_partitions(), Some(4));
         assert_eq!(decoding.retained_unit(), RetainedUnit::Partition);
         assert_eq!(
@@ -4122,7 +4721,7 @@ mod tests {
             "one block slot, the chunk buffer, and the decoder's own retention"
         );
 
-        let streaming = XzSource::partition_advice(&table, None, 1 << 20, 9 << 20, 0..4 * 4096);
+        let streaming = xz_partition_advice(&table, None, 1 << 20, 9 << 20, 0..4 * 4096);
         assert_eq!(streaming.max_partitions(), Some(1));
         assert_eq!(
             streaming.partition_bytes(),
@@ -4204,7 +4803,7 @@ mod tests {
         let table = block_table(blocks);
         let size = blocks * 4096;
         let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
-        let advice = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
+        let advice = xz_partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
         // The charge is a block, a chunk and the decoder — orders of
         // magnitude above the 4 KiB unit here, so a window sized by it would
         // swallow the whole file.
@@ -4986,6 +5585,221 @@ mod tests {
         assert_eq!(source.size().await.unwrap(), payload.len() as u64);
         let got = source.read_range(9_000, 4000).await.unwrap();
         assert_eq!(&got[..], &payload[9_000..13_000]);
+    }
+
+    // -----------------------------------------------------------------------
+    // The fetched `.xz` source: one block at a time, out of windows the caller
+    // fetched (`docs/design/roadmap-P14-remote-input.md`, "D1", "D13", "D20").
+    //
+    // The transport here is a local file, which is exactly the point: the
+    // window-fed path has no local twin to disagree with, so putting a file
+    // through it is what makes a divergence surface as a disagreement between
+    // two read paths over one byte stream rather than between two sources.
+    // -----------------------------------------------------------------------
+
+    /// A `ByteRangeSource` that counts the reads made through it, so an
+    /// assertion about the *request stream* — how many fetches a walk spends —
+    /// is possible without a server.
+    struct Counting {
+        inner: Arc<dyn ByteRangeSource>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl ByteRangeSource for Counting {
+        fn read_range(
+            &self,
+            offset: u64,
+            len: usize,
+        ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.inner.read_range(offset, len)
+        }
+        fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+            self.inner.size()
+        }
+        fn modified(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+            self.inner.modified()
+        }
+    }
+
+    /// A fetched source over the compressed file at `path`, walked the way
+    /// `open_remote` walks one: the probe's leading bytes first, then whatever
+    /// the machine asks for.
+    async fn fetched_xz(path: &Path) -> (FetchedXzSource, usize) {
+        let transport: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
+        let stored_size = transport.size().await.unwrap();
+        let leading = transport.read_range(0, ORIGIN_LEADING_BYTES).await.unwrap();
+        let (table, fetches) = walk_seek_table(&*transport, stored_size, &leading).await.unwrap();
+        (FetchedXzSource::with_table(transport, stored_size, table).unwrap(), fetches)
+    }
+
+    /// The composition, end to end: a table built by driving the walk over a
+    /// byte-range source, and every byte of the file read back out of fetched
+    /// windows.
+    #[tokio::test]
+    async fn a_fetched_xz_source_reads_what_the_file_holds() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let (source, _) = fetched_xz(compressed.path()).await;
+
+        assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+        assert_eq!(
+            source.stored_size().await.unwrap(),
+            std::fs::metadata(compressed.path()).unwrap().len()
+        );
+        assert!(source.seek_table().unwrap().block_count() > 1, "the fixture must be split");
+        // Inside one block, straddling two, and the whole stream.
+        assert_eq!(&source.read_range(100, 200).await.unwrap()[..], &payload[100..300]);
+        assert_eq!(&source.read_range(4_000, 4_000).await.unwrap()[..], &payload[4_000..8_000]);
+        assert_eq!(&source.read_range(0, payload.len()).await.unwrap()[..], &payload[..]);
+    }
+
+    /// The walked table is the same table the local source's own walk
+    /// produces over the same file — the two drivers differ in who fetches
+    /// and in nothing else.
+    #[tokio::test]
+    async fn a_walked_table_is_the_one_the_local_walk_produces() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let (source, _) = fetched_xz(compressed.path()).await;
+        let local = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+        assert_eq!(source.seek_table().as_ref(), Some(&local));
+    }
+
+    /// **The probe's bytes are the walk's first request**, so a caller holding
+    /// them spends no round trip on it: the same walk costs one more fetch
+    /// when nothing is handed in.
+    #[tokio::test]
+    async fn the_walk_spends_no_fetch_on_leading_bytes_the_caller_holds() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let file: Arc<dyn ByteRangeSource> =
+            Arc::new(LocalFileSource::open(compressed.path()).unwrap());
+        let stored_size = file.size().await.unwrap();
+        let leading = file.read_range(0, ORIGIN_LEADING_BYTES).await.unwrap();
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counting = Counting { inner: Arc::clone(&file), reads: Arc::clone(&reads) };
+        let (_, with_probe) = walk_seek_table(&counting, stored_size, &leading).await.unwrap();
+        assert_eq!(with_probe, reads.load(Ordering::Relaxed));
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counting = Counting { inner: file, reads: Arc::clone(&reads) };
+        let (_, without) = walk_seek_table(&counting, stored_size, &[]).await.unwrap();
+        assert_eq!(without, with_probe + 1);
+    }
+
+    /// The piecewise arm: a budget too small to hold a decoded block reads the
+    /// same bytes out of the same windows, through `xz_seek::BlockRead` rather
+    /// than into a pooled slot (D20). The two arms are asserted against each
+    /// other rather than against a constant, which is what makes a divergence
+    /// visible as one.
+    #[tokio::test]
+    async fn a_budget_too_small_for_a_block_reads_the_same_bytes_in_pieces() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let (source, _) = fetched_xz(compressed.path()).await;
+        assert!(source.block_path().is_some(), "the default budget holds a 4 KiB block");
+
+        source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        assert!(source.block_path().is_none(), "a one-byte budget holds no block");
+
+        assert_eq!(&source.read_range(100, 200).await.unwrap()[..], &payload[100..300]);
+        assert_eq!(&source.read_range(4_000, 4_000).await.unwrap()[..], &payload[4_000..8_000]);
+        assert_eq!(&source.read_range(0, payload.len()).await.unwrap()[..], &payload[..]);
+    }
+
+    /// A read past the end of the uncompressed stream is the same
+    /// `UnexpectedEof` every other source raises, on both arms.
+    #[tokio::test]
+    async fn a_read_past_the_end_is_refused_on_both_arms() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let (source, _) = fetched_xz(compressed.path()).await;
+        let past = payload.len() as u64;
+        for budget in [None, Some(1)] {
+            source.hint_parallelism(Parallelism::Serial { memory_bytes: budget });
+            let err = source.read_range(past - 10, 100).await.unwrap_err();
+            assert!(matches!(&err, Error::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof));
+        }
+    }
+
+    /// A table that does not describe this object is refused by `xz_seek`'s
+    /// validation without a byte being read, which is what `open_remote`
+    /// reports as `Recognized::Mismatch` rather than paying a walk.
+    #[tokio::test]
+    async fn a_table_from_another_file_is_an_invalid_table_rather_than_a_read() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let other = xz_compress(&payload[..1000], &["--block-size=512"]);
+        let table = XzSource::open(other.path()).unwrap().seek_table().unwrap();
+
+        let transport: Arc<dyn ByteRangeSource> =
+            Arc::new(LocalFileSource::open(compressed.path()).unwrap());
+        let stored_size = transport.size().await.unwrap();
+        let err = FetchedXzSource::with_table(transport, stored_size, table).unwrap_err();
+        assert!(matches!(err, Error::Xz(xz_seek::Error::InvalidTable { .. })), "{err:?}");
+    }
+
+    /// The single-block shape reads correctly too — there is no seek structure
+    /// to cut at, so every read decodes the one block from its start, and the
+    /// piecewise arm is what keeps that from allocating the whole plaintext.
+    #[tokio::test]
+    async fn a_single_block_file_is_read_by_the_same_two_arms() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &[]);
+        let (source, _) = fetched_xz(compressed.path()).await;
+        assert!(!source.seek_table().unwrap().is_seekable());
+        assert_eq!(&source.read_range(1_000, 500).await.unwrap()[..], &payload[1_000..1_500]);
+        source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
+        assert_eq!(&source.read_range(1_000, 500).await.unwrap()[..], &payload[1_000..1_500]);
+    }
+
+    /// **A wait is never taken here, whatever a loop grants.** The chunk
+    /// buffer is obtained on the runtime's own task rather than inside a
+    /// `spawn_blocking` closure, so a `Condvar` wait would block the thread a
+    /// releasing sibling needs. The local source takes the same grant, which
+    /// is what makes this a difference between two transports rather than a
+    /// policy nobody implements.
+    #[tokio::test]
+    async fn a_fetched_source_never_takes_the_wait_a_loop_grants() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let (fetched, _) = fetched_xz(compressed.path()).await;
+        fetched.hint_wait_policy(WaitPolicy::MayWait);
+        assert_eq!(fetched.pool.policy(), WaitPolicy::NeverWait);
+
+        let local = XzSource::open(compressed.path()).unwrap();
+        local.hint_wait_policy(WaitPolicy::MayWait);
+        assert_eq!(local.pool.policy(), WaitPolicy::MayWait);
+    }
+
+    /// The compressed window is charged rather than left unpooled: the
+    /// per-reader charge a caller solves a budget against carries the widest
+    /// window this file's blocks would make us fetch, on top of what the local
+    /// source charges for the same file (D20).
+    #[tokio::test]
+    async fn the_compressed_window_is_inside_the_charge() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let (source, _) = fetched_xz(compressed.path()).await;
+        let table = source.seek_table().unwrap();
+        let widest = table.blocks.iter().map(|b| b.total_size()).max().unwrap();
+        assert!(widest > 0);
+
+        let local = XzSource::open(compressed.path()).unwrap();
+        let fetched_charge = source.block_decode_bytes().unwrap();
+        let local_charge = local.block_decode_bytes().unwrap();
+        // The local source's decoder charge carries an input chunk this one
+        // never builds, so the two differ by the window less that chunk rather
+        // than by the window alone.
+        assert!(
+            fetched_charge > local_charge.saturating_sub(widest),
+            "the window must be billed: fetched {fetched_charge}, local {local_charge}, \
+             widest window {widest}",
+        );
     }
 
     /// **The walk is actually skipped**, tested behaviourally rather than by

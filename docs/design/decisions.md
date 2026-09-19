@@ -107,9 +107,10 @@ Rejected: a path dependency, which fails `cargo check` without the sibling check
 ### D15 A read decodes whole blocks and retains them; streaming is the fallback
 Whole-block decode, LRU-retained. The mutexed streaming reader stays for a file whose largest block
 the budget cannot hold (plain `xz bigfile` is single-block), and there `partitions()` answers one
-partition, two readers forcing each other's restarts. Decodes read through a `File`, not a `Window`
-(larger than the chunk it spares; reopens with ranged GETs). Two misses on one block decode it twice
-(`KD20`): an in-flight map would lock the common case to spare a boundary collision.
+partition, two readers forcing each other's restarts. `XzSource` decodes through a `File`, a
+`Window` being larger than the chunk it spares; `FetchedXzSource`, which pulls from nothing, fetches
+and charges that window per block. Two misses on one block decode it twice (`KD20`): an in-flight
+map would lock the common case to spare a boundary collision.
 
 ### D16 Block decode is afforded out of the stated budget, keyed on largest block
 `BlockCache::affordable` compares the charge at one reader (unit, chunk, decoder
