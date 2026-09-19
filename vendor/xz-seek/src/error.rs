@@ -1,11 +1,11 @@
 //! The error taxonomy.
 //!
-//! One `#[non_exhaustive]` enum of twelve variants: R7's six, plus
+//! One `#[non_exhaustive]` enum of thirteen variants: R7's six, plus
 //! [`Error::Io`], [`Error::InvalidTable`], [`Error::UnsupportedCheck`],
-//! [`Error::BlockDataError`], [`Error::BackendUnavailable`] and
-//! [`Error::BufferTooSmall`]. The rationale
+//! [`Error::BlockDataError`], [`Error::BackendUnavailable`],
+//! [`Error::BufferTooSmall`] and [`Error::OffsetPastBlockEnd`]. The rationale
 //! for each addition is in `docs/design/roadmap.md`, "Errors name the case and
-//! the offset", and in `docs/design/architecture.md`, "The error taxonomy".
+//! the offset"; the enum's shape is `docs/design/decisions.md`, "D28".
 //!
 //! **Every variant that is about a file carries the byte offset at which the
 //! fault was detected, in the compressed file's coordinate space** — one space,
@@ -15,15 +15,16 @@
 //!
 //! **A variant about the *build* or the caller's own call rather than about the
 //! file reports no position**, and [`Error::compressed_offset`] returns `None`
-//! for it. There are two — [`Error::BackendUnavailable`], the build does not
-//! carry the decoder the caller named, and [`Error::BufferTooSmall`], the buffer
-//! offered to a whole-block decode is shorter than the block — and the rule is
+//! for it. There are three — [`Error::BackendUnavailable`], the build does not
+//! carry the decoder the caller named; [`Error::BufferTooSmall`], the buffer
+//! offered to a whole-block decode is shorter than the block; and
+//! [`Error::OffsetPastBlockEnd`], a handle asked to advance beyond the block it
+//! holds — and the rule is
 //! stated rather than the count because the match below is what enforces it: it
 //! is exhaustive with named arms, so a further variant fails to compile until
 //! somebody decides which side it falls on. A fabricated `compressed_offset: 0`
-//! would ask nobody that. See `docs/design/architecture.md`,
-//! "`BackendUnavailable` is the variant with no offset", which files both
-//! rejected alternatives.
+//! would ask nobody that. The rejected alternatives are
+//! `docs/design/decisions.md`, "D29".
 //!
 //! # When a fault is "unsupported" rather than "damaged"
 //!
@@ -46,17 +47,23 @@
 //! since names something that is not a fault in a file — a build that cannot
 //! serve the request, a call that cannot be served.
 //!
-//! **A variant joins that other half only if it is raised before any byte of the
-//! file is read.** That is the bar, rather than "it arrived with an entry point
-//! that could fail that way", which admits anything: every new entry point can
-//! invent a failure. It is what keeps [`Error::compressed_offset`]'s `None`
-//! honest — a fault found mid-read that named no offset would leave a caller who
-//! has already been handed bytes with no way to place it — and both variants
-//! satisfy it, the backend resolved in the constructor and the buffer measured
-//! before the block header. **Each is held to it by a test that drives its entry
-//! point over a source answering nothing**, so a check moved below a read is a
-//! failure rather than a silent demotion: `tests/taxonomy.rs` for the backend,
-//! `src/task.rs`'s short-buffer test for the buffer.
+//! **A variant joins that other half only if the caller can still place the
+//! fault**: either it is raised before any byte of the file is read, or it names
+//! a position in the *uncompressed* coordinate space. That is the bar, rather
+//! than "it arrived with an entry point that could fail that way", which admits
+//! anything: every new entry point can invent a failure. It is what keeps
+//! [`Error::compressed_offset`]'s `None` honest — a fault found mid-read that
+//! named no position at all would leave a caller who has already been handed
+//! bytes with no way to place it. [`Error::BackendUnavailable`] and
+//! [`Error::BufferTooSmall`] satisfy the first clause, the backend resolved in
+//! the constructor and the buffer measured before the block header, and **each
+//! is held to it by a test that drives its entry point over a source answering
+//! nothing**, so a check moved below a read is a failure rather than a silent
+//! demotion: `tests/taxonomy.rs` for the backend, `src/task.rs`'s short-buffer
+//! test for the buffer. [`Error::OffsetPastBlockEnd`] satisfies the second: it
+//! arrives mid-block carrying the block the target missed, which places it in
+//! the uncompressed space. The clause is about naming a position, not about
+//! answering [`Error::uncompressed_range`], which stays the damage variants'.
 //!
 //! **This partition is the crate's, not `liblzma`'s**, and agreement with the
 //! reference decoder is not what decides it: `liblzma` answers `LZMA_DATA_ERROR`
@@ -81,9 +88,11 @@ pub enum Error {
     /// The source does not hold an `.xz` file: the six magic bytes at offset 0
     /// are not `\xfd7zXZ\x00`.
     ///
-    /// The magic is read once per reader, and it is what separates this from
-    /// [`Error::Truncated`]: both a clipped download and a random file fail at
-    /// the tail, and only the magic says which one the caller has.
+    /// The magic is read once by a reader that walks, and it is what separates
+    /// this from [`Error::Truncated`]: both a clipped download and a random
+    /// file fail at the tail, and only the magic says which one the caller has.
+    /// A reader built from a persisted table reads no byte at all, so this
+    /// variant is unreachable for it.
     NotXz {
         /// Always 0 — the magic is at the start of the file.
         compressed_offset: u64,
@@ -197,7 +206,7 @@ pub enum Error {
     UnsupportedCheck {
         /// The block being decoded when the unsupported check came due.
         compressed_offset: u64,
-        /// The reserved id, `0..=0x0f`.
+        /// The reserved id the stream's flags carried, `0..=0x0f`.
         check_id: u8,
     },
 
@@ -218,8 +227,10 @@ pub enum Error {
     /// built, so the bytes the chain came from are known good, and a
     /// mis-mapping fails over the whole fixture corpus rather than at one file.
     BlockDataError {
-        /// The byte the decoder stopped at, exact:
-        /// `block header offset + header size + input consumed`.
+        /// `block header offset + header size + input consumed`, always inside
+        /// the payload. Under `liblzma` that is the byte the decoder stopped
+        /// at; `xz4rust` discards a failed call's progress, so under it this
+        /// is the first byte of the chunk the decode failed in.
         compressed_offset: u64,
         /// The whole block's uncompressed range.
         uncompressed_range: Range<u64>,
@@ -261,12 +272,40 @@ pub enum Error {
     /// [`Error::compressed_offset`] is `None` — the rule for every variant
     /// about the build rather than the file, and this is the only one. A build
     /// carrying *no* backend is a different thing entirely and is a compile
-    /// error — see `docs/design/architecture.md`, "A build with no backend is a
-    /// compile error".
+    /// error.
     BackendUnavailable {
         /// The backend that was asked for. [`Backend::feature`] is the Cargo
         /// feature that would compile it.
         backend: Backend,
+    },
+
+    /// [`BlockRead::advance_to`](crate::BlockRead::advance_to) was asked for an
+    /// offset past the end of the block its handle holds.
+    ///
+    /// A handle is one block's, and the next block's bytes are the next
+    /// [`BlockTask`](crate::BlockTask)'s, so there is nothing to advance to. It
+    /// is a variant rather than a panic because the bound it crossed is an
+    /// **index claim**: the block's end comes from the table, so a target past
+    /// it may be the right answer and the *table* wrong, and a value that
+    /// reached us from a table a caller persisted is data, however wrong, which
+    /// earns a refusal (`docs/design/roadmap.md`, "What panics, and what joins
+    /// the error taxonomy"). Advancing *backward* crosses the other kind of
+    /// bound — [`BlockRead::position`](crate::BlockRead::position) is this
+    /// decode's own count of what it has produced — so no state of the file
+    /// makes such a target right, and it still panics.
+    ///
+    /// It names no compressed offset: the arithmetic that produced the target
+    /// never touched the compressed space, and
+    /// [`BlockTask::compressed_range`](crate::BlockTask::compressed_range) has
+    /// the block's compressed extent for a caller that wants it. It does not
+    /// answer [`Error::uncompressed_range`] either, which stays the two damage
+    /// variants' accessor; the block it holds is in `block`, which says *which*
+    /// entry of a persisted table disagreed with the file.
+    OffsetPastBlockEnd {
+        /// The file-absolute uncompressed offset the handle was asked for.
+        uncompressed_offset: u64,
+        /// The block the handle holds, whose end the offset is past.
+        block: Range<u64>,
     },
 }
 
@@ -276,9 +315,11 @@ impl Error {
     ///
     /// Every variant about a file has one, which is why this is a method and
     /// not a match the caller writes. A variant about the build or the caller's
-    /// own call returns `None` — [`Error::BackendUnavailable`] and
-    /// [`Error::BufferTooSmall`], both raised before a byte of the file is
-    /// read, which is the rule the module docs state for admitting a third.
+    /// own call returns `None` — [`Error::BackendUnavailable`],
+    /// [`Error::BufferTooSmall`] and [`Error::OffsetPastBlockEnd`], the first
+    /// two raised before a byte of the file is read and the third naming its
+    /// position in the uncompressed space instead, which is the rule the module
+    /// docs state for admitting a fourth.
     ///
     /// **The match is exhaustive with named arms on purpose.** It is the one
     /// place a new variant is obliged to say whether it names a byte in a file,
@@ -307,11 +348,17 @@ impl Error {
             | Error::BlockDataError {
                 compressed_offset, ..
             } => Some(*compressed_offset),
-            Error::BufferTooSmall { .. } | Error::BackendUnavailable { .. } => None,
+            Error::BufferTooSmall { .. }
+            | Error::BackendUnavailable { .. }
+            | Error::OffsetPastBlockEnd { .. } => None,
         }
     }
 
     /// The uncompressed range the fault ruins, where the variant names one.
+    ///
+    /// Damage only: [`Error::OffsetPastBlockEnd`] carries a block that is not
+    /// ruined, and keeps it in a field of its own instead
+    /// (`docs/design/decisions.md`, "D68").
     pub fn uncompressed_range(&self) -> Option<Range<u64>> {
         match self {
             Error::BlockCheckFailed {
@@ -335,8 +382,8 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The variants with no file offset are written first and return, so
-        // `at` is unconditionally there for every arm below.
+        // The variants with no compressed offset are written first and return,
+        // so `at` is unconditionally there for every arm below.
         match self {
             Error::BackendUnavailable { backend } => {
                 return write!(
@@ -353,11 +400,22 @@ impl fmt::Display for Error {
                      needed and {given} were offered"
                 );
             }
+            Error::OffsetPastBlockEnd {
+                uncompressed_offset,
+                block,
+            } => {
+                return write!(
+                    f,
+                    "uncompressed offset {uncompressed_offset} is past the end of the \
+                     block covering {}..{}",
+                    block.start, block.end
+                );
+            }
             _ => {}
         }
         let at = self
             .compressed_offset()
-            .expect("only the two variants above have no offset");
+            .expect("only the three variants above have no compressed offset");
         match self {
             Error::NotXz { .. } => write!(f, "not an xz file: bad magic at offset {at}"),
             Error::Truncated { .. } => write!(f, "truncated xz file: ends at offset {at}"),
@@ -401,8 +459,11 @@ impl fmt::Display for Error {
                  block covers uncompressed {}..{}",
                 uncompressed_range.start, uncompressed_range.end
             ),
-            // Handled above, where their lack of an offset is what selects them.
-            Error::BackendUnavailable { .. } | Error::BufferTooSmall { .. } => unreachable!(),
+            // Handled above, where their lack of a compressed offset is what
+            // selects them.
+            Error::BackendUnavailable { .. }
+            | Error::BufferTooSmall { .. }
+            | Error::OffsetPastBlockEnd { .. } => unreachable!(),
         }
     }
 }
@@ -473,8 +534,8 @@ mod tests {
         }
     }
 
-    /// The two variants that are not about a file have no offset — and each
-    /// names what a caller would act on instead.
+    /// The variants that are not about a file have no compressed offset — and
+    /// each names what a caller would act on instead.
     #[test]
     fn the_buffer_variant_has_no_offset_and_names_both_lengths() {
         let e = Error::BufferTooSmall {
@@ -508,12 +569,35 @@ mod tests {
         }
     }
 
+    /// The third variant with no compressed offset, and the only one of the
+    /// three that names a position at all — in the *uncompressed* space, which
+    /// is the bar the module docs state for admitting it. It places itself
+    /// through its own field, not through an accessor: `uncompressed_range()`
+    /// is the damage variants', and answering it here would make one accessor
+    /// mean both "bytes this ruins" and "a block that is fine".
+    #[test]
+    fn the_past_the_block_variant_answers_neither_accessor() {
+        let e = Error::OffsetPastBlockEnd {
+            uncompressed_offset: 4_096,
+            block: 1_024..2_048,
+        };
+        assert_eq!(e.compressed_offset(), None);
+        assert_eq!(e.uncompressed_range(), None);
+        let text = e.to_string();
+        assert!(
+            text.contains("4096") && text.contains("1024") && text.contains("2048"),
+            "{text:?}"
+        );
+    }
+
     #[test]
     fn only_the_two_range_variants_name_an_uncompressed_range() {
-        let ranged: Vec<_> = every_variant()
-            .iter()
-            .filter_map(|e| e.uncompressed_range())
-            .collect();
+        let mut all = every_variant();
+        all.push(Error::OffsetPastBlockEnd {
+            uncompressed_offset: 256,
+            block: 128..192,
+        });
+        let ranged: Vec<_> = all.iter().filter_map(|e| e.uncompressed_range()).collect();
         assert_eq!(ranged, vec![0..64, 64..128]);
     }
 

@@ -10,7 +10,7 @@
 //! What it *is* told is how big the block is — [`PayloadDecoder::new`] takes the
 //! payload's length and the block's uncompressed length — because that is the
 //! least a backend that decodes *streams* needs in order to find a *block's*
-//! end. See `docs/design/architecture.md`, "The block-payload seam".
+//! end. See `docs/design/decisions.md`, "D15".
 //!
 //! `liblzma` fits it natively and ignores both sizes.
 //! `Stream::new_raw_decoder` over a chain built from
@@ -35,9 +35,8 @@
 //! to recognise a single id — each filter's property length is an explicit
 //! variable-length integer — and recognises one only to derive LZMA2's
 //! dictionary size and to validate a property field's length, both of which are
-//! the format's business rather than a backend's. Reasoning:
-//! `docs/status/history/2026-09-03.md`, "Buildability is the backend's to
-//! declare, not the parse's".
+//! the format's business rather than a backend's. See
+//! `docs/design/decisions.md`, "D15".
 //!
 //! Both arms answer the same set, and the `xz4rust` arm checks it **before** it
 //! emits a header rather than letting the decoder discover an unknown id while
@@ -102,11 +101,9 @@ pub(crate) enum SeamError {
 /// Which implementation decodes a block's payload.
 ///
 /// Both variants exist whatever features are on, so a caller's `match` over
-/// this compiles in every configuration — which is worth more than making an
-/// unavailable request unrepresentable, the thing `cfg`-gated variants would
-/// buy at the price of an enum whose shape depends on how someone else
-/// configured the build. In a single-backend build the other variant is
-/// constructed nowhere here, and that is the point rather than dead code.
+/// this compiles in every configuration — `docs/design/decisions.md`, "D16".
+/// In a single-backend build the other variant is constructed nowhere here,
+/// and that is the point rather than dead code.
 ///
 /// Whether a build *carries* one is [`Backend::is_available`]'s question.
 /// Naming one it does not carry is [`crate::Error::BackendUnavailable`], raised
@@ -387,8 +384,7 @@ const STREAM_FLAGS: [u8; 2] = [0x00, 0x00];
 // **Compiled only under `--cfg xz_seek_decoder_reuse`, which no Cargo feature
 // can turn on.** It exists so that `F4` has a second arm to measure the shipped
 // one against; the seam builds a decoder per block and that is not in question
-// here. See "The decoder is built per block, and one `cfg` build reuses it" in
-// `docs/design/architecture.md`.
+// here. See `docs/design/decisions.md`, "D19".
 //
 // A *spare* rather than a shared decoder, because two `Xz4rust` arms can be
 // alive on one thread — a long-lived reader and a second one over the same
@@ -549,9 +545,16 @@ impl Xz4rust {
         // this crate approved, and `XzError::DictionaryTooLarge` is unreachable
         // because `needed_size > max` cannot hold.
         //
-        // `xz4rust` clamps both to its own 3 GiB `DICT_SIZE_MAX`, one property
-        // byte below what `liblzma` admits — deficiency: KD4, whose detail is in
-        // `docs/design/architecture.md`.
+        // Deficiency register: `deficiency: KD4` — `xz4rust` clamps both to its
+        // own 3 GiB `DICT_SIZE_MAX`, one property byte below what `liblzma`
+        // admits, so a block declaring the format's largest dictionary code
+        // decodes under one backend and not the other. Under this one it is
+        // `UnusableChain`, reached through `UnsupportedLzmaProperties`, since
+        // `props > 39` is refused before a size is computed at all.
+        // **(a) deliberate tradeoff** — reaching it needs a caller who also
+        // raised the memory limit past 3 GiB, so no fixture can carry the case
+        // without a 3 GiB allocation and there is nothing to test. Promoted by
+        // a real file that declares such a dictionary.
         let dict = dict_size(filters);
         #[cfg(not(xz_seek_decoder_reuse))]
         let decoder = xz4rust::XzDecoder::in_heap_with_alloc_dict_size(dict, dict);
@@ -855,10 +858,21 @@ enum Fault {
 #[cfg(feature = "xz4rust")]
 fn seam_error(e: &xz4rust::XzError, phase: Phase) -> SeamError {
     match (fault(e), phase) {
-        // A chain the format does not permit, or properties a filter refuses —
-        // and, where the block header's *framing* is what the decoder refused,
-        // this crate's own bug reported as the file's — deficiency: KD7, whose
-        // detail is in `docs/design/architecture.md`.
+        // A chain the format does not permit, or properties a filter refuses.
+        //
+        // Deficiency register: `deficiency: KD7` — `UnsupportedBlockHeaderOption`
+        // is raised both for the block header's framing, which
+        // [`crate::block::encode`] wrote, and for the chain, which the file
+        // supplied, and `Phase::Chain` cannot separate them: an `encode` bug in
+        // the block flags or the header padding is reported as `UnusableChain`,
+        // blaming the file, where the trailer phase's positional discriminator
+        // would have caught the equivalent. **(a) deliberate tradeoff** —
+        // `xz4rust` buffers and parses the whole block header in one go, so
+        // there is no boundary at which the framing bytes could be pushed
+        // separately; the byte-identity round trip over every real block header
+        // in the corpus is what catches such a bug instead, before any decoder
+        // sees it. Promoted by a real `encode` defect that reached a caller
+        // this way.
         //
         // Never [`SeamError::UnsupportedFilter`]: the arm's own allowlist has
         // already established that every id in the chain is one this crate
@@ -963,14 +977,19 @@ mod tests {
     /// Parallel block decode has to decide what crosses a thread boundary, and
     /// the answer it inherits is that a `BlockDecode` is a self-contained owned
     /// value whose only question mark was the backend's decoder — see
-    /// `docs/design/architecture.md`, "The block-payload seam". `liblzma`'s `Stream`
+    /// `docs/design/decisions.md`, "D22". `liblzma`'s `Stream`
     /// declares the impls; `xz4rust`'s decoder owns its dictionary and borrows
     /// nothing, so it holds by inference and this is what notices if that stops
     /// being true.
     ///
-    /// A test rather than a bound: nothing in this crate requires `Send` today,
-    /// and asserting it in the type system would be that phase's decision made
-    /// early.
+    /// **A test rather than a bound, and it now carries a public promise.**
+    /// [`crate::BlockRead`] is documented `Send` and holds a `BlockDecode`, so a
+    /// backend whose decoder stopped being `Send` would break that handle's
+    /// contract — which is why the property is asserted here, at the seam, where
+    /// a new arm meets it as an acceptance criterion rather than as a broken
+    /// consumer. Nothing states it as a where-clause: a bound on the seam would
+    /// withhold the whole crate from a backend that cannot offer it, where the
+    /// stated bound is that such a backend cannot serve the caller-held path.
     #[test]
     fn the_seam_is_send_under_every_compiled_backend() {
         fn assert_send<T: Send>() {}
@@ -1082,10 +1101,15 @@ mod tests {
     /// well-formed bytes of the right length, and options `liblzma` itself
     /// rejects.
     ///
-    /// **`xz4rust` does not check it** — deficiency: KD5, whose detail is in
-    /// `docs/design/architecture.md`. `xz` refuses such a file, so this is a
-    /// chain on which the pure-Rust backend and the oracle disagree; no fixture
-    /// carries one, because `xz` will not write one.
+    /// Deficiency register: `deficiency: KD5` — `xz4rust` reads the offset and
+    /// hands it to the filter without checking the alignment, so such a block
+    /// builds and decodes under that backend where `liblzma` and `xz` refuse
+    /// the chain. **(a) deliberate tradeoff** — validating it inside the arm is
+    /// a second and weaker copy of a rule this design leaves to the backend,
+    /// and `xz` will not write such a file, so only a handcrafted one reaches
+    /// it and under full verification the block's check then fails anyway.
+    /// Promoted by an `xz4rust` release that adds the check, or by a producer
+    /// that writes such chains.
     ///
     /// Pinned in both directions so that an `xz4rust` release which adds the
     /// check fails here rather than silently closing an entry nobody struck.

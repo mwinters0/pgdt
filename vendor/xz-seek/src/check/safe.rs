@@ -5,8 +5,7 @@
 //! `check::fast`, and it is the last of the three things that get that
 //! configuration's graph to "nothing outside the standard library permits
 //! `unsafe`" — the claim `scripts/unsafe_free.py` checks, and the rows it
-//! answers are in `docs/design/architecture.md`, "The default tree is not
-//! `unsafe`-free, and no feature makes it so".
+//! answers are in `docs/design/decisions.md`, "D53".
 //!
 //! The module is compiled under `any(not(feature = "fast-checks"), test)`, so
 //! it is **absent from a default release build** — nobody pays 48 KiB of
@@ -279,9 +278,8 @@ mod tests {
     /// Every intact fixture's plaintext, decoded once, so the two corpus tests
     /// below pay for `xz -dc` a single time each.
     ///
-    /// `bulk-blocks.xz` is in it: its 16 MiB costs 0.23 s across both tests,
-    /// which is not what the byte sweep excludes it over — `harness.md`,
-    /// "`bulk-blocks.xz` is out of the byte sweep and in everything else".
+    /// `bulk-blocks.xz` is in it: its 16 MiB costs little across both tests,
+    /// which is not what the byte sweep excludes it over.
     fn corpus() -> Vec<(&'static str, Vec<u8>)> {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
         fixtures_gen::FIXTURES

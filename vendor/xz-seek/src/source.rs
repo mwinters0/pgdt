@@ -84,15 +84,9 @@ pub trait CompressedSource {
 /// and a copying one are different sources as well as different branches, and a
 /// divergence surfaces as the wrong disagreement.
 ///
-/// **In this crate rather than in `harness`, because a `harness` type cannot
-/// satisfy this crate's own trait from inside `src/`** — the dev-dependency
-/// cycle links two instances of the library into the unit-test binary and their
-/// traits do not unify. See `docs/design/architecture.md`, "The declining
-/// wrapper is a `cfg(test)` type in the crate".
-///
-/// `#[cfg(test)] pub(crate)`, as `src/walk.rs`'s `Counting` and `src/task.rs`'s
-/// `Empty` are: the arms that consume it are `src/decode.rs`'s, so nothing
-/// outside the unit-test build needs to name it.
+/// `#[cfg(test)] pub(crate)` and in this crate rather than in `harness`, as
+/// `src/walk.rs`'s `Counting` and `src/task.rs`'s `Empty` are — see
+/// `docs/design/decisions.md`, "D3".
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Declining<S>(

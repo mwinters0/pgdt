@@ -220,10 +220,19 @@ def growth_since(repo: Path, stamp: str) -> Growth:
         if added != "-" and is_live_doc(path):
             docs += int(added) - int(deleted)
     comments = 0
+    # `is_source` per file, as the untracked pass below does: a `.rs` outside
+    # `CODE_ROOTS` is not this project's record, and a re-vendor of the frozen
+    # copy would otherwise spend the budget on comments no repoint may rake.
+    old, counting = "", False
     for line in _git(repo, "diff", "-U0", stamp, "--", "*.rs").splitlines():
-        if line.startswith("+++ ") or line.startswith("--- "):
+        if line.startswith("--- "):
+            old = line[6:] if line.startswith("--- a/") else ""
             continue
-        if line[:1] in "+-" and COMMENT_RE.match(line[1:]):
+        if line.startswith("+++ "):
+            new = line[6:] if line.startswith("+++ b/") else ""
+            counting = is_source(new or old)
+            continue
+        if counting and line[:1] in "+-" and COMMENT_RE.match(line[1:]):
             comments += 1 if line[0] == "+" else -1
     for path in _git(repo, "ls-files", "--others", "--exclude-standard").splitlines():
         lines = _lines(repo / path)

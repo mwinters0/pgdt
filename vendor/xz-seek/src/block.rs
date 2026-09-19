@@ -20,12 +20,11 @@
 //!
 //! # Why the chain is parsed here and not kept in the table
 //!
-//! The seek table holds no filter chain, on purpose — see
-//! `docs/design/architecture.md`, "The seek table". The
-//! header is read at seek time regardless, because it is the first bytes of the
-//! same range that carries the payload, so storing the chain would save no I/O
-//! and make the persisted table variable-length. What the read buys instead is a
-//! **detector**: the header's own CRC32 establishes that a block's
+//! The seek table holds no filter chain, on purpose — `docs/design/decisions.md`,
+//! "D9". The header is read at seek time regardless, because it is the first
+//! bytes of the same range that carries the payload, so storing the chain would
+//! save no I/O and make the persisted table variable-length. What the read buys
+//! instead is a **detector**: the header's own CRC32 establishes that a block's
 //! `compressed_offset` really points at a block header, which is the primary
 //! evidence behind [`Error::IndexInconsistent`].
 //!
@@ -78,14 +77,14 @@
 //! header, which is what makes it a seam (`src/backend.rs`'s module doc, first
 //! paragraph) — and it emits fresh bytes rather than keeping the ones
 //! [`read_header`] already read. Splicing would put "a block header" into the
-//! seam's vocabulary and make `KD3`'s two source reads into something
+//! seam's vocabulary and make the header's own read into something
 //! [`crate::decode`] has to keep alive across it. Emitting also gets the
 //! backend's own header validation for free: it re-parses the chain out of a
 //! CRC32 it checked, so an error here fails loudly rather than being trusted.
 //!
 //! `encode` is exact rather than merely acceptable, and
 //! `every_real_header_in_the_corpus_re_emits_byte_for_byte` is what says so:
-//! over all 91 headers `xz` wrote into the fixture corpus, parse then re-emit
+//! over every header `xz` wrote into the fixture corpus, parse then re-emit
 //! reproduces the original bytes. Decoding correctly is only indirect evidence
 //! — a wrong header that still happens to decode is exactly the fault that
 //! survives the differential sweep and surfaces on some other file.
@@ -95,7 +94,8 @@ use crate::source::CompressedSource;
 use crate::table::{BlockEntry, Check};
 use crate::walk::{inconsistent, le32, vli};
 
-/// `(0xff + 1) * 4` — the largest header the size byte can describe.
+/// `(0xff + 1) * 4` — the largest header the size byte can describe, and the
+/// format's own ceiling: `docs/design/xz-invariants.md`, `I26`.
 pub(crate) const HEADER_SIZE_MAX: u64 = 1024;
 
 /// Delta, whose one property byte is `distance - 1`.
@@ -160,8 +160,9 @@ pub(crate) struct BlockHeader {
 /// One read, of the header's largest possible extent or the block's own size,
 /// whichever is smaller. It stands alone: [`crate::decode`] reads the payload
 /// starting past the header rather than folding these bytes into the head of
-/// that range, which is `KD3` — free on a local file, a second range request
-/// per block over a remote source.
+/// that range — free on a local file, a second range request per block over a
+/// remote source, and neither over bytes the caller already holds
+/// ([`crate::decode`]'s module docs).
 pub(crate) fn read_header<S: CompressedSource>(
     source: &S,
     block: &BlockEntry,
@@ -284,8 +285,7 @@ pub(crate) fn parse(bytes: &[u8], block: &BlockEntry, check: Check) -> Result<Bl
 /// `uncompressed_size` the block's output length, each `Some` exactly when its
 /// flag bit is to be set. **The `xz4rust` arm passes `Some` for both**, so that
 /// the decoder enforces them and its `EndOfStream` lands on the block's last
-/// byte by being checked rather than by being hoped for
-/// (`docs/design/architecture.md`, "Two arms, and which one runs"). Passing the
+/// byte by being checked rather than by being hoped for. Passing the
 /// *original's* flags is what the round-trip test does, and it is the only
 /// caller that does.
 ///
@@ -814,10 +814,10 @@ mod tests {
             }
         }
 
-        // The twenty-two fixtures whose indexes are intact, and the block column
-        // of `harness.md`'s fixture table summed over the twenty-one that are
-        // not `bulk-blocks.xz` — whose 256 are re-emitted here and deliberately
-        // not counted into the floors, per this test's docs.
+        // The twenty-two fixtures whose indexes are intact, and their blocks
+        // summed over the twenty-one that are not `bulk-blocks.xz` — whose 256
+        // are re-emitted here and deliberately not counted into the floors, per
+        // this test's docs.
         assert_eq!(files, 22);
         assert!(headers >= 97, "{headers} headers re-emitted");
         assert!(declaring >= 4, "{declaring} headers declare a size");

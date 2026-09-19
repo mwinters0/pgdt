@@ -4,8 +4,7 @@
 //! fetched. It is what lets a block decode be driven over a buffer instead of
 //! over a device without inverting the seam: a worker is handed the block and a
 //! window holding that block's compressed range, and pulls out of it exactly as
-//! it pulls out of a file — see `docs/design/architecture.md`, "The window is a
-//! source over bytes someone else fetched".
+//! it pulls out of a file — `docs/design/decisions.md`, "D4", "D5".
 //!
 //! Two properties are the whole of its contract, and both exist so that a
 //! mistake in the *caller's* range arithmetic is reported as a mistake:
@@ -123,14 +122,9 @@ impl<B: AsRef<[u8]>> Window<B> {
     }
 }
 
-/// The impl bound is the backing's bound and nothing more.
-///
-/// A thread capability on the backing would enable nothing here: `Send` and
-/// `Sync` on `Window<B>` are auto-traits that follow from `B` whatever this impl
-/// says, and the bulk read asks for what it needs at its own signature. What a
-/// bound here would do is withhold the impl from a non-`Sync` backing such as
-/// `Rc<[u8]>` and tax generic code bounded by `AsRef<[u8]>` alone — which is the
-/// rule [`CompressedSource`] itself states.
+/// The impl bound is the backing's bound and nothing more: no thread capability,
+/// which is the rule [`CompressedSource`] itself states — see
+/// `docs/design/decisions.md`, "D5".
 impl<B: AsRef<[u8]>> CompressedSource for Window<B> {
     /// The bytes at `offset`, if the window holds every one the file would give.
     ///
@@ -216,15 +210,10 @@ mod tests {
     ///
     /// `Send` and `Sync` on `Window<B>` are auto-traits that follow from `B`,
     /// and `Clone + Send + 'static` is what the bulk read's own signature asks
-    /// of a source — see `docs/design/architecture.md`, "The window is a source
-    /// over bytes someone else fetched". Both are inferred rather than declared,
-    /// so nothing in the type's own text would notice a field being added that
-    /// broke either, and the consumer that would notice is several slices out.
-    ///
-    /// A test rather than a bound, for the reason the `CompressedSource` impl
-    /// carries none either: a bound on the impl constrains the backing and says
-    /// nothing about the window, and asserting the capability in the type system
-    /// would tax every caller who does not need it.
+    /// of a source. Both are inferred rather than declared, so nothing in the
+    /// type's own text would notice a field being added that broke either; this
+    /// assertion is what notices. A test rather than a bound — see
+    /// `docs/design/decisions.md`, "D5".
     #[test]
     fn a_window_is_send_and_sync_and_satisfies_the_bulk_read_s_bound() {
         fn assert_send<T: Send>() {}

@@ -37,8 +37,8 @@
 //! so the check's last byte is at `compressed_offset + total_size - 1` and the
 //! padding is `total_size - unpadded_size` null bytes. So the region this
 //! module reads after the header is `total_size - header_size`, and the chunk
-//! that carries the payload's last bytes carries the at most thirty-five bytes
-//! behind them with it. Over the ranged-HTTP source R2 exists to serve that is
+//! that carries the payload's last bytes carries the at most sixty-seven bytes
+//! behind them with it — three of padding and a check of at most 64. Over the ranged-HTTP source R2 exists to serve that is
 //! one request rather than two, and it is free.
 //!
 //! The padding is checked for null as it goes by, since the bytes are in hand
@@ -54,15 +54,19 @@
 //! The field order and the exclusion of the padding from Unpadded Size are
 //! `docs/design/xz-invariants.md`'s `I15`.
 //!
-//! **The header is a read of its own**, before that one and overlapping it —
-//! deficiency: KD3, whose detail is in `docs/design/architecture.md`. So a block
-//! is two source reads, which is free on a local file and a second range request
-//! per block over a remote one.
+//! **The header is a read of its own**, before that one and a strict prefix of
+//! the region it re-reads from, so a *positioned* read of a block makes two
+//! source reads of it: free on a local file, and two range requests per block
+//! over a remote source. **A decode over bytes the caller already holds makes
+//! neither** — a [`Window`](crate::Window) cut to the block's own
+//! `compressed_range()` answers the header read and every payload read out of
+//! one fetch, which is what [`crate::task::BlockTask::decode_into`] and
+//! [`crate::BlockRead`] are driven over.
 //!
 //! # What a failure is called
 //!
-//! Four variants come out of this module, and the lines between them are the
-//! ones the taxonomy was grown to draw:
+//! Four variants are this module's own verdicts, and the lines between them are
+//! the ones the taxonomy was grown to draw:
 //!
 //! * [`Error::MemoryLimitExceeded`] — the block declares a dictionary larger
 //!   than the reader allows. Raised before anything is built.
@@ -79,7 +83,13 @@
 //!   stopped at under `liblzma` and to the failing call's first byte under
 //!   `xz4rust`, whose decoder discards a failed call's progress.
 //!
-//! And one that arrives from beneath: [`Error::IndexInconsistent`], for a block
+//! Three more only pass through: [`Error::Io`] and [`Error::Truncated`] from a
+//! source that fails or runs out, and [`Error::UnsupportedFilter`] from the
+//! seam's chain build.
+//!
+//! And one this module both forwards and raises for itself:
+//! [`Error::IndexInconsistent`] — for non-null block padding, for a block
+//! outrunning the size the index recorded, and, the load-bearing case, for a block
 //! that decodes cleanly to a size the index does not agree with. That is the
 //! format's own obligation on a random-access decoder — a fully decoded block's
 //! unpadded and uncompressed sizes must match the index, and a partial decode
@@ -90,9 +100,18 @@
 //! completes at a length the index did not record is the index disagreeing with
 //! the blocks, which is `IndexInconsistent`'s own narrow case.
 //!
-//! **Where the index overstates a block the two backends draw that line
-//! differently** — deficiency: KD6, whose detail is in
-//! `docs/design/architecture.md`.
+//! Deficiency register: `deficiency: KD6` — **where the index overstates a
+//! block the two backends draw that line differently.** An entry claiming
+//! *more* uncompressed bytes than its block holds is [`Error::IndexInconsistent`]
+//! under `liblzma`, whose raw chain knows no declared length, so the payload
+//! ends cleanly and `complete` finds the shortfall; under `xz4rust` it is
+//! [`Error::BlockDataError`], since that arm is handed a synthesized header
+//! carrying the index's own numbers and refuses the payload against them. Both
+//! arms refuse the block, so only the name differs. **(c) unowned** — the fix
+//! is a `SeamError` variant for a block body whose length contradicts the
+//! header, routed to `IndexInconsistent` from one branch in
+//! [`BlockDecode::read`], and nothing that exists needs it. Promoted by a
+//! caller that branches on the two variants.
 
 use crate::backend::{Backend, PayloadDecoder, SeamError};
 use crate::block;
@@ -526,7 +545,7 @@ impl BlockDecode {
     /// not already carry.
     ///
     /// In the common case this reads nothing: the chunk that fetched the
-    /// payload's last bytes fetched the thirty-five bytes that can follow them
+    /// payload's last bytes fetched the sixty-seven bytes that can follow them
     /// too. It has work only where the payload ended on a chunk boundary.
     fn finish_tail<S: CompressedSource>(&mut self, source: &S) -> Result<()> {
         debug_assert_eq!(self.input_pos, self.input_len(), "the payload is spent");
@@ -718,8 +737,7 @@ mod tests {
     /// verification refuses it, and the test below is what asserts that
     /// instead. `bulk-blocks.xz` is in, at +1.50 s, and it is the one fixture
     /// whose blocks are numerous enough for the chunk axis below to be run 512
-    /// times over one recipe — `harness.md`, "`bulk-blocks.xz` is out of the
-    /// byte sweep and in everything else".
+    /// times over one recipe.
     #[test]
     fn every_block_in_the_corpus_decodes_to_the_bytes_xz_produces() {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
@@ -1399,9 +1417,9 @@ mod tests {
     /// An index entry whose uncompressed size is not the block's is caught by
     /// the counters the loop already keeps, either way it is wrong.
     ///
-    /// **Only the first half holds under every backend** — deficiency: KD6,
-    /// whose detail is in `docs/design/architecture.md`. Claiming *fewer* bytes
-    /// is caught by this loop's own output clamp, which is backend-independent.
+    /// **Only the first half holds under every backend** — `KD6`. Claiming
+    /// *fewer* bytes is caught by this loop's own output clamp, which is
+    /// backend-independent.
     /// Claiming *more* is caught by whoever notices the block ended early, and
     /// they do not agree: `liblzma` decodes a raw chain that knows no declared
     /// length, so the payload ends cleanly and `complete` finds the shortfall,
@@ -1439,7 +1457,7 @@ mod tests {
     /// `liblzma` calls `IndexInconsistent`.
     ///
     /// The other half of the test above, split off because it is
-    /// backend-dependent — deficiency: KD6.
+    /// backend-dependent — `KD6`.
     #[cfg(feature = "liblzma")]
     #[test]
     fn a_block_shorter_than_the_index_recorded_is_index_inconsistent_under_liblzma() {

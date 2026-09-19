@@ -7,8 +7,7 @@
 //! change with the worker count, and the only thing a caller sees of it is that
 //! the bytes arrive sooner.
 //!
-//! See `docs/design/architecture.md`, "The pool: one fetcher, N decoders, and
-//! exactly N slots".
+//! See `docs/design/decisions.md`, "D38" and "D39".
 //!
 //! ```text
 //!        fetch stage                 work queue            decoders
@@ -23,8 +22,8 @@
 //!          them, reused)   └────────────────────┘
 //! ```
 //!
-//! Four properties are the whole of it, and each is a decision recorded in the
-//! architecture doc rather than an implementation detail:
+//! Four properties are the whole of it, and each is a decision rather than an
+//! implementation detail:
 //!
 //! * **One fetcher, ascending.** Every source read the pool makes is for one
 //!   block's own compressed extent, and the reads go in ascending file order.

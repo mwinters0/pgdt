@@ -13,8 +13,7 @@
 //! table already carries every block size the arithmetic needs, **and since the
 //! walk fills [`StreamEntry::first_block_dict_size`](crate::StreamEntry::first_block_dict_size)
 //! that includes the decoder's own dictionary**. See
-//! `docs/design/architecture.md`, "The plan: what a bulk read will hold, before
-//! it reads".
+//! `docs/design/decisions.md`, "D35" and "D36".
 //!
 //! **A budget too small even for one worker clamps to one and reports.** It
 //! never refuses: a caller told *"1 worker, 142.4 MiB, which exceeds the budget
@@ -250,8 +249,7 @@ impl RangePlan {
     /// over the streams this range touches, so the whole a bulk read holds is
     /// this one number. It is **not a sound ceiling**: a stream whose later
     /// block declares a larger dictionary than its first is charged the first's
-    /// — deficiency: KD10, whose detail is in `docs/design/architecture.md`. The
-    /// number that cannot understate is
+    /// — `KD10`. The number that cannot understate is
     /// [`Builder::memlimit`](crate::Builder::memlimit) per worker, which is a
     /// refusal threshold about the file rather than a charge for this read, and
     /// which the decode compares against each block's own declared dictionary

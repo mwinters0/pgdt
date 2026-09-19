@@ -5,6 +5,31 @@
 //! index it points back at, and the stream header it derives the position of,
 //! and that is enough to place every block in the file.
 //!
+//! # The parse is a machine; the fetching is the driver's
+//!
+//! [`Walk`] is the parser. It hands out a [`Request`] naming a range of the
+//! compressed file, takes those bytes back through [`Walk::supply`], and hands
+//! out the next request until it has a table. It reads nothing, borrows
+//! nothing and has no lifetime, so a caller whose transport is asynchronous
+//! drives it across an `await` without this crate acquiring a runtime.
+//!
+//! [`walk`] is the synchronous driver, and [`Backfill`] is the cache above the
+//! machine. That is where the read count lives: the machine emits minimal
+//! ranges, and the straddling refill below is what turns the four a stream
+//! costs into one read. `docs/design/decisions.md`, "D64".
+//!
+//! # The file's end is the machine's, not each driver's
+//!
+//! The size is a constructor argument, so the machine is the one layer that
+//! holds it: it never hands out a range past it, and a supply that stops short
+//! of the range it answers is the file being smaller than that number, which is
+//! [`Error::Truncated`] at the offset the bytes ran out. A driver therefore
+//! carries no bound of its own — [`Backfill`] holds no size at all — and the
+//! panic is left to the two faults that name no offset in a file: a supply
+//! beginning past the start of what was asked for, and a supply of a request
+//! this walk is not waiting for.
+//! `docs/design/decisions.md`, "D65".
+//!
 //! # One read per stream, because of where a header sits
 //!
 //! A stream's header is adjacent to its *predecessor's* padding, footer and
@@ -19,7 +44,8 @@
 //! free: the read that fetches stream N's 12-byte header also carries the 4 KiB
 //! below it, which is exactly stream N-1's tail. The walk is therefore one read
 //! per stream plus one for the file's own tail, against the naive two per
-//! stream — 31,150 reads rather than 62,300 on the real multistream corpus file.
+//! stream — 31,151 reads rather than 62,301 on the real multistream corpus
+//! file, beside the magic read at offset 0 that precedes all of them.
 //! An index larger than the window falls back to a read sized to the index,
 //! which is the same policy with a bigger `len`.
 //!
@@ -27,27 +53,30 @@
 //!
 //! [`StreamEntry::first_block_dict_size`] is what a caller charges one concurrent
 //! decode for, and it is one byte of the first block's header — which begins
-//! exactly where the stream header ends. That read is extended forward to cover
-//! it, so the block header costs **no additional read**: the window still starts
-//! 4 KiB below the stream header, and only grows at its far end. What it costs is
-//! bytes, at most [`crate::block::HEADER_SIZE_MAX`] of them per stream.
+//! exactly where the stream header ends. The machine asks for both in one
+//! request, and the refill grows forward to cover the lookahead rather than
+//! giving up backward reach for it, so the block header costs **no additional
+//! read**. What it costs is bytes, at most [`crate::block::HEADER_SIZE_MAX`] of
+//! them per stream.
 //!
-//! *Rejected: buying the lookahead out of the backward reach* — 4,084 bytes below
-//! the header down to 3,060. It is free in bytes and costs a second read on any
-//! stream whose index and footer exceed what is left, which is on the order of
-//! 750 blocks in one stream, for no gain over spending the bytes.
+//! *Rejected: buying the lookahead out of the backward reach* — see
+//! `docs/design/decisions.md`, "D6", and [`Request::lookahead`].
 //!
 //! # What a failure is called
 //!
-//! Three variants come out of this module, and the split is R7's:
+//! Three variants come out of the parse, and the split is R7's. ([`Error::Io`]
+//! comes out of this module too, but out of the synchronous driver below the
+//! machine — [`Backfill`] and [`walk`] are the only things here that touch a
+//! source at all.)
 //!
 //! * [`Error::NotXz`] — the six magic bytes at offset 0 are wrong. Read once,
 //!   before anything else, because it is the only thing separating a random
 //!   file from a clipped download: both fail at the tail.
 //! * [`Error::Truncated`] — the file claims to be `.xz` and the structure runs
-//!   off its end. That includes a size that is not a multiple of four, a read
-//!   that would pass the last byte, and **a tail with no footer magic where a
-//!   footer must be**, which is what a `head -c` cut leaves behind.
+//!   off its end. That includes a size that is not a multiple of four, a range
+//!   that would pass the last byte, a supply that stops short of the range it
+//!   answers, and **a tail with no footer magic where a footer must be**, which
+//!   is what a `head -c` cut leaves behind.
 //! * [`Error::IndexInconsistent`] — the structure is present and disagrees with
 //!   itself: a footer or index or header CRC32 that does not match, reserved
 //!   stream-flag bits, a header that is not where the index says the stream
@@ -60,25 +89,10 @@
 //! is one of the other two, so a damaged file is never reported as "not xz".
 //!
 //! *Rejected: drawing the `Truncated`/`IndexInconsistent` line at the footer's
-//! CRC32 rather than at its magic.* Under that rule a footer whose CRC32 fails
-//! is "no real footer here", so a `head -c` cut that happens to end in `YZ`
-//! would be called a truncation, which is what it is. The cost is
-//! `corrupt-footer.xz` — a single flipped bit in a present footer's backward
-//! size — which would report `Truncated` as well, collapsing the distinction
-//! the corpus split that fixture out to make and leaving no damaged fixture in
-//! the index region that is not called a truncation. The mislabel the magic
-//! rule permits needs a cut landing on a four-byte boundary whose last two
-//! bytes are `YZ`; the mislabel the CRC32 rule permits is any flipped bit in
-//! any footer.
-//!
-//! What settles it is that `liblzma` partitions the same failure the same way,
-//! and says why: `lzma_stream_footer_decode` returns `LZMA_FORMAT_ERROR` on a
-//! missing magic and `LZMA_DATA_ERROR` on a failing CRC32, and the header
-//! decoder beside it comments that the CRC32 is verified "so we can distinguish
-//! between corrupt and unsupported files". The magic asks whether the structure
-//! is here; the CRC32 asks whether what is here is damaged. A second backend
-//! goes behind this taxonomy, and the rule that matches the format's own
-//! reference decoder is the one likeliest to survive that seam. See
+//! CRC32 rather than at its magic* — `docs/design/decisions.md`, "D7". What
+//! settles it is that `liblzma` partitions the same failure the same way: the
+//! magic asks whether the structure is here, the CRC32 whether what is here is
+//! damaged, and a second backend goes behind this taxonomy. See
 //! `xz-invariants.md`, `I11` — which also records that this line can never be
 //! settled differentially, since `xz --list` prints one string for every
 //! damaged fixture in the corpus.
@@ -91,23 +105,25 @@
 //! footer magic, and a boundary with less than a minimum stream's worth of file
 //! beneath it — are a truncation **only at the tail-most stream**.
 //!
-//! The first call to [`one_stream`] starts at the file's own end and is the one
-//! that can meet a cut. Every later call starts at a boundary the walk
-//! *derived* — from a footer it read, an index whose CRC32 matched, and a header
-//! found where that index said one would be — so every byte from there to the
-//! end of the file is known to be present, and the same two failures are the
-//! container disagreeing with itself: [`Error::IndexInconsistent`].
+//! The machine's first stream starts at the file's own end and is the one that
+//! can meet a cut. Every later one starts at a boundary the walk *derived* —
+//! from a footer it read, an index whose CRC32 matched, and a header found
+//! where that index said one would be — so every byte from there to the end of
+//! the file is known to be present, and the same two failures are the container
+//! disagreeing with itself: [`Error::IndexInconsistent`].
 //!
 //! Without that condition a file whose *interior* is damaged is reported as
 //! "ends at offset N" for an N that is nowhere near its end, which sends a
 //! caller to re-fetch a file it already has whole.
+
+use std::ops::Range;
 
 use crate::error::{Error, Result};
 use crate::source::CompressedSource;
 use crate::table::{BlockEntry, Check, SeekTable, StreamEntry};
 
 /// The straddling window, in bytes. Not configurable: see the module docs.
-const WINDOW: usize = 4096;
+const WINDOW: u64 = 4096;
 
 pub(crate) const STREAM_HEADER_SIZE: u64 = 12;
 pub(crate) const STREAM_FOOTER_SIZE: u64 = 12;
@@ -123,6 +139,488 @@ const FOOTER_MAGIC: [u8; 2] = *b"YZ";
 const VLI_BYTES_MAX: usize = 9;
 /// The format's stated floor — a block is at least a header and a byte.
 pub(crate) const UNPADDED_SIZE_MIN: u64 = 5;
+
+/// One range of the compressed file the walk needs before it can go on.
+///
+/// Handed out by [`Walk::begin`] and by [`Walk::supply`], and handed back with
+/// the bytes it names. It is `Copy`, holds no borrow and has no lifetime, so it
+/// crosses an `await` as a value — which is what makes the machine drivable
+/// from a future. There is no public constructor: a request is one the machine
+/// itself produced, and that is what lets [`Walk::supply`] tell a stale request
+/// from the pending one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Request {
+    start: u64,
+    len: u64,
+    /// How many of the trailing bytes are a forward lookahead — nonzero only
+    /// for the stream-header request, whose tail is the first block's header.
+    ///
+    /// **Crate-private, and a fetch hint rather than part of the protocol.**
+    /// The structure the machine is really at is `[start, end - lookahead)`, so
+    /// a cache reaching backward from a request positions itself off that; the
+    /// synchronous driver's does, which is what keeps its read exactly the
+    /// window plus the lookahead. The public surface is the range alone —
+    /// `docs/design/decisions.md`, "D64".
+    lookahead: u64,
+}
+
+impl Request {
+    /// The file-absolute range of bytes asked for.
+    pub fn range(&self) -> Range<u64> {
+        self.start..self.start + self.len
+    }
+
+    /// File-absolute offset of the first byte asked for.
+    pub fn start(&self) -> u64 {
+        self.start
+    }
+
+    /// How many bytes are asked for.
+    ///
+    /// Zero only for a file too short to hold the six magic bytes, which is a
+    /// file the first [`Walk::supply`] refuses as [`Error::NotXz`].
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    /// Whether the request asks for no bytes at all.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// One past the last byte asked for.
+    fn end(&self) -> u64 {
+        self.start + self.len
+    }
+}
+
+/// What the machine wants after a supply: more bytes, or nothing more.
+#[derive(Debug)]
+pub enum Step {
+    /// Fetch this range and supply it.
+    Need(Request),
+    /// The walk is over, and this is the file's table.
+    Done(SeekTable),
+}
+
+/// The footer walk as a state machine the caller drives.
+///
+/// The caller fetches; this parses. Nothing here reads a byte, opens anything
+/// or knows what a transport is — which is the whole point, since a caller
+/// cannot `await` inside [`CompressedSource::read_at`].
+///
+/// ```no_run
+/// # fn fetch(_range: std::ops::Range<u64>) -> Vec<u8> { unimplemented!() }
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use xz_seek::{Step, Walk};
+///
+/// # let file_size = 0u64;
+/// let (mut walk, mut request) = Walk::begin(file_size);
+/// let table = loop {
+///     let bytes = fetch(request.range());
+///     match walk.supply(request, &bytes)? {
+///         Step::Need(next) => request = next,
+///         Step::Done(table) => break table,
+///     }
+/// };
+/// # let _ = table;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The file's size is a constructor argument rather than a request: the walk
+/// starts at the tail, and reaching for that number through an I/O trait is
+/// what this seam exists to remove.
+///
+/// The requests descend, each one's position computed from the bytes of the
+/// one before it, and a whole walk is the magic, then per stream a footer, an
+/// index, a header, and one padding probe per four bytes of stream padding
+/// **plus one** — the probe that finds a non-zero word is what ends the run,
+/// so a stream with no padding still costs one. [`Reader`](crate::Reader) and [`SeekTable::from_source`] are drivers
+/// over this, and the cost the file itself dictates is unchanged by which
+/// driver is used.
+#[derive(Debug)]
+pub struct Walk {
+    size: u64,
+    /// The request the caller was last handed, and which `supply` takes back.
+    /// `None` once the walk has finished or failed.
+    pending: Option<Request>,
+    state: State,
+    walked: Vec<Walked>,
+    /// The end of the stream being walked, its own padding included.
+    end: u64,
+    /// Whether that end is the file's own: see the module docs, "Only the tail
+    /// of a file can be cut".
+    tail_most: bool,
+}
+
+/// What the pending request is for, and what the parse carries across it.
+#[derive(Debug)]
+enum State {
+    Magic,
+    Padding {
+        padding: u64,
+    },
+    Footer {
+        footer_end: u64,
+        padding: u64,
+    },
+    Index {
+        index_start: u64,
+        check: Check,
+        flags: [u8; 2],
+        footer_end: u64,
+        padding: u64,
+    },
+    Header {
+        start: u64,
+        check: Check,
+        flags: [u8; 2],
+        footer_end: u64,
+        padding: u64,
+        records: Vec<(u64, u64)>,
+    },
+    /// Finished or failed: `pending` is `None`, so no supply reaches this.
+    Done,
+}
+
+impl Walk {
+    /// Start a walk over a file of `file_size` bytes, and ask for the first
+    /// range.
+    ///
+    /// The six magic bytes at offset 0 come first because they are the only
+    /// thing that decides [`Error::NotXz`]; a file with no room for them fails
+    /// there rather than at its tail.
+    pub fn begin(file_size: u64) -> (Walk, Request) {
+        let request = Request {
+            start: 0,
+            len: (HEADER_MAGIC.len() as u64).min(file_size),
+            lookahead: 0,
+        };
+        let walk = Walk {
+            size: file_size,
+            pending: Some(request),
+            state: State::Magic,
+            walked: Vec::new(),
+            end: file_size,
+            tail_most: true,
+        };
+        (walk, request)
+    }
+
+    /// Supply bytes beginning at the start of `request`.
+    ///
+    /// [`Walk::supply_at`] with `at` defaulted to the request's own start, which
+    /// is the whole difference between the two: containment is the one rule, so
+    /// `bytes` running past the request's end is accepted and the remainder
+    /// ignored, exactly as it is there.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Truncated`] if `bytes` is shorter than the request, and whatever
+    /// the parse finds in the bytes it did get.
+    ///
+    /// # Panics
+    ///
+    /// If `request` is not the one this machine is waiting for — including one
+    /// held from an earlier step, and one supplied after the walk ended. A
+    /// driver-protocol fault is a caller contradicting itself one line after
+    /// being told what to fetch, and it names no offset in a file, so it is not
+    /// one of the taxonomy's variants: `docs/design/decisions.md`, "D64".
+    ///
+    /// In a debug build, also if this machine derives a range past the size
+    /// `begin` was given, which no file reaches and which a release build
+    /// refuses as [`Error::Truncated`] instead — `docs/design/decisions.md`,
+    /// "D65".
+    pub fn supply(&mut self, request: Request, bytes: &[u8]) -> Result<Step> {
+        self.supply_at(request, request.start, bytes)
+    }
+
+    /// Supply bytes that begin at `at` and **contain** the requested range.
+    ///
+    /// This is the shape for a caller who fetched more than was asked for — a
+    /// coalesced read, a speculative window, a whole file already in memory —
+    /// and it is what the synchronous driver itself uses, handing the machine
+    /// its whole cache window. Bytes outside the request are not retained: a
+    /// cache here would be the fetch policy this seam hands out.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Truncated`] if the supplied bytes stop short of the request's
+    /// end, and whatever the parse finds in the bytes it did get.
+    ///
+    /// # Panics
+    ///
+    /// As [`Walk::supply`], and if `at` is past the request's own start. Only
+    /// that half of containment is a driver contradicting itself; running out
+    /// early is the file's own length, and the machine is what holds it —
+    /// `docs/design/decisions.md`, "D65".
+    pub fn supply_at(&mut self, request: Request, at: u64, bytes: &[u8]) -> Result<Step> {
+        let requested = self.accept(request, at, bytes)?;
+        self.step(requested)
+    }
+
+    /// Take the pending request back, and cut the bytes it asked for out of
+    /// what the caller supplied.
+    ///
+    /// The two halves of containment are not the same fault. Bytes beginning
+    /// *past* the request's start are a driver that sliced wrongly, which names
+    /// no offset in a file. Bytes that begin at or below it and run out early
+    /// are the file being smaller than the size `begin` was handed, which names
+    /// one — and a driver told to fetch a range cannot distinguish the two from
+    /// outside, which is why the machine does it.
+    fn accept<'b>(&mut self, request: Request, at: u64, bytes: &'b [u8]) -> Result<&'b [u8]> {
+        assert_eq!(
+            self.pending,
+            Some(request),
+            "supplied a request this walk is not waiting for"
+        );
+        assert!(
+            at <= request.start,
+            "supplied bytes beginning at {at}, past the start of the requested {:?}",
+            request.range()
+        );
+        self.pending = None;
+        let end = at.saturating_add(bytes.len() as u64);
+        if end < request.end() {
+            return Err(Error::Truncated {
+                compressed_offset: end,
+            });
+        }
+        let lo = (request.start - at) as usize;
+        Ok(&bytes[lo..lo + request.len as usize])
+    }
+
+    /// Parse what the pending request asked for, and decide the next one.
+    fn step(&mut self, bytes: &[u8]) -> Result<Step> {
+        match std::mem::replace(&mut self.state, State::Done) {
+            State::Magic => {
+                if bytes != HEADER_MAGIC {
+                    return Err(Error::NotXz {
+                        compressed_offset: 0,
+                    });
+                }
+                // Streams and stream padding are both multiples of four, so the
+                // file is.
+                if !self.size.is_multiple_of(4) {
+                    return Err(Error::Truncated {
+                        compressed_offset: self.size,
+                    });
+                }
+                self.stream()
+            }
+            State::Padding { padding } => {
+                // Stream padding: null bytes, a multiple of four. A footer's
+                // last four bytes are its flags and `YZ`, which are never all
+                // zero, so this cannot walk into the stream it is looking for.
+                if bytes != [0, 0, 0, 0] {
+                    return self.footer(padding);
+                }
+                let padding = padding + 4;
+                if self.end - padding >= 4 {
+                    self.probe(padding)
+                } else {
+                    self.footer(padding)
+                }
+            }
+            State::Footer {
+                footer_end,
+                padding,
+            } => {
+                let footer_start = footer_end - STREAM_FOOTER_SIZE;
+                let f = bytes;
+                // No footer magic here means there is no footer here: at the
+                // tail of a file that claims to be xz, that is a cut; anywhere
+                // else it is the index region contradicting itself.
+                if f[10..12] != FOOTER_MAGIC {
+                    return missing_end(self.tail_most, footer_start);
+                }
+                if crate::check::crc32(&f[4..10]) != le32(&f[0..4]) {
+                    return inconsistent(footer_start);
+                }
+                let flags = [f[8], f[9]];
+                let check = stream_flags(flags, footer_start + 8)?;
+                let index_size = (le32(&f[4..8]) as u64 + 1) * 4;
+                let Some(index_start) = footer_start.checked_sub(index_size) else {
+                    return inconsistent(footer_start + 4);
+                };
+                if index_size < INDEX_SIZE_MIN {
+                    return inconsistent(index_start);
+                }
+                self.state = State::Index {
+                    index_start,
+                    check,
+                    flags,
+                    footer_end,
+                    padding,
+                };
+                self.need(Request {
+                    start: index_start,
+                    len: index_size,
+                    lookahead: 0,
+                })
+            }
+            State::Index {
+                index_start,
+                check,
+                flags,
+                footer_end,
+                padding,
+            } => {
+                let records = index(bytes, index_start)?;
+
+                let mut blocks_total = 0u64;
+                for (unpadded, _) in &records {
+                    blocks_total = match blocks_total.checked_add(round4(*unpadded)) {
+                        Some(t) => t,
+                        None => return inconsistent(index_start),
+                    };
+                }
+                // A crafted index can claim blocks summing past the address
+                // space, so the span is checked as well as subtracted:
+                // `index-span-overflow.xz` is the file that does.
+                let Some(start) = blocks_total
+                    .checked_add(STREAM_HEADER_SIZE)
+                    .and_then(|span| index_start.checked_sub(span))
+                else {
+                    return inconsistent(index_start);
+                };
+
+                // The header costs no extra read: the refill ends where this
+                // range ends, so it carries the previous stream's tail with it.
+                // The same range reaches forward over the first block's header,
+                // which begins where the stream header ends.
+                let lookahead = first_block_header_extent(&records);
+                self.state = State::Header {
+                    start,
+                    check,
+                    flags,
+                    footer_end,
+                    padding,
+                    records,
+                };
+                self.need(Request {
+                    start,
+                    len: STREAM_HEADER_SIZE + lookahead,
+                    lookahead,
+                })
+            }
+            State::Header {
+                start,
+                check,
+                flags,
+                footer_end,
+                padding,
+                records,
+            } => {
+                let (h, first_block_header) = bytes.split_at(STREAM_HEADER_SIZE as usize);
+                if h[0..6] != HEADER_MAGIC {
+                    return inconsistent(start);
+                }
+                if crate::check::crc32(&h[6..8]) != le32(&h[8..12]) {
+                    return inconsistent(start + 8);
+                }
+                // The format requires the two copies of the flags to be
+                // identical.
+                if h[6..8] != flags {
+                    return inconsistent(start + 6);
+                }
+
+                self.walked.push(Walked {
+                    start,
+                    end: footer_end,
+                    check,
+                    padding,
+                    first_block_dict_size: first_block_dict_size(
+                        &records,
+                        start,
+                        check,
+                        first_block_header,
+                    ),
+                    records,
+                });
+                if start == 0 {
+                    let walked = std::mem::take(&mut self.walked);
+                    return Ok(Step::Done(assemble(self.size, walked)?));
+                }
+                // Only the first stream starts at the file's own end, so only
+                // it can meet a cut rather than a contradiction.
+                self.end = start;
+                self.tail_most = false;
+                self.stream()
+            }
+            State::Done => unreachable!("a finished walk has no pending request"),
+        }
+    }
+
+    /// Begin the stream whose padding ends at `self.end`.
+    fn stream(&mut self) -> Result<Step> {
+        if self.end >= 4 {
+            self.probe(0)
+        } else {
+            self.footer(0)
+        }
+    }
+
+    /// Probe the four bytes below `self.end - padding` for more stream padding.
+    fn probe(&mut self, padding: u64) -> Result<Step> {
+        self.state = State::Padding { padding };
+        self.need(Request {
+            start: self.end - padding - 4,
+            len: 4,
+            lookahead: 0,
+        })
+    }
+
+    /// The padding is behind us: ask for the footer it ends above.
+    fn footer(&mut self, padding: u64) -> Result<Step> {
+        let footer_end = self.end - padding;
+        if footer_end < STREAM_SIZE_MIN {
+            return missing_end(self.tail_most, footer_end);
+        }
+        self.state = State::Footer {
+            footer_end,
+            padding,
+        };
+        self.need(Request {
+            start: footer_end - STREAM_FOOTER_SIZE,
+            len: STREAM_FOOTER_SIZE,
+            lookahead: 0,
+        })
+    }
+
+    /// Hand `request` out, unless it runs past the file.
+    ///
+    /// Every range the machine emits passes here, so the bound against the size
+    /// is written once. It sits here rather than in each driver because the size
+    /// is the machine's field: a driver checking it would be re-deriving, four
+    /// times over, a limit the layer holding the number can state.
+    ///
+    /// **No file reaches it.** Every range descends from a boundary the parse
+    /// has already placed inside the file, and the one that reaches *forward* is
+    /// bounded by [`first_block_header_extent`], so this is the machine keeping
+    /// a promise to its drivers rather than a path damage can take. Firing it is
+    /// therefore this crate's own arithmetic, which is why the assertion names
+    /// that and the release build still refuses the range:
+    /// `docs/design/decisions.md`, "D65".
+    fn need(&mut self, request: Request) -> Result<Step> {
+        debug_assert!(
+            request.end() <= self.size,
+            "xz-seek asked for {:?}, past the {} bytes this walk was given: no \
+             file reaches this, so it is a mis-derivation in xz-seek rather than \
+             a short file, and worth reporting",
+            request.range(),
+            self.size
+        );
+        if request.end() > self.size {
+            return Err(Error::Truncated {
+                compressed_offset: self.size,
+            });
+        }
+        self.pending = Some(request);
+        Ok(Step::Need(request))
+    }
+}
 
 /// Round up to the next multiple of four: block padding, index padding.
 fn round4(v: u64) -> u64 {
@@ -151,76 +649,53 @@ fn missing_end<T>(tail_most: bool, compressed_offset: u64) -> Result<T> {
     }
 }
 
-/// A 4 KiB read, cached, that refills backward.
+/// A 4 KiB read, cached, that refills backward: the synchronous driver's cache.
 ///
 /// The refill positions the window to **end** where the requested range ends.
 /// That is the whole of the straddle: a backward walk asking for the 12 bytes at
 /// a stream's start gets the 4 KiB below it in the same read, and that is where
-/// the previous stream's index and footer live.
+/// the previous stream's index and footer live. A request larger than the
+/// window — an index of more than a few hundred blocks — is one read sized to
+/// it, which is the same policy with a bigger `len`.
 ///
-/// [`Backfill::ahead`] buys a *forward* lookahead on top of that — the stream
-/// header's read is what also fetches the first block's header — and it is
-/// bought with bytes rather than with backward reach: the window still starts
-/// [`WINDOW`] below the range asked for, and grows by the lookahead at its far
-/// end.
+/// [`Request::lookahead`] buys a *forward* lookahead on top of that — the
+/// stream header's read is what also fetches the first block's header — and it
+/// is bought with bytes rather than with backward reach: the window still
+/// begins where a request without one would have put it, and grows by the
+/// lookahead at its far end.
 struct Backfill<'s, S: CompressedSource> {
     source: &'s S,
-    size: u64,
     start: u64,
     buf: Vec<u8>,
 }
 
 impl<'s, S: CompressedSource> Backfill<'s, S> {
-    fn new(source: &'s S, size: u64) -> Self {
+    fn new(source: &'s S) -> Self {
         Backfill {
             source,
-            size,
             start: 0,
             buf: Vec::new(),
         }
     }
 
-    /// The `len` bytes at `offset`, from the window if it holds them.
+    /// The window holding `request`, and the offset it starts at.
     ///
-    /// A range that would pass the last byte of the file is [`Error::Truncated`]
-    /// at the file's size: this is the only place the walk can run off the end,
-    /// so it is the only place that check has to be written.
-    fn bytes(&mut self, offset: u64, len: usize) -> Result<&[u8]> {
-        self.ahead(offset, len, 0)
-    }
-
-    /// The `len` bytes at `offset` **and** `extra` bytes past them, in one read.
-    ///
-    /// The window still begins [`WINDOW`] below `offset`, so the straddle that
-    /// makes the walk one read a stream is untouched and the read simply grows
-    /// by `extra`. That is the trade the lookahead is bought at: taking it out
-    /// of the backward reach instead would shorten the tail this read carries
-    /// for the *next* stream, and cost a second read on any stream whose index
-    /// and footer no longer fit under what was left.
-    fn ahead(&mut self, offset: u64, len: usize, extra: usize) -> Result<&[u8]> {
-        let total = len + extra;
-        let end = offset
-            .checked_add(total as u64)
-            .filter(|end| *end <= self.size)
-            .ok_or(Error::Truncated {
-                compressed_offset: self.size,
-            })?;
-        if offset < self.start || end > self.start + self.buf.len() as u64 {
-            self.fill(offset, end, extra)?;
+    /// The whole window goes back to the machine, which takes it as the
+    /// superset it is. **The cache holds no size and bounds nothing against
+    /// one**: the machine does not ask for a range past the file, and a source
+    /// returning fewer bytes than its own `size()` promised is handed back
+    /// short, for the machine to name — `docs/design/decisions.md`, "D65".
+    fn window(&mut self, request: Request) -> Result<(u64, &[u8])> {
+        let end = request.end();
+        if request.start < self.start || end > self.start + self.buf.len() as u64 {
+            self.fill(request)?;
         }
-        let lo = (offset - self.start) as usize;
-        Ok(&self.buf[lo..lo + total])
+        Ok((self.start, &self.buf))
     }
 
-    /// The same, copied out, for a range that has to outlive the next refill.
-    fn array<const N: usize>(&mut self, offset: u64) -> Result<[u8; N]> {
-        let mut out = [0u8; N];
-        out.copy_from_slice(self.bytes(offset, N)?);
-        Ok(out)
-    }
-
-    fn fill(&mut self, offset: u64, end: u64, extra: usize) -> Result<()> {
-        let want = ((end - offset) as usize).max(WINDOW + extra) as u64;
+    fn fill(&mut self, request: Request) -> Result<()> {
+        let end = request.end();
+        let want = request.len.max(WINDOW + request.lookahead);
         let start = end.saturating_sub(want);
         let len = (end - start) as usize;
         self.buf.clear();
@@ -229,18 +704,16 @@ impl<'s, S: CompressedSource> Backfill<'s, S> {
             .source
             .read_at(start, &mut self.buf)
             .map_err(|e| Error::io(start, e))?;
-        if got < len {
-            // `size()` promised these bytes. The source is shorter than it said.
-            return Err(Error::Truncated {
-                compressed_offset: start + got as u64,
-            });
-        }
+        // A source shorter than its own `size()` said yields a short window
+        // rather than an error here: the machine names where the bytes ran out.
+        self.buf.truncate(got);
         self.start = start;
         Ok(())
     }
 }
 
 /// One stream as the backward walk finds it, before the file is put in order.
+#[derive(Debug)]
 struct Walked {
     start: u64,
     /// One past the footer's last byte — the stream's end, padding excluded.
@@ -255,128 +728,21 @@ struct Walked {
 }
 
 /// Build a [`SeekTable`] by walking `source`'s stream footers backward.
+///
+/// The synchronous driver: [`Backfill`] answers what [`Walk`] asks for, and the
+/// source's own `size()` is the one number the machine is handed rather than
+/// asking for.
 pub(crate) fn walk<S: CompressedSource>(source: &S) -> Result<SeekTable> {
     let size = source.size().map_err(|e| Error::io(0, e))?;
-
-    // The magic is read once, and it is the only thing that decides `NotXz`.
-    let mut magic = [0u8; HEADER_MAGIC.len()];
-    let got = source.read_at(0, &mut magic).map_err(|e| Error::io(0, e))?;
-    if got < magic.len() || magic != HEADER_MAGIC {
-        return Err(Error::NotXz {
-            compressed_offset: 0,
-        });
-    }
-    // Streams and stream padding are both multiples of four, so the file is.
-    if size % 4 != 0 {
-        return Err(Error::Truncated {
-            compressed_offset: size,
-        });
-    }
-
-    let mut window = Backfill::new(source, size);
-    let mut walked: Vec<Walked> = Vec::new();
-    let mut end = size;
-    // Only the first call starts at the file's own end, so only it can meet a
-    // cut rather than a contradiction.
-    let mut tail_most = true;
+    let mut cache = Backfill::new(source);
+    let (mut machine, mut request) = Walk::begin(size);
     loop {
-        let stream = one_stream(&mut window, end, tail_most)?;
-        let start = stream.start;
-        walked.push(stream);
-        if start == 0 {
-            break;
+        let (at, bytes) = cache.window(request)?;
+        match machine.supply_at(request, at, bytes)? {
+            Step::Need(next) => request = next,
+            Step::Done(table) => return Ok(table),
         }
-        end = start;
-        tail_most = false;
     }
-
-    assemble(size, walked)
-}
-
-/// The stream whose padding ends at `end`, read backward from there.
-///
-/// `tail_most` says whether `end` is the file's own end. It decides nothing but
-/// the *name* of the two failures that mean "no stream ends here" — see the
-/// module docs, "Only the tail of a file can be cut".
-fn one_stream<S: CompressedSource>(
-    w: &mut Backfill<'_, S>,
-    end: u64,
-    tail_most: bool,
-) -> Result<Walked> {
-    // Stream padding: null bytes, a multiple of four. A footer's last four bytes
-    // are its flags and `YZ`, which are never all zero, so this cannot walk into
-    // the stream it is looking for.
-    let mut padding = 0;
-    while end - padding >= 4 && *w.bytes(end - padding - 4, 4)? == [0, 0, 0, 0] {
-        padding += 4;
-    }
-
-    let footer_end = end - padding;
-    if footer_end < STREAM_SIZE_MIN {
-        return missing_end(tail_most, footer_end);
-    }
-    let footer_start = footer_end - STREAM_FOOTER_SIZE;
-    let f: [u8; 12] = w.array(footer_start)?;
-
-    // No footer magic here means there is no footer here: at the tail of a file
-    // that claims to be xz, that is a cut; anywhere else it is the index region
-    // contradicting itself.
-    if f[10..12] != FOOTER_MAGIC {
-        return missing_end(tail_most, footer_start);
-    }
-    if crate::check::crc32(&f[4..10]) != le32(&f[0..4]) {
-        return inconsistent(footer_start);
-    }
-    let flags = [f[8], f[9]];
-    let check = stream_flags(flags, footer_start + 8)?;
-    let index_size = (le32(&f[4..8]) as u64 + 1) * 4;
-
-    let index_start = match footer_start.checked_sub(index_size) {
-        Some(at) => at,
-        None => return inconsistent(footer_start + 4),
-    };
-    let records = index(w, index_start, index_size)?;
-
-    let mut blocks_total = 0u64;
-    for (unpadded, _) in &records {
-        blocks_total = match blocks_total.checked_add(round4(*unpadded)) {
-            Some(t) => t,
-            None => return inconsistent(index_start),
-        };
-    }
-    let start = match index_start.checked_sub(blocks_total + STREAM_HEADER_SIZE) {
-        Some(at) => at,
-        None => return inconsistent(index_start),
-    };
-
-    // The header costs no extra read: the window refills to end where this
-    // range ends, so it carries the previous stream's tail with it. The same
-    // read reaches forward over the first block's header, which begins where
-    // the stream header ends.
-    let extra = first_block_header_extent(&records) as usize;
-    let bytes = w.ahead(start, STREAM_HEADER_SIZE as usize, extra)?;
-    let (h, first_block_header) = bytes.split_at(STREAM_HEADER_SIZE as usize);
-    if h[0..6] != HEADER_MAGIC {
-        return inconsistent(start);
-    }
-    if crate::check::crc32(&h[6..8]) != le32(&h[8..12]) {
-        return inconsistent(start + 8);
-    }
-    // The format requires the two copies of the flags to be identical.
-    if h[6..8] != flags {
-        return inconsistent(start + 6);
-    }
-
-    let first_block_dict_size = first_block_dict_size(&records, start, check, first_block_header);
-
-    Ok(Walked {
-        start,
-        end: footer_end,
-        check,
-        padding,
-        first_block_dict_size,
-        records,
-    })
 }
 
 /// How far past a stream header the first block's header can possibly run.
@@ -393,7 +759,8 @@ fn first_block_header_extent(records: &[(u64, u64)]) -> u64 {
     }
 }
 
-/// The dictionary the first block declares, from bytes the header read carried.
+/// The dictionary the first block declares, from bytes the header request
+/// carried.
 ///
 /// **A header that does not parse is `None` rather than a failed walk.** The
 /// walk places blocks out of the *index*, and a damaged block header is not a
@@ -446,18 +813,10 @@ fn stream_flags(flags: [u8; 2], at: u64) -> Result<Check> {
 
 /// The stream index: an indicator, a record count, the records, padding, CRC32.
 ///
-/// Read whole. An index bigger than the window is one sized read rather than a
-/// walk through it, because the alternative — a cursor stepping forward through
-/// a window that refills backward — would refill on nearly every record.
-fn index<S: CompressedSource>(
-    w: &mut Backfill<'_, S>,
-    start: u64,
-    size: u64,
-) -> Result<Vec<(u64, u64)>> {
-    if size < INDEX_SIZE_MIN {
-        return inconsistent(start);
-    }
-    let idx = w.bytes(start, size as usize)?.to_vec();
+/// Parsed whole, out of the bytes the index request asked for. A cursor
+/// stepping forward through a window that refills backward was the alternative,
+/// and it would refill on nearly every record.
+fn index(idx: &[u8], start: u64) -> Result<Vec<(u64, u64)>> {
     let crc_at = idx.len() - 4;
     if crate::check::crc32(&idx[..crc_at]) != le32(&idx[crc_at..]) {
         return inconsistent(start);
@@ -562,6 +921,15 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    /// A plain request for `len` bytes at `offset`, as the machine emits one.
+    fn req(start: u64, len: u64) -> Request {
+        Request {
+            start,
+            len,
+            lookahead: 0,
+        }
+    }
+
     /// A source that counts the reads made through it, so that the window's
     /// caching is a property a test can state rather than an intention.
     struct Counting {
@@ -593,28 +961,38 @@ mod tests {
         }
     }
 
+    /// The bytes of `request` out of the window the driver would fetch for it.
+    fn bytes<'w, S: CompressedSource>(
+        w: &'w mut Backfill<'_, S>,
+        request: Request,
+    ) -> Result<&'w [u8]> {
+        let (at, window) = w.window(request)?;
+        let lo = (request.start - at) as usize;
+        Ok(&window[lo..lo + request.len as usize])
+    }
+
     #[test]
     fn the_window_refills_to_end_where_the_request_ends() {
         let src = Counting::new(100_000);
-        let mut w = Backfill::new(&src, 100_000);
+        let mut w = Backfill::new(&src);
 
         // The straddle: asking for twelve bytes brings the 4084 below them.
-        assert_eq!(w.bytes(50_000, 12).unwrap().len(), 12);
+        assert_eq!(bytes(&mut w, req(50_000, 12)).unwrap().len(), 12);
         assert_eq!(src.reads.get(), 1);
-        assert_eq!(src.last_len.get(), WINDOW);
-        assert_eq!(w.start, 50_012 - WINDOW as u64);
+        assert_eq!(src.last_len.get(), WINDOW as usize);
+        assert_eq!(w.start, 50_012 - WINDOW);
 
         // Everything already inside it is free.
-        for offset in (50_012 - WINDOW as u64..50_012).step_by(4) {
+        for offset in (50_012 - WINDOW..50_012).step_by(4) {
             assert_eq!(
-                w.bytes(offset, 4).unwrap(),
+                bytes(&mut w, req(offset, 4)).unwrap(),
                 &src.bytes[offset as usize..][..4]
             );
         }
         assert_eq!(src.reads.get(), 1);
 
         // A range bigger than the window is one read sized to it.
-        assert_eq!(w.bytes(1_000, 9_000).unwrap().len(), 9_000);
+        assert_eq!(bytes(&mut w, req(1_000, 9_000)).unwrap().len(), 9_000);
         assert_eq!(src.reads.get(), 2);
         assert_eq!(src.last_len.get(), 9_000);
     }
@@ -628,38 +1006,171 @@ mod tests {
     #[test]
     fn a_lookahead_grows_the_read_and_leaves_the_backward_reach_alone() {
         let src = Counting::new(100_000);
-        let mut w = Backfill::new(&src, 100_000);
+        let mut w = Backfill::new(&src);
 
-        let got = w.ahead(50_000, 12, 1_024).unwrap();
+        let request = Request {
+            start: 50_000,
+            len: 12 + 1_024,
+            lookahead: 1_024,
+        };
+        let got = bytes(&mut w, request).unwrap();
         assert_eq!(got.len(), 12 + 1_024);
         assert_eq!(got, &src.bytes[50_000..][..12 + 1_024]);
         assert_eq!(src.reads.get(), 1);
         // One read, WINDOW + lookahead long, and starting exactly where a
         // plain twelve-byte request would have put it.
-        assert_eq!(src.last_len.get(), WINDOW + 1_024);
-        assert_eq!(w.start, 50_012 - WINDOW as u64);
+        assert_eq!(src.last_len.get(), WINDOW as usize + 1_024);
+        assert_eq!(w.start, 50_012 - WINDOW);
 
         // So the previous stream's whole tail is still cached.
         assert_eq!(src.reads.get(), 1);
-        assert_eq!(w.bytes(50_012 - WINDOW as u64, 4).unwrap().len(), 4);
+        assert_eq!(bytes(&mut w, req(50_012 - WINDOW, 4)).unwrap().len(), 4);
         assert_eq!(src.reads.get(), 1);
     }
 
     #[test]
-    fn the_window_clamps_at_the_start_of_the_file_and_refuses_to_pass_its_end() {
+    fn the_window_clamps_at_the_start_of_the_file_and_hands_a_short_source_back_short() {
         let src = Counting::new(1_000);
-        let mut w = Backfill::new(&src, 1_000);
-        assert_eq!(w.bytes(0, 12).unwrap(), &src.bytes[..12]);
+        let mut w = Backfill::new(&src);
+        assert_eq!(bytes(&mut w, req(0, 12)).unwrap(), &src.bytes[..12]);
         // Clamped at the start of the file: the window still ends where the
         // request ends, so there is simply less of it.
         assert_eq!(w.start, 0);
         assert_eq!(src.last_len.get(), 12);
 
+        // Past the last byte the source has, the cache refuses nothing: the
+        // window is what there was, and naming it is the machine's.
+        let (at, window) = w.window(req(996, 8)).expect("the cache bounds nothing");
+        assert_eq!(at + window.len() as u64, 1_000);
+    }
+
+    /// The machine crosses an `await` as a value, which is the whole reason it
+    /// exists — and nothing in either type's *text* would notice a field
+    /// arriving that broke it.
+    #[test]
+    fn the_machine_and_its_requests_are_send_and_hold_no_borrow() {
+        fn assert_send_and_owned<T: Send + 'static>() {}
+        assert_send_and_owned::<Walk>();
+        assert_send_and_owned::<Request>();
+        assert_send_and_owned::<Step>();
+    }
+
+    /// A request held from an earlier step is the one misuse the protocol
+    /// cannot design out, and it is a panic rather than another variant of the
+    /// taxonomy: it names no offset in a file, in either coordinate space.
+    #[test]
+    #[should_panic(expected = "not waiting for")]
+    fn a_stale_request_is_a_panic() {
+        let bytes = synthetic_stream(2, 100, 4_096);
+        let (mut machine, first) = Walk::begin(bytes.len() as u64);
+        let Step::Need(second) = machine
+            .supply(
+                first,
+                &bytes[first.range().start as usize..first.range().end as usize],
+            )
+            .expect("the magic is the file's")
+        else {
+            panic!("a one-stream file is not walked by its magic alone")
+        };
+        let _ = second;
+        let _ = machine.supply(first, &bytes[..6]);
+    }
+
+    /// Supplying more than was asked for is the driver's own shape — every walk
+    /// in this crate goes through it — and beginning *past* the request is the
+    /// half of containment a driver can only get wrong by contradicting itself.
+    #[test]
+    #[should_panic(expected = "past the start of")]
+    fn bytes_beginning_past_the_request_are_a_panic() {
+        let (mut machine, first) = Walk::begin(4_096);
+        let _ = machine.supply_at(first, 2, &[0u8; 8]);
+    }
+
+    /// A supply that runs out early is the file being smaller than the size the
+    /// machine was handed: [`Error::Truncated`] where the bytes ran out, and not
+    /// a panic, because it names an offset in a file and a driver cannot tell it
+    /// from its own slicing.
+    #[test]
+    fn a_supply_that_runs_out_early_is_a_truncation() {
+        let bytes = synthetic_stream(1, 100, 4_096);
+        let (mut machine, first) = Walk::begin(bytes.len() as u64);
+        let Step::Need(probe) = machine
+            .supply(first, &bytes[..first.len as usize])
+            .expect("the magic is the file's")
+        else {
+            panic!("a one-stream file is not walked by its magic alone")
+        };
+
+        // The padding probe asks for the file's last four bytes; answer it with
+        // three, as a source shorter than its own `size()` would.
+        let at = probe.start() as usize;
         assert!(matches!(
-            w.bytes(996, 8),
+            machine.supply_at(probe, at as u64, &bytes[at..at + 3]),
+            Err(Error::Truncated { compressed_offset }) if compressed_offset == at as u64 + 3
+        ));
+    }
+
+    /// The machine bounds every range it emits against the size it was given, so
+    /// no driver holds that bound — and nothing a *file* can contain reaches the
+    /// check, every range descending from a boundary already placed inside the
+    /// file. The two tests below provoke it by shrinking the size out from under
+    /// a walk in flight, which is the state a mis-derivation would leave behind;
+    /// they differ only in the profile, the assertion being the diagnosis and the
+    /// refusal what a release build does in its place.
+    fn a_walk_whose_size_shrank() -> (Walk, Request, Vec<u8>) {
+        let bytes = synthetic_stream(2, 100, 4_096);
+        let (mut machine, first) = Walk::begin(bytes.len() as u64);
+        machine.size = 8;
+        (machine, first, bytes)
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "mis-derivation in xz-seek")]
+    fn the_size_bound_asserts_in_debug() {
+        let (mut machine, first, bytes) = a_walk_whose_size_shrank();
+        let _ = machine.supply(first, &bytes[..first.len as usize]);
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn the_size_bound_refuses_the_range_in_release() {
+        let (mut machine, first, bytes) = a_walk_whose_size_shrank();
+        assert!(matches!(
+            machine.supply(first, &bytes[..first.len as usize]),
             Err(Error::Truncated {
-                compressed_offset: 1_000
+                compressed_offset: 8
             })
+        ));
+    }
+
+    /// A source whose `size()` over-reports reaches the same verdict through the
+    /// synchronous driver, at the last byte it actually had.
+    #[test]
+    fn a_source_shorter_than_it_claims_is_truncated_at_its_last_byte() {
+        struct Lying {
+            bytes: Vec<u8>,
+            claimed: u64,
+        }
+        impl CompressedSource for Lying {
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+                let slice: &[u8] = &self.bytes;
+                slice.read_at(offset, buf)
+            }
+            fn size(&self) -> std::io::Result<u64> {
+                Ok(self.claimed)
+            }
+        }
+
+        let bytes = synthetic_stream(2, 100, 4_096);
+        let real = bytes.len() as u64;
+        let src = Lying {
+            bytes,
+            claimed: real + 4,
+        };
+        assert!(matches!(
+            walk(&src),
+            Err(Error::Truncated { compressed_offset }) if compressed_offset == real
         ));
     }
 

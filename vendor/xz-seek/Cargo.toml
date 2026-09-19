@@ -30,8 +30,7 @@ publish = false
 # three claims are about a crate being *absent*: the unsafe-free build is
 # `--no-default-features --features xz4rust`, and what makes it unsafe-free is
 # that `liblzma`, `crc32fast`, `crc64fast` and `sha2` are not in its graph.
-# See `docs/design/architecture.md`, "Two implementations, selected by `cfg`
-# rather than by resolution".
+# See `docs/design/decisions.md`, "D52".
 [features]
 default     = ["liblzma", "fast-checks"]
 liblzma     = ["dep:liblzma"]
@@ -46,9 +45,6 @@ serde       = ["dep:serde"]
 # a dependency graph, so a stray `xz-seek/...` anywhere would silently change
 # every consumer's decode path for a measurement. Declared here so
 # `unexpected_cfgs` stays on for everything else.
-#
-# See `docs/design/architecture.md`, "The decoder is built per block, and one
-# `cfg` build reuses it".
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xz_seek_decoder_reuse)'] }
 

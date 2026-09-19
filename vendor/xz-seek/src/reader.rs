@@ -1,8 +1,9 @@
 //! The positioned read: an uncompressed byte offset in, the bytes there out.
 //!
-//! [`Reader`] holds the seek table, the configuration, and at most one live
-//! [`BlockDecode`]. Everything it does is decided by arithmetic over the table
-//! before a byte moves.
+//! [`Reader`] is a [`Layout`] — the seek table and the configuration — plus a
+//! source and at most one live [`BlockDecode`]. Everything it does is decided
+//! by arithmetic over the table before a byte moves, and every query that ends
+//! there is the layout's and is forwarded.
 //!
 //! # Continuing is chosen by arithmetic, not by a threshold
 //!
@@ -51,6 +52,7 @@ use std::sync::Arc;
 use crate::backend::{self, Backend};
 use crate::decode::{BlockDecode, DEFAULT_MEMLIMIT};
 use crate::error::{Error, Result};
+use crate::layout::Layout;
 use crate::plan::{Bulk, RangePlan};
 use crate::range::RangeRead;
 use crate::source::CompressedSource;
@@ -82,8 +84,10 @@ const DISCARD_CHUNK: usize = 256 << 10;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Verify {
     /// Checks are computed, and a partly-decoded block is decoded to its end
-    /// before the reader leaves it, so that every block the reader touched has
-    /// been verified.
+    /// before the reader seeks away from it, so that every block the reader
+    /// read from and moved on from has been verified. Dropping the reader
+    /// mid-block is not a seek and runs no escape: there is no `Drop` impl, and
+    /// declining by dropping is the same lever [`crate::BlockRead`] gives.
     ///
     /// A stream declaring a check id nothing implements is refused here, with
     /// [`Error::UnsupportedCheck`], before any of its blocks is decoded.
@@ -184,7 +188,9 @@ impl Builder {
 
     /// The backend, refused here if this build does not carry it.
     ///
-    /// Both constructors call this **first**, before the walk or the table's
+    /// All three of [`Builder::open`], [`Builder::layout`] and
+    /// [`Builder::open_with_table`] call this **first**, before the walk or the
+    /// table's
     /// validation, so a caller who named the wrong backend is not charged the
     /// two to three minutes of footer seeks the koji file's walk costs before
     /// being told.
@@ -211,7 +217,35 @@ impl Builder {
     pub fn open<S: CompressedSource>(self, source: S) -> Result<Reader<S>> {
         let backend = self.compiled_backend()?;
         let table = SeekTable::from_source(&source)?;
-        Ok(self.with(source, Arc::new(table), backend))
+        Ok(Reader::over(self.held(Arc::new(table), backend), source))
+    }
+
+    /// The sourceless handle over a [`SeekTable`] the caller already holds:
+    /// everything about the file that reading a byte cannot change.
+    ///
+    /// `compressed_file_size` is the whole `.xz` file's length in bytes, and it
+    /// is the only thing [`Builder::open_with_table`] ever wanted a source for
+    /// — it cross-checks the table against the file it claims to describe, as
+    /// that constructor does, and nothing here reads a byte either way. A
+    /// caller who drives [`Walk`](crate::Walk) over its own transport has that
+    /// number already, having handed it to [`Walk::begin`](crate::Walk::begin).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BackendUnavailable`] if [`Builder::backend`] named a backend
+    /// this build does not carry, checked first of all; then
+    /// [`Error::InvalidTable`] where the table does not describe a file of that
+    /// size. See [`Builder::open_with_table`] for what that check is and what it
+    /// deliberately is not.
+    pub fn layout(
+        self,
+        table: impl Into<Arc<SeekTable>>,
+        compressed_file_size: u64,
+    ) -> Result<Layout> {
+        let table = table.into();
+        let backend = self.compiled_backend()?;
+        table.validate(compressed_file_size)?;
+        Ok(self.held(table, backend))
     }
 
     /// Open a reader over `source` from a [`SeekTable`] the caller already
@@ -262,25 +296,12 @@ impl Builder {
         let backend = self.compiled_backend()?;
         let size = source.size().map_err(|e| Error::io(0, e))?;
         table.validate(size)?;
-        Ok(self.with(source, table, backend))
+        Ok(Reader::over(self.held(table, backend), source))
     }
 
-    /// The reader both constructors build once the table is in hand.
-    fn with<S: CompressedSource>(
-        self,
-        source: S,
-        table: Arc<SeekTable>,
-        backend: Backend,
-    ) -> Reader<S> {
-        Reader {
-            source,
-            table,
-            memlimit: self.memlimit,
-            verify: self.verify,
-            backend,
-            live: None,
-            discard: Vec::new(),
-        }
+    /// The configuration and the table as one value, once both are in hand.
+    fn held(self, table: Arc<SeekTable>, backend: Backend) -> Layout {
+        Layout::new(table, self.memlimit, self.verify, backend)
     }
 }
 
@@ -331,12 +352,11 @@ struct Live {
 /// [`Reader::new`] opens with the defaults; [`Builder`] is where the knobs are.
 pub struct Reader<S: CompressedSource> {
     source: S,
-    /// Shared rather than owned, so that [`Reader::index_shared`] can hand out
-    /// an alias and [`Builder::open_with_table`] can take one in.
-    table: Arc<SeekTable>,
-    memlimit: u64,
-    verify: Verify,
-    backend: Backend,
+    /// Everything about the file that reading a byte cannot change. Held as a
+    /// value rather than spread over the reader's own fields, so that
+    /// [`Reader::layout`] can hand it out and a caller with no source can hold
+    /// the same thing.
+    layout: Layout,
     live: Option<Live>,
     discard: Vec<u8>,
 }
@@ -351,269 +371,102 @@ impl<S: CompressedSource> Reader<S> {
         Builder::new().open(source)
     }
 
+    /// The reader over `source` once the layout is settled.
+    fn over(layout: Layout, source: S) -> Reader<S> {
+        Reader {
+            source,
+            layout,
+            live: None,
+            discard: Vec::new(),
+        }
+    }
+
+    /// What this reader knows about the file without reading it.
+    ///
+    /// The sourceless half of this reader, and the other side of
+    /// [`Builder::layout`]. Not the only route to a [`Layout`] from a walked
+    /// file — [`SeekTable::compressed_file_size`] is public, so that number and
+    /// the table rebuild one — but the only route that cannot silently disagree
+    /// with this reader's own configuration: a rebuild re-states the memory
+    /// limit, the verification state and the backend from memory, and the first
+    /// of those is readable nowhere. `D69`.
+    ///
+    /// [`Layout`] is [`Clone`] and the clone shares this reader's table, so a
+    /// caller that wants the shape and cost queries answerable beside a locked
+    /// reader clones one out and never takes the lock — [`Reader::read_at`] is
+    /// `&mut self`. Every one of the seven queries on it is forwarded here as
+    /// well, so a caller who has a file need not reach for it; the two
+    /// configuration accessors, [`Layout::verify`] and [`Layout::backend`], are
+    /// not, and are read through here.
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     /// The seek table this reader is using.
     ///
-    /// The table is a plain value with public documented fields, so this is
-    /// also the extraction half of persisting it: serialize what comes back —
-    /// the `serde` feature derives `Serialize` and `Deserialize` on every type
-    /// in it — and hand it to [`Builder::open_with_table`] next time.
-    ///
-    /// The shape and cost queries live on [`SeekTable`] and the reader does not
-    /// forward them: `reader.index().uncompressed_size()` is one keystroke more
-    /// than a forwarding method and one fewer thing to keep in step. That is
-    /// also why [`SeekTable::seek_cost`] is unambiguous — the table has no live
-    /// position to confuse a cold-start cost with.
+    /// [`Layout::index`], forwarded — it is also the extraction half of
+    /// persisting the table, which that page describes.
     pub fn index(&self) -> &SeekTable {
-        &self.table
+        self.layout.index()
     }
 
     /// The seek table this reader is using, as a handle that aliases it.
     ///
-    /// **Not a clone of the table**: the `Arc` returned is the one the reader
-    /// holds, so `&*reader.index_shared()` and [`Reader::index`] are the same
-    /// address and the table exists once however many handles are out. It is
-    /// the extraction half for a caller that keeps a reader behind a lock —
-    /// [`Reader::read_at`] is `&mut self` — and wants [`SeekTable`]'s queries
-    /// (`uncompressed_size`, `blocks_in`) answerable without taking that lock.
-    /// Cloning out of [`Reader::index`] answers the same queries at the cost of a
-    /// second table for the life of the process, 80 bytes a stream and 32 a
-    /// block.
-    ///
-    /// [`Builder::open_with_table`] takes an `Arc<SeekTable>` back the same way,
-    /// so a table read from a caller's own storage can be shared from the start.
+    /// [`Layout::index_shared`], forwarded: the `Arc` returned is the one this
+    /// reader holds, so the table exists once however many handles are out.
+    /// It is the extraction half for a caller that keeps a reader behind a lock
+    /// — [`Reader::read_at`] is `&mut self` — and wants [`SeekTable`]'s queries
+    /// answerable without taking that lock.
     pub fn index_shared(&self) -> Arc<SeekTable> {
-        Arc::clone(&self.table)
+        self.layout.index_shared()
     }
 
     /// The work of decoding one block, as a value a caller can schedule.
     ///
-    /// `index` is an index into [`SeekTable::blocks`](crate::SeekTable::blocks);
-    /// [`SeekTable::blocks_in`](crate::SeekTable::blocks_in) is what turns an
-    /// uncompressed range into the indices covering it. The task carries this
-    /// reader's memory limit, verification state and backend, and the block's
-    /// *resolved* check — so a block decoded through it decodes exactly as
-    /// [`Reader::read_at`] would decode it here.
-    ///
-    /// **`None` past the last block.** The one other way it is `None` is a table
-    /// that places a block outside every stream, so that no check can be
-    /// resolved for it; [`SeekTable::validate`](crate::SeekTable) refuses such a
-    /// table and a walk cannot produce one, so a reader that exists has no such
-    /// block.
-    ///
-    /// **This reader is not borrowed by the task.** `&self` ends with the call:
-    /// a [`BlockTask`] is `Copy` and owns everything it needs, so tasks may be
-    /// collected, sent to threads, and outlive the reader that named them.
-    /// Nothing here reads a byte or touches the live decode, so a reader stays
-    /// usable for positioned reads beside any number of tasks.
+    /// [`Layout::block_task`], forwarded. **This reader is not borrowed by the
+    /// task**, so tasks may be collected, sent to threads, and outlive the
+    /// reader that named them, and a reader stays usable for positioned reads
+    /// beside any number of them.
     pub fn block_task(&self, index: usize) -> Option<BlockTask> {
-        let block = *self.table.blocks.get(index)?;
-        let check = self.check_of(index).ok()?;
-        Some(BlockTask::new(
-            block,
-            check,
-            self.verify,
-            self.memlimit,
-            self.backend,
-        ))
+        self.layout.block_task(index)
     }
 
     /// What one decode of this file holds besides the bytes it produces, in
     /// bytes.
     ///
-    /// The charge a caller sizing a worker pool against a memory budget divides
-    /// by: everything one [`BlockTask::decode_into`](crate::BlockTask::decode_into)
-    /// — or one live [`Reader::read_at`] — retains beyond the output buffer the
-    /// caller owns. Three terms, and only the first varies per block:
-    ///
-    /// | Held | What it is |
-    /// |---|---|
-    /// | the LZMA2 dictionary | the largest any stream's first block header declares |
-    /// | the compressed input chunk | 1 MiB, capped by the largest block's whole extent |
-    /// | the backend's own decoder state | a constant, per backend |
-    ///
-    /// **It is [`Reader::decoder_bytes`] plus [`Reader::input_chunk_bytes`]**,
-    /// and a caller whose source lends its bytes wants the first of those alone:
-    /// the chunk is never allocated over such a source, so this sum over-charges
-    /// it by exactly that term.
-    ///
-    /// It costs **no source read and no decode**: the seek table carries the
-    /// first two and this reader is the third. **The dictionary is the whole
-    /// file's**, so *this* number does not vary with what is read and a caller
-    /// asks once, at construction, and stores it.
-    ///
-    /// That is also why it is not the charge for one *range*.
-    /// [`Reader::plan_range`] takes the same three terms over the streams a
-    /// range touches, so its
-    /// [`RangePlan::decoder_bytes`](crate::RangePlan::decoder_bytes) is the
-    /// smaller wherever a range misses the largest-dictionary stream — or a
-    /// stream whose first block header did not parse, which this method charges
-    /// `memlimit` for across the whole file. A caller sizing a pool for a read
-    /// it is about to make asks there and not here.
-    ///
-    /// **It is a footprint, not a dictionary, and `memlimit` is neither.**
-    /// [`Builder::memlimit`] is a refusal threshold about the *file* — *this
-    /// file declares a dictionary larger than you allowed* — and stays in
-    /// dictionary bytes; this is a charge for *our own* decode. The dictionary
-    /// term is separately readable as
-    /// [`StreamEntry::first_block_dict_size`](crate::StreamEntry::first_block_dict_size),
-    /// which is a public field of the table.
-    ///
-    /// # What it is not
-    ///
-    /// **Not a sound ceiling.** Within one stream every block declares the same
-    /// filter chain unless the producer deliberately changed it, which `xz`
-    /// does on demand (`docs/design/xz-invariants.md`, `I23`), so this is exact
-    /// for every file written without that and **understates** for the rest —
-    /// deficiency: KD10, whose detail is in `docs/design/architecture.md`. The
-    /// backstop is unconditional: `memlimit` is compared against each block's
-    /// own declared dictionary before any backend object is built, so an
-    /// understating charge surfaces as a clean
-    /// [`Error::MemoryLimitExceeded`] and never as an overrun. A caller that
-    /// needs a number that cannot understate has one already —
-    /// `memlimit` itself, which is the ceiling this can never exceed.
-    ///
-    /// **A stream whose first block header did not parse is charged
-    /// `memlimit`**, since nothing is known about the rest of it and
-    /// over-charging is the cheap direction.
-    ///
-    /// **Never zero**, so it is safe as a divisor: a file with no blocks still
-    /// reports the backend's own state.
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use xz_seek::{Bulk, Reader};
-    ///
-    /// let reader = Reader::new(std::fs::File::open("dump.xz")?)?;
-    /// let budget = 1 << 30;
-    ///
-    /// // What one decode of this file holds, whichever range it is over.
-    /// let per_decode = reader.decode_footprint();
-    ///
-    /// // How many decodes that budget admits over the range actually being
-    /// // read is `plan_range`'s answer rather than a division: the plan charges
-    /// // that range's own dictionary, and the buffers a bulk read holds beside
-    /// // the decoders.
-    /// let whole = 0..reader.index().uncompressed_size();
-    /// let workers = reader.plan_range(whole, Bulk::new(16, budget)).workers();
-    /// # let _ = (per_decode, workers);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// [`Layout::decode_footprint`], forwarded — the three terms, what the
+    /// number is not, and why it is not the charge for one *range* are there.
     pub fn decode_footprint(&self) -> u64 {
-        self.table.decode_footprint(self.backend, self.memlimit)
+        self.layout.decode_footprint()
     }
 
     /// What one decode of this file holds when the source lends its bytes, in
     /// bytes: the LZMA2 dictionary plus the backend's own decoder state.
     ///
-    /// [`Reader::decode_footprint`] less
-    /// [`Reader::input_chunk_bytes`] — the charge for a decode that never
-    /// allocates an input buffer, because a source that lends is read through
-    /// [`CompressedSource::slice_at`](crate::CompressedSource::slice_at) and the
-    /// chunk is never built. A caller handing
-    /// [`BlockTask::decode_into`](crate::BlockTask::decode_into) a
-    /// [`Window`](crate::Window) cut to that task's own
-    /// [`compressed_range`](crate::BlockTask::compressed_range) is exactly that
-    /// caller, and divides a budget by this rather than by the whole sum.
-    ///
-    /// **It is stated rather than left to the subtraction** so that a caller is
-    /// not the one deciding, silently, which side a fourth term of the footprint
-    /// would fall on.
-    ///
-    /// **The dictionary is the whole file's**, so this does not vary with what
-    /// is read.
-    /// [`RangePlan::decoder_bytes`](crate::RangePlan::decoder_bytes) is the same
-    /// quantity over the streams one *range* touches, and is the smaller
-    /// wherever that range misses the largest-dictionary stream; a caller sizing
-    /// a pool for a read it is about to make asks there and not here.
-    ///
-    /// **Not a sound ceiling**, on the same terms as the sum that contains it: a
-    /// stream whose *later* block declares a larger dictionary than its first is
-    /// understated — deficiency: KD10, whose detail is in
-    /// `docs/design/architecture.md`. `memlimit` remains the backstop, compared
-    /// against each block's own declared dictionary before any backend object is
-    /// built.
-    ///
-    /// **Never zero**, so it is safe as a divisor: the backend term is
-    /// unconditional, so even a file with no blocks reports it.
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use xz_seek::Reader;
-    ///
-    /// let reader = Reader::new(std::fs::File::open("dump.xz")?)?;
-    /// assert_eq!(
-    ///     reader.decode_footprint(),
-    ///     reader.decoder_bytes() + reader.input_chunk_bytes(),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// [`Layout::decoder_bytes`], forwarded.
     pub fn decoder_bytes(&self) -> u64 {
-        self.table.decoder_bytes(self.backend, self.memlimit)
+        self.layout.decoder_bytes()
     }
 
     /// The compressed input buffer a positioned read of this file may hold, in
     /// bytes: the second term of [`Reader::decode_footprint`], on its own.
     ///
-    /// A fixed 1 MiB chunk, capped by the largest block's whole compressed
-    /// extent, since a block shorter than the chunk is read in one. It is here
-    /// because the memory is: [`Reader::read_at`] pulls a block through this
-    /// buffer, and so does a
-    /// [`BlockTask::decode_into`](crate::BlockTask::decode_into) over a source
-    /// that does not lend.
-    ///
-    /// **It is an upper bound, not an allocation that always happens.** A source
-    /// that lends its bytes — a [`Window`](crate::Window), a `&[u8]`, a caller's
-    /// memory map — is read through
-    /// [`CompressedSource::slice_at`](crate::CompressedSource::slice_at) and the
-    /// decode holds no chunk at all, so over such a source this term and the
-    /// footprint that contains it over-charge by exactly this much. That is the
-    /// cheap direction, and it is the same direction
-    /// [`Reader::decode_footprint`] is conservative in elsewhere.
-    ///
-    /// **It is not a term of [`RangePlan::footprint`](crate::RangePlan::footprint).**
-    /// A bulk range read fetches every block whole into a compressed window and
-    /// decodes out of it at every worker count, so no decoder on that path owns
-    /// an input buffer. A caller sizing a pool asks
-    /// [`Reader::plan_range`]; this is what a *positioned* read holds.
-    ///
-    /// ```no_run
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use xz_seek::Reader;
-    ///
-    /// let reader = Reader::new(std::fs::File::open("dump.xz")?)?;
-    /// // The published charge is the dictionary, this chunk, and the backend's
-    /// // own state.
-    /// assert!(reader.input_chunk_bytes() <= reader.decode_footprint());
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// [`Layout::input_chunk_bytes`], forwarded — including why it is an upper
+    /// bound rather than an allocation that always happens.
     pub fn input_chunk_bytes(&self) -> u64 {
-        self.table.input_chunk()
+        self.layout.input_chunk_bytes()
     }
 
     /// What a bulk read over `range` under `bulk` would hold, and how many
     /// workers it admits.
     ///
-    /// **Readable before the read starts**, which is the point of it: it costs
-    /// no source read and no decode, so a caller can ask *"does this file's
-    /// blocks admit any parallelism inside my memory budget?"* and act on the
-    /// answer — including by not making the read at all. See [`RangePlan`], and
-    /// [`Bulk`] for the two numbers it is planned under.
-    ///
-    /// [`Reader::read_range`] plans the same range under the same [`Bulk`] and
-    /// gets the same answer; a caller who wants the number without the read asks
-    /// here, and one who wants it afterwards asks
-    /// [`RangeRead::plan`](crate::RangeRead::plan).
-    ///
-    /// **It never fails.** A budget too small for one worker is not an error but
-    /// a plan whose [`RangePlan::fits`] is false, reporting the footprint one
-    /// worker will use anyway.
+    /// [`Layout::plan_range`], forwarded. [`Reader::read_range`] plans the same
+    /// range under the same [`Bulk`] and gets the same answer; a caller who
+    /// wants the number without the read asks here, and one who wants it
+    /// afterwards asks [`RangeRead::plan`](crate::RangeRead::plan).
     pub fn plan_range(&self, range: core::ops::Range<u64>, bulk: Bulk) -> RangePlan {
-        RangePlan::new(&self.table, range, bulk, self.backend, self.memlimit)
+        self.layout.plan_range(range, bulk)
     }
-
     /// An ordered bulk read over a range of the uncompressed stream.
     ///
     /// `bulk` is the worker count and the byte budget the read is bounded by,
@@ -651,8 +504,7 @@ impl<S: CompressedSource> Reader<S> {
     /// somewhere in full first and your buffer is usually smaller than a block.
     /// **Passing a block-sized buffer does not avoid the copy** — this path never
     /// compares the two, so a caller reading whole blocks pays a slot and a copy
-    /// it does not need. That is deficiency: KD8, whose detail is in
-    /// `docs/design/architecture.md`.
+    /// it does not need. That is `KD8`.
     ///
     /// If that copy matters to you, [`Reader::block_task`] and
     /// [`BlockTask::decode_into`](crate::BlockTask::decode_into) decode one block
@@ -695,15 +547,15 @@ impl<S: CompressedSource> Reader<S> {
         S: Clone + Send + 'static,
     {
         let plan = self.plan_range(range.clone(), bulk);
-        let indices = self.table.blocks_in(range.clone());
+        let indices = self.layout.table.blocks_in(range.clone());
         let mut tasks = Vec::with_capacity(indices.len());
         for i in indices {
             tasks.push(BlockTask::new(
-                self.table.blocks[i],
-                self.check_of(i)?,
-                self.verify,
-                self.memlimit,
-                self.backend,
+                self.layout.table.blocks[i],
+                self.layout.check_of(i)?,
+                self.layout.verify,
+                self.layout.memlimit,
+                self.layout.backend,
             ));
         }
         Ok(RangeRead::new(
@@ -738,7 +590,7 @@ impl<S: CompressedSource> Reader<S> {
         while done < buf.len() {
             let target = offset + done as u64;
             // Past the last byte of the file: fill-or-EOF's short return.
-            let Some(block) = self.table.block_containing(target) else {
+            let Some(block) = self.layout.table.block_containing(target) else {
                 break;
             };
             let n = match self.read_from(block, target, &mut buf[done..]) {
@@ -776,7 +628,7 @@ impl<S: CompressedSource> Reader<S> {
             Some(l) if l.block == block && !l.decode.is_finished() => Some(l.decode.position()),
             _ => None,
         };
-        let start = self.table.blocks[block].uncompressed_offset;
+        let start = self.layout.table.blocks[block].uncompressed_offset;
         let skip = match route(start, live_position, target) {
             Route::Continue(skip) => skip,
             Route::Restart(skip) => {
@@ -790,17 +642,17 @@ impl<S: CompressedSource> Reader<S> {
     /// Leave whatever block the decoder is in and start `block`.
     fn start_block(&mut self, block: usize) -> Result<()> {
         self.leave_live_block()?;
-        let entry = self.table.blocks[block];
-        let check = self.check_of(block)?;
+        let entry = self.layout.table.blocks[block];
+        let check = self.layout.check_of(block)?;
         // Checked as compiled at the constructor, so the seam is never reached
         // with a backend this build does not carry.
         let decode = BlockDecode::start(
             &self.source,
             &entry,
             check,
-            self.verify,
-            self.memlimit,
-            self.backend,
+            self.layout.verify,
+            self.layout.memlimit,
+            self.layout.backend,
         )?;
         self.live = Some(Live {
             block,
@@ -820,7 +672,10 @@ impl<S: CompressedSource> Reader<S> {
         let Some(mut live) = self.live.take() else {
             return Ok(());
         };
-        if self.verify != Verify::Full || live.decode.is_finished() || live.check == Check::None {
+        if self.layout.verify != Verify::Full
+            || live.decode.is_finished()
+            || live.check == Check::None
+        {
             return Ok(());
         }
         if self.discard.is_empty() {
@@ -851,29 +706,6 @@ impl<S: CompressedSource> Reader<S> {
             left -= got as u64;
         }
         Ok(())
-    }
-
-    /// The check declared by the stream holding block `block`.
-    ///
-    /// A block's check type is written in its stream's flags and nowhere else,
-    /// and streams are ordered by compressed offset like the blocks inside
-    /// them, so this is one binary search. It reads only fields that mean
-    /// something for every stream — `first_block` does not, for a stream with no
-    /// blocks.
-    fn check_of(&self, block: usize) -> Result<Check> {
-        let at = self.table.blocks[block].compressed_offset;
-        let i = self
-            .table
-            .streams
-            .partition_point(|s| s.compressed_offset <= at)
-            .checked_sub(1);
-        match i {
-            Some(i) => Ok(self.table.streams[i].check),
-            // A walked table cannot put a block outside every stream.
-            None => Err(Error::IndexInconsistent {
-                compressed_offset: at,
-            }),
-        }
     }
 }
 

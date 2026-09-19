@@ -29,6 +29,7 @@ FILES = {
     "docs/process.md": "# P\n",
     ".claude/skills/x/SKILL.md": "---\nname: x\n---\n",
     "pgdump_query/src/lib.rs": "//! lib\nfn f() {}\n",
+    "vendor/xz-seek/src/lib.rs": "//! vendored\nfn v() {}\n",
 }
 
 
@@ -172,6 +173,14 @@ class Meter(unittest.TestCase):
             write(repo, "pgdump_query/src/new.rs", "//! new\nfn h() {}\n")  # untracked
             g = repoint.growth_since(repo, repoint.read_stamp(repo))
         self.assertEqual(g.comments, 3)  # +3 -1 committed, +1 untracked
+
+    def test_a_re_vendor_is_not_this_project_s_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            write(repo, "vendor/xz-seek/src/lib.rs", "//! a\n// b\n// c\nfn v() {}\n")
+            write(repo, "vendor/xz-seek/src/new.rs", "//! new\n")  # untracked
+            g = repoint.growth_since(repo, repoint.read_stamp(repo))
+        self.assertEqual(g.comments, 0)
 
     def test_past_the_budget_is_red(self):
         with tempfile.TemporaryDirectory() as tmp:

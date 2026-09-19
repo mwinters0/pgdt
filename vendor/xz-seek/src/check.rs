@@ -7,7 +7,7 @@
 //! true under both backends: `lzma_crc32`/`lzma_crc64` exist only as
 //! `unsafe extern` in `liblzma-sys`, SHA-256 is not bound at any level, and
 //! none of the three exists at all in an `xz4rust`-only build. See
-//! `docs/design/architecture.md`, "The check algorithms".
+//! `docs/design/decisions.md`, "D54".
 //!
 //! # Two implementations, selected by `cfg` rather than by resolution
 //!
@@ -22,8 +22,7 @@
 //! optional dependency to switch on, and gating it on a feature would put it
 //! outside `cargo test --workspace`. Its `cfg` includes `test` instead, which
 //! is what keeps it inside the standing gate — see
-//! `docs/design/architecture.md`, "Two implementations, selected by `cfg`
-//! rather than by resolution".
+//! `docs/design/decisions.md`, "D52".
 //!
 //! **[`crc32`] routes through the same swap**, because the claim being made is
 //! that `crc32fast` is *absent* from the unsafe-free build's graph, and the

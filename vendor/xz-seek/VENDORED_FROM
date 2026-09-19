@@ -1,13 +1,13 @@
 Vendored from /mnt/wd12t/fedora/experiments/xz-seek
-commit 6e5702e44c8956c17dc9bb0ed91b53c808c10571
-committed 2026-09-12T23:31:23Z
+commit 565135b9195aebd1d4db41d97361ed94e08a52e9
+committed 2026-09-19T13:24:22Z
 
 This is a read-only snapshot, not a fork: a bug found here is fixed upstream
 and arrives at the next sync, never patched in this copy directly. Re-sync
 with `cd scripts && uv run vendor_xz_seek.py`.
 
 `pgdump_query` names this copy as a path dependency (see
-docs/design/architecture.md, "The compressed source"), and re-takes it as
+docs/design/decisions.md, "The compressed source and the cache"), and re-takes it as
 upstream moves rather than waiting for a consumer that needs the newer work.
 So a sync can bring in code nothing in this tree exercises: it is finished by
 `cargo check --workspace` and `cargo test --workspace`, not by this script.

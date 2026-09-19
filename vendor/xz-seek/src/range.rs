@@ -4,8 +4,7 @@
 //! returns: the caller names a half-open range of the uncompressed stream, and
 //! then fills its own buffer from the handle, repeatedly, until a short return
 //! says the range ended. The range may span gigabytes, so nothing here assumes a
-//! buffer the whole of it fits in — see `docs/design/architecture.md`, "The bulk
-//! range read: ordered delivery into the caller's buffer".
+//! buffer the whole of it fits in — see `docs/design/decisions.md`, "D33".
 //!
 //! **The delivery contract does not change with the worker count, and neither
 //! does the fetch.** Every block is read into a [`Window`](crate::Window) over
@@ -25,11 +24,10 @@
 //! well as before it exists. See [`RangePlan`].
 //!
 //! **The slot is unconditional, even for a caller whose buffer could take a
-//! whole block** — deficiency: KD8, whose detail is in
-//! `docs/design/architecture.md`, "Every worker holds one slot, and the copy
-//! is what buys verification". A caller that wants a block decoded straight into
-//! its own memory has [`BlockTask::decode_into`](crate::BlockTask::decode_into),
-//! which is that shape without this module's ordering or clamping.
+//! whole block** — `KD8`, at [`RangeRead::read`]. A caller that wants a block
+//! decoded straight into its own memory has
+//! [`BlockTask::decode_into`](crate::BlockTask::decode_into), which is that
+//! shape without this module's ordering or clamping.
 //!
 //! Three properties are the whole of it:
 //!
@@ -140,7 +138,7 @@ pub struct RangeRead<S: CompressedSource> {
     /// waits on threads that have exited and reports `Pool::lost`, an `Io`
     /// error blaming the caller's source for a damaged file. The bar that
     /// the contract may not move with the worker count is why the serial path
-    /// adopts it too. See `docs/design/architecture.md`, "The bulk range read".
+    /// adopts it too. See `docs/design/decisions.md`, "D33".
     ///
     /// [`RangeRead::failed`] is this field, published: a spent handle and a
     /// delivered one both read zero, so nothing else distinguishes them.
@@ -248,9 +246,24 @@ impl<S: CompressedSource> RangeRead<S> {
     ///
     /// **Every byte is copied once on its way to `buf`**, out of the slot the
     /// block was decoded and verified in — including when `buf` is large enough
-    /// to have held the block itself, which this method does not check for
-    /// (deficiency: KD8). [`Reader::read_range`](crate::Reader::read_range) says
-    /// what to reach for instead where that copy matters.
+    /// to have held the block itself, which this method does not check for.
+    ///
+    /// Deficiency register: `deficiency: KD8` — a caller whose buffer *can* take
+    /// a whole block, reading from a block boundary, pays the slot and one copy
+    /// per delivered byte anyway, because the two are never compared. **(c)
+    /// unowned**: the fix is a branch here decoding into the caller's remaining
+    /// buffer when the head is block-aligned and that buffer is long enough,
+    /// falling back to the slot otherwise. It changes no contract, and it
+    /// reaches the one-worker path alone — above one worker the block at the
+    /// head was decoded before the caller's buffer was in scope. It is not built
+    /// because a saving that fires only when a buffer happens to fit is one no
+    /// caller can size against, and because it puts a second delivery path
+    /// through this method's contract; the plan's footprint is a ceiling, so a
+    /// read holding less than it charges breaches nothing. Promoted by a caller
+    /// reading whole blocks through
+    /// [`Reader::read_range`](crate::Reader::read_range); that shape today is
+    /// [`BlockTask::decode_into`](crate::BlockTask::decode_into), without this
+    /// method's ordering, clamping or pool.
     ///
     /// # Errors
     ///
@@ -351,8 +364,7 @@ impl<S: CompressedSource> RangeRead<S> {
         }
         let file_size = self.source_size()?;
         // Decoded into the slot even where `buf` could have taken the block
-        // whole — deficiency: KD8, whose detail is in
-        // `docs/design/architecture.md`.
+        // whole — `KD8`, at `RangeRead::read`.
         let window =
             task.fetch_window(&self.source, file_size, core::mem::take(&mut self.window))?;
         let decoded = task.decode_into(&window, &mut self.slot);

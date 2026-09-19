@@ -37,8 +37,10 @@ pub enum Check {
 impl Check {
     /// The check id as it appears in a stream's flags.
     ///
-    /// Only the low nibble of the flags' second byte is the check id, so this
-    /// is always `0..=0x0f`.
+    /// Only the low nibble of the flags' second byte is the check id, so for a
+    /// `Check` the walk produced this is always `0..=0x0f`. [`Check::from_id`]
+    /// is where that masking happens; the variant itself is public and carries
+    /// whatever it was built with.
     pub fn id(self) -> u8 {
         match self {
             Check::None => 0x00,
@@ -72,8 +74,12 @@ impl Check {
     /// though its algorithm is not, and therefore what keeps every offset in a
     /// stream carrying one exactly where `xz` wrote it. See `xz-invariants.md`,
     /// `I7`.
+    ///
+    /// Only the low nibble is the id, as in [`Check::from_id`], so this answers
+    /// for a [`Check::Unsupported`] a caller built out of a whole byte rather
+    /// than shifting past the width of the answer.
     pub fn size(self) -> u64 {
-        let id = self.id();
+        let id = self.id() & 0x0f;
         if id == 0 { 0 } else { 4 << ((id - 1) / 3) }
     }
 
@@ -126,15 +132,29 @@ pub struct StreamEntry {
     /// exactly. The unknowing is spelled by the type and arises in exactly one
     /// way: a first block header that fails to parse, which is `None`. A
     /// consumer therefore cannot take the number without deciding what an
-    /// absent one costs.
+    /// absent one costs, and a caller's own JSON omitting the field
+    /// deserializes to `None` — which charges the memory limit, the cheap
+    /// direction of that asymmetry.
     pub first_block_dict_size: Option<u64>,
 }
 
 /// One block.
 ///
-/// 32 bytes. The filter chain is deliberately not here: the block header is
-/// read at seek time regardless, since it is the first bytes of the same read
-/// that fetches the payload.
+/// 32 bytes, against a [`StreamEntry`]'s 80. The filter chain is deliberately
+/// not here — `docs/design/decisions.md`, "D9".
+///
+/// Deficiency register: `deficiency: KD1` — the table costs 32 bytes a block
+/// and 80 a stream, so its size is roughly `32 × uncompressed size ÷ block
+/// size`: a large file cut into very small blocks puts it into hundreds of
+/// megabytes, past the cgroup the first downstream scans in, and the CLI's
+/// JSON sidecar widens that rather than closing it, spelling out each field
+/// name beside each `u64`. **(a) A consequence of a deliberate tradeoff**, and
+/// it will not be worked: the table is a plain value with public documented
+/// fields so that a caller can persist it in its own envelope, and this is
+/// that shape's honest cost. A block-count cap would refuse a valid file, and
+/// a per-stream-base-plus-`u32`-delta encoding would give up the public fields
+/// to serve a shape nobody has. What promotes it is a real input in that shape;
+/// the answer then is the compact encoding behind the same accessors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlockEntry {
@@ -200,11 +220,18 @@ pub struct SeekTable {
 impl SeekTable {
     /// Build the table by walking `source`'s stream footers backward.
     ///
-    /// One read per stream and one for the file's tail; nothing is decoded and
-    /// no block header is read. This is what `Reader::new` will do before it has
+    /// One read per stream and one for the file's tail; nothing is decoded.
+    /// The first block's header is *parsed* — it rides on the stream header's
+    /// own read, which is what [`StreamEntry::first_block_dict_size`] is read
+    /// out of — so no read is spent on one. This is what `Reader::new` will do before it has
     /// a reader to hand back, and it is public so that a caller who wants only
     /// the table — to persist it, or to report a file's shape — need not build
     /// one.
+    ///
+    /// It is the *synchronous driver* over [`Walk`](crate::Walk), which is the
+    /// walk itself: a caller whose transport cannot answer a `&self` read —
+    /// because its reads are futures — drives that machine instead and gets the
+    /// same table.
     pub fn from_source<S: crate::CompressedSource>(source: &S) -> crate::Result<SeekTable> {
         crate::walk::walk(source)
     }
@@ -268,24 +295,13 @@ impl SeekTable {
     /// thing it takes from the source, which is the roadmap's "cross-check the
     /// source cheaply" — re-walking is the cost the table exists to avoid.
     ///
-    /// # What it enforces, and why that list
+    /// # What it enforces
     ///
     /// **More than the reader assumes, and exactly what the walk
-    /// guarantees.** The table is a plain value with public fields, so a caller
-    /// can hand back anything at all; without this the failure is not an error
-    /// but confidently wrong bytes, which is the whole reason
-    /// [`Error::InvalidTable`] exists.
-    ///
-    /// *Rejected: loosening this to the reader's own assumptions* — monotonic
-    /// uncompressed offsets, blocks inside the source, blocks inside some
-    /// stream. It would accept a table with a hole, which
-    /// [`Reader::read_at`](crate::Reader::read_at) can only report as the short
-    /// return that fill-or-EOF reserves for the end of the file, and a table
-    /// whose blocks sit outside their stream, which
-    /// `Reader::check_of` would decode under a neighbouring stream's check
-    /// algorithm. It would also buy nothing back: [`SeekTable::from_source`]
-    /// derives a stream's start by subtracting its blocks from its index, so
-    /// the strict rule refuses no table the walk can build.
+    /// guarantees** — `docs/design/decisions.md`, "D12". The table is a plain
+    /// value with public fields, so a caller can hand back anything at all;
+    /// without this the failure is not an error but confidently wrong bytes,
+    /// which is the whole reason [`Error::InvalidTable`] exists.
     ///
     /// The streams tile the file exactly — `[header · blocks · index · footer]`
     /// then padding, the next stream starting where that ends — and each
@@ -347,6 +363,13 @@ impl SeekTable {
                 return bad(c);
             }
             if !s.padding.is_multiple_of(4) {
+                return bad(c);
+            }
+            // The check id is the low nibble of the stream flags, so a walk
+            // cannot record one above `0x0f` — only a caller's own `Check`
+            // value or a deserialized table can carry one, and every offset
+            // beneath this stream is derived through `Check::size`.
+            if s.check.id() > 0x0f {
                 return bad(c);
             }
             let Some(body_end) = c.checked_add(s.compressed_size) else {
@@ -985,6 +1008,27 @@ mod tests {
         assert!(zero.validate(zero.compressed_file_size).is_ok());
         assert_eq!(zero.block_containing(100), Some(2));
         assert_eq!(zero.uncompressed_size(), 300);
+    }
+
+    /// A check id no stream flags byte can carry is refused, and cannot be
+    /// asked for a size.
+    ///
+    /// `Check::Unsupported` is a public variant of a `#[non_exhaustive]` enum,
+    /// which blocks exhaustive matching and not construction, and `serde`
+    /// admits any `u8` on the re-injection path — so this is reachable from a
+    /// persisted table and not only from a hand-built one.
+    #[test]
+    fn a_check_id_the_format_cannot_hold_is_not_a_table_a_walk_produced() {
+        let mut t = table(&[100, 300, 200]);
+        assert!(t.validate(t.compressed_file_size).is_ok());
+        t.streams[0].check = Check::Unsupported(0xc8);
+        assert!(t.validate(t.compressed_file_size).is_err());
+
+        // Every id answers a size, and it is the low nibble's, as `from_id`
+        // reads it: `0xc8` is `0x08`, not a shift 66 bits wide.
+        for id in 0..=u8::MAX {
+            assert_eq!(Check::Unsupported(id).size(), Check::from_id(id).size());
+        }
     }
 
     #[test]
