@@ -472,3 +472,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **The conformance run reads a plain dump only, and no follow-up row was
+  admitted for a compressed one.** The ledger row says "a fixture", and every
+  fixture is plain, so what a real origin has still never been asked for is a
+  `.xz` footer walk — the request pattern that differs most from the oracle,
+  which answers one request per connection where a shipped server keeps one
+  alive. The plain run does reuse a connection across its reads; it is the
+  walk's cadence that is unrun. Covering it needs a second variable and a
+  compressed object the person places themselves, compared by the plaintext our
+  reader hands back rather than byte for byte, `xz` output not being
+  reproducible across versions — which is an item's worth of contract, not a
+  line added to this one. Reconsidering admits that as its own `M<k>`.

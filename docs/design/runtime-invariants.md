@@ -16,8 +16,10 @@ its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
 toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
-whose re-verification is a test run against the oracle rather than a
-container).
+whose re-verification is a test run against the oracle rather than a container;
+`pgdump_query-cli/tests/http_conformance.rs` reads the same claims against a
+real origin wherever one is offered —
+[`../../CONTRIBUTING.md`](../../CONTRIBUTING.md), "Building and testing").
 
 **It is named for the runtime environment rather than for Linux or for
 cgroups.** The mechanism these entries serve — a process discovering its own

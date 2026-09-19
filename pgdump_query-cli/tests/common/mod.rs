@@ -107,6 +107,17 @@ pub fn require_uv(guarding: &str) {
     );
 }
 
+/// A `parse` listing without the one line that names the cache path, which
+/// differs between two runs by construction — so a remote run's report and a
+/// local one's can be compared whole.
+pub fn strip_cache_line(output: &str) -> String {
+    output
+        .lines()
+        .filter(|line| !line.starts_with("wrote cache to "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A private copy of a fixture in a fresh tempdir, named `name`, so a
 /// colocated `.dqcache` can be written beside it without touching the
 /// checked-in tree. The `TempDir` is returned because dropping it deletes the

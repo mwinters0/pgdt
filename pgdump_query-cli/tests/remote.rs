@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::oracle::Oracle;
-use common::{fixture, run, run_ok, stderr_of};
+use common::{fixture, run, run_ok, stderr_of, strip_cache_line};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     ByteRangeSource, Cancellation, KnownCompression, Origin, Parallelism, Recognized, ScanOptions,
@@ -377,16 +377,6 @@ fn parse_over_a_url_finds_what_a_local_parse_finds() {
     ]);
 
     assert_eq!(strip_cache_line(&remote), strip_cache_line(&local));
-}
-
-/// The one line of a `parse` listing that names the cache path, which differs
-/// between two runs by construction.
-fn strip_cache_line(output: &str) -> String {
-    output
-        .lines()
-        .filter(|line| !line.starts_with("wrote cache to "))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[test]
