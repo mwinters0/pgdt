@@ -2767,16 +2767,20 @@ fn xz_partition_advice(
 ) -> Partitioning {
     let Some(cache) = blocks else {
         // **The piecewise arm charges the chunk buffer and not the
-        // decoder**: that path keeps one live block handle behind a mutex
-        // however many readers a caller runs, so the decoder is a fixed
-        // cost of the source rather than of a concurrent reader
+        // decoder**: on both providers the decoder is a fixed cost of the
+        // source rather than of a concurrent reader
         // ([`Partitioning::partition_bytes`]).
         //
-        // Deficiency register: `deficiency: KD35` — one partition is what
-        // the mutex admits, not what the budget affords: a decoder retains
-        // far less than a decoded block, so several would fit where the
-        // blocks they decode do not, and the budget that sends a file down
-        // this arm is exactly the one that would benefit. **(c) unowned**;
+        // Deficiency register: `deficiency: KD35` — one partition is not
+        // what the budget affords: a decoder retains far less than a decoded
+        // block, so several would fit where the blocks they decode do not,
+        // and the budget that sends a file down this arm is exactly the one
+        // that would benefit. **What pins the count at one differs by
+        // provider, and neither reason is the budget**: [`LiveBlock`] is
+        // forward-only behind one mutex, so two local readers would force
+        // each other's restarts, while the fetched arm keeps nothing between
+        // reads and so is serial for want of cut points rather than for want
+        // of a lock. **(c) unowned**;
         // closing it means a handle per reader — which `xz_seek::BlockRead`
         // being `Send` and borrowing nothing already allows — and a figure
         // over the count, and the figure is the half this cannot skip.

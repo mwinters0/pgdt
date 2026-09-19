@@ -414,11 +414,12 @@ a phase nobody has sliced.
   `pgdump_query/src/gather.rs`.
 
 - **KD35** — a budget too small for a decoded block is read serially: the
-  piecewise arm advises one partition because one live block handle sits behind
-  a mutex, where a decoder retains far less than the block it decodes and
-  several would fit. **(c) unowned**; promoted by a phase taking up compressed
-  scan throughput, which is also what would take the figure. Detail:
-  `pgdump_query/src/io.rs`.
+  piecewise arm advises one partition on both providers, where a decoder retains
+  far less than the block it decodes and several would fit. What pins the count
+  at one is not the budget — one forward-only handle behind a mutex locally,
+  nothing handing the fetched arm cut points at all. **(c) unowned**; promoted by
+  a phase taking up compressed scan throughput, which is also what would take the
+  figure. Detail: `pgdump_query/src/io.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
   request at a time, so a cold remote open costs a round trip per stream —
