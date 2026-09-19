@@ -109,8 +109,8 @@ Whole-block decode, LRU-retained. A file whose largest block the budget cannot h
 single-block) goes through one live `xz_seek::BlockRead` behind a mutex, kept across reads so a forward scan
 continues; there `partitions()` answers one partition, two readers forcing each other's restarts. `XzSource`
 feeds it a `File`, a `Window` being larger than the chunk it spares; `FetchedXzSource` fetches a block's whole
-extent and keeps that window across reads, but begins a handle per read, so it re-decodes a block a scan sits
-inside (P14's D21 closes that). Two misses decode one block twice (`KD20`): an in-flight map would lock that.
+extent and keeps window and handle together, so a block a scan sits inside is fetched and decoded once.
+Two misses decode one block twice (`KD20`): an in-flight map would lock that.
 
 ### D16 Block decode is afforded out of the stated budget, keyed on largest block
 `BlockCache::affordable` compares the charge at one reader (unit, chunk, decoder

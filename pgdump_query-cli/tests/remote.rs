@@ -768,11 +768,13 @@ async fn a_remote_xz_read_with_no_room_for_a_block_answers_the_same_bytes() {
 
 #[tokio::test]
 async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
-    // The piecewise arm keeps the window it fetched, so a forward scan inside
-    // one block costs one ranged GET rather than one per read; the window is
-    // dropped when the scan leaves the block, and nothing is cached behind it
-    // — a read going back re-fetches (D21). What it does *not* keep is the
-    // decoder, so each read still decodes its block from the start.
+    // The piecewise arm keeps the block it is reading — the window it fetched
+    // and the handle decoding out of it — so a forward scan inside one block
+    // costs one ranged GET rather than one per read; both are dropped when the
+    // scan leaves the block, and nothing is cached behind them, so a read
+    // going back re-fetches (D21). That a block is decoded once as well as
+    // fetched once is counted in `io.rs` under `introspect`, this oracle
+    // seeing only the request stream.
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
@@ -804,7 +806,7 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
     // fetches block 0 again, where a retained *block* would answer for free.
     let mark = oracle.requests().len();
     assert_eq!(&source.read_range(0, step).await.unwrap()[..], &plain[..step]);
-    assert_eq!(fetches(mark), 1, "nothing is retained behind the last window");
+    assert_eq!(fetches(mark), 1, "nothing is retained behind the last block");
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
-//! What the library can tell an instrumented binary about its own heap: which
-//! allocations are statistics.
+//! What the library can tell an instrumented binary about its own work: which
+//! allocations are statistics, and how often a read began decoding a block.
 //!
 //! **Off by default and compiled out of every build that does not ask.** The
 //! `introspect` feature turns it on, and only `pgdump_query-cli`'s own
@@ -26,6 +26,37 @@
 
 #[cfg(feature = "introspect")]
 pub use enabled::{StatisticsReading, allocated, freed, statistics_reading};
+
+/// How many block decodes a piecewise `.xz` read path has begun rather than
+/// resumed.
+///
+/// **Nothing without the instrument**: the field is absent, `begun` compiles
+/// away and no build that ships carries the atomic. What it exists for is a
+/// property a shipped build cannot state — that a block a forward scan sits
+/// inside is decoded once rather than once per read — which a test asserts
+/// rather than argues (`docs/design/roadmap-P14-remote-input.md`, "D21").
+#[derive(Debug, Default)]
+pub(crate) struct DecodeCounter {
+    #[cfg(feature = "introspect")]
+    begun: std::sync::atomic::AtomicU64,
+}
+
+impl DecodeCounter {
+    /// A block is about to be begun rather than resumed. Counted where that
+    /// is decided, so a `begin` that then errors is counted.
+    #[inline]
+    pub(crate) fn begun(&self) {
+        #[cfg(feature = "introspect")]
+        self.begun.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// How many have. Racy against a read still running, which the caller
+    /// avoids by reading once the read has returned.
+    #[cfg(feature = "introspect")]
+    pub(crate) fn count(&self) -> u64 {
+        self.begun.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
 
 /// Attributes every allocation and free the current thread makes to
 /// statistics while it is alive. Scopes nest.

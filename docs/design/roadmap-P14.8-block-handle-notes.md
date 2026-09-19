@@ -22,9 +22,10 @@ index line and marker were rewritten for the same reason; nothing was closed.
   read through the same `Arc<std::fs::File>` — which is itself an
   `xz_seek::CompressedSource`, so it is handed to the crate directly.
 - **Three functions are the shared mechanism**: `piece_of`, which answers which
-  part of a read a block covers for all four `.xz` read arms; `fill_from_block`,
-  which turns `BlockRead::read`'s one-decoder-call return into this crate's fill
-  contract over any `CompressedSource`; and `PIECEWISE_SKIP_CHUNK`, which was
+  part of a read a block covers for all four `.xz` read arms; `LiveBlock::fill`
+  (`fill_from_block` until `14.11` folded it in), which turns `BlockRead::read`'s
+  one-decoder-call return into this crate's fill contract over any
+  `CompressedSource`; and `PIECEWISE_SKIP_CHUNK`, which was
   `FETCHED_SKIP_CHUNK`. The covering-block loops stay one per arm, the fetched
   one having to `await` a window between blocks.
 - **The advice is unchanged and `KD35` is still open.** The piecewise arm still
@@ -45,12 +46,12 @@ index line and marker were rewritten for the same reason; nothing was closed.
   `xz_seek::Reader::read_at` continued a live decode where it could reach the
   target and restarted the covering block otherwise (`vendor/xz-seek/src/reader.rs`,
   `route`). A handle begun and completed per read instead — the shape
-  `FetchedXzSource::read_in_pieces` takes — skips from the block's start on
-  every call *and* drains the remainder on every call, so a forward scan of a
-  single-block file costs one whole-file decode per chunk read rather than one
-  in total. That is a path turned unusable, not a path made slower, which is why
-  `LiveBlock` exists and why the mutex it sits behind is the same mutex as
-  before.
+  `FetchedXzSource::read_in_pieces` then took, until `14.11` — skips from the
+  block's start on every call *and* drains the remainder on every call, so a
+  forward scan of a single-block file costs one whole-file decode per chunk
+  read rather than one in total. That is a path turned unusable, not a path
+  made slower, which is why `LiveBlock` exists and why the mutex it sits behind
+  is the same mutex as before.
 - **Continuing is never dearer than restarting, so there is no route
   arithmetic.** Restarting skips `from − block.start` and continuing skips
   `from − position`, and a live handle's position is never before its block's
@@ -60,13 +61,14 @@ index line and marker were rewritten for the same reason; nothing was closed.
   completes it, which is where its check is compared, and a block still live
   when the source drops is not completed — `xz_seek::Verify::Full`'s own
   sentence, and today's guarantee carried across the swap rather than a new one.
-  It is *not* the fetched arm's pattern, which completes on every read; the two
-  agree on "every block read from and moved on from is verified" and differ in
-  how often they say it. That divergence is under
-  [`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another look".
+  It was *not* the fetched arm's pattern, which completed on every read; the
+  two agreed on "every block read from and moved on from is verified" and
+  differed in how often they said it. `14.11` closed that divergence by giving
+  the fetched arm a handle to keep
+  ([notes](roadmap-P14.11-kept-handle-notes.md)).
 - **A `--check=none` stream is abandoned rather than drained.** `BlockRead::complete`
   decodes the remainder whatever the check is, and on such a stream there is
-  nothing to compare — so `LiveBlock::seated` drops the handle instead, which is
+  nothing to compare — so `LiveBlock::leave` drops the handle instead, which is
   the one case `Reader::leave_live_block` also skips.
 - **The block arm lost its only lock.** Naming a `BlockTask` took the reader's
   mutex for a table lookup; a `Layout` answers it from the table alone, so a
