@@ -30,6 +30,32 @@ that is not that fixture byte for byte, and a server that ignores `Range` each
 fail by name. Python's `http.server` is one of the last — it answers `200` to a
 `Range` request and serves the whole file.
 
+**A second variable reaches a compressed object**, whose footer walk is a
+backward chain of very small ranged GETs down one connection — the request
+cadence the in-process oracle can least stand in for, since it closes every
+connection it answers. There is no committed `.xz` to point at and there cannot
+be one: `xz` output is not reproducible across versions, so what the tests
+compare is the **plaintext** the reader hands back, and the object is one you
+make. It must decompress to that same fixture and be more than one stream of
+more than one block, which is what gives the walk a per-stream cost and the
+reader something to seek in:
+
+```sh
+f=fixtures/16/edge_cases/default.sql
+half=$(( $(wc -c < "$f") / 2 ))
+{ head -c "$half" "$f" | xz --block-size=512 -c
+  tail -c +$((half + 1)) "$f" | xz --block-size=512 -c
+} > /srv/www/default.sql.xz     # wherever the server serves from
+
+PGDQ_HTTP_CONFORMANCE_XZ_URL=http://127.0.0.1:8091/default.sql.xz \
+  cargo test -p pgdump_query-cli --test http_conformance
+```
+
+The two variables are independent: either, both or neither may be set, and
+each turns on the tests that need it. An object under the compressed one that
+is not `.xz`, holds another dump, or has only one stream or one block fails by
+name like everything else here.
+
 ## Profiling
 
 **Detached debug symbols for libc are a requirement, not a nicety.** Without
