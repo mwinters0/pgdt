@@ -1272,12 +1272,51 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
 /// in the working directory, so "the cache at `koji.dump.dqcache`" does not
 /// say which `koji.dump` this run asked for
 /// (`docs/design/roadmap-P14-remote-input.md`, "D4", "D18").
+///
+/// **The classification is an exhaustive match, not a two-arm test.** Whether
+/// a refusal wants the source's name is a property of each variant, and the
+/// second arm was added here by hand long after the first; under `_ => false`
+/// the next variant that names no source would inherit that silence with
+/// nothing to catch it. Every variant is listed instead, so a variant added to
+/// [`pgdump_query::Error`] does not compile until it has been classified.
 fn naming_the_source(err: pgdump_query::Error, source: &Origin) -> anyhow::Error {
-    if matches!(
-        err,
-        pgdump_query::Error::SourceChangedWhileRead { .. }
-            | pgdump_query::Error::CacheSourceMismatch { .. }
-    ) {
+    use pgdump_query::Error as Lib;
+    let about_the_source = match &err {
+        Lib::SourceChangedWhileRead { .. } | Lib::CacheSourceMismatch { .. } => true,
+        // Named by the library itself: each of these carries the origin, the
+        // URL or the cache path in its own sentence.
+        Lib::SourceNotReadable { .. }
+        | Lib::Remote { .. }
+        | Lib::StrictIdentityUnmet { .. }
+        | Lib::CachedBlockChanged { .. } => false,
+        // About a place inside the dump, a value in it, or the request made
+        // of it — never about which file was read.
+        Lib::Io(_)
+        | Lib::Join(_)
+        | Lib::Arrow(_)
+        | Lib::Xz(_)
+        | Lib::CacheEncode(_)
+        | Lib::UnterminatedCopyBlock { .. }
+        | Lib::UnterminatedLargeObjectRegion { .. }
+        | Lib::LineTooLong { .. }
+        | Lib::ScanCancelled { .. }
+        | Lib::InvalidUtf8 { .. }
+        | Lib::ColumnCountMismatch { .. }
+        | Lib::CacheDisabled { .. }
+        | Lib::CacheModeMismatch(_)
+        | Lib::UnknownPredicateColumn { .. }
+        | Lib::UnorderedPredicateColumn { .. }
+        | Lib::UncomparablePredicateColumn { .. }
+        | Lib::PredicateValueDecode { .. }
+        | Lib::UnknownProjectionColumn { .. }
+        | Lib::DuplicateProjectionColumn { .. }
+        | Lib::ResumeQueryMismatch
+        | Lib::AmbiguousTable { .. }
+        | Lib::MetadataNotScanned { .. }
+        | Lib::FieldDecode { .. }
+        | Lib::FieldRender { .. } => false,
+    };
+    if about_the_source {
         return anyhow::anyhow!("{source}: {err}");
     }
     err.into()
@@ -2888,7 +2927,8 @@ mod tests {
     /// **The source's name is the CLI's to add.** The library detects a
     /// source moving underneath a run wherever the check is cheapest and has
     /// no name for what it was reading; every other error keeps its own
-    /// words, so the mapping is one arm and a fall-through.
+    /// words. Which is which is an exhaustive match, so the compiler is what
+    /// pins the coverage and this test pins the rendering.
     #[test]
     fn only_the_refusals_about_a_source_are_given_its_name() {
         let origin = Origin::local("/tmp/koji.dump");

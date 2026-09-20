@@ -472,3 +472,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **Two refusals about a source that changed still name only a cache.**
+  `M120`'s exhaustive match put a verdict against every `Error` variant, and for
+  `CachedBlockChanged` and `StrictIdentityUnmet` that verdict is a call rather
+  than a transcription: both refuse *because the source moved*, and both name
+  the cache and nothing else — which is the gap the review of
+  [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
+  "D18" called load-bearing once a cache path is derived from a URL's last
+  segment instead of sitting beside the dump. They were classified as naming
+  themselves because the item was admitted as a change moving no wording, and
+  because [`../design/decisions.md`](../design/decisions.md), "D20" words
+  *both* refusals with one tail and there are two. Reconsidering moves them into
+  the named group: two sentences gain the source's name, `naming_the_source` and
+  D20 stop saying *two*, and no test asserts either text through the CLI today.
