@@ -9,14 +9,15 @@ pgdq parse --source mydump.sql   # reads the dump, writes mydump.sql.dqcache
 pgdq info  --source mydump.sql   # reports what that cache holds
 ```
 
-**`parse` is the only command that reads your dump. `info` never does.** On a
+**`parse` reads your dump. `info` never does.** On a
 5KB dump the difference is invisible; on a 784GB one, `parse` is an hour of
 disk and `info` is instant. Splitting them means a command that reads like a
 question — "what is in this file?" — can never turn into an hour of I/O you
 did not ask for.
 
-Run `parse` once per dump file. Everything after that is `info` and `query`,
-answered from the cache.
+Run `parse` once per dump file. Everything after that is `info`, answered from
+the cache alone, and `query`, which answers from the cache *and* the blocks it
+needs — row data is never cached, so `query` always reads the file.
 
 ## `parse`: reading the dump
 
@@ -124,8 +125,9 @@ diagnostics:
     [warning] this .xz source has no seek structure (1 block(s), one stream) — every read decodes the file from byte 0; recompress with `xz -T0` or `--block-size=<size>` for random access
 ```
 
-`parse` is unaffected: it only ever reads forwards, so it costs the same on
-such a file as on any other. `query` is where you would feel it, and only on a
+`parse` pays it once: it reads forwards, and then once more from the start of
+the file, at the end of the scan, to collect the schema text it saves. `query`
+is where you would feel it, and only on a
 large one — a single-block file the budget has room to hold four times over,
 with room to spare for the decoder itself, is
 decoded once and read from there, so only a bigger one pays the decode again on
@@ -217,9 +219,10 @@ contains a colon, write it `./that:file` so it is read as a path.
 is read block by block, fetching each block's compressed bytes and decoding
 them locally. What that costs depends entirely on the cache. With one, a query
 is a cache read, an identity check and one block's bytes. **Without one, the
-first run walks the file's stream footers, and that is one round trip per
-stream**: a dump compressed as thousands of small streams costs thousands of
-requests before any row is read. pgdq says so on stderr before it starts. It is
+first run walks the file's stream footers, and that is several round trips per
+stream** — a footer, an index, a header and a padding probe each: a dump
+compressed as thousands of small streams costs tens of thousands of requests
+before any row is read. pgdq says so on stderr before it starts. It is
 paid once — keep the cache the run writes — and if you would rather not pay it
 at all, fetch the file once and parse the local copy.
 
@@ -277,20 +280,23 @@ it. It does need a source to ask about: cache-only
 `info`, with no `--source`, is answering from the cache alone and there is no
 identity there to bind, so the flag is refused as a usage error.
 
-**A file that changes while pgdq is reading it is an error whatever you pass.**
+**A file that changes while pgdq is reading it stops the run**, and `none` is
+the only thing that turns that off.
 That is a different question from the one above: between runs, a moved file is
 usually the same bytes in a new place, but *during* a run, bytes changing
 underneath a read that has already returned some of them cannot produce a right
 answer — the map or the rows would be mixed from two versions of the file. So
 pgdq checks as it banks the cache, and once more when the run finishes, and
 stops if the file moved. **Over HTTP the server does the checking**, on every
-request: each ranged GET names the version the run opened on, so an object
-rewritten mid-scan is refused on the first read after it happens rather than at
-the next save.
+request: each ranged GET names the version the run opened on — its `ETag`, or
+its `Last-Modified` where it sent no tag — so an object rewritten mid-scan is
+refused on the first read after it happens rather than at the next save. A
+server that sends neither is read unpinned, there being nothing to name, and
+such a run has no in-flight check at all.
 
 ```
 $ pgdq parse --source mydump.sql
-Error: mydump.sql: the dump changed while it was being read — its stored size went from 4096 to 8192 byte(s) — so nothing was saved and no cache was removed
+Error: mydump.sql: the dump changed while it was being read — its stored size went from 4096 to 8192 byte(s) — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or pass `--strict-identity=none` to read it anyway
 ```
 
 **Nothing is saved and nothing is deleted.** The check says when the change was
@@ -582,8 +588,8 @@ The one place the read-buffer budget bites is `.xz` input. A compressed file is
 normally read a whole block at a
 time, which is what makes reading the same block twice free — but that needs
 room for **four** blocks at one worker: the one that worker is decoding, which
-is the one it then keeps, and three more, because the pool keeps four slots
-whatever the worker count is. The decompressor's own working memory goes beside
+is the one it then keeps, and three more, because the pool keeps four slots, or
+one per worker where you allow more. The decompressor's own working memory goes beside
 them — mostly the dictionary size the file's own header declares, which is
 about 9 MB all told for an ordinarily compressed file. A file whose blocks do
 not leave room for all of that is read
@@ -721,7 +727,8 @@ can.
 > over — up to 64 MiB worth, the size `query` batches to when nothing is in its
 > way — so the number of pieces you get is that budget divided by *that sum*.
 > **The batch is what gives way, not the piece count**: under a 64 MiB budget —
-> which is what a plain file gets whatever `--memory` says, its reads asking for
+> which is what a plain file gets whatever `--memory` says, or the ceiling where
+> that is smaller, its reads asking for
 > no budget of their own — 64 MiB batches leave room for one piece, so `query`
 > shrinks the batches until the pieces you asked for fit, down to a floor of one
 > read buffer, and says on stderr how big the batches ended up and how many
@@ -767,8 +774,8 @@ with no room to hold what they decode buys less than either number suggests.
 
 > **On an `.xz` file, expect a parallel scan to hold more than the
 > read-buffer budget names.** The budget charges every reader the block it
-> holds and the pool's own slots besides — four of them at up to four workers,
-> and one per worker above that — so what a scan holds beyond the
+> holds and the pool's other slots besides — three of them at up to four
+> workers, and one short of the worker count above that — so what a scan holds beyond the
 > budget is first the part no byte budget covers at all:
 > threads, decoder state kept outside the pools, and the allocator's own
 > retention, which the callout below is about. **Asking for more workers than
@@ -930,8 +937,10 @@ the file and reads the rest whole. A run that does this says so once per
 declined block. Raising `--memory` moves the point where it happens, and is
 what re-reads the blocks that declined.
 
-`scan started` below repeats the two resolved numbers without the provenance,
-so a log line naming a scan says what produced everything that follows it.
+`scan started` below repeats the two resolved numbers without the provenance
+clauses — it keeps the bare `(default)` marker where no budget was stated or
+discovered — so a log line naming a scan says what produced everything that
+follows it.
 
 **`scan arrangement` is what says how many readers really ran.** `scan
 started`'s `jobs=` is the count `resolved the arrangement` announced, and two
@@ -1041,10 +1050,12 @@ public.events (98765 rows)
   row count and column list. This is the view to read when you're deciding
   what to query.
 
-Add `--detail` to also see each block's byte offsets and, per column, what
-it became: the Arrow type it resolved to, or — for a column that came back as
-a string — why (see [type handling](type-handling.md) for what "resolved"
-means and why a column sometimes isn't). On a compressed dump it also prints
+Add `--detail` to also see each block's byte offsets and, per column that has
+something to say, what it became: the Arrow type it resolved to, or — for a
+column that came back as a string for a reason — why (see [type
+handling](type-handling.md) for what "resolved"
+means and why a column sometimes isn't). A column that is simply text says
+nothing and prints no line. On a compressed dump it also prints
 the container's shape, described under "`.xz` files are read directly" above.
 
 `--detail` also turns the `user-defined types` count into a listing of the

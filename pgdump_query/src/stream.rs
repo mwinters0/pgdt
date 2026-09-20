@@ -983,9 +983,9 @@ pub struct MapRun {
     pub backfilled: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one
-    /// ([`crate::index::CopyBlock::statistics_declined`]) — zero for a run
-    /// interrupted before its map reached EOF, which is where the count is
-    /// taken, and for one that stated no allowance
+    /// ([`crate::index::CopyBlock::statistics_declined`]) — zero for a run the
+    /// interrupt reached before the back-fill finished, which is where the
+    /// count is taken, and for one that stated no allowance
     /// (`docs/design/decisions.md`, "D85").
     pub declined_statistics: usize,
     /// What the run's statistics held when it returned, by term, and the most
@@ -1009,22 +1009,24 @@ pub struct MapRun {
 /// **It gathers what `statistics` asks for**, over the blocks this run maps,
 /// and then **re-reads every block that lacks it** — one the cache already
 /// held, or one this run gathered too coarsely for a stated maximum
-/// ([`StatisticsRequest::backfill`]) — one at a time in file order through
-/// [`gather_block_statistics`], saving as it goes. The back-fill runs once the
+/// ([`StatisticsRequest::backfill`]) — one at a time in file order through the
+/// same per-block re-read [`gather_block_statistics`] exposes, saving as it
+/// goes and charging the run's own account. The back-fill runs once the
 /// map has reached EOF, so each block resolves against whole-file metadata,
 /// and a run interrupted inside it resumes into it, the blocks still lacking
 /// being counted afresh. [`StatisticsRequest::default`] gathers every
 /// statistic.
 ///
-/// **The three finishing steps are this function's, not `map_forward`'s.**
+/// **The three finishing steps are this function's.**
 ///
 /// - `metadata` is recomputed over the whole span list. EOF is the other
 ///   boundary [`dump_metadata_from_spans`] may be called at (I1), covering a
 ///   trailing database with no `COPY` block of its own, and a file with no
 ///   blocks at all.
 /// - `diagnostics` are recomputed rather than inherited, being
-///   `#[serde(skip)]`; whatever [`CacheMode::load`] reported about the cache
-///   *file* is kept ahead of them.
+///   `#[serde(skip)]` — [`map_forward`] recomputes them at its own EOF exit
+///   too, and what is this function's is keeping whatever
+///   [`CacheMode::load`] reported about the cache *file* ahead of them.
 /// - The cache is saved once more at the end, persisting the finished index;
 ///   it is also the only save when nothing was scanned at all.
 ///
@@ -1278,6 +1280,17 @@ struct BackfillRun {
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did.
 ///
+/// Deficiency register: `deficiency: KD37` — that is true of the flag and of a
+/// dropped read this pass makes itself ([`observe_rows`]), and not of one the
+/// leader dispatched: [`reread_block`]'s `leader::scan_region` propagates, so a
+/// source that answers a cancellation by failing its read ends a `parse` as
+/// `Error::ScanCancelled` with nothing banked, where the same Ctrl-C during the
+/// mapping pass is an interrupted run ([`cancelled_read`],
+/// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`] already
+/// carries for the pass's own leader reads, here as well. **(c) unowned**;
+/// promoted by a parallel remote `parse` seen to error on Ctrl-C after its map
+/// reached EOF, which is the only arrangement that reaches it.
+///
 /// **A block lacking statistics was loaded, or broke a stated maximum**: a
 /// block this pass mapped holds what its own request asked, except for a
 /// maximum no single read can deliver. So what a re-read replaces leaves the
@@ -1474,8 +1487,9 @@ fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) 
 }
 
 /// Re-read one block the map already holds and gather what `backfill` names —
-/// the library's per-block back-fill, which [`map_file`] runs over every block
-/// lacking what its request asks for. `metadata` is the map's, whole-file where
+/// the public entry point onto the same per-block re-read [`map_file`]'s
+/// back-fill runs over every block lacking what its request asks for, this one
+/// charging no account and naming no cache. `metadata` is the map's, whole-file where
 /// it can be, which the block's columns are resolved against as a mapping pass
 /// resolves them; `backfill` is [`StatisticsRequest::backfill`]'s answer for
 /// `block`. The caller stores the result in [`CopyBlock::statistics`], or —

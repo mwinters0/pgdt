@@ -2188,9 +2188,10 @@ impl BlockCache {
 /// be cut ([`XzBudget::partitions`]).
 ///
 /// **One value both sources hold, never a branch on the provider.** Nothing
-/// here differs by transport, which reaches this policy only as the
-/// `decode_bytes` its constructor is handed; two copies of one charge policy
-/// stay right exactly until one of them is edited
+/// this policy *answers* differs by transport, which reaches it as the
+/// `decode_bytes` its constructor is handed and as the chunk pool's wait
+/// policy, which each source announces for itself; two copies of one charge
+/// policy stay right exactly until one of them is edited
 /// (`docs/design/roadmap-P14-remote-input.md`, "D21").
 struct XzBudget {
     /// The chunk unit: what a read spanning more than one block is assembled
@@ -2416,8 +2417,9 @@ impl XzBudget {
 /// - Where the stated budget holds a whole decoded block, a read decodes the
 ///   blocks it lands in into slots of its own [`BlockCache`] and slices the
 ///   answer out of them. `xz_seek::BlockTask` is `Copy` and owns everything a
-///   decode needs, and an `xz_seek::Layout` names one without a lock, so
-///   nothing is serialized here at all.
+///   decode needs, and an `xz_seek::Layout` names one without a lock, so no
+///   lock is held across a decode; what this arm does take is its own
+///   [`BlockCache`]'s retention list.
 /// - Where it does not, the block is read **in pieces** through
 ///   `xz_seek::BlockRead` — one live handle, kept across reads so a forward
 ///   scan continues rather than restarting, which is what
@@ -3095,7 +3097,7 @@ impl ByteRangeSource for XzSource {
 ///
 /// Deficiency register: `deficiency: KD36` — this driver fetches exactly what
 /// it is asked for, so a cold walk over a dump compressed as many small streams
-/// is that many round trips before a row is read. The remedy is a **straddling
+/// is at least four round trips a stream before a row is read. The remedy is a **straddling
 /// window**: one read per stream positioned backward from the pending request
 /// and sized to cover what the walk asks for next, which answers three of every
 /// stream's four requests because a stream's header is adjacent to its
@@ -3402,9 +3404,10 @@ impl FetchedXzSource {
             return Err(xz_short_read());
         }
         // Past every way out, so a failed read retains nothing — `held` is
-        // dropped on the way out instead, exactly as the local arm drops its
-        // live handle rather than leaving state a later read would have to
-        // reason about.
+        // dropped on the way out instead, rather than leaving state a later
+        // read would have to reason about. The local arm clears its live handle
+        // on a decode error and leaves it seated on a short read, that handle
+        // being a position a later read may continue from where a window is not.
         *self.held.lock().unwrap_or_else(|e| e.into_inner()) = held;
         Ok(Bytes::from_owner(out).slice(..len))
     }
@@ -5496,11 +5499,11 @@ mod tests {
         assert!(cache.retained.lock().unwrap().len() <= slots);
     }
 
-    /// **The block arm takes no lock at all**: with the live piecewise handle's
-    /// mutex held by another thread outright, a block-path read — a cache miss
-    /// as well as a hit — still answers. Naming a `BlockTask` is arithmetic over
-    /// the layout's table, so the only lock this source has belongs to the other
-    /// arm.
+    /// **The block arm takes none of the piecewise arm's locks**: with the live
+    /// piecewise handle's mutex held by another thread outright, a block-path
+    /// read — a cache miss as well as a hit — still answers. Naming a
+    /// `BlockTask` is arithmetic over the layout's table, so what this arm locks
+    /// is its own retention list and never the live handle.
     #[tokio::test]
     async fn a_block_path_read_is_served_while_the_live_handle_is_held() {
         let payload = xz_test_payload();
@@ -6232,8 +6235,10 @@ mod tests {
 
     /// The compressed window is charged rather than left unpooled: the
     /// per-reader charge a caller solves a budget against carries the widest
-    /// window this file's blocks would make us fetch, on top of what the local
-    /// source charges for the same file (D20).
+    /// window this file's blocks would make us fetch. It is not the local
+    /// charge *plus* that window — the local one carries a compressed input
+    /// chunk this source never builds — so what is asserted is that the window
+    /// cannot have gone unbilled (D20).
     #[tokio::test]
     async fn the_compressed_window_is_inside_the_charge() {
         let payload = xz_test_payload();
