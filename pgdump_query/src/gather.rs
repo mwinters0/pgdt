@@ -1769,8 +1769,8 @@ impl DictionaryGatherer {
     /// renumbering's scratch is charged ahead of it, and **the interning map
     /// is rebuilt rather than pruned**, its new table charged ahead and the old
     /// one released in one update with every text let go: a table pruned in
-    /// place keeps its size while its reported capacity falls, which
-    /// [`map_heap`] would read as a smaller table.
+    /// place keeps its size while its reported capacity stops naming it
+    /// (`docs/design/runtime-invariants.md`, "RT11").
     fn renumber(&mut self, charge: &mut Charge) {
         let scratch = (self.entries.len() * size_of::<u32>()) as u64;
         let mut to = charge.ahead((scratch, 0), (0, 0), || vec![u32::MAX; self.entries.len()]);
@@ -2663,8 +2663,11 @@ mod tests {
     /// **A map made to hold `k` entries allocates the table a full map of
     /// `k − 1` grows into**, which is what [`DictionaryGatherer::renumber`]
     /// charges ahead of rebuilding its interning map, and reports a capacity
-    /// [`map_heap`] reads back as that table. A map pruned in place does not:
-    /// its capacity falls with its table unchanged, the reason it is rebuilt.
+    /// [`map_heap`] reads back as that table. A map pruned in place does not,
+    /// which is why the map is rebuilt: whether an erase hands its slot back
+    /// depends on the hash seeding, so a pruned map's capacity may fall or
+    /// stand, but under every seeding the table [`map_heap`] reads from it is
+    /// larger than the one a rebuild allocates for the entries it kept.
     #[test]
     fn a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged() {
         for k in 1..5000usize {
@@ -2673,9 +2676,14 @@ mod tests {
             assert_eq!(map_heap::<String, u32>(map.capacity()), table, "{k} entries");
         }
         let mut pruned: HashMap<String, u32> = (0..100).map(|i| (i.to_string(), i)).collect();
-        let before = pruned.capacity();
+        pruned.retain(|_, id| *id % 10 == 0);
+        assert!(
+            map_heap::<String, u32>(pruned.capacity())
+                > grown_map_heap::<String, u32>(pruned.len() - 1),
+            "a pruned table is no larger than the table its entries are rebuilt into"
+        );
         pruned.retain(|_, _| false);
-        assert!(pruned.capacity() < before, "a pruned table's capacity no longer falls");
+        assert!(map_heap::<String, u32>(pruned.capacity()) > 0, "an emptied map lets its table go");
     }
 
     /// **A vector pushed or extended through [`push_charged`] and
