@@ -295,8 +295,8 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
                 assert_eq!(
                     candidates,
                     &[
-                        "pgdq_fixture.public.widgets".to_string(),
-                        "pgdq_fixture_2.public.widgets".to_string()
+                        "pgdt_fixture.public.widgets".to_string(),
+                        "pgdt_fixture_2.public.widgets".to_string()
                     ],
                     "pg_dump {version}"
                 );
@@ -322,7 +322,7 @@ async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() 
         let (_dir, path) = multidb_fixture(version);
         let combined_source = LocalFileSource::open(&path).unwrap();
         let batch_options =
-            QueryOptions { database: Some("pgdq_fixture".to_string()), ..Default::default() };
+            QueryOptions { database: Some("pgdt_fixture".to_string()), ..Default::default() };
         let mut stream = table_stream(
             &combined_source,
             "public.widgets",
@@ -340,7 +340,7 @@ async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() 
 }
 
 /// Selecting the *second* database types it on a **cold** query, exactly as a
-/// query after `pgdq parse` does. The mapping pass states `DumpMetadata` at
+/// query after `pgdt parse` does. The mapping pass states `DumpMetadata` at
 /// each `\connect`ed database's first `COPY` block — one of the two boundaries
 /// `preamble::dump_metadata_from_spans` may be called at (I1) — so the DDL a
 /// scan has walked past is DDL it may use.
@@ -360,7 +360,7 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
         let source = LocalFileSource::open(&path).unwrap();
 
         let typed =
-            QueryOptions { database: Some("pgdq_fixture_2".to_string()), ..Default::default() };
+            QueryOptions { database: Some("pgdt_fixture_2".to_string()), ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.widgets",
@@ -383,7 +383,7 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
         );
 
         let strings = QueryOptions {
-            database: Some("pgdq_fixture_2".to_string()),
+            database: Some("pgdt_fixture_2".to_string()),
             schema_mode: SchemaMode::Strings,
             ..Default::default()
         };

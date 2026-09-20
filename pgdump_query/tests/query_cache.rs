@@ -232,7 +232,7 @@ async fn a_cold_query_maps_up_to_its_target_and_stops() {
 }
 
 /// `ScanExtent::Full` is the way back to a whole-file map from a query — the
-/// same coverage `pgdq parse` produces, at the cost of a full scan.
+/// same coverage `pgdt parse` produces, at the cost of a full scan.
 #[tokio::test]
 async fn scan_extent_full_maps_the_whole_file_from_a_query() {
     let (_dir, dump) = sandboxed_edge_cases();

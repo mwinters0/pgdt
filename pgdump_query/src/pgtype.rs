@@ -37,7 +37,7 @@ pub enum TypeOutcome {
     /// Refused rather than mapped to `List<Utf8View>`: the array separator is
     /// the *element type's* `typdelim` (I22) and `box`'s is `;`
     /// (`docs/design/decisions.md`, "D41"). Held apart from
-    /// [`Self::OpaqueBaseType`] so `pgdq info` can say which happened.
+    /// [`Self::OpaqueBaseType`] so `pgdt info` can say which happened.
     OpaqueElementType,
     /// An array whose element type is *itself* an array, through any chain of
     /// domains — `CREATE DOMAIN d AS integer[]` and a column of `d[]`, the
@@ -79,7 +79,7 @@ pub enum TypeOutcome {
 ///
 /// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
 /// included), which is where every branch bottoms out. `Serialize` so
-/// `pgdq info --json` can export a resolved schema's plans structurally
+/// `pgdt info --json` can export a resolved schema's plans structurally
 /// (`docs/design/decisions.md`, "D67"); **not `Deserialize`, and never
 /// persisted** — the cache holds what the dump said, never what we concluded
 /// (`docs/design/decisions.md`, "D68").
@@ -661,7 +661,7 @@ fn states_non_deterministic(reference: &str, collations: &[CollationDef]) -> boo
 
 /// The field names of the range struct, in order. Reserved: a composite type
 /// resolves to a `Struct` too, and only the [`NestedPlan`] tells them apart —
-/// these names are for a human reading `pgdq info`, never for dispatch.
+/// these names are for a human reading `pgdt info`, never for dispatch.
 pub const RANGE_STRUCT_FIELDS: [&str; 5] =
     ["lower", "upper", "lower_inclusive", "upper_inclusive", "empty"];
 
@@ -2514,7 +2514,7 @@ mod tests {
     }
 
     /// A domain over an enum carries the enum's labels, through any chain —
-    /// which is what lets `pgdq info --detail` list them beneath such a
+    /// which is what lets `pgdt info --detail` list them beneath such a
     /// column and a `--filter` term name one. **No fixture column is one**,
     /// so this is the only check of it.
     ///

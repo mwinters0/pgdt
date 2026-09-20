@@ -719,7 +719,7 @@ async fn read_table_rejects_offline_cache_mode() {
         "widgets",
         &ScanOptions::default(),
         &QueryOptions::default(),
-        CacheMode::Offline(PathBuf::from("/nonexistent.dqcache")),
+        CacheMode::Offline(PathBuf::from("/nonexistent.dtcache")),
         |_batch| ControlFlow::Continue(()),
     )
     .await;

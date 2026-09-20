@@ -556,12 +556,12 @@ async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed()
         assert_eq!(metadata.databases.len(), 2, "pg_dump {version}");
         assert_eq!(
             metadata.databases[0].name.as_deref(),
-            Some("pgdq_fixture"),
+            Some("pgdt_fixture"),
             "pg_dump {version}"
         );
         assert_eq!(
             metadata.databases[1].name.as_deref(),
-            Some("pgdq_fixture_2"),
+            Some("pgdt_fixture_2"),
             "pg_dump {version}"
         );
 

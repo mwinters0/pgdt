@@ -8,7 +8,7 @@ produces is a fact about the input, written to a `runs/` artifact -- not a
 `docs/design/measurements.md` figure, so it has no median, no apparatus gate
 and no staleness edge.
 
-**The input is `pgdq info --json`**, whose blocks carry their statistics as the
+**The input is `pgdt info --json`**, whose blocks carry their statistics as the
 cache holds them. Every group records its rows (`RowGroup::rows`) and groups
 are byte ranges from the block's start, so the rows per group at `2N` are the
 sums of adjacent pairs at `N`, a trailing odd group standing alone; the
@@ -76,7 +76,7 @@ from typing import Iterable, Sequence
 #: The density minimum's default, in rows: `2^20` stays right for rows up to
 #: `REASONABLE_ROW_BYTES`, so `2^20 / 2^10` rows a group.
 #: `pgdump_query::statistics::STATISTICS_GROUP_DEFAULT_MIN_ROWS`, mirrored, and held
-#: to the library's by a test; `pgdq` chooses a block's size by the same rule
+#: to the library's by a test; `pgdt` chooses a block's size by the same rule
 #: as `choose` at the median.
 DEFAULT_MIN_ROWS = 1024
 
@@ -171,7 +171,7 @@ class Choice:
 
 def choose(sizes: Sequence[Sequence[int]], min_rows: int, q: float) -> Choice:
     """The smallest size at which the `q`-quantile group ([`min_group`]) holds
-    at least `min_rows` rows, or the single group where none does. `pgdq`
+    at least `min_rows` rows, or the single group where none does. `pgdt`
     chooses a block's size by this rule, from whatever size the length cap left
     it; `pgdump_query::gather::density_merges`, mirrored."""
     for k, rows in enumerate(sizes):
@@ -344,9 +344,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     sel = sub.add_parser("select", help="print a --statistics selection of one narrow column a table")
-    sel.add_argument("info", type=Path, help="`pgdq info --json` of a cache holding the preamble")
+    sel.add_argument("info", type=Path, help="`pgdt info --json` of a cache holding the preamble")
     den = sub.add_parser("density", help="each block's rows per group at every size")
-    den.add_argument("info", type=Path, nargs="+", help="`pgdq info --json` output")
+    den.add_argument("info", type=Path, nargs="+", help="`pgdt info --json` output")
     den.add_argument("--min-rows", type=int, default=DEFAULT_MIN_ROWS)
     den.add_argument("--out", type=Path, help="write every distribution here as JSON")
     args = parser.parse_args(argv)

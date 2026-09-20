@@ -273,7 +273,7 @@ class Reconciliation(unittest.TestCase):
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
                 code="",
-                extra={"pgdump_query-cli/src/main.rs": CODE_D1},
+                extra={"pgdt/src/main.rs": CODE_D1},
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)

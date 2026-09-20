@@ -30,15 +30,15 @@ slice: 8.3
 started: 2026-08-29T14:07:00-05:00     # absolute, with offset
 expect: ~60m
 log: runs/measure-20260829-1407/log
-check: sudo nerdctl inspect -f '{{.State.Status}}' pgdq-koji
+check: sudo nerdctl inspect -f '{{.State.Status}}' pgdt-koji
 progress: wc -c < runs/measure-20260829-1407/log
-exit: sudo nerdctl inspect -f '{{.State.ExitCode}}' pgdq-koji
+exit: sudo nerdctl inspect -f '{{.State.ExitCode}}' pgdt-koji
 running: check says running
 done: check says exited; then exit 0 = ok, 130 = SIGINT (cache saved, resumable), 143 = SIGTERM
 failed: exit nonzero and not 130/143; or log tail has "panicked"/"No space left"
 stuck: progress unchanged across two consecutive fires
-stop: sudo nerdctl stop pgdq-koji     # safe: parse saves cache, same command resumes
-volatile: /dev/shm/pgdq (warm staging, evicted per figure); container pgdq-koji (state lost on prune); /mnt/ssd/fedora/scratch/pgdump_query/measure (kept, but partial figures overwrite)
+stop: sudo nerdctl stop pgdt-koji     # safe: parse saves cache, same command resumes
+volatile: /dev/shm/pgdt (warm staging, evicted per figure); container pgdt-koji (state lost on prune); /mnt/ssd/fedora/scratch/pgdump_query/measure (kept, but partial figures overwrite)
 result: runs/measure-20260829-1407/tables.md — one table per figure
 next: fold tables.md into docs/design/measurements.md per --check consumers, tick 8.3, notes doc
 ---

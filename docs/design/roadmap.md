@@ -131,19 +131,19 @@ deployment case is what settles it: under an orchestrator the process is
 have it restated on a command line.
 
 **The expected deployment is a container, so the discovered-limit path is the
-normal one and the unlimited path is an anomaly.** pgdq is built assuming it
+normal one and the unlimited path is an anomaly.** pgdt is built assuming it
 runs with an allocation somebody chose for it. That is why filling a discovered
 limit is the default rather than an option — and why "no limit found" is not a
 second supported mode to tune for, but a state in which nothing has said what
-pgdq may take while it shares the host with whatever else runs there. The
+pgdt may take while it shares the host with whatever else runs there. The
 status output reports which case applied, so an operator who expected a
 container and reads `no memory limit found: nothing is enforcing one on this
 process` has learned their allocation is not being enforced.
 
 **An allocation stated is permission; a machine merely observed is not.** A
-cgroup limit is somebody telling pgdq what it may have, so taking it is what
+cgroup limit is somebody telling pgdt what it may have, so taking it is what
 they asked for. A host with *no* limit has told us nothing — it is a shared
-machine until proved otherwise, and pgdq is not the only process on it. So the
+machine until proved otherwise, and pgdt is not the only process on it. So the
 two cases are not symmetric and must not be written as one: **where a limit is
 discovered the default fills it, and where none is, the default takes what the
 source recommends, capped at half of what the machine reports available.**
@@ -173,7 +173,7 @@ Four bounds, and they are what keep this from being "take everything":
   work for must not be multiplied into a budget request.
 - **Unstated is not unlimited.** Absent a discovered limit the charge a source
   recommends is capped at half of what the machine reports available, because
-  the alternative is sizing pgdq's appetite from hardware nobody said it could
+  the alternative is sizing pgdt's appetite from hardware nobody said it could
   have. That cap
   costs no speed where there is room — resident saturates at the worker count
   regardless — and binds wherever the recommended count costs more than half of
@@ -195,9 +195,9 @@ of every count, and multiplying is the composition's — which is also what lets
 the composition hand back a *pair*, the count an allowance affords beside the
 budget that many workers spend.
 
-### Two tunables fit pgdq to hardware: memory and parallelism
+### Two tunables fit pgdt to hardware: memory and parallelism
 
-**A person fits pgdq to their hardware by stating a memory allowance and a
+**A person fits pgdt to their hardware by stating a memory allowance and a
 worker count, and needs to state nothing else.** The implementation interprets
 those two however it must — a pool's depth, a statistic's granularity, whether
 a path is afforded at all — and no new flag is added whose purpose is fitting
@@ -207,7 +207,7 @@ chunk sizes or row groups.
 
 **The memory number means resident**, the number a person gives the
 container: a stated one is treated exactly as a discovered limit, and whatever
-pgdq holds — pools, statistics, the reserve for everything unbilled — is carved
+pgdt holds — pools, statistics, the reserve for everything unbilled — is carved
 from it.
 
 **It governs what a person needs to state, not what exists.** A flag stating
@@ -228,12 +228,12 @@ are not bent to reach it. A long dump of ordinary rows is not such a shape.
 against an allowlist classifying each as hardware, intent, input contract or
 expert override, and fails on a flag nobody has classified — so a third
 hardware knob is a decision somebody wrote down, not one that arrived quietly
-(`pgdump_query-cli/src/main.rs`, `every_numeric_flag_is_classified`).
+(`pgdt/src/main.rs`, `every_numeric_flag_is_classified`).
 
 ### A parse does all the work a later query could use
 
 **A parse carries the intent to do every piece of work that accelerates a later
-query, so its default does all of it** — `pgdq parse` and the library's mapping
+query, so its default does all of it** — `pgdt parse` and the library's mapping
 pass alike. A caller who wants less done issues cold queries instead; stating
 less is an opt-out, never the default. **What it spends doing that is a separate
 question**: workers and memory keep the defaults "A default runs as fast as the
@@ -256,7 +256,7 @@ first time a span kind is added.
 
 ### The input contract is valid PostgreSQL, not `pg_dump`'s output
 
-**pgdq reads plain SQL that a PostgreSQL server would accept, whoever wrote
+**pgdt reads plain SQL that a PostgreSQL server would accept, whoever wrote
 it.** `pg_dump` is the producer we verify against because it is the one we can
 run six versions of, not the boundary of what we accept. A file that is
 hand-written, hand-edited, or emitted by another `pg_dump`-compatible tool is
@@ -399,7 +399,7 @@ Reasoning: [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md),
 "The review of the six measurement decisions".
 
 **Why it is a rule rather than a note.** 4.6's row asked for two figures. For
-one it named both instruments — "a `decoders.rs` micro **and** `pgdq query
+one it named both instruments — "a `decoders.rs` micro **and** `pgdt query
 --schema-mode typed` against `strings`" — and got both. For the other it named
 only "composite decode throughput", got a micro, and earned **4.6.1** at
 review to supply the end-to-end half. Same row, same author, same slice: the
@@ -490,11 +490,11 @@ tool is a misconfigured environment, and the honest report is a failure naming
 **Why it is a rule.** A conditional skip is invisible in a passing suite, and
 the test most likely to carry one is a test nothing else covers — which is
 exactly when its silent absence costs the most.
-`pgdump_query-cli/tests/perf_generator_fidelity.rs` is the whole example: one
-test, the suite's only guard against `scripts/generate_perf_data.py` drifting
-away from what `pg_dump` writes, and it skipped itself when `uv` was absent.
-Three infidelities had already survived in that generator for want of any
-guard at all.
+`pgdt/tests/perf_generator_fidelity.rs` is the whole example: one test, the
+suite's only guard against `scripts/generate_perf_data.py` drifting away from
+what `pg_dump` writes, and it skipped itself when `uv` was absent. Three
+infidelities had already survived in that generator for want of any guard at
+all.
 
 **The check.** A test that reaches for an external tool either asserts it is
 present, or is gated behind an env var that defaults to *enforcing* — never a
@@ -555,7 +555,7 @@ corner-avoidance depth. The model as it stands was never measured or gated, so
 this phase inherits an unpriced constant rather than a freshly fitted one, and
 P23 is where that constant is read.
 
-**It revises [this file](roadmap.md), "Two tunables fit pgdq to hardware:
+**It revises [this file](roadmap.md), "Two tunables fit pgdt to hardware:
 memory and parallelism"** — that section's last clause, and nothing else about
 its purpose. Until this phase is specified the rule stands as written and the
 code keeps describing what is built.
@@ -854,8 +854,8 @@ which is what makes the difference worth minding at the moment one is found.
 
 - **A "safe mode" that deliberately under-fills a stated allocation.** The
   defaults fill a discovered cgroup limit, on the reasoning that a limit is
-  somebody saying what pgdq may have. That is wrong for an operator who knows
-  they *share* the cgroup — a sidecar in the same pod, two pgdq invocations in
+  somebody saying what pgdt may have. That is wrong for an operator who knows
+  they *share* the cgroup — a sidecar in the same pod, two pgdt invocations in
   one container — and who would rather take a fraction of the allocation than
   all of it. The obvious shape is a flag taking the same half-of-available
   fraction the no-limit path already caps at and applying it to the discovered
@@ -907,7 +907,7 @@ which is what makes the difference worth minding at the moment one is found.
 
 - **Collation-aware comparison: the `S`-irrelevant set widened, then the
   remainder deferred to an environment.** Call the server that wrote the dump
-  `S` and the environment pgdq runs in `E`. A column that states a collation
+  `S` and the environment pgdt runs in `E`. A column that states a collation
   other than `C`/`POSIX` is ordered bytewise today, so `<`/`>` return a row set
   the server would not (deficiency `KD7`). The partition that shapes the fix is
   exhaustive, which is why it is two increments and not a queue of collations:
@@ -931,24 +931,24 @@ which is what makes the difference worth minding at the moment one is found.
   versus glibc moves 5,796 of 5,998 strings. So bundling rules for `en_US.utf8`
   is not a cheaper approximation of this work, it is a different and wrong
   answer: it would be a snapshot of one glibc's tables presented with no sign
-  that it is one. There is no third source. Either pgdq answers bytewise and
+  that it is one. There is no third source. Either pgdt answers bytewise and
   registers the divergence, as it does now, or it **delegates to a provider in
   `E`** — the same libc and ICU the server would call — and states which one it
   used.
 
   **Deferral makes the conditional the user's to discharge, which is the whole
-  move.** pgdq cannot know `S`'s provider version; a user who owns `S` usually
-  can, and can run pgdq in an environment that matches it. That is a recourse
+  move.** pgdt cannot know `S`'s provider version; a user who owns `S` usually
+  can, and can run pgdt in an environment that matches it. That is a recourse
   they can execute — matching an *image* is cheap where restoring the dump into
-  a real server is exactly the cost pgdq exists to avoid — and it is the same
+  a real server is exactly the cost pgdt exists to avoid — and it is the same
   shape as `--database` resolving an ambiguity this build refuses to guess.
-  It transitively reaches every collation, ICU included, without pgdq carrying
+  It transitively reaches every collation, ICU included, without pgdt carrying
   a single collation rule. What it does not do is close `KD7` absolutely: the
   verdict such a comparison earns is *agrees with a server*, conditional on the
   provider matching, never the unqualified *agrees, on every server* that the
   `S`-irrelevant set earns. Two things make that honest rather than hopeful —
-  `ucol_getVersion()` reproduces `pg_collation.collversion` exactly, so pgdq can
-  report the version it computed under, and pgdq can name what a user must
+  `ucol_getVersion()` reproduces `pg_collation.collversion` exactly, so pgdt can
+  report the version it computed under, and pgdt can name what a user must
   match.
 
   **The feasibility is demonstrated, not assumed**, by a spike outside this
@@ -1036,7 +1036,7 @@ which is what makes the difference worth minding at the moment one is found.
   *inside* a composite (or inside another array's element type) on the
   optimistic path permanently: its shape has nowhere to be recorded, so a
   multi-dimensional or `[lb:ub]`-decorated value there stays a hard
-  `FieldDecode` even after `pgdq parse`
+  `FieldDecode` even after `pgdt parse`
   ([`decisions.md`](decisions.md), "D34"). Keying the census by a *path* within the column
   rather than by the column closes that, at the cost of a bigger cache record
   and a per-path walk. Deferred on frequency — a composite with a

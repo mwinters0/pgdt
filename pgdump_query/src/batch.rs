@@ -187,13 +187,13 @@ pub enum ScanExtent {
     /// table past the stopping point is never seen, `Error::AmbiguousTable` is
     /// not raised for it, and the query answers with the candidate it found.
     /// **(b) owned by P6**, which decides what the embedded API promises here.
-    /// [`Self::Full`], or a query after `pgdq parse`, gives exact detection
+    /// [`Self::Full`], or a query after `pgdt parse`, gives exact detection
     /// today; closing it by default means giving up the early stop.
     #[default]
     UntilTargetSettled,
     /// Map the whole file before returning anything. Costs a full scan and
     /// gives exact ambiguity detection and a complete, reusable cache — the
-    /// same map `pgdq parse` builds.
+    /// same map `pgdt parse` builds.
     Full,
 }
 
@@ -816,7 +816,7 @@ pub(crate) struct RowBatcher {
     /// across a long stretch that matches nothing.
     span: Option<(u64, u64)>,
     /// Whether any field of this block feeds a projected column. When
-    /// nothing does — `COUNT(*)`, `pgdq query --no-columns` — the batcher
+    /// nothing does — `COUNT(*)`, `pgdt query --no-columns` — the batcher
     /// decodes no field, and where the filter reads none either the read loop
     /// skips the bulk UTF-8 validation (`docs/design/decisions.md`, "D27").
     decodes_fields: bool,

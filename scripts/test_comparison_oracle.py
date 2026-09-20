@@ -127,7 +127,7 @@ class SqlBuilding(unittest.TestCase):
         # live in the function's own loop, so the two lists agreeing is what
         # keeps column n of the file meaning `OPERATORS[n]`.
         script = co.comparisons_script()
-        self.assertIn("pg_temp.pgdq_cmp(c.ty, c.l, c.r, c.coll)", script)
+        self.assertIn("pg_temp.pgdt_cmp(c.ty, c.l, c.r, c.coll)", script)
         for n, op in enumerate(co.OPERATORS, 1):
             self.assertIn(f"'{op}'", co._OPERATOR_ARRAY)
             self.assertIn(f"x.cells[{n}]", script)
@@ -140,9 +140,9 @@ class SqlBuilding(unittest.TestCase):
         # column's collation is its type's default, which is what a bare
         # column in a dump has.
         self.assertIn(
-            "CREATE TEMP TABLE pgdq_pair (a %s%s, b %s%s)", co.FUNCTIONS_SQL
+            "CREATE TEMP TABLE pgdt_pair (a %s%s, b %s%s)", co.FUNCTIONS_SQL
         )
-        self.assertIn("SELECT a %s b FROM pg_temp.pgdq_pair", co.FUNCTIONS_SQL)
+        self.assertIn("SELECT a %s b FROM pg_temp.pgdt_pair", co.FUNCTIONS_SQL)
 
     def test_a_collation_reaches_the_comparison_as_a_quoted_identifier(self):
         # `quote_ident` rather than interpolation: `default` is a reserved

@@ -140,7 +140,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// [`ByteRangeSource::partitions`] follows. Nothing in the library reads
     /// this — a caller that states a count gets that count — and it exists for
     /// the layer above, which has a person's flags to fill in
-    /// (`pgdump_query-cli`'s `Discovered::resolve`).
+    /// (`pgdt`'s `Discovered::resolve`).
     ///
     /// **It is a raw count, not a budgeted one**: what the byte budget affords
     /// is `crate::stream::worker_count`'s question, asked of every count
@@ -869,7 +869,7 @@ impl Parallelism {
     /// the reason [`discover_memory_limit_in`] takes one — and public for the
     /// same reason it is: a caller's own resolution is pinned against
     /// environments this machine cannot be put into
-    /// (`pgdump_query-cli/tests/data/runtime/`).
+    /// (`pgdt/tests/data/runtime/`).
     pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
         let (cap, ceiling) = match discover_memory_limit_in(root) {
             // The one carving, shared with a stated allowance
@@ -896,7 +896,7 @@ impl Parallelism {
     }
 
     /// The arrangement `jobs` workers take inside a **resident allowance** the
-    /// caller states — `pgdq --memory`, and an embedder that means by its
+    /// caller states — `pgdt --memory`, and an embedder that means by its
     /// number what a container means by one.
     ///
     /// **It is [`Parallelism::discover_in`]'s own carving, called with a
@@ -974,7 +974,7 @@ pub(crate) fn memory_budget_display(p: Parallelism) -> String {
 }
 
 /// What a source may hold in pooled buffers when the caller has stated no
-/// budget of its own — [`Parallelism::default`]'s number, and what a `pgdq` run
+/// budget of its own — [`Parallelism::default`]'s number, and what a `pgdt` run
 /// falls back to where neither `--memory` nor a limit says otherwise.
 ///
 /// **It is the serial path's budget and deliberately not the largest block
@@ -1326,9 +1326,9 @@ pub fn discover_memory_limit() -> Option<MemoryLimit> {
 /// tree is handed — here, and through [`Parallelism::discover_in`] and
 /// [`available_memory_in`] — so a caller's own resolution can be pinned
 /// against a v1 hierarchy, an unlimited one and a below-reserve one
-/// (`pgdump_query-cli/tests/data/runtime/`). The memory controller lives in
-/// exactly one hierarchy at a time (`RT6`), so a v1 shape cannot be produced
-/// beside a v2 one on the same host.
+/// (`pgdt/tests/data/runtime/`). The memory controller lives in exactly one
+/// hierarchy at a time (`RT6`), so a v1 shape cannot be produced beside a v2
+/// one on the same host.
 ///
 /// It is not a chroot facility: paths are joined onto the root, so a root of
 /// `/` is the real reading and anything else is a tree somebody built. What a
@@ -4482,7 +4482,7 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
 ///
 /// **The number itself is not owed to that channel.** The stream count is a
 /// property of the file, and [`crate::cache::CompressionShape`] is the
-/// projection that carries it to a caller as data — `pgdq info --detail` and
+/// projection that carries it to a caller as data — `pgdt info --detail` and
 /// `--json` both print it — beside the source's own [`ByteRangeSource::seek_table`].
 /// What this line adds is neither of those, but its timing.
 #[cfg(feature = "http")]
@@ -6426,9 +6426,9 @@ mod tests {
     #[test]
     fn an_ancestors_limit_binds_where_the_leaf_states_max() {
         let root = FakeRoot::new();
-        root.v2("/pgdq-probe/child")
-            .v2_limits("/pgdq-probe/child", Some("max"), Some("max"))
-            .v2_limits("/pgdq-probe", Some("268435456"), None);
+        root.v2("/pgdt-probe/child")
+            .v2_limits("/pgdt-probe/child", Some("max"), Some("max"))
+            .v2_limits("/pgdt-probe", Some("268435456"), None);
         assert_eq!(discover_memory_limit_in(root.path()).map(|l| l.bytes), Some(268435456));
     }
 

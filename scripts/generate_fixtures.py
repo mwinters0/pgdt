@@ -96,7 +96,7 @@ ROUTINE_VERSIONS = {
     "18": "postgres:18.6-trixie",
 }
 
-DB_NAME = "pgdq_fixture"
+DB_NAME = "pgdt_fixture"
 DB_USER = "postgres"
 
 # A second database, loaded for the `edge_cases` schema only, so that its
@@ -106,7 +106,7 @@ DB_USER = "postgres"
 # between DB_NAME and `postgres`, so the segment order is fixed by naming
 # rather than observed. See scripts/fixture_schema_edge_cases_tenant.sql for
 # why its tables look the way they do.
-TENANT_DB_NAME = "pgdq_tenant"
+TENANT_DB_NAME = "pgdt_tenant"
 TENANT_SCHEMA = "edge_cases"
 
 # fixture_schema_objects.sql's non-default tablespace (decisions.md,
@@ -182,7 +182,7 @@ def schema_file(schema: str) -> Path:
 
 def tenant_schema_file() -> Path:
     # Named for the fixture set it belongs to, not as a fifth fixture set:
-    # nothing dumps `pgdq_tenant` on its own, it only ever shows up inside
+    # nothing dumps `pgdt_tenant` on its own, it only ever shows up inside
     # `edge_cases/dumpall.sql`.
     return SCRIPT_DIR / f"fixture_schema_{TENANT_SCHEMA}_tenant.sql"
 
@@ -192,7 +192,7 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 
 def container_name(version: str) -> str:
-    return f"pgdq-fixture-{version}"
+    return f"pgdt-fixture-{version}"
 
 
 def start_container(version: str, image: str) -> str:

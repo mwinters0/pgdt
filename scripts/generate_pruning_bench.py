@@ -3,7 +3,7 @@
 control rows with one low-cardinality column appended.
 
 Backs docs/design/measurements.md's `statistics-pruning` figure, which prices
-what row-group statistics buy a `pgdq query` under a selective range on a
+what row-group statistics buy a `pgdt query` under a selective range on a
 sorted column and an equality answered by a dictionary, and what they cost
 under a filter they cannot narrow. The control already carries the first and
 the third -- its `id` ascends from 1 in one block, and its `v_smallint` is

@@ -327,7 +327,7 @@ fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
 ///
 /// Deficiency register: `deficiency: KD5` — the replacement is a whole-list
 /// clone, so mapping is O(blocks × splices) and O(blocks²) wherever the save
-/// throttle's gate never closes, which is every `--dqcache none` scan
+/// throttle's gate never closes, which is every `--dtcache none` scan
 /// (`measurements.md`, `per-block-quadratic`). **(c) unowned**; promoted by a
 /// dump of thousands of blocks scanned that way. Closing it means an
 /// appendable frontier here rather than a rebuild; a floor under the throttle
@@ -994,7 +994,7 @@ pub struct MapRun {
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
-/// holds** — `pgdq parse`'s scan (`docs/design/decisions.md`, "D61"). This is
+/// holds** — `pgdt parse`'s scan (`docs/design/decisions.md`, "D61"). This is
 /// [`map_forward`] with no stop target, plus the three whole-file facts that
 /// only a scan reaching EOF may state; `crate::index::build_index` stays the
 /// eager, cache-blind producer. Rejected: teaching *it* to resume, which
@@ -1153,7 +1153,7 @@ pub async fn map_file(
         // was already consistent at. **The check is this arm's own**: an
         // enabled save makes the same one before it writes, and a disabled
         // cache makes none at all, so leaving it to the save is how a
-        // `--dqcache none` run reached the interrupt below unverified. Only a
+        // `--dtcache none` run reached the interrupt below unverified. Only a
         // read the leader dispatched unwinds this far; every other one the
         // pass makes is caught at a check point of its own.
         Err(e) if cancelled_read(&e, scan_options) => {
@@ -2349,7 +2349,7 @@ async fn map_for_query(
         ScanExtent::Full => None,
     };
     // A cancelled mapping pass is an error here rather than a short stream
-    // (`docs/design/decisions.md`, "D48"). `pgdq query` never sets the flag;
+    // (`docs/design/decisions.md`, "D48"). `pgdt query` never sets the flag;
     // an embedder that does gets told.
     // A pass gathering nothing charges nothing, so its account is never read.
     let account = Arc::default();

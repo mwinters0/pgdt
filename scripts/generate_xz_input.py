@@ -211,7 +211,7 @@ def check_koji_density(compressed: int, uncompressed: int, offset: int) -> float
             f"{KOJI_RATIO_MIN:g}-{KOJI_RATIO_MAX:g}x this figure is taken on "
             f"({uncompressed} plaintext bytes in {compressed} compressed). A decode rate is a "
             "rate per plaintext byte, so bytes of another density belong to a different figure: "
-            "move the offset (PGDQ_KOJI_XZ_OFFSET) to a region inside the band, or decide in the "
+            "move the offset (PGDT_KOJI_XZ_OFFSET) to a region inside the band, or decide in the "
             "open that the figure is taken on these bytes and widen KOJI_RATIO_MIN/MAX"
         )
     return ratio
@@ -365,7 +365,7 @@ def main() -> None:
         if not args.from_koji.exists():
             raise SystemExit(
                 f"{args.from_koji} does not exist — this leg reads the koji download named in "
-                "CLAUDE.local.md, and PGDQ_KOJI_XZ is what points measure.py elsewhere"
+                "CLAUDE.local.md, and PGDT_KOJI_XZ is what points measure.py elsewhere"
             )
         start, end = koji_slice(args.from_koji, args.out, args.streams, args.from_offset)
         print(f"streams {args.streams} from {start} to {end}", file=sys.stderr)

@@ -42,11 +42,11 @@ declares one too** (`Outside.depends`), and its marker in the doc names the
 commit its readings were taken at: being outside means the harness cannot
 re-take them, not that nothing is told when they go wrong.
 
-**Not every figure times `pgdq`.** `xz-decode-scaling` times the `xz_decode`
+**Not every figure times `pgdt`.** `xz-decode-scaling` times the `xz_decode`
 example instead, which reaches past the library to the decoder's own bulk entry
 point -- the figure is about the decoder rather than about what the library
 does with it.
-The harness builds it (an *example* target, so `target/release/pgdq` is never
+The harness builds it (an *example* target, so `target/release/pgdt` is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
 declares.
@@ -54,7 +54,7 @@ declares.
 One binary this cannot build for itself, by design: the **census-off** binary is
 `map::census_row`'s body preceded by a bare `return;` -- a source patch no
 harness should perform. Build it by hand (the recipe is in measurements.md) and
-point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it. **It carries a `.stamp` beside it
+point `PGDT_MEASURE_CENSUS_OFF_BIN` at it. **It carries a `.stamp` beside it
 naming the commit it was built from**, the way a generated input does, and a
 census figure is refused unless that commit is an ancestor of the one being
 measured with no path the selected census figures declare changed in between:
@@ -137,11 +137,11 @@ SCRIPTS = REPO / "scripts"
 GIB = 1024**3
 MIB = 1024**2
 
-#: The only path `cargo build --release -p pgdump_query-cli` writes. It is a
-#: constant rather than a literal inside `Config` because `ensure_pgdq_binary`
-#: reads it back: the harness may claim to have built `cfg.bin_pgdq` only when
-#: the two are the same file.
-CARGO_RELEASE_BIN = REPO / "target/release/pgdq"
+#: The only path `cargo build --release -p pgdt` writes. It is a constant
+#: rather than a literal inside `Config` because `ensure_pgdt_binary` reads it
+#: back: the harness may claim to have built `cfg.bin_pgdt` only when the two
+#: are the same file.
+CARGO_RELEASE_BIN = REPO / "target/release/pgdt"
 
 
 # --------------------------------------------------------------------------
@@ -160,17 +160,17 @@ class Config:
     # Where generated inputs live and are kept between sessions. Cold figures
     # read them in place, so this must be the SSD, not tmpfs.
     cache_dir: Path = Path(
-        _env("PGDQ_MEASURE_CACHE_DIR", "/mnt/ssd/fedora/scratch/pgdump_query/measure")
+        _env("PGDT_MEASURE_CACHE_DIR", "/mnt/ssd/fedora/scratch/pgdump_query/measure")
     )
     # tmpfs, for every warm figure.
-    warm_dir: Path = Path(_env("PGDQ_MEASURE_WARM_DIR", "/dev/shm/pgdq"))
+    warm_dir: Path = Path(_env("PGDT_MEASURE_WARM_DIR", "/dev/shm/pgdt"))
     # A second *device*, not a second cache: the `cold-nvme` regime exists to
     # read the same bytes off a disk fast enough that the parse is not hidden
     # behind it, so what this path names has to be NVMe and not the SSD
     # `cache_dir` points at. Inputs are copied here from that cache and kept,
     # exactly as they are kept there -- it is disk, not RAM.
     nvme_dir: Path = Path(
-        _env("PGDQ_MEASURE_NVME_DIR", "/var/tmp/pgdump_query/measure")
+        _env("PGDT_MEASURE_NVME_DIR", "/var/tmp/pgdump_query/measure")
     )
     # How much of the tmpfs the harness may fill. **Normally computed, not
     # configured**: the harness knows which inputs each figure needs and how
@@ -180,41 +180,41 @@ class Config:
     # by, twenty minutes into a sweep. Set the variable only to cap it below
     # what the machine would otherwise allow.
     warm_budget: float | None = (
-        float(os.environ["PGDQ_MEASURE_TMPFS_BUDGET_GIB"])
-        if "PGDQ_MEASURE_TMPFS_BUDGET_GIB" in os.environ
+        float(os.environ["PGDT_MEASURE_TMPFS_BUDGET_GIB"])
+        if "PGDT_MEASURE_TMPFS_BUDGET_GIB" in os.environ
         else None
     )
-    out_dir: Path = Path(_env("PGDQ_MEASURE_OUT_DIR", str(REPO / "runs")))
+    out_dir: Path = Path(_env("PGDT_MEASURE_OUT_DIR", str(REPO / "runs")))
 
-    container: str = _env("PGDQ_MEASURE_CONTAINER", "sudo nerdctl")
-    image: str = _env("PGDQ_MEASURE_IMAGE", "postgres:16")
-    memory: str = _env("PGDQ_MEASURE_MEMORY", "512m")
-    sudo: str = _env("PGDQ_MEASURE_SUDO", "sudo")
+    container: str = _env("PGDT_MEASURE_CONTAINER", "sudo nerdctl")
+    image: str = _env("PGDT_MEASURE_IMAGE", "postgres:16")
+    memory: str = _env("PGDT_MEASURE_MEMORY", "512m")
+    sudo: str = _env("PGDT_MEASURE_SUDO", "sudo")
 
-    bin_pgdq: Path = Path(_env("PGDQ_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
+    bin_pgdt: Path = Path(_env("PGDT_MEASURE_BIN", str(CARGO_RELEASE_BIN)))
     bin_nocensus: Path = Path(
-        _env("PGDQ_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdq-nocensus"))
+        _env("PGDT_MEASURE_CENSUS_OFF_BIN", str(REPO / "runs/pgdt-nocensus"))
     )
     # The `allocator` figure's three legs. Each is a full cargo target dir, so
     # it goes on scratch rather than under `runs/`, which holds logs and small
     # binaries; the binaries themselves are copied into `runs/`. A separate
     # target dir per leg is not tidiness: a `--features` build writes
-    # `target/release/pgdq`, so building a leg in the default dir would
-    # silently replace `bin_pgdq` and every other figure in the same sweep
+    # `target/release/pgdt`, so building a leg in the default dir would
+    # silently replace `bin_pgdt` and every other figure in the same sweep
     # would be timed under the wrong allocator.
     alloc_build_root: Path = Path(
         _env(
-            "PGDQ_MEASURE_ALLOC_BUILD_ROOT",
+            "PGDT_MEASURE_ALLOC_BUILD_ROOT",
             "/mnt/ssd/fedora/scratch/pgdump_query/alloc-builds",
         )
     )
 
     # The size of the seven large inputs. 3.00 GiB is the recorded apparatus;
     # anything else marks the run unpublishable.
-    size_gib: float = float(_env("PGDQ_MEASURE_SIZE_GIB", "3.0"))
+    size_gib: float = float(_env("PGDT_MEASURE_SIZE_GIB", "3.0"))
     # Pin every CPU to SWEEP_GOVERNOR for the sweep. Off by default -- see
     # that constant for the measurement that says why.
-    pin_governor: bool = _env("PGDQ_MEASURE_PIN_GOVERNOR", "") not in ("", "0", "no")
+    pin_governor: bool = _env("PGDT_MEASURE_PIN_GOVERNOR", "") not in ("", "0", "no")
     # Rep-count override, for smoke runs only. None means each figure's own.
     reps_override: int | None = None
     dry_run: bool = False
@@ -230,7 +230,7 @@ class Config:
         exactly as a generated input's `.stamp` sits beside the input.
 
         Derived from the binary's own path rather than given its own
-        environment variable, so pointing `PGDQ_MEASURE_CENSUS_OFF_BIN` at
+        environment variable, so pointing `PGDT_MEASURE_CENSUS_OFF_BIN` at
         another build moves the stamp with it and cannot leave the two
         describing different files."""
         return self.bin_nocensus.with_name(self.bin_nocensus.name + ".stamp")
@@ -515,7 +515,7 @@ class Sampler:
     def start(self) -> None:
         if self.interval <= 0 or self._thread is not None:
             return
-        self._thread = threading.Thread(target=self._loop, name="pgdq-sampler", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="pgdt-sampler", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -1023,19 +1023,19 @@ def parse_oom_kills(text: str) -> int | None:
 
 #: A `key=value` line an instrument writes where the harness can read it. Two
 #: write them today: the decode example, on stdout, which has no other output;
-#: and `pgdq --features introspect`, into the file `INSTRUMENT_OUT_VAR` names,
+#: and `pgdt --features introspect`, into the file `INSTRUMENT_OUT_VAR` names,
 #: which is a channel of its own rather than a stream it shares.
 REPORTED_RE = re.compile(r"^([a-z_]+)=(\S+)$")
 
-#: The environment variable naming the file `pgdump_query-cli/src/introspect.rs`
-#: writes its report to. **Unset means no report at all**, so a default build
-#: and an unmeasured run of the instrument build behave identically.
+#: The environment variable naming the file `pgdt/src/introspect.rs` writes its
+#: report to. **Unset means no report at all**, so a default build and an
+#: unmeasured run of the instrument build behave identically.
 #:
 #: Shared in fact rather than in type: the two constants live in two languages
 #: and `test_measure.py` holds them to each other. An environment variable
 #: rather than a flag, so the instrumented leg's argv is the argv a figure
 #: times — see `RunSpec.instrument`.
-INSTRUMENT_OUT_VAR = "PGDQ_INTROSPECT_OUT"
+INSTRUMENT_OUT_VAR = "PGDT_INTROSPECT_OUT"
 
 #: Where the report is mounted inside the container, and the directory under a
 #: sitting's own output that is bind-mounted there. One report per rep lands
@@ -1106,7 +1106,7 @@ def parse_resolution(text: str) -> dict[str, str]:
     return {"resolved_jobs": match.group(1), "resolved_budget": match.group(2)}
 
 
-#: What `pgdq query` says on stderr about the rows it did not read, and how many
+#: What `pgdt query` says on stderr about the rows it did not read, and how many
 #: it returned: the pruning note (`PlanNoteKind::StatisticsPruned`), the early
 #: stop's note, and the closing count.
 PRUNING_NOTE_RE = re.compile(
@@ -1124,7 +1124,7 @@ NO_ROWS_RE = re.compile(r"^no rows found for ", re.MULTILINE)
 
 
 def parse_query_notes(text: str) -> dict[str, str]:
-    """What a `pgdq query` reported of its own reading: the groups and bytes
+    """What a `pgdt query` reported of its own reading: the groups and bytes
     its statistics skipped, the bytes an early stop left unread, and the rows
     it returned. `{}` for a run that printed none of them.
 
@@ -1160,7 +1160,7 @@ def rss_wrapper(machine: str) -> str:
     """A shell prefix that runs its arguments and reports their peak RSS.
 
     **Why a wrapper at all.** `/usr/bin/time -f %M` around `nerdctl run` reports
-    the *client's* peak, not pgdq's — it read 40–45 MB for a 2 MB input
+    the *client's* peak, not pgdt's — it read 40–45 MB for a 2 MB input
     (`measurements.md`, "Scan throughput by input shape"), and the timer has to
     go inside the container anyway. Inside `postgres:16` there is no
     `/usr/bin/time` at all, and bash's `time` reports no memory.
@@ -1228,7 +1228,7 @@ class InputSpec:
     scales: bool = True
     #: What the staged file is called. `.sql` for a plain dump; `.xz` for a
     #: compressed one, which is a *different kind of input* rather than a plain
-    #: one under another name -- `pgdq` recognises a source by content, but the
+    #: one under another name -- `pgdt` recognises a source by content, but the
     #: harness's own staging, eviction and stamping all key on the file name,
     #: and two inputs whose names collided would evict each other silently.
     suffix: str = ".sql"
@@ -1373,9 +1373,9 @@ INPUTS["control_xz128"] = InputSpec(
 #: curve is a within-leg ratio and barely moves -- and it is why the ratio is
 #: gated rather than assumed (`docs/design/decisions.md`, "The compressed source and the cache").
 KOJI_XZ = _env(
-    "PGDQ_KOJI_XZ", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump.multistream.xz"
+    "PGDT_KOJI_XZ", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump.multistream.xz"
 )
-KOJI_XZ_OFFSET = int(_env("PGDQ_KOJI_XZ_OFFSET", str(20_000_000_000)))
+KOJI_XZ_OFFSET = int(_env("PGDT_KOJI_XZ_OFFSET", str(20_000_000_000)))
 #: How many whole streams the koji leg keeps. The download is one 24 MiB block
 #: per stream, so 128 of them is 3.00 GiB of plaintext -- the register's input
 #: size, and enough blocks that 24 workers are never clamped by the work.
@@ -1587,7 +1587,7 @@ class Stager:
                 raise RuntimeError(
                     "the tmpfs budget cannot hold one figure's inputs at once: still needs "
                     f"{victim} and {need / GIB:.2f} GiB more; raise "
-                    "PGDQ_MEASURE_TMPFS_BUDGET_GIB"
+                    "PGDT_MEASURE_TMPFS_BUDGET_GIB"
                 )
             self.log(f"  evicting {victim} from tmpfs")
             del self._staged[victim]
@@ -1619,7 +1619,7 @@ class Stager:
     def budget(self) -> int:
         """The tmpfs ceiling: one figure's inputs plus headroom, since only one
         figure's inputs are ever needed at once and eviction handles the rest.
-        An explicit PGDQ_MEASURE_TMPFS_BUDGET_GIB overrides it."""
+        An explicit PGDT_MEASURE_TMPFS_BUDGET_GIB overrides it."""
         if self.cfg.warm_budget is not None:
             return int(self.cfg.warm_budget * GIB)
         largest = max(self.figure_need.values(), default=0)
@@ -1651,8 +1651,8 @@ class Stager:
             problems.append(
                 f"{self.cfg.warm_dir} has {warm_free / GIB:.2f} GiB usable, under the "
                 f"{budget / GIB:.2f} GiB this sweep needs resident. Point "
-                "PGDQ_MEASURE_WARM_DIR at a larger memory-backed filesystem, or lower "
-                "PGDQ_MEASURE_SIZE_GIB — which makes the run unpublishable"
+                "PGDT_MEASURE_WARM_DIR at a larger memory-backed filesystem, or lower "
+                "PGDT_MEASURE_SIZE_GIB — which makes the run unpublishable"
             )
         wanted = {
             n
@@ -1710,7 +1710,7 @@ class Stager:
             return [
                 f"{self.cfg.nvme_dir} has {free / GIB:.2f} GiB free, under the "
                 f"{want / GIB:.2f} GiB of inputs the cold-NVMe figures still need copied "
-                "there. Point PGDQ_MEASURE_NVME_DIR at an NVMe volume with room"
+                "there. Point PGDT_MEASURE_NVME_DIR at an NVMe volume with room"
             ]
         return []
 
@@ -1729,13 +1729,13 @@ class Stager:
                 path.unlink()
             del self._staged[name]
         # The caches a run writes into the staging directory go with it.
-        for leftover in self.cfg.warm_dir.glob("*.dqcache"):
+        for leftover in self.cfg.warm_dir.glob("*.dtcache"):
             leftover.unlink(missing_ok=True)
 
     # -- profiling --------------------------------------------------------
 
     def profile(self, name: str) -> dict:
-        """Row and column counts for an input, off `pgdq info --json`.
+        """Row and column counts for an input, off `pgdt info --json`.
 
         Not a figure: it runs on the host, untimed, once per input, and only
         the tables that quote a per-row cost need it."""
@@ -1763,7 +1763,7 @@ class Stager:
             }
         self.log(f"  profiling {name} (host, untimed)")
         path = self.warm_path(name) if name in self._staged else self.cold_path(name)
-        tmp = self.cfg.cache_dir / f"{name}.profile.dqcache"
+        tmp = self.cfg.cache_dir / f"{name}.profile.dtcache"
         tmp.unlink(missing_ok=True)
         # `--jobs` even though nothing here is timed: the row counts this
         # returns are the divisor under every per-row number in the document,
@@ -1771,16 +1771,16 @@ class Stager:
         # moves underneath it (`SWEEP_JOBS`).
         run(
             [
-                str(self.cfg.bin_pgdq), "parse",
+                str(self.cfg.bin_pgdt), "parse",
                 "--source", str(path),
-                "--dqcache", str(tmp),
+                "--dtcache", str(tmp),
                 "--jobs", str(SWEEP_JOBS),
                 *NO_STATISTICS.split(),
             ],
             quiet=True,
         )
         out = run(
-            [str(self.cfg.bin_pgdq), "info", "--dqcache", str(tmp), "--json"], capture=True
+            [str(self.cfg.bin_pgdt), "info", "--dtcache", str(tmp), "--json"], capture=True
         )
         tmp.unlink(missing_ok=True)
         index = json.loads(out)
@@ -1823,7 +1823,7 @@ def run(
 class RunSpec:
     """One timed command: a binary, an input, a command shape, a regime."""
 
-    binary: str  # "pgdq" | "nocensus" | "before" | "none" (dd)
+    binary: str  # "pgdt" | "nocensus" | "before" | "none" (dd)
     input: str
     command: str
     regime: str  # "cold" | "cold-nvme" | "warm"
@@ -1897,7 +1897,7 @@ PROJECTION_WIDTHS: dict[int, tuple[str, ...]] = {
 
 
 def projection_flags(width: int) -> str:
-    """The `pgdq query` flags that ask for one width.
+    """The `pgdt query` flags that ask for one width.
 
     Zero columns is `--no-columns` rather than an empty repetition of
     `--column`, which is the CLI this phase specifies; every other width
@@ -2142,7 +2142,7 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:           of `PARALLEL_JOBS` landing on the same floor and the same seven.
 QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 7}
 
-#: The worker count every `pgdq` invocation this harness makes states, and the
+#: The worker count every `pgdt` invocation this harness makes states, and the
 #: one every registered figure is taken at **except the three whose axis it is**
 #: (`parallel-scan-throughput`, `parallel-peak-rss`, `xz-decode-scaling`) **and
 #: `reserve`**, whose stated legs hold `RESERVE_JOBS` and whose flagless legs
@@ -2179,7 +2179,7 @@ QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 7}
 #: and obliges a re-sweep, exactly as changing the allocator would.
 SWEEP_JOBS = 1
 
-#: **Every `pgdq parse` this harness runs gathers no statistics**, outside the
+#: **Every `pgdt parse` this harness runs gathers no statistics**, outside the
 #: two figures whose subject is the gathering (`GATHER_STATISTICS`). `parse`
 #: gathers per-row-group statistics by default, reading every value of every
 #: column, so a shape that inherited the default would re-time what its figure
@@ -2227,7 +2227,7 @@ STATISTICS_LEGS: tuple[tuple[str, str], ...] = (
 #: rather than standing in for it.
 STATISTICS_MEMORY = "2g"
 
-#: `statistics-pruning`'s shapes, `<family><filter>-<leg>`: a `pgdq query`
+#: `statistics-pruning`'s shapes, `<family><filter>-<leg>`: a `pgdt query`
 #: timed against a cache one untimed gathering `parse` wrote in the same
 #: container, as `info-cache-rss` builds its own — so the cache is by
 #: construction this input's, and the two legs differ by `--statistics` alone.
@@ -3089,26 +3089,26 @@ def _script(command: str) -> str:
     timed command's redirection, which deletes the figure and leaves a labelled
     run with no number under it.
 
-    **Every `pgdq` shape states its worker count**, because a shape that
+    **Every `pgdt` shape states its worker count**, because a shape that
     inherits the CLI's default measures whatever that default is on the day --
     see `SWEEP_JOBS`. `--check` refuses a shape that pins none."""
-    q = "time /pgdq"
+    q = "time /pgdt"
     j = f"--jobs {SWEEP_JOBS}"
     ns = NO_STATISTICS
     if command == "parse":
-        return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {j} {ns} >/dev/null"
+        return f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null"
     if command == "parse-rss":
         # The same `parse` as above, wrapped so the run reports its own peak
         # resident set as well as its wall clock. The redirection is outside
-        # the wrapper and takes pgdq's stdout with it; the reading goes to
+        # the wrapper and takes pgdt's stdout with it; the reading goes to
         # stderr, where bash's `time` report already goes.
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
-            f"--dqcache /tmp/x.dqcache {j} {ns} >/dev/null"
+            f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
+            f"--dtcache /tmp/x.dtcache {j} {ns} >/dev/null"
         )
     if command == "parse-preamble":
         return (
-            f"{q} parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache "
+            f"{q} parse --preamble-only --source /dump.sql --dtcache /tmp/x.dtcache "
             f"{j} >/dev/null"
         )
     if command == "parse-preamble-rss":
@@ -3119,8 +3119,8 @@ def _script(command: str) -> str:
         # `peak-rss`'s own inputs cannot, since `blocks4000` gives every table
         # exactly one block and the two coincide in it.
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdq parse --preamble-only "
-            f"--source /dump.sql --dqcache /tmp/x.dqcache {j} >/dev/null"
+            f"time {rss_wrapper(platform.machine())} /pgdt parse --preamble-only "
+            f"--source /dump.sql --dtcache /tmp/x.dtcache {j} >/dev/null"
         )
     if command == "info-cache-rss":
         # An index *deserialized* rather than built: the second route to the
@@ -3140,36 +3140,36 @@ def _script(command: str) -> str:
         # none**: `info` takes no `--jobs` because it starts no workers, so
         # there is no default for it to inherit.
         return (
-            f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} {ns} >/dev/null; "
-            f"time {rss_wrapper(platform.machine())} /pgdq info --dqcache /tmp/x.dqcache "
+            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null; "
+            f"time {rss_wrapper(platform.machine())} /pgdt info --dtcache /tmp/x.dtcache "
             ">/dev/null"
         )
     if command in ("query-nomatch-cached-rss", "query-nomatch-rss"):
         # The pair that isolates the un-throttled splice, one flag apart. A
         # table that never matches maps to EOF and renders no row, so what
         # differs between them is the save throttle and nothing else: with a
-        # cache path `parse`'s throttle governs, with `--dqcache none` the
+        # cache path `parse`'s throttle governs, with `--dtcache none` the
         # whole-list rebuild is paid per block (`KD5`).
         #
-        # `query` rather than `parse` because `parse` refuses `--dqcache none`
+        # `query` rather than `parse` because `parse` refuses `--dtcache none`
         # outright -- "cache is disabled, but `parse` requires a cache file" --
         # so the un-throttled shape is reachable only through `query`.
-        cache = "/tmp/x.dqcache" if command.endswith("cached-rss") else "none"
+        cache = "/tmp/x.dtcache" if command.endswith("cached-rss") else "none"
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdq query --source /dump.sql "
-            f"--table public.nosuchtable --dqcache {cache} {j} >/dev/null"
+            f"time {rss_wrapper(platform.machine())} /pgdt query --source /dump.sql "
+            f"--table public.nosuchtable --dtcache {cache} {j} >/dev/null"
         )
     if command == "parse-cache-out":
         # The cache goes to the mounted tmpfs, not the container's own layer,
         # and the removal is outside the timer.
         return (
-            "rm -f /out/measure.dqcache; "
-            f"{q} parse --source /dump.sql --dqcache /out/measure.dqcache {j} {ns} >/dev/null"
+            "rm -f /out/measure.dtcache; "
+            f"{q} parse --source /dump.sql --dtcache /out/measure.dtcache {j} {ns} >/dev/null"
         )
     if command in ("query-typed", "query-strings"):
         mode = command.split("-")[1]
         return (
-            f"{q} query --source /dump.sql --table public.perf --dqcache none "
+            f"{q} query --source /dump.sql --table public.perf --dtcache none "
             f"--schema-mode {mode} {j} >/dev/null"
         )
     if command.startswith("query-project-"):
@@ -3179,7 +3179,7 @@ def _script(command: str) -> str:
         if not width.isdigit():
             raise ValueError(f"unknown command shape {command!r}")
         return (
-            f"{q} query --source /dump.sql --table public.perf --dqcache none "
+            f"{q} query --source /dump.sql --table public.perf --dtcache none "
             f"--schema-mode typed {projection_flags(int(width))} {j} >/dev/null"
         )
     if command.startswith("query-where-"):
@@ -3192,13 +3192,13 @@ def _script(command: str) -> str:
         # mode).
         expr = predicate_expr(command.removeprefix("query-where-"))
         return (
-            f"{q} query --source /dump.sql --table public.perf --dqcache none "
+            f"{q} query --source /dump.sql --table public.perf --dtcache none "
             f"--schema-mode strings --where '{expr}' {j} >/dev/null"
         )
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
         return (
-            f"{q} query --source /dump.sql --table public.nosuchtable --dqcache none "
+            f"{q} query --source /dump.sql --table public.nosuchtable --dtcache none "
             f"{j} >/dev/null"
         )
     if command.startswith(STATISTICS_FAMILY):
@@ -3209,8 +3209,8 @@ def _script(command: str) -> str:
         if leg not in flags or suffix != "rss":
             raise ValueError(f"unknown command shape {command!r}")
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
-            f"--dqcache /tmp/x.dqcache {j} {flags[leg]} >/dev/null"
+            f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
+            f"--dtcache /tmp/x.dtcache {j} {flags[leg]} >/dev/null"
         )
     if command.startswith(PRUNING_FAMILY):
         # `statistics-pruning`. The builder is outside the timer and states the
@@ -3223,9 +3223,9 @@ def _script(command: str) -> str:
         expr = PRUNING_FILTERS[name][0]
         written, used = (NO_STATISTICS, "all") if uncarried else (GATHER_STATISTICS, leg)
         return (
-            f"/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache {j} "
+            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} "
             f"{written} >/dev/null; "
-            f"{q} query --source /dump.sql --table public.perf --dqcache /tmp/x.dqcache "
+            f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.dtcache "
             f"--schema-mode typed --where '{expr}' --statistics {used} {j} >/dev/null"
         )
     if command.startswith("parse-chunk-"):
@@ -3239,7 +3239,7 @@ def _script(command: str) -> str:
         if int(size) not in CHUNK_SIZES:
             raise ValueError(f"{command!r} names a chunk size the figure does not carry")
         return (
-            f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
+            f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache "
             f"--chunk-size {size} {j} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FAMILY):
@@ -3248,7 +3248,7 @@ def _script(command: str) -> str:
         # run`, so the whole leg is visible in the recorded argv the way every
         # other apparatus choice is.
         #
-        # **The assignment goes before `perl`, not before `/pgdq`.** The
+        # **The assignment goes before `perl`, not before `/pgdt`.** The
         # wrapper `exec`s its arguments, so the child inherits the environment
         # it was started with; an assignment written on the inner command would
         # be a further argument to `perl` and would set nothing.
@@ -3260,8 +3260,8 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a budget the figure does not carry")
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
-            f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
-            f"--source /dump.sql --dqcache /tmp/x.dqcache "
+            f"time {arena}{rss_wrapper(platform.machine())} /pgdt parse "
+            f"--source /dump.sql --dtcache /tmp/x.dtcache "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FLAGLESS):
@@ -3281,8 +3281,8 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names an arena setting the figure does not carry")
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
-            f"time {arena}{rss_wrapper(platform.machine())} /pgdq parse "
-            f"--source /dump.sql --dqcache /tmp/x.dqcache {ns} >/dev/null"
+            f"time {arena}{rss_wrapper(platform.machine())} /pgdt parse "
+            f"--source /dump.sql --dtcache /tmp/x.dtcache {ns} >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
         # The path step: a stated budget either side of `charge_bytes(unit, 1)`
@@ -3294,8 +3294,8 @@ def _script(command: str) -> str:
         if not budget.isdigit() or int(budget) not in RESERVE_STEP_BUDGETS:
             raise ValueError(f"{command!r} names a budget the figure does not carry")
         return (
-            f"time {rss_wrapper(platform.machine())} /pgdq parse "
-            f"--source /dump.sql --dqcache /tmp/x.dqcache "
+            f"time {rss_wrapper(platform.machine())} /pgdt parse "
+            f"--source /dump.sql --dtcache /tmp/x.dtcache "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command.startswith(JOBS_AXIS):
@@ -3317,22 +3317,22 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         p = f"--jobs {jobs} --memory {stated_allowance(PARALLEL_BUDGET)}"
         if shape == "parse":
-            return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {p} {ns} >/dev/null"
+            return f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
         if shape == "parse-rss":
             return (
-                f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
-                f"--dqcache /tmp/x.dqcache {p} {ns} >/dev/null"
+                f"time {rss_wrapper(platform.machine())} /pgdt parse --source /dump.sql "
+                f"--dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
             )
         if shape == "query-typed":
             return (
-                f"{q} query --source /dump.sql --table public.perf --dqcache none "
+                f"{q} query --source /dump.sql --table public.perf --dtcache none "
                 f"--schema-mode typed {p} >/dev/null"
             )
         raise ValueError(f"unknown command shape {command!r}")
     if command.startswith("decode-"):
-        # The `xz_decode` example, not `pgdq`: nothing in the library decodes
+        # The `xz_decode` example, not `pgdt`: nothing in the library decodes
         # concurrently yet, so this figure reaches the decoder's own bulk entry
-        # point directly. `/pgdq` is the harness's fixed mount point for
+        # point directly. `/pgdt` is the harness's fixed mount point for
         # whichever binary a spec names, and `/dump.sql` its fixed mount point
         # for the input, whatever that input actually is.
         #
@@ -3345,7 +3345,7 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         if int(workers) not in DECODE_WORKERS:
             raise ValueError(f"{command!r} names a worker count the figure does not carry")
-        return f"time /pgdq --source /dump.sql --workers {workers}"
+        return f"time /pgdt --source /dump.sql --workers {workers}"
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
@@ -3391,17 +3391,17 @@ def command_shapes() -> tuple[str, ...]:
     )
 
 
-#: A worker count stated on a command line: `pgdq`'s `--jobs`, or the decode
+#: A worker count stated on a command line: `pgdt`'s `--jobs`, or the decode
 #: instrument's own `--workers`. Either spelling pins the count; what fails is
 #: a shape carrying neither.
 _WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
 
 #: The one shape that states no worker count and is right not to: `dd` is the
 #: device floor, not a run of ours. Named rather than inferred, so a second
-#: non-`pgdq` shape has to be admitted here on purpose.
+#: non-`pgdt` shape has to be admitted here on purpose.
 _NO_WORKERS = ("dd",)
 
-#: The one `pgdq` family that states no worker count and is right not to: the
+#: The one `pgdt` family that states no worker count and is right not to: the
 #: reserve figure's flagless legs, whose reading *is* the count a flagless run
 #: resolves. Declared as its own prefix rather than appended to `_NO_WORKERS`
 #: above, because that tuple's rule is "not a run of ours" and this is the
@@ -3434,13 +3434,13 @@ def worker_count_problems() -> list[str]:
     ]
 
 
-#: One `pgdq parse` invocation inside a command shape's script, up to the next
+#: One `pgdt parse` invocation inside a command shape's script, up to the next
 #: command separator.
-_PARSE_RUN = re.compile(r"/pgdq parse [^;]*")
+_PARSE_RUN = re.compile(r"/pgdt parse [^;]*")
 
 
 def statistics_flag_problems() -> list[str]:
-    """Command shapes running a `pgdq parse` that does not state
+    """Command shapes running a `pgdt parse` that does not state
     `NO_STATISTICS`.
 
     `parse` gathers statistics unless told not to, so such a shape times the
@@ -3669,8 +3669,8 @@ class Session:
     # -- one timed run ----------------------------------------------------
 
     def binary_path(self, which: str) -> Path:
-        if which == "pgdq":
-            return self.cfg.bin_pgdq
+        if which == "pgdt":
+            return self.cfg.bin_pgdt
         if which == "nocensus":
             return self.cfg.bin_nocensus
         if which == "xzdecode":
@@ -3725,7 +3725,7 @@ class Session:
                 f"{spec.label}: this leg declares the instrument, and no report reached "
                 f"{path}. Either the binary was built without `--features introspect`, "
                 f"or the leg is pointed at the default binary, or the write failed — "
-                f"`pgdq --version` names the instrument when it is there, and a failed "
+                f"`pgdt --version` names the instrument when it is there, and a failed "
                 f"write says so on stderr."
             )
         return report
@@ -3751,7 +3751,7 @@ class Session:
         dump = self.input_path(spec.input, spec.regime)
         mounts = [f"{dump}:/dump.sql:ro"]
         if spec.binary != "none":
-            mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdq:ro")
+            mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdt:ro")
         if spec.command == "parse-cache-out":
             mounts.append(f"{self.cfg.warm_dir}:/out")
         # The instrument writes to a file rather than to a stream, so the leg
@@ -4222,7 +4222,7 @@ def census_binary_problem(
     `measurements.md` writes it.
 
     The cost of not having it is not hypothetical. A census figure is a
-    subtraction between this binary and `target/release/pgdq`, so **everything
+    subtraction between this binary and `target/release/pgdt`, so **everything
     that differs between the two trees is attributed to the census**: the
     binary found 40 commits behind on 2026-09-05 would have charged ten slices
     of read-path work to the census, in the one table that was already the
@@ -4256,9 +4256,9 @@ def census_binary_problem(
     instead, at the first second of the sitting that would have published the
     figure.
 
-    The *other* side of every census subtraction, `bin_pgdq`, is out of scope
+    The *other* side of every census subtraction, `bin_pgdt`, is out of scope
     here for a reason rather than for a weaker one: the harness builds it
-    (`ensure_pgdq_binary`), so it knows that provenance and has nothing to ask a
+    (`ensure_pgdt_binary`), so it knows that provenance and has nothing to ask a
     stamp. This binary is the register's only pinned historical build, and it is
     pinned *with* an expiry -- which is what the one that had none, the
     quadratic table's retired pre-throttle column, is the argument for.
@@ -4276,7 +4276,7 @@ def census_binary_problem(
         return (
             f"{cfg.bin_nocensus} is missing. The census-off binary is a source patch no harness "
             "should perform: add a bare `return;` as the first statement of "
-            "`map::census_row`, `cargo build --release -p pgdump_query-cli`, copy the binary "
+            "`map::census_row`, `cargo build --release -p pgdt`, copy the binary "
             f"to {cfg.bin_nocensus}, then revert. measurements.md's census section has the recipe."
         )
     want = resolve("HEAD")
@@ -4328,14 +4328,14 @@ def census_binary_problem(
 #: `_ALLOC_BUILT`'s reason, one level up: this is the binary every figure that
 #: is not a census subtraction is timed against, and a stale one is what a
 #: sitting cannot see.
-_PGDQ_BUILT = False
+_PGDT_BUILT = False
 
 
-def ensure_pgdq_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     """The shipped binary, built before the first reading rather than found.
 
     **What this closes is a sitting that does not look lost.** The harness
-    timed whatever `target/release/pgdq` happened to be and asked only that the
+    timed whatever `target/release/pgdt` happened to be and asked only that the
     file exist, while the session stamp named `git rev-parse HEAD` regardless —
     so a run on a tree-old binary emits a full table, a stamp naming a commit
     it did not execute, and a verdict. The worked instance is the 2026-09-12
@@ -4359,25 +4359,25 @@ def ensure_pgdq_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     that has not moved costs about a second; a build between two timed reps
     would move the second one.
 
-    **`PGDQ_MEASURE_BIN` pointed anywhere else builds nothing.** The only path
+    **`PGDT_MEASURE_BIN` pointed anywhere else builds nothing.** The only path
     that build writes is `CARGO_RELEASE_BIN`, so a harness that ran it and then
     timed a different file would be asserting a provenance it does not have.
     There the binary is the caller's, and its absence is `main`'s error rather
     than a build.
     """
-    global _PGDQ_BUILT
-    if _PGDQ_BUILT or cfg.bin_pgdq != CARGO_RELEASE_BIN:
-        return cfg.bin_pgdq
+    global _PGDT_BUILT
+    if _PGDT_BUILT or cfg.bin_pgdt != CARGO_RELEASE_BIN:
+        return cfg.bin_pgdt
     if cfg.dry_run:
         # A dry run measures nothing and must work where no binary exists, so
         # it announces instead — the same arm `ensure_allocator_binary` has,
         # for the same reason.
-        log(f"[dry-run] would build {cfg.bin_pgdq}")
-        return cfg.bin_pgdq
-    log(f"building {cfg.bin_pgdq}")
-    run(["cargo", "build", "--release", "-p", "pgdump_query-cli"], cwd=REPO)
-    _PGDQ_BUILT = True
-    return cfg.bin_pgdq
+        log(f"[dry-run] would build {cfg.bin_pgdt}")
+        return cfg.bin_pgdt
+    log(f"building {cfg.bin_pgdt}")
+    run(["cargo", "build", "--release", "-p", "pgdt"], cwd=REPO)
+    _PGDT_BUILT = True
+    return cfg.bin_pgdt
 
 
 #: Whether this process has already built the `xz_decode` instrument. Per
@@ -4396,14 +4396,14 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     edit* no harness should perform, and this is a `cargo build` of a committed
     target.
 
-    **An example target, so `target/release/pgdq` is untouched.** Every other
+    **An example target, so `target/release/pgdt` is untouched.** Every other
     figure in a sweep is timed against that binary, and a build that replaced
     it would re-time all of them against something else — the failure the
     allocator legs' separate target directories exist to prevent, one target
     kind along.
     """
     global _XZ_DECODE_BUILT
-    out = cfg.out_dir / "pgdq-xz-decode"
+    out = cfg.out_dir / "pgdt-xz-decode"
     if _XZ_DECODE_BUILT:
         return out
     if cfg.dry_run:
@@ -4431,28 +4431,28 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
 #: it was linked against and the measurement records the image.
 ALLOCATOR_LEGS: tuple[str, ...] = ("system", "jemalloc", "mimalloc")
 
-#: What `pgdq --version` appends. The harness *asks the binary* rather than
+#: What `pgdt --version` appends. The harness *asks the binary* rather than
 #: trusting the flags it passed: a leg mislabelled by one word gives a
 #: perfectly plausible table of the wrong comparison, which is the same family
 #: of failure as profiling the `release` binary and calling it `profiling`.
 ALLOCATOR_RE = re.compile(r"\(allocator: ([a-z]+)\)")
 
 #: What an *instrumented* build appends beside its allocator
-#: (`pgdump_query-cli/src/introspect.rs`). Such a build takes an atomic on
-#: every allocation and prints its own live bytes and glibc's statistics: it is
-#: how an attribution is taken, and it is not what any figure may be timed or
-#: measured on (`docs/design/roadmap.md`, "Attribution is introspective; only
-#: the gate is blind"). The marker rides in `--version` because that is the one
-#: place a *binary* can be asked what it is, which is the same argument the
-#: allocator name is read there for.
+#: (`pgdt/src/introspect.rs`). Such a build takes an atomic on every allocation
+#: and prints its own live bytes and glibc's statistics: it is how an
+#: attribution is taken, and it is not what any figure may be timed or measured
+#: on (`docs/design/roadmap.md`, "Attribution is introspective; only the gate
+#: is blind"). The marker rides in `--version` because that is the one place a
+#: *binary* can be asked what it is, which is the same argument the allocator
+#: name is read there for.
 INSTRUMENT_RE = re.compile(r"\(instrument: ([a-z-]+)\)")
 
 
 def binary_allocator(binary: Path) -> str:
-    """Which allocator a built `pgdq` links against, read out of the binary.
+    """Which allocator a built `pgdt` links against, read out of the binary.
 
     Not an optional nicety: the day the CLI's default feature set changes,
-    `target/release/pgdq` becomes a different binary and every apparatus line
+    `target/release/pgdt` becomes a different binary and every apparatus line
     that still names the old allocator is wrong with nothing to notice. This is
     what the session stamp reports.
 
@@ -4484,7 +4484,7 @@ def binary_allocator(binary: Path) -> str:
 #: needs it: a real build leaves the binary behind, which is the memo.
 _ALLOC_ANNOUNCED: set[str] = set()
 #: Legs already built *by this process*. The cache is deliberately per-run and
-#: not the file on disk: `runs/pgdq-alloc-<leg>` from an earlier session was
+#: not the file on disk: `runs/pgdt-alloc-<leg>` from an earlier session was
 #: built from whatever the source said then, and reusing it compares a fresh
 #: reference binary against a stale leg -- which is exactly the "plausible table
 #: of the wrong comparison" this figure's assertions exist to stop, and it fails
@@ -4502,7 +4502,7 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
       allocator whatever the CLI's default becomes. Without it this figure
       stops being re-takeable the moment a leg is adopted -- which is the one
       thing the figure exists to decide.
-    * **Its own target dir**, so `target/release/pgdq` -- every other figure's
+    * **Its own target dir**, so `target/release/pgdt` -- every other figure's
       binary -- is never overwritten by a `--features` build.
     * **`--version` is read back** and must name this leg.
 
@@ -4515,7 +4515,7 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     """
     if leg not in ALLOCATOR_LEGS:
         raise ValueError(f"unknown allocator leg {leg!r}")
-    out = cfg.out_dir / f"pgdq-alloc-{leg}"
+    out = cfg.out_dir / f"pgdt-alloc-{leg}"
     if leg in _ALLOC_BUILT:
         return out
     features = [] if leg == "system" else ["--features", leg]
@@ -4533,13 +4533,13 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     target.mkdir(parents=True, exist_ok=True)
     run(
         [
-            "cargo", "build", "--release", "-p", "pgdump_query-cli",
+            "cargo", "build", "--release", "-p", "pgdt",
             "--no-default-features", *features,
             "--target-dir", str(target),
         ],
         cwd=REPO,
     )
-    shutil.copyfile(target / "release/pgdq", out)
+    shutil.copyfile(target / "release/pgdt", out)
     out.chmod(0o755)
     _ALLOC_BUILT.add(leg)
     got = binary_allocator(out)
@@ -4561,7 +4561,7 @@ _INSTRUMENT_BUILT = False
 
 
 def binary_instrument(binary: Path) -> str:
-    """Which instrument a built `pgdq` carries, read out of the binary.
+    """Which instrument a built `pgdt` carries, read out of the binary.
 
     The mirror of `binary_allocator`'s refusal, pointed the other way: there an
     instrumented build must not be timed, here a leg that declares the
@@ -4589,7 +4589,7 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     binary runs, so subtracting the defaults would measure a third build.
 
     **Its own target dir**, because a `--features` build in the default one
-    overwrites `target/release/pgdq` — every other figure's binary — with a
+    overwrites `target/release/pgdt` — every other figure's binary — with a
     binary that takes an atomic on every allocation and that
     `binary_allocator` then refuses, which is a sitting lost to a build step.
 
@@ -4599,7 +4599,7 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     hour rather than the second before it.
     """
     global _INSTRUMENT_BUILT
-    out = cfg.out_dir / "pgdq-introspect"
+    out = cfg.out_dir / "pgdt-introspect"
     if _INSTRUMENT_BUILT:
         return out
     target = cfg.alloc_build_root / "introspect"
@@ -4611,13 +4611,13 @@ def ensure_instrument_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     target.mkdir(parents=True, exist_ok=True)
     run(
         [
-            "cargo", "build", "--release", "-p", "pgdump_query-cli",
+            "cargo", "build", "--release", "-p", "pgdt",
             "--features", "introspect",
             "--target-dir", str(target),
         ],
         cwd=REPO,
     )
-    shutil.copyfile(target / "release/pgdq", out)
+    shutil.copyfile(target / "release/pgdt", out)
     out.chmod(0o755)
     _INSTRUMENT_BUILT = True
     log(f"  {out.name}: {binary_instrument(out)}")
@@ -4638,14 +4638,14 @@ def count_saves(
 
     Untimed, but the save count it returns is published, and `-f` follows every
     thread — so it states its worker count like everything else here."""
-    cache = cfg.warm_dir / "savecount.dqcache"
+    cache = cfg.warm_dir / "savecount.dtcache"
     cache.unlink(missing_ok=True)
     if cfg.dry_run:
         return (0, 0)
     proc = subprocess.run(
         [
             "strace", "-f", "-e", "trace=open,openat",
-            str(binary), "parse", "--source", str(dump), "--dqcache", str(cache),
+            str(binary), "parse", "--source", str(dump), "--dtcache", str(cache),
             "--jobs", str(SWEEP_JOBS), *NO_STATISTICS.split(),
         ],
         text=True,
@@ -4778,7 +4778,7 @@ class Figure:
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
 SCAN = ("pgdump_query/src/scan.rs", "pgdump_query/src/copy.rs", "pgdump_query/src/stream.rs")
-#: Every figure that times a `pgdq` run over a file reads its bytes through
+#: Every figure that times a `pgdt` run over a file reads its bytes through
 #: this one module, whatever else the figure is about, so it is its own
 #: mechanism rather than part of `SCAN`: `nested-end-to-end` and
 #: `census-attribution` declare no scanner path and are still moved by it.
@@ -4814,7 +4814,7 @@ PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
 #: prefix, so naming the one file leaves every other module in that crate as a
 #: staleness edge nobody declared -- and the crate now has three
 #: (`main.rs`, `where_expr.rs`, `alloc.rs`).
-QUERY_CLI = ("pgdump_query-cli/src/",)
+QUERY_CLI = ("pgdt/src/",)
 
 GEN_PERF = ("scripts/generate_perf_data.py",)
 GEN_BLOCKS = ("scripts/generate_block_count_bench.py",)
@@ -4849,7 +4849,7 @@ _THROUGHPUT_ROWS = (
 
 def _throughput_specs(regime: str) -> list[RunSpec]:
     return [
-        RunSpec("none" if cmd == "dd" else "pgdq", inp, cmd, regime, f"{label} ({regime})")
+        RunSpec("none" if cmd == "dd" else "pgdt", inp, cmd, regime, f"{label} ({regime})")
         for inp, cmd, label in _THROUGHPUT_ROWS
     ]
 
@@ -4929,7 +4929,7 @@ CHUNK_REGIMES: tuple[tuple[str, str], ...] = (
 def _chunk_specs() -> list[RunSpec]:
     return [
         RunSpec(
-            "pgdq",
+            "pgdt",
             "control",
             f"parse-chunk-{size}",
             regime,
@@ -4990,7 +4990,7 @@ def _census_specs(input_name: str, regime: str) -> tuple[RunSpec, RunSpec]:
     dictionary lookup that silently returns nothing if the key drifts."""
     return (
         RunSpec("nocensus", input_name, "parse", regime, f"census off ({regime})"),
-        RunSpec("pgdq", input_name, "parse", regime, f"census on ({regime})"),
+        RunSpec("pgdt", input_name, "parse", regime, f"census on ({regime})"),
     )
 
 
@@ -5018,7 +5018,7 @@ def _census_figure(session: Session, figure: str, input_name: str) -> str:
 
     profile = session.stager.profile(input_name)
     warm_off = session.get(figure, RunSpec("nocensus", input_name, "parse", "warm", ""))
-    warm_on = session.get(figure, RunSpec("pgdq", input_name, "parse", "warm", ""))
+    warm_on = session.get(figure, RunSpec("pgdt", input_name, "parse", "warm", ""))
     delta = median(warm_on) - median(warm_off)
     per_row_ns = delta / profile["rows"] * 1e9 if profile["rows"] else 0.0
     floors = {
@@ -5058,7 +5058,7 @@ def _nested_specs() -> list[RunSpec]:
     specs = []
     for name, _ in _NESTED_FILES:
         for mode in ("strings", "typed"):
-            specs.append(RunSpec("pgdq", name, f"query-{mode}", "warm", f"{name} {mode}"))
+            specs.append(RunSpec("pgdt", name, f"query-{mode}", "warm", f"{name} {mode}"))
     return specs
 
 
@@ -5068,8 +5068,8 @@ def run_nested_end_to_end(session: Session) -> str:
     session.sweep(figure, specs, session.cfg.reps(5))
     rows, per_rep = [], []
     for name, label in _NESTED_FILES:
-        s = RunSpec("pgdq", name, "query-strings", "warm", "")
-        t = RunSpec("pgdq", name, "query-typed", "warm", "")
+        s = RunSpec("pgdt", name, "query-strings", "warm", "")
+        t = RunSpec("pgdt", name, "query-typed", "warm", "")
         sv, tv = session.get(figure, s), session.get(figure, t)
         profile = session.stager.profile(name)
         diff = median(tv) - median(sv)
@@ -5103,8 +5103,8 @@ def _per_row_diffs(session: Session, figure: str, a: str, b: str) -> list[float]
     out = []
     for name in (a, b):
         profile = session.stager.profile(name)
-        s = session.get(figure, RunSpec("pgdq", name, "query-strings", "warm", ""))
-        t = session.get(figure, RunSpec("pgdq", name, "query-typed", "warm", ""))
+        s = session.get(figure, RunSpec("pgdt", name, "query-strings", "warm", ""))
+        t = session.get(figure, RunSpec("pgdt", name, "query-typed", "warm", ""))
         out.append([(tv - sv) / profile["rows"] * 1e6 for sv, tv in zip(s, t)])
     reps = min(len(out[0]), len(out[1]))
     return [out[1][i] - out[0][i] for i in range(reps)]
@@ -5119,7 +5119,7 @@ def run_cross_file_floor(session: Session) -> str:
     specs = []
     for name in ("control", "control43"):
         for mode in ("strings", "typed"):
-            specs.append(RunSpec("pgdq", name, f"query-{mode}", "warm", f"{name} {mode}"))
+            specs.append(RunSpec("pgdt", name, f"query-{mode}", "warm", f"{name} {mode}"))
     session.sweep(figure, specs, session.cfg.reps(6))
     floor = _per_row_diffs(session, figure, "control", "control43")
     rows = [
@@ -5165,7 +5165,7 @@ def run_projection_widths(session: Session) -> str:
     """
     figure = "projection-widths"
     specs = [
-        RunSpec("pgdq", "arrays", f"query-project-{width}", "warm", f"{width}-column")
+        RunSpec("pgdt", "arrays", f"query-project-{width}", "warm", f"{width}-column")
         for width, _, _ in _PROJECTION_ROWS
     ]
     # Six, like the two differencing figures this replaces: the reading that
@@ -5175,7 +5175,7 @@ def run_projection_widths(session: Session) -> str:
     profile = session.stager.profile("arrays")
     rows, per_rep, previous = [], [], None
     for width, label, buys in _PROJECTION_ROWS:
-        spec = RunSpec("pgdq", "arrays", f"query-project-{width}", "warm", "")
+        spec = RunSpec("pgdt", "arrays", f"query-project-{width}", "warm", "")
         values = session.get(figure, spec)
         if previous is None:
             delta = "—"
@@ -5235,7 +5235,7 @@ def run_predicate_terms(session: Session) -> str:
     """
     figure = "predicate-terms"
     specs = [
-        RunSpec("pgdq", "control", f"query-where-{shape}", "warm", label)
+        RunSpec("pgdt", "control", f"query-where-{shape}", "warm", label)
         for shape, label, _ in _PREDICATE_ROWS
     ]
     # Six, as `projection-widths` takes: the reading that matters is a paired
@@ -5244,7 +5244,7 @@ def run_predicate_terms(session: Session) -> str:
     profile = session.stager.profile("control")
     rows, per_rep, previous = [], [], None
     for shape, label, buys in _PREDICATE_ROWS:
-        spec = RunSpec("pgdq", "control", f"query-where-{shape}", "warm", "")
+        spec = RunSpec("pgdt", "control", f"query-where-{shape}", "warm", "")
         values = session.get(figure, spec)
         if previous is None:
             delta = "—"
@@ -5293,12 +5293,12 @@ def run_census_attribution(session: Session) -> str:
     files = ("control", "arrays")
     specs = [
         RunSpec(binary, name, "query-strings", "warm", f"{binary} {name}")
-        for binary in ("pgdq", "nocensus")
+        for binary in ("pgdt", "nocensus")
         for name in files
     ]
     session.sweep(figure, specs, session.cfg.reps(5))
     rows, per_rep = [], []
-    for binary, label in (("pgdq", "census on"), ("nocensus", "census off")):
+    for binary, label in (("pgdt", "census on"), ("nocensus", "census off")):
         medians = [
             median(session.get(figure, RunSpec(binary, n, "query-strings", "warm", "")))
             for n in files
@@ -5342,7 +5342,7 @@ def run_per_block_quadratic(session: Session) -> str:
     condition on it."""
     figure = "per-block-quadratic"
     specs = [
-        RunSpec("pgdq", name, "parse-cache-out", "warm", name) for name, _ in _QUADRATIC_ROWS
+        RunSpec("pgdt", name, "parse-cache-out", "warm", name) for name, _ in _QUADRATIC_ROWS
     ]
     session.sweep(figure, specs, session.cfg.reps(2))
 
@@ -5350,9 +5350,9 @@ def run_per_block_quadratic(session: Session) -> str:
     rows, per_rep, save_counts = [], [], []
     for name, label in _QUADRATIC_ROWS:
         dump = session.input_path(name, "warm")
-        readings = session.get(figure, RunSpec("pgdq", name, "parse-cache-out", "warm", ""))
+        readings = session.get(figure, RunSpec("pgdt", name, "parse-cache-out", "warm", ""))
         saves, cache_size = count_saves(
-            session.cfg, session.binary_path("pgdq"), dump, session.log
+            session.cfg, session.binary_path("pgdt"), dump, session.log
         )
         save_counts.append(saves)
         rows.append(
@@ -5428,7 +5428,7 @@ def input_block_count(name: str) -> int:
 def run_peak_rss(session: Session) -> str:
     figure = "peak-rss"
     specs = [
-        RunSpec("pgdq", name, "parse-rss", "warm", f"peak RSS {name}") for name in _RSS_ROWS
+        RunSpec("pgdt", name, "parse-rss", "warm", f"peak RSS {name}") for name in _RSS_ROWS
     ]
     session.sweep(figure, specs, session.cfg.reps(3))
 
@@ -5500,15 +5500,15 @@ _ATTRIBUTION_INPUTS: tuple[str, str] = ("blocks500", "blocks4000")
 #: preamble prepass and `info` over a finished cache -- which are what separate
 #: a cost paid per *table* from one paid per `COPY` block.
 _ATTRIBUTION_LEGS: tuple[tuple[str, str, str], ...] = (
-    ("`parse` — the `peak-rss` row", "pgdq", "parse-rss"),
+    ("`parse` — the `peak-rss` row", "pgdt", "parse-rss"),
     ("`parse`, jemalloc", "alloc:jemalloc", "parse-rss"),
     ("`parse`, mimalloc", "alloc:mimalloc", "parse-rss"),
-    ("`parse --preamble-only`", "pgdq", "parse-preamble-rss"),
-    ("`info --dqcache` over the finished cache", "pgdq", "info-cache-rss"),
-    ("`query` (no match), cached", "pgdq", "query-nomatch-cached-rss"),
-    ("`query` (no match), `--dqcache none`", "pgdq", "query-nomatch-rss"),
-    ("`query` (no match), `--dqcache none`, jemalloc", "alloc:jemalloc", "query-nomatch-rss"),
-    ("`query` (no match), `--dqcache none`, mimalloc", "alloc:mimalloc", "query-nomatch-rss"),
+    ("`parse --preamble-only`", "pgdt", "parse-preamble-rss"),
+    ("`info --dtcache` over the finished cache", "pgdt", "info-cache-rss"),
+    ("`query` (no match), cached", "pgdt", "query-nomatch-cached-rss"),
+    ("`query` (no match), `--dtcache none`", "pgdt", "query-nomatch-rss"),
+    ("`query` (no match), `--dtcache none`, jemalloc", "alloc:jemalloc", "query-nomatch-rss"),
+    ("`query` (no match), `--dtcache none`, mimalloc", "alloc:mimalloc", "query-nomatch-rss"),
 )
 
 
@@ -5596,7 +5596,7 @@ def run_map_only(session: Session) -> str:
     figure = "map-only"
     counts = (1000, 2000, 4000)
     specs = [
-        RunSpec("pgdq", f"blocks{n}", "query-nomatch", "warm", f"map only blocks{n}")
+        RunSpec("pgdt", f"blocks{n}", "query-nomatch", "warm", f"map only blocks{n}")
         for n in counts
     ]
     session.sweep(figure, specs, session.cfg.reps(3))
@@ -5615,10 +5615,10 @@ def run_map_only(session: Session) -> str:
 
 def run_preamble_prepass(session: Session) -> str:
     figure = "preamble-prepass"
-    preamble = RunSpec("pgdq", "blocks4000", "parse-preamble", "warm", "preamble-only blocks4000")
+    preamble = RunSpec("pgdt", "blocks4000", "parse-preamble", "warm", "preamble-only blocks4000")
     session.sweep(figure, [preamble], session.cfg.reps(5))
     note = share_readings(session, figure)
-    full_spec = RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", "full parse blocks4000")
+    full_spec = RunSpec("pgdt", "blocks4000", "parse-cache-out", "warm", "full parse blocks4000")
     if full_spec.key(figure) not in session.readings:
         session.sweep(figure, [full_spec], session.cfg.reps(2))
     full = session.get(figure, full_spec)
@@ -5732,7 +5732,7 @@ def run_nested_decode_micro(session: Session) -> str:
 #: `parse`'s profile at all, and it is `parse` where the answer turned out to
 #: be decided.
 _ALLOCATOR_SHAPES: tuple[tuple[str, str, str], ...] = (
-    ("parse", "`pgdq parse` — structure discovery", "census-brace-free"),
+    ("parse", "`pgdt parse` — structure discovery", "census-brace-free"),
     (
         "query-strings",
         "`query --schema-mode strings` — zero-copy extraction",
@@ -5749,7 +5749,7 @@ ALLOCATOR_SHARES: tuple[Shared, ...] = tuple(
     Shared(
         source,
         f"the reference column's `{command}` row",
-        (RunSpec("pgdq", "control", command, "warm", ""),),
+        (RunSpec("pgdt", "control", command, "warm", ""),),
     )
     for command, _, source in _ALLOCATOR_SHAPES
 )
@@ -5758,7 +5758,7 @@ ALLOCATOR_SHARES: tuple[Shared, ...] = tuple(
 def _allocator_reference(cfg: Config) -> str:
     """The allocator the *shipped* binary links against, read out of it.
 
-    This figure's reference column is `target/release/pgdq` itself rather than
+    This figure's reference column is `target/release/pgdt` itself rather than
     a fourth build of the same source, for two reasons. It is the binary every
     other figure in the doc was taken with, so the ratios are ratios against
     the published numbers instead of against a build nothing else uses -- and
@@ -5774,7 +5774,7 @@ def _allocator_reference(cfg: Config) -> str:
     reference, with the other two measured against it and no code change."""
     if cfg.dry_run:
         return ALLOCATOR_LEGS[0]
-    return binary_allocator(cfg.bin_pgdq)
+    return binary_allocator(cfg.bin_pgdt)
 
 
 def allocator_columns(reference: str) -> list[str]:
@@ -5787,7 +5787,7 @@ def allocator_columns(reference: str) -> list[str]:
 def _allocator_specs(reference: str) -> list[RunSpec]:
     """Every leg of every shape, plus the co-measured floor.
 
-    The reference leg runs as the plain `pgdq` binary; the others are built
+    The reference leg runs as the plain `pgdt` binary; the others are built
     per leg. The floor is one row rather than three: `dd` links no allocator,
     so a per-leg floor would be three readings of one thing. It is here for
     the same reason every other warm table co-measures one -- a session's own
@@ -5797,7 +5797,7 @@ def _allocator_specs(reference: str) -> list[RunSpec]:
     specs = []
     for command, label, _ in _ALLOCATOR_SHAPES:
         for leg in allocator_columns(reference):
-            binary = "pgdq" if leg == reference else f"alloc:{leg}"
+            binary = "pgdt" if leg == reference else f"alloc:{leg}"
             specs.append(RunSpec(binary, "control", command, "warm", f"{label} ({leg})"))
     specs.append(RunSpec("none", "control", "dd", "warm", "`dd` → `/dev/null` (warm)"))
     return specs
@@ -5826,10 +5826,10 @@ def run_allocator(session: Session) -> str:
     for command, label, _ in _ALLOCATOR_SHAPES:
         cells = [label]
         reference_median = median(
-            session.get(figure, RunSpec("pgdq", "control", command, "warm", ""))
+            session.get(figure, RunSpec("pgdt", "control", command, "warm", ""))
         )
         for leg in columns:
-            binary = "pgdq" if leg == reference else f"alloc:{leg}"
+            binary = "pgdt" if leg == reference else f"alloc:{leg}"
             values = session.get(figure, RunSpec(binary, "control", command, "warm", ""))
             cell = fmt_median_spread(values)
             if leg != reference:
@@ -6000,7 +6000,7 @@ PARALLEL_PLAINTEXT: dict[str, str] = {"control": "control", "control_xz": "contr
 
 def _parallel_specs() -> list[RunSpec]:
     return [
-        RunSpec("pgdq", inp, f"{family}-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        RunSpec("pgdt", inp, f"{family}-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
         for inp, family, label in PARALLEL_LEGS
         for jobs in PARALLEL_JOBS
     ]
@@ -6141,7 +6141,7 @@ PARALLEL_RSS_LEGS: tuple[tuple[str, str], ...] = (
 
 def _parallel_rss_specs() -> list[RunSpec]:
     return [
-        RunSpec("pgdq", leg, f"parse-rss-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        RunSpec("pgdt", leg, f"parse-rss-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
         for leg, label in PARALLEL_RSS_LEGS
         for jobs in PARALLEL_JOBS
     ]
@@ -6264,7 +6264,7 @@ def _fmt_budget_bytes(n: int) -> str:
 #: input and regime, so measuring it twice would put two numbers in the doc for
 #: one measurement. A sitting that took `peak-rss` borrows it; one that did not
 #: measures it here and says so in the table's own provenance paragraph.
-_RESERVE_BASELINE = RunSpec("pgdq", "control", "parse-rss", "warm", "plain, serial default")
+_RESERVE_BASELINE = RunSpec("pgdt", "control", "parse-rss", "warm", "plain, serial default")
 
 
 def _reserve_specs() -> list[RunSpec]:
@@ -6275,7 +6275,7 @@ def _reserve_specs() -> list[RunSpec]:
     prints cannot share a reading -- the failure `_attribution_specs` names."""
     return [
         RunSpec(
-            "pgdq",
+            "pgdt",
             name,
             f"{RESERVE_FAMILY}{token}-{budget}",
             "warm-parallel",
@@ -6309,7 +6309,7 @@ def _reserve_flagless_specs() -> list[RunSpec]:
     `RunSpec.memory`, which `RunSpec.key` carries for exactly this reason."""
     return [
         RunSpec(
-            "pgdq",
+            "pgdt",
             name,
             _flagless_shape(),
             "warm-parallel",
@@ -6353,7 +6353,7 @@ def _reserve_mechanism_specs() -> list[tuple[str, RunSpec]]:
         (
             arena,
             RunSpec(
-                "pgdq",
+                "pgdt",
                 RESERVE_MECHANISM_INPUT,
                 _flagless_shape(RESERVE_CAPPED),
                 "warm-parallel",
@@ -6414,7 +6414,7 @@ def _reserve_step_specs() -> list[RunSpec]:
     block-decoding reader, then the one a byte below it."""
     return [
         RunSpec(
-            "pgdq",
+            "pgdt",
             RESERVE_MECHANISM_INPUT,
             f"{RESERVE_STEP_FAMILY}{budget}",
             "warm-parallel",
@@ -7483,7 +7483,7 @@ def run_reserve(session: Session) -> str:
         + "\n\n**What the process says it held**, on the introspection build running the "
         "same flagless shape as the axis above. These are this figure's instrument legs, "
         "declared in its register entry; the build takes an atomic on every allocation and "
-        "`pgdq --version` names it, so it is never timed. The "
+        "`pgdt --version` names it, so it is never timed. The "
         "two families do not cover the same memory — the Rust column is what passed through "
         "`GlobalAlloc`, every glibc column is the whole process, C included — and the gap "
         "between them is decoder working set plus bookkeeping plus retention, never retention "
@@ -7595,7 +7595,7 @@ _STATISTICS_ROWS: tuple[tuple[str, str], ...] = (
 def _statistics_specs() -> list[RunSpec]:
     return [
         RunSpec(
-            "pgdq", name, f"{STATISTICS_FAMILY}{leg}-rss", "warm", f"{label}, statistics {leg}"
+            "pgdt", name, f"{STATISTICS_FAMILY}{leg}-rss", "warm", f"{label}, statistics {leg}"
         )
         for name, label in _STATISTICS_ROWS
         for leg, _ in STATISTICS_LEGS
@@ -7652,7 +7652,7 @@ def run_statistics_gathering(session: Session) -> str:
     )
     return (
         table
-        + f"\n\nEvery run is `pgdq parse` over the whole file at `--jobs {SWEEP_JOBS}`, "
+        + f"\n\nEvery run is `pgdt parse` over the whole file at `--jobs {SWEEP_JOBS}`, "
         f"statistics stated as `{NO_STATISTICS}` or `{GATHER_STATISTICS}` — the shipped "
         f"default request — **in a {STATISTICS_MEMORY} container**, against the register's "
         f"{session.cfg.memory}: nothing bills what statistics hold, so the limit is chosen "
@@ -7666,7 +7666,7 @@ def run_statistics_gathering(session: Session) -> str:
 def _pruning_specs() -> list[RunSpec]:
     return [
         RunSpec(
-            "pgdq",
+            "pgdt",
             "pruning",
             f"{PRUNING_FAMILY}{name}-{leg}",
             "warm",
@@ -7676,7 +7676,7 @@ def _pruning_specs() -> list[RunSpec]:
         for leg in PRUNING_LEGS
     ] + [
         RunSpec(
-            "pgdq",
+            "pgdt",
             "pruning",
             f"{PRUNING_FAMILY}{PRUNING_UNNARROWED}-{PRUNING_UNCARRIED}",
             "warm",
@@ -7737,7 +7737,7 @@ def pruning_problems(reported: Mapping[str, Mapping[str, str]]) -> list[str]:
 
 
 def run_statistics_pruning(session: Session) -> str:
-    """`pgdq query` under a selective range on a sorted column, under an
+    """`pgdt query` under a selective range on a sorted column, under an
     equality a dictionary answers, and under an equality its statistics cannot
     narrow, each with its statistics and with `--statistics none`, warm — the
     last also against a cache written without statistics."""
@@ -7758,7 +7758,7 @@ def run_statistics_pruning(session: Session) -> str:
         legs = (*PRUNING_LEGS, PRUNING_UNCARRIED) if name == PRUNING_UNNARROWED else PRUNING_LEGS
         walls = {
             leg: session.get(
-                figure, RunSpec("pgdq", "pruning", f"{PRUNING_FAMILY}{name}-{leg}", "warm", "")
+                figure, RunSpec("pgdt", "pruning", f"{PRUNING_FAMILY}{name}-{leg}", "warm", "")
             )
             for leg in legs
         }
@@ -7865,7 +7865,7 @@ FIGURES: list[Figure] = [
             Shared(
                 "census-brace-free",
                 "the `COPY` row, which is the census table's census-on column for this regime",
-                (RunSpec("pgdq", "control", "parse", "cold", ""),),
+                (RunSpec("pgdt", "control", "parse", "cold", ""),),
             ),
         ),
         run=run_scan_throughput_cold,
@@ -7885,7 +7885,7 @@ FIGURES: list[Figure] = [
             Shared(
                 "census-brace-free",
                 "the `COPY` row, which is the census table's census-on column for this regime",
-                (RunSpec("pgdq", "control", "parse", "warm", ""),),
+                (RunSpec("pgdt", "control", "parse", "warm", ""),),
             ),
         ),
         run=run_scan_throughput_warm,
@@ -8019,7 +8019,7 @@ FIGURES: list[Figure] = [
             Shared(
                 "per-block-quadratic",
                 "the full-`parse` row, which is the quadratic table's 4000-block `parse` cell",
-                (RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", ""),),
+                (RunSpec("pgdt", "blocks4000", "parse-cache-out", "warm", ""),),
             ),
         ),
         run=run_preamble_prepass,
@@ -8079,7 +8079,7 @@ FIGURES: list[Figure] = [
             # so a change to it changes what this figure is a figure of.
             # `src/alloc.rs` needs no line of its own: `QUERY_CLI` is the
             # directory.
-            "pgdump_query-cli/Cargo.toml",
+            "pgdt/Cargo.toml",
         ),
         warm_inputs=("control",),
         shares=ALLOCATOR_SHARES,
@@ -8089,7 +8089,7 @@ FIGURES: list[Figure] = [
         id="xz-decode-scaling",
         section="What a second decode worker buys, and what the twenty-fourth does not",
         stage="warm-parallel",
-        # Not the library's read path: no `pgdq` runs here at all. What can move
+        # Not the library's read path: no `pgdt` runs here at all. What can move
         # this figure is the decoder, the instrument that drives it, and the
         # generators behind the two files — including the perf generator, which
         # the control leg's bytes are a compression of.
@@ -8104,7 +8104,7 @@ FIGURES: list[Figure] = [
         run=run_xz_decode_scaling,
     ),
     # The parallel scan's throughput claim, and the first figure in the register
-    # whose axis is the worker count of `pgdq` itself. `depends` is the union of
+    # whose axis is the worker count of `pgdt` itself. `depends` is the union of
     # everything a parallel scan runs through — the scanner, the map, the read
     # path, the leader, the decoder, and the CLI where `--jobs` is parsed — plus
     # both generators behind its inputs. It is wide on purpose: this figure is
@@ -8149,7 +8149,7 @@ FIGURES: list[Figure] = [
         ),
         # **The query path's sub-stream sizing does not reach this figure.** It
         # is in `stream::plan_partitions`, and every leg here is
-        # `pgdq parse`, which reaches `worker_count` through
+        # `pgdt parse`, which reaches `worker_count` through
         # `leader::scan_region` instead — so this figure is excused by
         # reachability where its sibling is not, though both declare the same
         # read path.
@@ -8192,7 +8192,7 @@ FIGURES: list[Figure] = [
             *CACHE,
             *PREAMBLE,
             *QUERY_CLI,
-            "pgdump_query-cli/Cargo.toml",
+            "pgdt/Cargo.toml",
             *GEN_BLOCKS,
         ),
         #: Read off `_attribution_specs` rather than respelling the two
@@ -8380,7 +8380,7 @@ EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
 CONSUMER_ROOTS: tuple[tuple[str, str], ...] = (
     ("docs", "**/*.md"),
     ("pgdump_query", "**/*.rs"),
-    ("pgdump_query-cli", "**/*.rs"),
+    ("pgdt", "**/*.rs"),
     ("scripts", "*.py"),
 )
 #: Top-level documents, named rather than globbed: the working tree also holds
@@ -9453,7 +9453,7 @@ def sitting_problems(
       in later -- which makes a non-descendant either a marker a sweep left
       behind or a hand edit, both of which republish a fresh table under a lying
       provenance and put `--stale` back on the wrong commit. It is the
-      `pgdq-nocensus` failure in another mechanism, and it costs one
+      `pgdt-nocensus` failure in another mechanism, and it costs one
       `is_ancestor` call."""
     ancestor = ancestor or is_ancestor
     out: list[str] = []
@@ -9607,7 +9607,7 @@ def session_stamp(
     """The line the doc carries, and the line `stamped_commit` reads back.
 
     The allocator is part of it because a figure here is a **CLI** figure,
-    taken under whatever `pgdq` links against -- see `measurements.md`, "Which
+    taken under whatever `pgdt` links against -- see `measurements.md`, "Which
     allocator a figure was taken under". It is read out of the binary rather
     than assumed, so the day the CLI's default changes the stamp changes with
     it; `None` where there is no binary to ask, which is `--dry-run` and the
@@ -9806,7 +9806,7 @@ def render(cfg: Config, run_dir: Path) -> int:
     # keeps a re-render from restoring a stamp the run was not entitled to.
     whole_sweep = stamps_the_document(whole_sweep, sorted(failed))
 
-    with tempfile.TemporaryDirectory(prefix="pgdq-render-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="pgdt-render-") as tmp:
         session = ReplaySession(cfg, raw, Path(tmp), lambda msg: None)
         parts: list[str] = []
         sections_seen: set[str] = set()
@@ -9866,7 +9866,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         log_file.flush()
 
     head, dirty = git_head()
-    allocator = None if cfg.dry_run else binary_allocator(cfg.bin_pgdq)
+    allocator = None if cfg.dry_run else binary_allocator(cfg.bin_pgdt)
     # A sitting short of the whole sweep does not re-stamp the document, so
     # each table it emits carries the commit it was taken at inside its own
     # marker and every reader of the stamp argues from that
@@ -10178,7 +10178,7 @@ def cmd_list() -> None:
         print(f"  {'':<24}  invalidated by: {edge}\n")
 
 
-KOJI_DUMP = _env("PGDQ_KOJI_DUMP", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump")
+KOJI_DUMP = _env("PGDT_KOJI_DUMP", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump")
 
 
 def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> str:
@@ -10191,12 +10191,12 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
 
     Three things here have each cost a run, and a test asserts all three:
 
-    * `exec`, so `pgdq` is PID 1 and `nerdctl stop` reaches the interrupt guard.
+    * `exec`, so `pgdt` is PID 1 and `nerdctl stop` reaches the interrupt guard.
       A compound command cannot be `exec`'d, which is why nothing is appended to
       report the exit status — `nerdctl inspect` reports it either way, for a
       run that finished *or* was signalled.
     * the cgroup limit, which is part of the apparatus.
-    * `--dqcache` under the mounted `/out`. The dump is read-only, so the
+    * `--dtcache` under the mounted `/out`. The dump is read-only, so the
       colocated default lands in the container's ephemeral layer and is
       destroyed with it — an hour of scanning thrown away with no error, since
       the write itself succeeds.
@@ -10212,7 +10212,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
     second variable in a check that has one.
     """
     mounts = (
-        f'  -v "{cfg.bin_pgdq}:/pgdq:ro" \\\n'
+        f'  -v "{cfg.bin_pgdt}:/pgdt:ro" \\\n'
         f'  -v "{cfg.out_dir}:/out" \\\n'
         f'  -v "{KOJI_DUMP}:/dump.sql:ro" \\\n'
     )
@@ -10222,23 +10222,23 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             f"-m {cfg.memory} --memory-swap {cfg.memory} \\\n"
             + mounts
             + f"  {cfg.image} \\\n"
-            f"  sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/{cache} "
+            f"  sh -c 'exec /pgdt parse --source /dump.sql --dtcache /out/{cache} "
             f"--jobs {jobs} {NO_STATISTICS} >> /out/{log} 2>&1'"
         )
 
-    out = ["cargo build --release -p pgdump_query-cli   # default target: glibc", "mkdir -p runs", ""]
+    out = ["cargo build --release -p pgdt   # default target: glibc", "mkdir -p runs", ""]
     if not wrap:
         out += [
-            leg(name, f"{name}.dqcache", f"{name}-scan.log"),
+            leg(name, f"{name}.dtcache", f"{name}-scan.log"),
             "",
             f"# still going?   sudo nerdctl inspect -f '{{{{.State.Status}}}}' {name}",
             f"# peak RSS:      sudo grep VmHWM /proc/$(sudo nerdctl inspect -f "
             "'{{.State.Pid}}' " + name + ")/status",
             "#   Read it while the run is still going: the kernel keeps the high-water mark,",
             "#   so one read covers everything up to it, and it is gone the moment the",
-            "#   process exits. `exec` above makes pgdq PID 1, so that is the pid to read.",
+            "#   process exits. `exec` above makes pgdt PID 1, so that is the pid to read.",
             "#   The container cgroup's memory.peak is the wrong instrument here — it is",
-            "#   charged the page cache of a 784 GB read and reports the limit, not pgdq.",
+            "#   charged the page cache of a 784 GB read and reports the limit, not pgdt.",
             f"# exit status:   sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}",
             "#   130 = SIGINT, which is what `nerdctl stop` sends: the postgres images set",
             "#   STOPSIGNAL SIGINT, and --stop-signal on `run` is accepted and then ignored.",
@@ -10250,7 +10250,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
     else:
         out += [
             "# leg 1 — cold, interrupted partway.",
-            leg(f"{name}-wrap1", f"{name}-wrap.dqcache", f"{name}-wrap-scan.log"),
+            leg(f"{name}-wrap1", f"{name}-wrap.dtcache", f"{name}-wrap-scan.log"),
             f"sleep 1200 && sudo nerdctl stop -t 120 {name}-wrap1",
             f"sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}-wrap1   # 130 (SIGINT)",
             "",
@@ -10259,13 +10259,13 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             # keep the trailing line-continuation: the mounts run straight on
             # into the image name below.
             mounts.rstrip("\n"),
-            f"  {cfg.image} /pgdq info --dqcache /out/{name}-wrap.dqcache --detail \\",
+            f"  {cfg.image} /pgdt info --dtcache /out/{name}-wrap.dtcache --detail \\",
             "  | grep -c 'not declared\\|metadata not scanned'",
             "",
             "# leg 2 — resume the identical command, then compare to a full run's cache",
             f"sudo nerdctl rm -f {name}-wrap1",
-            leg(f"{name}-wrap2", f"{name}-wrap.dqcache", f"{name}-wrap-scan.log"),
-            f"cmp runs/{name}-wrap.dqcache runs/<a previous full run>.dqcache",
+            leg(f"{name}-wrap2", f"{name}-wrap.dtcache", f"{name}-wrap-scan.log"),
+            f"cmp runs/{name}-wrap.dtcache runs/<a previous full run>.dtcache",
         ]
     return "\n".join(out)
 
@@ -10278,7 +10278,7 @@ def cmd_koji(wrap: bool, jobs: int) -> int:
         "# detached and read it in a later session (CLAUDE.md, \"Long-running processes\").\n"
         f"# The scan below runs at --jobs {jobs}; --koji-jobs states another.\n"
     )
-    print(koji_recipe(cfg, "pgdq-koji", wrap, jobs))
+    print(koji_recipe(cfg, "pgdt-koji", wrap, jobs))
     return 0
 
 
@@ -10300,7 +10300,7 @@ def cmd_koji(wrap: bool, jobs: int) -> int:
 #: `perf_event_paranoid = 2`, which permits user-space sampling of one's own
 #: processes -- and user space is what this phase is about. `samply` is the
 #: alternative if a richer reader is wanted, and costs a sysctl.
-PERF = _env("PGDQ_PROFILE_PERF", "perf")
+PERF = _env("PGDT_PROFILE_PERF", "perf")
 
 #: Where libc's detached debug symbols come from when the machine has none.
 #: **This is not a nicety.** A stripped libc puts ~48% of a warm `parse` profile
@@ -10328,7 +10328,7 @@ PERF = _env("PGDQ_PROFILE_PERF", "perf")
 #: `debug` file somewhere `perf` does not read and yielding bare addresses with
 #: no error. The flag lives on `buildid-cache` alone, with `perf` top-level and
 #: `perf report` rejecting it, which is what once read as `perf` not having one.
-DEBUGINFOD = _env("PGDQ_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
+DEBUGINFOD = _env("PGDT_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
 
 #: Sampling frequency, in Hz. Prime, so it cannot fall into lockstep with a
 #: periodic phase of the thing being sampled.
@@ -10383,7 +10383,7 @@ PROFILE_AXIS: tuple[tuple[str, str], ...] = (
 
 
 def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[str]:
-    """The `pgdq` arguments one profiled shape runs.
+    """The `pgdt` arguments one profiled shape runs.
 
     Deliberately the same flags `_script` hands the sweep, because a profile is
     only readable against the figure it explains -- and a profile of a shape no
@@ -10397,7 +10397,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
         return [
             "parse",
             "--source", str(source),
-            "--dqcache", str(cache),
+            "--dtcache", str(cache),
             "--jobs", str(SWEEP_JOBS),
             *NO_STATISTICS.split(),
         ]
@@ -10407,7 +10407,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "query",
             "--source", str(source),
             "--table", "public.perf",
-            "--dqcache", "none",
+            "--dtcache", "none",
             "--schema-mode", mode,
             "--jobs", str(SWEEP_JOBS),
         ]
@@ -10423,7 +10423,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             return [
                 "parse",
                 "--source", str(source),
-                "--dqcache", str(cache),
+                "--dtcache", str(cache),
                 "--jobs", jobs,
                 "--memory", str(stated_allowance(PARALLEL_BUDGET)),
                 *NO_STATISTICS.split(),
@@ -10438,7 +10438,7 @@ def profile_recipe(cfg: Config) -> str:
     be, and each fails *silently* -- a profile comes back, it just describes
     something else. `test_measure.py` asserts all six:
 
-    * **the `profiling` binary, never `target/release/pgdq`.** `release`
+    * **the `profiling` binary, never `target/release/pgdt`.** `release`
       carries no line tables and no frame pointers, so `perf` attributes every
       sample to an address it cannot name and the report is a flat list of
       `[unknown]`. The published figures stay on `release`, which is why this
@@ -10479,8 +10479,8 @@ def profile_recipe(cfg: Config) -> str:
     A profile is about proportions, and the cgroup adds capability plumbing
     without changing them."""
     warm = cfg.warm_dir
-    binary = REPO / "target/profiling/pgdq"
-    cache = warm / "profile.dqcache"
+    binary = REPO / "target/profiling/pgdt"
+    cache = warm / "profile.dtcache"
     out = cfg.out_dir
 
     lines: list[str] = []
@@ -10506,7 +10506,7 @@ def profile_recipe(cfg: Config) -> str:
     )
     lines += [
         'RUSTFLAGS="-C force-frame-pointers=yes" \\',
-        "  cargo build --profile profiling -p pgdump_query-cli",
+        "  cargo build --profile profiling -p pgdt",
         "",
     ]
 
@@ -10616,7 +10616,7 @@ def cmd_profile() -> int:
 #: beside it: the two ship in one package, so a machine that has moved one has
 #: moved both, and two knobs would let a session analyse with a printer that
 #: does not match the recorder's file format.
-HEAPTRACK = _env("PGDQ_HEAPTRACK", "heaptrack")
+HEAPTRACK = _env("PGDT_HEAPTRACK", "heaptrack")
 
 #: The demangler the report is piped through.
 #:
@@ -10628,7 +10628,7 @@ HEAPTRACK = _env("PGDQ_HEAPTRACK", "heaptrack")
 #: natively, so one pipe buys back every Rust frame in the report; without it
 #: the C frames read fine and the Rust ones above them are noise, which is a
 #: report that looks half-broken rather than one that looks wrong.
-HEAPTRACK_DEMANGLE = _env("PGDQ_HEAPTRACK_DEMANGLE", "c++filt")
+HEAPTRACK_DEMANGLE = _env("PGDT_HEAPTRACK_DEMANGLE", "c++filt")
 
 #: The two shapes recorded, and they are a **pair** rather than a survey.
 #:
@@ -10654,7 +10654,7 @@ HEAPTRACK_AXIS: tuple[tuple[str, str], ...] = tuple(
 
 
 def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[str]:
-    """The `pgdq` arguments one recorded shape runs.
+    """The `pgdt` arguments one recorded shape runs.
 
     `profile_argv`'s sibling, and the same reconciliation applies: these are the
     flags `_script` hands the sweep, because an attribution is only readable
@@ -10669,7 +10669,7 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
         return [
             "parse",
             "--source", str(source),
-            "--dqcache", str(cache),
+            "--dtcache", str(cache),
             "--jobs", str(RESERVE_JOBS),
             "--memory", str(stated_allowance(int(budget))),
             *NO_STATISTICS.split(),
@@ -10684,7 +10684,7 @@ def heaptrack_recipe(cfg: Config) -> str:
     and each fails by returning a plausible report of something else.
     `test_measure.py` asserts all five:
 
-    * **the `profiling` binary, never `target/release/pgdq`.** heaptrack
+    * **the `profiling` binary, never `target/release/pgdt`.** heaptrack
       resolves symbols from either, but `release` carries no line tables, so a
       report off it has no `.rs:` reference anywhere in it — 3,627 of them
       against 0, measured on the same recording — and every Rust frame is a bare
@@ -10717,8 +10717,8 @@ def heaptrack_recipe(cfg: Config) -> str:
     limit. The gate is where a cgroup belongs (`roadmap.md`, "Attribution is
     introspective; only the gate is blind"); this is the other half."""
     warm = cfg.warm_dir
-    binary = REPO / "target/profiling/pgdq"
-    cache = warm / "heaptrack.dqcache"
+    binary = REPO / "target/profiling/pgdt"
+    cache = warm / "heaptrack.dtcache"
     out = cfg.out_dir
     printer = f"{HEAPTRACK}_print"
 
@@ -10742,7 +10742,7 @@ def heaptrack_recipe(cfg: Config) -> str:
         "pointers buy nothing and would fingerprint a second build. The",
         "`profiling` profile is what buys source lines; release has none.",
     )
-    lines += ["cargo build --profile profiling -p pgdump_query-cli", ""]
+    lines += ["cargo build --profile profiling -p pgdt", ""]
 
     staged = sorted({name for _, name in HEAPTRACK_AXIS})
     head(
@@ -11641,10 +11641,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # provenance rather than existence. `print` rather than the sitting's log,
     # which `emit` has not opened yet — a build that fails here must not leave
     # an empty run directory behind it.
-    ensure_pgdq_binary(cfg, lambda msg: print(msg, flush=True))
-    if not cfg.dry_run and not cfg.bin_pgdq.exists():
+    ensure_pgdt_binary(cfg, lambda msg: print(msg, flush=True))
+    if not cfg.dry_run and not cfg.bin_pgdt.exists():
         parser.error(
-            f"{cfg.bin_pgdq} is missing, and PGDQ_MEASURE_BIN names a binary this harness does "
+            f"{cfg.bin_pgdt} is missing, and PGDT_MEASURE_BIN names a binary this harness does "
             f"not build. Point it at one that exists, or unset it and let the harness build "
             f"{CARGO_RELEASE_BIN}."
         )

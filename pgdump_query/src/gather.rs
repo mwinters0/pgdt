@@ -2638,7 +2638,7 @@ mod tests {
     /// the arithmetic the account's interned term is, against the capacities
     /// the standard library's map actually reports as it fills. That the
     /// arithmetic is the allocation is the instrument build's to show
-    /// (`pgdump_query-cli/tests/statistics_account.rs`).
+    /// (`pgdt/tests/statistics_account.rs`).
     #[test]
     fn a_full_map_grows_into_the_table_it_is_charged() {
         let mut map: HashMap<String, u32> = HashMap::new();

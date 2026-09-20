@@ -29,13 +29,13 @@ async fn watching(source: &dyn ByteRangeSource) -> SourceWatch {
 fn colocated_path_appends_the_cache_suffix() {
     assert_eq!(
         cache::colocated_path(Path::new("/a/b/dump.sql")),
-        PathBuf::from("/a/b/dump.sql.dqcache")
+        PathBuf::from("/a/b/dump.sql.dtcache")
     );
 }
 
 /// The four unusable outcomes are told apart, not collapsed: each is a
-/// different sentence `pgdq info` has to print, even though every one of them
-/// ends in `pgdq parse` (`docs/design/decisions.md`, "D22").
+/// different sentence `pgdt info` has to print, even though every one of them
+/// ends in `pgdt parse` (`docs/design/decisions.md`, "D22").
 /// `SourceChanged` has its own test below, since producing it needs a second
 /// file.
 #[tokio::test]
@@ -43,10 +43,10 @@ async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
 
-    let missing = dir.path().join("nonexistent.dqcache");
+    let missing = dir.path().join("nonexistent.dtcache");
     assert_eq!(cache::load(&missing, &source).await.unwrap(), CacheStatus::Missing);
 
-    let foreign = dir.path().join("garbage.dqcache");
+    let foreign = dir.path().join("garbage.dtcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
     assert_eq!(cache::load(&foreign, &source).await.unwrap(), CacheStatus::Unreadable);
 }
@@ -60,7 +60,7 @@ async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &source, &index).await.unwrap();
 
     let mut bytes = std::fs::read(&path).unwrap();
@@ -84,7 +84,7 @@ async fn saved_index_round_trips_exactly() {
     assert!(index.metadata.is_some());
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &source, &index).await.unwrap();
     let loaded = match cache::load(&path, &source).await.unwrap() {
         CacheStatus::Valid { index, weak, total_size, compression, .. } => {
@@ -118,14 +118,14 @@ async fn saved_index_round_trips_exactly() {
 async fn preamble_only_persists_a_real_unscanned_tail() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
     // A preamble-only scan never reaches EOF (that's the point of it), so
     // the cache it persists is `Incomplete` by the same completeness check
-    // `pgdq info`'s default listing uses to decide whether to trust a cache
+    // `pgdt info`'s default listing uses to decide whether to trust a cache
     // as the whole file's map — not `Valid`, and not `Absent` either, since
     // it's a real, usable partial scan (`docs/design/decisions.md`,
     // "D22").
@@ -150,7 +150,7 @@ async fn save_overwrites_an_existing_cache() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     std::fs::write(&path, b"stale placeholder").unwrap();
     cache::save(&path, &source, &index).await.unwrap();
 
@@ -176,7 +176,7 @@ async fn save_propagates_write_failures() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dqcache");
+    let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dtcache");
     assert!(matches!(cache::save(&path, &source, &index).await, Err(Error::Io(_))));
 }
 
@@ -190,7 +190,7 @@ async fn size_mismatch_invalidates_the_cache() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &source, &index).await.unwrap();
 
     let dump_bytes = std::fs::read(edge_cases()).unwrap();
@@ -223,14 +223,14 @@ async fn cache_mode_load_names_each_unusable_status() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
-    let missing = dir.path().join("nonexistent.dqcache");
+    let missing = dir.path().join("nonexistent.dtcache");
     assert_eq!(CacheMode::enabled(missing).load(&source).await.unwrap(), CacheLoad::Missing);
 
-    let foreign = dir.path().join("garbage.dqcache");
+    let foreign = dir.path().join("garbage.dtcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
     assert_eq!(CacheMode::enabled(foreign).load(&source).await.unwrap(), CacheLoad::Unreadable);
 
-    let stale = dir.path().join("stale.dqcache");
+    let stale = dir.path().join("stale.dtcache");
     cache::save(&stale, &source, &index).await.unwrap();
     let mut bytes = std::fs::read(&stale).unwrap();
     bytes[0] = bytes[0].wrapping_add(1);
@@ -240,7 +240,7 @@ async fn cache_mode_load_names_each_unusable_status() {
         CacheLoad::UnsupportedVersion
     );
 
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &source, &index).await.unwrap();
     let grown = dir.path().join("grown.sql");
     let mut grown_bytes = std::fs::read(edge_cases()).unwrap();
@@ -283,7 +283,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
 
     // Grow the dump under its own cache: the file at `path` is now a valid
     // cache for a file that no longer exists, which is what pointing
-    // `--dqcache` at the wrong path produces too.
+    // `--dtcache` at the wrong path produces too.
     let mut grown = std::fs::read(&dump).unwrap();
     grown.push(b'\n');
     std::fs::write(&dump, &grown).unwrap();
@@ -369,11 +369,11 @@ fn cache_mode_resolves_default_explicit_and_disabled() {
 
     assert_eq!(
         CacheMode::resolve(&dump, None),
-        CacheMode::enabled(PathBuf::from("/a/b/dump.sql.dqcache"))
+        CacheMode::enabled(PathBuf::from("/a/b/dump.sql.dtcache"))
     );
     assert_eq!(
-        CacheMode::resolve(&dump, Some(Path::new("/other/path.dqcache"))),
-        CacheMode::enabled(PathBuf::from("/other/path.dqcache"))
+        CacheMode::resolve(&dump, Some(Path::new("/other/path.dtcache"))),
+        CacheMode::enabled(PathBuf::from("/other/path.dtcache"))
     );
     assert_eq!(CacheMode::resolve(&dump, Some(Path::new("none"))), CacheMode::DISABLED);
 }
@@ -504,7 +504,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
@@ -523,7 +523,7 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
 async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
 
     let offline = CacheMode::Offline(path.clone());
     assert!(matches!(offline.load(&source).await, Err(Error::CacheModeMismatch(_))));
@@ -550,7 +550,7 @@ async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
 async fn load_offline_reports_incomplete_for_a_partial_scan() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
@@ -574,7 +574,7 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
 
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let full_path = dir.path().join("full.dqcache");
+    let full_path = dir.path().join("full.dtcache");
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     pgdump_query::cache::save(&full_path, &source, &index).await.unwrap();
 
@@ -588,7 +588,7 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
         loaded.diagnostics
     );
 
-    let partial_path = dir.path().join("partial.dqcache");
+    let partial_path = dir.path().join("partial.dtcache");
     let mode = CacheMode::enabled(partial_path.clone());
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
     let status = CacheMode::Offline(partial_path).load_offline().await.unwrap();
@@ -607,7 +607,7 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
 #[tokio::test]
 async fn load_offline_missing_file_is_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("nonexistent.dqcache");
+    let path = dir.path().join("nonexistent.dtcache");
     assert_eq!(CacheMode::Offline(path).load_offline().await.unwrap(), CacheStatus::Missing);
 }
 
@@ -640,7 +640,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
 /// `cache::save`/`load`'s round trip produce the same `DumpIndex` whether the
 /// bytes came straight off disk or through the decoder — the differential
 /// parity at the library level. The CLI-level parity against generated
-/// fixtures is `pgdump_query-cli/tests/xz_source.rs`.
+/// fixtures is `pgdt/tests/xz_source.rs`.
 #[tokio::test]
 async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
@@ -664,7 +664,7 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     assert_eq!(xz_index, plain_index);
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.xz.dqcache");
+    let path = dir.path().join("edge_cases.sql.xz.dtcache");
     cache::save(&path, &xz, &xz_index).await.unwrap();
     match cache::load(&path, &xz).await.unwrap() {
         CacheStatus::Valid { index, weak, total_size, compression, .. } => {
@@ -742,7 +742,7 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("single_block.xz.dqcache");
+    let path = dir.path().join("single_block.xz.dtcache");
     cache::save(&path, &xz, &index).await.unwrap();
     match cache::load(&path, &xz).await.unwrap() {
         CacheStatus::Valid { index, .. } => {
@@ -764,7 +764,7 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     let non_seekable = xz_compress_single_block(&edge_cases());
     let xz = XzSource::open(non_seekable.path()).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let mode = CacheMode::enabled(dir.path().join("preamble.xz.dqcache"));
+    let mode = CacheMode::enabled(dir.path().join("preamble.xz.dtcache"));
 
     let (_metadata, diagnostics) =
         preamble_only(&xz, &ScanOptions::default(), &mode).await.unwrap();
@@ -806,7 +806,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.xz.dqcache");
+    let path = dir.path().join("edge_cases.sql.xz.dtcache");
     cache::save(&path, &xz, &index).await.unwrap();
 
     let known = match cache::claim(&path, &Origin::local(compressed.path())).await.unwrap() {
@@ -832,7 +832,7 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &plain, &index).await.unwrap();
 
     assert_eq!(
@@ -848,13 +848,13 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
 #[tokio::test]
 async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     let dir = tempfile::tempdir().unwrap();
-    let missing = dir.path().join("nothing.dqcache");
+    let missing = dir.path().join("nothing.dtcache");
     assert_eq!(
         cache::claim(&missing, &Origin::local(edge_cases())).await.unwrap(),
         CacheClaim::Compression(KnownCompression::Unknown)
     );
 
-    let foreign = dir.path().join("foreign.dqcache");
+    let foreign = dir.path().join("foreign.dtcache");
     std::fs::write(&foreign, b"not a cache at all").unwrap();
     assert_eq!(
         cache::claim(&foreign, &Origin::local(edge_cases())).await.unwrap(),
@@ -863,7 +863,7 @@ async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
-    let path = dir.path().join("edge_cases.sql.dqcache");
+    let path = dir.path().join("edge_cases.sql.dtcache");
     cache::save(&path, &plain, &index).await.unwrap();
     // A real cache, and a dump path with nothing at it at all: there is no
     // size to compare against, and the open that follows is where that has a
@@ -887,7 +887,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     let compressed = xz_compress(&edge_cases());
     let xz = XzSource::open(compressed.path()).unwrap();
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
-    let path = dir.path().join("edge_cases.sql.xz.dqcache");
+    let path = dir.path().join("edge_cases.sql.xz.dtcache");
     cache::save(&path, &xz, &index).await.unwrap();
 
     // The compressed file's own cache, put to the plain file it decompresses

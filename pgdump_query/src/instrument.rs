@@ -2,8 +2,8 @@
 //! allocations are statistics, and how often a read began decoding a block.
 //!
 //! **Off by default and compiled out of every build that does not ask.** The
-//! `introspect` feature turns it on, and only `pgdump_query-cli`'s own
-//! `introspect` feature does (`docs/design/decisions.md`, "D13"): without it,
+//! `introspect` feature turns it on, and only `pgdt`'s own `introspect`
+//! feature does (`docs/design/decisions.md`, "D13"): without it,
 //! `StatisticsScope` is an empty guard and every function here does nothing.
 //! The library still installs no allocator; the binary's counting allocator
 //! calls `allocated` and `freed`, and this module decides what counts.

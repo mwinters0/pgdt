@@ -87,7 +87,7 @@ dispatched work, not CPUs (an idle reactor thread seeds a glibc arena). Rejected
 our own; `rayon`. Consequence: cancellation is a cooperative flag (D26).
 
 ### D13 The allocator is the binary's choice
-No `#[global_allocator]` in the library; `pgdq` links the platform allocator, `jemalloc`/`mimalloc`
+No `#[global_allocator]` in the library; `pgdt` links the platform allocator, `jemalloc`/`mimalloc`
 are opt-in features, `--version` names which. Rejected: `mimalloc` on a few percent, making every
 table a figure of an unshipped binary; `mallopt(M_ARENA_MAX)`, binding if set at resolution (RT10)
 but saving only below the count arenas already follow (D12), on `.xz` alone, at unpriced contention,
@@ -150,7 +150,7 @@ descriptor at the save's cadence (D62) and at run end, aborting without saving o
 compares every ranged GET against the probe's validators and one stating neither is read unpinned.
 
 ### D87 A remote cache is named from the URL, and the origin it records is advisory
-Default `./<last URL segment>.dqcache`; no last segment is refused by name. Another origin is a diagnostic,
+Default `./<last URL segment>.dtcache`; no last segment is refused by name. Another origin is a diagnostic,
 the stored size still refusing (D20), so two same-named dumps of equal size from different hosts in one
 directory read each other's map with a warning the origin makes legible. A local cache records none, its
 default sitting beside the dump. Rejected: a canonical path as a local origin, advisory after every move.
@@ -314,7 +314,7 @@ Rejected: compacting views past a selectivity threshold. Evidence: `parallel-pea
 announced `ScanOptions::chunk_size_bytes` — one read chunk, below which the span costs rows and bounds nothing the
 retained unit does not — and writes it onto the sub-streams. A plain source stays on `DEFAULT_MEMORY_BUDGET` whatever
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
-(`roadmap.md`, "Two tunables fit pgdq to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
+(`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
 claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
 readers the announced one seats. Reopens: a plain `query` at `--jobs 8` vs `--jobs 4`, the span floored on one leg. Code: `stream.rs`.
 

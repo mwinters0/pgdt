@@ -5,17 +5,17 @@ Backs docs/design/measurements.md ("Decoder and whole-file benchmarks"), whose
 preamble carries the rules a figure taken over this input obeys. Unlike
 generate_fixtures.py, this is *not* a correctness
 fixture: its output is never checked against real pg_dump, only shaped
-closely enough to satisfy this codebase's own COPY/DDL grammar so pgdq can
+closely enough to satisfy this codebase's own COPY/DDL grammar so pgdt can
 read it back. Two different runs producing different bytes is fine -- this
 measures decode/scan throughput, not correctness, and correctness already
 lives in fixtures/, which pg_dump itself produces.
 
 "Closely enough" has a mechanical floor, and it is the one this script kept
-failing silently: every column must declare a type pgdq maps and hold values
-pgdq re-renders unchanged, or a benchmark for the typed path is quietly
+failing silently: every column must declare a type pgdt maps and hold values
+pgdt re-renders unchanged, or a benchmark for the typed path is quietly
 measuring the untyped one. That floor is asserted from the Rust side --
-pgdump_query-cli/tests/perf_generator_fidelity.rs generates a small file in
-every flag combination a recorded figure is taken on and requires `pgdq query
+pgdt/tests/perf_generator_fidelity.rs generates a small file in every flag
+combination a recorded figure is taken on and requires `pgdt query
 --schema-mode typed` and `strings` to agree byte for byte on each.
 
 Generated, never committed: point the output path somewhere outside the repo
@@ -97,7 +97,7 @@ ARRAY_COLUMNS: list[tuple[str, str]] = [
 
 # --composite only, and separate from --arrays so a run can put the composite
 # on one axis by itself. What one nested column costs end to end is read off
-# `pgdq query --column`, one file at several projection widths (measurements.md,
+# `pgdt query --column`, one file at several projection widths (measurements.md,
 # "What a column costs: five projection widths over one file"); the separate
 # file is what the census figures need, since only --arrays puts a `{` in a
 # row.
@@ -117,7 +117,7 @@ LOREM_WORDS = (
 ).split()
 
 # The exact escapes pg_dump's own COPY TO ever emits -- postgres-invariants.md
-# I15. Reproduced here (rather than shelling out to `pgdq`) because this
+# I15. Reproduced here (rather than shelling out to `pgdt`) because this
 # script has no Rust runtime to call into; pgdump_query::copy::encode_field
 # implements the identical mapping and its round trip against real pg_dump
 # output is what backs I15 in the first place.
@@ -176,7 +176,7 @@ def float_text(value: float, *, single: bool) -> str:
     round-trips, formatted fixed or scientific by the classic %g rule at
     FLT_DIG/DBL_DIG.
 
-    The point is that pgdq re-renders this string unchanged. A float64
+    The point is that pgdt re-renders this string unchanged. A float64
     `repr()` in a `real` column does not survive that -- 17 significant digits
     round-trip through an f64 and not through the f32 the column decodes to,
     so `typed` prints something else and the benchmark's two modes disagree on
@@ -197,7 +197,7 @@ def float_text(value: float, *, single: bool) -> str:
     # Rounding runs over Decimal(value), which is the float's *exact* binary
     # value, and breaks ties away from zero -- `%.Ne` breaks them to even, and
     # the two disagree on values like -390238.125, where Rust's own shortest
-    # formatter (which is what pgdq re-renders through) answers -390238.13.
+    # formatter (which is what pgdt re-renders through) answers -390238.13.
     exact = Decimal(value)
     for precision in range(1, 18):
         rounded = Context(prec=precision, rounding=ROUND_HALF_UP).create_decimal(exact)

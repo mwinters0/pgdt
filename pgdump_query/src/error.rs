@@ -60,7 +60,7 @@ pub enum Error {
     Xz(#[from] xz_seek::Error),
     #[error("failed to encode structure cache: {0}")]
     CacheEncode(#[from] bincode::error::EncodeError),
-    #[error("cache is disabled (`--dqcache none`), but `{operation}` requires a cache file")]
+    #[error("cache is disabled (`--dtcache none`), but `{operation}` requires a cache file")]
     CacheDisabled { operation: &'static str },
     #[error("cache mode mismatch: {0}")]
     CacheModeMismatch(&'static str),
@@ -190,7 +190,7 @@ pub enum Error {
     )]
     AmbiguousTable { name: String, candidates: Vec<String> },
     #[error(
-        "metadata for database {} was not scanned — run `pgdq parse` first, or use --schema-mode strings",
+        "metadata for database {} was not scanned — run `pgdt parse` first, or use --schema-mode strings",
         database.as_deref().unwrap_or("(unnamed)")
     )]
     MetadataNotScanned { database: Option<String> },

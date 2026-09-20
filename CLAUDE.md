@@ -12,9 +12,9 @@ decisions the code cannot explain, nothing more.
 cargo check --workspace && cargo test --workspace && cargo clippy --workspace
 cargo fmt --check                                 # config: rustfmt.toml
 INSTA_UPDATE=always cargo test -p <crate> --test <target>   # accept snapshots (no cargo-insta here)
-cargo run -p pgdump_query-cli -- parse --source <file>      # binary is `pgdq`; scans ahead, resumes
-cargo run -p pgdump_query-cli -- info --source <file> [--detail]   # never scans; reads the cache
-cargo build --release -p pgdump_query-cli --features introspect --target-dir <own>  # the instrument; never timed
+cargo run -p pgdt -- parse --source <file>      # binary is `pgdt`; scans ahead, resumes
+cargo run -p pgdt -- info --source <file> [--detail]   # never scans; reads the cache
+cargo build --release -p pgdt --features introspect --target-dir <own>  # the instrument; never timed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [--skip-oracle]
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>
@@ -31,7 +31,7 @@ are asserted there, not remembered here.
 
 ## Long-running processes
 
-Anything over ~10 minutes (a `measure.py --all` sweep, any `pgdq` run against
+Anything over ~10 minutes (a `measure.py --all` sweep, any `pgdt` run against
 the koji dump in `CLAUDE.local.md`) is launched fully detached with `setsid`,
 logging under `runs/` (gitignored), and **never waited on, monitored, or given
 a completion notification** — waiting expires the prompt cache and reloads the

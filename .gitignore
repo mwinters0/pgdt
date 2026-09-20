@@ -5,7 +5,7 @@
 /scripts/.venv
 __pycache__/
 /runs
-*.dqcache
+*.dtcache
 # vendor/xz-seek is excluded from the workspace, so `cargo check` inside it
 # writes its own build state instead of the root's.
 /vendor/xz-seek/target

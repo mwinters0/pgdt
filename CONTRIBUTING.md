@@ -12,16 +12,16 @@ generator, the oracles, the measurement harness — run under `uv`, from that
 directory. [`CLAUDE.md`](CLAUDE.md) lists every one of them with its purpose.
 
 **One test file is opt-in**, and it is the only thing a full run leaves
-unexercised: `pgdump_query-cli/tests/http_conformance.rs` reads a dump over
-HTTP from a **real** static origin rather than from the misbehaving one the
-other remote tests build in-process, which is what says whether that in-process
-server encodes our own misreading of HTTP. Serve `fixtures/` from any static
-server that answers **ranged GETs** — `nginx`, `caddy file-server`, an object
-store's public URL — and point the run at the one object it reads:
+unexercised: `pgdt/tests/http_conformance.rs` reads a dump over HTTP from a
+**real** static origin rather than from the misbehaving one the other remote
+tests build in-process, which is what says whether that in-process server
+encodes our own misreading of HTTP. Serve `fixtures/` from any static server
+that answers **ranged GETs** — `nginx`, `caddy file-server`, an object store's
+public URL — and point the run at the one object it reads:
 
 ```sh
-PGDQ_HTTP_CONFORMANCE_URL=http://127.0.0.1:8091/fixtures/16/edge_cases/default.sql \
-  cargo test -p pgdump_query-cli --test http_conformance
+PGDT_HTTP_CONFORMANCE_URL=http://127.0.0.1:8091/fixtures/16/edge_cases/default.sql \
+  cargo test -p pgdt --test http_conformance
 ```
 
 Unset, those tests pass having done nothing, which is why CI and every other
@@ -47,8 +47,8 @@ half=$(( $(wc -c < "$f") / 2 ))
   tail -c +$((half + 1)) "$f" | xz --block-size=512 -c
 } > /srv/www/default.sql.xz     # wherever the server serves from
 
-PGDQ_HTTP_CONFORMANCE_XZ_URL=http://127.0.0.1:8091/default.sql.xz \
-  cargo test -p pgdump_query-cli --test http_conformance
+PGDT_HTTP_CONFORMANCE_XZ_URL=http://127.0.0.1:8091/default.sql.xz \
+  cargo test -p pgdt --test http_conformance
 ```
 
 The two variables are independent: either, both or neither may be set, and

@@ -82,7 +82,7 @@ pub enum ColumnResolution {
 
 /// One column's full resolution, named and carrying the raw declared type
 /// string (if any DDL named one) alongside the outcome — what a human-facing
-/// display (`pgdq info`) needs in one place, for every column.
+/// display (`pgdt info`) needs in one place, for every column.
 ///
 /// **A note, not a diagnostic**: there is exactly one per column, always. The
 /// file-level exception channel is [`crate::diagnostic::Diagnostic`], kept a
@@ -158,7 +158,7 @@ impl Default for ResolvedSchema {
 }
 
 impl ResolvedSchema {
-    /// How many columns have no `Mapped` resolution — the count `pgdq info`'s
+    /// How many columns have no `Mapped` resolution — the count `pgdt info`'s
     /// default summary line reports (`"N of M columns unmapped"`).
     pub fn unmapped_count(&self) -> usize {
         self.columns.iter().filter(|c| **c != ColumnResolution::Mapped).count()

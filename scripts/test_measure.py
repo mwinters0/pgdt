@@ -255,7 +255,7 @@ class Scripts(unittest.TestCase):
 class WorkerCount(unittest.TestCase):
     """A worker count is apparatus, so nothing here inherits the CLI's.
 
-    `pgdq --jobs`' default has moved underneath the published figures without
+    `pgdt --jobs`' default has moved underneath the published figures without
     one command shape changing, and now depends on the source, which is the
     failure this reconciles against. That it agrees with `SWEEP_JOBS` on some
     source is not a reason to inherit it. `--stale` cannot see
@@ -273,7 +273,7 @@ class WorkerCount(unittest.TestCase):
         # `flagless_flag_problems` is what holds *that* family to stating
         # nothing, so neither exemption leaves a shape unchecked.
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql"
         ):
             reported = measure.worker_count_problems()
         self.assertEqual(
@@ -287,7 +287,7 @@ class WorkerCount(unittest.TestCase):
 
     def test_check_fails_on_a_shape_that_inherits_one(self):
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql"
         ):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
@@ -325,13 +325,13 @@ class WorkerCount(unittest.TestCase):
 
     def test_the_only_exempt_shape_runs_no_binary_of_ours(self):
         # `dd` is the device floor. Anything else claiming the exemption would
-        # be a pgdq run measuring whatever the machine had.
+        # be a pgdt run measuring whatever the machine had.
         for command in measure._NO_WORKERS:
             with self.subTest(command=command):
-                self.assertNotIn("/pgdq", measure._script(command))
+                self.assertNotIn("/pgdt", measure._script(command))
 
     def test_the_decode_instrument_pins_its_own_spelling(self):
-        # It is not `pgdq`, so it has no `--jobs`; `--workers` is the same
+        # It is not `pgdt`, so it has no `--jobs`; `--workers` is the same
         # statement in the instrument's own vocabulary, and the figure's whole
         # axis is that count.
         for workers in measure.DECODE_WORKERS:
@@ -371,7 +371,7 @@ class WorkerCount(unittest.TestCase):
 
 
 class StatisticsFlag(unittest.TestCase):
-    """Every `pgdq parse` the harness runs gathers no statistics, but for the
+    """Every `pgdt parse` the harness runs gathers no statistics, but for the
     statistics figures' own (`StatisticsFigures`).
 
     `parse` gathers by default, which reads every value of every column, so a
@@ -384,7 +384,7 @@ class StatisticsFlag(unittest.TestCase):
 
     def test_a_shape_that_gathers_is_reported(self):
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 1"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql --jobs 1"
         ):
             reported = measure.statistics_flag_problems()
         self.assertEqual(sorted(reported), sorted(measure.command_shapes()))
@@ -393,8 +393,8 @@ class StatisticsFlag(unittest.TestCase):
         # A builder ahead of the timed command, as `info-cache-rss` has, is a
         # `parse` of its own.
         script = (
-            f"/pgdq parse --source /dump.sql {measure.NO_STATISTICS} >/dev/null; "
-            "time /pgdq parse --source /dump.sql >/dev/null"
+            f"/pgdt parse --source /dump.sql {measure.NO_STATISTICS} >/dev/null; "
+            "time /pgdt parse --source /dump.sql >/dev/null"
         )
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             self.assertTrue(measure.statistics_flag_problems())
@@ -410,7 +410,7 @@ class StatisticsFlag(unittest.TestCase):
 
     def test_check_fails_on_a_shape_that_gathers(self):
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 1"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql --jobs 1"
         ):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
@@ -422,7 +422,7 @@ class StatisticsFlag(unittest.TestCase):
         # read against a figure that states it.
         flag = measure.NO_STATISTICS.split()
         argvs = [
-            measure.profile_argv("parse", "/dump.sql", "/tmp/x.dqcache"),
+            measure.profile_argv("parse", "/dump.sql", "/tmp/x.dtcache"),
             measure.profile_argv(f"parse-jobs-{measure.PARALLEL_JOBS[-1]}", "/d", "/c"),
             *(measure.heaptrack_argv(shape, "/d", "/c") for shape, _ in measure.HEAPTRACK_AXIS),
         ]
@@ -438,8 +438,8 @@ class StatisticsFlag(unittest.TestCase):
         # koji's check is that a parallel scan writes the serial cache, which a
         # gathering leg would answer with the serial scan compared to itself.
         for wrap in (False, True):
-            recipe = measure.koji_recipe(measure.Config(), "pgdq-koji", wrap, 8)
-            legs = [line for line in recipe.splitlines() if "/pgdq parse" in line]
+            recipe = measure.koji_recipe(measure.Config(), "pgdt-koji", wrap, 8)
+            legs = [line for line in recipe.splitlines() if "/pgdt parse" in line]
             with self.subTest(wrap=wrap):
                 self.assertTrue(legs)
                 self.assertTrue(all(measure.NO_STATISTICS in leg for leg in legs), legs)
@@ -455,7 +455,7 @@ class StatisticsFigures(unittest.TestCase):
     pruning sitting whose pruned leg skipped nothing refuses rather than
     publishing a table saying pruning buys nothing."""
 
-    #: What `pgdq query` printed over a 24 MiB `pruning` input, verbatim.
+    #: What `pgdt query` printed over a 24 MiB `pruning` input, verbatim.
     QUERY_STDERR = (
         "2026-09-14T23:28:26.079040999Z  INFO scan started bytes=1 jobs=1 memory_bytes=67108864\n"
         "note: row-group statistics rule out 3060 of 3072 group(s), so 3208646636 of the "
@@ -507,7 +507,7 @@ class StatisticsFigures(unittest.TestCase):
     def test_the_exemption_admits_the_gathering_request_and_nothing_else(self):
         # Outside the two families a `parse` stating `GATHER_STATISTICS` is
         # still one that gathers, and is reported.
-        script = f"time /pgdq parse --source /dump.sql {measure.GATHER_STATISTICS} --jobs 1"
+        script = f"time /pgdt parse --source /dump.sql {measure.GATHER_STATISTICS} --jobs 1"
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             reported = measure.statistics_flag_problems()
         self.assertEqual(
@@ -525,10 +525,10 @@ class StatisticsFigures(unittest.TestCase):
                 with self.subTest(filter=name, leg=leg):
                     script = measure._script(f"{measure.PRUNING_FAMILY}{name}-{leg}")
                     builder, _, timed = script.partition("; ")
-                    self.assertIn("/pgdq parse", builder)
+                    self.assertIn("/pgdt parse", builder)
                     self.assertIn(measure.GATHER_STATISTICS, builder)
                     self.assertNotIn("time ", builder)
-                    self.assertTrue(timed.startswith("time /pgdq query"))
+                    self.assertTrue(timed.startswith("time /pgdt query"))
                     self.assertEqual(script.count("time "), 1)
                     self.assertIn(f"--statistics {leg} ", timed)
 
@@ -589,7 +589,7 @@ class StatisticsFigures(unittest.TestCase):
         column, literal = expr.split("=")
         self.assertEqual(dict(perf.COLUMNS)[column], "smallint")
         self.assertEqual(int(literal), 0)
-        fidelity = (measure.REPO / "pgdump_query-cli/tests/perf_generator_fidelity.rs").read_text()
+        fidelity = (measure.REPO / "pgdt/tests/perf_generator_fidelity.rs").read_text()
         self.assertIn(f'"{expr}"', fidelity)
         self.assertIn(str(measure.STATISTICS_GROUP_SIZE), fidelity)
 
@@ -618,7 +618,7 @@ class StatisticsFigures(unittest.TestCase):
         # leave every leg reading as one that skipped nothing, which the
         # renderer refuses — loudly, but a sitting late.
         stream = (measure.REPO / "pgdump_query/src/stream.rs").read_text()
-        cli = (measure.REPO / "pgdump_query-cli/src/main.rs").read_text()
+        cli = (measure.REPO / "pgdt/src/main.rs").read_text()
         self.assertIn(
             '"row-group statistics rule out {skipped_groups} of {groups} group(s), so \\', stream
         )
@@ -729,13 +729,13 @@ class Allocator(unittest.TestCase):
         # differ by ~10% from code layout alone, which is larger than the
         # effect being measured.
         specs = measure._allocator_specs("system")
-        reference = [s for s in specs if s.command == "parse" and s.binary == "pgdq"]
+        reference = [s for s in specs if s.command == "parse" and s.binary == "pgdt"]
         self.assertEqual(len(reference), 1)
 
     def test_every_other_leg_is_its_own_build(self):
         specs = measure._allocator_specs("system")
         binaries = {s.binary for s in specs if s.command == "parse"}
-        self.assertEqual(binaries, {"pgdq", "alloc:jemalloc", "alloc:mimalloc"})
+        self.assertEqual(binaries, {"pgdt", "alloc:jemalloc", "alloc:mimalloc"})
 
     def test_the_reference_is_read_off_the_binary_not_assumed(self):
         # Adopt a leg and it becomes the reference with no code change; assume
@@ -747,7 +747,7 @@ class Allocator(unittest.TestCase):
                 self.assertEqual(sorted(columns), sorted(measure.ALLOCATOR_LEGS))
                 specs = measure._allocator_specs(reference)
                 shipped = {s.binary for s in specs if s.command == "parse"}
-                self.assertIn("pgdq", shipped)
+                self.assertIn("pgdt", shipped)
                 self.assertNotIn(f"alloc:{reference}", shipped)
 
     def test_an_unknown_reference_is_an_error(self):
@@ -784,7 +784,7 @@ class Allocator(unittest.TestCase):
             with self.subTest(command=command):
                 # A shape the sweep does not time is a shape no figure can be
                 # read against.
-                self.assertIn("time /pgdq", measure._script(command))
+                self.assertIn("time /pgdt", measure._script(command))
 
     def test_each_shape_names_a_figure_that_takes_its_reference_reading(self):
         # The borrow is what keeps one number in the doc per measurement, and
@@ -796,14 +796,14 @@ class Allocator(unittest.TestCase):
                 self.assertLess(order.index(source), order.index("allocator"))
         census = measure._census_specs("control", "warm")
         self.assertIn(
-            measure.RunSpec("pgdq", "control", "parse", "warm", "").key("census-brace-free"),
+            measure.RunSpec("pgdt", "control", "parse", "warm", "").key("census-brace-free"),
             {s.key("census-brace-free") for s in census},
         )
         nested = measure._nested_specs()
         for command in ("query-strings", "query-typed"):
             with self.subTest(command=command):
                 self.assertIn(
-                    measure.RunSpec("pgdq", "control", command, "warm", "").key(
+                    measure.RunSpec("pgdt", "control", command, "warm", "").key(
                         "nested-end-to-end"
                     ),
                     {s.key("nested-end-to-end") for s in nested},
@@ -811,16 +811,16 @@ class Allocator(unittest.TestCase):
 
     def test_a_version_string_yields_its_allocator(self):
         with unittest.mock.patch.object(
-            measure, "run", return_value="pgdq 0.1.0 (allocator: mimalloc)\n"
+            measure, "run", return_value="pgdt 0.1.0 (allocator: mimalloc)\n"
         ):
-            self.assertEqual(measure.binary_allocator(Path("/pgdq")), "mimalloc")
+            self.assertEqual(measure.binary_allocator(Path("/pgdt")), "mimalloc")
 
     def test_a_binary_that_names_no_allocator_is_an_error(self):
         # Not a default: a binary too old to report it would otherwise be
         # published as the reference leg under a name nothing checked.
-        with unittest.mock.patch.object(measure, "run", return_value="pgdq 0.1.0\n"):
+        with unittest.mock.patch.object(measure, "run", return_value="pgdt 0.1.0\n"):
             with self.assertRaises(RuntimeError):
-                measure.binary_allocator(Path("/pgdq"))
+                measure.binary_allocator(Path("/pgdt"))
 
     def test_an_instrumented_build_is_refused_rather_than_timed(self):
         # The failure this prevents is silent: a counting `#[global_allocator]`
@@ -830,10 +830,10 @@ class Allocator(unittest.TestCase):
         with unittest.mock.patch.object(
             measure,
             "run",
-            return_value="pgdq 0.1.0 (allocator: system) (instrument: counting-allocator)\n",
+            return_value="pgdt 0.1.0 (allocator: system) (instrument: counting-allocator)\n",
         ):
             with self.assertRaises(RuntimeError) as raised:
-                measure.binary_allocator(Path("/pgdq"))
+                measure.binary_allocator(Path("/pgdt"))
         self.assertIn("counting-allocator", str(raised.exception))
 
     def test_an_unknown_leg_is_never_built(self):
@@ -845,7 +845,7 @@ class Allocator(unittest.TestCase):
         # reference leg stops being the platform allocator the day one is
         # adopted, so the figure stops being re-takeable at the moment it
         # matters; without its own `--target-dir` a `--features` build
-        # overwrites `target/release/pgdq` and every other figure in the same
+        # overwrites `target/release/pgdt` and every other figure in the same
         # sweep is timed under the wrong allocator.
         with tempfile.TemporaryDirectory() as tmp:
             cfg = measure.Config(
@@ -857,7 +857,7 @@ class Allocator(unittest.TestCase):
                 calls.append(list(argv))
                 built = cfg.alloc_build_root / "jemalloc" / "release"
                 built.mkdir(parents=True, exist_ok=True)
-                (built / "pgdq").write_text("#!/bin/true\n")
+                (built / "pgdt").write_text("#!/bin/true\n")
                 return ""
 
             with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -873,7 +873,7 @@ class Allocator(unittest.TestCase):
                 argv[argv.index("--target-dir") + 1],
                 str(cfg.alloc_build_root / "jemalloc"),
             )
-            self.assertEqual(out, cfg.out_dir / "pgdq-alloc-jemalloc")
+            self.assertEqual(out, cfg.out_dir / "pgdt-alloc-jemalloc")
 
     def test_a_leg_whose_build_dropped_its_feature_is_refused(self):
         # The build succeeds and produces a working binary, so nothing else
@@ -886,7 +886,7 @@ class Allocator(unittest.TestCase):
             def fake_run(argv, cwd=None, capture=False, quiet=False):
                 built = cfg.alloc_build_root / "mimalloc" / "release"
                 built.mkdir(parents=True, exist_ok=True)
-                (built / "pgdq").write_text("#!/bin/true\n")
+                (built / "pgdt").write_text("#!/bin/true\n")
                 return ""
 
             with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -895,10 +895,10 @@ class Allocator(unittest.TestCase):
                  ):
                 with self.assertRaises(RuntimeError):
                     measure.ensure_allocator_binary(cfg, "mimalloc", lambda _: None)
-            self.assertFalse((cfg.out_dir / "pgdq-alloc-mimalloc").exists())
+            self.assertFalse((cfg.out_dir / "pgdt-alloc-mimalloc").exists())
 
     def test_a_leg_left_over_from_an_earlier_session_is_rebuilt(self):
-        # The failure this stops is silent and total: `runs/pgdq-alloc-<leg>`
+        # The failure this stops is silent and total: `runs/pgdt-alloc-<leg>`
         # survives between sessions, so short-circuiting on its existence times
         # a leg built from last week's source against a reference built from
         # today's, and the leg still answers `--version` with its own allocator
@@ -907,7 +907,7 @@ class Allocator(unittest.TestCase):
             cfg = measure.Config(
                 out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
             )
-            stale = cfg.out_dir / "pgdq-alloc-jemalloc"
+            stale = cfg.out_dir / "pgdt-alloc-jemalloc"
             stale.parent.mkdir(parents=True, exist_ok=True)
             stale.write_text("last session's binary\n")
             calls = []
@@ -916,7 +916,7 @@ class Allocator(unittest.TestCase):
                 calls.append(list(argv))
                 built = cfg.alloc_build_root / "jemalloc" / "release"
                 built.mkdir(parents=True, exist_ok=True)
-                (built / "pgdq").write_text("#!/bin/true\n")
+                (built / "pgdt").write_text("#!/bin/true\n")
                 return ""
 
             with unittest.mock.patch.object(measure, "run", fake_run), \
@@ -935,7 +935,7 @@ class Allocator(unittest.TestCase):
         session = measure.Session(measure.Config(dry_run=True), None, lambda _: None)
         self.assertEqual(
             session.binary_path("alloc:jemalloc"),
-            measure.Config().out_dir / "pgdq-alloc-jemalloc",
+            measure.Config().out_dir / "pgdt-alloc-jemalloc",
         )
 
     def test_an_unknown_binary_is_still_an_error(self):
@@ -961,7 +961,7 @@ class CensusBinary(unittest.TestCase):
     """The census-off binary's stamp: the harness will not build that binary,
     and will not trust one whose tree could have moved a reading.
 
-    A census figure is a subtraction between it and `target/release/pgdq`, so
+    A census figure is a subtraction between it and `target/release/pgdt`, so
     every difference between the two trees is attributed to the census — which
     is why the age of the hand-built half has to be checkable at all. The
     threshold is that hazard rather than commit equality: an **ancestor** of
@@ -1014,7 +1014,7 @@ class CensusBinary(unittest.TestCase):
         )
 
     def _cfg(self, tmp, *, binary=True, stamp=None):
-        cfg = measure.Config(bin_nocensus=Path(tmp) / "runs" / "pgdq-nocensus")
+        cfg = measure.Config(bin_nocensus=Path(tmp) / "runs" / "pgdt-nocensus")
         cfg.bin_nocensus.parent.mkdir(parents=True, exist_ok=True)
         if binary:
             cfg.bin_nocensus.write_text("#!/bin/true\n")
@@ -1023,18 +1023,18 @@ class CensusBinary(unittest.TestCase):
         return cfg
 
     def test_the_stamp_sits_beside_the_binary_it_describes(self):
-        # Derived from the binary's path, so PGDQ_MEASURE_CENSUS_OFF_BIN moves
+        # Derived from the binary's path, so PGDT_MEASURE_CENSUS_OFF_BIN moves
         # both and cannot leave them describing different files.
-        cfg = measure.Config(bin_nocensus=Path("/elsewhere/pgdq-nocensus"))
+        cfg = measure.Config(bin_nocensus=Path("/elsewhere/pgdt-nocensus"))
         self.assertEqual(
-            cfg.bin_nocensus_stamp, Path("/elsewhere/pgdq-nocensus.stamp")
+            cfg.bin_nocensus_stamp, Path("/elsewhere/pgdt-nocensus.stamp")
         )
 
     def test_a_missing_binary_is_still_refused_by_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp, binary=False)
             problem = self._problem(cfg)
-            self.assertIn("pgdq-nocensus", problem)
+            self.assertIn("pgdt-nocensus", problem)
             self.assertIn("is missing", problem)
 
     def test_a_binary_with_no_stamp_is_refused(self):
@@ -1043,7 +1043,7 @@ class CensusBinary(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp)
             problem = self._problem(cfg)
-            self.assertIn("pgdq-nocensus.stamp", problem)
+            self.assertIn("pgdt-nocensus.stamp", problem)
 
     def test_a_stamp_that_names_no_commit_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1168,17 +1168,17 @@ class ShippedBinary(unittest.TestCase):
 
     def setUp(self):
         # Module state, so one test's build would otherwise satisfy the next.
-        measure._PGDQ_BUILT = False
+        measure._PGDT_BUILT = False
 
     def _cfg(self, **kw):
-        return measure.Config(bin_pgdq=measure.CARGO_RELEASE_BIN, **kw)
+        return measure.Config(bin_pgdt=measure.CARGO_RELEASE_BIN, **kw)
 
     def test_the_default_binary_is_the_one_cargo_writes(self):
-        # `ensure_pgdq_binary` compares the two to decide whether it may claim
+        # `ensure_pgdt_binary` compares the two to decide whether it may claim
         # to have built what it is about to time, so a `Config` default that
         # drifted from cargo's output path would turn the build into a no-op
         # and put the old check back with no sign of it.
-        self.assertEqual(measure.Config().bin_pgdq, measure.CARGO_RELEASE_BIN)
+        self.assertEqual(measure.Config().bin_pgdt, measure.CARGO_RELEASE_BIN)
 
     def test_the_shipped_binary_is_built_once_per_process(self):
         calls = []
@@ -1188,13 +1188,13 @@ class ShippedBinary(unittest.TestCase):
             return ""
 
         with unittest.mock.patch.object(measure, "run", fake_run):
-            out = measure.ensure_pgdq_binary(self._cfg(), lambda _: None)
-            measure.ensure_pgdq_binary(self._cfg(), lambda _: None)
+            out = measure.ensure_pgdt_binary(self._cfg(), lambda _: None)
+            measure.ensure_pgdt_binary(self._cfg(), lambda _: None)
         self.assertEqual(out, measure.CARGO_RELEASE_BIN)
         self.assertEqual(len(calls), 1)
         argv, cwd = calls[0]
         self.assertEqual(
-            argv, ["cargo", "build", "--release", "-p", "pgdump_query-cli"]
+            argv, ["cargo", "build", "--release", "-p", "pgdt"]
         )
         self.assertEqual(cwd, measure.REPO)
         # No `--target-dir` and no `--features`: this is the shipped build, and
@@ -1205,7 +1205,7 @@ class ShippedBinary(unittest.TestCase):
 
     def test_an_existing_binary_is_rebuilt_anyway(self):
         # The whole point, and it is asserted as an absence: nothing on the
-        # path to the build consults the file. `target/release/pgdq` survives
+        # path to the build consults the file. `target/release/pgdt` survives
         # between sessions, so short-circuiting on its existence is what timed
         # a charge model three commits stale against the harness's repaired
         # mirror of it and reported the difference as an over-bill.
@@ -1220,7 +1220,7 @@ class ShippedBinary(unittest.TestCase):
 
         with unittest.mock.patch.object(measure, "run", fake_run), \
              unittest.mock.patch.object(Path, "exists", never):
-            measure.ensure_pgdq_binary(self._cfg(), lambda _: None)
+            measure.ensure_pgdt_binary(self._cfg(), lambda _: None)
         self.assertEqual(len(calls), 1)
 
     def test_a_dry_run_announces_and_builds_nothing(self):
@@ -1231,7 +1231,7 @@ class ShippedBinary(unittest.TestCase):
             raise AssertionError("a dry run built the binary")
 
         with unittest.mock.patch.object(measure, "run", fake_run):
-            measure.ensure_pgdq_binary(self._cfg(dry_run=True), said.append)
+            measure.ensure_pgdt_binary(self._cfg(dry_run=True), said.append)
         self.assertEqual(len(said), 1)
         self.assertIn("dry-run", said[0])
 
@@ -1243,10 +1243,10 @@ class ShippedBinary(unittest.TestCase):
             raise AssertionError("the harness built a binary it does not own")
 
         with tempfile.TemporaryDirectory() as tmp:
-            elsewhere = Path(tmp) / "pgdq"
+            elsewhere = Path(tmp) / "pgdt"
             with unittest.mock.patch.object(measure, "run", fake_run):
-                out = measure.ensure_pgdq_binary(
-                    measure.Config(bin_pgdq=elsewhere), lambda _: None
+                out = measure.ensure_pgdt_binary(
+                    measure.Config(bin_pgdt=elsewhere), lambda _: None
                 )
             self.assertEqual(out, elsewhere)
 
@@ -1400,7 +1400,7 @@ class PeakRss(unittest.TestCase):
     """The one figure whose reading is not a time.
 
     Two things decide whether the number means what the table says. The
-    *instrument* must report pgdq's peak and not the wrapper's or the client's
+    *instrument* must report pgdt's peak and not the wrapper's or the client's
     — every wrong answer here is a plausible-looking one, which is why the
     wrapper is asserted rather than remembered. And the *rows* must vary one
     thing each: the byte pair differs in bytes alone, the block rows in blocks
@@ -1413,9 +1413,9 @@ class PeakRss(unittest.TestCase):
         # A wrapped `parse`, not a different command: what this figure reports
         # has to be the resident set of the scan the rest of the doc measures.
         script = measure._script("parse-rss")
-        self.assertIn("/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache", script)
+        self.assertIn("/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache", script)
 
-    def test_the_redirection_takes_pgdq_s_stdout_and_not_the_reading(self):
+    def test_the_redirection_takes_pgdt_s_stdout_and_not_the_reading(self):
         # The reading goes to stderr, where bash's own `time` report goes, so
         # `>/dev/null` on the whole command cannot swallow it.
         script = measure._script("parse-rss")
@@ -1437,7 +1437,7 @@ class PeakRss(unittest.TestCase):
         self.assertIn(f"syscall({measure.GETRUSAGE_SYSCALL['x86_64']}, -1,", wrapper)
 
     def test_the_wrapper_propagates_a_failed_run(self):
-        # Otherwise a pgdq that died would be reported as a resident set.
+        # Otherwise a pgdt that died would be reported as a resident set.
         self.assertIn("exit($st == 0 ? 0 :", measure.rss_wrapper("x86_64"))
 
     def test_an_unregistered_machine_is_an_error_not_a_guess(self):
@@ -1557,7 +1557,7 @@ class RssAttribution(unittest.TestCase):
     def test_the_reference_leg_is_the_shape_peak_rss_times(self):
         # The first row is read against `peak-rss`'s block-count rows, which
         # only holds while the two run the same command.
-        self.assertEqual(measure._ATTRIBUTION_LEGS[0][1:], ("pgdq", "parse-rss"))
+        self.assertEqual(measure._ATTRIBUTION_LEGS[0][1:], ("pgdt", "parse-rss"))
         self.assertEqual(
             [s.command for s in _peak_rss_specs()][0], measure._ATTRIBUTION_LEGS[0][2]
         )
@@ -1603,7 +1603,7 @@ class RssAttribution(unittest.TestCase):
 def _peak_rss_specs() -> list:
     """`peak-rss`'s specs, without running the figure."""
     return [
-        measure.RunSpec("pgdq", name, "parse-rss", "warm", name) for name in measure._RSS_ROWS
+        measure.RunSpec("pgdt", name, "parse-rss", "warm", name) for name in measure._RSS_ROWS
     ]
 
 
@@ -1671,7 +1671,7 @@ class BorrowGraph(unittest.TestCase):
             },
             "per-block-quadratic": {
                 measure.RunSpec(
-                    "pgdq", name, "parse-cache-out", "warm", ""
+                    "pgdt", name, "parse-cache-out", "warm", ""
                 ).key("per-block-quadratic")
                 for name, _ in measure._QUADRATIC_ROWS
             },
@@ -1718,7 +1718,7 @@ class BorrowGraph(unittest.TestCase):
         )
 
     def test_a_satisfied_borrow_is_copied_and_said_to_be_shared(self):
-        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
         session = self._session({source.key("census-brace-free"): [1.0, 2.0]})
         note = measure.share_readings(session, "scan-throughput-warm")
         self.assertEqual(session.readings[source.key("scan-throughput-warm")], [1.0, 2.0])
@@ -1732,7 +1732,7 @@ class BorrowGraph(unittest.TestCase):
         would report the spec satisfied and then leave the borrowing figure's
         renderer asking `get_rss` for a key nothing wrote — an hour into a
         sweep, not at the declaration."""
-        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
         session = self._session(
             {source.key("census-brace-free"): [1.0, 2.0]},
             {source.key("census-brace-free"): [5.9, 6.0]},
@@ -1744,7 +1744,7 @@ class BorrowGraph(unittest.TestCase):
         # An absent `rss` key means "this shape carries no RSS wrapper", which
         # `sweep` is careful to distinguish from an empty one. Manufacturing an
         # empty list here would turn the first fact into the second.
-        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
         session = self._session({source.key("census-brace-free"): [1.0, 2.0]})
         measure.share_readings(session, "scan-throughput-warm")
         self.assertNotIn(source.key("scan-throughput-warm"), session.rss)
@@ -1752,7 +1752,7 @@ class BorrowGraph(unittest.TestCase):
     def test_an_all_killed_source_leg_crosses_as_an_empty_list(self):
         # The other side of the same distinction: the source opened the key and
         # every rep was censored. That is a fact about the leg and it travels.
-        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        source = measure.RunSpec("pgdt", "control", "parse", "warm", "")
         session = self._session(
             {source.key("census-brace-free"): [1.0]},
             {source.key("census-brace-free"): []},
@@ -1964,7 +1964,7 @@ class Untaken(unittest.TestCase):
 
 class ParallelFigures(unittest.TestCase):
     """The two `parallel-*` figures: the first in the register whose axis is
-    `pgdq`'s own `--jobs`.
+    `pgdt`'s own `--jobs`.
 
     Every assertion here is a way to get a plausible table of the wrong thing,
     which is the family this module already covers for the allocator legs and
@@ -2216,7 +2216,7 @@ class Reserve(unittest.TestCase):
 
     def test_the_arena_setting_is_the_processs_environment(self):
         # `perl` is `exec`ed by the wrapper, so an assignment in front of it is
-        # inherited by pgdq. In front of `/pgdq` it would be a further argument
+        # inherited by pgdt. In front of `/pgdt` it would be a further argument
         # to `perl` and would set nothing at all.
         for token, value, _ in measure.RESERVE_ARENAS:
             with self.subTest(arena=token):
@@ -2386,7 +2386,7 @@ class CompressedAccount(unittest.TestCase):
                 script = measure._script(f"{measure.RESERVE_FLAGLESS}{token}")
                 self.assertNotIn("--jobs", script)
                 self.assertNotIn("--memory", script)
-                self.assertIn("/pgdq parse --source /dump.sql", script)
+                self.assertIn("/pgdt parse --source /dump.sql", script)
 
     def test_a_flagless_shape_that_states_a_flag_is_reported(self):
         # The check must fail loudly: the shape it would pass still runs and
@@ -2394,7 +2394,7 @@ class CompressedAccount(unittest.TestCase):
         with unittest.mock.patch.object(
             measure,
             "_script",
-            lambda c: "time /pgdq parse --source /dump.sql --jobs 4 --memory 99",
+            lambda c: "time /pgdt parse --source /dump.sql --jobs 4 --memory 99",
         ):
             reported = measure.flagless_flag_problems()
         self.assertEqual(
@@ -2436,8 +2436,8 @@ class CompressedAccount(unittest.TestCase):
     def test_a_spec_that_states_no_limit_keys_as_it_always_did(self):
         # Appended rather than always present, so a past sitting's `raw.json`
         # still renders: every spec outside this figure keys exactly as before.
-        spec = measure.RunSpec("pgdq", "control", "parse-rss", "warm", "x")
-        self.assertEqual(spec.key("peak-rss"), "peak-rss/pgdq/control/parse-rss/warm")
+        spec = measure.RunSpec("pgdt", "control", "parse-rss", "warm", "x")
+        self.assertEqual(spec.key("peak-rss"), "peak-rss/pgdt/control/parse-rss/warm")
         self.assertEqual(spec.memory, None)
 
     def test_nothing_outside_this_figure_states_a_per_spec_limit(self):
@@ -2607,7 +2607,7 @@ class CompressedAccount(unittest.TestCase):
         # at the same input and limit — which the axis above already measures,
         # so nothing here is measured twice.
         reference = measure.RunSpec(
-            "pgdq",
+            "pgdt",
             measure.RESERVE_MECHANISM_INPUT,
             f"{measure.RESERVE_FLAGLESS}{measure.RESERVE_UNCAPPED}",
             "warm-parallel",
@@ -2678,7 +2678,7 @@ class CompressedAccount(unittest.TestCase):
             label for token, _, label in measure.RESERVE_ARENAS if token == measure.RESERVE_CAPPED
         )
         spec = dict(measure._reserve_mechanism_specs())[arena]
-        self.assertEqual(spec.binary, "pgdq")
+        self.assertEqual(spec.binary, "pgdt")
         script = measure._script(spec.command)
         self.assertIn("time MALLOC_ARENA_MAX=2 perl", script)
         self.assertNotIn("--jobs", script)
@@ -3258,7 +3258,7 @@ class PinnedWorkerCount(unittest.TestCase):
 
     def test_a_shape_that_drifts_off_the_constant_is_reported(self):
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 4"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql --jobs 4"
         ):
             reported = measure.pinned_count_problems()
         self.assertTrue(reported)
@@ -3267,7 +3267,7 @@ class PinnedWorkerCount(unittest.TestCase):
     def test_the_axis_families_are_exempt(self):
         # They are the exemption, so nothing this reports may name one.
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 4"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql --jobs 4"
         ):
             reported = measure.pinned_count_problems()
         for line in reported:
@@ -3277,7 +3277,7 @@ class PinnedWorkerCount(unittest.TestCase):
 
     def test_check_fails_on_a_shape_that_drifts(self):
         with unittest.mock.patch.object(
-            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 4"
+            measure, "_script", lambda c: "time /pgdt parse --source /dump.sql --jobs 4"
         ):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
@@ -3310,7 +3310,7 @@ def _figure_specs(fid: str) -> list:
 class XzDecodeScaling(unittest.TestCase):
     """The decode-scaling figure: two `.xz` legs, seven worker counts.
 
-    It is the register's first figure that runs no `pgdq` at all, its first
+    It is the register's first figure that runs no `pgdt` at all, its first
     compressed input, its first fourth regime and its first departure from the
     512 MB container — so what these hold is that each of those is *declared*
     rather than inherited, since every one of them fails by emitting a
@@ -3357,7 +3357,7 @@ class XzDecodeScaling(unittest.TestCase):
         self.assertIn("scripts/generate_perf_data.py", fig.depends)
 
     def test_the_decoder_and_the_instrument_are_declared(self):
-        # No `pgdq` runs here, so none of the library's own paths can move this
+        # No `pgdt` runs here, so none of the library's own paths can move this
         # figure and none of them is declared. What can is the decoder, the
         # binary that drives it, and the generators behind the two files.
         fig = measure.SELECTABLE_BY_ID["xz-decode-scaling"]
@@ -3616,7 +3616,7 @@ class InstrumentReport(unittest.TestCase):
         # other would leave the instrument writing nowhere the harness looks —
         # which is now an error rather than an empty dict, but only because the
         # name is right.
-        source = (measure.REPO / "pgdump_query-cli/src/introspect.rs").read_text()
+        source = (measure.REPO / "pgdt/src/introspect.rs").read_text()
         self.assertIn(f'pub const OUT_VAR: &str = "{measure.INSTRUMENT_OUT_VAR}";', source)
 
     def test_no_leg_that_does_not_declare_it_is_given_the_variable(self):
@@ -3648,20 +3648,20 @@ class InstrumentReport(unittest.TestCase):
         # there an instrumented build must not be timed, here a leg that
         # declares the instrument must carry one.
         with unittest.mock.patch.object(
-            measure, "run", return_value="pgdq 0.1.0 (allocator: system)\n"
+            measure, "run", return_value="pgdt 0.1.0 (allocator: system)\n"
         ):
             with self.assertRaises(RuntimeError) as caught:
-                measure.binary_instrument(Path("/pgdq"))
+                measure.binary_instrument(Path("/pgdt"))
         self.assertIn("--features introspect", str(caught.exception))
 
     def test_the_instrument_build_is_read_back_and_names_itself(self):
         with unittest.mock.patch.object(
             measure,
             "run",
-            return_value="pgdq 0.1.0 (allocator: system) (instrument: counting-allocator)\n",
+            return_value="pgdt 0.1.0 (allocator: system) (instrument: counting-allocator)\n",
         ):
             self.assertEqual(
-                measure.binary_instrument(Path("/pgdq")), "counting-allocator"
+                measure.binary_instrument(Path("/pgdt")), "counting-allocator"
             )
 
     def test_the_dictionary_term_is_inside_the_reader_charge(self):
@@ -4499,7 +4499,7 @@ class RegisterBoundary(unittest.TestCase):
         # EOF …`, which reads as a level-1 heading.
         text = (
             "## Outside\n\n<!-- outside-register: koji -->\n\n"
-            "```sh\n# maps to EOF (the table never matches)\npgdq parse\n```\n\n"
+            "```sh\n# maps to EOF (the table never matches)\npgdt parse\n```\n\n"
             "<!-- figure: map-only -->\n"
         )
         self.assertEqual(measure.outside_register_sections(text), [("koji", ["map-only"])])
@@ -4560,7 +4560,7 @@ class OutsideInvalidation(unittest.TestCase):
             "pgdump_query/src/preamble.rs",
             "pgdump_query/src/resolve.rs",
             "pgdump_query/src/pgtype.rs",
-            "pgdump_query-cli/src/main.rs",
+            "pgdt/src/main.rs",
         ):
             with self.subTest(path=path):
                 self.assertEqual(
@@ -4897,18 +4897,18 @@ class KojiRecipe(unittest.TestCase):
     not execute. Each assertion below is a mistake that has cost a run."""
 
     def _recipe(self, wrap=False, jobs=measure.SWEEP_JOBS) -> str:
-        return measure.koji_recipe(measure.Config(), "pgdq-koji", wrap, jobs)
+        return measure.koji_recipe(measure.Config(), "pgdt-koji", wrap, jobs)
 
-    def test_pgdq_is_pid_one(self):
+    def test_pgdt_is_pid_one(self):
         # A compound command cannot be exec'd, so nothing may be appended to
         # report the exit status: `sh` would take the signal and not forward
         # it, the runtime's SIGKILL would follow, and the interrupt guard would
         # never run.
-        self.assertIn("sh -c 'exec /pgdq parse", self._recipe())
+        self.assertIn("sh -c 'exec /pgdt parse", self._recipe())
 
     def test_nothing_follows_the_parse_inside_the_shell(self):
         for line in self._recipe().splitlines():
-            if "exec /pgdq parse" in line:
+            if "exec /pgdt parse" in line:
                 with self.subTest(line=line):
                     self.assertNotIn("; echo", line)
 
@@ -4919,8 +4919,8 @@ class KojiRecipe(unittest.TestCase):
         # The dump is mounted read-only, so the colocated default would land in
         # the container's ephemeral layer and die with it — an hour of scanning
         # lost with no error, because the write itself succeeds.
-        self.assertIn("--dqcache /out/", self._recipe())
-        self.assertNotIn("--dqcache /dump.sql", self._recipe())
+        self.assertIn("--dtcache /out/", self._recipe())
+        self.assertNotIn("--dtcache /dump.sql", self._recipe())
 
     def test_the_dump_is_read_only(self):
         self.assertIn(":/dump.sql:ro", self._recipe())
@@ -4941,19 +4941,19 @@ class KojiRecipe(unittest.TestCase):
         # It is read from the host while the scan runs; adding anything to the
         # container's command would cost `exec` and with it the interrupt guard.
         for line in self._recipe().splitlines():
-            if "exec /pgdq parse" in line:
+            if "exec /pgdt parse" in line:
                 with self.subTest(line=line):
                     self.assertNotIn("VmHWM", line)
 
     def test_the_wrap_recipe_stops_reports_resumes_and_compares(self):
         wrap = self._recipe(wrap=True)
-        for fragment in ("nerdctl stop", "info --dqcache", "--detail", "cmp "):
+        for fragment in ("nerdctl stop", "info --dtcache", "--detail", "cmp "):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, wrap)
 
     def test_the_wrap_resumes_the_identical_command(self):
         wrap = self._recipe(wrap=True)
-        legs = [ln for ln in wrap.splitlines() if "exec /pgdq parse" in ln]
+        legs = [ln for ln in wrap.splitlines() if "exec /pgdt parse" in ln]
         self.assertEqual(len(legs), 2)
         self.assertEqual(legs[0], legs[1])
 
@@ -5003,8 +5003,8 @@ class ProfileRecipe(unittest.TestCase):
         # of it is a flat list of unnameable addresses. The published figures
         # stay on `release`, which is why this is a second binary.
         recipe = self._recipe()
-        self.assertIn("target/profiling/pgdq", recipe)
-        self.assertNotIn("target/release/pgdq", recipe)
+        self.assertIn("target/profiling/pgdt", recipe)
+        self.assertNotIn("target/release/pgdt", recipe)
 
     def test_frame_pointers_come_from_the_build_line(self):
         # Cargo has no profile key for them, so `[profile.profiling]` alone
@@ -5117,7 +5117,7 @@ class ProfileRecipe(unittest.TestCase):
         with the count would put a second variable in the one reading this
         pair exists to isolate."""
         argvs = [
-            measure.profile_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+            measure.profile_argv(shape, "/dump.sql", "/tmp/x.dtcache")
             for shape, _ in measure.PROFILE_AXIS
         ]
         self.assertEqual(len(argvs), 2)
@@ -5165,11 +5165,11 @@ class ProfileRecipe(unittest.TestCase):
         for shape in shapes:
             with self.subTest(shape=shape):
                 timed = measure._script(shape).split()
-                # Drop `time /pgdq`, the trailing redirect, and the container's
+                # Drop `time /pgdt`, the trailing redirect, and the container's
                 # own paths; what is left is the flags both must agree on.
-                self.assertEqual(timed[:2], ["time", "/pgdq"])
+                self.assertEqual(timed[:2], ["time", "/pgdt"])
                 timed = [w for w in timed[2:] if w != ">/dev/null"]
-                profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+                profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.dtcache")
                 self.assertEqual(profiled, timed)
 
     def test_the_recipe_never_runs_anything(self):
@@ -5209,8 +5209,8 @@ class HeaptrackRecipe(unittest.TestCase):
         # in it — 3,627 against 0 on the same recording — and every Rust frame
         # is a bare name with no file behind it.
         recipe = self._recipe()
-        self.assertIn("target/profiling/pgdq", recipe)
-        self.assertNotIn("target/release/pgdq", recipe)
+        self.assertIn("target/profiling/pgdt", recipe)
+        self.assertNotIn("target/release/pgdt", recipe)
         self.assertIn("--profile profiling", recipe)
 
     def test_frame_pointers_are_not_asked_for(self):
@@ -5271,7 +5271,7 @@ class HeaptrackRecipe(unittest.TestCase):
         for i in starts:
             with self.subTest(line=lines[i]):
                 self.assertTrue(lines[i - 1].startswith("rm -f "), lines[i - 1])
-                self.assertIn("heaptrack.dqcache", lines[i - 1])
+                self.assertIn("heaptrack.dtcache", lines[i - 1])
 
     def test_the_pair_is_read_as_a_difference(self):
         # The whole reason there are two recordings: a single one names what a
@@ -5291,7 +5291,7 @@ class HeaptrackRecipe(unittest.TestCase):
         moved with the budget would put a second variable in the one reading
         this pair exists to isolate."""
         argvs = [
-            measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+            measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dtcache")
             for shape, _ in measure.HEAPTRACK_AXIS
         ]
         self.assertEqual(len(argvs), 2)
@@ -5314,10 +5314,10 @@ class HeaptrackRecipe(unittest.TestCase):
         for shape, _ in measure.HEAPTRACK_AXIS:
             with self.subTest(shape=shape):
                 script = measure._script(shape)
-                head, sep, rest = script.partition("/pgdq ")
+                head, sep, rest = script.partition("/pgdt ")
                 self.assertTrue(sep, script)
                 timed = [w for w in rest.split() if w != ">/dev/null"]
-                recorded = measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+                recorded = measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dtcache")
                 self.assertEqual(recorded, timed)
 
     def test_every_recorded_invocation_states_its_worker_count(self):
@@ -5325,7 +5325,7 @@ class HeaptrackRecipe(unittest.TestCase):
         # the count a source recommends moves with the budget, so a recording
         # that inherited one would differ from its partner in two things.
         argv_lines = [
-            ln for ln in self._recipe().splitlines() if "target/profiling/pgdq parse" in ln
+            ln for ln in self._recipe().splitlines() if "target/profiling/pgdt parse" in ln
         ]
         self.assertEqual(len(argv_lines), len(measure.HEAPTRACK_AXIS))
         for line in argv_lines:
@@ -5620,7 +5620,7 @@ class ChunkSize(unittest.TestCase):
 
     def test_every_row_is_the_same_binary_over_the_same_file(self):
         specs = measure._chunk_specs()
-        self.assertEqual({s.binary for s in specs}, {"pgdq"})
+        self.assertEqual({s.binary for s in specs}, {"pgdt"})
         self.assertEqual({s.input for s in specs}, {"control"})
         self.assertEqual(
             len(specs), len(measure.CHUNK_SIZES) * len(measure.CHUNK_REGIMES)
@@ -5655,15 +5655,15 @@ class Drift(unittest.TestCase):
 
     def test_the_delta_is_the_second_sweep_against_the_first(self):
         with tempfile.TemporaryDirectory() as tmp:
-            a = self._sweep(tmp, "a", {"census-brace-free/pgdq/control/parse/warm": [1.0, 1.0]})
-            b = self._sweep(tmp, "b", {"census-brace-free/pgdq/control/parse/warm": [1.1, 1.1]})
+            a = self._sweep(tmp, "a", {"census-brace-free/pgdt/control/parse/warm": [1.0, 1.0]})
+            b = self._sweep(tmp, "b", {"census-brace-free/pgdt/control/parse/warm": [1.1, 1.1]})
             table = measure.drift_table(a / "raw.json", b / "raw.json")
             self.assertIn("+10.0%", table)
 
     def test_a_faster_second_sweep_reads_negative(self):
         with tempfile.TemporaryDirectory() as tmp:
-            a = self._sweep(tmp, "a", {"f/pgdq/control/parse/warm": [2.0]})
-            b = self._sweep(tmp, "b", {"f/pgdq/control/parse/warm": [1.0]})
+            a = self._sweep(tmp, "a", {"f/pgdt/control/parse/warm": [2.0]})
+            b = self._sweep(tmp, "b", {"f/pgdt/control/parse/warm": [1.0]})
             self.assertIn("-50.0%", measure.drift_table(a / "raw.json", b / "raw.json"))
 
     def test_only_shared_readings_are_compared(self):
@@ -6045,7 +6045,7 @@ class Render(unittest.TestCase):
                 measure.Config(), raw, Path(tmp), lambda _m: None
             )
             spec = measure.RunSpec(
-                binary="pgdq", input="control", command="parse", regime="warm", label="x"
+                binary="pgdt", input="control", command="parse", regime="warm", label="x"
             )
             with self.assertRaises(AssertionError):
                 session.take(spec, 0)
@@ -6480,7 +6480,7 @@ class CensoredCells(unittest.TestCase):
             )
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 return measure.run_reserve(session), session
 
@@ -6535,7 +6535,7 @@ class CensoredCells(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         self.assertIn("reported no bound before it died", body)
@@ -6600,7 +6600,7 @@ class CensoredCells(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         no_line = [ln for ln in body.splitlines() if ln.startswith("- **") and "no line" in ln]
@@ -6621,7 +6621,7 @@ class CensoredCells(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 return measure.run_reserve(session)
 
@@ -6798,7 +6798,7 @@ class CensoredCells(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         row = next(
@@ -6820,7 +6820,7 @@ class CensoredCells(unittest.TestCase):
             )
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         self.assertNotIn("OOM-killed", body)
@@ -6907,7 +6907,7 @@ class ChargeModelSection(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 return measure.run_reserve(session)
 
@@ -7090,7 +7090,7 @@ class ChargeModelSection(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         rows = self._model_rows(body)
@@ -7111,7 +7111,7 @@ class ChargeModelSection(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         self.assertIn("The model was evaluated at no cell", body)
@@ -7171,7 +7171,7 @@ class ChargeModelSection(unittest.TestCase):
             session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
             session.figure_id = self.FIGURE
             with unittest.mock.patch.object(
-                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdq")
+                measure, "ensure_instrument_binary", lambda *_a, **_k: Path("/pgdt")
             ):
                 body = measure.run_reserve(session)
         row = next(r for r in self._flagless_rows(body) if r.startswith(f"| `-m {target[1]}`"))

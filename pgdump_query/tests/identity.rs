@@ -207,7 +207,7 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
 async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     let (_dir, dump) = sandboxed();
 
-    // `--dqcache none`: the load is not an observation (nothing is read), so
+    // `--dtcache none`: the load is not an observation (nothing is read), so
     // the baseline is the only one before the end-of-run check.
     let shifting = Shifting::new(dump.clone(), 1);
     let err = map_file(
@@ -269,7 +269,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
 /// by another door is still an interrupt (`stream::cancelled_read`), and the
 /// two arms that catch one leave `map_file` without passing the end-of-run
 /// check the polled path takes — so each asks the source itself. Under
-/// `--dqcache none` there is no save to inherit the question from, which is
+/// `--dtcache none` there is no save to inherit the question from, which is
 /// the case this pins; with a cache enabled the save asks it anyway, except
 /// in the prepass, which saves nothing at all
 /// (`map_file::a_dropped_read_inside_the_prepass_banks_and_writes_nothing`).

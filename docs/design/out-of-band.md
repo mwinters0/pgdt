@@ -62,4 +62,6 @@ the centering; a row whose Date is still empty is a live obligation and stays,
 since a number is allocated on admission and the unattended loop reads this
 table as a work queue.
 
-*Empty: every item through `M127` was struck at a keystone review.*
+| Item | Date | What changed | Blocks | Why |
+|---|---|---|---|---|
+| `M128` | 2026-09-20 | The CLI is renamed `pgdt`: the binary, the package and its directory (`pgdump_query-cli` → `pgdt`, the `[[bin]]` stanza dropped with it), `--dqcache`/`.dqcache` → `--dtcache`/`.dtcache`, and every `PGDQ_*` variable → `PGDT_*`. "DQ" reads as *data quality* to a reader who does not know the project. The library crate and the repository keep their names, and dated entries keep theirs |  | [2026-09-20](../status/history/2026-09-20.md), "`M128`: the CLI is `pgdt`" |

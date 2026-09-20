@@ -150,7 +150,7 @@ ROADMAP = REPO / "docs" / "design" / "roadmap.md"
 DOC_ROOT = REPO / "docs"
 
 #: Where a code marker may live -- and the only place a detail exists.
-CODE_ROOTS = (REPO / "pgdump_query" / "src", REPO / "pgdump_query-cli" / "src")
+CODE_ROOTS = (REPO / "pgdump_query" / "src", REPO / "pgdt" / "src")
 
 SECTION_HEADING = "## Known deficiencies"
 
@@ -849,7 +849,7 @@ def check(repo: Path = REPO, out=sys.stdout) -> int:
     status = repo / "docs" / "status" / "STATUS.md"
     roadmap = repo / "docs" / "design" / "roadmap.md"
     doc_root = repo / "docs"
-    code_roots = tuple(repo / p for p in ("pgdump_query/src", "pgdump_query-cli/src"))
+    code_roots = tuple(repo / p for p in ("pgdump_query/src", "pgdt/src"))
 
     text = status.read_text()
     entries, problems = parse_index(text)

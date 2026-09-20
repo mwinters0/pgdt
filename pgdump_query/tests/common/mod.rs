@@ -114,7 +114,7 @@ pub fn all_fixtures() -> Vec<PathBuf> {
 }
 
 /// A private copy of `source` in a fresh tempdir, named `name`, so a test can
-/// freely read and write a colocated `.dqcache` beside it without touching
+/// freely read and write a colocated `.dtcache` beside it without touching
 /// the checked-in fixture. The `TempDir` is returned because dropping it
 /// deletes the copy.
 pub fn sandboxed(source: &Path, name: &str) -> (tempfile::TempDir, PathBuf) {
@@ -139,7 +139,7 @@ pub fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
 /// shape.
 ///
 /// The second copy has its database name changed so the two `\connect`
-/// targets are distinguishable: `pgdq_fixture` (the fixture generator's fixed
+/// targets are distinguishable: `pgdt_fixture` (the fixture generator's fixed
 /// `DB_NAME`) appears nowhere in a `--create` dump except in the
 /// `CREATE DATABASE`/`ALTER DATABASE`/`\connect` lines naming it, so a
 /// literal string replace is safe and needs no real second Postgres instance.
@@ -150,7 +150,7 @@ pub fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
 /// only hand-written unit input.
 pub fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
     let content = std::fs::read_to_string(edge_cases_fixture(version, "create")).unwrap();
-    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
+    let renamed = content.replace("pgdt_fixture", "pgdt_fixture_2");
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("multidb.sql");
     std::fs::write(&path, format!("{content}{renamed}")).unwrap();

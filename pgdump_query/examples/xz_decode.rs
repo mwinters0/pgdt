@@ -12,7 +12,7 @@
 //! ./target/release/examples/xz_decode --source control_xz.xz --workers 8
 //! ```
 //!
-//! # Why an example and not a `pgdq` flag
+//! # Why an example and not a `pgdt` flag
 //!
 //! The library decodes concurrently through its block path and the leader's
 //! workers, which put a budget, a pool and a scan's arrangement between the

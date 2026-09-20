@@ -1,6 +1,6 @@
 //! The structural summary a scan produces: where every COPY block lives.
 //!
-//! This is what a `pgdq parse` scan yields and what the structure cache
+//! This is what a `pgdt parse` scan yields and what the structure cache
 //! (`cache.rs`) persists.
 
 use std::collections::BTreeSet;

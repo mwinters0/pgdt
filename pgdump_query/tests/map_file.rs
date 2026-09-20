@@ -1,4 +1,4 @@
-//! `stream::map_file` — `pgdq parse`'s scan
+//! `stream::map_file` — `pgdt parse`'s scan
 //! (`docs/design/decisions.md`, "The CLI").
 //!
 //! **The claim these tests exist for**: a scan that stopped partway leaves a
@@ -11,10 +11,10 @@
 //! **Every scan here gathers nothing** (`StatisticsRequest::NONE`): the eager
 //! producer gathers no statistics to compare against. A gathering scan's
 //! parallel map is compared against a serial one instead, by
-//! `tests/statistics.rs` and `pgdump_query-cli/tests/determinism.rs`. The
-//! exceptions are the back-fill tests, which ask for `StatisticsRequest::ALL`
-//! over a dropping or a cancelling source to see what an interrupted back-fill
-//! banks and reports.
+//! `tests/statistics.rs` and `pgdt/tests/determinism.rs`. The exceptions are
+//! the back-fill tests, which ask for `StatisticsRequest::ALL` over a dropping
+//! or a cancelling source to see what an interrupted back-fill banks and
+//! reports.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,7 +38,7 @@ fn already_cancelled() -> Arc<Cancellation> {
 }
 
 /// A private copy of `tests/data/edge_cases.sql` in a fresh tempdir, so each
-/// test may freely write the colocated `.dqcache` beside it — same fixture and
+/// test may freely write the colocated `.dtcache` beside it — same fixture and
 /// same convention as `tests/query_cache.rs`, which is what makes the "a query
 /// stops at its target" setup below behave identically here.
 mod common;
@@ -126,7 +126,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                     let label =
                         format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");
                     let mode =
-                        CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.dqcache")));
+                        CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.dtcache")));
                     let options = ScanOptions {
                         chunk_size_bytes: chunk_size,
                         parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
@@ -311,7 +311,7 @@ async fn a_complete_cache_is_reported_without_rescanning() {
 }
 
 /// A [`ByteRangeSource`] that refuses to read past `fail_at` — the killed
-/// `pgdq parse` these tests cannot produce with a signal. Everything below
+/// `pgdt parse` these tests cannot produce with a signal. Everything below
 /// `fail_at` reads normally, so the scan makes real progress and banks real
 /// saves before it dies.
 struct FailsPast<'a> {
@@ -404,7 +404,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
 /// query only ever captures the first (`scan_preamble`'s bounded prepass), and
 /// that is all it may honestly claim while the map is short of EOF; `map_file`
 /// reaches the other boundary `dump_metadata_from_spans` may be called at, so
-/// `pgdq parse` leaves every database `preamble_complete`.
+/// `pgdt parse` leaves every database `preamble_complete`.
 #[tokio::test]
 async fn a_full_scan_recovers_every_databases_ddl() {
     for version in [13, 16, 18] {
@@ -415,7 +415,7 @@ async fn a_full_scan_recovers_every_databases_ddl() {
         let content = std::fs::read_to_string(&fixture).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("multidb.sql");
-        std::fs::write(&dump, format!("{content}{}", content.replace("pgdq_fixture", "pgdq_2")))
+        std::fs::write(&dump, format!("{content}{}", content.replace("pgdt_fixture", "pgdt_2")))
             .unwrap();
         let source = LocalFileSource::open(&dump).unwrap();
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
@@ -858,7 +858,7 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
 
 /// **A read dropped inside the back-fill is the back-fill's own interrupt.**
 /// The counts a polled stop reports are reported here too, which is what keeps
-/// `pgdq parse`'s two interrupt sentences apart: the map is whole and the
+/// `pgdt parse`'s two interrupt sentences apart: the map is whole and the
 /// re-read is partial, not the other way round.
 #[tokio::test]
 async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
@@ -993,9 +993,9 @@ async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
 /// renamed. A `pg_dumpall` and a bare `cat a.sql b.sql` are different shapes
 /// (I9) and this is the only fixture for the second one, so it stays beside
 /// the real dump rather than being replaced by it. The name is deliberately
-/// not `pgdq_fixture_2`, which the synthetic multi-database helpers elsewhere
+/// not `pgdt_fixture_2`, which the synthetic multi-database helpers elsewhere
 /// in the suite use: with both constructions in one file, a failure naming
-/// `pgdq_fixture_2` would not say which it came from.
+/// `pgdt_fixture_2` would not say which it came from.
 fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures")
@@ -1004,12 +1004,12 @@ fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
     let content = std::fs::read_to_string(&fixture).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("multidb.sql");
-    std::fs::write(&dump, format!("{content}{}", content.replace("pgdq_fixture", "pgdq_2")))
+    std::fs::write(&dump, format!("{content}{}", content.replace("pgdt_fixture", "pgdt_2")))
         .unwrap();
     (dir, dump)
 }
 
-/// Every banked block's columns, resolved the way `pgdq info` resolves them:
+/// Every banked block's columns, resolved the way `pgdt info` resolves them:
 /// against the index's own metadata, with no census (a partial index may not
 /// believe one — `DumpIndex::is_complete`).
 fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
@@ -1141,10 +1141,10 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
 }
 
 /// The boundary against a file `pg_dump` actually wrote. `edge_cases/dumpall`
-/// carries `COPY` blocks in two consecutive segments — `pgdq_fixture` and
-/// `pgdq_tenant`, in that order by I30 — and `pgdq_tenant.public.widgets`
+/// carries `COPY` blocks in two consecutive segments — `pgdt_fixture` and
+/// `pgdt_tenant`, in that order by I30 — and `pgdt_tenant.public.widgets`
 /// repeats the earlier database's table name with a different type on every
-/// column, so an index that resolved these blocks against `pgdq_fixture`'s DDL
+/// column, so an index that resolved these blocks against `pgdt_fixture`'s DDL
 /// would answer wrongly rather than merely fall silent.
 #[tokio::test]
 async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
@@ -1157,7 +1157,7 @@ async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("dumpall.sql");
         std::fs::copy(&fixture, &dump).unwrap();
-        assert_an_interrupt_inside(&dump, "pgdq_tenant", &format!("pg_dump {version} dumpall"))
+        assert_an_interrupt_inside(&dump, "pgdt_tenant", &format!("pg_dump {version} dumpall"))
             .await;
     }
 }
@@ -1212,7 +1212,7 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
         };
 
         assert_eq!(
-            types_of("pgdq_fixture"),
+            types_of("pgdt_fixture"),
             vec![
                 DataType::Int32,
                 DataType::Utf8View,
@@ -1223,7 +1223,7 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
             "pg_dump {version}"
         );
         assert_eq!(
-            types_of("pgdq_tenant"),
+            types_of("pgdt_tenant"),
             vec![
                 DataType::Int64,
                 DataType::FixedSizeBinary(16),
@@ -1243,7 +1243,7 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
 async fn an_interrupt_inside_a_later_database_of_a_concatenated_file_types_what_it_finished() {
     for version in [13, 16, 18] {
         let (_dir, dump) = multidb(version);
-        assert_an_interrupt_inside(&dump, "pgdq_2", &format!("pg_dump {version} concatenated"))
+        assert_an_interrupt_inside(&dump, "pgdt_2", &format!("pg_dump {version} concatenated"))
             .await;
     }
 }

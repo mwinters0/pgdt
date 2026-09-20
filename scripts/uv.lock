@@ -55,7 +55,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pgdq-fixtures"
+name = "pgdt-fixtures"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

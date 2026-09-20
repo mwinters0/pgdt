@@ -57,7 +57,7 @@ impl PredicateOp {
     }
 
     /// How an error message names this operator — the same spelling
-    /// `pgdq query --filter` accepts.
+    /// `pgdt query --filter` accepts.
     pub fn symbol(self) -> &'static str {
         match self {
             Self::Eq => "=",
@@ -1882,7 +1882,7 @@ fn accepted_form(kind: &CompareKind) -> String {
 /// would hand the user a spelling that is not a label. Nothing bounds how
 /// many labels a type declares.
 ///
-/// The overflow clause has somewhere to send the reader: `pgdq info --detail`
+/// The overflow clause has somewhere to send the reader: `pgdt info --detail`
 /// prints every label of an enum column *and* lists every user-defined type
 /// with its labels, both uncapped (`docs/design/decisions.md`, "The CLI").
 const ENUM_LABELS_SHOWN: usize = 12;

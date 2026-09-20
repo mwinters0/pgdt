@@ -55,7 +55,7 @@ partition-root marker (I2), and a file containing any `\connect` at all
 (`pg_dumpall`, concatenation, `--create`). What stays undetectable is a file
 whose *first* segment is an ordinary dump with something concatenated after
 it — nothing before the stopping point says so. `ScanExtent::Full`, or any
-query against an already-`pgdq parse`d file, detects it exactly. Rows are
+query against an already-`pgdt parse`d file, detects it exactly. Rows are
 never a union either way.
 
 **Why P6 cares.** This is the one place where the default query path
@@ -83,7 +83,7 @@ question entirely.
 
 **Fact.** `batch::read_table`, the push-mode entry point, is a ~20-line drain
 over the pull-mode `stream::table_stream` — it forwards each batch to the
-callback and returns `(ResolvedSchema, Option<ResumeToken>)`. Because `pgdq query` is a pull-mode caller (it needs the stream's
+callback and returns `(ResolvedSchema, Option<ResumeToken>)`. Because `pgdt query` is a pull-mode caller (it needs the stream's
 `NestedPlan`s while rendering), nothing outside `pgdump_query/tests/` and
 `pgdump_query/benches/whole_file.rs` calls it. The shared scan loop is
 unaffected and still exercised by every CLI invocation; what has no
@@ -159,7 +159,7 @@ rows and a wrongly-typed one is a wrong answer with no signal.
 `resolve::resolve_columns` marks the column
 `ColumnResolution::MetadataNotScanned` and carries on, because a *listing*
 covers every block in the index and one unresolvable block must not sink the
-document. `pgdq info --json` exports the second form; `pgdq query` gets the
+document. `pgdt info --json` exports the second form; `pgdt query` gets the
 first.
 
 **Why P6 cares.** A `TableProvider`'s `schema()` and a Python binding's
@@ -198,7 +198,7 @@ at — not necessarily the last completed block; `stream::table_stream`
 instead yields `Error::ScanCancelled { scanned_through }` on its first poll
 past the mapping pass, because rows from the blocks a stopped mapping pass
 happened to reach are a prefix of the answer with nothing saying so. The CLI
-wires the flag for `pgdq parse` only. **The flag is read before the read, not
+wires the flag for `pgdt parse` only. **The flag is read before the read, not
 during it**, so a scan blocked inside `ByteRangeSource::read_range` does not
 notice until that read returns; `scan::scan` (and so `index::scan_preamble`)
 ignores the flag entirely, on purpose — stopping there could not be told from
@@ -244,7 +244,7 @@ which a plain dump does not record — I32), `Utf8View` from a bare `numeric`
 has a server operator of its own), and `Dictionary` from an enum (PostgreSQL
 orders by declaration order).
 
-**`TableStream::comparison_notes()` is what an embedder can read**, and `pgdq
+**`TableStream::comparison_notes()` is what an embedder can read**, and `pgdt
 query` prints each of them once on stderr. It is per **term**, not per column:
 `=` routes through the same comparison plan the ordering operators do, and most
 divergences reach ordering alone, so one column filtered with `<` and `=` can
@@ -306,7 +306,7 @@ Two further facts about the mapping, from the v55 source:
   costs nothing here because a composite's fields are always built in
   declaration order, which is also the order the dump writes them — but a
   provider that reorders or name-matches would be answering a different
-  question from the one pgdq answers.
+  question from the one pgdt answers.
 - **`List` columns already have full `=`/`<`/`<=`/`>`/`>=` in v55**,
   element-wise and lexicographic
   (`datafusion/sqllogictest/test_files/array_query.slt`), so nothing about
@@ -342,11 +342,11 @@ differently changes what the promise would say.
 
 ---
 
-## Two-thirds of a typed `pgdq query` is the CLI, so no published figure describes what an embedder pays
+## Two-thirds of a typed `pgdt query` is the CLI, so no published figure describes what an embedder pays
 
 **Fact.** Every `query` figure in [`measurements.md`](measurements.md) times
-`pgdq query … >/dev/null`, and a sampling profile of that command puts
-`pgdq::print_batch` — the CLI turning each `RecordBatch` back into TSV — at
+`pgdt query … >/dev/null`, and a sampling profile of that command puts
+`pgdt::print_batch` — the CLI turning each `RecordBatch` back into TSV — at
 **25.75%** of a `strings` query's user time and **36.42%** of a typed one's,
 and it was 34.0% and 62.8% when this entry was filed — the render path has since
 been reworked three times and the library is now the larger bucket in both
@@ -357,7 +357,7 @@ now show 1.38 and once showed 2.4. **Read every one of those numbers off the
 budget when P6 comes up rather than off this entry**, which is the point of the
 entry rather than a caveat on it: the pair was 4.06 and 2.48 when it was filed.
 The same figures also
-all run `--dqcache none`, so each one contains a full mapping pass and reads the
+all run `--dtcache none`, so each one contains a full mapping pass and reads the
 file exactly twice (2.0000× its bytes, counted with `strace`); an embedder with
 a cache reads it once. Both are in
 [`decisions.md`](decisions.md), "D29".
@@ -384,7 +384,7 @@ line behind it. If P6 wants the latter, building the instrument is P6's work and
 not inherited.
 
 **And the allocator is the embedder's, not ours, which sharpens what a claim
-may say.** `pgdq` links the platform allocator by its own choice — a
+may say.** `pgdt` links the platform allocator by its own choice — a
 `#[global_allocator]` in `pgdump_query` would impose one on every embedder — so
 an embedder's numbers are under whatever their binary chose, and that is
 measurably not the same number — though by less than this entry once said. On
@@ -413,7 +413,7 @@ proportion without moving what the library costs.
 
 **Fact.** `table_stream_partitions` splits `TableStream` into N sub-streams
 over a complete map, each internally in file order, and the library hands those
-out rather than merging them — `pgdq query` does its own k-way merge on source offset when a human
+out rather than merging them — `pgdt query` does its own k-way merge on source offset when a human
 wants file order. Running the partitions sequentially *is* the serial path, so
 the parallelism knob's "off" setting is not a second implementation. The
 library defaults to `Parallelism::Serial` and adds no `rt-multi-thread`
@@ -435,7 +435,7 @@ group (`statistics::RowGroup`), a byte range a partition's cuts need not
 follow.
 
 **One public method exists for the merge alone**: `TableStream::batch_source_offset`,
-the offset of the batch just yielded's first row, which is what `pgdq query`
+the offset of the batch just yielded's first row, which is what `pgdt query`
 sorts one-batch-per-partition on. An engine that schedules the partitions
 itself never needs it — it is the same shape of question as `read_table`
 having no non-test caller, and it comes to this phase for the same reason: a
@@ -454,10 +454,10 @@ mechanisms are [`decisions.md`](decisions.md), "D51" and
 
 ---
 
-## Reproducible error ordering across sub-streams is the *caller's*, and only `pgdq query` has it
+## Reproducible error ordering across sub-streams is the *caller's*, and only `pgdt query` has it
 
 **Fact.** When several sub-streams of one partitioned replay fail, which
-failure the user sees is decided entirely by the code driving them. `pgdq query`
+failure the user sees is decided entirely by the code driving them. `pgdt query`
 arranges the file's answer: it records a sub-stream's failure instead of
 raising it, marks every sub-stream at or after it dead, drains the ones before
 it, and raises the lowest-indexed error — index order being file order, since

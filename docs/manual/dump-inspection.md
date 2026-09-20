@@ -1,12 +1,12 @@
 # Dump inspection
 
-`pgdq` tells you what is in a dump file — tables, roles, indexes, functions,
+`pgdt` tells you what is in a dump file — tables, roles, indexes, functions,
 everything `pg_dump` wrote — without decoding any row data. It takes two
 commands, and the split between them is the thing to learn first:
 
 ```sh
-pgdq parse --source mydump.sql   # reads the dump, writes mydump.sql.dqcache
-pgdq info  --source mydump.sql   # reports what that cache holds
+pgdt parse --source mydump.sql   # reads the dump, writes mydump.sql.dtcache
+pgdt info  --source mydump.sql   # reports what that cache holds
 ```
 
 **`parse` reads your dump. `info` never does.** On a
@@ -22,12 +22,12 @@ needs — row data is never cached, so `query` always reads the file.
 ## `parse`: reading the dump
 
 ```sh
-pgdq parse --source mydump.sql
+pgdt parse --source mydump.sql
 ```
 
 It scans the file end to end, writes the cache beside it
-(`mydump.sql.dqcache`), and prints the same listing `info` prints. Pass
-`--dqcache <path>` to put the cache somewhere else — worth doing when the dump
+(`mydump.sql.dtcache`), and prints the same listing `info` prints. Pass
+`--dtcache <path>` to put the cache somewhere else — worth doing when the dump
 sits on a read-only mount, since the default location is next to the dump.
 
 **An interrupted parse is not wasted work.** The scan banks its progress at
@@ -36,7 +36,7 @@ most of those 50 minutes on disk. Run `parse` again and it picks up where it
 stopped:
 
 ```
-$ pgdq parse --source koji.dump
+$ pgdt parse --source koji.dump
 resumed a previous scan at byte 612000104448 of 784019857152
 ...
 ```
@@ -56,10 +56,10 @@ it has scanned to the cache, says where it stopped, and exits 130 or 143 so a
 script can tell an interrupt from a failure:
 
 ```
-$ pgdq parse --source koji.dump
+$ pgdt parse --source koji.dump
 ^C
-interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.dqcache holds the scan so far
-re-run `pgdq parse --source koji.dump` to continue
+interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.dtcache holds the scan so far
+re-run `pgdt parse --source koji.dump` to continue
 ```
 
 An interrupt that arrives before the first banking says so instead — `nothing
@@ -79,7 +79,7 @@ apart, every block is banked and a clean stop loses only the one it was
 reading. Nothing is ever left *corrupt*: a write is made beside the cache and
 swapped in whole once finished, so a kill in the middle of one leaves the
 previous banking in place, and a file named after the cache and ending `.tmp`
-beside it, which is safe to delete. `pgdq info` states how far the cache goes.
+beside it, which is safe to delete. `pgdt info` states how far the cache goes.
 
 ### `parse --preamble-only`
 
@@ -101,22 +101,22 @@ If your dump is `.xz`-compressed, hand it over as it is — there is nothing to
 decompress first, and no flag to pass:
 
 ```sh
-pgdq parse --source mydump.sql.xz
-pgdq info  --source mydump.sql.xz
-pgdq query --source mydump.sql.xz --table public.widgets
+pgdt parse --source mydump.sql.xz
+pgdt info  --source mydump.sql.xz
+pgdt query --source mydump.sql.xz --table public.widgets
 ```
 
 Everything works exactly as it does on an uncompressed file: the same listing,
-the same cache (written to `mydump.sql.xz.dqcache`), the same rows. Recognition
+the same cache (written to `mydump.sql.xz.dtcache`), the same rows. Recognition
 is by content, not by name, so a compressed dump called something other than
 `.xz` is still read as one, and a file *named* `.xz` that is really plain text
 is still read as plain text.
 
 **Other compression is not read yet.** `.gz`, `.zst` and `.lz4` — including
 what `pg_dump -Fp --compress=…` writes — still have to be decompressed before
-pgdq sees them.
+pgdt sees them.
 
-**One `.xz` file in three is slow to seek into, and pgdq says so when it is.**
+**One `.xz` file in three is slow to seek into, and pgdt says so when it is.**
 An `.xz` file made of a single compressed block has nothing to seek by, so
 reading anything but the start of it means decoding from the beginning:
 
@@ -135,41 +135,41 @@ every backward read. How big that is depends on the read-buffer budget, which
 is carved out of your memory allowance (below, "`--jobs` and `--memory`"). The
 remedy is in the message —
 recompressing with `xz -T0` or an
-explicit `--block-size` produces a file pgdq can seek into. Files that
+explicit `--block-size` produces a file pgdt can seek into. Files that
 `xz` produced with threads, or that were made by concatenating several `.xz`
 files, are already seekable and earn no warning.
 
 You can also ask a file what shape it is in, at any time and without reading
-it: `pgdq info --detail` prints one line naming the container's blocks,
+it: `pgdt info --detail` prints one line naming the container's blocks,
 streams and largest block. It comes out of the cache, so it costs nothing and
-works from a `--dqcache` alone:
+works from a `--dtcache` alone:
 
 ```
-$ pgdq info --source mydump.sql.xz --detail
+$ pgdt info --source mydump.sql.xz --detail
 compression: xz — 5700 block(s) in 1 stream(s), largest block 134217728 bytes uncompressed
 ```
 
-`largest block` is what pgdq's read buffers have to clear **four times over**,
+`largest block` is what pgdt's read buffers have to clear **four times over**,
 with the read buffer and the decompressor's own working memory beside it —
 roughly 10 MB more, for the reasons below under "`--jobs` and `--memory`", where
 `--memory` has to clear that *plus* a 384 MiB reserve. The
 alternative way to learn it is `xz --list`, which on a file of many
 concatenated streams reads every one of their footers.
 
-Note that pgdq has to read the file's block index before it can read anything
+Note that pgdt has to read the file's block index before it can read anything
 else. On a file built from many concatenated streams — the shape a chunked
 download or a `cat a.xz b.xz` produces — that index costs one disk seek per
 stream, which on a very large file can be a minute or more. You pay it once:
-`pgdq parse` saves the index in the cache beside the dump, and every command
+`pgdt parse` saves the index in the cache beside the dump, and every command
 after that takes it from there. A file compressed in one go with `xz -T0` or
 `--block-size` never has the problem at all — its index is a single read
 whatever the file's size.
 
 If the cache stops matching the file it sits beside — you replaced the dump,
-or pointed `--dqcache` at another file's cache — pgdq says so rather than
+or pointed `--dtcache` at another file's cache — pgdt says so rather than
 quietly working around it. All three commands refuse, `parse` included: a
 cache that does not describe this file describes some *other* file, and
-scanning would write over it. Delete it, or point `--dqcache` somewhere else,
+scanning would write over it. Delete it, or point `--dtcache` somewhere else,
 and `parse` builds a fresh one.
 
 ### Reading a dump over HTTP
@@ -177,12 +177,12 @@ and `parse` builds a fresh one.
 `--source` takes a URL as readily as a path, on all three commands:
 
 ```sh
-pgdq parse --source https://example.com/dumps/mydump.sql
-pgdq info  --source https://example.com/dumps/mydump.sql
-pgdq query --source https://example.com/dumps/mydump.sql --table public.widgets
+pgdt parse --source https://example.com/dumps/mydump.sql
+pgdt info  --source https://example.com/dumps/mydump.sql
+pgdt query --source https://example.com/dumps/mydump.sql --table public.widgets
 ```
 
-Nothing is downloaded whole. pgdq asks the server for the byte ranges it
+Nothing is downloaded whole. pgdt asks the server for the byte ranges it
 actually needs, so a `query` answered from a cache reads one block's worth of
 bytes rather than the file. **The server has to support ranged requests**; one
 that ignores `Range` and answers with the whole object is refused by name,
@@ -190,9 +190,9 @@ before any of it is fetched.
 
 **The cache goes in the working directory.** With a local dump it sits beside
 the file; a URL has no "beside", so the default is the URL's last path segment
-plus `.dqcache`, in whatever directory you ran the command from —
-`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.dqcache`. `--dqcache
-<path>` states somewhere else, and `--dqcache none` turns it off where the
+plus `.dtcache`, in whatever directory you ran the command from —
+`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.dtcache`. `--dtcache
+<path>` states somewhere else, and `--dtcache none` turns it off where the
 command allows. A URL that names no object — a bare host, or a path ending in
 `/` — is refused: there is no dump named there to read.
 
@@ -201,12 +201,12 @@ directory, share a cache file. If their sizes differ the second run refuses,
 naming the URL it refused for; if they match, it reads the first one's map and
 says on stderr that the cache was written for a dump fetched from somewhere
 else. `--strict-identity=location` turns that warning into a refusal, and
-`--dqcache <path>` keeps them apart in the first place.
+`--dtcache <path>` keeps them apart in the first place.
 
 **No credentials are sent, ever.** A URL carrying `user:password@` is refused
 rather than quietly stripped, so nobody is left believing a password went out.
 For a private object, use a **presigned URL**: the signature rides in the query
-string, which pgdq preserves on every request it makes.
+string, which pgdt preserves on every request it makes.
 
 `http://` and `https://` are the schemes read over the network. `file://` is
 accepted too and means a path on this machine, so having learned that
@@ -222,7 +222,7 @@ is a cache read, an identity check and one block's bytes. **Without one, the
 first run walks the file's stream footers, and that is several round trips per
 stream** — a footer, an index, a header and a padding probe each: a dump
 compressed as thousands of small streams costs tens of thousands of requests
-before any row is read. pgdq says so on stderr before it starts. It is
+before any row is read. pgdt says so on stderr before it starts. It is
 paid once — keep the cache the run writes — and if you would rather not pay it
 at all, fetch the file once and parse the local copy.
 
@@ -242,7 +242,7 @@ whole. Nothing here is tuned for a network yet.
 
 ### `--strict-identity`: when a moved file should stop the run
 
-Size is not the only thing pgdq knows about your dump — it also records the
+Size is not the only thing pgdt knows about your dump — it also records the
 file's modification time when it writes the cache. By default that time is
 **advisory**: a dump that was copied to another machine, restored from backup
 or simply `touch`ed still has the same bytes, and refusing to read it would be
@@ -254,7 +254,7 @@ genuinely should not have moved. It takes a comma-separated selection, and the
 flag on its own means `time,location`:
 
 ```sh
-pgdq query --source mydump.sql --table public.widgets --strict-identity=time
+pgdt query --source mydump.sql --table public.widgets --strict-identity=time
 ```
 
 - **`time`** binds the modification signal: a local file's modification time,
@@ -275,18 +275,18 @@ named, then the cache, what failed and the two modification times it compared
 (seconds and nanoseconds since the Unix epoch, which `date -d @<seconds>` reads
 back), which is more than the diagnostic says. The dump's name leads it because
 a cache's own is not always enough — over HTTP the cache is named after the
-URL's last segment, so `mydump.dqcache` does not say which `mydump` asked for
+URL's last segment, so `mydump.dtcache` does not say which `mydump` asked for
 it. It does need a source to ask about: cache-only
 `info`, with no `--source`, is answering from the cache alone and there is no
 identity there to bind, so the flag is refused as a usage error.
 
-**A file that changes while pgdq is reading it stops the run**, and `none` is
+**A file that changes while pgdt is reading it stops the run**, and `none` is
 the only thing that turns that off.
 That is a different question from the one above: between runs, a moved file is
 usually the same bytes in a new place, but *during* a run, bytes changing
 underneath a read that has already returned some of them cannot produce a right
 answer — the map or the rows would be mixed from two versions of the file. So
-pgdq checks as it banks the cache, and once more when the run finishes, and
+pgdt checks as it banks the cache, and once more when the run finishes, and
 stops if the file moved. **Over HTTP the server does the checking**, on every
 request: each ranged GET names the version the run opened on — its `ETag`, or
 its `Last-Modified` where it sent no tag — so an object rewritten mid-scan is
@@ -295,7 +295,7 @@ server that sends neither is read unpinned, there being nothing to name, and
 such a run has no in-flight check at all.
 
 ```
-$ pgdq parse --source mydump.sql
+$ pgdt parse --source mydump.sql
 Error: mydump.sql: the dump changed while it was being read — its stored size went from 4096 to 8192 byte(s) — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or pass `--strict-identity=none` to read it anyway
 ```
 
@@ -306,7 +306,7 @@ and is left exactly as it is. Re-run once the file has settled, or pass
 `--strict-identity=none` to get a warning instead of a stop.
 
 A dump replaced by *rename* — the usual way a pipeline publishes a new one — is
-not this case: pgdq goes on reading the file it opened, finishes the run it
+not this case: pgdt goes on reading the file it opened, finishes the run it
 started, and the new file is picked up by the next one.
 
 ### `--chunk-size`: you almost certainly do not need it
@@ -362,7 +362,7 @@ find a size that beats 1 MiB on it, that is worth reporting.
 
 ### `--max-line-bytes`: a dump holding very large values
 
-One row of a `COPY` block is one line of the file, and pgdq holds a line whole
+One row of a `COPY` block is one line of the file, and pgdt holds a line whole
 while it scans it. So that a malformed file cannot grow that without bound,
 `parse` and `query` refuse a line longer than 64 MiB, with an error naming the
 byte offset it starts at. A dump that really does hold a value that large — a
@@ -370,8 +370,8 @@ byte offset it starts at. A dump that really does hold a value that large — a
 limit on both commands:
 
 ```sh
-pgdq parse --source big.sql --max-line-bytes 1073741824
-pgdq query --source big.sql --table public.documents --max-line-bytes 1073741824
+pgdt parse --source big.sql --max-line-bytes 1073741824
+pgdt query --source big.sql --table public.documents --max-line-bytes 1073741824
 ```
 
 The limit is what one row may cost in memory, so raise it to what the file
@@ -386,7 +386,7 @@ table's data — a **row group**, one mebibyte of it, doubled for a table whose
 data would take more than 4,096 groups until it takes no more, doubled
 again for a table whose rows are wide, and halved for one too dense for a
 stated maximum (both below) — the number of
-rows, each column's number of NULLs, and, where pgdq compares a column's values
+rows, each column's number of NULLs, and, where pgdt compares a column's values
 exactly, its least and greatest value and its distinct values (up to 64, none
 longer than 256 bytes; past either, that group records no distinct values for
 the column).
@@ -400,11 +400,11 @@ as they read, and record exactly what one worker would. `--statistics none`
 turns it off:
 
 ```sh
-pgdq parse --source big.sql --statistics none                        # nothing gathered
-pgdq parse --source big.sql --statistics public.orders,public.items.sku
-pgdq parse --source big.sql --statistics-group-size 65536            # finer groups
-pgdq parse --source big.sql --statistics-min-rows 4096               # fewer, fuller groups
-pgdq parse --source big.sql --statistics-max-rows 4096               # more, emptier groups
+pgdt parse --source big.sql --statistics none                        # nothing gathered
+pgdt parse --source big.sql --statistics public.orders,public.items.sku
+pgdt parse --source big.sql --statistics-group-size 65536            # finer groups
+pgdt parse --source big.sql --statistics-min-rows 4096               # fewer, fuller groups
+pgdt parse --source big.sql --statistics-max-rows 4096               # more, emptier groups
 ```
 
 A selection is a comma-separated list of tables (`schema.table`, or a bare
@@ -473,7 +473,7 @@ the cache:
 ```
 
 `bytes=` is what the statistics held when `parse` finished and `peak_bytes=`
-the most they held at once, counted as the sizes pgdq asked the allocator for
+the most they held at once, counted as the sizes pgdt asked the allocator for
 — the statistics alone, not everything the process holds. The rest are the
 parts of it, each giving its own peak, reached at its own moment, so they do not
 add up to `peak_bytes=`:
@@ -492,7 +492,7 @@ A `parse` with no statistics to hold — `--statistics none` over a cache holdin
 none — prints no such line, and `query` never prints one.
 
 **A table whose statistics will not fit the memory you allowed is skipped, not
-gathered badly, and pgdq says which.** What the statistics of one run may hold
+gathered badly, and pgdt says which.** What the statistics of one run may hold
 is what the allowance leaves once the workers and the fifth left free are paid
 for ("`--jobs` and `--memory`" below), and the line naming it is on the
 `resolved the arrangement` line as `statistics_bytes=`. A `COPY` block that
@@ -560,8 +560,8 @@ has stretches skipped by what they held before, and may lose rows it holds now
 `parse` and `query` take two more numbers: how many workers to ask for, and how
 much memory the process may hold.
 
-**`--memory <bytes>` is how much memory pgdq may hold resident — the number you
-would give the container. Left unstated, pgdq reads the memory limit it is
+**`--memory <bytes>` is how much memory pgdt may hold resident — the number you
+would give the container. Left unstated, pgdt reads the memory limit it is
 actually running under.** A number you type replaces what was discovered and is
 carved up in exactly the same way, so the two are one setting reached two ways:
 
@@ -571,7 +571,7 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   every `memory_bytes=` on stderr names.
 - **The worker count is then held so that a fifth of the whole allowance stays
   unspent**, because what kills a container is one run's peak.
-- **pgdq takes inside that what the *file* asks for**, not the whole of it —
+- **pgdt takes inside that what the *file* asks for**, not the whole of it —
   one reader's worth for each worker it would run.
 - **What is left under that fifth is what a gathering `parse`'s statistics may
   hold**, and a table whose statistics will not fit it is skipped rather than
@@ -579,7 +579,7 @@ carved up in exactly the same way, so the two are one setting reached two ways:
   above. It is the `statistics_bytes=` on the `resolved the arrangement` line.
 
 So `--memory 1073741824` in a 1 GiB container asks for exactly what that
-container already told pgdq, and the read-buffer budget that follows is
+container already told pgdt, and the read-buffer budget that follows is
 640 MiB at most. A stated allowance is not a promise of extra room: it is the
 same carve, which is what makes it a number an operator can size a container
 from.
@@ -618,18 +618,18 @@ so raising it works at any worker count and you do not have to ask for a second
 worker to make it count. If you do not have the memory, nothing is wrong —
 the file reads fine, just with more decoding on backward reads.
 
-**Where the default comes from, when you state nothing.** pgdq reads the
+**Where the default comes from, when you state nothing.** pgdt reads the
 cgroup limit a container or a systemd unit sets, taking the smallest that
 binds, including limits set above you that your own cgroup does not show, and
 carves it exactly as above. So a container given 512 MiB has 128 MiB to read
 inside, and one given 3 GiB has 2.625 GiB, without you restating on the
 command line what you already told the orchestrator.
 
-**That number is a ceiling, not the budget.** What pgdq takes inside it is what
+**That number is a ceiling, not the budget.** What pgdt takes inside it is what
 the *file* asks for — one reader's worth for each worker it would run, which is
 about 1.3 GiB for a 24 MiB-block `.xz` on a 24-core host, so that file in the
 3 GiB container reads at about 1.3 GiB and not at 2.625. **A plain dump asks
-for nothing of its own and gets the 64 MiB pgdq has always used**, or the
+for nothing of its own and gets the 64 MiB pgdt has always used**, or the
 ceiling where that is smaller — and that is true of a stated allowance as much
 as a discovered limit, so `--memory` does not buy a plain dump larger read
 buffers. `--chunk-size` is what changes what a plain read holds. And where the
@@ -641,7 +641,7 @@ not the 140 two of them do, so it reads a block at a time with a single worker
 and a budget of 106 MiB — and the run says as much before it starts (below,
 "Status on stderr").
 
-**The fifth left free is a second thing the worker count answers to.** pgdq
+**The fifth left free is a second thing the worker count answers to.** pgdt
 takes the largest worker count whose predicted total — the readers' own
 buffers, plus 256 MiB for everything a scan holds outside them — still fits in
 four fifths of the allowance, and reads with that many. In a 1 GiB container a
@@ -659,11 +659,11 @@ force, so raising the number raises both.
 
 Two things follow, and both are deliberate. **A very small allowance gets a
 very small budget rather than a floor**: at 384 MiB or less there is nothing
-left after the reserve, and pgdq reads compressed input through the streaming decoder and
+left after the reserve, and pgdt reads compressed input through the streaming decoder and
 plain input a chunk at a time, which is correct and slower. `query` says so on
 stderr when it happens, naming the budget in force beside what one reader of
 that file holds, so a slow run inside a tight container is never silent about
-why it is slow. And **where no limit is set at all**, pgdq does not size itself
+why it is slow. And **where no limit is set at all**, pgdt does not size itself
 from the machine's RAM: it takes what the file asks for exactly as above, held
 under half of what the machine reports as available — half rather than all
 because that figure is an estimate two processes reading at once would each see
@@ -672,7 +672,7 @@ the whole of.
 If that is more than you want a flagless run to take, state `--memory`; a
 number you type wins over anything discovered, in both directions.
 
-**`--jobs <n>` is how many workers pgdq may ask for. Left unstated, the file
+**`--jobs <n>` is how many workers pgdt may ask for. Left unstated, the file
 decides.** A plain (uncompressed) dump reads serially: on every disk we have
 measured, a single worker already reads such a dump at the speed the disk
 delivers the bytes, and we have no measurement of several workers doing better
@@ -683,7 +683,7 @@ given — the machine's cores, or fewer where a container quota says so, since
 decompression is the part of the work that more cores finish sooner, from four
 of them up: two workers read a compressed dump no faster than one — and fewer
 still where the file itself has fewer blocks than that:
-pgdq splits a compressed file at its block boundaries, so a file with six
+pgdt splits a compressed file at its block boundaries, so a file with six
 blocks reads with at most six workers however wide the machine — and with
 fewer on a machine narrower than that, the count being the smaller of the two. **How many of those workers actually read is then bounded by
 `--memory`**: one reader of an ordinary 24 MiB-block file wants about
@@ -749,14 +749,14 @@ can.
 > affords, `query` says so on stderr, naming the terms it was charged and the
 > budget that declined them, so you know which number to raise.
 
-For `parse` it cuts the *inside* of a `COPY` block up. Once pgdq has read a
+For `parse` it cuts the *inside* of a `COPY` block up. Once pgdt has read a
 block's `COPY … FROM stdin;` header it knows everything until the block's end
 marker is rows, so it hands that stretch out to this many readers at once and
 folds their answers back into the one result — the same block list, the same
 row counts, the same cache, whatever you set.
 
 **Raise it for a dump of a few large tables; leave it at `--jobs 1` for a dump
-of many small ones.** pgdq cannot know where a block ends until it finds the
+of many small ones.** pgdt cannot know where a block ends until it finds the
 end marker, so each reader is given a stretch sized for a large block. Where
 the block really is that large, the readers share it. Where it is much smaller,
 they read past its end and that work is thrown away — and every reader you add
@@ -785,12 +785,12 @@ with no room to hold what they decode buys less than either number suggests.
 > than a 128 MiB budget and a few hundred more than a 512 MiB one. The number
 > to raise when a compressed scan is short of memory is still
 > `--memory`, since it is what decides how many readers there are;
-> raising `--jobs` past what it affords adds workers pgdq will not use, and
+> raising `--jobs` past what it affords adds workers pgdt will not use, and
 > blocks it will keep for them.
 
 > **Under a container memory limit, leave room for the allocator as well.**
 > glibc gives each thread that allocates its own memory arena, which it keeps
-> rather than returns. pgdq runs a thread for each piece of work it has in
+> rather than returns. pgdt runs a thread for each piece of work it has in
 > flight, so raising `--jobs` raises the arena count with it. So size a cgroup
 > at what `--memory` names rather than at the read-buffer budget: the reserve
 > and the fifth are exactly what the difference between the two is for, and
@@ -822,7 +822,7 @@ unfortunate, because it is also the shape that costs the most: about five times
 a `COPY` block's CPU per byte.
 
 A plain (uncompressed) file *is* split, but do not expect much from it, and it
-is the shape where the number you state is not the number you get. pgdq's read
+is the shape where the number you state is not the number you get. pgdt's read
 buffers are pooled four deep on such a file, and a worker needs one to read
 with, so a fifth worker waits for a fourth to finish: above `--jobs 4` you get
 four. What that ceiling costs has not been measured on its own; on every disk
@@ -841,7 +841,7 @@ it lines up with anything else read off the same clock — a `dmesg` entry, a
 cgroup sample, an orchestrator's own log:
 
 ```
-$ pgdq parse --source koji.dump.xz
+$ pgdt parse --source koji.dump.xz
 2026-07-23T14:02:11.104297118Z  INFO no memory limit found: nothing is enforcing one on this process jobs_flag=(not stated) memory_flag=(not stated)
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
@@ -875,11 +875,11 @@ rather than one because half of the answer needs the file and half does not.
 The **first** comes before anything is read, so a mistyped flag is confirmed
 straight away rather than after an `.xz` file's seek-table walk — which on the
 dump above is the minute and a half between it and the next pair. It opens with
-which of two situations pgdq found itself in: `running inside a stated memory
+which of two situations pgdt found itself in: `running inside a stated memory
 allocation`, naming the limit in `limit_bytes` and the file that set it in
 `limit_read_from`, or `no memory limit found: nothing is enforcing one on this
 process`. That distinction is the whole reason the pair exists — under an
-allocation somebody set, pgdq fills it; with nothing set, pgdq is a guest on a
+allocation somebody set, pgdt fills it; with nothing set, pgdt is a guest on a
 machine nobody promised it and stays inside half of what the kernel reports
 free, which can quietly buy fewer readers than the file could have used. Beside
 it are your two flags exactly as typed — `jobs_flag` and `memory_flag`,
@@ -989,7 +989,7 @@ There is no flag yet to raise, lower, or silence this output — a `-vvv` and a
 ## `info`: reporting what is known
 
 ```sh
-pgdq info --source mydump.sql
+pgdt info --source mydump.sql
 ```
 
 ```
@@ -1075,8 +1075,8 @@ user-defined types: 7
 That is every type, not only the enums, and each line carries whatever its
 kind has to say: an enum's labels, a domain's base type and any `COLLATE`
 clause, a composite's fields, a range's subtype. The two `pg_dump` never
-writes but pgdq can still meet are spelled out rather than left blank —
-`composite: (fields not parsed)` for a body pgdq could not read (that is the
+writes but pgdt can still meet are spelled out rather than left blank —
+`composite: (fields not parsed)` for a body pgdt could not read (that is the
 one case that changes how a column of the type resolves), and `range (subtype
 not parsed)`. A C-level type says `base type` or `shell type` because that is
 genuinely all the dump records about it: the *server* knows how to parse its
@@ -1129,7 +1129,7 @@ statistics:
   then its **order**: `ascending`, `descending` or `unsorted` row by row
   through each block (a column whose blocks differ says how many are which),
   followed by how many groups carry a least and greatest value — or `no bounds`
-  where pgdq does not order the column's values exactly, text under a
+  where pgdt does not order the column's values exactly, text under a
   collation other than `C` for one. Last, how many groups carry a list of
   distinct values, or `no dictionary` where it does not compare them exactly.
   A group holding only NULLs carries no bounds. `not gathered` is a column a
@@ -1146,12 +1146,12 @@ are five different messages because they mean five different things:
 | Message | What happened |
 |---|---|
 | `no cache at …` | You have not parsed this file yet. |
-| `… is not a pgdq cache` | Something else is at that path — or a cache from a pgdq build whose format changed, which usually reads this way rather than as the next row. Check `--dqcache`. |
-| `… was written by a different pgdq build` | The cache's format version is not this build's. Pre-1.0 this happens; nothing is migrated. |
+| `… is not a pgdt cache` | Something else is at that path — or a cache from a pgdt build whose format changed, which usually reads this way rather than as the next row. Check `--dtcache`. |
+| `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
 | `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round. |
 
-**The first three send you straight to `pgdq parse`; the last two do not.** The
+**The first three send you straight to `pgdt parse`; the last two do not.** The
 split is whether the file at the cache path is worth keeping. For the first
 three it is not — there is no cache there, or what is there is not one, or it is
 one this build cannot read — so `parse` simply scans over it.
@@ -1164,14 +1164,14 @@ found, because a cache that does not describe this file is a valid index for
 a different cache path** — and `parse` builds a fresh one once you have taken
 either. There is no flag that overrides this.
 
-`--dqcache none`, which for `query` means "ignore the cache", is rejected on
+`--dtcache none`, which for `query` means "ignore the cache", is rejected on
 `info` — with nothing to read and no scan to fall back on, there would be
 nothing left to report. If you reached for it because the directory beside the
 dump is read-only, put the cache somewhere else instead:
 
 ```sh
-pgdq parse --source /readonly/dump.sql --dqcache ~/dump.dqcache
-pgdq info  --source /readonly/dump.sql --dqcache ~/dump.dqcache
+pgdt parse --source /readonly/dump.sql --dtcache ~/dump.dtcache
+pgdt info  --source /readonly/dump.sql --dtcache ~/dump.dtcache
 ```
 
 ## Reading a partial answer
@@ -1215,7 +1215,7 @@ publication, comment block, and stretch of framing) is there too; `--map`
 lists all of it, in file order, instead of just the tables:
 
 ```
-$ pgdq info --source mydump.sql --map
+$ pgdt info --source mydump.sql --map
 Scan completion: 100% (48213911 bytes)
 
 [0, 35) framing
@@ -1229,7 +1229,7 @@ Scan completion: 100% (48213911 bytes)
 312 span(s)
 ```
 
-Every byte of the file shows up in exactly one line — that's a property pgdq
+Every byte of the file shows up in exactly one line — that's a property pgdt
 checks on every scan, not just a description of the output. Reach for
 `--map` when you want to see what's actually in a dump beyond its tables (an
 unusually large comment block, a publication you didn't know about, where a
@@ -1241,18 +1241,18 @@ A dump run with `--inserts`/`--column-inserts` shows a table's data as an
 `INSERT run` entry instead of a `COPY` block — same idea, a table's rows
 merged into one line, just written differently by `pg_dump`. A dump
 containing large objects (`lo_create`/`lowrite` calls, not `COPY` data) shows
-their whole region as a single `large objects` entry — pgdq accounts for the
+their whole region as a single `large objects` entry — pgdt accounts for the
 bytes but does not read large-object contents; see
 [`docs/design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)'s
 "Large objects (BLOBs)" row if you need to know why.
 
 ## Scripting against the output: `--json`
 
-`pgdq info --json` prints everything as one compact JSON object — a single
+`pgdt info --json` prints everything as one compact JSON object — a single
 line — on stdout instead of formatted text:
 
 ```sh
-pgdq info --source mydump.sql --json | jq '.spans | length'
+pgdt info --source mydump.sql --json | jq '.spans | length'
 ```
 
 It is the whole cache file. Beside the file map is what the cache records about
@@ -1282,7 +1282,7 @@ carries three things the text views state differently:
   get an answer for `public.mood[]` as well as for `public.mood`.
 
   Records are keyed by **block**, not by table — one table's data can occupy
-  several `COPY` blocks, and pgdq does not yet have a rule for merging blocks
+  several `COPY` blocks, and pgdt does not yet have a rule for merging blocks
   that disagree, so grouping them is left to you.
 
 The file map's own `COPY` blocks carry **`statistics`**, exactly as the cache
@@ -1304,35 +1304,35 @@ how a script tells a table nobody asked statistics for from one that asked and
 was refused the memory, and the number in it is the one to parse with more
 than.
 
-**This is a raw dump of pgdq's internal representation, not a designed API.**
+**This is a raw dump of pgdt's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field
 for this shape (`format_version` versions the cache file, not the JSON), and no
 attempt to make the shape convenient — field names, nesting, and what's
 included can all change as the underlying code does. Reach for it when you need
 something the text views don't show (or don't show in a shape you can parse),
-and expect to adjust your `jq`/script when you upgrade pgdq. `--json` can't be
+and expect to adjust your `jq`/script when you upgrade pgdt. `--json` can't be
 combined with `--detail` or `--map`, since the full object already carries
 everything those two format for a human.
 
 ## Inspecting a cache with the dump gone: no `--source`
 
-`pgdq info` can answer entirely from a saved `.dqcache` file, with no dump
+`pgdt info` can answer entirely from a saved `.dtcache` file, with no dump
 file in reach at all — deleted, moved elsewhere, or never local to this
-machine. Drop `--source` and pass `--dqcache <path>` on its own:
+machine. Drop `--source` and pass `--dtcache <path>` on its own:
 
 ```sh
-pgdq info --dqcache mydump.sql.dqcache
+pgdt info --dtcache mydump.sql.dtcache
 ```
 
 This works for the default listing, `--map` and `--json` alike — whichever one
 you'd run against the live file, partial caches included. It's for exactly the
-sysadmin-facing use case this whole page is about: keep a folder of `.dqcache`
+sysadmin-facing use case this whole page is about: keep a folder of `.dtcache`
 files from dumps you no longer keep around, and still be able to answer "what
 tables did this have," "which roles did it need," "did the schema change since
 last time," without the multi-hundred-gigabyte file itself.
 
 The one thing this form cannot do is check the cache against anything. With
-`--source`, pgdq compares the file's size against the cache's and tells you if
+`--source`, pgdt compares the file's size against the cache's and tells you if
 the file changed; with no `--source` there is nothing to compare, so every
 cache-only answer carries a `diagnostics:` line saying it is unverified,
 historical data from whenever the cache was last saved.

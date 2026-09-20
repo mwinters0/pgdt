@@ -237,7 +237,7 @@ CREATE TYPE public.collated_pair AS (plain text, c text COLLATE "C");
 CREATE COLLATION public.c_collation FROM "C";
 
 -- The one ICU collation in the tree, and the only one whose dump text states
--- something pgdq acts on: `deterministic = false` is emitted unconditionally
+-- something pgdt acts on: `deterministic = false` is emitted unconditionally
 -- wherever the catalog says so (I42), so v_nd below is a column whose *equality*
 -- is knowably not a byte comparison. A non-deterministic collation is ICU-only
 -- -- the server refuses the option for every other provider -- so this shape

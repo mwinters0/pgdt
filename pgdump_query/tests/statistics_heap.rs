@@ -7,7 +7,7 @@
 //! be the bytes it reports — for statistics a pass gathered and for statistics
 //! decoded from a cache, whose vectors come back at other capacities. What the
 //! account charges an observer still gathering is reconciled end to end by
-//! `pgdump_query-cli/tests/statistics_account.rs`, on the instrument build.
+//! `pgdt/tests/statistics_account.rs`, on the instrument build.
 //!
 //! **This binary installs a counting global allocator**, per thread, which is
 //! why it is a test file of its own: a drop on the test thread frees what it

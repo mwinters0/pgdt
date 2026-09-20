@@ -16,11 +16,11 @@ each **value**, not of the declared type, so we take it from the values
 themselves as the file is read rather than guessing from the DDL. That happens
 on any query — see "Arrays, composites, ranges, and multiranges" below.
 
-You can see exactly what happened to each column: `pgdq info --detail` prints
+You can see exactly what happened to each column: `pgdt info --detail` prints
 one line per column, giving the Arrow type it resolved to — or, for a column
 that came back as a string, the reason. A column that is a string because
 that is simply what it is (`text`, `json`, `inet`) gets no line, since
-`Utf8View` is the answer that carries no information. `pgdq info --json`
+`Utf8View` is the answer that carries no information. `pgdt info --json`
 carries the same per-column outcomes in machine-readable form (see
 [dump inspection](dump-inspection.md), "Scripting against the output"), and the
 library exposes them on the resolved schema
@@ -34,10 +34,10 @@ public.t_composite (3 rows)
     v_points: List(Struct("x": Int32, "y": Utf8View))
 ```
 
-`pgdq query`'s text output is identical whether typing is on or off: every
+`pgdt query`'s text output is identical whether typing is on or off: every
 value is rendered back to the same PostgreSQL text `pg_dump` itself would
 have written, so switching `--schema-mode` never changes what shows up on
-your terminal or in a pipeline downstream — only whether `pgdq info` (and a
+your terminal or in a pipeline downstream — only whether `pgdt info` (and a
 caller reading `RecordBatch` types directly) sees a narrower Arrow type.
 
 ## What we can and cannot recover from a dump
@@ -76,7 +76,7 @@ months, days and a time part as three independent fields — exactly what
 PostgreSQL stores, so nothing is flattened into a single duration. The text it
 is read from is always in PostgreSQL's `postgres` interval style
 (`1 year 2 mons 3 days 04:05:06`), because `pg_dump` pins the setting when it
-reads the table, and `pgdq query` writes that same text back.
+reads the table, and `pgdt query` writes that same text back.
 
 Two kinds of value have no place in the Arrow type, and a column holding one
 fails to build the same way a `date` holding `infinity` does:
@@ -99,8 +99,8 @@ intervals, so `1 mon`, `30 days` and `720:00:00` are one value, and all three
 select the same rows:
 
 ```sh
-pgdq query --source dump.sql --table public.jobs --filter 'ran_for>1 mon'
-pgdq query --source dump.sql --table public.jobs --filter 'ran_for>720:00:00'
+pgdt query --source dump.sql --table public.jobs --filter 'ran_for>1 mon'
+pgdt query --source dump.sql --table public.jobs --filter 'ran_for>720:00:00'
 ```
 
 ### `numeric` with no precision is a string, but it still filters as a number
@@ -161,11 +161,11 @@ like this:
 
 ```sh
 # selects the -infinity row, prints it, and succeeds — v_date is not built
-pgdq query --source dump.sql --table public.t_date \
+pgdt query --source dump.sql --table public.t_date \
   --filter 'v_date<2020-01-01' --column id
 
 # selects the same row and then fails building the Date32 column for it
-pgdq query --source dump.sql --table public.t_date --filter 'v_date<2020-01-01'
+pgdt query --source dump.sql --table public.t_date --filter 'v_date<2020-01-01'
 # Error: public.t_date.v_date at row offset …: value `-infinity` does not
 # parse as its mapped type `date` — use --schema-mode strings to read this
 # column verbatim
@@ -205,13 +205,13 @@ Only `C` and `POSIX` from `pg_catalog` are answered exactly, by name. A
 collation of your own that happens to be bytewise — `CREATE COLLATION mycoll
 FROM "C"` — is still warned about, even though the dump that declares it says
 `locale = 'C'`: the rows are right and the warning is one you can ignore. The
-alternative would be pgdq deciding what a collation *does* from something other
+alternative would be pgdt deciding what a collation *does* from something other
 than its name, and getting that wrong silently returns the wrong rows.
 
 A filter that orders such a column says so, once per query, on stderr:
 
 ```sh
-pgdq query --source dump.sql --table public.people --filter 'name<B'
+pgdt query --source dump.sql --table public.people --filter 'name<B'
 # warning: `name` (text) is compared bytewise: the column declares no COLLATE
 # clause, so its collation is the database's, which a plain dump does not
 # record — this matches the server only if that collation is C or POSIX
@@ -228,11 +228,11 @@ asks `name<B` and `name=alpha` warns once.
 ICU one and which the dump states outright. Such a collation can call two
 differently spelled strings *equal* — that is what people create one for, a
 case- or accent-insensitive column — so `=` on a column of it returns fewer
-rows here than on the server. pgdq reads the `CREATE COLLATION` and says so,
+rows here than on the server. pgdt reads the `CREATE COLLATION` and says so,
 under `=` and `!=` as well as under the ordering operators:
 
 ```sh
-pgdq query --source dump.sql --table public.people --filter 'name=alpha'
+pgdt query --source dump.sql --table public.people --filter 'name=alpha'
 # warning: `name` (text) is compared bytewise: the column declares a collation
 # this dump declares non-deterministic, so PostgreSQL neither orders nor
 # compares it byte for byte — two values spelled differently can be equal to
@@ -274,11 +274,11 @@ server orders them:
 in PostgreSQL's *output* spelling only, which is what every value in the file
 is already in. So `--filter 'ran_for>1 mon'` works and `--filter 'ran_for>1
 month'` does not, and `--filter 'host>08:00:2b:01:02:03'` works where
-`08-00-2b-01-02-03` does not — the server accepts both, pgdq accepts the one
+`08-00-2b-01-02-03` does not — the server accepts both, pgdt accepts the one
 a dump can contain. A spelling it will not read is refused by name:
 
 ```sh
-pgdq query --source dump.sql --table public.jobs --filter 'ran_for>1 month'
+pgdt query --source dump.sql --table public.jobs --filter 'ran_for>1 month'
 # error: filter value `1 month` for `ran_for > ...` does not parse as the
 # column's declared type `interval`
 ```
@@ -310,7 +310,7 @@ comma.
 **The caveat is collation, and it is the text caveat one level down.**
 PostgreSQL orders every string *inside* a `jsonb` document — values and object
 keys alike — by the database's collation, which a plain dump does not record.
-So pgdq compares those bytewise, exactly as it does a bare `text` column, and
+So pgdt compares those bytewise, exactly as it does a bare `text` column, and
 says so once on stderr — for an *ordering* filter. `=` and `!=` on a `jsonb`
 column are exact, for the same reason they are on a text one. A document with
 no strings in it, or one whose comparison is settled before a string is
@@ -341,7 +341,7 @@ is read, instead of quietly matching nothing — and the refusal says what the
 column *does* read:
 
 ```
-$ pgdq query --source dump.sql --table public.t --filter 'v_flag=true'
+$ pgdt query --source dump.sql --table public.t --filter 'v_flag=true'
 Error: filter value `true` for `v_flag = ...` does not parse as the column's declared type `boolean`, which is written `t` or `f`
 ```
 
@@ -367,8 +367,8 @@ answered.
 A term is `<column><operator><value>`, and it can be written either way round:
 
 ```sh
-pgdq query --source dump.sql --table public.widgets --filter 'name=alpha'
-pgdq query --source dump.sql --table public.widgets --filter 'name = "alpha"'
+pgdt query --source dump.sql --table public.widgets --filter 'name=alpha'
+pgdt query --source dump.sql --table public.widgets --filter 'name = "alpha"'
 ```
 
 Spaces around the operator are not part of the value — `name = alpha` asks for
@@ -428,9 +428,9 @@ grouping — there is `--where`, which takes one expression over exactly the
 terms above:
 
 ```sh
-pgdq query --source dump.sql --table public.widgets \
+pgdt query --source dump.sql --table public.widgets \
   --where 'name=alpha or (name=beta and is_active=t)'
-pgdq query --source dump.sql --table public.widgets --where 'not name=alpha'
+pgdt query --source dump.sql --table public.widgets --where 'not name=alpha'
 ```
 
 `NOT` binds tighter than `AND`, which binds tighter than `OR`; parens
@@ -483,13 +483,13 @@ though the dump never declares it. Nesting composes without special cases:
 a composite array is `List(Struct(…))`, a composite with a `text[]` field is
 `Struct("label": Utf8View, "tags": List(Utf8View))`, and an array of ranges is
 `List(Range<…>)` — the same Arrow type a multirange gets, since they are the
-same shape; the declared PostgreSQL type on the same `pgdq info` line is what
+same shape; the declared PostgreSQL type on the same `pgdt info` line is what
 tells them apart.
 
 However an array column was declared, it is the same type: PostgreSQL accepts
 `integer[]`, `integer[3]`, `integer[][]`, `integer[3][4]`, `integer ARRAY` and
 `integer ARRAY[4]`, discards the bounds and the dimension count, and keeps
-"array of `integer`". pgdq reads all six that way. `pg_dump` only ever writes
+"array of `integer`". pgdt reads all six that way. `pg_dump` only ever writes
 the first, so this matters for SQL written by hand or by another tool; what
 shape the *values* have is a separate question, answered under "Its arrays do
 not all have the same shape" below.
@@ -507,13 +507,13 @@ and an **empty** vector as an empty field. So a filter on such a column is
 written the same way:
 
 ```sh
-pgdq query --source dump.sql --table pg_index --filter 'indkey=1 2 3'
+pgdt query --source dump.sql --table pg_index --filter 'indkey=1 2 3'
 ```
 
 It compares element by element, exactly as an array does — so `2` is *less
 than* `10`, where the two strings sort the other way round.
 
-**A range is five fields**, and `pgdq info` prints them as `Range<T>` because
+**A range is five fields**, and `pgdt info` prints them as `Range<T>` because
 they are the same five for every range column in every dump:
 
 | Field | Type | Meaning |
@@ -575,7 +575,7 @@ written. The same rule refuses a padded scalar: `--filter 'n=1'` is fine and
 one level down:
 
 ```sh
-pgdq query --source dump.sql --table public.t --filter 'tags<{b}'
+pgdt query --source dump.sql --table public.t --filter 'tags<{b}'
 # warning: `tags[]` (text) is compared bytewise: the column declares no COLLATE
 # clause, so its collation is the database's, which a plain dump does not
 # record — this matches the server only if that collation is C or POSIX
@@ -589,7 +589,7 @@ the server refuses it too — `json` has no comparison in PostgreSQL, so a
 `json[]` column has none either:
 
 ```
-$ pgdq query --source dump.sql --table public.t --filter 'docs<{}'
+$ pgdt query --source dump.sql --table public.t --filter 'docs<{}'
 Error: `<` on column `docs` in the COPY block at offset 1234: the column is
 nested and `[]` inside it is `json`, which has no order here — PostgreSQL
 refuses the same comparison, since a container is ordered by its element type's
@@ -602,7 +602,7 @@ for a `json[]` either, so a text comparison is an answer the server does not
 have rather than a weaker one:
 
 ```sh
-pgdq query --source dump.sql --table public.t --filter 'docs={}'
+pgdt query --source dump.sql --table public.t --filter 'docs={}'
 # warning: `docs[]` (json) is compared bytewise: PostgreSQL defines no
 # comparison for this type at all — no equality, no ordering, no operator class
 # — so this comparison is one the server does not have
@@ -612,7 +612,7 @@ pgdq query --source dump.sql --table public.t --filter 'docs={}'
 rewrites it.** PostgreSQL does not store a range as you write it: for
 `int4range`, `int8range` and `daterange` it shifts a bound to the next value so
 that the range is half-open, and it collapses a range holding nothing to
-`empty`. pgdq does the same, so every spelling of one value matches:
+`empty`. pgdt does the same, so every spelling of one value matches:
 
 ```sh
 --filter "span='[1,11)'"   # all four match the same rows —
@@ -630,11 +630,11 @@ normalized in the same spirit: its
 members are sorted, empty ones dropped, and any two that overlap or touch
 merged, so `{[5,10),[1,5)}` and `{[1,10)}` are one value.
 
-A range whose lower bound is above its upper is not a value at all, and pgdq
+A range whose lower bound is above its upper is not a value at all, and pgdt
 refuses the literal rather than matching nothing:
 
 ```
-$ pgdq query --source dump.sql --table public.t --filter "span='[10,1)'"
+$ pgdt query --source dump.sql --table public.t --filter "span='[10,1)'"
 Error: `=` on column `span`: `[10,1)` is not a value of type `int4range` — it
 is read as a range literal — `[a,b)`, `empty`, a bound left empty for
 unbounded — whose lower bound is not above its upper …
@@ -643,12 +643,12 @@ unbounded — whose lower bound is not above its upper …
 **A range type of your own with a `canonical` parameter is refused, not
 guessed at.** That parameter names a function on your server that rewrites
 every value of the type before storing or comparing it, and no reader of a dump
-can run it — so `[1,10]` and `[1,11)` might be one value there or two, and pgdq
+can run it — so `[1,10]` and `[1,11)` might be one value there or two, and pgdt
 will not pretend to know which. A filter on such a column is refused under
 **every** operator, `=` and `!=` included, naming the type and the function:
 
 ```
-$ pgdq query --source dump.sql --table public.t --filter "span='[1,10]'"
+$ pgdt query --source dump.sql --table public.t --filter "span='[1,10]'"
 Error: `=` on column `span` in the COPY block at offset 1234: the range type
 `public.canonrange` declares a canonical function
 (`public.canonrange_canonical`), which PostgreSQL applies to every value of it
@@ -663,7 +663,7 @@ and `IS NULL`/`IS NOT NULL` still work, since they read no value. The column
 itself still comes back: only comparing it is refused. This is rare: a
 canonical function has to be written in C or in one of the server's internal
 languages, so in practice it comes from an extension or a hand-loaded module.
-`pgdq info --detail` names the parameter under the type, so you can see
+`pgdt info --detail` names the parameter under the type, so you can see
 whether a dump has one before you write a filter.
 
 #### Four ways one of these columns is still a string
@@ -676,14 +676,14 @@ whether a dump has one before you write a filter.
   inherits its base type's separator while recording nothing about it. Splitting
   such a literal on `,` would invent element boundaries that are not there, and
   the elements it recovered would be opaque text anyway, so the whole value
-  stays one string. `pgdq info --detail` reports this as `opaque element
+  stays one string. `pgdt info --detail` reports this as `opaque element
   type`.
 - **The array's element type is itself an array.** `CREATE DOMAIN intarr AS
   integer[]` and a column of `intarr[]` is legal, and PostgreSQL writes such a
   value one brace deep — `{"{1,2}","{3}"}`, each element an array literal in
   its own right, quoted — rather than as a two-dimensional array. So the
   literal's shape and the column's declared depth say different things, and we
-  decline the column rather than guess which. It comes back as text, and `pgdq
+  decline the column rather than guess which. It comes back as text, and `pgdt
   info --detail` reports `nested array element`. Unlike an opaque element
   type, nothing about this one is unknowable: it is a shape we have not chosen
   to represent, and the lossless array representation planned in the next
@@ -698,7 +698,7 @@ whether a dump has one before you write a filter.
   `{1,2}` in one row and `{{1,2},{3,4}}` in the next has no honest Arrow list
   type, and neither does one holding a value with an explicit lower bound
   (`[0:2]={7,8,9}`) — Arrow lists start at 0 and have nowhere to record an
-  index origin. Both come back as text, and `pgdq info --detail` reports
+  index origin. Both come back as text, and `pgdt info --detail` reports
   `varying array shape`.
 
   A structured representation that is lossless for *every* array — dimensions,
@@ -733,10 +733,10 @@ where `--schema-mode strings` is a whole-table one:
 
 ```sh
 # fails on v
-pgdq query --source dump.sql --table public.t_shipments
+pgdt query --source dump.sql --table public.t_shipments
 
 # succeeds: v is never decoded
-pgdq query --source dump.sql --table public.t_shipments --column id
+pgdt query --source dump.sql --table public.t_shipments --column id
 ```
 
 The error message does not mention this second remedy. Both work; which one
@@ -790,7 +790,7 @@ Error: filter value `furious` for `v_mood = ...` does not parse as the column's 
 ```
 
 A type declaring more than a dozen labels gets the first twelve and a count of
-the rest. `pgdq info --detail` lists an enum column's declared labels beneath
+the rest. `pgdt info --detail` lists an enum column's declared labels beneath
 it, in full, so you can read the spelling off the dump instead of guessing at
 it — and lists every enum type's labels once, up in the header,
 which is where to look for the ones no column of yours happens to use; see

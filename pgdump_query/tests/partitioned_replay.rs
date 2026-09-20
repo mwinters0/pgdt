@@ -404,7 +404,7 @@ async fn a_small_batch_size_flushes_at_a_piece_boundary_without_losing_a_row() {
 
 /// **The key a caller merges the sub-streams back on.** A `RecordBatch`
 /// carries no position, so `TableStream::batch_source_offset` is what
-/// `pgdq query` sorts one-batch-per-partition on
+/// `pgdt query` sorts one-batch-per-partition on
 /// (`docs/design/decisions.md`, "D51").
 ///
 /// The sub-streams are drained **round-robin**, which is the arrival order a

@@ -90,7 +90,7 @@ pub enum DiagnosticKind {
     /// (`docs/design/decisions.md`, "D31"). Always `Info` — zero is a normal, reported state (the map
     /// running in header-less degraded mode), not an error.
     TocCoverage { attributed: usize, spans: usize },
-    /// The index was loaded from a retained `.dqcache` with no live dump file
+    /// The index was loaded from a retained `.dtcache` with no live dump file
     /// to check it against (`docs/design/decisions.md`,
     /// "The compressed source and the cache") — unverified, there being no
     /// recorded size/mtime to compare. Pushed unconditionally by
@@ -123,7 +123,7 @@ impl Diagnostic {
     /// Public, unlike its siblings: a caller matching on
     /// [`crate::cache::CacheStatus`] itself rather than going through
     /// [`crate::cache::CacheMode::load`] still has to turn a
-    /// [`crate::cache::WeakIdentity::Differs`] into this warning. `pgdq info`
+    /// [`crate::cache::WeakIdentity::Differs`] into this warning. `pgdt info`
     /// is that caller: it reports what the cache holds, unless the selection
     /// it asked [`crate::cache::CacheMode::strict_identity_refusal`] about
     /// binds the signal.

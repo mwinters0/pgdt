@@ -21,7 +21,7 @@ figures entered from a sitting of their own after it, each standing in no
 published outside the sweep", below); `peak-rss`, which `rss-attribution` and
 `reserve` each borrow a run from, could not.
 `peak-rss`, `parallel-peak-rss`, `rss-attribution` and `reserve` are denominated
-in bytes rather than seconds; `xz-decode-scaling` times no `pgdq` at all, being
+in bytes rather than seconds; `xz-decode-scaling` times no `pgdt` at all, being
 a property of the decoder rather than of the read path.
 So no table here carries a partial-sitting note, and every number inside a
 table is its own sitting's; where prose sets an earlier sitting's reading beside
@@ -88,7 +88,7 @@ Eighteen standing rules for reading anything below:
   s** before the binary starts — three runs of a trivial command, opening the
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
   brace-free control is **0.457 s** timed by the container's own shell. So the
-  timed command is `bash -c 'time /pgdq …'`, whose
+  timed command is `bash -c 'time /pgdt …'`, whose
   timer resolves to 1 ms. This does not license running a figure outside the
   container to avoid the cost — the cgroup limit is part of the apparatus, and
   a difference of binaries is not measurable across two different ones.
@@ -127,7 +127,7 @@ Eighteen standing rules for reading anything below:
   reading times a one-worker process under the cap, and the one resident
   reading of a one-reader process under it — the `reserve` figure's mechanism
   leg, a flagless `.xz` `parse` that resolved one reader at `512m` and already
-  runs 2 arenas uncapped — moves −112 KiB. Whether `pgdq` should set a cap of
+  runs 2 arenas uncapped — moves −112 KiB. Whether `pgdt` should set a cap of
   its own is [`decisions.md`](decisions.md), "I/O, memory and parallelism"; the
   difference an operator wants is read **inside** a sitting instead, so the
   reserve figure carries an uncapped leg and a `MALLOC_ARENA_MAX=2` leg and
@@ -136,7 +136,7 @@ Eighteen standing rules for reading anything below:
   under the image's glibc ([`runtime-invariants.md`](runtime-invariants.md), "RT10"),
   which the blanket hardware sentence at the top of this section covers.
 - **A worker count is apparatus too, so every invocation states one.** A command
-  that says nothing measures whatever `pgdq --jobs` defaults to that day rather
+  that says nothing measures whatever `pgdt --jobs` defaults to that day rather
   than an arrangement anybody chose, and a moved default changes no command
   shape and gives `--stale` nothing to say, staleness meaning *re-take* and
   never *the apparatus moved underneath you*. So nothing
@@ -238,8 +238,8 @@ Eighteen standing rules for reading anything below:
   instruction count independently says. The control moving is the tell, so a
   bench group is worth having one.
 - **A mode difference and a per-column delta are CLI numbers, so neither sizes
-  a library change.** Every `query` figure here is a `pgdq query` figure, which
-  means `pgdq::print_batch` — the CLI turning each batch back into TSV — is
+  a library change.** Every `query` figure here is a `pgdt query` figure, which
+  means `pgdt::print_batch` — the CLI turning each batch back into TSV — is
   inside it, and it is not a rounding error: on the control **most of the
   `typed` − `strings` gap is still that one function** — 0.76 s of a 1.35 s
   gap — and a typed query spends **36.42%** of its user time there against a
@@ -414,24 +414,23 @@ numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
 
 **That binary is built by the harness, in the first second, and not looked up.**
-`target/release/pgdq` survives between sessions, so a preflight that asks only
+`target/release/pgdt` survives between sessions, so a preflight that asks only
 whether the file exists times whatever the last build left there while the
 session stamp names `git rev-parse HEAD` regardless — and the resulting sitting
 does not look lost: it emits a full table, a stamp naming a commit it did not
-execute, and a verdict. So `measure.py` runs `cargo build --release -p
-pgdump_query-cli` once per process before anything else, which costs about a
-second on a tree that has not moved. **Building it and refusing the census-off
-binary are the same rule**: what the census section refuses is a harness
-patching its *own subject*, which an unpatched build of the current tree is not.
-`PGDQ_MEASURE_BIN` pointed anywhere else
-builds nothing — that is the one path the build writes — and the binary is then
-the caller's. Only one figure's numbers can see a stale binary at all: a
-`reserve` sitting's resolved budgets fingerprint the charge model compiled into
-the binary
-([`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The gate
-sitting timed a binary three commits stale, and its verdict is about a library
-nobody ran"). A throughput table encodes no such fingerprint and would publish
-in silence.
+execute, and a verdict. So `measure.py` runs `cargo build --release -p pgdt`
+once per process before anything else, which costs about a second on a tree
+that has not moved. **Building it and refusing the census-off binary are the
+same rule**: what the census section refuses is a harness patching its *own
+subject*, which an unpatched build of the current tree is not.
+`PGDT_MEASURE_BIN` pointed anywhere else builds nothing — that is the one path
+the build writes — and the binary is then the caller's. Only one figure's
+numbers can see a stale binary at all: a `reserve` sitting's resolved budgets
+fingerprint the charge model compiled into the binary
+([`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The
+gate sitting timed a binary three commits stale, and its verdict is about a
+library nobody ran"). A throughput table encodes no such fingerprint and would
+publish in silence.
 
 **The worker count is in that line because it is stated rather than inherited**
 — `measure.SWEEP_JOBS`, carried by every shape `_script` builds outside the
@@ -460,7 +459,7 @@ exempted from `SWEEP_JOBS` by prefix in `pinned_count_problems` exactly as an
 axis is. They still state a count, so `worker_count_problems` holds them.
 
 **The third exemption is from stating a count at all, and it is the only
-`pgdq` family that has one: the flagless legs of the `reserve` figure**
+`pgdt` family that has one: the flagless legs of the `reserve` figure**
 (`measure.RESERVE_FLAGLESS`, named in `measure._NO_FLAGS`), black-box and
 instrument legs alike. There the count *is* the reading — a flagless run's
 arrangement is what the allocation it was given resolves to, so a shape that
@@ -664,12 +663,13 @@ construction rather than by anyone keeping them in step. Evidence:
 
 **A declared path is matched by prefix, so moving code out of one silently
 un-declares it.** `QUERY_CLI` is the worked case, and it is now the directory
-`pgdump_query-cli/src/` rather than `main.rs`: naming the one file left every
-other module in that crate outside every declaration quoting it, which is a
-staleness edge nobody declared — and the crate holds `where_expr.rs`,
-`alloc.rs`, `info_statistics.rs` and `introspect.rs` beside `main.rs`. Splitting a crate up is fine; whatever splits
-it widens the declaration to the directory in the same change, because the
-alternative is a `--stale` that is silent about the file the change is in.
+`pgdt/src/` rather than `main.rs`: naming the one file left every other module
+in that crate outside every declaration quoting it, which is a staleness edge
+nobody declared — and the crate holds `where_expr.rs`, `alloc.rs`,
+`info_statistics.rs` and `introspect.rs` beside `main.rs`. Splitting a crate up
+is fine; whatever splits it widens the declaration to the directory in the same
+change, because the alternative is a `--stale` that is silent about the file
+the change is in.
 
 **A commit can be acknowledged, and then it stops marking a figure stale.** A
 change *inside* a declared path that provably moves nothing leaves `--stale`
@@ -957,15 +957,15 @@ account, none of it takes a marker, and nothing here needs a quiet machine.
 | `/proc/self/smaps_rollup` | anon against file-backed, `Pss` | anything inside the heap | one read |
 | heaptrack — `--heaptrack-recipe` | every `malloc`, C and Rust alike, attributed to **call stacks**, with each site's peak and a `--diff` between two recordings | what the allocator kept after a `free` — it counts what was asked for, not what glibc held on to | a `runs/` artifact; several times the allocation cost |
 
-**Two of them are built and in the tree**, behind `pgdump_query-cli`'s
-off-by-default `introspect` feature: the counting `#[global_allocator]` and
-glibc's `mallinfo2`/`malloc_info`, reported together as `key=value` lines in
-the file `PGDQ_INTROSPECT_OUT` names — unset meaning no report at all, so the
-instrument writes to no stream. **They do not cover the same memory**, and the
-report labels which each is: the counter sees Rust's `GlobalAlloc` and glibc
-sees the whole process, C included, so their difference is decoder working set
-plus bookkeeping plus retention rather than retention. How to build it, what
-each line means and why `--version` refuses to let it be timed is
+**Two of them are built and in the tree**, behind `pgdt`'s off-by-default
+`introspect` feature: the counting `#[global_allocator]` and glibc's
+`mallinfo2`/`malloc_info`, reported together as `key=value` lines in the file
+`PGDT_INTROSPECT_OUT` names — unset meaning no report at all, so the instrument
+writes to no stream. **They do not cover the same memory**, and the report
+labels which each is: the counter sees Rust's `GlobalAlloc` and glibc sees the
+whole process, C included, so their difference is decoder working set plus
+bookkeeping plus retention rather than retention. How to build it, what each
+line means and why `--version` refuses to let it be timed is
 [`decisions.md`](decisions.md), "D13". **The counter also attributes
 statistics**: what a thread allocates inside the library's statistics scope is
 counted apart, and a `parse` reports it beside the library's own account of the
@@ -1055,13 +1055,12 @@ figure, and the instrumented build is still never the timed binary.
 ## Which allocator a figure was taken under
 
 **The platform allocator — glibc's `malloc` on this apparatus.** The choice is
-`pgdump_query-cli`'s and never the library's, so every figure in this document
-is a **CLI** figure taken under whatever `pgdq` links against, and an embedder
-inherits whatever their own binary chose
-([`decisions.md`](decisions.md), "D13").
-The harness reads the allocator out of the binary — `pgdq --version` names it —
-so the session stamp above cannot go on saying `glibc` after the day the
-default changes.
+`pgdt`'s and never the library's, so every figure in this document is a **CLI**
+figure taken under whatever `pgdt` links against, and an embedder inherits
+whatever their own binary chose ([`decisions.md`](decisions.md), "D13"). The
+harness reads the allocator out of the binary — `pgdt --version` names it — so
+the session stamp above cannot go on saying `glibc` after the day the default
+changes.
 
 The reference column is the shipped binary itself — never a fourth build of the
 same source, since two builds of one source can differ by ~10% from code layout
@@ -1074,7 +1073,7 @@ are measured here and the table says so.
 
 | Warm, on tmpfs | `system` — the shipped binary | `jemalloc` | `mimalloc` |
 |---|---|---|---|
-| `pgdq parse` — structure discovery | **0.447 s** (0.432–0.479) | **0.440 s** (0.425–0.540) — 0.99× | **0.433 s** (0.423–0.452) — 0.97× |
+| `pgdt parse` — structure discovery | **0.447 s** (0.432–0.479) | **0.440 s** (0.425–0.540) — 0.99× | **0.433 s** (0.423–0.452) — 0.97× |
 | `query --schema-mode strings` — zero-copy extraction | **3.52 s** (3.44–3.54) | **3.94 s** (3.83–4.03) — 1.12× | **3.40 s** (3.37–3.50) — 0.97× |
 | `query --schema-mode typed` | **4.84 s** (4.79–4.89) | **5.29 s** (5.24–5.30) — 1.09× | **4.71 s** (4.68–4.84) — 0.97× |
 | `dd` → `/dev/null` — the co-measured floor | **0.307 s** (0.302–0.316) | — | — |
@@ -1087,9 +1086,9 @@ Shared, not measured again — the same binary, command and input:
 - the reference column's `query-typed` row, from `nested-end-to-end`.
 
 Per-rep readings (s):
-- `pgdq parse` — structure discovery (system): 0.456, 0.437, 0.479, 0.432, 0.458, 0.432
-- `pgdq parse` — structure discovery (jemalloc): 0.425, 0.540, 0.427, 0.450, 0.440
-- `pgdq parse` — structure discovery (mimalloc): 0.433, 0.423, 0.452, 0.428, 0.437
+- `pgdt parse` — structure discovery (system): 0.456, 0.437, 0.479, 0.432, 0.458, 0.432
+- `pgdt parse` — structure discovery (jemalloc): 0.425, 0.540, 0.427, 0.450, 0.440
+- `pgdt parse` — structure discovery (mimalloc): 0.433, 0.423, 0.452, 0.428, 0.437
 - `query --schema-mode strings` — zero-copy extraction (system): 3.46, 3.54, 3.54, 3.52, 3.44
 - `query --schema-mode strings` — zero-copy extraction (jemalloc): 3.83, 3.89, 3.94, 3.94, 4.03
 - `query --schema-mode strings` — zero-copy extraction (mimalloc): 3.50, 3.46, 3.38, 3.37, 3.40
@@ -1138,16 +1137,16 @@ manifest so a re-take costs five minutes.
 **Every leg is built by the sitting that times it.** `ensure_allocator_binary`
 memoizes per **process** rather than per machine, and builds every leg before
 the first reading rather than lazily at the rep that wants it. *Rejected:*
-short-circuiting on `runs/pgdq-alloc-<leg>` existing — that file outlives a
+short-circuiting on `runs/pgdt-alloc-<leg>` existing — that file outlives a
 session, so a re-take would time an earlier session's legs against this
-session's `pgdq` and a stale leg still answers `--version` with its own
+session's `pgdt` and a stale leg still answers `--version` with its own
 allocator name, so nothing would notice. The tell in a run log: `building the
 <leg> allocator leg into …` must appear once per non-reference leg before
 `rep1`.
 
 ## Scan throughput by input shape
 
-Three 3.00 GiB synthetic dumps, a whole-file `pgdq` scan in a 512MB-limited
+Three 3.00 GiB synthetic dumps, a whole-file `pgdt` scan in a 512MB-limited
 container, in three regimes. **Cold** is `drop_caches` before every run,
 including before the floor, because that is the only regime in which a device
 floor means anything: this file fits page cache twice over, so a second read of
@@ -1280,8 +1279,8 @@ figure is taken in that regime, so its `COPY` row is its own reading.
 
 Every run completes inside the 512 MB cgroup, which is the memory claim *this*
 table can make. **It carries no max-RSS figure**: `/usr/bin/time -f %M` around
-`nerdctl run` reports the *nerdctl client's* peak, not pgdq's — it read the same
-~40–45 MB for a 2 MB input as for a 3.00 GiB one. pgdq's own resident set is a
+`nerdctl run` reports the *nerdctl client's* peak, not pgdt's — it read the same
+~40–45 MB for a 2 MB input as for a 3.00 GiB one. pgdt's own resident set is a
 figure of its own, "What a scan holds resident, per byte and per block" below,
 which reads it from inside the container and finds it flat in bytes and not
 flat in block count.
@@ -1429,7 +1428,7 @@ Per-rep readings:
 
 Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤9.51%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.81 GHz, ≤60°C.
 
-Four inputs, each a warm `pgdq parse`, reporting peak resident set instead of
+Four inputs, each a warm `pgdt parse`, reporting peak resident set instead of
 wall clock — the only table here whose reading is not a time, so the rules
 about device floors and ratios do not reach it: there is no `dd` floor for a
 resident set, and page-cache state is what those rules exist to hold off a
@@ -1440,7 +1439,7 @@ where no `depends` edge goes red when the read path moves.
 
 **The instrument.** `/usr/bin/time -f %M` around `nerdctl run` reports the *client's* peak — 40–45
 MB whatever the input — and `postgres:16` carries no `/usr/bin/time` at all, so
-the timed command is wrapped in a four-line `perl` that forks, `exec`s pgdq,
+the timed command is wrapped in a four-line `perl` that forks, `exec`s pgdt,
 waits, and reads `ru_maxrss` out of `getrusage(RUSAGE_CHILDREN)`. **`exec`
 installs a fresh `mm`**, so the interpreter's own ~5.4 MiB is not in the child's
 high-water mark: the same wrapper around `/bin/true` reports 1.9 MiB. Polling
@@ -1508,11 +1507,11 @@ baseline folded into it.
 | `parse`, jemalloc | 18.84 MiB | 60.91 MiB | +12,603 B |
 | `parse`, mimalloc | 28.90 MiB | 67.02 MiB | +11,421 B |
 | `parse --preamble-only` | 7.50 MiB | 27.86 MiB | +6,101 B |
-| `info --dqcache` over the finished cache | 7.08 MiB | 26.53 MiB | +5,826 B |
+| `info --dtcache` over the finished cache | 7.08 MiB | 26.53 MiB | +5,826 B |
 | `query` (no match), cached | 9.55 MiB | 45.15 MiB | +10,666 B |
-| `query` (no match), `--dqcache none` | 10.16 MiB | 52.96 MiB | +12,823 B |
-| `query` (no match), `--dqcache none`, jemalloc | 18.64 MiB | 52.62 MiB | +10,181 B |
-| `query` (no match), `--dqcache none`, mimalloc | 29.07 MiB | 62.98 MiB | +10,158 B |
+| `query` (no match), `--dtcache none` | 10.16 MiB | 52.96 MiB | +12,823 B |
+| `query` (no match), `--dtcache none`, jemalloc | 18.64 MiB | 52.62 MiB | +10,181 B |
+| `query` (no match), `--dtcache none`, mimalloc | 29.07 MiB | 62.98 MiB | +10,158 B |
 
 Shared, not measured again — the same binary, command and input:
 - the `parse` reference row at both block counts, from `peak-rss`.
@@ -1523,11 +1522,11 @@ Per-rep readings (MiB, 500 then 4,000):
 - `parse`, jemalloc: 18.84, 18.90, 18.78 · 60.91, 60.87, 64.77
 - `parse`, mimalloc: 28.80, 28.90, 29.05 · 67.02, 67.23, 67.02
 - `parse --preamble-only`: 7.39, 7.71, 7.50 · 27.80, 28.08, 27.86
-- `info --dqcache` over the finished cache: 6.85, 7.08, 7.34 · 26.74, 26.21, 26.53
+- `info --dtcache` over the finished cache: 6.85, 7.08, 7.34 · 26.74, 26.21, 26.53
 - `query` (no match), cached: 9.56, 9.38, 9.55 · 45.15, 44.12, 46.70
-- `query` (no match), `--dqcache none`: 10.16, 9.82, 10.36 · 55.44, 52.23, 52.96
-- `query` (no match), `--dqcache none`, jemalloc: 24.18, 18.57, 18.64 · 52.62, 51.97, 52.63
-- `query` (no match), `--dqcache none`, mimalloc: 29.07, 29.21, 27.20 · 62.90, 62.98, 62.99
+- `query` (no match), `--dtcache none`: 10.16, 9.82, 10.36 · 55.44, 52.23, 52.96
+- `query` (no match), `--dtcache none`, jemalloc: 24.18, 18.57, 18.64 · 52.62, 51.97, 52.63
+- `query` (no match), `--dtcache none`, mimalloc: 29.07, 29.21, 27.20 · 62.90, 62.98, 62.99
 
 Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤10.93%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤67°C.
 
@@ -1567,12 +1566,12 @@ unattributed.** An earlier sitting at `41c96bb` read jemalloc's legs at
 117.70 MiB and 163.43 against 18.84 and 60.91 here, and mimalloc's 500-block leg
 at 31.00 against 28.90, with every per-block slope within a kilobyte of this
 table's. Those readings came from a standalone script using
-`runs/pgdq-alloc-*` binaries whose source is not recoverable, so which build
+`runs/pgdt-alloc-*` binaries whose source is not recoverable, so which build
 moved the fixed term cannot be said; that is a candidate rather than a finding.
 The paragraph above reads the *ranking of the slopes*, which three sittings
 agree on.
 
-**Retention is real, but only where the throttle is off.** `--dqcache none`
+**Retention is real, but only where the throttle is off.** `--dtcache none`
 splices per block (`KD5`), and there glibc's +12,823 B sits **2,665 B above
 mimalloc's +10,158** and 2,642 B above jemalloc's +10,181 — the one place a
 different allocator recovers anything. Against its own cached twin, which
@@ -1592,11 +1591,11 @@ Its legs are nine `nerdctl run`s of the form
 
 ```sh
 sudo nerdctl run --rm -m 512m --memory-swap 512m \
-  -v <binary>:/pgdq:ro -v /dev/shm/pgdq/blocks4000.sql:/dump.sql:ro \
-  postgres:16 bash -c '<getrusage wrapper> /pgdq <command> >/dev/null'
+  -v <binary>:/pgdt:ro -v /dev/shm/pgdt/blocks4000.sql:/dump.sql:ro \
+  postgres:16 bash -c '<getrusage wrapper> /pgdt <command> >/dev/null'
 ```
 
-where `<binary>` is `target/release/pgdq` or one of the `allocator` figure's
+where `<binary>` is `target/release/pgdt` or one of the `allocator` figure's
 legs — borrowed by name through `ensure_allocator_binary` — and the wrapper is
 `rss_wrapper`, the same one `peak-rss` is taken through. The `info` leg builds its cache inside
 its own container, untimed and unwrapped.
@@ -1605,7 +1604,7 @@ its own container, untimed and unwrapped.
 
 <!-- figure: chunk-size — reproduce with `cd scripts && uv run measure.py --figure chunk-size` -->
 
-One `pgdq parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
+One `pgdt parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
 three regimes, differing in nothing but the number `--chunk-size` carries.
 `scan::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is the shipped constant and the ratio column is
 against its row. The figure exists to decide one of the three I/O defaults and
@@ -1718,7 +1717,7 @@ by default — 814,362 rows of 16 columns, 3,956 bytes each on `--seed 42`: no
 `{` or `[` in any data row, so every row is rejected by the census's own pre-filter
 after one pass over its bytes and no row is ever split into fields. That is
 deliberately the koji shape — koji's six array columns are entirely NULL — and
-it is the case worth knowing the price of, since it is what a `pgdq parse`
+it is the case worth knowing the price of, since it is what a `pgdt parse`
 over a real dump mostly does.
 
 Census on is the working tree; census off is the same tree with one line
@@ -1812,9 +1811,9 @@ to it, so the patch isolates the census for **every** caller, the interior
 workers included ([`decisions.md`](decisions.md), "D52"). Then
 
 ```sh
-cargo build --release -p pgdump_query-cli          # default target: glibc
-cp target/release/pgdq runs/pgdq-nocensus          # then revert map.rs
-git rev-parse HEAD > runs/pgdq-nocensus.stamp      # what it was built from
+cargo build --release -p pgdt          # default target: glibc
+cp target/release/pgdt runs/pgdt-nocensus          # then revert map.rs
+git rev-parse HEAD > runs/pgdt-nocensus.stamp      # what it was built from
 ```
 
 and the harness takes it from there, staging both regimes, interleaving the
@@ -1825,7 +1824,7 @@ cd scripts && uv run measure.py --figure census-brace-free
 ```
 
 **The stamp is not bookkeeping: it is what makes the subtraction mean the
-census.** These tables difference that binary against `target/release/pgdq`, so
+census.** These tables difference that binary against `target/release/pgdt`, so
 whatever differs between the two *trees* is charged to the census — and a
 hand-built binary has no provenance the harness can read, where every generated
 input carries a `.stamp` naming its generator. So the census-off binary carries
@@ -1837,7 +1836,7 @@ any figure it likes. A stamp cannot catch a re-stamp without a rebuild, but
 was found 40 commits stale on 2026-09-05 with nothing having noticed
 ([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "The
 census-off binary is apparatus, and nothing was checking its age").
-`target/release/pgdq`, the binary these tables are differenced *against*, needs
+`target/release/pgdt`, the binary these tables are differenced *against*, needs
 none of it: the harness builds that one in the first second of every sitting
 (see "The apparatus"), so there is no provenance left for a stamp to record.
 
@@ -1943,7 +1942,7 @@ The input alone, for a reader who wants it without the harness:
 
 ```sh
 cd scripts && uv run generate_perf_data.py --arrays --composite \
-  --size-mb 3072 --seed 42 /dev/shm/pgdq/arrays.sql
+  --size-mb 3072 --seed 42 /dev/shm/pgdt/arrays.sql
 ```
 
 *Rejected:* a `no-census` cargo feature, so this reproduces as a flag instead
@@ -1984,7 +1983,7 @@ Criterion medians (ns):
 - copy control at 601 bytes: 40 ns
 - copy control at 42 bytes: 20 ns
 
-Apparatus: this figure runs no `pgdq` and reads no file, so it carries none of
+Apparatus: this figure runs no `pgdt` and reads no file, so it carries none of
 the stall, temperature or device gates the sweep's tables do.
 
 **Both control figures are read with a caveat.** `text_view_x1024` reports
@@ -2225,14 +2224,14 @@ exists against: a built-and-unrun instrument is *named* rather than latent.
 **`typed` and `strings` agree byte for byte on all three inputs**, as they do
 on what `pg_dump` writes (`decisions.md`, "The CLI") — so `cmp` on the
 two outputs is a valid smoke test here, and
-`pgdump_query-cli/tests/perf_generator_fidelity.rs` asserts it on small
-generated files: the control, `--composite` alone and `--arrays --composite`,
-which are the three flag settings a published figure is taken on, so the
-generator cannot drift back out of that agreement.
+`pgdt/tests/perf_generator_fidelity.rs` asserts it on small generated files:
+the control, `--composite` alone and `--arrays --composite`, which are the
+three flag settings a published figure is taken on, so the generator cannot
+drift back out of that agreement.
 
 ```sh
-cargo build --release -p pgdump_query-cli          # default target: glibc
-D=/dev/shm/pgdq                                     # generate from the HOST
+cargo build --release -p pgdt          # default target: glibc
+D=/dev/shm/pgdt                                     # generate from the HOST
 (cd scripts &&
  uv run generate_perf_data.py --size-mb 3072 --seed 42 $D/control.sql &&
  uv run generate_perf_data.py --composite --size-mb 3072 --seed 42 \
@@ -2242,10 +2241,10 @@ D=/dev/shm/pgdq                                     # generate from the HOST
 for i in 1 2 3 4 5; do for f in control composite arrays; do for m in strings typed; do
   echo "### $f $m rep$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
-    -v "$PWD/target/release/pgdq:/pgdq:ro" \
+    -v "$PWD/target/release/pgdt:/pgdt:ro" \
     -v "$D/$f.sql:/dump.sql:ro" \
     postgres:16 bash -c \
-    "time /pgdq query --source /dump.sql --table public.perf --dqcache none \
+    "time /pgdt query --source /dump.sql --table public.perf --dtcache none \
        --schema-mode $m --jobs 1 >/dev/null"
 done; done; done
 ```
@@ -2333,7 +2332,7 @@ The input alone, for a reader who wants it without the harness, is the same
 
 ```sh
 cd scripts && uv run generate_perf_data.py --arrays --composite \
-  --size-mb 3072 --seed 42 /dev/shm/pgdq/arrays.sql
+  --size-mb 3072 --seed 42 /dev/shm/pgdt/arrays.sql
 ```
 
 *Rejected: folding these rows into "A typed query over nested columns".* A
@@ -2429,7 +2428,7 @@ brace-free control the census and throughput figures are taken on:
 
 ```sh
 cd scripts && uv run generate_perf_data.py --seed 42 \
-  --size-mb 3072 /dev/shm/pgdq/control.sql
+  --size-mb 3072 /dev/shm/pgdt/control.sql
 ```
 
 *Rejected: a conjunction of terms every row satisfies, so that every row
@@ -2463,7 +2462,7 @@ not this one's.
 | Large-object region | **0.531 s** (0.517–0.603) | **0.554 s** (0.524–0.645) | **+0.023 s, +4%** | **6.03 MiB** (5.93–6.07) | **5.70 MiB** (5.61–6.09) | 0.361 s |
 | `INSERT` run | **2.37 s** (2.35–2.40) | **2.39 s** (2.35–2.43) | **+0.020 s, +1%** | **5.91 MiB** (5.73–6.04) | **5.91 MiB** (5.79–6.08) | 0.375 s |
 
-Every run is `pgdq parse` over the whole file at `--jobs 1`, statistics stated as `--statistics none` or `--statistics all --statistics-group-size 1048576` — the default's base size, gathered exactly where a flagless `parse` coarsens wide rows — **in a 2g container**, against the register's 512m: nothing bills what statistics hold, so the limit is chosen generously and the resident column says what it left. Resident is recorded, not attributed.
+Every run is `pgdt parse` over the whole file at `--jobs 1`, statistics stated as `--statistics none` or `--statistics all --statistics-group-size 1048576` — the default's base size, gathered exactly where a flagless `parse` coarsens wide rows — **in a 2g container**, against the register's 512m: nothing bills what statistics hold, so the limit is chosen generously and the resident column says what it left. Resident is recorded, not attributed.
 
 **Gathering costs a `COPY`-dense parse most of its time, warm.** Every
 statistic over the control's 811,677 rows of 16 columns adds 3.04 s to a
@@ -2797,7 +2796,7 @@ Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤2.20%, 
 
 ## What a scan holds above the budget it was given
 
-A flagless `pgdq` scan discovers its own memory limit, keeps
+A flagless `pgdt` scan discovers its own memory limit, keeps
 `io::MEMORY_RESERVE` back from it and solves the remainder for a worker count
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). This
 figure is what says that arithmetic survives contact with a real cgroup: it
@@ -2860,7 +2859,7 @@ carries its own instead of the register's 512 MB.
 
 **The model holds at every cell above**: nothing here crosses any of its three lines.
 
-**What the process says it held**, on the introspection build running the same flagless shape as the axis above. These are this figure's instrument legs, declared in its register entry; the build takes an atomic on every allocation and `pgdq --version` names it, so it is never timed. The two families do not cover the same memory — the Rust column is what passed through `GlobalAlloc`, every glibc column is the whole process, C included — and the gap between them is decoder working set plus bookkeeping plus retention, never retention alone:
+**What the process says it held**, on the introspection build running the same flagless shape as the axis above. These are this figure's instrument legs, declared in its register entry; the build takes an atomic on every allocation and `pgdt --version` names it, so it is never timed. The two families do not cover the same memory — the Rust column is what passed through `GlobalAlloc`, every glibc column is the whole process, C included — and the gap between them is decoder working set plus bookkeeping plus retention, never retention alone:
 
 | Leg | Readers | Peak RSS | glibc heap high-water | Rust live high-water | Arenas | Freed and held at exit | mmap-backed at exit |
 |---|---|---|---|---|---|---|---|
@@ -3052,11 +3051,11 @@ the disqualification *at* the number rather than once in a preamble.
 | Bytes accounted for | 784,019,857,152 |
 | `UnterminatedCopyBlock` | none |
 
-**The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
+**The `.dtcache` a run leaves behind dies at the next cache-format bump**, and
 those are free and frequent pre-1.0 (`decisions.md`, "The compressed source and the cache"). Treat the
 koji cache as a byproduct of a scan run for another reason, never as an asset:
 the cache left by the 2026-08-25 run was unreadable within days. Nothing plans around keeping one alive — inspecting koji at all
-(`pgdq info`, with or without `--source`) is available only between a scan and
+(`pgdt info`, with or without `--source`) is available only between a scan and
 the next bump, and regaining it costs the full ~54-minute scan.
 
 **So a run that verifies one arrangement against another takes both legs
@@ -3090,7 +3089,7 @@ and a regression check rather than a throughput figure. The harness owns the
 *invocation* — `uv run measure.py --koji-recipe`.
 
 **The identity check has been taken on the glibc build, at `f5768e7`.** The
-2026-09-05 run (container `pgdq-koji`, `runs/pgdq-koji-scan.log`, `exit=0`,
+2026-09-05 run (container `pgdt-koji`, `runs/pgdt-koji-scan.log`, `exit=0`,
 00:54:18Z → 01:57:03Z) is the regression check for the whole scan-performance
 campaign: eleven landed changes reworked how bytes reach the parser — the read buffer pool and the
 read-loop carry (`io.rs`, `scan.rs`, `stream.rs`), the bulk UTF-8 pass and the
@@ -3127,7 +3126,7 @@ moves.
 
 **koji's own record still gets one, from `--koji-recipe`.** `VmHWM` in
 `/proc/<pid>/status`, read from the host while the scan is still running:
-`exec` makes pgdq PID 1, `nerdctl inspect -f '{{.State.Pid}}'` gives the host
+`exec` makes pgdt PID 1, `nerdctl inspect -f '{{.State.Pid}}'` gives the host
 pid, and the kernel maintains the high-water mark, so one read covers
 everything up to it. It adds nothing to the `exec`'d command, so all three
 load-bearing recipe details are untouched. The container cgroup's `memory.peak`
@@ -3150,7 +3149,7 @@ not. So ~208 against ~241 is not a 13% regression until an uncontended glibc
 run supplies the missing half.
 
 **Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
-(container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
+(container `pgdt-koji`, `runs/koji-throughput-scan.log`) reproduced the same
 74 blocks/19,575,829,920 rows/784,019,857,152 bytes, and measured 54m9.97s
 wall-clock — **~241 MB/s**, against the original 2026-08-22 baseline's ~243
 MB/s. The two independent runs agree to within ~1%, which is inside the noise
@@ -3163,12 +3162,12 @@ documented below, not a real regression. Command and container recipe are in
 `CLAUDE.md`.
 
 **Per-block cache persistence costs ~1.5%, and the throttle leaves it
-untouched.** `pgdq parse` serializes the whole cache at a `CopyEnd` watermark,
+untouched.** `pgdt parse` serializes the whole cache at a `CopyEnd` watermark,
 so a koji scan writes it 74 times where the build before it wrote it once. The
 self-tuning throttle below never fires on this shape — koji's blocks are ~45 s
 apart and its saves cost well under a second, so the "20x the last save's own
 cost" bar is cleared every time. Container
-`pgdq-koji-9.1`, launched 2026-08-26T04:21:17Z, `runs/koji-9.1-scan.log`,
+`pgdt-koji-9.1`, launched 2026-08-26T04:21:17Z, `runs/koji-9.1-scan.log`,
 `exit=0`:
 
 | | |
@@ -3224,7 +3223,7 @@ which is `public.archive_rpm_components` and row-dense rather than byte-dense.
 What it does establish is that resuming carries no detectable cost — the same
 device, the same order of magnitude, with a stop and a cache reload in between.
 
-The interrupted leg's own throughput (~16.5 MB/s) measures nothing about pgdq:
+The interrupted leg's own throughput (~16.5 MB/s) measures nothing about pgdt:
 a `cargo build`/`test`/`clippy` cycle ran on the same HDD throughout. The
 resumed leg, uncontended over the same file, is what says so.
 
@@ -3265,7 +3264,7 @@ it logs the expected value beside the observed one and a reader compares, so
 `runs/koji-xz-verify-20260908-b/orchestrator.log`, 14:19:17 → 15:25:25 UTC,
 both legs `exit=0`) took a `--jobs 1` and a `--jobs 4 --parallel-memory
 268435456` parse of `koji-2026-07-23.dump.multistream.xz` — the upstream
-download's 31,150 one-block streams — in one run, on a `pgdq` built at
+download's 31,150 one-block streams — in one run, on a `pgdt` built at
 `e29939c`. It is the two-legged shape the paragraph above describes:
 
 | | |
@@ -3295,7 +3294,7 @@ they were taken back to back with no quiet-machine gate and no repetition:
   and 40 GB off the device against those rows' 784 GB, the difference spent in
   the decoder. `parallel-scan-throughput` is the registered figure for `--jobs`
   against throughput.
-- **Resident set, sampled every 60 s** (`runs/pgdq-koji-xz-<leg>-mem.log`):
+- **Resident set, sampled every 60 s** (`runs/pgdt-koji-xz-<leg>-mem.log`):
   the serial leg held 68–73 MiB anonymous, peak `VmHWM` 78 MiB; the parallel
   leg plateaued at ~330 MiB with 10–12 threads and **one** arena, peak 404 MiB,
   leaving ~108 MiB of the cgroup unused. Without `MALLOC_ARENA_MAX` the same
@@ -3323,14 +3322,14 @@ machine is no more a figure with the cgroup raised than with it tuned.
 The orchestrator compares the two caches itself — `cmp`, with the verdict in
 the log — which is the one place this run is stricter than the wrap script
 above. It still only prints the expected counts beside each leg's tail, and it
-does not read the byte total back at all; that is `pgdq info --dqcache <cache>
+does not read the byte total back at all; that is `pgdt info --dtcache <cache>
 --detail` afterwards on the host.
 
 ## The preamble prepass is bounded by the schema, not by the dump
 
 <!-- figure: preamble-prepass — reproduce with `cd scripts && uv run measure.py --figure preamble-prepass` -->
 
-`pgdq parse` and every cold query open with `index::scan_preamble`, which reads
+`pgdt parse` and every cold query open with `index::scan_preamble`, which reads
 from byte 0 to the first `COPY` header. It is the one region that ignores
 `ScanOptions::cancel` (see `decisions.md`, "D63"), so "bounded by its own length" is the claim that has to hold.
 
@@ -3372,7 +3371,7 @@ cd scripts && uv run measure.py --figure preamble-prepass
 ```
 
 Both rows are taken inside the container like every other figure. *Rejected:*
-`/usr/bin/time` around a host `pgdq`, which obeys neither the timer rule nor the
+`/usr/bin/time` around a host `pgdt`, which obeys neither the timer rule nor the
 cgroup one.
 
 So the region grows with the *schema* — table count and DDL size — and not with
@@ -3393,7 +3392,7 @@ which is how `pg_dump` orders a plain dump:
 ```sh
 cd scripts
 for n in 500 1000 2000 4000; do
-  uv run generate_block_count_bench.py --blocks $n --out /dev/shm/pgdq/r$n.sql
+  uv run generate_block_count_bench.py --blocks $n --out /dev/shm/pgdt/r$n.sql
 done
 ```
 
@@ -3455,7 +3454,7 @@ with the cache **disabled entirely** the map is O(blocks²) exactly as it was:
 
 ```sh
 # maps to EOF (the table never matches) and never saves
-/pgdq query --source /dump.sql --table public.nosuchtable --dqcache none --jobs 1
+/pgdt query --source /dump.sql --table public.nosuchtable --dtcache none --jobs 1
 ```
 
 <!-- figure: map-only — reproduce with `cd scripts && uv run measure.py --figure map-only` -->
@@ -3474,7 +3473,7 @@ Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤3.03%, 
 **This table is what says the gate above did nothing here**, which is why it is
 re-taken alongside it rather than assumed. Four stamps have read it:
 1.012 / 4.56 / 19.03, 1.004 / 3.98 / 19.07, 0.984 / 3.86 / 18.37 and
-1.053 / 4.65 / 19.28 s. `--dqcache none` makes
+1.053 / 4.65 / 19.28 s. `--dtcache none` makes
 `cache::CacheMode::save` a no-op, so the throttle has no cost to amortize, its
 gate never closes, and the map is rebuilt at every `CopyEnd`. The 1000- and
 4000-block rows have held inside 7% and 5% across all four; the **2000-block

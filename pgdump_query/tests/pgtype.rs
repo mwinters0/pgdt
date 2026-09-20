@@ -136,7 +136,7 @@ async fn every_column_family_resolves_as_the_mapping_table_says() {
         assert!(composite_res.iter().all(|r| *r == Mapped), "pg_dump {v}: {composite_res:?}");
 
         // `mybase` is opaque on its own account; `mybase[]` is refused for
-        // its *element*, and the two are told apart so `pgdq info` can say
+        // its *element*, and the two are told apart so `pgdt info` can say
         // which happened.
         let base_res = m("public.t_base_type");
         assert_eq!(base_res[1], ColumnResolution::OpaqueBaseType, "pg_dump {v}: v_mybase");
@@ -495,7 +495,7 @@ const EVERY_OUTCOME: [ColumnResolution; 8] = [
 ///
 /// The census is the block's own, so an outcome only the census can produce
 /// (`VaryingArrayShape`) is reachable here — this walk sees the same evidence
-/// `pgdq info` does on a fully scanned file.
+/// `pgdt info` does on a fully scanned file.
 ///
 /// **The check is partial and says so.** A shape that resolves to an outcome
 /// already covered and merely *works* still passes without a fixture; that

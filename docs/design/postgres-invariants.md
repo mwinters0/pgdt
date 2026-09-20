@@ -402,7 +402,7 @@ Both segment shapes hold against a real `pg_dumpall` run:
 `fixtures/{13,18}/edge_cases/dumpall.sql`
 (`pg_dumpall --no-role-passwords` against the fixture cluster) show, on both
 the oldest and newest routine versions, `template1`/`postgres` printing
-`\connect` *then* their version-header pair, and `pgdq_fixture` printing the
+`\connect` *then* their version-header pair, and `pgdt_fixture` printing the
 pair *then* its own `\connect`.
 
 **Verified against:** v18.6 source (`RestoreArchive()`,
@@ -1692,11 +1692,11 @@ about `pg_dump --create`, which emits one database and no ordering question.
 
 **Verified against:** v13.23, v18.6, master — the query is byte-identical in
 all three; and observed in output on all six routine majors, where
-`pgdq_tenant` lands between `pgdq_fixture` and `postgres` in every
+`pgdt_tenant` lands between `pgdt_fixture` and `postgres` in every
 `edge_cases/dumpall.sql`.
 **Relied on by:** `decisions.md` ("D69"). The `edge_cases/dumpall`
 fixture's database sequence is chosen by naming, not observed: a second
-data-carrying database named `pgdq_tenant` lands between `pgdq_fixture` and
+data-carrying database named `pgdt_tenant` lands between `pgdt_fixture` and
 `postgres`, which is what makes "cancel inside the *second* database's data" a
 deterministic file offset for the recurring-metadata-boundary test
 (`decisions.md`, "D63"). If the ordering
@@ -1782,13 +1782,13 @@ and `char(n)` while answering true for `name`.
 **Scope limit.** A `--create` dump *does* carry it, and so does `pg_dumpall`,
 whose per-database `CREATE DATABASE` statements come from the same function. So
 this is a statement about the ordinary single-database plain dump, which is the
-input pgdq is built around, not about every file `pg_dump` can write.
+input pgdt is built around, not about every file `pg_dump` can write.
 
 **Consequence.** A text ordering comparison on a `default`-collation column
 with no `COLLATE` clause cannot be made to agree with the server from the dump
 alone: PostgreSQL orders `text` by collation, and under any non-`C` collation
 the answer differs from a bytewise comparison (`'a' < 'B'` is true in
-`en_US.UTF-8`, false bytewise). pgdq therefore compares bytewise and
+`en_US.UTF-8`, false bytewise). pgdt therefore compares bytewise and
 **registers the divergence** rather than claiming agreement — see
 [`decisions.md`](decisions.md)'s "Predicates", which holds the ordering
 register. The comparison oracle asks each text pair under `COLLATE "C"` and
@@ -1827,7 +1827,7 @@ psql -c "select typname, typcollation from pg_type where typname in ('text','nam
 ## I33 — The scalar comparison operators the ordering register claims agreement with are byte- or value-order, and NaN is the largest float
 
 **Claim.** For the types the ordering register marks *Agrees*, PostgreSQL's
-own `<`/`<=`/`>`/`>=` are exactly the order pgdq computes over the decoded
+own `<`/`<=`/`>`/`>=` are exactly the order pgdt computes over the decoded
 value:
 
 - **`float4`/`float8`** — `NaN` sorts **above** every other value, infinity
@@ -2897,11 +2897,11 @@ about *equality* either, which for a deterministic collation never consults the
 collation at all and for a non-deterministic one does (I42) — and the builtin
 and libc providers are always deterministic, so no shape named here is
 affected. And it is not a claim that a collation absent from this list is
-non-bytewise: glibc 2.41's `C.UTF-8` orders by code point in fact, which pgdq
+non-bytewise: glibc 2.41's `C.UTF-8` orders by code point in fact, which pgdt
 must not act on, because it is a property of that libc and the file names only
 the collation.
 
-**Consequence.** These are the collations pgdq can order **without knowing
+**Consequence.** These are the collations pgdt can order **without knowing
 anything about the server that wrote the dump** — no libc version, no ICU
 version, no platform. That is what the comparison register's *Agrees, on every
 server* verdict means and the only thing that earns it; every other collation's
@@ -3029,8 +3029,8 @@ grep -n -A40 'MULTIRANGE_BEFORE_RANGE' src/backend/utils/adt/multirangetypes.c
 And ask a server, which is a minute per major:
 
 ```sh
-docker run -d --rm --name pgdq-i44 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
-docker exec -i pgdq-i44 psql -qtA -U postgres <<'SQL'
+docker run -d --rm --name pgdt-i44 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdt-i44 psql -qtA -U postgres <<'SQL'
 CREATE TYPE point2d AS (x integer, y text);
 CREATE FUNCTION probe(typ text, lit text) RETURNS text LANGUAGE plpgsql AS $$
 DECLARE out text;
@@ -3049,7 +3049,7 @@ SELECT t.typ, t.lit, probe(t.typ, t.lit) FROM (VALUES
   ('int4multirange', '{empty}'), ('int4multirange', '{[5,6),[1,2)}')
 ) AS t(typ, lit);
 SQL
-docker rm -f pgdq-i44
+docker rm -f pgdt-i44
 ```
 
 Confirm `{{},{}}` is the only cell that moves between 16 and 18, and that
@@ -3164,8 +3164,8 @@ grep -n -B5 -A40 'We consider two NULLs equal' src/backend/utils/adt/rowtypes.c
 And ask a server, which is a minute per major:
 
 ```sh
-docker run -d --rm --name pgdq-i45 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
-docker exec -i pgdq-i45 psql -qtA -U postgres <<'SQL'
+docker run -d --rm --name pgdt-i45 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdt-i45 psql -qtA -U postgres <<'SQL'
 CREATE TYPE point2d AS (x integer, y text);
 SELECT '{1,2}'::int[]        > '[0:1]={1,2}'::int[]   AS lower_bound_last,
        '{1,2}'::int[]        < '{{1,2},{3,4}}'::int[] AS fewer_elements_below,
@@ -3174,7 +3174,7 @@ SELECT '{1,2}'::int[]        > '[0:1]={1,2}'::int[]   AS lower_bound_last,
        ROW(NULL,'a')::point2d > ROW(1,'a')::point2d   AS null_field_above;
 SELECT '{}'::json[] < '{}'::json[];   -- 42883: no operator, no cmp proc
 SQL
-docker rm -f pgdq-i45
+docker rm -f pgdt-i45
 ```
 
 Every column of the first query is `t` at every supported major, and the second
@@ -3303,8 +3303,8 @@ grep -n -A50 '^multirange_canonicalize'        src/backend/utils/adt/multiranget
 And ask a server, which is a minute per major:
 
 ```sh
-docker run -d --name pgdq-i46 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
-docker exec -i pgdq-i46 psql -qtA -U postgres <<'SQL'
+docker run -d --name pgdt-i46 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdt-i46 psql -qtA -U postgres <<'SQL'
 SELECT 'empty'::int4range < '(,)'::int4range   AS empty_below_unbounded,
        '(,5)'::int4range < '[1,10)'::int4range AS unbounded_lower_first,
        '[1,10)'::int4range < '[1,)'::int4range AS unbounded_upper_last,
@@ -3323,7 +3323,7 @@ SELECT '[1,9223372036854775807]'::int8range;   -- bigint out of range
 DO $$ BEGIN PERFORM '[10,1)'::int4range;
       EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'out of order: %', SQLSTATE; END $$;
 SQL
-docker rm -f pgdq-i46
+docker rm -f pgdt-i46
 ```
 
 Every column of the first query is `t`. The second answers `[1,11)`,
@@ -3446,8 +3446,8 @@ grep -n -A6 "typname => 'int2vector'" src/include/catalog/pg_type.dat
 And ask a server:
 
 ```sh
-docker run -d --name pgdq-i47 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
-docker exec -i pgdq-i47 psql -qtA -U postgres <<'SQL'
+docker run -d --name pgdt-i47 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdt-i47 psql -qtA -U postgres <<'SQL'
 SELECT 'ops', count(*) FROM pg_operator WHERE 'int2vector'::regtype IN (oprleft, oprright);
 SELECT 'casts', count(*) FROM pg_cast WHERE 'int2vector'::regtype IN (castsource, casttarget);
 SELECT 'type', typcategory, typelem::regtype::text, typlen FROM pg_type WHERE typname='int2vector';
@@ -3465,7 +3465,7 @@ DO $$ BEGIN PERFORM '32768'::int2vector;
 DO $$ BEGIN PERFORM '{1,2}'::int2vector;
       EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'braces: %', SQLSTATE; END $$;
 SQL
-docker rm -f pgdq-i47
+docker rm -f pgdt-i47
 ```
 
 `ops` and `casts` are both `0`; `type` is `A|smallint|-1`; the four `out` rows

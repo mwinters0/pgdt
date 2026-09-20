@@ -3,7 +3,7 @@
 //!
 //! The library-level tests only: everything here drives `table_stream`
 //! directly. The flags are pinned separately, in
-//! `pgdump_query-cli/tests/query_projection.rs`.
+//! `pgdt/tests/query_projection.rs`.
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;

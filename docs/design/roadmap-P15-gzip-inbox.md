@@ -15,7 +15,7 @@ weighed first: every read loop in the library is already written as
 `want = chunk_size.min(size - read_pos)` … `read_pos += bytes.len()`, so **all
 of them already tolerate a short read**. What actually depends on the number
 being exact is the loop's exit test, and the coverage denominator —
-`total_size`, `scanned_through`, and `pgdq info`'s percentages.
+`total_size`, `scanned_through`, and `pgdt info`'s percentages.
 
 **Why P15 cares.** This is the decision this phase cannot avoid, since gzip
 cannot answer it: `ISIZE` is the uncompressed length mod 2^32, useless above
@@ -80,13 +80,13 @@ as xz-specific once a second codec is in.
 
 ## No test in the tree asserts that a compressed `parse` is deterministic in `--jobs`
 
-**Fact.** `pgdump_query-cli/tests/determinism.rs` asserts that `pgdq parse`
-writes one byte-identical `.dqcache` at every stated `--jobs`, and its whole
-input tree is plain `.sql`. The compressed source's own suites assert something
-weaker: `xz_source.rs` carries end-to-end row and `info --json` parity across
-container shapes, and `parallelism.rs` carries budget parity, neither on cache
-bytes. So the claim "a compressed parse at two job counts writes one cache"
-holds in exactly one place — the 2026-09-08 koji run
+**Fact.** `pgdt/tests/determinism.rs` asserts that `pgdt parse` writes one
+byte-identical `.dtcache` at every stated `--jobs`, and its whole input tree is
+plain `.sql`. The compressed source's own suites assert something weaker:
+`xz_source.rs` carries end-to-end row and `info --json` parity across container
+shapes, and `parallelism.rs` carries budget parity, neither on cache bytes. So
+the claim "a compressed parse at two job counts writes one cache" holds in
+exactly one place — the 2026-09-08 koji run
 ([`measurements.md`](measurements.md), "koji full scan"), once, on one machine,
 over a 40 GB file nobody can rescan cheaply. Nothing in CI can see it.
 

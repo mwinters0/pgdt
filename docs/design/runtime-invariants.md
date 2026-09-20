@@ -17,9 +17,9 @@ toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **gli
 release** — the host's or the figures' image's (`RT10` only) — and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
-`pgdump_query-cli/tests/http_conformance.rs` reads the same claims against a
-real origin wherever one is offered —
-[`../../CONTRIBUTING.md`](../../CONTRIBUTING.md), "Building and testing").
+`pgdt/tests/http_conformance.rs` reads the same claims against a real origin
+wherever one is offered — [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md),
+"Building and testing").
 
 **It is named for the runtime environment rather than for Linux or for
 cgroups.** The mechanism these entries serve — a process discovering its own
@@ -118,7 +118,7 @@ cgroup v2 is always in the format `0::$PATH`."*
   seq_puts(m, " (deleted)\n")`). A reader that joins the raw path onto the mount
   point opens a path that does not exist.
 - **Line order is not specified.** Where both hierarchies exist the v2 line may
-  come last; observed here as `<n>:name=pgdqprobe:/` above
+  come last; observed here as `<n>:name=pgdtprobe:/` above
   `0::/user.slice/…`. Select the line by its shape, never by its position — and
   not by the hierarchy id either, which `idr_alloc_cyclic` hands out cyclically
   and which came back as `1` on one run of the check below and `2` on the next.
@@ -305,13 +305,13 @@ limit, the reclaim algorithm reclaims from the tasks in the ancestor…"*
 Structurally it is `struct page_counter`'s `parent` pointer: a charge walks it
 to the root.
 
-Observed directly. With `/pgdq-probe` limited to 256 MiB and an unlimited child
+Observed directly. With `/pgdt-probe` limited to 256 MiB and an unlimited child
 under it, a process in the child reports:
 
 ```
-0::/pgdq-probe/child
+0::/pgdt-probe/child
 max                      # its own memory.max
-268435456                # /pgdq-probe/memory.max — the limit that actually binds
+268435456                # /pgdt-probe/memory.max — the limit that actually binds
 ```
 
 **Scope limit.** Three:
@@ -349,17 +349,17 @@ The leaf reads `536870912`, its parent `max`, and the root reports no such file.
 
 ```sh
 sudo sh -c '
-  mkdir -p /sys/fs/cgroup/pgdq-probe
-  echo "+memory" > /sys/fs/cgroup/pgdq-probe/cgroup.subtree_control
-  echo 268435456 > /sys/fs/cgroup/pgdq-probe/memory.max
-  mkdir -p /sys/fs/cgroup/pgdq-probe/child
-  sh -c "echo \$\$ > /sys/fs/cgroup/pgdq-probe/child/cgroup.procs
+  mkdir -p /sys/fs/cgroup/pgdt-probe
+  echo "+memory" > /sys/fs/cgroup/pgdt-probe/cgroup.subtree_control
+  echo 268435456 > /sys/fs/cgroup/pgdt-probe/memory.max
+  mkdir -p /sys/fs/cgroup/pgdt-probe/child
+  sh -c "echo \$\$ > /sys/fs/cgroup/pgdt-probe/child/cgroup.procs
          cat /proc/self/cgroup
-         cat /sys/fs/cgroup/pgdq-probe/child/memory.max"'
-sudo rmdir /sys/fs/cgroup/pgdq-probe/child /sys/fs/cgroup/pgdq-probe
+         cat /sys/fs/cgroup/pgdt-probe/child/memory.max"'
+sudo rmdir /sys/fs/cgroup/pgdt-probe/child /sys/fs/cgroup/pgdt-probe
 ```
 
-The process reports `0::/pgdq-probe/child` and its own limit as `max`, while
+The process reports `0::/pgdt-probe/child` and its own limit as `max`, while
 256 MiB binds one level up. **Remove the scratch cgroups**; the `rmdir` is part
 of the check, not cleanup after it. The `+memory` line is load-bearing: without
 the controller enabled in the parent's `cgroup.subtree_control` the child has no
@@ -393,7 +393,7 @@ hierarchy named `memory` would satisfy a substring test and hold no memory
 controller at all. Observed here, alongside the live v2 line:
 
 ```
-2:name=pgdqprobe:/
+2:name=pgdtprobe:/
 0::/user.slice/user-1000.slice/user@1000.service/…
 ```
 
@@ -418,12 +418,12 @@ file above, with the v2 line **second**).
 ```sh
 sudo unshare -m sh -c '
   mkdir -p /tmp/cg1probe
-  mount -t cgroup -o none,name=pgdqprobe cgroup /tmp/cg1probe
+  mount -t cgroup -o none,name=pgdtprobe cgroup /tmp/cg1probe
   cat /proc/self/cgroup
   umount /tmp/cg1probe'
 ```
 
-Two lines: `<n>:name=pgdqprobe:/` — the id is whatever `idr_alloc_cyclic` next
+Two lines: `<n>:name=pgdtprobe:/` — the id is whatever `idr_alloc_cyclic` next
 hands out — and the machine's `0::` line. The mount lives in
 a private mount namespace and leaves nothing behind. On this machine the v2
 hierarchy owns `memory`, which the presence of `/sys/fs/cgroup/memory.max` on a
@@ -531,7 +531,7 @@ which is why the claim is about what the kernel provides rather than about what
 is always mounted there — a shim makes the reading *more* conservative, never
 less, so it does not break the use below.
 
-**Scope limit.** This says nothing about how much memory pgdq may actually
+**Scope limit.** This says nothing about how much memory pgdt may actually
 obtain: `MemAvailable` is an estimate, it moves second to second, and two
 processes reading it at once each see the whole of it. It is therefore usable
 as a **ceiling** on what to plan for and never as a reservation or a target to
@@ -717,7 +717,7 @@ interning map is rebuilt rather than pruned — nor of any allocator's own
 rounding: the sizes are what `GlobalAlloc` is asked for.
 
 **Verified against:** Rust 1.98.0, `hashbrown` 0.17.1 (source read; observed
-through the instrument build, `pgdump_query-cli/tests/statistics_account.rs`).
+through the instrument build, `pgdt/tests/statistics_account.rs`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D81" — the interned term of
 the statistics account, `gather::map_heap` and `gather::grown_map_heap`.
@@ -728,7 +728,7 @@ the statistics account, `gather::map_heap` and `gather::grown_map_heap`.
 grep -A2 'name = "hashbrown"' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/Cargo.lock"
 cargo test -p pgdump_query --lib a_full_map_grows_into_the_table_it_is_charged
 cargo test -p pgdump_query --lib a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged
-cargo test -p pgdump_query-cli --features introspect --test statistics_account --target-dir <own>
+cargo test -p pgdt --features introspect --test statistics_account --target-dir <own>
 ```
 
 The first names the version whose `src/raw.rs` the proof reads; the second and
@@ -755,7 +755,7 @@ vector by themselves, whose amortized capacities are the toolchain's choice, nor
 of any allocator's own rounding: the sizes are what `GlobalAlloc` is asked for.
 
 **Verified against:** Rust 1.98.0 (source read; observed through the instrument
-build, `pgdump_query-cli/tests/statistics_account.rs`).
+build, `pgdt/tests/statistics_account.rs`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D81" — a vector charged
 ahead of its growth, `gather::reserve_charged` and `gather::push_charged`.
@@ -765,7 +765,7 @@ ahead of its growth, `gather::reserve_charged` and `gather::push_charged`.
 ```sh
 grep -n -A20 'fn grow_exact' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs"
 cargo test -p pgdump_query --lib a_vector_grows_into_the_capacity_it_is_charged
-cargo test -p pgdump_query-cli --features introspect --test statistics_account --target-dir <own>
+cargo test -p pgdt --features introspect --test statistics_account --target-dir <own>
 ```
 
 The first shows the capacity stored; the second holds the capacities to the
@@ -791,7 +791,7 @@ size of the object (#5272)"; `header_meta` reads the validators from the same
 answers `200` to a `Range` (which is `RT14`), or for any backend but this one.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
-oracle, `pgdump_query-cli/tests/remote.rs`).
+oracle, `pgdt/tests/remote.rs`).
 
 **Relied on by:** `io::RemoteObject::probe` ([`decisions.md`](decisions.md),
 "D14") — the origin probe costs one round trip rather than a `HEAD` and a
@@ -800,7 +800,7 @@ oracle, `pgdump_query-cli/tests/remote.rs`).
 **Re-verify:**
 
 ```sh
-cargo test -p pgdump_query-cli --test remote the_origin_probe_costs_one_round_trip
+cargo test -p pgdt --test remote the_origin_probe_costs_one_round_trip
 ```
 
 The assertion is on the request log, so a crate that started asking twice fails
@@ -822,7 +822,7 @@ particular server does. A server answering `206` with the wrong span is a
 different case, and is `RT15`.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
-oracle's `ignoring_range` knob, `pgdump_query-cli/tests/remote.rs`).
+oracle's `ignoring_range` knob, `pgdt/tests/remote.rs`).
 
 **Relied on by:** `io::RemoteSource` ([`decisions.md`](decisions.md), "D6") —
 positioned reads are simply unavailable against such a server, and asking for
@@ -831,7 +831,7 @@ one does not download the object to find that out.
 **Re-verify:**
 
 ```sh
-cargo test -p pgdump_query-cli --test remote a_range_ignoring_server_is_refused_rather_than_read_whole
+cargo test -p pgdt --test remote a_range_ignoring_server_is_refused_rather_than_read_whole
 ```
 
 ## RT15 — a ranged GET delivers exactly the span asked for, or fails
@@ -855,11 +855,11 @@ error from the body stream.
 
 **Scope limit.** Nothing is claimed about *which* servers do this; both
 conditions are produced deliberately by the oracle
-(`pgdump_query-cli/tests/common/oracle.rs`), whose `short_range_after` and
+(`pgdt/tests/common/oracle.rs`), whose `short_range_after` and
 `truncating_body_after` are the two halves.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against both
-oracle knobs, `pgdump_query-cli/tests/remote.rs`).
+oracle knobs, `pgdt/tests/remote.rs`).
 
 **Relied on by:** `io::RemoteSource::read_range` ([`decisions.md`](decisions.md),
 "D6") — it answers exactly its `len` or errors, as `ByteRangeSource` requires
@@ -868,8 +868,8 @@ of every source.
 **Re-verify:**
 
 ```sh
-cargo test -p pgdump_query-cli --test remote a_short_206_is_a_fault_rather_than_a_short_read
-cargo test -p pgdump_query-cli --test remote a_body_that_stops_short_of_its_declared_length_is_a_failure
+cargo test -p pgdt --test remote a_short_206_is_a_fault_rather_than_a_short_read
+cargo test -p pgdt --test remote a_body_that_stops_short_of_its_declared_length_is_a_failure
 ```
 
 ## RT16 — an absent `Last-Modified` is reported as the Unix epoch, not as absence
@@ -900,7 +900,7 @@ silent rather than as claiming a date.
 **Re-verify:**
 
 ```sh
-cargo test -p pgdump_query-cli --test remote a_server_sending_no_modification_time_reads_as_silence
+cargo test -p pgdt --test remote a_server_sending_no_modification_time_reads_as_silence
 ```
 
 ## RT17 — the HTTP backend runs on a `current_thread` runtime
@@ -915,8 +915,8 @@ binary using it declares for itself.
 `rt-multi-thread`, and its `tokio` feature adds only `dep:tokio` and
 `dep:tracing`; `src/client/retry.rs` and `src/client/get.rs` await
 `tokio::time::sleep` and the response body directly, with no spawn. Observed:
-every assertion in `pgdump_query-cli/tests/remote.rs` runs under
-`#[tokio::test]`, whose flavour is `current_thread`.
+every assertion in `pgdt/tests/remote.rs` runs under `#[tokio::test]`, whose
+flavour is `current_thread`.
 
 **Scope limit.** Multipart upload and the `list` path are not claimed; this
 project calls neither.
@@ -924,15 +924,15 @@ project calls neither.
 **Verified against:** `object_store` 0.14.2, `reqwest` 0.13.5, `hyper` 1.11.1
 (source and lockfile read; observed through the test suite).
 
-**Relied on by:** [`decisions.md`](decisions.md), "D12" — `pgdq` runs one
+**Relied on by:** [`decisions.md`](decisions.md), "D12" — `pgdt` runs one
 `current_thread` runtime and would seed one glibc arena per visible CPU if a
 dependency forced the multi-threaded flavour on it.
 
 **Re-verify:**
 
 ```sh
-cargo tree -p pgdump_query-cli -e features -i tokio | grep -c rt-multi-thread
-cargo test -p pgdump_query-cli --test remote
+cargo tree -p pgdt -e features -i tokio | grep -c rt-multi-thread
+cargo test -p pgdt --test remote
 ```
 
 The first must print `0` for the shipped feature set; the second exercises the
@@ -971,6 +971,6 @@ silently.
 **Re-verify:**
 
 ```sh
-cargo test -p pgdump_query-cli --test remote every_ranged_get_after_the_probe_pins_the_object
-cargo test -p pgdump_query-cli --test remote an_object_rewritten_under_a_read_is_refused_by_the_server
+cargo test -p pgdt --test remote every_ranged_get_after_the_probe_pins_the_object
+cargo test -p pgdt --test remote an_object_rewritten_under_a_read_is_refused_by_the_server
 ```

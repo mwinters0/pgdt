@@ -9,13 +9,13 @@ Available as:
 
 ```bash
 # Parse a dump (builds a cache)
-pgdq parse --source=f00.xz
+pgdt parse --source=f00.xz
 
 # Inspect what you parsed, e.g. tables, roles, etc
-pgdq info --details --source=f00.xz
+pgdt info --details --source=f00.xz
 
 # Run a query.  Look ma, no daemons!
-pgdq query --where='foo.bar = baz' --source=f00.xz
+pgdt query --where='foo.bar = baz' --source=f00.xz
 ```
 
 Heavily assisted by LLMs.
@@ -104,8 +104,8 @@ deficiencies.
 
 ## Operation
 This code essentially has two phases:
-1. Parse the file's contents (`pgdq parse`).  Stores a file map, row group statistics, etc in a `*.dqcache` file.
-2. Query the contents using the cache (`pgdq query`).
+1. Parse the file's contents (`pgdt parse`).  Stores a file map, row group statistics, etc in a `*.dtcache` file.
+2. Query the contents using the cache (`pgdt query`).
 
 Note that this order is not strictly necessary -- you can "cold query" the file without a cache.  This will build a partial cache as it scans, though beware that:
 - A partial cache will never provide the same query efficiency as a full one.  (We can only build certain statistics with a full parse.)

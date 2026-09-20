@@ -19,16 +19,16 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pgdq_fixture; Type: DATABASE; Schema: -; Owner: postgres
+-- Name: pgdt_fixture; Type: DATABASE; Schema: -; Owner: postgres
 --
 
-CREATE DATABASE pgdq_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE = 'en_US.utf8';
+CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE = 'en_US.utf8';
 
 
-ALTER DATABASE pgdq_fixture OWNER TO postgres;
+ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
 \unrestrict hKnwy4kXKoagxQIN42hhmHdnGJ0xaUCb6IbDZyZAHT8cbF7sXwh4i003Xp6bCwO
-\connect pgdq_fixture
+\connect pgdt_fixture
 \restrict hKnwy4kXKoagxQIN42hhmHdnGJ0xaUCb6IbDZyZAHT8cbF7sXwh4i003Xp6bCwO
 
 SET statement_timeout = 0;

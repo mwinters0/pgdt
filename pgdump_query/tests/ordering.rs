@@ -6,8 +6,7 @@
 //! directly against real `pg_dump` output, so each column is compared
 //! through the decoder its own DDL resolved to. The unit tests in
 //! `src/predicate.rs` cover the comparison itself against hand-built
-//! schemas; the flags are pinned in
-//! `pgdump_query-cli/tests/query_ordering.rs`.
+//! schemas; the flags are pinned in `pgdt/tests/query_ordering.rs`.
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;

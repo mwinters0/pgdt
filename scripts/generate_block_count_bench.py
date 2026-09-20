@@ -2,7 +2,7 @@
 """Generate a synthetic pg_dump-shaped dump with a chosen number of COPY blocks.
 
 Backs docs/design/measurements.md ("Per-block cache saving is quadratic in
-block count"): `pgdq parse` serializes the *whole* structure cache at a
+block count"): `pgdt parse` serializes the *whole* structure cache at a
 completed block, and the cache grows with the block count, so the total cost of
 saving is O(blocks^2) in a regime no real sample here can reach -- koji is 784
 GB across 74 blocks. This generator supplies the other regime: block-rich and

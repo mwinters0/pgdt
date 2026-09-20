@@ -44,7 +44,7 @@ rather than an accident of the base image.** The fixture containers are the
 Debian (`-trixie`) images, so the server is glibc and `datcollate`'s
 `en_US.utf8` means glibc's collation. Every text pair is asked twice -- once
 under `COLLATE "C"`, once under `COLLATE "default"`, which is the database's
-own collation -- so one file holds both halves: pgdq compares bytewise, which
+own collation -- so one file holds both halves: pgdt compares bytewise, which
 *is* PostgreSQL's answer under `C` and is not under `en_US.utf8`. Equality
 comes along with it, and agrees under both, every libc collation being
 deterministic.
@@ -155,7 +155,7 @@ TYPE_CASES: list[TypeCases] = [
     # accepts it and wraps it to 4294967295 -- `oidin` has read a leading minus
     # since well before 13, and still does through v18's `uint32in_subr` -- and
     # this build refuses the literal instead, so the wrap belongs in the file as
-    # the server's answer rather than as a value pgdq claims to order.
+    # the server's answer rather than as a value pgdt claims to order.
     TypeCases(
         "oid",
         ("0", "2147483647", "2147483648", "4294967295", None),
@@ -269,7 +269,7 @@ TYPE_CASES: list[TypeCases] = [
     # The collation dimension. The same alphabet is asked twice -- bytewise
     # under `C`, and under the database's own collation, which on this
     # apparatus is glibc's `en_US.utf8` -- so the file holds both halves of
-    # the register's text row: pgdq's bytewise order *is* PostgreSQL's answer
+    # the register's text row: pgdt's bytewise order *is* PostgreSQL's answer
     # under `C`, and is not under a libc locale. All ordered pairs, as
     # everywhere else, because whether the two orders coincide is the property
     # under test and a ladder would presume it.
@@ -394,7 +394,7 @@ TYPE_CASES: list[TypeCases] = [
     # one pair here the register is known to answer differently:
     # `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to
     # `varstr_cmp`, so a leaf is ordered by the database's collation, which a
-    # plain dump does not record (I32). pgdq compares it bytewise and
+    # plain dump does not record (I32). pgdt compares it bytewise and
     # announces `ComparisonDivergence::JsonbStringCollation`.
     #
     # The inputs are I41's input grammar: a number's exponent and a signed
@@ -590,7 +590,7 @@ def comparison_cases() -> list[tuple[str, str | None, str | None, str | None]]:
     `literals.tsv`, which states the same rejection once. Around 6% of the
     committed rows are of that kind. They are kept because they are the only
     place two separately generated halves of the oracle are forced to agree,
-    which is what would catch a `pgdq_cmp` whose subtransaction split had
+    which is what would catch a `pgdt_cmp` whose subtransaction split had
     drifted; `test_comparison_oracle.py` asserts the agreement over the
     committed tree. Do not drop the pairing to shrink the file.
     """
@@ -631,7 +631,7 @@ SET bytea_output = 'hex';
 SET array_nulls = on;
 """
 
-#: The six operators as a SQL array literal, so the loop inside `pgdq_cmp` and
+#: The six operators as a SQL array literal, so the loop inside `pgdt_cmp` and
 #: the cells `comparisons_script` projects out of it are one list in one order.
 _OPERATOR_ARRAY = "ARRAY[" + ", ".join(sql_literal(op) for op in OPERATORS) + "]"
 
@@ -654,8 +654,8 @@ FUNCTIONS_SQL = f"""\
 -- split is what decides how far a rejection reaches. A type the server does
 -- not have, or a literal it refuses, is a pair that cannot exist, so it
 -- answers all six cells; a type with no `<` fails that cell alone.
-CREATE FUNCTION pg_temp.pgdq_cmp(typ text, lhs text, rhs text, coll text)
-RETURNS text[] LANGUAGE plpgsql AS $pgdq$
+CREATE FUNCTION pg_temp.pgdt_cmp(typ text, lhs text, rhs text, coll text)
+RETURNS text[] LANGUAGE plpgsql AS $pgdt$
 DECLARE
     c text := CASE WHEN coll IS NULL THEN '' ELSE ' COLLATE ' || quote_ident(coll) END;
     cells text[] := ARRAY[]::text[];
@@ -664,8 +664,8 @@ DECLARE
     r boolean;
 BEGIN
     BEGIN
-        EXECUTE format('CREATE TEMP TABLE pgdq_pair (a %s%s, b %s%s)', typ, c, typ, c);
-        EXECUTE format('INSERT INTO pg_temp.pgdq_pair VALUES ($1::%s, $2::%s)', typ, typ)
+        EXECUTE format('CREATE TEMP TABLE pgdt_pair (a %s%s, b %s%s)', typ, c, typ, c);
+        EXECUTE format('INSERT INTO pg_temp.pgdt_pair VALUES ($1::%s, $2::%s)', typ, typ)
             USING lhs, rhs;
     EXCEPTION WHEN others THEN
         setup := 'E' || SQLSTATE;
@@ -676,7 +676,7 @@ BEGIN
             CONTINUE;
         END IF;
         BEGIN
-            EXECUTE format('SELECT a %s b FROM pg_temp.pgdq_pair', op) INTO r;
+            EXECUTE format('SELECT a %s b FROM pg_temp.pgdt_pair', op) INTO r;
             cells := cells || CASE WHEN r IS NULL THEN 'u' WHEN r THEN 't' ELSE 'f' END;
         EXCEPTION WHEN others THEN
             cells := cells || ('E' || SQLSTATE);
@@ -684,17 +684,17 @@ BEGIN
     END LOOP;
     -- Only where the setup succeeded: its own rollback took the table with it.
     IF setup IS NULL THEN
-        EXECUTE 'DROP TABLE pg_temp.pgdq_pair';
+        EXECUTE 'DROP TABLE pg_temp.pgdt_pair';
     END IF;
     RETURN cells;
 END
-$pgdq$;
+$pgdt$;
 
 -- The type's own output function, reached through `textin(typoutput(...))`
 -- rather than a cast to `text`: `bpchar::text` strips the blank padding that
 -- `bpcharout` -- and therefore the dump -- keeps.
-CREATE FUNCTION pg_temp.pgdq_lit(typ text, lit text, OUT status text, OUT out_text text)
-LANGUAGE plpgsql AS $pgdq$
+CREATE FUNCTION pg_temp.pgdt_lit(typ text, lit text, OUT status text, OUT out_text text)
+LANGUAGE plpgsql AS $pgdt$
 DECLARE outfn text;
 BEGIN
     SELECT quote_ident(n.nspname) || '.' || quote_ident(p.proname) INTO outfn
@@ -709,7 +709,7 @@ EXCEPTION WHEN others THEN
     status := 'E' || SQLSTATE;
     out_text := NULL;
 END
-$pgdq$;
+$pgdt$;
 """
 
 
@@ -788,7 +788,7 @@ def literals_script() -> str:
     return (
         SESSION_SQL
         + FUNCTIONS_SQL
-        + "\nCOPY (\n  SELECT c.ty, c.lit, (pg_temp.pgdq_lit(c.ty, c.lit)).*\n"
+        + "\nCOPY (\n  SELECT c.ty, c.lit, (pg_temp.pgdt_lit(c.ty, c.lit)).*\n"
         + _values_list(rows, "o, ty, lit")
         + "\n) TO STDOUT;\n"
     )
@@ -807,7 +807,7 @@ def comparisons_script() -> str:
     rows = list(comparison_cases())
     cells = ",\n".join(f"         x.cells[{n}]" for n in range(1, len(OPERATORS) + 1))
     lateral = (
-        "  CROSS JOIN LATERAL pg_temp.pgdq_cmp(c.ty, c.l, c.r, c.coll) AS x(cells)\n"
+        "  CROSS JOIN LATERAL pg_temp.pgdt_cmp(c.ty, c.l, c.r, c.coll) AS x(cells)\n"
     )
     return (
         SESSION_SQL

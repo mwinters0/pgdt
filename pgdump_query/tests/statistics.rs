@@ -379,7 +379,7 @@ async fn statistics_round_trip_through_the_cache() {
 /// at 256 bytes a group nearly every cut falls inside a group: the joined
 /// bounds, dictionaries and row order — an ascending column and a descending
 /// one — are the serial pass's. Every fixture is swept the same way by
-/// `pgdump_query-cli/tests/determinism.rs`, byte for byte.
+/// `pgdt/tests/determinism.rs`, byte for byte.
 #[tokio::test]
 async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     let dir = tempfile::tempdir().unwrap();
@@ -1055,7 +1055,7 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
 async fn a_block_rewritten_at_the_same_size_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("rewritten.sql");
-    let cache_path = dir.path().join("elsewhere").join("rewritten.dqcache");
+    let cache_path = dir.path().join("elsewhere").join("rewritten.dtcache");
     std::fs::create_dir(cache_path.parent().unwrap()).unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
     let before = "COPY public.t (a) FROM stdin;\n11\n2\n\\.\nSELECT 1;\n";

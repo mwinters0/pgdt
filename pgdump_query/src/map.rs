@@ -118,7 +118,7 @@ pub struct Span {
     /// `None` for a plain dump (or content before any `\connect`).
     pub database: Option<String>,
     /// The span's own bytes, sliced from the file by offset and stored in the
-    /// cache so `pgdq info` answers without re-reading the dump
+    /// cache so `pgdt info` answers without re-reading the dump
     /// (`docs/design/decisions.md`, "D30"). `None` until [`attach_text`] has
     /// run, and permanently `None` for [`SpanBody::Data`] and
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded.
@@ -139,7 +139,7 @@ pub struct Span {
     /// text (`true`), as opposed to `toc` being inherited from an earlier
     /// entry's span (`false`) — `false` when `toc` is `None`, but for a comment
     /// block shaped like a TOC entry whose header did not parse. An object
-    /// census (`pgdq info`'s `object kinds:`) counts `toc_owned` spans, one
+    /// census (`pgdt info`'s `object kinds:`) counts `toc_owned` spans, one
     /// per archive entry, while TOC coverage counts every attributed span
     /// (`toc.is_some()`), inherited ones included
     /// (`docs/design/decisions.md`, "D31").

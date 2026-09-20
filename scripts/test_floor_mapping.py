@@ -52,7 +52,7 @@ fn builtin_scalar(base: &str, typmod: Option<&str>) -> Option<(DataType, Compari
 
 PYPROJECT_TOML = """
 [project]
-name = "pgdq-fixtures"
+name = "pgdt-fixtures"
 dependencies = [
     "adbc-driver-postgresql==1.12.0",
     "pyarrow==25.0.1",

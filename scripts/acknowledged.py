@@ -111,7 +111,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified=(
             "git show --format= -U0 2223f8b -- pgdump_query/src/preamble.rs "
-            "pgdump_query-cli/Cargo.toml | grep -E '^[+-]' | "
+            "pgdt/Cargo.toml | grep -E '^[+-]' | "
             "grep -vE '^(\\+\\+\\+|---)' | grep -vE '^[+-][[:space:]]*(///|//!|//|#)'"
             "  # empty"
         ),

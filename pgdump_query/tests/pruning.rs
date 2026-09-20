@@ -78,7 +78,7 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
 /// once drained, in file order — or the error, as text.
 type Answer = Result<(Option<RecordBatch>, Vec<PlanNote>, Resolved, Vec<EarlyStop>), String>;
 
-/// What the first sub-stream says of the schema once drained — what `pgdq
+/// What the first sub-stream says of the schema once drained — what `pgdt
 /// query` announces.
 type Resolved = (pgdump_query::ResolvedSchema, Vec<pgdump_query::ComparisonNote>);
 
@@ -440,7 +440,7 @@ async fn check_fixture(
     let (dir, dump, index) = gathered(fixture, TINY_GROUP).await;
     // Resolution reads no statistic, so what refuses is asked of a cache
     // holding none, which loads in a fraction of the time.
-    let plain = dir.path().join("plain.dqcache");
+    let plain = dir.path().join("plain.dtcache");
     let source = LocalFileSource::open(&dump).unwrap();
     let request = StatisticsRequest::NONE;
     map_file(&source, &ScanOptions::default(), &CacheMode::enabled(plain.clone()), &request)

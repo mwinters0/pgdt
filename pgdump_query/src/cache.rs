@@ -7,7 +7,7 @@
 //! never a hard error. Which of the three it was is still reported, as far as
 //! the decode can tell them apart (`KD30`) — see
 //! [`CacheStatus`], and [`CacheLoad`] for the same statuses reaching a caller
-//! that holds a live source — because `pgdq info` has no "scan instead" to
+//! that holds a live source — because `pgdt info` has no "scan instead" to
 //! fall back on and has to say what went wrong.
 //!
 //! **The size-mismatched file is the exception.** A cache whose recorded
@@ -359,7 +359,7 @@ fn epoch_stamp(t: SystemTime) -> String {
 ///
 /// It rides on [`CacheMode`] beside the path because the library owns the
 /// refusal: an embedder gets the same comparison without re-implementing it,
-/// and `pgdq`'s `--strict-identity` only sets it.
+/// and `pgdt`'s `--strict-identity` only sets it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StrictIdentity {
     time: bool,
@@ -371,7 +371,7 @@ impl StrictIdentity {
     /// The default: nothing weak binds between runs, and a source that
     /// changes under an in-flight read is still an error.
     pub const ADVISORY: Self = Self { time: false, location: false, in_flight: true };
-    /// Nothing binds at all, the in-flight check included — `pgdq
+    /// Nothing binds at all, the in-flight check included — `pgdt
     /// --strict-identity=none`. The only way to turn that check off, because
     /// it is not a question of whether to trust a weak signal but of whether
     /// a read whose bytes changed underneath it may be believed.
@@ -557,7 +557,7 @@ struct CacheFile {
 
 /// Everything a cache file persists beside its index and `total_size`, as it
 /// was read — handed out on [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`]
-/// so a reporting caller can export the whole file, which `pgdq info --json`
+/// so a reporting caller can export the whole file, which `pgdt info --json`
 /// does (`docs/design/decisions.md`, "D67").
 ///
 /// **Opaque to Rust, whole to serde**: the fields stay private, so no caller
@@ -602,10 +602,10 @@ pub fn advisory_identity_diagnostics(
 }
 
 /// The default cache location when no explicit path is given:
-/// `<dump-path>.dqcache`.
+/// `<dump-path>.dtcache`.
 pub fn colocated_path(dump_path: &Path) -> PathBuf {
     let mut path = dump_path.as_os_str().to_owned();
-    path.push(".dqcache");
+    path.push(".dtcache");
     PathBuf::from(path)
 }
 
@@ -631,7 +631,7 @@ pub enum CacheStatus {
     /// decoded before its version is read, so a cache from a build whose
     /// persisted shape changed — the change that bumps `CACHE_FORMAT_VERSION` —
     /// almost always fails to decode and is [`CacheStatus::Unreadable`], which
-    /// `pgdq info` words as not a pgdq cache at all; an unknown `ContainerKind`
+    /// `pgdt info` words as not a pgdt cache at all; an unknown `ContainerKind`
     /// cannot decode at all. **(c) unowned**; promoted by a user sent to check a
     /// path that holds an old cache, the fix being the version read ahead of
     /// the rest.
@@ -666,7 +666,7 @@ pub enum CacheStatus {
     /// `total_size` — a real, not-yet-finished scan (a preamble-only scan, or
     /// a query that stopped once its target settled), not a defect
     /// (`docs/design/decisions.md`, "D22"). What "not enough" means is
-    /// caller-specific: `pgdq info` states the coverage
+    /// caller-specific: `pgdt info` states the coverage
     /// (`docs/design/decisions.md`, "The CLI"), while a caller resuming an
     /// incremental scan (`crate::stream::map_file`,
     /// `crate::stream::table_stream`, `crate::index::preamble_only`) builds
@@ -1011,7 +1011,7 @@ pub enum CacheMode {
     /// No live dump source at all — answer strictly from the cache at this
     /// path (`docs/design/decisions.md`,
     /// "The compressed source and the cache"). Never constructed by
-    /// [`CacheMode::resolve`]; a caller builds it directly (`pgdq info` with
+    /// [`CacheMode::resolve`]; a caller builds it directly (`pgdt info` with
     /// no `--source`). Every method below that takes a live `source` rejects
     /// it as a caller-contract violation, and [`load_offline`] rejects
     /// `Enabled`/`Disabled` the other way. It carries no strictness: with no
@@ -1028,11 +1028,11 @@ impl CacheMode {
         CacheMode::Enabled { path: path.into(), strict: StrictIdentity::ADVISORY }
     }
 
-    /// Resolve a `--dqcache`-style argument against the source it is for:
+    /// Resolve a `--dtcache`-style argument against the source it is for:
     /// `None` selects the default, the literal path `none` disables the
     /// cache, and any other path is used as-is.
     ///
-    /// **The default is the name of the dump plus `.dqcache`, and only where
+    /// **The default is the name of the dump plus `.dtcache`, and only where
     /// it sits differs.** A local dump's cache sits *beside* it, so the
     /// pairing is the filesystem's. An object fetched over a network has no
     /// beside, so its cache is named after the URL's last path segment and
@@ -1102,7 +1102,7 @@ impl CacheMode {
     /// map exists (`docs/design/decisions.md`, "D22"). A caller that instead
     /// *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`], as
-    /// `pgdq info` does. Neither the four unusable statuses nor the caller's
+    /// `pgdt info` does. Neither the four unusable statuses nor the caller's
     /// own opt-out is collapsed: each arrives as its own variant, and such a
     /// caller asks [`CacheMode::strict_identity_refusal`] for the check this
     /// method makes inline.
@@ -1137,7 +1137,7 @@ impl CacheMode {
     /// mode binds nothing that `weak` fails — exposed because a caller that
     /// *reports* what a cache holds reads the full [`CacheStatus`] through
     /// [`load`] and so never passes through `load`'s own check
-    /// (`pgdq info`). The comparison stays here rather than at that caller,
+    /// (`pgdt info`). The comparison stays here rather than at that caller,
     /// so one selection means one thing on every command
     /// (`docs/design/decisions.md`, "D21").
     ///
@@ -1246,7 +1246,7 @@ impl CacheMode {
 
     /// The path this mode resolves to, or `Error::CacheDisabled` if the
     /// caller disabled the cache but `operation` requires one — so an
-    /// incompatible `--dqcache none` is rejected up front rather than
+    /// incompatible `--dtcache none` is rejected up front rather than
     /// discovered when a write silently no-ops.
     pub fn require_enabled(&self, operation: &'static str) -> Result<&Path> {
         match self {
@@ -1324,7 +1324,7 @@ mod tests {
             );
             assert_eq!(source.seek_table().is_some(), name == "xz");
 
-            let path = dir.path().join(format!("{name}.dqcache"));
+            let path = dir.path().join(format!("{name}.dtcache"));
             save(&path, source, &run.index).await.unwrap();
             let whole = CacheFile {
                 format_version: CACHE_FORMAT_VERSION,
@@ -1368,7 +1368,7 @@ mod tests {
     #[test]
     fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dump.sql.dqcache");
+        let path = dir.path().join("dump.sql.dtcache");
         std::fs::write(&path, b"the previous cache").unwrap();
 
         let failed = write_beside(&path, |writer| {
@@ -1377,9 +1377,9 @@ mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
             let names = listing(dir.path());
             assert_eq!(names.len(), 2, "the cache and the save's own file: {names:?}");
-            let partial = names.iter().find(|name| *name != "dump.sql.dqcache").unwrap();
+            let partial = names.iter().find(|name| *name != "dump.sql.dtcache").unwrap();
             assert!(
-                partial.starts_with("dump.sql.dqcache.") && partial.ends_with(".tmp"),
+                partial.starts_with("dump.sql.dtcache.") && partial.ends_with(".tmp"),
                 "the partial file is named for its cache: {partial}"
             );
             assert_eq!(
@@ -1390,7 +1390,7 @@ mod tests {
         });
         assert!(matches!(failed, Err(Error::CacheModeMismatch(_))));
         assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
-        assert_eq!(listing(dir.path()), ["dump.sql.dqcache"]);
+        assert_eq!(listing(dir.path()), ["dump.sql.dtcache"]);
 
         write_beside(&path, |writer| {
             writer.write_all(b"the next cache")?;
@@ -1399,6 +1399,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"the next cache");
-        assert_eq!(listing(dir.path()), ["dump.sql.dqcache"]);
+        assert_eq!(listing(dir.path()), ["dump.sql.dtcache"]);
     }
 }

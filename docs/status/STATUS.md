@@ -30,11 +30,11 @@ quotes a number: every figure is in
 | Best-effort structural cache with source-identity checking and cache-only inspection | working; the library never replaces cache data automatically, a weak signal — an mtime, or a server's `Last-Modified` and `ETag`, and where a source was fetched from — is advisory between runs unless `--strict-identity` binds the term, and a source that changes under an in-flight read aborts a run that then saves and removes nothing | `cache.rs`; D18–D22; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--strict-identity`: when a moved file should stop the run" |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed, decoded and compared structurally; two shapes stay text (`KD3`) and an array inside a composite is decided optimistically (`KD2`) | `nested.rs`, `pgtype.rs`; D39, D41, D45, D58 |
 | Array shape census | recorded by every mapping pass and read back before a query's first batch | `map.rs`; D35, D43 |
-| CLI `pgdq parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` scans ahead, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdump_query-cli/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
+| CLI `pgdt parse` / `info` / `query`, with `--map`, `--json`, `--detail` and cache-only `info` | working; `parse` scans ahead, resumes, and saves on Ctrl-C; `info` never scans; `query` reads partitioned and prints file order | `pgdt/src/main.rs`; D61–D67; [`../manual/dump-inspection.md`](../manual/dump-inspection.md) |
 | Partial reporting | `info` reports an unfinished scan's cache with its completion stated once at the top; an interrupted cache is typed for every database segment the scan finished (I1) | D67 |
 | Column projection | working, library and CLI; an unprojected column is never decoded unless a filter term names it | `batch.rs`; D28; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | The filter expression, three-valued | working; `Expr` is one tree evaluated in SQL's `True`/`False`/`Unknown` domain, reached as `--where` and as repeated `--filter` | `predicate.rs`; D53, D54 |
-| The `--where` and `--filter` grammars | working, CLI only; nothing below L4 parses a term | `pgdump_query-cli/src/where_expr.rs`, `main.rs`; D60; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`" and "Writing a filter term" |
+| The `--where` and `--filter` grammars | working, CLI only; nothing below L4 parses a term | `pgdt/src/where_expr.rs`, `main.rs`; D60; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`" and "Writing a filter term" |
 | Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault | `predicate.rs`, `pgtype.rs`; D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
 | The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced per term on its own channel; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation | committed under `fixtures/<major>/oracle/` and checked by `predicate.rs`'s unit test, `scripts/oracle_differences.py` and `scripts/oracle_register.py` | D70, D71 |
@@ -47,7 +47,7 @@ quotes a number: every figure is in
 | Remote input (`--source https://…`), over `object_store` | working behind the default-off `http` feature: one ranged GET probes, one reader reads, no credential is sent, `file:` resolves to a local path and every other scheme is refused by name; the cache is named after the URL's last segment in the working directory and records the origin it was written for, and every ranged GET pins the object to the version the probe saw — its entity tag, or its modification time where it stated no tag — so a rewrite mid-scan is refused by the server, a server stating neither being read unpinned; a fetched `.xz` is read block by block out of windows we fetch, and its cold footer walk is announced rather than refused (`KD36`); where the budget cannot hold one decoded block the fetched arm keeps the window and the handle together, so a block a scan sits inside is fetched and decoded once | `io.rs` (`RemoteSource`, `FetchedXzSource`, `walk_seek_table`, `Origin`), `cache.rs` (`OriginMatch`); D6, D12, D14, D15, D18, D26; RT13–RT18; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "Reading a dump over HTTP" |
 | Python bindings, DataFusion `TableProvider` | not started; P6 | |
 | Device-bound scan performance | settled; parallelism is filed beside its own mechanisms | D10, D29 |
-| Per-row-group column statistics | working; `pgdq parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, and say on stderr how much memory they held, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdq query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none`; statistics stop where the account fills, so a long dump keeps a prefix (`KD33`); under an unstated group size a block's groups merge pairwise past `BLOCK_MAX_STATISTICS_GROUPS` and, once it is read, until its median group holds the density minimum, never past a stated maximum, which turns the cap off and re-reads a block once at the finer size its groups predict, each block recording the request that sized it; a block whose statistics the run's allowance cannot hold declines, says so, and is re-read only under a larger one | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdump_query-cli/src/info_statistics.rs`; D19, D34, D54, D67, D75–D82, D85; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
+| Per-row-group column statistics | working; `pgdt parse` and the library's `map_file` gather them by default, at any worker count, and persist them in the cache, re-reading a mapped block that lacks what is asked, and say on stderr how much memory they held, `info --detail` reports them per table and column and `--json` exports every group's, and a query — library and `pgdt query` — skips the row groups they rule out, and stops reading a block sorted past the filter's bound, saying after the fact what that left unread, unless told `--statistics none`; statistics stop where the account fills, so a long dump keeps a prefix (`KD33`); under an unstated group size a block's groups merge pairwise past `BLOCK_MAX_STATISTICS_GROUPS` and, once it is read, until its median group holds the density minimum, never past a stated maximum, which turns the cap off and re-reads a block once at the finer size its groups predict, each block recording the request that sized it; a block whose statistics the run's allowance cannot hold declines, says so, and is re-read only under a larger one | `statistics.rs`, `gather.rs`, `prune.rs`, `pgdt/src/info_statistics.rs`; D19, D34, D54, D67, D75–D82, D85; [`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--statistics`: what `parse` records for later queries" |
 | `--inserts` row reading; custom, directory and tar archives | not started; P8, and the map already locates `INSERT` runs (`KD9`) | D33 |
 
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
@@ -73,7 +73,7 @@ instrument can see").
 
 ## Not started
 
-- **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
+- **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **No phase is open.** A dump is readable over HTTP, plain and `.xz`, with
@@ -169,9 +169,9 @@ a phase nobody has sliced.
 
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
   wherever the save throttle's gate does not close it — which is every
-  `--dqcache none` scan, since a no-op save leaves nothing to amortize.
+  `--dtcache none` scan, since a no-op save leaves nothing to amortize.
   **(c) unowned**; promoted by a dump with thousands of blocks
-  scanned under `--dqcache none`. Detail: `pgdump_query/src/stream.rs`.
+  scanned under `--dtcache none`. Detail: `pgdump_query/src/stream.rs`.
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
@@ -244,7 +244,7 @@ a phase nobody has sliced.
   **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
   `pgdump_query/src/leader.rs`.
 
-- **KD23** — a `pgdq query` sub-stream can pin several decoded blocks where the
+- **KD23** — a `pgdt query` sub-stream can pin several decoded blocks where the
   budget bills one: a query partition is cut over a whole `CopyBlock` rather
   than through the leader's window, so `BOUNDARIED_PARTITION_UNITS` does not
   bound it and a held batch's `max_source_span` reaches up to four of koji's 24
@@ -290,16 +290,16 @@ a phase nobody has sliced.
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail: `pgdump_query/src/preamble.rs`.
 
-- **KD29** — a flagless `pgdq` run reads its memory limit twice, once for the
+- **KD29** — a flagless `pgdt` run reads its memory limit twice, once for the
   status lines and the statistics allowance and again inside
   `Parallelism::discover_in` for the read-buffer budget, so a limit rewritten
   between the two is announced and carved for statistics as one number while
   the pools are budgeted from another. **(c) unowned**; promoted by a limit
   seen to move inside a run, or by discovery that can take a limit already
-  read. Detail: `pgdump_query-cli/src/main.rs`.
+  read. Detail: `pgdt/src/main.rs`.
 
 - **KD30** — a cache from a build whose persisted shape changed is decoded
-  whole before its version is read, so it almost always reads as not a pgdq
+  whole before its version is read, so it almost always reads as not a pgdt
   cache rather than as another build's, and `info` sends the user to check the
   path. **(c) unowned**; promoted by a user misled by it, the fix being the
   version read first. Detail: `pgdump_query/src/cache.rs`.

@@ -3,7 +3,7 @@
 `uv run python -m unittest test_row_density`.
 
 Synthetic `info --json` documents only: the reading itself runs over caches
-`pgdq` writes, which are not committed, so what is pinned here is the
+`pgdt` writes, which are not committed, so what is pinned here is the
 arithmetic -- the pairwise ladder, the quantiles the spec's bound rests on, the
 choice, the criterion and the selection.
 """

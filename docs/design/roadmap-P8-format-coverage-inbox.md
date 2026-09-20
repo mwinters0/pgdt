@@ -40,7 +40,7 @@ reproduction and the exact source functions — and the
 `--load-via-partition-root` row in
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md).
 
-**Contingent on.** Nothing in `pgdq`; this is upstream behaviour with a
+**Contingent on.** Nothing in `pgdt`; this is upstream behaviour with a
 re-verification step recorded on I2 itself.
 
 ---

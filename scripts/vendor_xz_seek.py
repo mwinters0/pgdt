@@ -43,7 +43,7 @@ DEST = REPO / "vendor" / "xz-seek"
 # This machine's xz-seek checkout (CLAUDE.local.md, "xz-seek (external crate,
 # vendored into this repo)"). A different machine points this elsewhere.
 SOURCE = Path(
-    os.environ.get("PGDQ_XZ_SEEK_SOURCE", "/mnt/wd12t/fedora/experiments/xz-seek")
+    os.environ.get("PGDT_XZ_SEEK_SOURCE", "/mnt/wd12t/fedora/experiments/xz-seek")
 )
 
 # Top-level manifest tables, and which side of the cut each falls on. Any

@@ -19,7 +19,7 @@ weighed first: every read loop in the library is already written as
 `want = chunk_size.min(size - read_pos)` … `read_pos += bytes.len()`, so **all
 of them already tolerate a short read**. What actually depends on the number
 being exact is the loop's exit test, and the coverage denominator —
-`total_size`, `scanned_through`, and `pgdq info`'s percentages.
+`total_size`, `scanned_through`, and `pgdt info`'s percentages.
 
 **Why P18 cares.** This is the decision this phase cannot avoid, since zstd's
 frame content size is optional and a streaming writer — which is what

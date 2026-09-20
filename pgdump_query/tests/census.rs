@@ -119,7 +119,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
         // through the cache it persisted, and a shared one would let the
         // first pass answer for the second.
         let dir = tempfile::tempdir().unwrap();
-        let cache = CacheMode::enabled(dir.path().join("dump.dqcache"));
+        let cache = CacheMode::enabled(dir.path().join("dump.dtcache"));
         let options = QueryOptions { scan_extent: extent, ..Default::default() };
         let mut stream = table_stream(
             &source,
@@ -158,7 +158,7 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
 
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
         let dir = tempfile::tempdir().unwrap();
-        let cache = CacheMode::enabled(dir.path().join("dump.dqcache"));
+        let cache = CacheMode::enabled(dir.path().join("dump.dtcache"));
         let options = QueryOptions { scan_extent: extent, ..Default::default() };
         let mut stream = table_stream(
             &source,

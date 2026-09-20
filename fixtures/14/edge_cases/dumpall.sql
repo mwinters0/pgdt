@@ -60,7 +60,7 @@ SET row_security = off;
 \unrestrict coZcdKldDdPPiqfm6acAztZwONslWDNxAqRAPdcZ2OC8HxjP9T9ZDzK0uK37Emu
 
 --
--- Database "pgdq_fixture" dump
+-- Database "pgdt_fixture" dump
 --
 
 --
@@ -84,16 +84,16 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pgdq_fixture; Type: DATABASE; Schema: -; Owner: postgres
+-- Name: pgdt_fixture; Type: DATABASE; Schema: -; Owner: postgres
 --
 
-CREATE DATABASE pgdq_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE = 'en_US.utf8';
+CREATE DATABASE pgdt_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE = 'en_US.utf8';
 
 
-ALTER DATABASE pgdq_fixture OWNER TO postgres;
+ALTER DATABASE pgdt_fixture OWNER TO postgres;
 
 \unrestrict 3aG8c7gf9XlhRQZUsbKhORk3lB86UEveFElHpzT4FAYwcK9DzubANjbbhy2fktM
-\connect pgdq_fixture
+\connect pgdt_fixture
 \restrict 3aG8c7gf9XlhRQZUsbKhORk3lB86UEveFElHpzT4FAYwcK9DzubANjbbhy2fktM
 
 SET statement_timeout = 0;
@@ -488,7 +488,7 @@ ALTER TABLE ONLY logs.events
 \unrestrict 3aG8c7gf9XlhRQZUsbKhORk3lB86UEveFElHpzT4FAYwcK9DzubANjbbhy2fktM
 
 --
--- Database "pgdq_tenant" dump
+-- Database "pgdt_tenant" dump
 --
 
 --
@@ -512,16 +512,16 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pgdq_tenant; Type: DATABASE; Schema: -; Owner: postgres
+-- Name: pgdt_tenant; Type: DATABASE; Schema: -; Owner: postgres
 --
 
-CREATE DATABASE pgdq_tenant WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE = 'en_US.utf8';
+CREATE DATABASE pgdt_tenant WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE = 'en_US.utf8';
 
 
-ALTER DATABASE pgdq_tenant OWNER TO postgres;
+ALTER DATABASE pgdt_tenant OWNER TO postgres;
 
 \unrestrict 3siqaLP5hDBrG2kgpKqa7sWSYW3lDVY9AqROfdX7Eq4LRjLisQ23okoAxT8LCyc
-\connect pgdq_tenant
+\connect pgdt_tenant
 \restrict 3siqaLP5hDBrG2kgpKqa7sWSYW3lDVY9AqROfdX7Eq4LRjLisQ23okoAxT8LCyc
 
 SET statement_timeout = 0;
