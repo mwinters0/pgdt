@@ -676,7 +676,7 @@ the variant and one calling `table_stream` still does — the split the entry
 above describes, now the same on both providers.
 
 **Origin.** P14.5, 2026-09-18. See
-[`roadmap-P14.5-remote-source-notes.md`](roadmap-P14.5-remote-source-notes.md)
+[`roadmap-P14-remote-input-notes.md`](roadmap-P14-remote-input-notes.md)
 and [`decisions.md`](decisions.md), "D6" and "D26". *Contingent on* the feature
 staying default-off and on the trait answers staying conservative — the phase
 that tunes the network may replace either.

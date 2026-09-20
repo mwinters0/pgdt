@@ -19,7 +19,7 @@ reused, including a struck phase's.
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
-| P14 — remote input | **Current** | [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md) |
+| P14 — remote input | Complete | [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md); [notes](roadmap-P14-remote-input-notes.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
@@ -640,10 +640,13 @@ What it inherits:
 
 ## P14 — Remote input
 
-**Specified and current: [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md)**,
-which is where this phase's decisions live; its slice checklist is
-[`../status/STATUS.md`](../status/STATUS.md). Its inbox was drained by that
-grilling and deleted.
+**Complete.** Specified in
+[`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), which is where
+this phase's decisions live until the keystone folds them, with what it left
+behind in
+[`roadmap-P14-remote-input-notes.md`](roadmap-P14-remote-input-notes.md). Its
+inbox was drained by its grilling and deleted. It delivered correctness and
+priced nothing about the network — `KD35` and `KD36` are unowned.
 
 Read a dump over the network — `pgdq --source https://example.com/foo.dump`, and
 the `.xz` composition beside it — over HTTP and HTTPS alone, for correctness

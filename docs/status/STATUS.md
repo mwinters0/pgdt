@@ -71,136 +71,15 @@ either produces is a `runs/` artifact with no median, no apparatus gate and no
 marker ([`../design/measurements.md`](../design/measurements.md), "What an
 instrument can see").
 
-## P14 progress
-
-Slices of [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md),
-in order. Each lands its notes doc, its manual text and its register entries in
-the same change ([`../process.md`](../process.md), "The loop"); the rows say only
-what is delivered.
-
-- [x] **14.1** Cancellation gains an awaitable form beside the polled flag, so a
-  read in flight can be dropped rather than waited out (D16). No remote code;
-  amends [`../design/decisions.md`](../design/decisions.md), "D26", which
-  describes a polled flag.
-  [notes](../design/roadmap-P14.1-cancellation-notes.md)
-- [x] **14.2** The **origin**: the pre-source probe that answers stored size,
-  weak identity and leading magic bytes before any source is built, `cache::claim`
-  consuming it instead of a `&Path`, and recognition told what it holds rather
-  than reading the path (D2). The local source is its only user.
-  [notes](../design/roadmap-P14.2-origin-notes.md)
-- [x] **14.3** In-flight identity on the local source: the check at every cache
-  save and once at run end, `--strict-identity=time,location,none` with absence
-  as a failure, and an abort that saves nothing and deletes nothing (D5,
-  D10–D12). `location` is inert until 14.6 gives it an origin.
-  [notes](../design/roadmap-P14.3-in-flight-identity-notes.md)
-- [x] **14.4** The oracle: an HTTP server inside the test binary serving fixtures
-  over loopback, with a knob per misbehaviour — range ignored, ETag changed
-  mid-run, short read, mid-body failure, mid-scan 404 — and its own tests proving
-  it misbehaves as asked (D6). No subject yet, deliberately.
-  [notes](../design/roadmap-P14.4-oracle-notes.md)
-- [x] **14.5** The remote source over a plain dump, end to end:
-  `parse`/`query`/`info --source https://…`, the `http` feature and `cmake`
-  pinned, URL and `file://` handling with credentials and non-HTTP schemes
-  refused by name, the client defaults, the conservative trait answers, the
-  public constructor, and network failure as an error naming the URL (D3, D7–D9,
-  D14, D15, D17). The oracle gains an eighth knob, a stalled origin, and the
-  client deadline and the cancellation race are asserted against it rather than
-  left unproducible (D6, D9, D16). Adds the `RT<n>` entries its decisions depend
-  on. A remote `.xz` is refused by name until 14.7.
-  [notes](../design/roadmap-P14.5-remote-source-notes.md)
-- [x] **14.6** Remote identity and the remote cache: `SourceIdentity::Remote`,
-  the URL-basename default cache path, the origin recorded and reported
-  advisorily, the precondition on every ranged GET, and `CacheSourceMismatch`
-  naming a source rather than a path (D4, D11, D18, D19). Adds `RT18`, the
-  precondition's own external behaviour, and corrects D18, which described a
-  field the code does not have.
-  [notes](../design/roadmap-P14.6-remote-identity-notes.md)
-- [x] **14.9** A cancelled read is an interrupted run on both providers, not an
-  error: `cancelled_read` is the one predicate saying a failed read *is* the
-  interrupt arriving by another door, and it routes the four reads that can
-  meet one — the mapping pass's chunk and its trailing `attach_text`, the
-  preamble prepass, the back-fill's read loop — onto the outcome the polled
-  check point beside each already produces, banking at the watermark the map
-  was consistent at rather than splicing a new one. `main.rs`'s translating arm
-  is deleted ([`../design/decisions.md`](../design/decisions.md), "D26", which
-  already carried the rule). Admitted after spec time, so it takes the next
-  free number, and ordered here rather than last: it is upstream of what 14.7
-  composes and does not share 14.7's wait.
-  [notes](../design/roadmap-P14.9-cancelled-read-notes.md)
-- [x] **14.7** Remote `.xz`: `io::FetchedXzSource` over any `ByteRangeSource`,
-  `io::walk_seek_table` driving `xz-seek`'s sans-IO footer walk from a future,
-  and `open_remote` composing the two; a whole-block arm where the budget holds
-  one decoded and `xz_seek::BlockRead` where it does not, each block's
-  compressed window fetched and charged; the cold walk announced on the status
-  channel before it is paid for, with both remedies; `KD36`, which is `(c)
-  unowned` rather than the row's "owned by the phase that tunes the network",
-  no such phase being in the roadmap's index (D1, D13, D20).
-  [notes](../design/roadmap-P14.7-remote-xz-notes.md)
-
-- [x] **14.8** The local small-budget read moves onto the block handle: one
-  mechanism for a read inside a block on both providers, the source being the
-  difference, and the piecewise arm's one-partition advice unchanged, the gain
-  from raising it being a figure this phase does not take (D20). Admitted after
-  spec time, and ordered after 14.7 for the reason its spec gives. `XzSource`
-  holds an `xz_seek::Layout` and one live `xz_seek::BlockRead` where it held an
-  `xz_seek::Reader`, so nothing in this tree holds one (D13); `KD35` is
-  rewritten onto the handle and stays open.
-  [notes](../design/roadmap-P14.8-block-handle-notes.md)
-
-- [x] **14.10** The fetched piecewise arm stops re-fetching a block it still
-  holds: the last window is retained across reads, so a forward scan inside one
-  block fetches it once rather than once per read (D21). The charge does not move
-  — the window is already inside `decode_bytes` and the arm charges the chunk
-  alone — and the arm stays stateless as to decoding, so nothing is decided here
-  about holding a handle across an `await`. Asserted with `Oracle::requests()`,
-  which counts every ranged GET. The decode stays quadratic, which is 14.11's,
-  and the split is falsified if it does not. Carries the wording that is true when
-  it lands: `PlanNoteKind::CompressedBlockPathDeclined` says *streaming decoder*,
-  which on this arm still describes a re-decode per read.
-  [notes](../design/roadmap-P14.10-retained-window-notes.md)
-- [x] **14.11** The fetched piecewise arm keeps its handle across reads, as the
-  local one does, so a block is decoded once rather than once per read and a
-  forward scan of a single-block file costs one decode of the file (D21). The
-  charge does not move; what this spends is the arm's statelessness, so it
-  **rewrites `KD35`** to record that the fetched arm is now mutex-bound and was
-  not before, the per-reader handle that would keep both partitions and cheap
-  reads being that entry's remedy and waiting on its figure. **`LiveBlock` becomes
-  the shared state machine, generic over `S: xz_seek::CompressedSource`** as
-  `fill_from_block` already is, rather than a second copy or one body branching on
-  the provider (D21); each arm keeps the loop its scheduling requires, the local
-  one decoding a read inside one `spawn_blocking` where this one returns to the
-  runtime between blocks. Completing and dropping the outgoing handle precedes
-  fetching the next block's window, or a boundary holds two where `decode_bytes`
-  counts one. Adds a decode counter behind `introspect` — a build that is never
-  timed — so the property is asserted rather than argued, and corrects
-  `xz_partition_advice`'s rustdoc, which explains the single partition by a live
-  handle only the local arm had. The fetched arm reaches the local one's
-  completion moment as a consequence, D20's verification clause being met either
-  way. With this the *streaming decoder* wording is honest on both arms again, so
-  it is this row that retires the caveat 14.10 added rather than a ledger item
-  churning the string twice.
-  [notes](../design/roadmap-P14.11-kept-handle-notes.md)
-- [x] **14.12** The two `.xz` sources stop keeping two copies of one budget
-  policy: `apportion`, `charged_chunk_bytes`, `block_worker_memory`, `block_path`,
-  `partitions` and `block_decode_bytes` are byte-identical between them, with no
-  provider difference in any of them, and become one value both sources hold
-  (D21) — `io::XzBudget`, carrying the two pools, the block unit and the two
-  announced numbers, with the transport reaching it only as the decoder charge
-  its constructor is handed. Composition, not a branch and not a merged body; the
-  two hint bodies and `BlockCache::for_table` went with the six, and nothing the
-  policy answers moved. Landed after 14.11 because that slice changes
-  `FetchedXzSource`'s field set, and extracting against a field set still moving
-  is how an extraction gets done twice.
-  [notes](../design/roadmap-P14.12-one-budget-policy-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P14 is open** — remote input over HTTP, its spec
-  [`../design/roadmap-P14-remote-input.md`](../design/roadmap-P14-remote-input.md)
-  and its checklist above. What statistics may hold resident is bounded and their
+- **No phase is open.** P14 wrapped with a dump readable over HTTP, plain and
+  `.xz`, and with nothing about the network's speed priced (`KD35`, `KD36`);
+  [its notes](../design/roadmap-P14-remote-input-notes.md) hold what the next
+  phases inherit. What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
   [`../design/roadmap.md`](../design/roadmap.md), "P23 — Statistics coverage
   and the resident reserve" holds what it inherits. Every built mechanism — the

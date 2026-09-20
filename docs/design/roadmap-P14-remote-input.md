@@ -723,7 +723,7 @@ is the **source's** name, which matters here because the cache path is now
 asked for. The CLI adds it, in `main.rs`'s `naming_the_source`, which is where
 the in-flight refusal's name already comes from and is the division 14.3
 recorded
-([`roadmap-P14.3-in-flight-identity-notes.md`](roadmap-P14.3-in-flight-identity-notes.md),
+([`roadmap-P14-remote-input-notes.md`](roadmap-P14-remote-input-notes.md),
 "Negative results"). Nothing was added to `ByteRangeSource` to carry a name into
 the library.
 
