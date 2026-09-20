@@ -4484,12 +4484,11 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
 /// (`docs/design/decisions.md`, "D64"), so both providers announce a walk
 /// alike.
 ///
-/// **What it does not reach is a caller draining diagnostics**, `pgdq info
-/// --json` among them. This file's stream count is a property of the file, as
-/// the block count behind
-/// [`crate::diagnostic::DiagnosticKind::NonSeekableCompressedSource`] is, and
-/// nothing on that channel carries it yet.
-///
+/// **The number itself is not owed to that channel.** The stream count is a
+/// property of the file, and [`crate::cache::CompressionShape`] is the
+/// projection that carries it to a caller as data — `pgdq info --detail` and
+/// `--json` both print it — beside the source's own [`ByteRangeSource::seek_table`].
+/// What this line adds is neither of those, but its timing.
 #[cfg(feature = "http")]
 fn announce_remote_walk(origin: &Origin) {
     tracing::warn!(
