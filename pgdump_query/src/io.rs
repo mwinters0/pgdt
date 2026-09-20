@@ -128,7 +128,7 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// Whether the path was declined is read off
     /// [`ByteRangeSource::partitions`]; this is only the number the message
-    /// needs. See `docs/design/decisions.md`, "D16".
+    /// needs. See `docs/design/decisions.md`, "D15".
     fn block_decode_bytes(&self) -> Option<u64> {
         None
     }
@@ -207,13 +207,13 @@ pub trait ByteRangeSource: Send + Sync {
     /// Where this source was fetched from and which version of the object it
     /// is reading — the half of a cache's identity a source reached over a
     /// network has and a file does not
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D18").
+    /// (`docs/design/decisions.md`, "D87").
     ///
     /// **`None` is a statement, not a gap**: a local cache records no origin,
     /// because its default path sits *beside* the dump, so the pairing is the
     /// filesystem's rather than a name we derived, and
     /// `crate::cache::StrictIdentity::location` binds nothing there
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D19").
+    /// (`docs/design/decisions.md`, "D87").
     fn remote_identity(&self) -> Option<RemoteIdentity> {
         None
     }
@@ -225,7 +225,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// re-checked by the watch itself, which holds the same answer. A source
     /// whose server can do the comparing pins the object on every request
     /// instead, and this is the only thing that turns that off
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D11").
+    /// (`docs/design/decisions.md`, "D21").
     ///
     /// **It is announced late, so the default must be the binding one.** A
     /// read taken before the watch opens — an origin probe, a cache claim —
@@ -236,7 +236,7 @@ pub trait ByteRangeSource: Send + Sync {
 /// Where a source was fetched from and which version of it is being read:
 /// [`ByteRangeSource::remote_identity`]'s answer, and the two fields a
 /// remote cache records that a local one has no equivalent of
-/// (`docs/design/roadmap-P14-remote-input.md`, "D18").
+/// (`docs/design/decisions.md`, "D87").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteIdentity {
     origin: String,
@@ -624,7 +624,7 @@ impl Partitioning {
     /// records only the first block's dictionary per stream, so it is an
     /// estimate and not a ceiling; what cannot understate is the layout's
     /// `memlimit`, compared against each block's own declared dictionary
-    /// before any backend object is built (`docs/design/decisions.md`, "D16").
+    /// before any backend object is built (`docs/design/decisions.md`, "D15").
     pub fn partition_bytes(&self) -> u64 {
         self.memory.bytes_per_worker()
     }
@@ -722,7 +722,7 @@ impl Partitioning {
 ///
 /// **Three mechanisms read it, and only the third spawns.** `memory_bytes`
 /// sizes both pools in a source and decides whether a compressed source can
-/// afford to decode a whole block (`docs/design/decisions.md`, "D16"); `jobs`
+/// afford to decode a whole block (`docs/design/decisions.md`, "D15"); `jobs`
 /// is the block pool's depth and — capped by what the bytes afford — how many
 /// sub-streams a partitioned replay is cut into
 /// (`crate::table_stream_partitions`), a ceiling rather than a request. The
@@ -2063,7 +2063,7 @@ impl BlockCache {
     /// What **one concurrent reader** of this file holds while it decodes
     /// whole blocks, in bytes: one block unit, the chunk buffer a straddling
     /// read is assembled into, and the decoder's own retention
-    /// (`docs/design/decisions.md`, "D16").
+    /// (`docs/design/decisions.md`, "D15").
     ///
     /// **One unit, because the block a reader decodes *becomes* the block it
     /// retains**: [`BlockCache::slot`] drains the retention list to
@@ -2102,7 +2102,7 @@ impl BlockCache {
 
     /// Whether `budget` admits one such reader — the line that decides between
     /// block decode and the piecewise arm
-    /// (`docs/design/decisions.md`, "D16").
+    /// (`docs/design/decisions.md`, "D15").
     ///
     /// **It is asked of *one* reader and charges that reader's share of the
     /// retention list with it**: a pool serving a single reader still holds
@@ -2120,7 +2120,7 @@ impl BlockCache {
     /// wants the path back states a budget.
     ///
     /// *Rejected: a fixed refusal line beside a fixed budget*
-    /// (`docs/design/decisions.md`, "D16"). Reading the line off the budget
+    /// (`docs/design/decisions.md`, "D15"). Reading the line off the budget
     /// makes the stated number true: a unit the caller did not allow room for
     /// is never decoded whole.
     ///
@@ -2192,7 +2192,7 @@ impl BlockCache {
 /// `decode_bytes` its constructor is handed and as the chunk pool's wait
 /// policy, which each source announces for itself; two copies of one charge
 /// policy stay right exactly until one of them is edited
-/// (`docs/design/roadmap-P14-remote-input.md`, "D21").
+/// (`docs/design/decisions.md`, "D15").
 struct XzBudget {
     /// The chunk unit: what a read spanning more than one block is assembled
     /// into, and what a piecewise read fills.
@@ -2410,7 +2410,7 @@ impl XzBudget {
 /// by everything and disturbs nothing. It is what `xz_seek` pulls from —
 /// `std::fs::File` is a `CompressedSource` — which is the whole difference
 /// between this source and [`FetchedXzSource`], whose bytes have to be fetched
-/// into a window first (`docs/design/roadmap-P14-remote-input.md`, "D20").
+/// into a window first (`docs/design/decisions.md`, "D15").
 ///
 /// **Two arms, and the budget picks between them**, as the fetched source's do:
 ///
@@ -2437,7 +2437,7 @@ pub struct XzSource {
     /// The table, the memory limit, the verification state and the backend as
     /// one value — everything a decode needs that is not bytes, and the only
     /// thing that hands out an `xz_seek::BlockTask`. It holds no source and
-    /// needs no lock (`docs/design/roadmap-P14-remote-input.md`, "D13").
+    /// needs no lock (`docs/design/decisions.md`, "D14").
     layout: xz_seek::Layout,
     /// The layout's own table, aliased rather than copied, so `size()`,
     /// `seek_table()` and the per-read `blocks_in` lookup read one table.
@@ -2649,7 +2649,7 @@ impl XzSource {
     /// would allocate more than the caller allowed — up to the whole file, on a
     /// single-block one — and it is the same mechanism
     /// [`FetchedXzSource::read_in_pieces`] drives, with a `File` in place of a
-    /// fetched window (`docs/design/roadmap-P14-remote-input.md`, "D20").
+    /// fetched window (`docs/design/decisions.md`, "D15").
     ///
     /// **The handle is kept across reads**, which is what makes a forward scan
     /// cost one decode of the file rather than one per read ([`LiveBlock`]).
@@ -2715,14 +2715,14 @@ impl XzSource {
 /// arms do not share is the loop around it, their scheduling differing: the
 /// local one decodes a whole read inside one `spawn_blocking`, the fetched one
 /// returns to the runtime between blocks to fetch the next window
-/// (`docs/design/roadmap-P14-remote-input.md`, "D21").
+/// (`docs/design/decisions.md`, "D15").
 ///
 /// **It is `xz_seek::Reader`'s own live decode with the handle held here.** That
 /// reader continued a forward read out of the decode it already had and
 /// restarted the covering block otherwise, which is what keeps a forward scan
 /// of a single-block file linear in the file rather than quadratic in it; the
 /// handle is what carries that property across the mechanism swap
-/// (`docs/design/roadmap-P14-remote-input.md`, "D20").
+/// (`docs/design/decisions.md`, "D15").
 ///
 /// **Leaving a block completes it**, which is where its check is compared —
 /// `xz_seek::Verify::Full`'s seek-away escape, now a call we make. A block
@@ -3081,7 +3081,7 @@ impl ByteRangeSource for XzSource {
 /// the network can be `.xz` at all —
 /// `xz_seek::Reader` pulls through a *synchronous* positional trait, and
 /// nothing can `await` inside it
-/// (`docs/design/roadmap-P14-remote-input.md`, "D13").
+/// (`docs/design/decisions.md`, "D14").
 ///
 /// `leading` is what the caller already holds of the file's first bytes — an
 /// [`Origin`] probe's, normally. The walk's first request is the six magic
@@ -3093,7 +3093,7 @@ impl ByteRangeSource for XzSource {
 /// a footer, an index, a header and at least one padding probe per stream, in a
 /// strictly backward chain where each request's position comes out of the bytes
 /// of the one before it — so neither coalescing nor concurrency buys anything
-/// on its own (`docs/design/roadmap-P14-remote-input.md`, "D1").
+/// on its own (`docs/design/decisions.md`, "D18").
 ///
 /// Deficiency register: `deficiency: KD36` — this driver fetches exactly what
 /// it is asked for, so a cold walk over a dump compressed as many small streams
@@ -3134,7 +3134,7 @@ pub async fn walk_seek_table(
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed dump the bytes of which
 /// have to be **fetched** rather than pulled
-/// (`docs/design/roadmap-P14-remote-input.md`, "D1", "D13").
+/// (`docs/design/decisions.md`, "D14" and "D18").
 ///
 /// **The difference from [`XzSource`] is the transport and nothing else.**
 /// There the crate holds a `std::fs::File` and reads through it as it decodes;
@@ -3229,7 +3229,7 @@ impl FetchedXzSource {
         // **The window is charged rather than booked as unpooled.** Its length
         // is known before the fetch, and a term that can be priced and is not
         // is the falsification of [`MEMORY_UNPOOLED_BOUND`] rather than an
-        // instance of it (`docs/design/roadmap-P14-remote-input.md`, "D20").
+        // instance of it (`docs/design/decisions.md`, "D15").
         let widest_window = table.blocks.iter().map(|block| block.total_size()).max().unwrap_or(0);
         let budget = XzBudget::over(&table, layout.decoder_bytes().saturating_add(widest_window));
         Self {
@@ -3346,8 +3346,7 @@ impl FetchedXzSource {
     /// **The window and the handle are kept between reads together**
     /// ([`HeldBlock`]), as the local twin keeps its handle ([`LiveBlock`]): a
     /// forward scan inside one block fetches *and* decodes that block once
-    /// rather than once per read (`docs/design/roadmap-P14-remote-input.md`,
-    /// "D21").
+    /// rather than once per read (`docs/design/decisions.md`, "D15").
     async fn read_in_pieces(&self, offset: u64, len: usize) -> Result<Bytes> {
         let end = offset.checked_add(len as u64).ok_or_else(xz_short_read)?;
         let covering = self.table.blocks_in(offset..end);
@@ -3422,7 +3421,7 @@ impl FetchedXzSource {
     /// **An instrument, never a figure** (`../../CLAUDE.md`): a build carrying
     /// `introspect` is never timed, and what this exists for is a test that
     /// asserts a block a forward scan sits inside is decoded once rather than
-    /// once per read (`docs/design/roadmap-P14-remote-input.md`, "D21").
+    /// once per read (`docs/design/decisions.md`, "D15").
     #[cfg(feature = "introspect")]
     pub fn block_decodes_begun(&self) -> u64 {
         self.decodes.count()
@@ -3436,7 +3435,7 @@ impl FetchedXzSource {
 /// source is the file, held by the source itself and handed to each call;
 /// here the source is one block's fetched extent, so the window travels with
 /// the handle and the pair is what a read keeps
-/// (`docs/design/roadmap-P14-remote-input.md`, "D21").
+/// (`docs/design/decisions.md`, "D15").
 ///
 /// **One block's window at a time is what this source's [`XzBudget`] charges**
 /// — the decoder plus this file's largest window — so the block being left is
@@ -3611,7 +3610,7 @@ impl ByteRangeSource for FetchedXzSource {
     /// Announced to the transport, which is what carries the precondition on
     /// every fetch — so every window a walk or a block decode asks for is
     /// pinned to the version this run opened on, without either knowing
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D10", "D11").
+    /// (`docs/design/decisions.md`, "D21").
     fn hint_in_flight_identity(&self, binds: bool) {
         self.source.hint_in_flight_identity(binds);
     }
@@ -3639,7 +3638,7 @@ impl ByteRangeSource for FetchedXzSource {
     /// for at once.
     ///
     /// **The reason is not that this phase defers network tuning**, though it
-    /// does (`docs/design/roadmap-P14-remote-input.md`, "D7"): it is that the
+    /// does (`docs/design/decisions.md`, "D2"): it is that the
     /// two errors are not symmetric. Recommending too few costs throughput on
     /// a link, and the caller types `--jobs` to take it back. Recommending too
     /// many opens `min(cores, block_count)` concurrent connections to a *third
@@ -3756,8 +3755,7 @@ impl Origin {
 
     /// The dump an HTTP server holds at `url`, read over ranged GETs.
     ///
-    /// **This is where "HTTP only" is enforced rather than merely stated**
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D3"): the scheme must be
+    /// **This is where "HTTP only" is enforced rather than merely stated**: the scheme must be
     /// `http` or `https`, and a URL carrying a username or password is refused
     /// by name rather than silently stripped, so nobody believes a credential
     /// was sent (D17). A presigned URL needs none — the signature rides in the
@@ -3775,8 +3773,7 @@ impl Origin {
     ///
     /// **A knob the library offers and the CLI does not**: what a person at a
     /// terminal must state is governed, and an embedder on a link this project
-    /// has never seen is not that person
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D9"). The stalled-origin
+    /// has never seen is not that person. The stalled-origin
     /// assertion is its first user rather than its reason.
     #[cfg(feature = "http")]
     pub fn remote_with_read_timeout(url: &url::Url, read_timeout: Duration) -> Result<Self> {
@@ -3806,8 +3803,7 @@ impl Origin {
         })
     }
 
-    /// What a `--source` argument names: **a URL first and a path second**
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D3").
+    /// What a `--source` argument names: **a URL first and a path second**.
     ///
     /// `http` and `https` select the network; `file:` is a local path, because
     /// a user who has seen `--source https://…` work may reasonably conclude
@@ -3862,7 +3858,7 @@ impl Origin {
     /// file name from it: a URL's **last path segment**, exactly as written
     /// there — the working-directory cache name a remote dump gets, there
     /// being no place beside it for one to sit
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+    /// (`docs/design/decisions.md`, "D87").
     ///
     /// `None` for a local file, whose caller has [`Origin::local_path`] and
     /// the colocated rule. A remote origin always has one: a URL that names
@@ -4049,7 +4045,7 @@ pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Reco
 //
 // One `ByteRangeSource` over `object_store`'s HTTP backend, and what an
 // `Origin` needs in order to name one. Everything below is behind the `http`
-// feature (`docs/design/roadmap-P14-remote-input.md`, "D6").
+// feature.
 // ---------------------------------------------------------------------------
 
 /// How long a remote request may go without delivering a byte before it is
@@ -4058,8 +4054,7 @@ pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Reco
 /// **It replaces `object_store`'s *total* request timeout**, which limits link
 /// speed rather than liveness: that one counts the response body, so a large
 /// ranged GET over a slow-but-working link fails while still progressing. A read timeout resets on every byte that arrives, so a slow
-/// transfer completes and only a dead connection fails
-/// (`docs/design/roadmap-P14-remote-input.md`, "D9").
+/// transfer completes and only a dead connection fails.
 ///
 /// **Unmeasured, and chosen rather than tuned**: a link that has delivered
 /// nothing for this long is not a slow link. The phase that tunes the network
@@ -4080,7 +4075,7 @@ struct RemoteObject {
     /// What the probe's response said the object was: kept whole rather than
     /// projected, because the precondition every later request carries is
     /// built from the validators **as the server stated them**
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D11"), and a date
+    /// (`docs/design/decisions.md`, "D21"), and a date
     /// round-tripped through a [`SystemTime`] is a second spelling of one of
     /// them. Set by [`RemoteObject::probe`], which [`Origin::probe`] runs at
     /// most once.
@@ -4092,8 +4087,7 @@ impl RemoteObject {
     /// Build the client for `url`, whose scheme [`Origin::remote`] has already
     /// accepted.
     fn open(url: url::Url, read_timeout: Duration) -> Result<Self> {
-        // Four client settings, three of them the crate's own
-        // (`docs/design/roadmap-P14-remote-input.md`, "D9"): the retry
+        // Four client settings, three of them the crate's own: the retry
         // configuration and `http1_only` are left alone, `allow_http` follows
         // the scheme the user typed — which is their statement that plaintext
         // is acceptable — and only the timeout is ours.
@@ -4112,7 +4106,7 @@ impl RemoteObject {
     /// The identity precondition a ranged GET carries, so that an object
     /// rewritten mid-scan comes back as a refusal instead of as bytes from
     /// two versions of the file mixed together
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D10").
+    /// (`docs/design/decisions.md`, "D21").
     ///
     /// **The server does the comparing**, which is why the cadence is every
     /// request here where it is every cache save locally: the check rides on
@@ -4145,8 +4139,7 @@ impl RemoteObject {
     /// The object a request addresses: the store's own base URL with nothing
     /// appended, since the store was built from the whole URL. That is the
     /// form that **preserves a query string**, which is what lets a presigned
-    /// URL work with no credential handling of our own
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D17").
+    /// URL work with no credential handling of our own.
     fn object(&self) -> object_store::path::Path {
         object_store::path::Path::default()
     }
@@ -4201,7 +4194,7 @@ fn weak_identity(seconds: i64, nanos: u32) -> Option<SystemTime> {
 /// A URL's last path segment, or `None` where it has none — a bare host, or a
 /// path ending in `/`. Left exactly as the URL spells it, percent-escapes
 /// included: the point of the derived cache name is that a user can predict it
-/// by reading the URL (`docs/design/roadmap-P14-remote-input.md`, "D4"), and a
+/// by reading the URL (`docs/design/decisions.md`, "D87"), and a
 /// decoded segment can hold a path separator where the written one cannot.
 #[cfg(feature = "http")]
 fn remote_name_of(url: &url::Url) -> Option<&str> {
@@ -4226,7 +4219,7 @@ fn without_credentials(url: &url::Url) -> String {
 }
 
 /// `object_store`'s wording, named against the URL it is about rather than
-/// surfaced raw (`docs/design/roadmap-P14-remote-input.md`, "D15").
+/// surfaced raw (`docs/design/decisions.md`, "D62").
 #[cfg(feature = "http")]
 fn remote_failure(url: &url::Url, error: &object_store::Error) -> Error {
     Error::Remote { url: url.to_string(), message: error.to_string() }
@@ -4236,7 +4229,7 @@ fn remote_failure(url: &url::Url, error: &object_store::Error) -> Error {
 ///
 /// **Almost every advisory trait member is left at its default, and that is
 /// the decision rather than an omission**
-/// (`docs/design/roadmap-P14-remote-input.md`, "D7"): one worker, no
+/// (`docs/design/decisions.md`, "D2"): one worker, no
 /// partitioning advice, no memory recommendation, no read-size hint — this
 /// source recycles no buffer, so there is nothing for one to size — and an
 /// exact size, which is also the stored size. Each is the conservative answer,
@@ -4291,7 +4284,7 @@ impl RemoteSource {
     /// network**: the server has just said the object is no longer the one
     /// this run opened on, which is exactly what a local `fstat` finds and is
     /// reported in the same words, remedies included
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D10", "D12"). Everything
+    /// (`docs/design/decisions.md`, "D21"). Everything
     /// else is [`Error::Remote`].
     fn failed(&self, error: &object_store::Error) -> Error {
         match error {
@@ -4395,7 +4388,7 @@ impl ByteRangeSource for RemoteSource {
 
     /// **The only thing that stops pinning the object**, which is what
     /// `--strict-identity=none` reaches
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    /// (`docs/design/decisions.md`, "D21").
     fn hint_in_flight_identity(&self, binds: bool) {
         self.precondition.store(binds, Ordering::Relaxed);
     }
@@ -4409,8 +4402,8 @@ impl ByteRangeSource for RemoteSource {
 ///
 /// **A remote `.xz` is read exactly as a local one is**, through
 /// [`FetchedXzSource`] over the plain source rather than through [`XzSource`],
-/// which pulls from a file (`docs/design/roadmap-P14-remote-input.md`, "D1",
-/// "D13"). Where the cache holds the seek table there is no walk at all; where
+/// which pulls from a file (`docs/design/decisions.md`, "D14" and "D18").
+/// Where the cache holds the seek table there is no walk at all; where
 /// it does not, the walk is announced before it is paid for
 /// ([`announce_remote_walk`]).
 #[cfg(feature = "http")]
@@ -4467,7 +4460,7 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
 
 /// Say, **before** it is paid for, what walking a fetched `.xz` file's stream
 /// footers is about to cost, and what the two ways out of it are
-/// (`docs/design/roadmap-P14-remote-input.md`, "D1").
+/// (`docs/design/decisions.md`, "D18").
 ///
 /// **Not refused, announced.** A threshold above which a cold walk was
 /// rejected would be a tuned number this phase has said it produces none of,
@@ -5195,7 +5188,7 @@ mod tests {
 
     /// **Whole-block decode is declined unless the budget affords the one
     /// block a reader holds *and* the retention list beside it**
-    /// (`docs/design/decisions.md`, "D16"). A reader's decode buffer and the
+    /// (`docs/design/decisions.md`, "D15"). A reader's decode buffer and the
     /// block it then retains are the same buffer, and a single reader leaves
     /// `(POOL_DEPTH - 1)` units of list nothing else is there to fill, so
     /// [`POOL_DEPTH`] units is the line.
@@ -5572,7 +5565,7 @@ mod tests {
 
     /// **A block the stated budget cannot hold is not decoded whole**, and the
     /// line is the budget rather than a constant beside it
-    /// (`docs/design/decisions.md`, "D16"). Asserted against a synthetic
+    /// (`docs/design/decisions.md`, "D15"). Asserted against a synthetic
     /// table, that being the only way to have a block this size without
     /// writing one.
     #[test]
@@ -5612,7 +5605,7 @@ mod tests {
         // **`POOL_DEPTH` units, not one.** A single reader is charged the
         // block it holds *and* the retention list beside it
         // ([`BlockCache::worker_memory`]), so the default budget declines an
-        // ordinary compressed dump (`docs/design/decisions.md`, "D16").
+        // ordinary compressed dump (`docs/design/decisions.md`, "D15").
         assert!(!affordable(24 << 20, DEFAULT_MEMORY_BUDGET));
         assert!(affordable(24 << 20, 107 << 20));
         // Larger blocks — `xz --block-size=128MiB`, and `xz -9 -T0` — are
@@ -5786,7 +5779,7 @@ mod tests {
     /// over the same file read through the local whole-block arm, the local
     /// piecewise arm and the fetched window-fed arm must agree byte for byte:
     /// the source a block handle pulls from is the only difference between them
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D20"), so a divergence
+    /// (`docs/design/decisions.md`, "D15"), so a divergence
     /// surfaces here as a disagreement between two read paths over one byte
     /// stream rather than between two files.
     #[tokio::test]
@@ -6008,7 +6001,7 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // The fetched `.xz` source: one block at a time, out of windows the caller
-    // fetched (`docs/design/roadmap-P14-remote-input.md`, "D1", "D13", "D20").
+    // fetched (`docs/design/decisions.md`, "D14", "D15" and "D18").
     //
     // The transport here is a local file, which is exactly the point: the
     // window-fed path has no local twin to disagree with, so putting a file

@@ -1,5 +1,5 @@
 //! `--strict-identity` on `pgdq info`: one flag, one meaning on every command
-//! (`docs/design/roadmap-P14-remote-input.md`, "D5").
+//! (`docs/design/decisions.md`, "D21").
 //!
 //! `info` is the command that *reports* — it reads the whole `CacheStatus`
 //! rather than going through `CacheMode::load`, where the refusal for the two

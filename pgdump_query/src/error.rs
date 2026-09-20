@@ -33,9 +33,8 @@ pub enum Error {
     ///
     /// **It refuses by name**: `origin` is the argument as the user wrote it
     /// and `why` says which rule it met, so a mistyped scheme is a sentence
-    /// rather than a fall-through to "no such file"
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D3" and "D17"). The field
-    /// is not called `source`, which `thiserror` reads as an error cause.
+    /// rather than a fall-through to "no such file". The field is not called
+    /// `source`, which `thiserror` reads as an error cause.
     #[error("{origin} cannot be read: {why}")]
     SourceNotReadable { origin: String, why: String },
     /// A request to a remote source failed: a refusal the server made, or a
@@ -47,8 +46,8 @@ pub enum Error {
     /// **No progress is lost that was not already at risk.** The save throttle
     /// means the cache on disk holds the scan to its last save and a re-run
     /// resumes from it, so a network failure costs one throttle interval
-    /// rather than the scan (`docs/design/roadmap-P14-remote-input.md`,
-    /// "D15"). What this variant owes is the naming: the URL, and the
+    /// rather than the scan (`docs/design/decisions.md`, "D62"). What this
+    /// variant owes is the naming: the URL, and the
     /// underlying failure rather than the backend's wording alone.
     #[error("{url}: {message}")]
     Remote { url: String, message: String },

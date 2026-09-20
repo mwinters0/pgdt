@@ -15,11 +15,10 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9–P13, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P1–P5, P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
-| P14 — remote input | Complete | [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md); [notes](roadmap-P14-remote-input-notes.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
@@ -50,7 +49,7 @@ Two standing-constraint docs cut across everything below.
 [`decisions.md`](decisions.md), "D68" and "D74", assign each module to one of
 four layers, fix the direction dependencies may point, and pre-answer the
 cross-layer phases below: what statistics may persist and how they parse a
-value is settled there, and the sources P14, P15 and P18 add are L1. [`postgres-invariants.md`](postgres-invariants.md)
+value is settled there, and the remote source, as the ones P15 and P18 add, is L1. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
 
@@ -638,28 +637,6 @@ What it inherits:
   and `statistics-pruning` are stale because the margin now binds a typed
   number, and are not re-taken until the constant settles.
 
-## P14 — Remote input
-
-**Complete.** Specified in
-[`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), which is where
-this phase's decisions live until the keystone folds them, with what it left
-behind in
-[`roadmap-P14-remote-input-notes.md`](roadmap-P14-remote-input-notes.md). Its
-inbox was drained by its grilling and deleted. It delivered correctness and
-priced nothing about the network — `KD35` and `KD36` are unowned.
-
-Read a dump over the network — `pgdq --source https://example.com/foo.dump`, and
-the `.xz` composition beside it — over HTTP and HTTPS alone, for correctness
-alone. What it inherits is most of the design: `read_range`/`size` were shaped
-against `object_store`'s `get_range`/`head` deliberately
-([`decisions.md`](decisions.md), "I/O, memory and parallelism"), and with a
-complete cache a query already touches only the cache, the source's identity and
-the target block's byte range.
-
-**Scheduled ahead of P6.** P6's own reason for going last is that it presents
-surfaces over mechanisms that have stopped moving, and a `TableProvider` commits
-to the I/O layer beneath it. That layer is this phase.
-
 ## P6 — Embeddable engine story
 
 **Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
@@ -678,9 +655,9 @@ under "Standing rules" above, made to keep this open:
 - Apache Spark / Trino integration — order and approach TBD; likely follows
   whatever pattern the DataFusion integration establishes, if applicable.
 
-The `object_store`-backed byte source that used to head that list is **P14**,
-carved out because it is an L1 addition rather than a surface this phase
-presents.
+The `object_store`-backed byte source that used to head that list was carved
+out and built before this phase, being an L1 addition rather than a surface
+this phase presents ([`decisions.md`](decisions.md), "D6", "D87").
 
 **Scheduled after the phases above**, because it is the phase that *presents* a
 surface over mechanisms they are still changing. A `TableProvider` commits to
@@ -688,7 +665,7 @@ what the predicate can express and to the I/O layer beneath it; built while
 either is in motion, it is built twice. Each phase ahead of it hands it a
 settled input instead — the predicate surface from typed predicates, the
 byte-range abstraction with its measured defaults from scan performance, and
-the remote backend from P14 — and this is also the least-specified phase, whose
+the remote backend, built ahead of it — and this is also the least-specified phase, whose
 grilling needs real research rather than architectural taste, so it gains most
 from going last. Its inbox is
 the largest of the five and none of it decays by waiting: the entries are

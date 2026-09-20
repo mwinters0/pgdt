@@ -2,13 +2,11 @@
 
 The decisions the code cannot explain: shapes kept for a deliverable not yet built, defaults chosen
 over an alternative, and obvious changes measured or argued and refused. Nothing here says how the
-code works (the named module does) or quotes a number (`measurements.md` does, cited by figure id;
-so do the invariant registers, cited by `I<n>`/`RT<n>`). Cite an entry as
-`docs/design/decisions.md`, "D12"; numbering and striking are `docs/process.md`, "The decision
-register". **Capped at 550 lines**: an entry earns its place by being something a later session
-would otherwise re-litigate, and adding one may mean striking one.
+code works (the named module does) or quotes a number (`measurements.md` does, by figure id, as the
+invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
+rules, the 550-line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D86 -->
+<!-- decision-watermark: D87 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -97,25 +95,21 @@ overwriting the operator's `MALLOC_ARENA_MAX`. Reopens: a contention figure. Evi
 
 ## The compressed source and the cache (`io.rs`, `cache.rs`)
 ### D14 `.xz` is read; recognition sniffs content
-An `.xz` dump is third-party post-compression (input reach); gzip/zstd are `pg_dump --compress`
-output (compatibility). Recognition compares magic and sits outside the trait, and is *told* those
-bytes by `Origin`'s probe — which also answers D20's size, so what is settled before a source exists
-stops being a statement about files. Rejected: extension dispatch; a probe cached across failure.
-`xz-seek` is a vendored read-only copy (`scripts/vendor_xz_seek.py`); a bug is fixed upstream.
-Rejected: a path dependency, which fails `cargo check` without the sibling checkout.
+An `.xz` dump is third-party post-compression (input reach); gzip/zstd are `pg_dump --compress` output
+(compatibility). Recognition compares magic and sits outside the trait, and is *told* those bytes by
+`Origin`'s probe — which also answers D20's size, so what is settled before a source exists stops being a
+statement about files. Rejected: extension dispatch; a probe cached across failure. `xz-seek` is a vendored
+read-only copy (`scripts/vendor_xz_seek.py`); a bug is fixed upstream, and so was the seam a fetched source
+needs — nothing can `await` inside `CompressedSource::read_at`, so the walk and the block handle are sans-IO
+and driven from here. Rejected: a path dependency, failing `cargo check` without the sibling checkout.
 
 ### D15 A read decodes whole blocks and retains them; reading one in pieces is the fallback
-Whole-block decode, LRU-retained. A file whose largest block the budget cannot hold (plain `xz bigfile` is
-single-block) goes through one live `xz_seek::BlockRead` behind a mutex, kept across reads so a forward scan
-continues; there `partitions()` answers one partition, two readers forcing each other's restarts. `XzSource`
-feeds it a `File`, a `Window` being larger than the chunk it spares; `FetchedXzSource` fetches a block's whole
-extent and keeps window and handle together, so a block a scan sits inside is fetched and decoded once.
-Two misses decode one block twice (`KD20`): an in-flight map would lock that.
-
-### D16 Block decode is afforded out of the stated budget, keyed on largest block
-`BlockCache::affordable` compares the charge at one reader (unit, chunk, decoder
-footprint, and the retention list's `POOL_DEPTH − 1` units) against the caller's number,
-from file-wide inputs. Rejected: a fixed refusal line; keying on block count. Evidence: `reserve`.
+Whole-block decode, LRU-retained, afforded at one reader against the caller's number from file-wide inputs
+(`BlockCache::affordable`). Rejected: a fixed refusal line; keying on block count. A file whose largest
+block the budget cannot hold reads through one live `xz_seek::BlockRead` behind a mutex — one state machine
+both arms instantiate over their own `CompressedSource`, never one body branching on the provider — kept
+across reads so a forward scan continues, advising one partition (`KD35`); the fetched arm's window is
+charged rather than booked unpooled. Two misses decode one block twice (`KD20`). Evidence: `reserve`.
 
 ### D17 Two pools per source; retained and free units share a pool's slots
 The hinted unit drives both what a pool keeps and how it sizes, so one pool is wrong for either
@@ -147,13 +141,19 @@ both refusals with one tail. A back-fill meeting a block that no longer ends whe
 back-fill goes on for a file it knows was rewritten; re-mapped, cache data is replaced unasked.
 
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
-`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first;
-`SourceIdentity`'s variants are read through signal accessors, so two kinds compare rather than
-refuse; `CompressionIndex` is `ContainerKind`'s sibling, `Plain` honest for a compressed source with
-`total_size` its own field. **Two questions, split by tense.** Between runs a weak signal —
-modification, and where a source was fetched from — is advisory, reported and never persisted, and
-binds under its own `StrictIdentity` term alone, absence included; during one, `SourceWatch` re-reads
-the open descriptor at the save's cadence (D62) and at run end, aborting without saving or removing.
+`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and
+`SourceIdentity`'s variants are read through signal accessors, so two kinds compare rather than refuse.
+**Two questions, split by tense.** Between runs a weak signal — modification, and where a source was
+fetched from — is advisory, reported and never persisted, and binds under its own `StrictIdentity` term
+alone, absence included. During one the cadence follows the cost of asking: `SourceWatch` re-reads the open
+descriptor at the save's cadence (D62) and at run end, aborting without saving or removing, where a server
+compares every ranged GET against the probe's validators and one stating neither is read unpinned.
+
+### D87 A remote cache is named from the URL, and the origin it records is advisory
+Default `./<last URL segment>.dqcache`; no last segment is refused by name. Another origin is a diagnostic,
+the stored size still refusing (D20), so two same-named dumps of equal size from different hosts in one
+directory read each other's map with a warning the origin makes legible. A local cache records none, its
+default sitting beside the dump. Rejected: a canonical path as a local origin, advisory after every move.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 `Incomplete` is usable (or `map_forward` restarts from zero) and `Disabled` is about the caller;

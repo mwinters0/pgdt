@@ -71,12 +71,12 @@ pub enum DiagnosticKind {
     /// than [`DiagnosticKind::CacheMtimeChanged`]'s wording widened, because a
     /// local dump has no such tag and a message about one would be noise
     /// there. Bound by the same selector
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    /// (`docs/design/decisions.md`, "D21").
     CacheEntityTagChanged,
     /// A loaded cache was written for a different **origin** than this run
     /// reads — where the object was fetched from, which a local source has
     /// none of. Advisory by the same rule the signal above is
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D4"); a caller that asked
+    /// (`docs/design/decisions.md`, "D87"); a caller that asked
     /// for `crate::cache::StrictIdentity::location` is refused instead.
     ///
     /// It is what makes the working-directory default cache path's one

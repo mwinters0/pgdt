@@ -4,9 +4,9 @@
 //! The oracle is ours on both sides of the wire, so the one fault it cannot
 //! surface is a misreading of HTTP that our client and our server share: an
 //! off-by-one in a `Range`, a `Content-Range` we spell wrong and parse back
-//! the same way, a validator no shipped server would accept. That is the risk
-//! named in `docs/design/roadmap-P14-remote-input.md`, "D6" under `Reopens`,
-//! and this file is what answers it.
+//! the same way, a validator no shipped server would accept. That is the one
+//! risk a bespoke oracle cannot retire by construction, and this file is what
+//! answers it.
 //!
 //! **Opt-in, and empty by default.** Nothing below runs unless
 //! `PGDQ_HTTP_CONFORMANCE_URL` names an object, so `cargo test --workspace`

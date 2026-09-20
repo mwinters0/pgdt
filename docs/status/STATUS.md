@@ -76,10 +76,9 @@ instrument can see").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** P14 wrapped with a dump readable over HTTP, plain and
-  `.xz`, and with nothing about the network's speed priced (`KD35`, `KD36`);
-  [its notes](../design/roadmap-P14-remote-input-notes.md) hold what the next
-  phases inherit. What statistics may hold resident is bounded and their
+- **No phase is open.** A dump is readable over HTTP, plain and `.xz`, with
+  nothing about the network's speed priced (`KD35`, `KD36`). What statistics
+  may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
   [`../design/roadmap.md`](../design/roadmap.md), "P23 — Statistics coverage
   and the resident reserve" holds what it inherits. Every built mechanism — the

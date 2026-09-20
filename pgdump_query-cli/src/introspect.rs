@@ -295,7 +295,7 @@ mod enabled {
 
     /// What the two scopes mean, in the report itself rather than only in the
     /// document that explains it. The number is `XZ_DECODE_FOOTPRINT`
-    /// (`docs/design/decisions.md`, "D16").
+    /// (`docs/design/decisions.md`, "D15").
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`.\n",
         "# `mallinfo_*` and `malloc_*` are glibc's view of the whole process, C\n",

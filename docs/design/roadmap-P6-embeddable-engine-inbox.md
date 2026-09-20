@@ -214,8 +214,7 @@ uncancellable region today — is the *first* thing a cold query does, and since
 give up a request in flight rather than inherit a flag the read path never
 checks (`decisions.md`, "D26"). What is left for this phase is the preamble
 prepass, which still ignores the polled flag: a read dropped inside it ends the
-run as an interrupt like any other (P14.9), but between two reads nothing stops
-it.
+run as an interrupt like any other, but between two reads nothing stops it.
 
 **Why P6 cares.** Both embedding surfaces have their own cancellation
 idiom and neither is this flag: a DataFusion `TableProvider`'s stream is
@@ -671,12 +670,11 @@ above ("A scan is cancellable…") says a `TableStream` is cancelled by dropping
 it and that `ScanCancelled` sits awkwardly in a DataFusion error; a remote read
 now raises that same variant from inside the read path, where the flag used to
 be read only between reads. **The mapping pass folds it back into
-`MapRun::interrupted`** (P14.9), so an embedder calling `map_file` never sees
+`MapRun::interrupted`**, so an embedder calling `map_file` never sees
 the variant and one calling `table_stream` still does — the split the entry
 above describes, now the same on both providers.
 
-**Origin.** P14.5, 2026-09-18. See
-[`roadmap-P14-remote-input-notes.md`](roadmap-P14-remote-input-notes.md)
-and [`decisions.md`](decisions.md), "D6" and "D26". *Contingent on* the feature
+**Origin.** The remote-input work, 2026-09-18. See
+[`decisions.md`](decisions.md), "D6" and "D26". *Contingent on* the feature
 staying default-off and on the trait answers staying conservative — the phase
 that tunes the network may replace either.

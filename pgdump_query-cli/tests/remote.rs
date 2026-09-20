@@ -1,6 +1,4 @@
-//! The remote source, read against the oracle
-//! (`docs/design/roadmap-P14-remote-input.md`, "D3", "D6"–"D9", "D14", "D15",
-//! "D17").
+//! The remote source, read against the oracle.
 //!
 //! **Here rather than in the library's own tests** because the oracle is here:
 //! a `tests/*.rs` file is its own crate and this is the crate that enables the

@@ -1,10 +1,7 @@
-//! The oracle's own tests: proof that it misbehaves exactly as asked
-//! (`docs/design/roadmap-P14-remote-input.md`, "D6").
+//! The oracle's own tests: proof that it misbehaves exactly as asked.
 //!
 //! **The instrument precedes its subject**, which is why this file exists
-//! before anything reads a URL
-//! (`docs/design/roadmap-P14-remote-input.md`, "How it is sliced, and why in
-//! that order"). Nothing here names a remote source, `object_store` or the
+//! before anything reads a URL. Nothing here names a remote source, `object_store` or the
 //! `http` feature: every assertion is against bytes on a socket, so the proof
 //! that the server ignores a `Range` does not rest on the crate whose handling
 //! of that case is the thing being tested.
@@ -97,8 +94,7 @@ fn a_head_answers_the_size_and_the_validators_with_no_body() {
 /// `object_store` requires `Content-Length` unconditionally and refuses a
 /// chunked or content-encoded response, so an oracle that ever omitted the
 /// header would be exercising a case the crate rejects before any of our code
-/// runs (`docs/design/roadmap-P14-remote-input.md`, "What the backend actually
-/// does").
+/// runs.
 #[test]
 fn every_response_declares_a_length_and_none_is_chunked() {
     let oracle = Oracle::serving(BODY)
@@ -183,7 +179,7 @@ fn the_etag_knob_changes_the_validator_from_the_stated_request_onward() {
     );
 }
 
-/// The mechanism `docs/design/roadmap-P14-remote-input.md`, "D10" pins a
+/// The mechanism `docs/design/decisions.md`, "D21" pins a
 /// remote read with: the validator taken at the probe rides every later ranged
 /// GET, so a rewrite mid-scan comes back as a refusal instead of as mixed
 /// bytes.
@@ -263,7 +259,7 @@ fn the_not_found_knob_withdraws_the_object_from_the_stated_request_onward() {
 /// `object_store` substitutes the Unix epoch where a server sends no
 /// `Last-Modified`, so "the server said nothing" and "the server said 1970" are
 /// indistinguishable in its metadata — which is the asymmetry
-/// `docs/design/roadmap-P14-remote-input.md`, "D5" reads as absence. The
+/// `docs/design/decisions.md`, "D21" reads as absence. The
 /// oracle has to be able to produce both halves of it.
 #[test]
 fn the_suppressing_knobs_omit_the_weak_identity_headers() {

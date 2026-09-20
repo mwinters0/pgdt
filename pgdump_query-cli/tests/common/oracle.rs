@@ -1,5 +1,16 @@
-//! The oracle: a deliberately misbehaving HTTP/1.1 origin server, in-process
-//! (`docs/design/roadmap-P14-remote-input.md`, "D6").
+//! The oracle: a deliberately misbehaving HTTP/1.1 origin server, in-process.
+//!
+//! **It is written rather than depended on, and that generalizes to nothing.**
+//! Two of the knobs below cannot be emitted by anything that ships — an honest
+//! short 206, whose `Content-Range` describes the smaller span it really sent,
+//! and a declared `Content-Length` the body then contradicts, which a correct
+//! server exists to prevent and which no byte-cutting proxy can produce, being
+//! unable to rewrite the header it truncates under. Socket-level code is owed
+//! either way, and once it is, control and treatment must be one
+//! implementation: a knob-off oracle is a correct origin, where reading a
+//! misbehaving case against *another* server's baseline credits the knob with
+//! what may be the implementation. A mock-server dev-dependency was refused on
+//! the same two knobs, and an off-the-shelf origin behind a proxy on all four.
 //!
 //! The failures a remote source has to get right are all *server* behaviours —
 //! a server that ignores `Range`, one whose validator changes between the probe
@@ -207,7 +218,7 @@ impl OracleBuilder {
     }
 
     /// Send no `ETag`. The weak identity is then half-present, which is what
-    /// `docs/design/roadmap-P14-remote-input.md`, "D5" reads as absence.
+    /// `docs/design/decisions.md`, "D21" reads as absence.
     pub fn without_etag(mut self) -> Self {
         self.knobs.suppress_etag = true;
         self
@@ -260,7 +271,7 @@ impl OracleBuilder {
     /// It is the one misbehaviour a truncated body cannot stand in for. A
     /// liveness deadline and a cancellation are both timed against a *wait*,
     /// and a failure that arrives promptly ends the wait before either can be
-    /// observed (`docs/design/roadmap-P14-remote-input.md`, "D6").
+    /// observed.
     ///
     /// **Addressed to one request rather than to a suffix, unlike every other
     /// knob here.** What a stall is used to observe is what the client does
@@ -453,7 +464,7 @@ struct Validators<'a> {
 /// RFC 9110's precedence: `If-Match`, then `If-Unmodified-Since`, then
 /// `If-None-Match`, then `If-Modified-Since`. A conditional header naming a
 /// validator the object does not have fails, which is the case
-/// `docs/design/roadmap-P14-remote-input.md`, "D10" pins a ranged GET with.
+/// `docs/design/decisions.md`, "D21" pins a ranged GET with.
 fn precondition(request: &Request, validators: Validators) -> Option<Response> {
     let refused = || Some(simple(412, "Precondition Failed", Vec::new(), Some(validators)));
     let fresh = || Some(simple(304, "Not Modified", Vec::new(), Some(validators)));
@@ -668,9 +679,8 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 //
 // The oracle's own tests need a client, and using the one the oracle exists to
 // test would make the proof circular -- an instrument checked with the thing it
-// judges agrees with it by construction
-// (`docs/design/roadmap-P14-remote-input.md`, "How it is sliced, and why in
-// that order"). So this reads bytes off a socket and parses only what an
+// judges agrees with it by construction. So this reads bytes off a socket and
+// parses only what an
 // assertion needs.
 // ---------------------------------------------------------------------------
 

@@ -793,9 +793,9 @@ answers `200` to a `Range` (which is `RT14`), or for any backend but this one.
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
 oracle, `pgdump_query-cli/tests/remote.rs`).
 
-**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
-"D2" — `io::RemoteObject::probe` costs one round trip rather than a `HEAD` and
-a `GET`.
+**Relied on by:** `io::RemoteObject::probe` ([`decisions.md`](decisions.md),
+"D14") — the origin probe costs one round trip rather than a `HEAD` and a
+`GET`.
 
 **Re-verify:**
 
@@ -824,9 +824,9 @@ different case, and is `RT15`.
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
 oracle's `ignoring_range` knob, `pgdump_query-cli/tests/remote.rs`).
 
-**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
-"D7" — positioned reads are simply unavailable against such a server, and
-asking for one does not download the object to find that out.
+**Relied on by:** `io::RemoteSource` ([`decisions.md`](decisions.md), "D6") —
+positioned reads are simply unavailable against such a server, and asking for
+one does not download the object to find that out.
 
 **Re-verify:**
 
@@ -855,15 +855,15 @@ error from the body stream.
 
 **Scope limit.** Nothing is claimed about *which* servers do this; both
 conditions are produced deliberately by the oracle
-([`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D6"), whose
-`short_range_after` and `truncating_body_after` are the two halves.
+(`pgdump_query-cli/tests/common/oracle.rs`), whose `short_range_after` and
+`truncating_body_after` are the two halves.
 
 **Verified against:** `object_store` 0.14.2 (source read; observed against both
 oracle knobs, `pgdump_query-cli/tests/remote.rs`).
 
-**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
-"D7" — `io::RemoteSource::read_range` answers exactly its `len` or errors, as
-`ByteRangeSource` requires of every source.
+**Relied on by:** `io::RemoteSource::read_range` ([`decisions.md`](decisions.md),
+"D6") — it answers exactly its `len` or errors, as `ByteRangeSource` requires
+of every source.
 
 **Re-verify:**
 
@@ -893,9 +893,9 @@ a decoding.
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
 oracle's `without_last_modified` knob).
 
-**Relied on by:** [`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md),
-"D5" — `io::weak_identity` reads the epoch as absence, so a server that says
-nothing is treated as silent rather than as claiming a date.
+**Relied on by:** `io::weak_identity` ([`decisions.md`](decisions.md), "D21") —
+it reads the epoch as absence, so a server that says nothing is treated as
+silent rather than as claiming a date.
 
 **Re-verify:**
 
@@ -963,7 +963,7 @@ project cannot tell.
 oracle's `etag_changing_after` and `without_etag` knobs).
 
 **Relied on by:**
-[`roadmap-P14-remote-input.md`](roadmap-P14-remote-input.md), "D10" and "D11" —
+[`decisions.md`](decisions.md), "D21" —
 the in-flight identity check on a remote source *is* this precondition, so a
 header that was not sent would leave a remote run with no such check at all,
 silently.

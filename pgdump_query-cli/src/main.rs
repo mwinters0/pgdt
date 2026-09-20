@@ -1277,7 +1277,7 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
 /// default cache is named after the URL's last path segment and sits in the
 /// working directory, so "the cache at `koji.dump.dqcache`" does not say which
 /// `koji.dump` this run asked for
-/// (`docs/design/roadmap-P14-remote-input.md`, "D4", "D18"). The fourth, a
+/// (`docs/design/decisions.md`, "D87"). The fourth, a
 /// block refused against a map with no cache attached, names neither.
 ///
 /// **It is an exhaustive match, not a test of the variants somebody
@@ -1773,7 +1773,7 @@ async fn main() -> Result<()> {
             // Reported rather than acted on: between runs the weak signals are
             // advisory unless a selection binds them
             // (`docs/design/decisions.md`, "D21";
-            // `docs/design/roadmap-P14-remote-input.md`, "D4"). Asked for by
+            // `docs/design/decisions.md`, "D87"). Asked for by
             // name, for the same reason the refusal above is.
             index
                 .diagnostics
@@ -2612,7 +2612,7 @@ fn report(
 /// what `--memory`'s read-buffer budget has to clear for a query to read this
 /// file a block at a time — **four times over**, one reader's block beside the further
 /// blocks the pool keeps however few readers run, plus a read buffer and the
-/// decompressor's own working memory (`docs/design/decisions.md`, "D16").
+/// decompressor's own working memory (`docs/design/decisions.md`, "D15").
 fn compression_line(shape: &CompressionShape) -> String {
     format!(
         "compression: {} — {} block(s) in {} stream(s), largest block {} bytes uncompressed",

@@ -34,7 +34,7 @@ pub use enabled::{StatisticsReading, allocated, freed, statistics_reading};
 /// away and no build that ships carries the atomic. What it exists for is a
 /// property a shipped build cannot state — that a block a forward scan sits
 /// inside is decoded once rather than once per read — which a test asserts
-/// rather than argues (`docs/design/roadmap-P14-remote-input.md`, "D21").
+/// rather than argues (`docs/design/decisions.md`, "D15").
 #[derive(Debug, Default)]
 pub(crate) struct DecodeCounter {
     #[cfg(feature = "introspect")]

@@ -502,8 +502,8 @@ async fn location_binds_nothing_on_a_local_source() {
 }
 
 // ---------------------------------------------------------------------------
-// A source that was fetched from somewhere (`docs/design/roadmap-P14-remote-input.md`,
-// "D4", "D5", "D18", "D19")
+// A source that was fetched from somewhere (`docs/design/decisions.md`, "D87"
+// and "D21")
 // ---------------------------------------------------------------------------
 
 /// A source that reports having been fetched from an origin, with a stated
@@ -571,7 +571,7 @@ async fn mapped(
 
 /// A cache written for one origin and read against another is **advisory**:
 /// the map loads, and the difference is a warning
-/// (`docs/design/roadmap-P14-remote-input.md`, "D4"). The same stored size is
+/// (`docs/design/decisions.md`, "D87"). The same stored size is
 /// what makes the case reachable at all — two same-named dumps of equal size
 /// from different hosts is exactly the collision the derived cache path
 /// admits.
@@ -655,7 +655,7 @@ async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
 /// The entity tag is the stronger of the two modification signals, so where
 /// both sides carry one it settles the question — here saying the object
 /// changed while the modification time says it did not
-/// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+/// (`docs/design/decisions.md`, "D21").
 #[tokio::test]
 async fn an_entity_tag_outranks_a_modification_time_that_agrees_with_nothing() {
     let (_dir, dump) = sandboxed();

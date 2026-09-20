@@ -164,3 +164,29 @@ should hand out a shareable handle from the start.
 ([`decisions.md`](decisions.md), "D4";
 [`../status/history/2026-09-12.md`](../status/history/2026-09-12.md), "The seek
 table is held twice, and the walk runs before the budget does").
+
+---
+
+## A compressed source composes over any transport, and one value holds its budget policy
+
+**Fact.** `FetchedXzSource` holds an `Arc<dyn ByteRangeSource>` and delegates
+every trait answer to it, so the whole compressed-over-fetched composition is
+exercised over a local file with no server and no feature enabled. The budget
+policy that both `.xz` sources answer from — apportionment, the charged chunk,
+the block path and its partitions, the block decode charge — is one value they
+hold (`io::XzBudget`), with the transport reaching it only as the decoder
+charge its constructor is handed and as the wait policy each source announces
+for itself; `hint_wait_policy` and `default_workers` stayed outside it, being
+the two answers the two sources genuinely differ on.
+
+**Why P15 cares.** This phase adds a *format*, not a transport, so the shape
+to copy is that one: a source per codec, each holding the budget value and
+composing over whatever byte source it is given, rather than a source per
+(codec, transport) pair. If the codec's reader cannot be driven from a caller's
+window the way `xz-seek`'s block handle is, that is the difference to find
+before the slices are written, since it is what decides whether the fetched arm
+exists at all.
+
+**Origin.** The remote-input work, 2026-09-20. *Contingent on* both `.xz`
+sources still sharing one budget value — see `pgdump_query/src/io.rs` and
+([`decisions.md`](decisions.md), "D15").

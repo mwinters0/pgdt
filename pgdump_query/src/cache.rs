@@ -23,7 +23,7 @@
 //! the device, not the addressable (possibly decompressed) length — and, for a
 //! source that was fetched from somewhere, **where it came from** and the
 //! server's entity tag
-//! (`docs/design/roadmap-P14-remote-input.md`, "D18", "D19"); [`load`]
+//! (`docs/design/decisions.md`, "D87"); [`load`]
 //! re-observes the live source and compares. A stored-size mismatch means
 //! every byte offset in the cache could be wrong, so the cache is unusable.
 //! Neither weak signal invalidates it by default: they are surfaced on
@@ -81,7 +81,7 @@ pub(crate) const CACHE_FORMAT_VERSION: u32 = 23;
 /// **Opaque, not a struct** (`docs/design/decisions.md`, "D21"): each variant
 /// carries whatever evidence its own kind of source has, an ETag not being a
 /// `SystemTime` and a local file having no origin at all
-/// (`docs/design/roadmap-P14-remote-input.md`, "D18", "D19"). What the three
+/// (`docs/design/decisions.md`, "D87"). What the three
 /// comparisons below read is a *signal* — origin, modification, stored size —
 /// rather than a variant, so a pairing of two kinds is compared rather than
 /// refused.
@@ -182,7 +182,7 @@ impl SourceIdentity {
     /// so where both sides have one it settles the question and a
     /// `Last-Modified` disagreeing with it is not consulted; where either
     /// side has none, the modification time is what is left
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    /// (`docs/design/decisions.md`, "D21").
     fn weak_against(&self, live: &Self) -> WeakIdentity {
         if let (Some(cached), Some(live)) = (self.etag(), live.etag()) {
             return if cached == live {
@@ -200,7 +200,7 @@ impl SourceIdentity {
 
     /// What this identity's origin says against `live`'s — the second
     /// advisory answer, and the one [`StrictIdentity::location`] binds
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+    /// (`docs/design/decisions.md`, "D87").
     ///
     /// **Two sources that were both fetched from nowhere agree**, which is
     /// what makes `location` inert on a local file rather than a refusal
@@ -239,7 +239,7 @@ impl SourceIdentity {
 
 /// What the origin recorded in a cache said against the live source's — the
 /// second half of what a cache load compares, beside [`WeakIdentity`]
-/// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+/// (`docs/design/decisions.md`, "D87").
 ///
 /// **Advisory by default and only two states**, where the modification signal
 /// has three: an absent origin is not silence, it is the positive statement
@@ -290,7 +290,7 @@ pub enum WeakIdentity {
     /// Both sides carry an entity tag and the two differ — the server's own
     /// statement that this is a different version of the object, which
     /// outranks whatever `Last-Modified` says
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D5"). Advisory by
+    /// (`docs/design/decisions.md`, "D21"). Advisory by
     /// default, exactly as [`WeakIdentity::Differs`] is.
     TagDiffers { cached: String, live: String },
     /// They differ — advisory by default
@@ -442,7 +442,7 @@ impl SourceWatch {
     /// a provider that can have the server do the comparing the check is a
     /// precondition on every request rather than this watch's own re-read, and
     /// `--strict-identity=none` has to reach both
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D11",
+    /// (`docs/design/decisions.md`, "D21",
     /// [`ByteRangeSource::hint_in_flight_identity`]).
     pub async fn open(source: &dyn ByteRangeSource, strict: StrictIdentity) -> Result<Self> {
         source.hint_in_flight_identity(strict.in_flight());
@@ -1038,7 +1038,7 @@ impl CacheMode {
     /// beside, so its cache is named after the URL's last path segment and
     /// sits in the working directory — predictable by reading the URL, where
     /// a hashed name would not be
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D4").
+    /// (`docs/design/decisions.md`, "D87").
     ///
     /// *Consequence, stated rather than defended away:* two same-named dumps
     /// of equal stored size from different hosts, read in one working
@@ -1139,7 +1139,7 @@ impl CacheMode {
     /// [`load`] and so never passes through `load`'s own check
     /// (`pgdq info`). The comparison stays here rather than at that caller,
     /// so one selection means one thing on every command
-    /// (`docs/design/roadmap-P14-remote-input.md`, "D5").
+    /// (`docs/design/decisions.md`, "D21").
     ///
     /// Only [`CacheMode::Enabled`] can refuse: [`CacheMode::Disabled`] loads
     /// no cache to compare, and [`CacheMode::Offline`] has no live source, so
