@@ -58,8 +58,9 @@ over HTTP" is the user-facing half.
   (`pgdump_query/src/cache.rs`, `CacheMode::source_mismatch`). The source's
   name is added by the CLI's `naming_the_source`, which already did exactly
   that for the in-flight refusal — the division 14.3 recorded and expected this
-  slice to either fold into or leave alone. It is under "Decisions worth
-  another look".
+  slice to either fold into or leave alone. Reviewed since and affirmed, with
+  the classification widened to every refusal that fires because the source
+  moved and shared by all three commands (`M127`).
 - **`CacheMtimeChanged` kept its wording, and a third kind was added.**
   Widening it to "the modification signal" made the local sentence vaguer for
   every user who has no entity tag, and the comparison already distinguishes

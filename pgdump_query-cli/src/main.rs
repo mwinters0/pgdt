@@ -1261,34 +1261,42 @@ fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
     })
 }
 
-/// **Name the source on the two refusals that are about it.** The library
-/// detects a source moving underneath a run wherever the check is cheapest,
-/// and refuses a cache written for another file from inside the cache
-/// machinery; neither place has a name for what was being read, and the user
-/// typed one (`docs/design/decisions.md`, "D20").
+/// Whether a refusal is about **which file was read** — the classification
+/// [`naming_the_source`] renders and `Command::Query`'s own reporter shares,
+/// so one answer serves every command.
 ///
-/// The second matters most where the cache path was *derived*: a remote
-/// dump's default cache is named after the URL's last path segment and sits
-/// in the working directory, so "the cache at `koji.dump.dqcache`" does not
-/// say which `koji.dump` this run asked for
-/// (`docs/design/roadmap-P14-remote-input.md`, "D4", "D18").
+/// Four refusals fire *because the source moved*, and the library raises each
+/// wherever its check is cheapest: in flight, from the cache machinery when a
+/// cache was written for another file or a bound weak signal does not hold,
+/// and from the back-fill when a block no longer ends where the map says
+/// (`docs/design/decisions.md`, "D20", "D21"). None of those places has a name
+/// for what was being read, and the user typed one.
 ///
-/// **The classification is an exhaustive match, not a two-arm test.** Whether
-/// a refusal wants the source's name is a property of each variant, and the
-/// second arm was added here by hand long after the first; under `_ => false`
-/// the next variant that names no source would inherit that silence with
-/// nothing to catch it. Every variant is listed instead, so a variant added to
-/// [`pgdump_query::Error`] does not compile until it has been classified.
-fn naming_the_source(err: pgdump_query::Error, source: &Origin) -> anyhow::Error {
+/// **A cache's own name is not the source's.** Three of the four name the
+/// cache, which settles nothing where that path was *derived*: a remote dump's
+/// default cache is named after the URL's last path segment and sits in the
+/// working directory, so "the cache at `koji.dump.dqcache`" does not say which
+/// `koji.dump` this run asked for
+/// (`docs/design/roadmap-P14-remote-input.md`, "D4", "D18"). The fourth, a
+/// block refused against a map with no cache attached, names neither.
+///
+/// **It is an exhaustive match, not a test of the variants somebody
+/// remembered.** Whether a refusal wants the source's name is a property of
+/// each variant, and arms have been added here by hand slices apart; under
+/// `_ => false` the next variant that names no source would inherit that
+/// silence with nothing to catch it. Every variant is listed instead, so a
+/// variant added to [`pgdump_query::Error`] does not compile until it has been
+/// classified.
+fn about_the_source(err: &pgdump_query::Error) -> bool {
     use pgdump_query::Error as Lib;
-    let about_the_source = match &err {
-        Lib::SourceChangedWhileRead { .. } | Lib::CacheSourceMismatch { .. } => true,
-        // Named by the library itself: each of these carries the origin, the
-        // URL or the cache path in its own sentence.
-        Lib::SourceNotReadable { .. }
-        | Lib::Remote { .. }
+    match err {
+        Lib::SourceChangedWhileRead { .. }
+        | Lib::CacheSourceMismatch { .. }
         | Lib::StrictIdentityUnmet { .. }
-        | Lib::CachedBlockChanged { .. } => false,
+        | Lib::CachedBlockChanged { .. } => true,
+        // Named by the library itself: each of these carries the origin or
+        // the URL in its own sentence.
+        Lib::SourceNotReadable { .. } | Lib::Remote { .. } => false,
         // About a place inside the dump, a value in it, or the request made
         // of it — never about which file was read.
         Lib::Io(_)
@@ -1315,8 +1323,13 @@ fn naming_the_source(err: pgdump_query::Error, source: &Origin) -> anyhow::Error
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRender { .. } => false,
-    };
-    if about_the_source {
+    }
+}
+
+/// Lead a refusal [`about_the_source`] with the name the user typed, and
+/// leave every other error its own words.
+fn naming_the_source(err: pgdump_query::Error, source: &Origin) -> anyhow::Error {
+    if about_the_source(&err) {
         return anyhow::anyhow!("{source}: {err}");
     }
     err.into()
@@ -1750,9 +1763,12 @@ async fn main() -> Result<()> {
             // `info` reads the whole status rather than going through
             // `CacheMode::load`, so it asks for that method's check by name;
             // the selection means here what it means on the commands that
-            // scan (`docs/design/decisions.md`, "D21").
+            // scan (`docs/design/decisions.md`, "D21"). One meaning is one
+            // rendering too: the refusal is about a source that moved, so it
+            // goes out through the classifier the scanning commands use
+            // rather than straight into `anyhow`.
             if let Some(refusal) = mode.strict_identity_refusal(&weak, &cache_origin) {
-                return Err(refusal.into());
+                return Err(naming_the_source(refusal, &origin));
             }
             // Reported rather than acted on: between runs the weak signals are
             // advisory unless a selection binds them
@@ -1814,13 +1830,17 @@ async fn main() -> Result<()> {
             let source = open_for_scan(&origin, &mode).await?;
             let parallel = stated.resolve(source.as_ref());
             parallel.announce();
-            // Both refusals a query can raise that want more than the
-            // library's own words: one adds a note, the other a name.
-            let report = |err: pgdump_query::Error| match err {
-                pgdump_query::Error::SourceChangedWhileRead { .. } => {
+            // The refusals a query can raise that want more than the
+            // library's own words: those about the source gain its name, and
+            // a column name not found gains a note. Which wants the name is
+            // asked of [`about_the_source`] rather than listed again here — a
+            // second list is how this arm went slices behind `parse`'s.
+            let report = |err: pgdump_query::Error| {
+                if about_the_source(&err) {
                     naming_the_source(err, &origin)
+                } else {
+                    name_taken_verbatim(err)
                 }
-                other => name_taken_verbatim(other),
             };
             let mut header_printed = false;
             let mut any_batch = false;
@@ -2928,32 +2948,55 @@ mod tests {
     /// source moving underneath a run wherever the check is cheapest and has
     /// no name for what it was reading; every other error keeps its own
     /// words. Which is which is an exhaustive match, so the compiler is what
-    /// pins the coverage and this test pins the rendering.
+    /// pins the coverage and this test pins the rendering — one case per
+    /// refusal that fires *because the source moved*, since each is raised by
+    /// a different mechanism and names a different thing by itself.
     #[test]
     fn only_the_refusals_about_a_source_are_given_its_name() {
         let origin = Origin::local("/tmp/koji.dump");
-        let moved = pgdump_query::Error::SourceChangedWhileRead {
+        let named = |err: pgdump_query::Error| naming_the_source(err, &origin).to_string();
+
+        let said = named(pgdump_query::Error::SourceChangedWhileRead {
             differences: "its modification time moved".into(),
-        };
-        let said = naming_the_source(moved, &origin).to_string();
+        });
         assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
         assert!(said.contains("while it was being read"), "{said}");
 
         // The cache names itself; what it cannot name is the dump it was
         // checked against, which is the whole point where the path was
         // derived from a URL.
-        let mismatched = pgdump_query::Error::CacheSourceMismatch {
+        let said = named(pgdump_query::Error::CacheSourceMismatch {
             path: PathBuf::from("koji.dump.dqcache"),
             cached_stored_size: 10,
             live_stored_size: 11,
-        };
-        let said = naming_the_source(mismatched, &origin).to_string();
+        });
         assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
         assert!(said.contains("koji.dump.dqcache"), "the cache is still named: {said}");
 
+        // A bound weak signal that does not hold: the same derived cache
+        // path, and a clause about times rather than sizes.
+        let said = named(pgdump_query::Error::StrictIdentityUnmet {
+            path: PathBuf::from("koji.dump.dqcache"),
+            term: "time",
+            unmet: "the modification time has moved".into(),
+        });
+        assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
+        assert!(said.contains("koji.dump.dqcache"), "the cache is still named: {said}");
+
+        // Both arms of the block refusal, the cache-less one naming nothing
+        // at all by itself — the case with most to gain.
+        let said = named(pgdump_query::Error::CachedBlockChanged {
+            path: Some(PathBuf::from("koji.dump.dqcache")),
+            header_offset: 4096,
+        });
+        assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
+        let said =
+            named(pgdump_query::Error::CachedBlockChanged { path: None, header_offset: 4096 });
+        assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
+
         let other = pgdump_query::Error::CacheDisabled { operation: "parse" };
         let verbatim = other.to_string();
-        assert_eq!(naming_the_source(other, &origin).to_string(), verbatim);
+        assert_eq!(named(other), verbatim);
     }
 
     /// The bare flag is `time,location`, stated once — in the attribute — and

@@ -8,6 +8,11 @@
 //! that the flag is a usage error where there is no source to bind it to.
 //! `pgdump_query/tests/identity.rs` pins what the refusal itself compares; this
 //! file pins that `info` asks for it.
+//!
+//! One selection meaning one thing includes how the refusal *reads*, so the
+//! third case pins the same refusal on a command that scans: the source's name
+//! leads it on both, the classifier being shared rather than copied
+//! (`main.rs`'s `about_the_source`).
 
 use std::time::{Duration, SystemTime};
 
@@ -49,6 +54,7 @@ fn info_refuses_a_moved_signal_under_strict_time_and_reports_without_it() {
     assert!(!refused.status.success(), "`time` binds the modification time on `info` too");
     let said = stderr_of(&refused);
     assert!(said.contains("dump.sql.dqcache"), "it names the cache it refused: {said}");
+    assert!(said.contains(dump), "and the source it refused it about: {said}");
     assert!(said.contains("modification time has moved"), "and why: {said}");
     assert!(
         said.contains("the cache recorded") && said.contains("the source now reports"),
@@ -81,4 +87,23 @@ fn strict_identity_without_a_source_is_a_usage_error() {
     assert!(!refused.status.success(), "the flag needs a source to bind");
     let said = stderr_of(&refused);
     assert!(said.contains("--source"), "and the usage error names what is missing: {said}");
+}
+
+/// The same refusal on a command that *scans*, reading the same way: a cache
+/// path is derived on a remote source and says nothing about which dump was
+/// asked for, so the source's name leads the sentence wherever the refusal
+/// surfaces, not only on the command that happened to be written first.
+#[test]
+fn a_scanning_command_names_the_source_in_a_strict_identity_refusal() {
+    let (_dir, dump) = sandboxed();
+    let dump = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", dump]);
+    touch_forward(std::path::Path::new(dump));
+
+    let refused =
+        run(&["query", "--source", dump, "--table", "public.widgets", "--strict-identity=time"]);
+    assert!(!refused.status.success(), "`time` binds the modification time on `query` too");
+    let said = stderr_of(&refused);
+    assert!(said.contains(&format!("Error: {dump}: the cache at")), "{said}");
+    assert!(said.contains("dump.sql.dqcache"), "the cache is still named: {said}");
 }

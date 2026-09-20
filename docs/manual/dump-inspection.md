@@ -267,10 +267,13 @@ pgdq query --source mydump.sql --table public.widgets --strict-identity=time
   below.
 
 The flag asks the same question of all three commands, so `info` stops too
-rather than reporting — the refusal names the cache, what failed and the two
-modification times it compared (seconds and nanoseconds since the Unix epoch,
-which `date -d @<seconds>` reads back), which is more than the diagnostic
-says. It does need a source to ask about: cache-only
+rather than reporting, and the refusal reads the same on each: the dump you
+named, then the cache, what failed and the two modification times it compared
+(seconds and nanoseconds since the Unix epoch, which `date -d @<seconds>` reads
+back), which is more than the diagnostic says. The dump's name leads it because
+a cache's own is not always enough — over HTTP the cache is named after the
+URL's last segment, so `mydump.dqcache` does not say which `mydump` asked for
+it. It does need a source to ask about: cache-only
 `info`, with no `--source`, is answering from the cache alone and there is no
 identity there to bind, so the flag is refused as a usage error.
 
@@ -511,9 +514,9 @@ choice and is never quietly changed to fit memory, because a cache must not
 depend on the container that happened to write it.
 
 A file rewritten in place at the same size since it was scanned is refused
-here, with a message naming the block and the cache file, if a re-read table's
-data no longer ends where the cache says it does: delete that cache and parse
-again.
+here, with a message naming the dump, the block and the cache file, if a
+re-read table's data no longer ends where the cache says it does: delete that
+cache and parse again.
 
 **`query` skips every group its statistics rule out.** Given a `--filter` or
 `--where`, a group in which no row can satisfy it is never read, and stderr
