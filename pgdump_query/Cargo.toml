@@ -12,8 +12,7 @@ introspect = []
 # The remote source (`io::RemoteSource`) and everything that names a URL.
 # **Default-off**: what `object_store`'s `http` feature drags in, an
 # `aws-lc-sys` C build included, is too much to impose on an embedder that
-# reads local files (`docs/design/roadmap-P14-remote-input.md`, "D6" and "D8",
-# where the tree is counted).
+# reads local files.
 #
 # `tokio/net` and `tokio/time` are declared here rather than inherited: the
 # backend needs the IO and time drivers at runtime and nothing in its own tree
@@ -36,8 +35,7 @@ bytes = "1.12.1"
 futures = "0.3.34"
 memchr = "2.8.3"
 # `http` only, and `default-features = false` to leave out the `fs` backend:
-# what is wanted is one `HttpStore` over ranged GETs
-# (`docs/design/roadmap-P14-remote-input.md`, "D8"). The `http` feature
+# what is wanted is one `HttpStore` over ranged GETs. The `http` feature
 # resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build needing
 # `cmake` — which `mise.toml` pins.
 object_store = { version = "0.14.2", optional = true, default-features = false, features = [
@@ -58,8 +56,7 @@ tokio = { version = "1.53.1", features = ["rt", "sync"] }
 tracing = "0.1"
 # `http` only: the same crate `object_store` parses URLs with, so a `Url` this
 # crate builds is the one its backend takes. What reads it is
-# `io::Origin::resolve`, which classifies a `--source` argument
-# (`docs/design/roadmap-P14-remote-input.md`, "D3" and "D17").
+# `io::Origin::resolve`, which classifies a `--source` argument.
 url = { version = "2.5.8", optional = true }
 # A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
 # workspace, not published (`docs/design/decisions.md`, "The compressed
