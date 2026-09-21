@@ -106,6 +106,10 @@ delivered.
 - [x] **6.4** One schema per table: blocks reordered by name into the table's
   order, a disagreeing name set refused.
   [Notes](../design/roadmap-P6.4-one-schema-notes.md).
+- [ ] **6.4.1** A block with no column list copies no columns: rows of zero
+  fields, a non-empty line refused, a zero-column table's row count kept; and
+  the fixtures gain a reordered attached partition, a zero-column table and a
+  generated-only table on every major, I5 verified against them.
 - [ ] **6.5** `datafusion-pgdump`: a complete cache loaded, the catalog and
   single-table forms, the partitioned scan with projection, limit and batch
   size, the session budget; the same rows as the library over every fixture.
@@ -412,16 +416,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **6.4's rule is the library's, so `pgdt query` changed too.** The spec
-  states "one schema per table" as what the provider presents, built from the
-  per-block resolution; 6.4 put it in `stream.rs`'s `ReplayPlan`, which every
-  query shares, because the provider and `pgdt` read one replay and the census
-  was being unioned by position either way. So `pgdt query` now reorders a
-  partition's rows into the table's order and refuses a table whose blocks name
-  different columns (`Error::TableColumnsDisagree`), where it used to print
-  each block in its own shape. One corner regressed: a table with no columns
-  and rows is refused by `Error::UnnamedBlockWidth` where it used to come back
-  as one empty column ([notes](../design/roadmap-P6.4-one-schema-notes.md)).
-  Reconsidering means a per-block mode kept for `pgdt`, the provider alone
-  applying the rule.
 

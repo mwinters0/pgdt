@@ -81,18 +81,24 @@ each block's header naming the root (I2) — may list its columns in a different
 order per block, so **each block's batches are reordered by name** into the
 table's order. A table whose blocks disagree on the *set* of column names is
 refused, naming the blocks. A table with no DDL in the file (a data-only dump)
-takes the first block's column order under the same set rule. A block with no
-column list takes the table's names where its field count matches, and is
-refused where it does not.
+takes the first block's column order under the same set rule. **A block with
+no column list copies no columns** (I5: `pg_dump` writes none exactly when every
+column is dropped or generated), so each of its rows is an empty line read as a
+row of zero fields, and a line that is not empty is refused; a table whose
+blocks list nothing has an empty schema and its true row count.
 
 Rejected: the first block's order with every other order refused, which
-refuses ordinary partitioned dumps; and the union of names with absent columns
-filled as `NULL`, which states values PostgreSQL never held.
+refuses ordinary partitioned dumps; the union of names with absent columns
+filled as `NULL`, which states values PostgreSQL never held; and a list-less
+block taking the table's declared names where its width matches, which reads
+an empty line as one field and gives a table of generated columns `''` for
+every value.
 
-The library today resolves a schema per block (`stream::resolve_block`), so a
-multi-block stream can yield batches of more than one shape; the rule above is
-the one the provider presents, and the per-block resolution is what it is
-built from.
+The rule is the library's, so every query presents it, `pgdt query` included,
+not the provider alone: it rests on `pg_dump`'s output rather than on
+DataFusion, and a per-block shape is the hazard it removes. Settled 2026-09-21
+([`../status/history/2026-09-21.md`](../status/history/2026-09-21.md), "One
+schema per table is every query's, and a list-less block copies nothing").
 
 ## Comparison means what DataFusion means
 
