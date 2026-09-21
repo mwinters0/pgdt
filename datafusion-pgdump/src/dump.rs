@@ -1,0 +1,191 @@
+//! A dump opened through its complete cache
+//! (`docs/design/roadmap-P6-datafusion.md`, "The provider reads a complete
+//! cache, and never maps").
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use pgdump_query::cache::{self, CacheClaim, CacheMode, CacheStatus, SourceWatch, StrictIdentity};
+use pgdump_query::{
+    ByteRangeSource, Diagnostic, DumpIndex, Origin, Recognized, SchemaMode, TableName,
+};
+
+use crate::Error;
+
+/// How a dump is opened.
+#[derive(Debug, Clone, Default)]
+pub struct PgDumpOptions {
+    /// The cache to read, where it is not the one `pgdt parse` writes by
+    /// default — beside a local dump, or in the working directory named after
+    /// a URL's last segment ([`CacheMode::resolve`]).
+    pub cache_path: Option<PathBuf>,
+    /// Typed columns, or every column as text — the escape hatch from a wrong
+    /// type mapping, per dump.
+    pub schema_mode: SchemaMode,
+}
+
+/// A dump and the complete map of it its cache holds, opened once and shared
+/// by every catalog, table and scan registered over it.
+///
+/// **It never maps and never writes.** The map is the one `pgdt parse` left,
+/// loaded whole at open and believed only where it reaches the end of the file
+/// and its identity checks pass as they do for any load; anything short of
+/// that is an error naming the `pgdt parse` that would build it.
+pub struct PgDump {
+    origin: String,
+    source: Arc<dyn ByteRangeSource>,
+    watch: Arc<SourceWatch>,
+    index: DumpIndex,
+    tables: Vec<TableName>,
+    schema_mode: SchemaMode,
+}
+
+impl std::fmt::Debug for PgDump {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PgDump").field("origin", &self.origin).finish_non_exhaustive()
+    }
+}
+
+impl PgDump {
+    /// Open `location` — a path, or anything `pgdt --source` accepts — through
+    /// its complete cache.
+    pub async fn open(location: &str, options: PgDumpOptions) -> Result<Arc<Self>, Error> {
+        #[cfg(feature = "http")]
+        let origin = Origin::resolve(location)?;
+        #[cfg(not(feature = "http"))]
+        let origin = Origin::local(location);
+        let mode = CacheMode::resolve(&origin, options.cache_path.as_deref());
+        let CacheMode::Enabled { path, .. } = &mode else {
+            return Err(Error::CacheNotComplete {
+                parse: parse_command(location, options.cache_path.as_deref()),
+                why: "no cache was named — `none` disables the cache this provider reads"
+                    .to_string(),
+            });
+        };
+        let incomplete = |why: String| Error::CacheNotComplete {
+            parse: parse_command(location, options.cache_path.as_deref()),
+            why,
+        };
+        // The claim first, as `pgdt` opens: it spares a compressed file's
+        // footer walk, and refuses a cache for another file before one.
+        let known = match cache::claim(path, &origin).await? {
+            CacheClaim::Compression(known) => known,
+            CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
+                return Err(mode.source_mismatch(cached_stored_size, live_stored_size).into());
+            }
+        };
+        let source = match pgdump_query::open(&origin, known).await? {
+            Recognized::Source(source) => source,
+            Recognized::Mismatch => {
+                return Err(incomplete(format!(
+                    "the cache at {} records compression details the file contradicts, so it \
+                     was written for another file",
+                    path.display()
+                )));
+            }
+        };
+        // The baseline every scan's end checks the file against, taken before
+        // the map it is about to trust is read.
+        let watch = Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await?);
+        let index = match cache::load(path, source.as_ref()).await? {
+            CacheStatus::Valid { mut index, weak, origin: matched, .. } => {
+                index.diagnostics.extend(cache::advisory_identity_diagnostics(&weak, &matched));
+                index
+            }
+            CacheStatus::Incomplete { index, total_size, .. } => {
+                return Err(incomplete(format!(
+                    "the cache at {} covers {} of {total_size} byte(s)",
+                    path.display(),
+                    index.scanned_through
+                )));
+            }
+            CacheStatus::Missing => {
+                return Err(incomplete(format!("there is no cache at {}", path.display())));
+            }
+            CacheStatus::Unreadable => {
+                return Err(incomplete(format!("{} is not a pgdt cache", path.display())));
+            }
+            CacheStatus::UnsupportedVersion => {
+                return Err(incomplete(format!(
+                    "the cache at {} was written by another build",
+                    path.display()
+                )));
+            }
+            CacheStatus::SourceChanged { cached_stored_size, live_stored_size } => {
+                return Err(mode.source_mismatch(cached_stored_size, live_stored_size).into());
+            }
+        };
+        let tables = index.tables();
+        Ok(Arc::new(Self {
+            origin: origin.to_string(),
+            source,
+            watch,
+            index,
+            tables,
+            schema_mode: options.schema_mode,
+        }))
+    }
+
+    /// The dump as a message names it.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Every table the dump holds rows for, in the order its first block
+    /// appears.
+    pub fn tables(&self) -> &[TableName] {
+        &self.tables
+    }
+
+    /// The databases the file holds, in file order: each `\connect`ed
+    /// database by name, and `None` for one no `\connect` names — a plain
+    /// single-database dump taken without `--create`. The stretch of a
+    /// `pg_dumpall` file before its first `\connect`, which holds roles and
+    /// no table, is not one.
+    pub fn databases(&self) -> Vec<Option<String>> {
+        let mut names: Vec<Option<String>> = Vec::new();
+        let declared = self
+            .index
+            .metadata
+            .iter()
+            .flat_map(|m| &m.databases)
+            .map(|db| &db.name)
+            .filter(|name| name.is_some());
+        let holding = self.tables.iter().map(|t| &t.database);
+        for name in declared.chain(holding) {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
+    /// What the file-level channel says about this dump and its cache.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.index.diagnostics
+    }
+
+    pub(crate) fn index(&self) -> &DumpIndex {
+        &self.index
+    }
+
+    pub(crate) fn source(&self) -> &Arc<dyn ByteRangeSource> {
+        &self.source
+    }
+
+    pub(crate) fn watch(&self) -> &Arc<SourceWatch> {
+        &self.watch
+    }
+
+    pub(crate) fn schema_mode(&self) -> SchemaMode {
+        self.schema_mode
+    }
+}
+
+/// The `pgdt parse` that builds the cache this open looked for.
+fn parse_command(location: &str, cache_path: Option<&Path>) -> String {
+    match cache_path {
+        Some(path) => format!("pgdt parse --source {location} --dtcache {}", path.display()),
+        None => format!("pgdt parse --source {location}"),
+    }
+}

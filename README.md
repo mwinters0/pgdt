@@ -6,6 +6,7 @@ Because sometimes stupid problems need stupid solutions.
 Available as:
 - A Rust library (`pgdump_query`)
 - A CLI (`pgdt` aka "Postgres Dump Tool")
+- A DataFusion catalog and `TableProvider` (`datafusion-pgdump`), over a dump `pgdt parse` has cached
 
 ```bash
 # Parse a dump (builds a cache)

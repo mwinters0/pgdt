@@ -196,6 +196,15 @@ pub enum Error {
         "table `{table}` is written as COPY blocks naming different columns — the block at offset {header_offset} and the one at offset {other_offset}; one table's blocks must name the same columns"
     )]
     TableColumnsDisagree { table: String, header_offset: u64, other_offset: u64 },
+    /// A replay over a map the caller holds was handed one that stops short
+    /// of the source's end, so a table's blocks past that point would be
+    /// missing from its rows and its schema without anything saying so. Raised
+    /// by `crate::TablePartitions::plan` before a byte is read; building the
+    /// rest of the map is the caller's to arrange, the replay never scans.
+    #[error(
+        "the map covers {scanned_through} of the source's {size} byte(s); a replay over a caller's map needs one that reaches the end of the file"
+    )]
+    MapIncomplete { scanned_through: u64, size: u64 },
     #[error(
         "metadata for database {} was not scanned — run `pgdt parse` first, or use --schema-mode strings",
         database.as_deref().unwrap_or("(unnamed)")

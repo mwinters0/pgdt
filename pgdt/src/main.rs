@@ -1294,6 +1294,9 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::CacheSourceMismatch { .. }
         | Lib::StrictIdentityUnmet { .. }
         | Lib::CachedBlockChanged { .. } => true,
+        // A caller's map short of the file's end names neither. `pgdt` hands
+        // the library no map of its own, so it never meets this one.
+        Lib::MapIncomplete { .. } => true,
         // Named by the library itself: each of these carries the origin or
         // the URL in its own sentence.
         Lib::SourceNotReadable { .. } | Lib::Remote { .. } => false,

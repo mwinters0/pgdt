@@ -914,11 +914,30 @@ impl Parallelism {
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
     pub fn within(jobs: usize, memory: Option<WorkerMemory>, allowance: u64) -> Self {
+        Self::within_shared(jobs, memory, allowance, 0)
+    }
+
+    /// [`Parallelism::within`] for one of several arrangements drawing on one
+    /// allowance at once — concurrent scans in one process — where `drawn` is
+    /// the read-buffer budget the others already hold.
+    ///
+    /// **The reserve comes off once, and what is drawn comes off both
+    /// bounds**: [`MEMORY_RESERVE`] covers the process however many
+    /// arrangements run inside it, while every byte another arrangement holds
+    /// is a byte of the cap and of [`margin_allowance`]'s ceiling this one
+    /// cannot spend. An allowance already drawn to nothing leaves one worker
+    /// on a budget of zero, the floor [`Parallelism::within`] has too.
+    pub fn within_shared(
+        jobs: usize,
+        memory: Option<WorkerMemory>,
+        allowance: u64,
+        drawn: u64,
+    ) -> Self {
         let (jobs, budget) = Self::fit(
             jobs,
             memory,
-            allowance.saturating_sub(MEMORY_RESERVE),
-            Some(margin_allowance(allowance)),
+            allowance.saturating_sub(MEMORY_RESERVE).saturating_sub(drawn),
+            Some(margin_allowance(allowance).saturating_sub(drawn)),
         );
         Self::workers(jobs, budget)
     }
@@ -6834,6 +6853,34 @@ mod tests {
         let blind = Parallelism::within(8, None, 64 << 30);
         assert_eq!(blind.jobs(), 8);
         assert_eq!(blind.memory_bytes(), Some(DEFAULT_MEMORY_BUDGET));
+    }
+
+    /// **A share of an allowance others are drawing on spends only what they
+    /// leave.** Inside 10 GiB the margin affords seven 1 GiB readers: the first
+    /// arrangement takes the four it asks for, the second the three that are
+    /// left, and one arriving after the whole has been drawn gets one reader on
+    /// nothing.
+    #[test]
+    fn a_shared_allowance_leaves_each_arrangement_what_the_others_have_not_drawn() {
+        let per_worker = 1 << 30;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let allowance = 10 << 30;
+        assert_eq!(
+            Parallelism::within_shared(24, memory, allowance, 0),
+            Parallelism::within(24, memory, allowance),
+            "nothing drawn is `within` itself"
+        );
+        assert_eq!(Parallelism::within(24, memory, allowance).jobs(), 7);
+
+        let first = Parallelism::within_shared(4, memory, allowance, 0);
+        assert_eq!(first.jobs(), 4);
+        let drawn = first.memory_bytes().unwrap();
+        let second = Parallelism::within_shared(4, memory, allowance, drawn);
+        assert_eq!(second.jobs(), 3);
+        assert_eq!(second.memory_bytes(), Some(3 * per_worker));
+
+        let exhausted = Parallelism::within_shared(4, memory, allowance, allowance);
+        assert_eq!(exhausted, Parallelism::Serial { memory_bytes: Some(0) });
     }
 
     /// **An unlimited environment falls back to the shipped constant**, and at

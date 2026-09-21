@@ -30,7 +30,8 @@ pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 pub use error::Error;
 pub use index::{
-    ArrayShape, CopyBlock, DumpIndex, PG_ARRAY_MAX_DIMS, build_index, preamble_only, union_census,
+    ArrayShape, CopyBlock, DumpIndex, PG_ARRAY_MAX_DIMS, TableName, build_index, preamble_only,
+    union_census,
 };
 pub use io::{
     ByteRangeSource, DEFAULT_MEMORY_BUDGET, FetchedXzSource, KnownCompression, LocalFileSource,
@@ -70,8 +71,9 @@ pub use statistics::{
     StatisticsTarget, StatisticsTerms,
 };
 pub use stream::{
-    BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TableStream,
-    gather_block_statistics, map_file, table_stream, table_stream_partitions,
+    BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TablePartitions,
+    TableStream, gather_block_statistics, map_file, table_schema, table_stream,
+    table_stream_partitions,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;

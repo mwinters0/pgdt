@@ -1,0 +1,36 @@
+[package]
+name = "datafusion-pgdump"
+version.workspace = true
+edition.workspace = true
+
+# The DataFusion layer over `pgdump_query`: a catalog and a `TableProvider`
+# reading a dump through the complete cache `pgdt parse` leaves
+# (`docs/design/roadmap-P6-datafusion.md`). A library only; the binary that
+# carries it is a separate crate, so an embedder does not inherit
+# `datafusion-cli`.
+
+[features]
+default = []
+# Passes through to the library's remote source, off by default for the reason
+# it is off there: what `object_store`'s `http` feature drags in is too much to
+# impose on an embedder reading local files.
+http = ["pgdump_query/http"]
+
+[dependencies]
+# The pin is the one `arrow` follows (`docs/design/roadmap.md`, "Arrow follows
+# DataFusion"). No default features: the provider needs the catalog, the plan
+# and the session, and none of the file formats, function families or the SQL
+# front end — an embedder turns those on in its own manifest.
+datafusion = { version = "55.1.0", default-features = false }
+arrow = { version = "59.2.0", default-features = false }
+async-trait = "0.1"
+futures = "0.3.34"
+pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
+thiserror = "2.0.20"
+
+[dev-dependencies]
+# `sql` for the tests' queries: the same SQL a user types is what reaches
+# `scan`'s projection and limit.
+datafusion = { version = "55.1.0", default-features = false, features = ["sql"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }

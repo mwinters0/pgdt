@@ -183,6 +183,49 @@ pub struct CopyBlock {
     pub array_shapes: Vec<ArrayShape>,
 }
 
+/// One table as its `COPY` headers name it: the database whose `\connect`
+/// governs the block, the schema qualifier and the table, each exactly as the
+/// header spelled it once unquoted.
+///
+/// **An exact key, never a pattern.** [`DumpIndex::blocks_for`] matches a name
+/// a person typed, bare or qualified, and splits it at its first `.`; this is
+/// what a caller that read the table off the map already holds, so nothing is
+/// split and no two tables can answer to it (`docs/design/decisions.md`,
+/// "D49").
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TableName {
+    pub database: Option<String>,
+    pub schema: Option<String>,
+    pub table: String,
+}
+
+impl TableName {
+    /// The table `block` holds rows for.
+    pub fn of(block: &CopyBlock) -> Self {
+        Self {
+            database: block.database.clone(),
+            schema: block.header.schema.clone(),
+            table: block.header.table.clone(),
+        }
+    }
+
+    /// Whether `block` holds rows for this table.
+    pub fn names(&self, block: &CopyBlock) -> bool {
+        self.database == block.database
+            && self.schema == block.header.schema
+            && self.table == block.header.table
+    }
+
+    /// `schema.table`, or `table` where no schema qualifies it — the header's
+    /// own [`CopyHeader::qualified_name`], not re-quoted.
+    pub fn qualified(&self) -> String {
+        match &self.schema {
+            Some(schema) => format!("{schema}.{}", self.table),
+            None => self.table.clone(),
+        }
+    }
+}
+
 /// The full file map discovered in a dump, in file order
 /// (`docs/design/decisions.md`, "D34"). [`DumpIndex::blocks`] is a derived
 /// filter over it, not a second stored structure.
@@ -233,6 +276,18 @@ impl DumpIndex {
     /// bare (`table`, any schema).
     pub fn blocks_for(&self, name: &str) -> impl Iterator<Item = &CopyBlock> {
         self.blocks().filter(move |b| b.header.matches(name))
+    }
+
+    /// Every table this map holds a `COPY` block for, each once, in the order
+    /// its first block appears.
+    pub fn tables(&self) -> Vec<TableName> {
+        let mut seen = BTreeSet::new();
+        self.blocks().map(TableName::of).filter(|name| seen.insert(name.clone())).collect()
+    }
+
+    /// The blocks of exactly `table`, in file order.
+    pub fn blocks_of<'a>(&'a self, table: &'a TableName) -> impl Iterator<Item = &'a CopyBlock> {
+        self.blocks().filter(move |b| table.names(b))
     }
 
     pub fn total_rows(&self) -> u64 {

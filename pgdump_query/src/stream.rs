@@ -61,8 +61,8 @@ use crate::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::gather;
 use crate::index::{
-    ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
-    union_census,
+    ArrayShape, CopyBlock, DumpIndex, TableName, scan_preamble, tiling_diagnostics,
+    toc_coverage_diagnostic, union_census,
 };
 use crate::instrument::StatisticsScope;
 #[cfg(feature = "introspect")]
@@ -1846,7 +1846,7 @@ fn resolve_block(
 /// empty one: a table whose blocks list nothing has an empty order whatever
 /// its DDL declares, and each of its rows is an empty line read as a row of
 /// zero fields ([`crate::batch::RowBatcher::push_row`]).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TableColumns {
     order: Vec<String>,
     /// One entry per name in `order`, its census unioned over every block
@@ -1945,6 +1945,7 @@ fn snapshot(
 /// block the query will replay — are settled once, so two partitions of one
 /// table cannot order its columns or resolve its arrays differently
 /// (`docs/design/decisions.md`, "D35").
+#[derive(Clone)]
 struct ReplayPlan {
     scan_options: ScanOptions,
     query_options: QueryOptions,
@@ -2058,7 +2059,7 @@ fn prune_blocks(
 /// It records the two inputs the block itself contributes, so a lookup can
 /// confirm it answers the activation asking rather than trusting the offset
 /// alone; the rest are the [`ReplayPlan`]'s, and fixed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PlannedBlock {
     header: CopyHeader,
     database: Option<String>,
@@ -3619,22 +3620,8 @@ pub async fn table_stream_partitions<'a>(
     let mapped =
         map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await?;
     let MappedTable { matches, metadata } = mapped;
-    let mut plan = ReplayPlan::new(scan_options, query_options, &matches, metadata)?;
-    let (groups, mut plan_notes, span) = plan_partitions(
-        source,
-        &matches,
-        &plan.kept,
-        plan.query_options.parallelism,
-        plan.query_options.max_source_span,
-        plan.scan_options.chunk_size_bytes,
-    );
-    // **The span the plan was solved against is the span the batches use**, or
-    // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is
-    // outside the resume fingerprint, being a batching knob
-    // (`docs/design/decisions.md`, "D50"), so writing it back moves no token.
-    plan.query_options.max_source_span = span;
-    let plan = Arc::new(plan);
-    plan_notes.extend(plan.pruned.iter().cloned());
+    let (plan, groups, plan_notes) =
+        plan_replay(source, &matches, metadata, scan_options, query_options)?;
     let of = groups.len();
     Ok(groups
         .into_iter()
@@ -3661,6 +3648,184 @@ pub async fn table_stream_partitions<'a>(
             shared.into_stream(Box::pin(inner))
         })
         .collect())
+}
+
+/// A [`ReplayPlan`], its sub-streams' segments, and the plan notes each
+/// carries.
+type PlannedReplay = (Arc<ReplayPlan>, Vec<Vec<Segment>>, Vec<PlanNote>);
+
+/// The plan and the sub-streams' segments for replaying `matches`, shared by
+/// [`table_stream_partitions`] and [`TablePartitions::plan`]: the
+/// [`ReplayPlan`], its blocks cut into groups ([`plan_partitions`]), and the
+/// plan notes every sub-stream carries.
+fn plan_replay(
+    source: &dyn ByteRangeSource,
+    matches: &[CopyBlock],
+    metadata: Option<DumpMetadata>,
+    scan_options: ScanOptions,
+    query_options: QueryOptions,
+) -> Result<PlannedReplay> {
+    let mut plan = ReplayPlan::new(scan_options, query_options, matches, metadata)?;
+    let (groups, mut plan_notes, span) = plan_partitions(
+        source,
+        matches,
+        &plan.kept,
+        plan.query_options.parallelism,
+        plan.query_options.max_source_span,
+        plan.scan_options.chunk_size_bytes,
+    );
+    // **The span the plan was solved against is the span the batches use**, or
+    // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is
+    // outside the resume fingerprint, being a batching knob
+    // (`docs/design/decisions.md`, "D50"), so writing it back moves no token.
+    plan.query_options.max_source_span = span;
+    plan_notes.extend(plan.pruned.iter().cloned());
+    Ok((Arc::new(plan), groups, plan_notes))
+}
+
+/// The schema a query of `table` would resolve over `index`, read off the map
+/// and the DDL alone: no byte of the dump is read, and nothing is asked of a
+/// source.
+///
+/// It is the schema every batch of that query carries, projection included
+/// ([`TableColumns`]), or the refusal its plan would raise — a table whose
+/// blocks name different column sets, a projected name no block carries. A
+/// table the map holds no block for has the empty schema, as its stream has
+/// no rows. **Believe it only over a complete map**: a table's later blocks
+/// are part of its census and of its column-set check
+/// ([`crate::index::DumpIndex::is_complete`]).
+pub fn table_schema(
+    index: &DumpIndex,
+    table: &TableName,
+    query_options: &QueryOptions,
+) -> Result<ResolvedSchema> {
+    let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
+    let metadata = index.metadata.as_ref();
+    let columns = TableColumns::settle(&matches, metadata)?;
+    let blocks = plan_blocks(&matches, query_options, metadata, &columns)?;
+    Ok(blocks.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
+}
+
+/// A partitioned replay of one table over **a complete map the caller holds**,
+/// planned once and streamed per partition, for an embedder that schedules
+/// partitions itself and runs them in any order, or more than once
+/// (`docs/design/roadmap-P6-datafusion.md`, "The provider reads a complete
+/// cache, and never maps").
+///
+/// [`table_stream_partitions`] with the mapping pass taken out: no cache is
+/// loaded or written and no byte is scanned for structure, so the map is
+/// believed exactly as handed over, which is why a map that stops short of
+/// the source's end is refused ([`Error::MapIncomplete`]). **The table is
+/// named exactly** ([`TableName`]), so nothing is matched and no ambiguity can
+/// arise.
+///
+/// **It owns its source**, so its sub-streams outlive the call that planned
+/// them — `'static`, which is what a scheduler holding a plan across tasks
+/// needs. `watch` is the caller's: its baseline is what each sub-stream
+/// checks the source against when it ends, so a caller opens it before
+/// trusting the map it loaded and shares it across every replay of that map.
+pub struct TablePartitions {
+    source: Arc<dyn ByteRangeSource>,
+    watch: Arc<SourceWatch>,
+    plan: Arc<ReplayPlan>,
+    groups: Vec<Vec<Segment>>,
+    plan_notes: Vec<PlanNote>,
+    table: String,
+}
+
+impl TablePartitions {
+    /// Plan the replay of `table` over `index`: its columns, every block
+    /// resolved, statistics consulted, and the blocks cut into as many
+    /// partitions as `query_options.parallelism` and the source's own advice
+    /// allow — the same plan [`table_stream_partitions`] makes after its
+    /// mapping pass.
+    pub async fn plan(
+        source: Arc<dyn ByteRangeSource>,
+        index: &DumpIndex,
+        watch: Arc<SourceWatch>,
+        table: &TableName,
+        scan_options: ScanOptions,
+        query_options: QueryOptions,
+    ) -> Result<Self> {
+        validate_request(&query_options, None, 0)?;
+        let size = source.size().await?;
+        if !index.is_complete(size) {
+            return Err(Error::MapIncomplete { scanned_through: index.scanned_through, size });
+        }
+        let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
+        let (plan, groups, plan_notes) = plan_replay(
+            source.as_ref(),
+            &matches,
+            index.metadata.clone(),
+            scan_options,
+            query_options,
+        )?;
+        Ok(Self { source, watch, plan, groups, plan_notes, table: table.qualified() })
+    }
+
+    /// How many sub-streams the plan cut: at least one, and never more than
+    /// the parallelism it was planned under allows.
+    pub fn len(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// Always `false`: a plan holds at least one partition, the degenerate one
+    /// of a table with no rows included.
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    /// The schema every sub-stream's batches carry, known before any is read.
+    pub fn resolved_schema(&self) -> ResolvedSchema {
+        self.plan.blocks.values().next().map(|planned| planned.resolved.clone()).unwrap_or_default()
+    }
+
+    /// What the plan settled before any row is read ([`TableStream::plan_notes`]).
+    pub fn plan_notes(&self) -> &[PlanNote] {
+        &self.plan_notes
+    }
+
+    /// A fresh stream over partition `partition`, cutting batches at
+    /// `max_rows` rows — the one batching knob a scheduler states only when it
+    /// runs the partition, and outside the plan it was cut under
+    /// (`docs/design/decisions.md`, "D50"). Each call starts the partition from
+    /// its beginning; a partition past [`Self::len`] is an empty stream.
+    pub fn stream(&self, partition: usize, max_rows: usize) -> TableStream<'static> {
+        let segments = self.groups.get(partition).cloned().unwrap_or_default();
+        let plan = if self.plan.query_options.max_rows == max_rows {
+            Arc::clone(&self.plan)
+        } else {
+            let mut plan = ReplayPlan::clone(&self.plan);
+            plan.query_options.max_rows = max_rows;
+            Arc::new(plan)
+        };
+        let fingerprint = query_fingerprint(
+            &self.table,
+            &plan.query_options,
+            Some((partition, self.groups.len())),
+        );
+        let shared = StreamShared::new(ResumeToken::start(fingerprint))
+            .with_plan_notes(self.plan_notes.clone());
+        let shared_for_stream = shared.clone();
+        let source = Arc::clone(&self.source);
+        let watch = Arc::clone(&self.watch);
+        let inner = try_stream! {
+            let mut rows = Box::pin(replay(
+                source.as_ref(),
+                plan,
+                segments,
+                shared_for_stream,
+                None,
+                fingerprint,
+            ));
+            while let Some(batch) = rows.next().await {
+                yield batch?;
+            }
+            drop(rows);
+            watch.check(source.as_ref()).await?;
+        };
+        shared.into_stream(Box::pin(inner))
+    }
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers
