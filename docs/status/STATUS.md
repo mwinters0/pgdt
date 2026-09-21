@@ -80,9 +80,10 @@ manual text and its register entries in the same change
 ([`../process.md`](../process.md), "The loop"); the rows say only what is
 delivered.
 
-- [ ] **6.1** Arrow-order evidence: each `CompareKind`'s order, and its
+- [x] **6.1** Arrow-order evidence: each `CompareKind`'s order, and its
   gathered bounds, checked against Arrow's `cmp` kernels on the emitted arrays,
   recording which kinds already agree. Test code only.
+  [Notes](../design/roadmap-P6.1-arrow-order-notes.md).
 - [ ] **6.2** An Arrow-semantics comparison mode in the library, and bounds
   gathered in it or reported absent.
 - [ ] **6.3** One diagnostics sink draining the file-level, per-column and

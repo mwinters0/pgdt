@@ -1465,6 +1465,21 @@ impl BoundsGatherer {
     }
 }
 
+/// The bounds one group of `values` is stored with under `kind`'s order, or
+/// `None` where it keeps none — for a test outside this module that holds
+/// stored bounds against another order.
+#[cfg(test)]
+pub(crate) fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bounds> {
+    let mut gatherer = BoundsGatherer::new(kind);
+    let mut group = gatherer.fresh_group();
+    for value in values {
+        gatherer.observe(&mut group, value);
+    }
+    let mut charge = Charge::new(Arc::default(), Term::Gathering);
+    gatherer.close_group(group, &mut charge);
+    gatherer.finish().groups.pop().flatten()
+}
+
 /// A closed group's bounds as [`BoundsGatherer::groups`] and
 /// [`BoundsGatherer::flags`] hold them.
 fn closed(group: GroupBounds) -> (Option<Bounds>, u8) {

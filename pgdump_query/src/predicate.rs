@@ -5503,6 +5503,271 @@ mod tests {
             );
         }
 
+        /// Whether each [`CompareKind`] orders the values its column emits as
+        /// Arrow's `cmp` kernels order the emitted array — which is what
+        /// DataFusion compares with — and whether the bounds gathering stores
+        /// under it are Arrow's minimum and maximum of the group, as
+        /// `(kind, order agrees, bounds agree)`. Asserted as the exact table,
+        /// every kind present, so a kind moving either way fails here.
+        ///
+        /// Every kind whose key is the decoded Arrow value agrees by
+        /// construction; `MacAddr` agrees because `macaddr_out` writes
+        /// fixed-width lowercase hex, whose bytes order as the octets do. The
+        /// eight that do not, each with the pair the walk first meets:
+        ///
+        /// - `Enum`, emitted `Dictionary`: Arrow compares the label text, not
+        ///   the declaration order (I33).
+        /// - `Float32`/`Float64`: Arrow's order is IEEE `totalOrder`, so `-0`
+        ///   is below `0` where PostgreSQL equates them; `NaN` places alike.
+        /// - `Interval`, emitted `Interval(MonthDayNano)`: Arrow compares
+        ///   months, days and nanoseconds field by field, so `30 days` is
+        ///   below `1 mon` where `interval_cmp_value` equates them (I40).
+        /// - `Numeric`, `TimeTz`, `Network`, `Jsonb`, emitted `Utf8View`: Arrow
+        ///   compares the text bytewise.
+        /// - `PaddedText`, emitted `Utf8View` with its padding: Arrow compares
+        ///   the padded text, so a byte below the blank orders differently —
+        ///   and a stored bound, being unpadded, is no value of the column.
+        const ARROW_AGREEMENT: &[(&str, bool, bool)] = &[
+            ("Bool", true, true),
+            ("Bytea", true, true),
+            ("Date", true, true),
+            ("Decimal", true, true),
+            ("Enum", false, false),
+            ("Float32", false, false),
+            ("Float64", false, false),
+            ("Int", true, true),
+            ("Interval", false, false),
+            ("Jsonb", false, false),
+            ("MacAddr", true, true),
+            ("Network", false, false),
+            ("Numeric", false, false),
+            ("PaddedText", false, false),
+            ("Text", true, true),
+            ("Time", true, true),
+            ("TimeTz", false, false),
+            ("Timestamp", true, true),
+            ("UnsignedInt", true, true),
+            ("Uuid", true, true),
+        ];
+
+        /// Values added to the oracle's for a kind whose committed population
+        /// happens to order alike under both comparisons, each in the form its
+        /// type's `*_out` writes: every IPv4 `inet`/`cidr` case there has a
+        /// first octet of two digits or more, so none reaches where a
+        /// network's order and its text's part — `9.` against `10.`.
+        const SUPPLEMENT: &[(&str, &str)] = &[("inet", "9.0.0.1"), ("cidr", "9.0.0.0/8")];
+
+        /// A stable name per [`CompareKind`] variant, exhaustive so a new kind
+        /// cannot go unrecorded in [`ARROW_AGREEMENT`].
+        fn kind_name(kind: &CompareKind) -> &'static str {
+            match kind {
+                CompareKind::Bool => "Bool",
+                CompareKind::Int => "Int",
+                CompareKind::UnsignedInt => "UnsignedInt",
+                CompareKind::Float32 => "Float32",
+                CompareKind::Float64 => "Float64",
+                CompareKind::Decimal(_) => "Decimal",
+                CompareKind::Date => "Date",
+                CompareKind::Time => "Time",
+                CompareKind::Timestamp { .. } => "Timestamp",
+                CompareKind::Uuid => "Uuid",
+                CompareKind::Bytea => "Bytea",
+                CompareKind::Text => "Text",
+                CompareKind::PaddedText => "PaddedText",
+                CompareKind::Numeric { .. } => "Numeric",
+                CompareKind::Enum(_) => "Enum",
+                CompareKind::Interval => "Interval",
+                CompareKind::TimeTz => "TimeTz",
+                CompareKind::Network { .. } => "Network",
+                CompareKind::MacAddr { .. } => "MacAddr",
+                CompareKind::Jsonb => "Jsonb",
+            }
+        }
+
+        /// Arrow's order of every element of `array` against element `j`,
+        /// read off the `lt`, `eq` and `gt` kernels, or why it has none: a
+        /// kernel refusing the type, or an element answering other than
+        /// exactly one of the three.
+        fn arrow_against(
+            array: &arrow::array::ArrayRef,
+            j: usize,
+        ) -> std::result::Result<Vec<Ordering>, String> {
+            use arrow::array::{Array, Scalar};
+            use arrow::compute::kernels::cmp::{eq, gt, lt};
+            let scalar = Scalar::new(array.slice(j, 1));
+            let kernel = |r: std::result::Result<arrow::array::BooleanArray, _>| {
+                r.map_err(|e: arrow::error::ArrowError| e.to_string())
+            };
+            let (lt, eq, gt) = (
+                kernel(lt(array, &scalar))?,
+                kernel(eq(array, &scalar))?,
+                kernel(gt(array, &scalar))?,
+            );
+            (0..array.len())
+                .map(|i| match (lt.value(i), eq.value(i), gt.value(i)) {
+                    (true, false, false) => Ok(Ordering::Less),
+                    (false, true, false) => Ok(Ordering::Equal),
+                    (false, false, true) => Ok(Ordering::Greater),
+                    other => Err(format!("element {i} against {j} answers lt/eq/gt {other:?}")),
+                })
+                .collect()
+        }
+
+        /// One kind's findings over every declared type compared by it.
+        #[derive(Default)]
+        struct Agreement {
+            declared: BTreeSet<String>,
+            arrow_types: BTreeSet<String>,
+            pairs: usize,
+            groups: usize,
+            /// The first pair the two orders answer differently, or the
+            /// first reason Arrow gave none.
+            order: Option<String>,
+            /// The first group whose stored bounds are not Arrow's extremes.
+            bounds: Option<String>,
+        }
+
+        /// **Which kinds already order as Arrow orders the emitted array**,
+        /// over every value the server wrote for every declared type the
+        /// register compares as a scalar, on six majors: each pair's
+        /// [`ValueKey`] order against the `cmp` kernels' answer on the array
+        /// a batch builds from the same texts, and each gathered group's
+        /// stored bounds against the group's Arrow minimum and maximum.
+        ///
+        /// A value the emitted type cannot hold — a `date`'s `infinity`, a
+        /// `numeric(p,s)`'s `NaN` (`KD8`) — is left out: no array carries it
+        /// for Arrow to order.
+        #[tokio::test]
+        async fn each_kind_s_order_and_bounds_against_arrow_s() {
+            let mut rng = Seeded(0x5EED_0006_0001);
+            let mut found: BTreeMap<&'static str, Agreement> = BTreeMap::new();
+            for major in MAJORS {
+                let types = types_of(major).await;
+                let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    if let (Some(declared), Some("ok"), Some(output)) =
+                        (row[0].clone(), row[2].as_deref(), row[3].clone())
+                    {
+                        outputs.entry(declared).or_default().insert(output);
+                    }
+                }
+                for (declared, value) in SUPPLEMENT {
+                    outputs.entry(declared.to_string()).or_default().insert(value.to_string());
+                }
+                for (declared, values) in outputs {
+                    let resolved = schema(&declared, None, &types);
+                    let ComparisonPlan::Compared { kind, .. } = &resolved.comparisons[0] else {
+                        continue;
+                    };
+                    let data_type = resolved.schema.field(0).data_type();
+                    let plan = &resolved.plans[0];
+                    let held: Vec<&str> = values
+                        .iter()
+                        .map(String::as_str)
+                        .filter(|v| crate::batch::column_of(data_type, plan, &[v]).is_ok())
+                        .collect();
+                    if held.is_empty() {
+                        continue;
+                    }
+                    let agreement = found.entry(kind_name(kind)).or_default();
+                    agreement.declared.insert(declared.clone());
+                    agreement.arrow_types.insert(format!("{data_type}"));
+                    let key = |v: &str| {
+                        ValueKey::of(kind, v)
+                            .unwrap_or_else(|| panic!("{major} {declared}: the server wrote {v:?}"))
+                    };
+                    let array = crate::batch::column_of(data_type, plan, &held).unwrap();
+                    for (j, b) in held.iter().enumerate() {
+                        let arrow = match arrow_against(&array, j) {
+                            Ok(arrow) => arrow,
+                            Err(e) => {
+                                agreement.order.get_or_insert(format!("{major} {declared}: {e}"));
+                                break;
+                            }
+                        };
+                        for (i, a) in held.iter().enumerate() {
+                            agreement.pairs += 1;
+                            let ours = key(a).compare(&key(b));
+                            if ours != arrow[i] {
+                                agreement.order.get_or_insert(format!(
+                                    "{major} {declared}: {a:?} against {b:?} is {ours:?} here and \
+                                     {:?} in Arrow",
+                                    arrow[i]
+                                ));
+                            }
+                        }
+                    }
+                    // The whole set as one group, and seeded small ones.
+                    let mut groups = vec![held.clone()];
+                    groups.extend(
+                        (0..30).map(|_| (0..1 + rng.below(5)).map(|_| *rng.pick(&held)).collect()),
+                    );
+                    for group in groups {
+                        let Some(stored) = crate::gather::one_group_bounds(kind.clone(), &group)
+                        else {
+                            continue;
+                        };
+                        agreement.groups += 1;
+                        let mut with_bounds = group.clone();
+                        with_bounds.extend([stored.min.as_str(), stored.max.as_str()]);
+                        let array = match crate::batch::column_of(data_type, plan, &with_bounds) {
+                            Ok(array) => array,
+                            Err(v) => {
+                                agreement.bounds.get_or_insert(format!(
+                                    "{major} {declared}: stored bound {v:?} is not a value of \
+                                     {data_type}"
+                                ));
+                                continue;
+                            }
+                        };
+                        let n = group.len();
+                        let problem = (|| {
+                            let (min, max) =
+                                (arrow_against(&array, n)?, arrow_against(&array, n + 1)?);
+                            // Arrow's extremes are the bounds when the bound
+                            // is at or below (above) every value and equal to
+                            // one of them.
+                            let below = min[..n].iter().all(|o| o.is_ge());
+                            let above = max[..n].iter().all(|o| o.is_le());
+                            let min_held = min[..n].contains(&Ordering::Equal);
+                            let max_held = max[..n].contains(&Ordering::Equal);
+                            if below && above && min_held && (max_held || !stored.max_exact) {
+                                Ok(())
+                            } else {
+                                Err(format!(
+                                    "{:?} and {:?} over {group:?}: below {below}, above {above}, \
+                                     min held {min_held}, max held {max_held}",
+                                    stored.min, stored.max
+                                ))
+                            }
+                        })();
+                        if let Err(e) = problem {
+                            agreement.bounds.get_or_insert(format!("{major} {declared}: {e}"));
+                        }
+                    }
+                }
+            }
+            let table: Vec<(&str, bool, bool)> = found
+                .iter()
+                .map(|(name, a)| (*name, a.order.is_none(), a.bounds.is_none()))
+                .collect();
+            let report: Vec<String> = found
+                .iter()
+                .map(|(name, a)| {
+                    format!(
+                        "  {name}: {} types as {:?}, {} pairs, {} groups\n    order: {}\n    bounds: {}",
+                        a.declared.len(),
+                        a.arrow_types,
+                        a.pairs,
+                        a.groups,
+                        a.order.as_deref().unwrap_or("agrees"),
+                        a.bounds.as_deref().unwrap_or("agree"),
+                    )
+                })
+                .collect();
+            assert_eq!(table, ARROW_AGREEMENT, "\n{}", report.join("\n"));
+        }
+
         /// A range or multirange literal is put into the form the server
         /// stores it in *before* it is compared, checked against the server's
         /// own rewriting of every such literal in `literals.tsv`.

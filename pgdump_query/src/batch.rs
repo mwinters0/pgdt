@@ -792,6 +792,26 @@ fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
     }
 }
 
+/// One column of `data_type` holding `values`, each appended as
+/// [`RowBatcher`] appends a non-NULL field, for a test outside this module
+/// that needs the array a batch emits beside the text it was filled from.
+/// `Err` is the first value the column's builder refused.
+#[cfg(test)]
+pub(crate) fn column_of(
+    data_type: &DataType,
+    plan: &NestedPlan,
+    values: &[&str],
+) -> std::result::Result<ArrayRef, String> {
+    let mut builder = new_column_builder(data_type, plan);
+    for text in values {
+        match &mut builder {
+            ColumnBuilder::Utf8View(b) => b.append_value(text),
+            typed => append_typed(typed, text)?,
+        }
+    }
+    Ok(finish_column(&mut builder))
+}
+
 /// Accumulates rows from a single `COPY` block into typed `RecordBatch`es,
 /// one [`ColumnBuilder`] per field of the query's
 /// [`crate::resolve::ResolvedSchema`].
