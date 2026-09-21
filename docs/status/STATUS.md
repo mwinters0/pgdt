@@ -94,6 +94,9 @@ delivered.
 - [x] **6.3** One diagnostics sink draining the file-level, per-column and
   comparison channels.
   [Notes](../design/roadmap-P6.3-diagnostics-sink-notes.md).
+- [ ] **6.3.1** Each column's divergence from PostgreSQL, in the semantics a
+  query asks for, produced from its resolved schema as findings the sink
+  drains at registration.
 - [ ] **6.4** One schema per table: blocks reordered by name into the table's
   order, a disagreeing name set refused.
 - [ ] **6.5** `datafusion-pgdump`: a complete cache loaded, the catalog and
@@ -402,14 +405,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The spec's per-column divergence report has no slice, and 6.3 did not
-  build it.** The spec's "Comparison means what DataFusion means" says a
-  column's divergence from PostgreSQL is reported per column when a table is
-  registered, through the sink. But the one producer, `ComparisonNote`, is
-  built per term and only in PostgreSQL's semantics
-  (`predicate::resolve_term`). Slice 6.3 delivered its row as written: the
-  sink, and three channels draining into it. The call was to read the
-  per-column producer as 6.5's, because 6.5 does the registration, rather than
-  widen 6.3. If that is wrong, the producer is an earned `6.3.1` and 6.5 has
-  one fewer obligation.
-  ([6.3's notes](../design/roadmap-P6.3-diagnostics-sink-notes.md).)

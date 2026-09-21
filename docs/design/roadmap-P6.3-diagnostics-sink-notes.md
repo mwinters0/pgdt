@@ -37,9 +37,8 @@ finding is recovered as its own type.
   (6.2's notes). So the provider's comparison findings are not per term. The
   spec reports divergence per column, at registration. No library call
   produces that yet: `ComparisonNote` is built per term by
-  `predicate::resolve_term`, under PostgreSQL's semantics only. 6.5 needs a
-  per-column producer, or has to state that a divergence is reported only in
-  PostgreSQL's semantics.
+  `predicate::resolve_term`, under PostgreSQL's semantics only. The
+  per-column producer is 6.3.1's.
 
 ## Negative results
 
