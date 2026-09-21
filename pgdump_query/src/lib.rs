@@ -27,7 +27,7 @@ pub mod stream;
 
 pub use batch::{QueryOptions, ScanExtent, read_table, render_field, render_field_into};
 pub use copy::CopyHeader;
-pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
+pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 pub use error::Error;
 pub use index::{
     ArrayShape, CopyBlock, DumpIndex, PG_ARRAY_MAX_DIMS, build_index, preamble_only, union_census,

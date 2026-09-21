@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 
-use crate::diagnostic::Severity;
+use crate::diagnostic::{Finding, Severity};
 use crate::index::{ArrayShape, PG_ARRAY_MAX_DIMS};
 use crate::pgtype::{
     ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type, with_extension,
@@ -80,6 +80,35 @@ pub enum ColumnResolution {
     EmptyEnum,
 }
 
+impl ColumnResolution {
+    /// The sentence a human reads for this outcome — what `pgdt info
+    /// --detail` prints beside the column, and the tail of
+    /// [`ColumnNote`]'s [`Finding::message`].
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Mapped => "mapped",
+            Self::UnknownType => "unknown type — no mapping for this build",
+            Self::NotDeclared => "not declared — no DDL explained this column",
+            Self::MetadataNotScanned => {
+                "metadata not scanned — the scan never reached this database's DDL; finish the \
+                 parse"
+            }
+            Self::OpaqueElementType => {
+                "opaque element type — the array's element type is information-free in the dump"
+            }
+            Self::NestedArrayElement => {
+                "nested array element — the array's element type is itself an array"
+            }
+            Self::VaryingArrayShape => {
+                "varying array shape — dimensionality differs between rows, or a value carries an \
+                 explicit lower bound"
+            }
+            Self::OpaqueBaseType => "opaque base type — information-free in the dump",
+            Self::EmptyEnum => "empty enum",
+        }
+    }
+}
+
 /// One column's full resolution, named and carrying the raw declared type
 /// string (if any DDL named one) alongside the outcome — what a human-facing
 /// display (`pgdt info`) needs in one place, for every column.
@@ -96,18 +125,29 @@ pub struct ColumnNote {
     pub resolution: ColumnResolution,
 }
 
-impl ColumnNote {
+impl Finding for ColumnNote {
     /// Where this column sits on the shared [`Severity`] scale: a column that
     /// resolved to a real Arrow type is `Info`; anything that fell back to
     /// `Utf8View` is a `Warning`, since its values come back unparsed.
     ///
     /// Derived rather than stored — it is a pure function of `resolution`,
     /// and a stored copy could disagree with it.
-    pub fn severity(&self) -> Severity {
+    fn severity(&self) -> Severity {
         match self.resolution {
             ColumnResolution::Mapped => Severity::Info,
             _ => Severity::Warning,
         }
+    }
+
+    /// The column, its declared type where DDL named one, and
+    /// [`ColumnResolution::describe`].
+    fn message(&self) -> String {
+        let declared = self.declared.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
+        format!("column `{}`{declared}: {}", self.column, self.resolution.describe())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

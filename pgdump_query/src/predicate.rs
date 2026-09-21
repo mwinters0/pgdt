@@ -6,6 +6,7 @@ use arrow::datatypes::i256;
 
 use crate::copy::{RawRow, RowSplit};
 use crate::decode;
+use crate::diagnostic::{Finding, Severity};
 use crate::nested;
 use crate::pgtype::{
     CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, NestedCompare,
@@ -177,7 +178,9 @@ impl Default for Expr {
 /// own operator for that column would — reported per stream by
 /// `crate::stream::TableStream::comparison_notes`, on its own channel rather
 /// than as a `Diagnostic` or a [`crate::resolve::ColumnNote`]
-/// (`docs/design/decisions.md`, "D59", "D68").
+/// (`docs/design/decisions.md`, "D59", "D68"), and reaching a caller's
+/// `crate::diagnostic::DiagnosticSink` beside them as a
+/// [`crate::diagnostic::Finding`].
 ///
 /// Per term rather than per column, a divergence being
 /// operator-conditional ([`ComparisonDivergence::affects_equality`]): a
@@ -203,10 +206,16 @@ pub struct ComparisonNote {
     pub divergence: ComparisonDivergence,
 }
 
-impl ComparisonNote {
+impl Finding for ComparisonNote {
+    /// Always `Warning`: the rows a query returns are not the server's
+    /// wherever the divergence reaches them.
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
     /// One sentence naming the column, its declared type, and what its
     /// comparison is not.
-    pub fn message(&self) -> String {
+    fn message(&self) -> String {
         let column = format!("{}{}", self.column, self.path.as_deref().unwrap_or(""));
         let column = &column;
         let declared = &self.declared_type;
@@ -249,6 +258,10 @@ impl ComparisonNote {
                  does not record — this matches the server only if that collation is C or POSIX",
             ),
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

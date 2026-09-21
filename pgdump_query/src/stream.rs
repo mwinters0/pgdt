@@ -1741,8 +1741,10 @@ impl<'a> TableStream<'a> {
     /// alone (`crate::pgtype::ComparisonDivergence::affects_equality`), so a
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
     /// under `=`. A third channel beside `DumpIndex.diagnostics` (L1) and
-    /// `ResolvedSchema.notes` (L2). Like [`Self::resolved_schema`], it
-    /// describes the **last** block whose schema resolved.
+    /// `ResolvedSchema.notes` (L2), each a [`crate::diagnostic::Finding`] a
+    /// caller drains into one sink with the other two. Like
+    /// [`Self::resolved_schema`], it describes the **last** block whose schema
+    /// resolved.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
         self.comparison_notes.lock().unwrap().clone()
     }
@@ -2726,7 +2728,7 @@ impl PlanNote {
 
     /// One sentence naming why the plan fell short of what was asked, and what
     /// to raise to close the gap — in the library's own vocabulary rather than
-    /// any caller's flag names, as [`ComparisonNote::message`] is.
+    /// any caller's flag names, as `ComparisonNote`'s `Finding::message` is.
     pub fn message(&self) -> String {
         match &self.kind {
             PlanNoteKind::ParallelismBudgetLimited {

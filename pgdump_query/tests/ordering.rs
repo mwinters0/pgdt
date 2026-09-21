@@ -9,6 +9,7 @@
 //! schemas; the flags are pinned in `pgdt/tests/query_ordering.rs`.
 
 use futures::StreamExt;
+use pgdump_query::Finding;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     ComparisonDivergence, Error, Expr, LocalFileSource, Predicate, PredicateOp, QueryOptions,

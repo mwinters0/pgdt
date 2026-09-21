@@ -26,14 +26,64 @@
 //! `crate::resolve::ColumnResolution` is an L2 conclusion, so a
 //! [`DiagnosticKind`] variant carrying one would make L1 name an L2 type
 //! (`docs/design/decisions.md`, "D68"). `crate::resolve::ColumnNote` is the
-//! per-column record at L2 — one per column, always present — reporting on
-//! this same scale through `ColumnNote::severity`, so a caller reading both
-//! filters uniformly. Unifying at the *drain* point stays open
-//! (`docs/design/roadmap.md`).
+//! per-column record at L2 — one per column, always present — and
+//! `crate::predicate::ComparisonNote` the per-term one at L4.
+//!
+//! **The three are unified at the drain, not at the storage type**: each
+//! implements [`Finding`], defined here at L1 so that every layer can, and a
+//! caller hands any of them to one [`DiagnosticSink`] of its own through
+//! [`drain`]. Each channel is still read where it is produced — a
+//! `DumpIndex`, a `ResolvedSchema`, a `TableStream` — so what the sink adds is
+//! one scale and one sentence per finding, not one place they are stored.
+
+use std::any::Any;
+use std::fmt::Debug;
 
 use serde::Serialize;
 
 use crate::map::TilingIssue;
+
+/// One finding from any of the library's diagnostic channels, as a
+/// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
+/// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (L1,
+/// about the file), `crate::resolve::ColumnNote` (L2, about one column's type)
+/// and `crate::predicate::ComparisonNote` (L4, about one term of a query).
+///
+/// A sink wanting the structured record rather than the sentence recovers it
+/// through [`Finding::as_any`], downcasting to one of those three.
+pub trait Finding: Debug + Send + Sync {
+    fn severity(&self) -> Severity;
+    /// One sentence, with no severity label and no trailing newline: the
+    /// label is the sink's to render, from [`Finding::severity`].
+    fn message(&self) -> String;
+    fn as_any(&self) -> &dyn Any;
+}
+
+/// Where a caller wants findings to go — a caller-supplied object the
+/// library's channels drain into ([`drain`]). Shared, so a sink handed to
+/// several concurrent readers is `Send + Sync`; any
+/// `Fn(&dyn Finding) + Send + Sync` closure is one.
+pub trait DiagnosticSink: Send + Sync {
+    fn report(&self, finding: &dyn Finding);
+}
+
+impl<F: Fn(&dyn Finding) + Send + Sync> DiagnosticSink for F {
+    fn report(&self, finding: &dyn Finding) {
+        self(finding)
+    }
+}
+
+/// Hand every finding of one channel to `sink`, in the channel's own order —
+/// `sink` taking `&index.diagnostics`, `&resolved.notes` or
+/// `&stream.comparison_notes()` alike.
+pub fn drain<'a, F: Finding + 'a>(
+    sink: &dyn DiagnosticSink,
+    findings: impl IntoIterator<Item = &'a F>,
+) {
+    for finding in findings {
+        sink.report(finding);
+    }
+}
 
 /// How much a diagnostic matters. One scale for every producer, so a caller
 /// draining several channels can filter uniformly.
@@ -113,6 +163,46 @@ pub enum DiagnosticKind {
 pub struct Diagnostic {
     pub severity: Severity,
     pub kind: DiagnosticKind,
+}
+
+impl Finding for Diagnostic {
+    fn severity(&self) -> Severity {
+        self.severity
+    }
+
+    fn message(&self) -> String {
+        match &self.kind {
+            DiagnosticKind::TilingBroken { issues } => format!(
+                "the file map has {} gap(s)/overlap(s) that don't tile the file — this is a pgdt \
+                 bug, please report it",
+                issues.len()
+            ),
+            DiagnosticKind::CacheMtimeChanged => "the dump file's mtime has changed since the \
+                cache was saved (size still matches, so the cache was kept)"
+                .to_string(),
+            DiagnosticKind::CacheEntityTagChanged => "the server's entity tag for the dump has \
+                changed since the cache was saved (size still matches, so the cache was kept)"
+                .to_string(),
+            DiagnosticKind::CacheOriginChanged => "the cache was written for a dump fetched from \
+                somewhere else (size still matches, so the cache was kept)"
+                .to_string(),
+            DiagnosticKind::TocCoverage { attributed, spans } => {
+                format!("TOC coverage: {attributed}/{spans} span(s) attributed to a TOC entry")
+            }
+            DiagnosticKind::CacheOffline => "answering from a cache with no source dump file to \
+                check it against — unverified, historical as of whenever the cache was last saved"
+                .to_string(),
+            DiagnosticKind::NonSeekableCompressedSource { block_count } => format!(
+                "this .xz source has no seek structure ({block_count} block(s), one stream) — \
+                 every read decodes the file from byte 0; recompress with `xz -T0` or \
+                 `--block-size=<size>` for random access"
+            ),
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 impl Diagnostic {

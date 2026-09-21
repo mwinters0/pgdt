@@ -17,10 +17,10 @@ use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
     ArrayShape, ByteRangeSource, Cancellation, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Origin, Parallelism,
-    Predicate, PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS,
-    ScanOptions, Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, TypeKind, open, preamble_only, render_field_into,
+    DumpIndex, DumpMetadata, Finding, KnownCompression, NestedPlan, Origin, Parallelism, Predicate,
+    PredicateOp, QueryOptions, Recognized, STATISTICS_GROUP_DEFAULT_MIN_ROWS, ScanOptions,
+    Severity, Span, SpanBody, StatisticsRequest, StatisticsSelection, StatisticsTarget, TypeKind,
+    open, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -1377,9 +1377,9 @@ enum Slot {
 /// **Announced by the CLI rather than by a library channel** — the signal is
 /// per-column *and* conditional on a predicate, so L4, while
 /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` L2. An embedder
-/// reads `TableStream::comparison_notes` for the same facts, until the
-/// diagnostics sink lands (`docs/design/roadmap-P6-datafusion.md`,
-/// "Diagnostics: one sink").
+/// drains `TableStream::comparison_notes` into its own
+/// `pgdump_query::DiagnosticSink` beside the other two; this command prints
+/// each channel where its output already speaks, and adopts no sink.
 fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     for note in stream.comparison_notes() {
         eprintln!("warning: {}", note.message());
@@ -2117,7 +2117,8 @@ const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
 /// `SourceChanged`, so that arm names [`TWO_WAYS_OUT`] before it names the
 /// command (`docs/design/decisions.md`, "D20").
 ///
-/// **One match, two renderings**, the discipline [`resolution_words`] applies.
+/// **One match, two renderings**, so a new [`CacheStatus`] variant has to
+/// answer both.
 /// `source` is `None` in cache-only mode, which states the fault and stops; it
 /// cannot reach [`CacheStatus::SourceChanged`] at all, there being no live
 /// file to compare against — what its `CacheOffline` diagnostic warns about.
@@ -2181,47 +2182,23 @@ async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Resul
     report(&index, total_size, compression, &envelope, detail, map, json)
 }
 
-/// One column's resolution outcome, in both spellings: a stable token for
-/// `--json` and the sentence `info --detail` prints
-/// (`docs/design/decisions.md`, "The CLI"). **One match, two renderings**, so
-/// a new [`ColumnResolution`] variant is a compile error that has to answer
-/// both.
-fn resolution_words(r: &ColumnResolution) -> (&'static str, &'static str) {
+/// One column's resolution outcome as the stable token `--json` prints
+/// (`docs/design/decisions.md`, "The CLI"); the sentence `info --detail`
+/// prints is the library's, [`ColumnResolution::describe`]. **Both matches are
+/// exhaustive**, so a new [`ColumnResolution`] variant is a compile error that
+/// has to answer both.
+fn resolution_token(r: &ColumnResolution) -> &'static str {
     match r {
-        ColumnResolution::Mapped => ("mapped", "mapped"),
-        ColumnResolution::UnknownType => {
-            ("unknown_type", "unknown type — no mapping for this build")
-        }
-        ColumnResolution::NotDeclared => {
-            ("not_declared", "not declared — no DDL explained this column")
-        }
-        ColumnResolution::MetadataNotScanned => (
-            "metadata_not_scanned",
-            "metadata not scanned — the scan never reached this database's DDL; finish the parse",
-        ),
-        ColumnResolution::OpaqueElementType => (
-            "opaque_element_type",
-            "opaque element type — the array's element type is information-free in the dump",
-        ),
-        ColumnResolution::NestedArrayElement => (
-            "nested_array_element",
-            "nested array element — the array's element type is itself an array",
-        ),
-        ColumnResolution::VaryingArrayShape => (
-            "varying_array_shape",
-            "varying array shape — dimensionality differs between rows, or a value carries an explicit lower bound",
-        ),
-        ColumnResolution::OpaqueBaseType => {
-            ("opaque_base_type", "opaque base type — information-free in the dump")
-        }
-        ColumnResolution::EmptyEnum => ("empty_enum", "empty enum"),
+        ColumnResolution::Mapped => "mapped",
+        ColumnResolution::UnknownType => "unknown_type",
+        ColumnResolution::NotDeclared => "not_declared",
+        ColumnResolution::MetadataNotScanned => "metadata_not_scanned",
+        ColumnResolution::OpaqueElementType => "opaque_element_type",
+        ColumnResolution::NestedArrayElement => "nested_array_element",
+        ColumnResolution::VaryingArrayShape => "varying_array_shape",
+        ColumnResolution::OpaqueBaseType => "opaque_base_type",
+        ColumnResolution::EmptyEnum => "empty_enum",
     }
-}
-
-/// The sentence half of [`resolution_words`] — `info --detail`'s per-column
-/// line.
-fn resolution_label(r: &ColumnResolution) -> &'static str {
-    resolution_words(r).1
 }
 
 /// What one column became in Arrow — the other half of `info --detail`'s
@@ -2547,7 +2524,7 @@ fn print_index_json(
                 .map(|(i, note)| ColumnResolutionJson {
                     name: &note.column,
                     declared: note.declared.as_deref(),
-                    outcome: resolution_words(&note.resolution).0,
+                    outcome: resolution_token(&note.resolution),
                     arrow_type: arrow_type_label(
                         resolved.schema.field(i).data_type(),
                         &resolved.plans[i],
@@ -2703,7 +2680,7 @@ fn print_index(
                 for (i, note) in resolved.notes.iter().enumerate() {
                     let data_type = resolved.schema.field(i).data_type();
                     if note.resolution != ColumnResolution::Mapped {
-                        println!("    {}: {}", note.column, resolution_label(&note.resolution));
+                        println!("    {}: {}", note.column, note.resolution.describe());
                     } else if *data_type != DataType::Utf8View {
                         println!(
                             "    {}: {}",
@@ -2775,7 +2752,7 @@ fn print_diagnostics(diagnostics: &[Diagnostic]) -> bool {
     }
     println!("diagnostics:");
     for d in diagnostics {
-        println!("    [{}] {}", severity_label(d.severity), diagnostic_message(&d.kind));
+        println!("    [{}] {}", severity_label(d.severity), d.message());
     }
     true
 }
@@ -2785,27 +2762,6 @@ fn severity_label(severity: Severity) -> &'static str {
         Severity::Info => "info",
         Severity::Warning => "warning",
         Severity::Error => "error",
-    }
-}
-
-fn diagnostic_message(kind: &DiagnosticKind) -> String {
-    match kind {
-        DiagnosticKind::TilingBroken { issues } => format!(
-            "the file map has {} gap(s)/overlap(s) that don't tile the file — this is a pgdt bug, please report it",
-            issues.len()
-        ),
-        DiagnosticKind::CacheMtimeChanged => "the dump file's mtime has changed since the cache was saved (size still matches, so the cache was kept)".to_string(),
-        DiagnosticKind::CacheEntityTagChanged => "the server's entity tag for the dump has changed since the cache was saved (size still matches, so the cache was kept)".to_string(),
-        DiagnosticKind::CacheOriginChanged => "the cache was written for a dump fetched from somewhere else (size still matches, so the cache was kept)".to_string(),
-        DiagnosticKind::TocCoverage { attributed, spans } => {
-            format!("TOC coverage: {attributed}/{spans} span(s) attributed to a TOC entry")
-        }
-        DiagnosticKind::CacheOffline => {
-            "answering from a cache with no source dump file to check it against — unverified, historical as of whenever the cache was last saved".to_string()
-        }
-        DiagnosticKind::NonSeekableCompressedSource { block_count } => format!(
-            "this .xz source has no seek structure ({block_count} block(s), one stream) — every read decodes the file from byte 0; recompress with `xz -T0` or `--block-size=<size>` for random access"
-        ),
     }
 }
 
