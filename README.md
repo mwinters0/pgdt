@@ -1,11 +1,11 @@
-# pgdump_query
+# pgdump_query / pgdt
 
 Query Postgres dumps like they're parquet.  (Or just inspect them without having to load them.)
 Because sometimes stupid problems need stupid solutions.
 
 Available as:
-- A Rust library
-- A CLI
+- A Rust library (`pgdump_query`)
+- A CLI (`pgdt` aka "Postgres Dump Tool")
 
 ```bash
 # Parse a dump (builds a cache)
