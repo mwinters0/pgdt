@@ -844,9 +844,6 @@ enum OrderKey {
     Bool(bool),
     Int(i64),
     Float(f64),
-    /// A float under Arrow's order, IEEE `totalOrder` ([`f64::total_cmp`]).
-    /// Held as `f64` for a `real` too: widening preserves that order.
-    TotalFloat(f64),
     Decimal(i256),
     /// A bare `numeric`, whose digits do not fit any fixed-width integer.
     Numeric(NumericKey),
@@ -894,7 +891,6 @@ impl OrderKey {
             Self::Bool(_)
             | Self::Int(_)
             | Self::Float(_)
-            | Self::TotalFloat(_)
             | Self::Decimal(_)
             | Self::Numeric(_)
             | Self::Interval(_)
@@ -1073,8 +1069,6 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
-        CompareKind::Float32Total => OrderKey::TotalFloat(f64::from(decode::decode_f32(text)?)),
-        CompareKind::Float64Total => OrderKey::TotalFloat(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {
             OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, *scale)?)?)
         }
@@ -1139,7 +1133,6 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         (OrderKey::Bool(x), OrderKey::Bool(y)) => x.cmp(y),
         (OrderKey::Int(x), OrderKey::Int(y)) => x.cmp(y),
         (OrderKey::Float(x), OrderKey::Float(y)) => pg_float_cmp(*x, *y),
-        (OrderKey::TotalFloat(x), OrderKey::TotalFloat(y)) => x.total_cmp(y),
         (OrderKey::Decimal(x), OrderKey::Decimal(y)) => x.cmp(y),
         (OrderKey::Numeric(x), OrderKey::Numeric(y)) => x.cmp(y),
         (OrderKey::Interval(x), OrderKey::Interval(y)) => x.cmp(y),
@@ -1190,7 +1183,6 @@ impl ValueKey {
             | OrderKey::Bool(_)
             | OrderKey::Int(_)
             | OrderKey::Float(_)
-            | OrderKey::TotalFloat(_)
             | OrderKey::Decimal(_)
             | OrderKey::Interval(_)
             | OrderKey::IntervalFields(..)
@@ -1737,8 +1729,6 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         // rule the ordering operators use (I34).
         K::Float32
         | K::Float64
-        | K::Float32Total
-        | K::Float64Total
         | K::Numeric { .. }
         | K::Interval
         | K::IntervalFields
@@ -1850,9 +1840,7 @@ fn accepted_form(kind: &CompareKind) -> String {
         // The width *is* the refusal: `oidin` wraps a negative and this does
         // not, so the range is the useful half of the sentence.
         K::UnsignedInt => "as a whole number from 0 to 4294967295".into(),
-        K::Float32 | K::Float64 | K::Float32Total | K::Float64Total => {
-            "as a number, or `Infinity`, `-Infinity` or `NaN`".into()
-        }
+        K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`".into(),
         // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
         // `numeric` past 76 digits — has `NaN` and nothing else. Only the
         // typed arm carries a scale to be finer than: a `p > 76` column is
@@ -2139,8 +2127,8 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// that is not of the column's type is a fault reported once rather than a
 /// filter that matches nothing (`docs/design/decisions.md`, "D54").
 ///
-/// The two operator families part company on a column with no plan. An
-/// ordering operator is *refused*, before a row of this block flows, unless
+/// The two operator families part company on a column with no plan, in
+/// PostgreSQL's semantics. An ordering operator is *refused*, before a row of this block flows, unless
 /// the column resolved `Mapped` and the register gave it a comparison — a
 /// nested column's included, where every position is compared; `Eq`/`Ne` fall
 /// back to comparing the canonical `*_out` text the file holds. So a nested
@@ -2151,8 +2139,9 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// [`ResolvedSchema::comparisons`].
 ///
 /// **Under [`ComparisonSemantics::Arrow`]** a scalar compares by its kind's
-/// [`CompareKind::arrow_order`], every comparing operator on a nested column
-/// is refused, statistics are read only where they are ordered or equated
+/// [`CompareKind::arrow_order`], a column with no plan — every one of which
+/// emits `Utf8View` — compares bytewise under every operator, every
+/// comparing operator on a nested column is refused, statistics are read only where they are ordered or equated
 /// that way, and no term announces a divergence from PostgreSQL, which is a
 /// property of the column rather than of the term
 /// (`docs/design/decisions.md`, "D40").
@@ -2201,7 +2190,7 @@ pub(crate) fn resolve_term(
     // can say what that fallback costs at the position that refused the order.
     let mut fell_back: Option<&NestedCompare> = None;
     if resolved.columns[index] != ColumnResolution::Mapped {
-        if ordering {
+        if ordering && !arrow {
             return Err(refuse(NOT_MAPPED));
         }
         plan = None;
@@ -2299,7 +2288,18 @@ pub(crate) fn resolve_term(
         ),
         // No plan at all: an ordering operator is refused here, and `Eq`/`Ne`
         // on a column the register does not compare is a comparison of the
-        // canonical `*_out` text the file holds.
+        // canonical `*_out` text the file holds. In Arrow's semantics the
+        // column is the `Utf8View` holding that text, which DataFusion orders
+        // bytewise, and so is it ordered here; nothing was gathered for it.
+        _ if ordering && arrow => (
+            Comparison::Ordered {
+                kind: CompareKind::Text,
+                bound: order_key(&CompareKind::Text, text)
+                    .ok_or_else(|| refuse_literal(&CompareKind::Text))?,
+            },
+            Vec::new(),
+            BelievedStatistics::NONE,
+        ),
         _ if ordering => return Err(refuse(NO_ORDER)),
         //
         // What it announces comes from one of two places, and which one is
@@ -3760,7 +3760,8 @@ mod tests {
     /// Under Arrow's semantics every comparing operator on a nested column is
     /// refused — `=` too, which PostgreSQL's answers structurally or as text
     /// — and a column with no plan still answers `=` bytewise, which is
-    /// Arrow's `=` over the `Utf8View` it emits, announcing nothing.
+    /// Arrow's `=` over the `Utf8View` it emits, announcing nothing. Its
+    /// ordering is `arrow_semantics_orders_a_column_with_no_plan_bytewise`'s.
     #[test]
     fn arrow_semantics_refuses_a_nested_column_under_every_comparing_operator() {
         let arrow = |p: &Predicate, resolved: &ResolvedSchema| {
@@ -3789,6 +3790,53 @@ mod tests {
         assert_eq!(term.eval_value(Some("(1,1),(0,0)")), Some(Truth::True));
     }
 
+    /// **A column with no plan is ordered bytewise in Arrow's semantics**,
+    /// under every ordering operator, where PostgreSQL's refuses them: the
+    /// column emits the file's text as `Utf8View`, which DataFusion orders by
+    /// its bytes. Both roads there — a type this build does not map, and a
+    /// column no DDL declared, which is every column under
+    /// `--schema-mode strings` — answer alike, announce nothing and read no
+    /// statistics.
+    #[test]
+    fn arrow_semantics_orders_a_column_with_no_plan_bytewise() {
+        let mut unknown = one_column("box", DataType::Utf8View);
+        unknown.columns[0] = ColumnResolution::UnknownType;
+        let mut undeclared = one_column("text", DataType::Utf8View);
+        undeclared.columns[0] = ColumnResolution::NotDeclared;
+        undeclared.comparisons[0] = ComparisonPlan::Refused;
+        // Bytewise, so an upper-case letter is below every lower-case one and
+        // a multi-byte character above both.
+        let cases = [
+            (PredicateOp::Lt, "a", [true, false, false, false]),
+            (PredicateOp::Le, "a", [true, true, false, false]),
+            (PredicateOp::Gt, "a", [false, false, true, true]),
+            (PredicateOp::Ge, "b", [false, false, true, true]),
+        ];
+        let values = ["Z", "a", "b", "é"];
+        for resolved in [&unknown, &undeclared] {
+            for (op, literal, want) in cases {
+                let p = order_predicate(op, literal);
+                assert!(matches!(
+                    resolve_term(&p, 0, resolved, 0),
+                    Err(Error::UnorderedPredicateColumn { .. })
+                ));
+                let term =
+                    super::resolve_term(&p, 0, resolved, 0, ComparisonSemantics::Arrow).unwrap();
+                assert!(term.comparison_notes().is_empty());
+                let statistics = &term.compared.as_ref().unwrap().statistics;
+                assert!(statistics.bounds.is_none() && !statistics.dictionary);
+                for (value, want) in values.iter().zip(want) {
+                    assert_eq!(
+                        term.eval_value(Some(value)),
+                        Some(Truth::of(want)),
+                        "{value:?} {} {literal:?}",
+                        op.symbol()
+                    );
+                }
+            }
+        }
+    }
+
     /// Which statistics a term reads, per semantics: `(bounds under <,
     /// dictionary under =)`. **Arrow's semantics reads bounds only where a
     /// kind keeps its order there** — they were gathered in PostgreSQL's —
@@ -3808,7 +3856,7 @@ mod tests {
         for (declared, literal, postgres, arrow) in [
             ("integer", "1", (true, true), (true, true)),
             ("uuid", "00000000-0000-0000-0000-000000000000", (true, true), (true, true)),
-            ("real", "1", (true, true), (false, true)),
+            ("real", "1", (true, true), (true, true)),
             ("numeric", "1", (true, true), (false, true)),
             ("interval", "1 day", (true, true), (false, true)),
             ("public.mood", "ok", (true, true), (false, true)),
@@ -5647,21 +5695,19 @@ mod tests {
         }
 
         /// Whether each [`CompareKind`] orders the values its column emits as
-        /// Arrow's `cmp` kernels order the emitted array — which is what
-        /// DataFusion compares with — and whether the bounds gathering stores
-        /// under it are Arrow's minimum and maximum of the group, as
-        /// `(kind, order agrees, bounds agree)`. Asserted as the exact table,
+        /// DataFusion orders the emitted array ([`arrow_against`]), and whether
+        /// the bounds gathering stores under it are that order's minimum and
+        /// maximum of the group, as `(kind, order agrees, bounds agree)`. Asserted as the exact table,
         /// every kind present, so a kind moving either way fails here.
         ///
         /// Every kind whose key is the decoded Arrow value agrees by
-        /// construction; `MacAddr` agrees because `macaddr_out` writes
+        /// construction — a float's too, its `-0` made `0` before the
+        /// kernels see it; `MacAddr` agrees because `macaddr_out` writes
         /// fixed-width lowercase hex, whose bytes order as the octets do. The
-        /// eight that do not, each with the pair the walk first meets:
+        /// seven that do not, each with the pair the walk first meets:
         ///
         /// - `Enum`, emitted `Dictionary`: Arrow compares the label text, not
         ///   the declaration order (I33).
-        /// - `Float32`/`Float64`: Arrow's order is IEEE `totalOrder`, so `-0`
-        ///   is below `0` where PostgreSQL equates them; `NaN` places alike.
         /// - `Interval`, emitted `Interval(MonthDayNano)`: Arrow compares
         ///   months, days and nanoseconds field by field, so `30 days` is
         ///   below `1 mon` where `interval_cmp_value` equates them (I40).
@@ -5676,8 +5722,8 @@ mod tests {
             ("Date", true, true),
             ("Decimal", true, true),
             ("Enum", false, false),
-            ("Float32", false, false),
-            ("Float64", false, false),
+            ("Float32", true, true),
+            ("Float64", true, true),
             ("Int", true, true),
             ("Interval", false, false),
             ("Jsonb", false, false),
@@ -5701,8 +5747,8 @@ mod tests {
         const SUPPLEMENT: &[(&str, &str)] = &[("inet", "9.0.0.1"), ("cidr", "9.0.0.0/8")];
 
         /// A stable name per [`CompareKind`] variant, exhaustive so a new kind
-        /// cannot go unrecorded in [`ARROW_AGREEMENT`]. The three only
-        /// [`CompareKind::arrow_order`] produces are named and never walked.
+        /// cannot go unrecorded in [`ARROW_AGREEMENT`]. The one only
+        /// [`CompareKind::arrow_order`] produces is named and never walked.
         fn kind_name(kind: &CompareKind) -> &'static str {
             match kind {
                 CompareKind::Bool => "Bool",
@@ -5725,22 +5771,37 @@ mod tests {
                 CompareKind::Network { .. } => "Network",
                 CompareKind::MacAddr { .. } => "MacAddr",
                 CompareKind::Jsonb => "Jsonb",
-                CompareKind::Float32Total => "Float32Total",
-                CompareKind::Float64Total => "Float64Total",
                 CompareKind::IntervalFields => "IntervalFields",
             }
         }
 
-        /// Arrow's order of every element of `array` against element `j`,
-        /// read off the `lt`, `eq` and `gt` kernels, or why it has none: a
+        /// DataFusion's order of every element of `array` against element
+        /// `j`, read off the `lt`, `eq` and `gt` kernels, or why it has none: a
         /// kernel refusing the type, or an element answering other than
         /// exactly one of the three.
+        ///
+        /// DataFusion's `apply_cmp` makes a float's `-0` into `0` before the
+        /// kernels run (`normalize_float_zero`, `datafusion-common` 55), so
+        /// this does too; the kernels alone order `-0` below `0`. The check
+        /// against DataFusion itself is the provider crate's, the library
+        /// taking no DataFusion dependency.
         fn arrow_against(
             array: &arrow::array::ArrayRef,
             j: usize,
         ) -> std::result::Result<Vec<Ordering>, String> {
-            use arrow::array::{Array, Scalar};
+            use arrow::array::{Array, AsArray, Scalar};
             use arrow::compute::kernels::cmp::{eq, gt, lt};
+            use arrow::datatypes::{DataType, Float32Type, Float64Type};
+            let array: arrow::array::ArrayRef = match array.data_type() {
+                DataType::Float32 => std::sync::Arc::new(
+                    array.as_primitive::<Float32Type>().unary::<_, Float32Type>(|v| v + 0.0),
+                ),
+                DataType::Float64 => std::sync::Arc::new(
+                    array.as_primitive::<Float64Type>().unary::<_, Float64Type>(|v| v + 0.0),
+                ),
+                _ => array.clone(),
+            };
+            let array = &array;
             let scalar = Scalar::new(array.slice(j, 1));
             let kernel = |r: std::result::Result<arrow::array::BooleanArray, _>| {
                 r.map_err(|e: arrow::error::ArrowError| e.to_string())
@@ -5774,10 +5835,10 @@ mod tests {
             bounds: Option<String>,
         }
 
-        /// **Which kinds already order as Arrow orders the emitted array**,
-        /// over every value the server wrote for every declared type the
-        /// register compares as a scalar, on six majors: each pair's
-        /// [`ValueKey`] order against the `cmp` kernels' answer on the array
+        /// **Which kinds already order as DataFusion orders the emitted
+        /// array**, over every value the server wrote for every declared type
+        /// the register compares as a scalar, on six majors: each pair's
+        /// [`ValueKey`] order against [`arrow_against`]'s answer on the array
         /// a batch builds from the same texts, and each gathered group's
         /// stored bounds against the group's Arrow minimum and maximum.
         ///
@@ -5916,19 +5977,19 @@ mod tests {
         }
 
         /// **Under [`ComparisonSemantics::Arrow`] every comparing operator
-        /// answers as Arrow's kernels do** over the array a batch builds,
-        /// over every value the server wrote for every declared type the
-        /// register compares as a scalar, on six majors, each value in turn
-        /// the literal — and announces nothing. A nested column refuses
+        /// answers as DataFusion does** ([`arrow_against`]) over the array a
+        /// batch builds, over every value the server wrote for every declared
+        /// type the register compares as a scalar, on six majors, each value
+        /// in turn the literal — and announces nothing. A nested column refuses
         /// every comparing operator instead.
         ///
         /// It also holds the rule for which stored bounds Arrow's semantics
         /// reads ([`ComparisonPlan::bounds_ordered_in`]) to the evidence
         /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::arrow_order`]
         /// leaves alone is one whose order and gathered bounds were found
-        /// to be Arrow's.
+        /// to be DataFusion's.
         #[tokio::test]
-        async fn arrow_semantics_answers_as_arrow_s_kernels() {
+        async fn arrow_semantics_answers_as_datafusion_does() {
             const OPS: [PredicateOp; 8] = [
                 PredicateOp::Eq,
                 PredicateOp::Ne,

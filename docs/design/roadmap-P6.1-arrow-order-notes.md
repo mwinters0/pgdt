@@ -8,8 +8,10 @@ builds from it, and checks two things against Arrow's `lt`/`eq`/`gt` kernels on
 that array: each pair's `ValueKey` order, and the bounds gathering stores for
 each group. Its `ARROW_AGREEMENT` table is the record of which kinds agree, and
 the doc comment on the table gives the first disagreeing pair for each kind
-that does not. Two test-only helpers came with it: `batch::column_of` and
-`gather::one_group_bounds`.
+that does not. The walk now takes DataFusion's measure, a float's `-0` made
+`0` before the kernels run (6.2.1), so the table records both floats as
+agreeing; the counts below are the bare kernels'. Two test-only helpers came
+with it: `batch::column_of` and `gather::one_group_bounds`.
 
 ## What 6.2 inherits
 

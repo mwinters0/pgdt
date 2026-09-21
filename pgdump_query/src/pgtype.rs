@@ -207,12 +207,6 @@ pub enum CompareKind {
     /// (I41) — the database's collation, absent from a plain dump (I32) — so
     /// the column carries [`ComparisonDivergence::JsonbStringCollation`].
     Jsonb,
-    /// `real` under Arrow's order: IEEE `totalOrder`, so `-0` is below `0`
-    /// and unequal to it, where [`Self::Float32`] equates them. No register
-    /// arm answers it; [`Self::arrow_order`] alone produces it.
-    Float32Total,
-    /// `double precision` under Arrow's order, as [`Self::Float32Total`].
-    Float64Total,
     /// `interval` under Arrow's order of `Interval(MonthDayNano)`: months,
     /// then days, then the time part, each compared alone, so `30 days` is
     /// below `1 mon` where [`Self::Interval`] equates them. Produced only by
@@ -232,28 +226,29 @@ pub enum ComparisonSemantics {
     /// it — `pgdt`'s, and the default.
     #[default]
     Postgres,
-    /// Arrow's order of the value the column emits — what Arrow's `cmp`
-    /// kernels answer over the batch this build produces, and so what
-    /// DataFusion compares with. A comparison this build cannot answer that
-    /// way is refused rather than answered in the other semantics.
+    /// DataFusion's comparison of the value the column emits — Arrow's `cmp`
+    /// kernels over the batch this build produces, a float's `-0` first made
+    /// `0` (DataFusion's `apply_cmp`). A comparison this build cannot answer
+    /// that way is refused rather than answered in the other semantics.
     Arrow,
 }
 
 impl CompareKind {
-    /// The kind whose order over this kind's field text is Arrow's order over
-    /// the value its column emits. Most kinds are their own: their key *is*
-    /// the emitted value, or (`MacAddr`) its text orders as its octets do.
-    /// The kinds emitted as `Utf8View` whose comparison is not bytewise, an
-    /// enum (emitted `Dictionary`, compared by label text) and `character(n)`
-    /// (emitted padded) become [`Self::Text`]; the floats and `interval`
-    /// become their Arrow-order variants.
+    /// The kind whose order over this kind's field text is
+    /// [`ComparisonSemantics::Arrow`]'s order over the value its column emits.
+    /// Most kinds are their own: their key *is* the emitted value, or
+    /// (`MacAddr`) its text orders as its octets do. A float is its own too:
+    /// with `-0` made `0`, IEEE `totalOrder` over what a dump holds — one
+    /// `NaN`, which it writes as `NaN` — is `float8_cmp`'s. The kinds emitted as
+    /// `Utf8View` whose comparison is not bytewise, an enum (emitted
+    /// `Dictionary`, compared by label text) and `character(n)` (emitted
+    /// padded) become [`Self::Text`]; `interval` becomes its field-wise
+    /// variant.
     ///
     /// A special value the emitted type cannot hold (`KD8`) keeps its rank in
     /// the key, which no Arrow value contradicts.
     pub fn arrow_order(&self) -> CompareKind {
         match self {
-            Self::Float32 => Self::Float32Total,
-            Self::Float64 => Self::Float64Total,
             Self::Interval => Self::IntervalFields,
             Self::Enum(_)
             | Self::Numeric { .. }

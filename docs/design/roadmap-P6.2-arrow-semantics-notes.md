@@ -11,21 +11,19 @@ and `predicate::resolve_term`. The why is
 ## What 6.3 and later slices inherit
 
 - **Every scalar kind now has an Arrow-mode answer, checked against the
-  kernels.** `arrow_semantics_answers_as_arrow_s_kernels` (`predicate.rs`,
+  kernels.** `arrow_semantics_answers_as_datafusion_does` (`predicate.rs`,
   `oracle` module) runs all eight comparing operators over every committed
   oracle value, each value in turn the literal, on six majors, and compares
-  the answer with `lt`/`eq`/`gt` on the array a batch builds. Three kinds were
-  added, and no register arm produces them: `Float32Total`, `Float64Total`
-  (IEEE `totalOrder`, which DataFusion's `apply_cmp` does not use for `-0`;
-  slice 6.2.1 retires them) and `IntervalFields` (months, days, time, one
-  after another). The six kinds emitted as text or as a dictionary compare as
+  the answer with `lt`/`eq`/`gt` on the array a batch builds, a float's `-0`
+  made `0` first (6.2.1's notes). One kind was added, and no register arm
+  produces it: `IntervalFields` (months, days, time, one after another). The
+  six kinds emitted as text or as a dictionary compare as
   `Text`: `Enum`, `Numeric`, `TimeTz`, `Network`, `Jsonb` and `PaddedText`.
 - **Arrow semantics refuses every comparing operator on a nested column**,
   with `Error::UncomparablePredicateColumn`. That includes `=`, which
   PostgreSQL's semantics answers structurally or as text. A column with no
-  plan still answers `=` bytewise, which is Arrow's `=` over the `Utf8View` it
-  emits. Its ordering operators stay refused here; 6.2.1 answers them.
-  The refusal is raised at plan time, before a row. So for 6.6, a
+  plan answers every operator bytewise, which is Arrow's order over the
+  `Utf8View` it emits (6.2.1). The refusal is raised at plan time, before a row. So for 6.6, a
   `supports_filters_pushdown` that asks the library whether a term resolves
   in this mode gets `Unsupported` for every such term. Why nested stays
   refused: [`decisions.md`](decisions.md), "D40".
@@ -63,5 +61,5 @@ and `predicate::resolve_term`. The why is
   it. 6.6's "pushdown on and off answer alike" check has to project only the
   columns that decode, as `tests/pruning.rs` already does.
 - **No cache format change.** No existing kind orders or equates differently,
-  and the three new kinds are never gathered, so `CACHE_FORMAT_VERSION` and
+  and the new kind is never gathered, so `CACHE_FORMAT_VERSION` and
   the golden order stand.
