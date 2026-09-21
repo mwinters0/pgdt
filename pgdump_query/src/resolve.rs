@@ -140,10 +140,17 @@ impl Finding for ColumnNote {
     }
 
     /// The column, its declared type where DDL named one, and
-    /// [`ColumnResolution::describe`].
+    /// [`ColumnResolution::describe`] — and, for a column that fell back,
+    /// that its value is the file's text and compares as that text, which is
+    /// the only finding such a column earns about its comparison
+    /// (`crate::predicate::column_divergences`).
     fn message(&self) -> String {
         let declared = self.declared.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
-        format!("column `{}`{declared}: {}", self.column, self.resolution.describe())
+        let fallback = match self.resolution {
+            ColumnResolution::Mapped => "",
+            _ => "; its value is the file's text, and compares as that text",
+        };
+        format!("column `{}`{declared}: {}{fallback}", self.column, self.resolution.describe())
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

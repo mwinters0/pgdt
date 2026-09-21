@@ -261,7 +261,8 @@ impl CompareKind {
     }
 
     /// How [`Self::arrow_order`]'s comparison differs from this kind's —
-    /// `None` exactly where it leaves the kind alone.
+    /// `None` exactly where it leaves the kind alone. A float inside a nested
+    /// column differs besides ([`NestedCompare::arrow_divergences`]).
     pub fn arrow_divergence(&self) -> Option<ComparisonDivergence> {
         match self {
             Self::Enum(_) => Some(ComparisonDivergence::LabelText),
@@ -273,6 +274,20 @@ impl CompareKind {
             _ => None,
         }
     }
+}
+
+/// What a position of `kind` diverges in under [`ComparisonSemantics::Arrow`],
+/// given the register's own `divergence` for it: [`CompareKind::arrow_divergence`],
+/// then the register's, but for `jsonb`'s string collation, the whole value
+/// being compared as text there.
+pub(crate) fn arrow_position_divergences(
+    kind: &CompareKind,
+    divergence: Option<ComparisonDivergence>,
+) -> Vec<ComparisonDivergence> {
+    kind.arrow_divergence()
+        .into_iter()
+        .chain(divergence.filter(|d| *d != ComparisonDivergence::JsonbStringCollation))
+        .collect()
 }
 
 /// How a comparison here differs from PostgreSQL's own for the same declared
@@ -365,27 +380,35 @@ pub enum ComparisonDivergence {
     LabelText,
     /// A type emitted as `Utf8View` whose PostgreSQL comparison is by value —
     /// a bare `numeric`, `timetz`, `inet`/`cidr`, `jsonb` — which DataFusion
-    /// compares bytewise. Equality too, wherever the type writes one value
-    /// more than one way (a bare `numeric`'s `1.5` and `1.50`).
+    /// compares bytewise. Equality too: a literal matches only the text the
+    /// server writes, so `'12:00+00'` misses `12:00:00+00` and `'10.0.0.1/32'`
+    /// misses an `inet`'s `10.0.0.1`, and a bare `numeric` writes one value
+    /// two ways (`1.5` and `1.50`).
     ValueAsText,
     /// `interval` as DataFusion compares `Interval(MonthDayNano)`: months,
     /// then days, then the time part, where PostgreSQL compares the span
     /// (I40), so `1 mon` and `30 days` are equal only to the server.
     IntervalFields,
     /// `character(n)` compared with its blank padding, as it is emitted,
-    /// where `bpcharcmp` trims both sides first (I38). Equality too: a bare
-    /// `bpchar` keeps a value's trailing blanks.
+    /// where `bpcharcmp` trims both sides first (I38). Equality too: an
+    /// unpadded literal (`'abc'` against a `character(5)`'s `abc  `) matches
+    /// nothing, and a bare `bpchar` keeps a value's trailing blanks.
     PaddedText,
     /// A nested column — array, composite, range, multirange — which
-    /// DataFusion compares with `make_comparator` under default options, an
+    /// DataFusion orders with `make_comparator` under default options, an
     /// order upstream marks for change and this build does not evaluate
-    /// (`docs/design/decisions.md`, "D40").
+    /// (`docs/design/decisions.md`, "D40"). **Order alone**: it puts a NULL
+    /// element or field first where `array_cmp` and `record_cmp` put it
+    /// last, and both call two NULLs equal (`array_eq`, `record_eq`), so what
+    /// reaches equality is a position's own divergence, reported under its
+    /// path beside this one.
     NestedArrowOrder,
-    /// A column this build emits as text with no comparison of its declared
-    /// type behind it — one that did not resolve, or whose type the register
-    /// has no order for — so DataFusion compares it bytewise under every
-    /// operator, which the server's comparison of that type need not be.
-    EmittedText,
+    /// A float position inside a nested column, which `make_comparator`
+    /// orders by IEEE `totalOrder` with no `-0` made `0` — the normalization
+    /// DataFusion's `apply_cmp` gives a float column and not one nested in a
+    /// list or struct — so `-0` is below `0` and unequal to it, where
+    /// `float8eq` equates them.
+    UnnormalizedZero,
 }
 
 impl ComparisonDivergence {
@@ -411,15 +434,14 @@ impl ComparisonDivergence {
             Self::UnknownCollation | Self::NonBytewiseCollation | Self::JsonbStringCollation => {
                 false
             }
-            Self::LabelText => false,
-            // True of some member of each — a type writing one value two
-            // ways, or a comparison this build does not model — so claimed
-            // for all, the announcing direction.
-            Self::ValueAsText
-            | Self::IntervalFields
-            | Self::PaddedText
-            | Self::NestedArrowOrder
-            | Self::EmittedText => true,
+            // A label is unique, and a NULL equals a NULL on both sides.
+            Self::LabelText | Self::NestedArrowOrder => false,
+            // A literal matches only the emitted text: a spelling other than
+            // the server's own (`'12:00+00'`, an unpadded `character(n)`)
+            // misses a value PostgreSQL matches, and some members also write
+            // one stored value two ways (`1.5` and `1.50`).
+            Self::ValueAsText | Self::IntervalFields | Self::PaddedText => true,
+            Self::UnnormalizedZero => true,
         }
     }
 }
@@ -518,9 +540,9 @@ impl NestedCompare {
     /// multirange's is `[].bound`.
     pub fn uncomparable(&self) -> Option<(String, String)> {
         let mut found = None;
-        self.walk(&mut String::new(), &mut |path, declared, ordered, _| {
-            if !ordered && found.is_none() {
-                found = Some((path.to_string(), declared.to_string()));
+        self.walk(&mut String::new(), &mut |path, leaf| {
+            if matches!(leaf, Self::Uncomparable { .. }) && found.is_none() {
+                found = Some((path.to_string(), leaf.declared().to_string()));
             }
         });
         found
@@ -536,32 +558,61 @@ impl NestedCompare {
     /// the whole column falls back to is not.
     pub fn divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
         let mut out = Vec::new();
-        self.walk(&mut String::new(), &mut |path, declared, _, divergence| {
-            if let Some(divergence) = divergence {
-                out.push((path.to_string(), declared.to_string(), divergence));
-            }
+        self.walk(&mut String::new(), &mut |path, leaf| {
+            let divergence = match leaf {
+                Self::Leaf { divergence, .. } | Self::Uncomparable { divergence, .. } => {
+                    *divergence
+                }
+                _ => None,
+            };
+            out.extend(divergence.map(|d| (path.to_string(), leaf.declared().to_string(), d)));
         });
         out
     }
 
-    /// Depth-first over every leaf, handing each its path, its declared type,
-    /// whether it has an order at all, and its divergence. The two are
-    /// independent: an [`Self::Uncomparable`] position has no order and may
-    /// still carry a divergence, which is what the column's `=` fallback
-    /// costs there.
-    fn walk(
-        &self,
-        path: &mut String,
-        visit: &mut impl FnMut(&str, &str, bool, Option<ComparisonDivergence>),
-    ) {
+    /// [`Self::divergences`] under [`ComparisonSemantics::Arrow`]: what each
+    /// position's own comparison differs in from the server's when DataFusion
+    /// compares the emitted value with `make_comparator`, in walk order. A
+    /// leaf reports what a column of its kind would
+    /// ([`arrow_position_divergences`]) plus [`ComparisonDivergence::UnnormalizedZero`]
+    /// for a float, and an [`Self::Uncomparable`] position keeps what its
+    /// bytewise `=` costs. The container's own order is the column's
+    /// [`ComparisonDivergence::NestedArrowOrder`], not a position's.
+    pub fn arrow_divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
+        let mut out = Vec::new();
+        self.walk(&mut String::new(), &mut |path, leaf| {
+            let divergences = match leaf {
+                Self::Leaf { kind, divergence, .. } => {
+                    let mut found = arrow_position_divergences(kind, *divergence);
+                    if matches!(kind, CompareKind::Float32 | CompareKind::Float64) {
+                        found.push(ComparisonDivergence::UnnormalizedZero);
+                    }
+                    found
+                }
+                Self::Uncomparable { divergence, .. } => divergence.iter().copied().collect(),
+                _ => Vec::new(),
+            };
+            out.extend(
+                divergences.into_iter().map(|d| (path.to_string(), leaf.declared().to_string(), d)),
+            );
+        });
+        out
+    }
+
+    /// A leaf's declared type as the DDL spelled it; `int2vector` for its
+    /// fixed element.
+    fn declared(&self) -> &str {
         match self {
-            Self::Leaf { declared, divergence, .. } => visit(path, declared, true, *divergence),
-            // One position: the element node is fixed and has nothing to
-            // say.
-            Self::Int2Vector => visit(path, "int2vector", true, None),
-            Self::Uncomparable { declared, divergence } => {
-                visit(path, declared, false, *divergence)
-            }
+            Self::Leaf { declared, .. } | Self::Uncomparable { declared, .. } => declared,
+            _ => "int2vector",
+        }
+    }
+
+    /// Depth-first over every leaf — [`Self::Leaf`], [`Self::Uncomparable`]
+    /// or [`Self::Int2Vector`] — handing each its path and the node.
+    fn walk(&self, path: &mut String, visit: &mut impl FnMut(&str, &Self)) {
+        match self {
+            Self::Leaf { .. } | Self::Int2Vector | Self::Uncomparable { .. } => visit(path, self),
             Self::Array(element) => {
                 let len = path.len();
                 path.push_str("[]");

@@ -98,10 +98,11 @@ delivered.
   query asks for, produced from its resolved schema as findings the sink
   drains at registration.
   [Notes](../design/roadmap-P6.3.1-column-divergence-notes.md).
-- [ ] **6.3.2** Arrow-semantics registration announces what diverges and
+- [x] **6.3.2** Arrow-semantics registration announces what diverges and
   once: a nested column's order alone, each position's own divergence under
   its path, no second finding for a column already falling back to text, and
   a literal's spelling named in the text-emitted kinds' sentences.
+  [Notes](../design/roadmap-P6.3.2-registration-divergence-notes.md).
 - [ ] **6.4** One schema per table: blocks reordered by name into the table's
   order, a disagreeing name set refused.
 - [ ] **6.5** `datafusion-pgdump`: a complete cache loaded, the catalog and
@@ -410,3 +411,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **A float inside a nested column gets a divergence of its own,
+  `UnnormalizedZero`.** The review behind 6.3.2 listed each position's
+  "own" divergence. A float has none as a column, because DataFusion's
+  `apply_cmp` makes `-0` into `0` first. Nested inside a list or struct it
+  does diverge: `make_comparator` compares floats by `total_cmp`, so `{-0}`
+  is below `{0}` and unequal to it. The call adds a seventh Arrow-only
+  variant, reaching equality, at every float position. The reason is the
+  announcing direction (`pgtype.rs`, `states_non_deterministic`): leaving it
+  out would make a `real[]` equality silently wrong. A unit case pins it on a
+  built array; the oracle holds no float array. Reconsidering means dropping
+  the variant, so that a nested float's `-0` goes unannounced.
+  ([6.3.2's notes](../design/roadmap-P6.3.2-registration-divergence-notes.md).)

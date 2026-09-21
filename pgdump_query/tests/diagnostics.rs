@@ -125,8 +125,9 @@ async fn a_column_note_reads_as_a_finding() {
 /// **A table's divergences drain at registration, before any term is named**,
 /// on the comparison channel and in the semantics asked for: the enum and the
 /// label-less enum of `t_enum_domain` report nothing in PostgreSQL's
-/// semantics, and in Arrow's the one is compared by its label text and the
-/// other, emitted as text, bytewise. The domain over `integer` reports in
+/// semantics, and in Arrow's the enum is compared by its label text. The
+/// label-less one, emitted as text, earns no second finding beside its
+/// `Warning` column note, which says so. The domain over `integer` reports in
 /// neither.
 #[tokio::test]
 async fn a_table_s_divergences_drain_at_registration() {
@@ -155,16 +156,13 @@ async fn a_table_s_divergences_drain_at_registration() {
     assert_eq!(drained(ComparisonSemantics::Postgres), []);
     let arrow = drained(ComparisonSemantics::Arrow);
     let divergences: Vec<_> = arrow.iter().map(|(c, d, _)| (c.as_str(), *d)).collect();
-    assert_eq!(
-        divergences,
-        [
-            ("v_mood", ComparisonDivergence::LabelText),
-            ("v_empty_enum", ComparisonDivergence::EmittedText)
-        ]
-    );
+    assert_eq!(divergences, [("v_mood", ComparisonDivergence::LabelText)]);
     assert!(
         arrow[0].2.starts_with("`v_mood` (public.mood) is compared by its labels' text"),
         "{}",
         arrow[0].2
     );
+    let empty = resolved.notes.iter().find(|n| n.column == "v_empty_enum").unwrap();
+    assert_eq!(empty.severity(), Severity::Warning);
+    assert!(empty.message().ends_with("compares as that text"), "{}", empty.message());
 }

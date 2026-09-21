@@ -24,22 +24,16 @@ named. The why is [`decisions.md`](decisions.md), "D59".
   which terms the library answers.** Six `ComparisonDivergence` variants are
   Arrow semantics' own and never come from the register: `LabelText`,
   `ValueAsText`, `IntervalFields`, `PaddedText`, `NestedArrowOrder`,
-  `EmittedText`. A scalar kind's variant is `CompareKind::arrow_divergence`,
+  `UnnormalizedZero` (the last two as 6.3.2 left them). A scalar kind's
+  variant is `CompareKind::arrow_divergence`,
   beside `arrow_order`, and the Arrow walk checks that one is `Some` exactly
   where the other moves the kind. A collation divergence the register
   announced is kept beside it. `jsonb`'s string collation is dropped, because
   the whole value is compared as text.
 - **Every oracle cell Arrow semantics answers unlike the server falls on a
   column that reports it**, under that cell's operator
-  (`a_column_reporting_no_arrow_divergence_answers_as_the_server`). Nine
-  declared types disagree somewhere: `character(10)`, `interval`, `jsonb`,
-  `numeric`, `public.box_domain`, `public.intarr[]`, `public.mood`, `text`
-  and `time with time zone`.
-- **Registration will warn more than a query does.** Every nested column
-  reports `NestedArrowOrder` and every unresolved column `EmittedText`. So
-  a dump registered in `:strings` mode warns once per column, and a table of
-  arrays once per array. 6.8's stderr sink prints each one unless it
-  filters or groups them.
+  (`a_column_reporting_no_arrow_divergence_answers_as_the_server`), which
+  6.3.2 extended to nested columns.
 
 ## Negative results
 
@@ -48,9 +42,7 @@ named. The why is [`decisions.md`](decisions.md), "D59".
   included: DataFusion compares a user's literal bytewise with the emitted
   text, so `'12:00+00'`, `'10.0.0.1/32'` or an unpadded `'abc'` misses a value
   PostgreSQL would match. The oracle walk cannot show it, its literals being
-  the server's own spellings. Two places do over-announce, and 6.3.2 corrects
-  both: `NestedArrowOrder` claims equality, and `EmittedText` repeats the
-  fall-back column note.
+  the server's own spellings; 6.3.2's unit case pins one.
 - **`pgdt` is unchanged.** It still announces per term, in PostgreSQL's
   semantics, and never calls the report.
 - **No cache format change.** Nothing gathered or persisted moved.
