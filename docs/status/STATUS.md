@@ -98,6 +98,10 @@ delivered.
   query asks for, produced from its resolved schema as findings the sink
   drains at registration.
   [Notes](../design/roadmap-P6.3.1-column-divergence-notes.md).
+- [ ] **6.3.2** Arrow-semantics registration announces what diverges and
+  once: a nested column's order alone, each position's own divergence under
+  its path, no second finding for a column already falling back to text, and
+  a literal's spelling named in the text-emitted kinds' sentences.
 - [ ] **6.4** One schema per table: blocks reordered by name into the table's
   order, a disagreeing name set refused.
 - [ ] **6.5** `datafusion-pgdump`: a complete cache loaded, the catalog and
@@ -406,16 +410,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **Arrow-semantics registration over-announces rather than under-announces.**
-  `column_divergences` reports every nested column as `NestedArrowOrder` and
-  every unresolved column, which is every column under `:strings`, as
-  `EmittedText`. It also says `ValueAsText` and `PaddedText` reach equality.
-  That is true for a bare `numeric`, `jsonb` and a bare `bpchar`, and false
-  for `timetz`, `inet`/`cidr` and `character(n)`. The call follows the
-  register's announcing direction: a spurious note is better than a silent
-  wrong row set (`pgtype.rs`, `states_non_deterministic`). The cost is noise
-  at registration: one warning per array column, and under `:strings` one per
-  column. Reconsidering means splitting those variants by equality and
-  checking `make_comparator` against `array_cmp` per element kind, or having
-  6.8's sink group the warnings.
-  ([6.3.1's notes](../design/roadmap-P6.3.1-column-divergence-notes.md).)

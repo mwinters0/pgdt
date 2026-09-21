@@ -43,14 +43,14 @@ named. The why is [`decisions.md`](decisions.md), "D59".
 
 ## Negative results
 
-- **The report over-announces in three places, and no test asserts
-  otherwise.** `ValueAsText` and `PaddedText` claim equality as well as order.
-  That holds for a bare `numeric`, `jsonb` and a bare `bpchar`. It does not
-  hold for `timetz`, `inet`/`cidr` or `character(n)`, whose `*_out` is unique
-  per value. A nested column is reported whatever its element type, including
-  the cases where DataFusion's `make_comparator` would agree with
-  `array_cmp`. The oracle walk asserts only the other direction: no
-  disagreement goes unreported.
+- **The equality claims of `ValueAsText` and `PaddedText` are right for
+  every kind they cover**, `timetz`, `inet`/`cidr` and `character(n)`
+  included: DataFusion compares a user's literal bytewise with the emitted
+  text, so `'12:00+00'`, `'10.0.0.1/32'` or an unpadded `'abc'` misses a value
+  PostgreSQL would match. The oracle walk cannot show it, its literals being
+  the server's own spellings. Two places do over-announce, and 6.3.2 corrects
+  both: `NestedArrowOrder` claims equality, and `EmittedText` repeats the
+  fall-back column note.
 - **`pgdt` is unchanged.** It still announces per term, in PostgreSQL's
   semantics, and never calls the report.
 - **No cache format change.** Nothing gathered or persisted moved.
