@@ -1,0 +1,354 @@
+# P6 — DataFusion integration
+
+Query a `pg_dump` file's tables from Apache DataFusion: a `TableProvider` over
+the library, in a new workspace member, and a build of `datafusion-cli` that
+carries it.
+
+Grilled 2026-09-21; its inbox was drained into this file and deleted. **The
+first slice exists to produce evidence**: 6.1 checks the library's orderings
+against Arrow's before 6.2 builds a comparison mode on the result, so slice
+numbers after it are allocation order as much as schedule. The checklist is
+`../status/STATUS.md`, "P6 progress".
+
+## Scope
+
+**DataFusion only.** Python bindings are P24's; Spark and Trino are off the
+roadmap. The phase's deliverables are the provider crate and a
+`datafusion-cli` build with the provider built in, `datafusion-pgdump-cli`.
+
+**The target is the latest DataFusion release, 55.1.0** (tagged upstream and
+on crates.io; `datafusion-cli`'s sources are unchanged from 55.0.0), whose
+`arrow` pin (59.2.0) is the one this workspace already carries. How the pin moves after
+this phase is a standing rule, [`roadmap.md`](roadmap.md), "Arrow follows
+DataFusion".
+
+## The provider reads a complete cache, and never maps
+
+**The provider opens a dump only through a cache that covers the whole file
+and matches the source** — what `pgdt parse` leaves: `DumpIndex::scanned_through`
+equal to the source's size, and the cache's identity checks passing as they do
+for any load. A missing, partial or interrupted cache is an error naming
+`pgdt parse`. The provider never runs a mapping pass and never writes a cache.
+Whether a parse can be *started* from inside the SQL shell is a separate
+question, not yet settled.
+
+The alternative, a provider that falls back to a cold query's early-stopping
+map, is refused because every one of the following comes back with it:
+
+- **Ambiguity is detected exactly.** A cold query stops mapping once its target
+  is settled and can miss a second `COPY` block for the same name past that
+  point (`KD6`); a complete map cannot. The provider therefore never exhibits
+  `KD6`. The library's cold query still does, so `KD6` is not closed by this
+  phase and is `(c) unowned`.
+- **A schema is stated before any scan, from evidence that covers every
+  block.** Every block in a map carries a complete array-shape census, and a
+  complete map holds every block of the table, so the union the provider
+  reports is the union a scan would stream. The partial-map question — report
+  optimistically, refuse, or expose partiality — does not arise.
+- **"This database's DDL was never read" does not arise.** A mapping pass states
+  a database's DDL at its first `COPY` block, so a complete map covers every
+  database it holds. The two existing answers to that condition (a stream
+  refuses with `Error::MetadataNotScanned`, a listing degrades the column to
+  `ColumnResolution::MetadataNotScanned`) stay in the library; the provider
+  meets neither.
+- **The partitioned replay is available.** `table_stream_partitions` requires a
+  complete map.
+
+## How a dump appears in SQL
+
+**A dump is registered as a catalog**: its PostgreSQL schemas are DataFusion
+schemas and its tables are tables, so `koji.public.build` names a table and
+`SHOW TABLES` lists the dump. **The user names the catalog**, because a plain
+single-database dump taken without `--create` does not record its database's
+name. **A multi-database file registers one catalog per database, named after
+that database**; it is refused only where a name is needed and nothing
+supplies one. In `datafusion-pgdump-cli` that reads: a bare `--dump <path>`
+takes its catalog names from the file; `<name>=` is required only where the
+file names no database, and is refused on a multi-database file. Rejected:
+prefixing each database with the given name, which invents names nobody wrote;
+and one `--dump` per database selected by a fragment.
+
+**A single table can also be registered on its own**, as
+`CREATE EXTERNAL TABLE t STORED AS PGDUMP LOCATION '…'` with the table named in
+its options — built over the catalog form rather than beside it.
+
+## One schema per table
+
+**A table's schema is its root's declared columns, in DDL order**, typed over
+the census unioned across every block the table owns. A table owning several
+blocks — the leaf partitions of a partitioned table loaded through its root,
+each block's header naming the root (I2) — may list its columns in a different
+order per block, so **each block's batches are reordered by name** into the
+table's order. A table whose blocks disagree on the *set* of column names is
+refused, naming the blocks. A table with no DDL in the file (a data-only dump)
+takes the first block's column order under the same set rule. A block with no
+column list takes the table's names where its field count matches, and is
+refused where it does not.
+
+Rejected: the first block's order with every other order refused, which
+refuses ordinary partitioned dumps; and the union of names with absent columns
+filled as `NULL`, which states values PostgreSQL never held.
+
+The library today resolves a schema per block (`stream::resolve_block`), so a
+multi-block stream can yield batches of more than one shape; the rule above is
+the one the provider presents, and the per-block resolution is what it is
+built from.
+
+## Comparison means what DataFusion means
+
+**Inside DataFusion a comparison has DataFusion's semantics: Arrow's ordering
+of the emitted type.** A filter is pushed down `Exact` exactly when the library
+evaluates it as Arrow would over the value it emits, and `Unsupported`
+otherwise; nothing is `Inexact`. This keeps a pushed-down answer and a
+re-filtered one identical, which is the property that matters — DataFusion
+decides per plan whether a filter reaches the provider (an `OR` it cannot
+split does not), so a provider answering in any other semantics makes a query's
+rows depend on its plan.
+
+Where the library's comparison and Arrow's differ today (`CompareKind`,
+`pgdump_query/src/pgtype.rs`):
+
+| Kind | The library compares | Arrow compares the emitted value |
+|---|---|---|
+| Text, under any collation | bytewise | bytewise — the same |
+| Enum (emitted `Dictionary`) | by declaration order (I33) | by label text |
+| Bare `numeric`, `interval`, `timetz`, `inet`/`cidr`, `jsonb` (emitted `Utf8View`) | by value | bytewise |
+| `character(n)` | trailing blanks trimmed (I38) | padded text |
+
+So **the library gains an Arrow-semantics comparison mode** beside its
+PostgreSQL one — bytewise over the emitted text for the `Utf8View` kinds,
+label order for an enum — and the provider asks for it. Collated text is
+already in that mode and becomes pushable and prunable as it stands. **Statistics
+bounds are either gathered in the same mode or reported `Absent`** for a kind
+whose stored bounds are ordered otherwise.
+
+**Divergence from PostgreSQL is reported, never a reason to decline a
+pushdown.** It is a property of the column — `ORDER BY`, `MIN`/`MAX` and every
+comparison DataFusion evaluates itself reach it — so it is reported per column
+when a table is registered, through the diagnostics sink below. The existing
+register's classes (agrees / diverges / refused, [`decisions.md`](decisions.md),
+"D55") say how an answer relates to the *server's*; they no longer decide
+pushdown.
+
+Superseded within this grilling: pushing down `Exact` where the library agrees
+with PostgreSQL, which let an enum `<` answer in declaration order when pushed
+and in label order when not. `Inexact` stays refused for the reason it was: it
+promises a superset, and a comparison in other semantics can omit a row.
+
+Two facts about the mapping, from the v55 source: struct equality against a
+literal is coerced by field *name* in DataFusion
+(`datafusion/sqllogictest/test_files/struct.slt`) where PostgreSQL's
+`record_eq` is positional — harmless while a composite's fields are built in
+declaration order, the order the dump writes them; and `List` columns have
+element-wise, lexicographic `=`/`<`/`<=`/`>`/`>=` already (`array_query.slt`),
+so nothing in DataFusion obstructs pushing a nested comparison down where its
+element kind is in Arrow's semantics.
+
+## Cancellation
+
+**A query is cancelled by dropping its stream, and that is the provider's only
+cancellation.** The provider sets no `ScanOptions::cancel`: with no mapping
+pass there is no partial map for a drop to leave behind, a dropped replay
+stops, and a remote read in flight is dropped with the future awaiting it. So
+`Error::ScanCancelled` cannot arise on a read over a complete cache and needs
+no DataFusion translation. `ScanOptions::cancel` stays the CLI's mechanism for
+`pgdt parse`.
+
+## Workers and memory
+
+**The worker count is DataFusion's `target_partitions`**, read inside `scan()`
+as DataFusion's own sources read it, and the provider declares however many
+sub-streams the library returns — which may be fewer, the file's blocks
+deciding how a table can be cut. **The byte budget is one object per session**,
+held on the session's config or runtime (the precedent is DataFusion's
+metadata-cache limit, a bounded object set once on the `RuntimeEnv`) and shared
+by every pgdump scan the session runs, so concurrent scans draw from it rather
+than each taking the whole. Its default follows [`roadmap.md`](roadmap.md), "A
+default runs as fast as the allocation permits": the process's discovered
+allowance, as `pgdt` derives it.
+
+Rejected: a budget per registered table, which has no precedent among
+DataFusion's sources and multiplies by the tables a join names; and no budget,
+sizing every scan to its worker count, which gives up bounded memory on a
+compressed source. DataFusion supplies no reading to divide: its memory pool
+explicitly does not cover data sources, and nothing in it reads a cgroup
+(`datafusion/execution/src/memory_pool/mod.rs`, v55).
+
+## Library surfaces the provider does not use
+
+The provider pulls partitions under DataFusion's scheduler, so it uses neither
+`batch::read_table` (push mode), `TableStream::batch_source_offset` (the CLI's
+merge into file order), nor `ResumeToken`. **All three stay as they are**:
+tightening the library's public surface is one sweep at feature-completeness,
+not piecemeal work inside this phase ([`roadmap.md`](roadmap.md), Future item
+"A public-surface sweep at feature-completeness").
+
+**The provider promises no order among partition errors**: the first observed
+wins, as for any DataFusion source; `pgdt query` keeps its file-order rule
+([`decisions.md`](decisions.md), "D52"). **A partitioned read is not
+resumable**, and DataFusion has no resume for the provider to serve.
+
+## Statistics handed to DataFusion
+
+DataFusion answers `COUNT(*)` and `MIN`/`MAX` from `Exact` statistics without
+reading a row, so an `Exact` that is wrong is a wrong answer with no error.
+
+- **Row count: `Exact`**, the sum of every block's rows, which a complete map
+  holds.
+- **Column bounds and null count: `Exact` only where every group of every
+  block carries them and they are ordered as the column's Arrow type orders**
+  (above, "Comparison means what DataFusion means");
+  `Inexact` where some groups lack them; `Absent` otherwise.
+- **Output ordering from recorded sortedness** is not declared by this phase;
+  it is a Future item.
+
+## The binary: `datafusion-pgdump-cli`
+
+**A new workspace member building `datafusion-pgdump-cli`**, depending on the
+`datafusion-cli` library at the targeted release: a copy of its private
+`main.rs` plus our registrations, which is upstream's endorsed pattern
+(`datafusion-cli/examples/cli-session-context.rs`). **A dump is attached by a
+repeatable `--dump <name>=<path>` flag**, registering it as catalog `<name>`,
+**and by `CREATE EXTERNAL TABLE … STORED AS PGDUMP`**, whose options live
+under a registered `pgdump.` table-options extension. **No backslash commands
+of our own**, which would mean owning the REPL loop as well.
+
+Rejected: a `pgdt sql` subcommand, which puts DataFusion into the build every
+figure in [`measurements.md`](measurements.md) is taken from; and no binary at
+all. The cost accepted is re-copying `main.rs` at each DataFusion major.
+
+## Diagnostics: one sink
+
+**The library gains one diagnostics sink**, a caller-supplied trait object into
+which all three channels drain: the file-level `DumpIndex::diagnostics` (L1),
+the per-column `ResolvedSchema::notes` (L2), and the query-conditional
+comparison notes (L4). Each channel's type reaches it through one shared trait
+bearing `diagnostic::Severity`, which is the unification point left open when
+the channels were kept as separate types — unifying at the drain rather than at
+the storage type, which the layering forbids ([`decisions.md`](decisions.md),
+"D68"). **The provider takes a sink; `datafusion-pgdump-cli` supplies one
+printing to stderr** — at registration for file- and column-level notes, and
+after the statement for what a query raised. `pgdt` may adopt the sink later;
+that is not this phase's work.
+
+DataFusion 55 offers no non-error channel a provider could use instead (below),
+and `log` is hidden by `datafusion-cli`'s default level.
+
+## Sources, and no parse inside the binary
+
+**A dump is anything `Origin::resolve` accepts** — a local path, an `.xz`, an
+`http(s)://` URL — resolved exactly as `pgdt` resolves it, the cache location
+for a URL included. The provider crate carries an `http` feature passing
+through to the library's, **off by default**; `datafusion-pgdump-cli` turns it
+on, as `pgdt` does. A remote dump reads as one partition, the remote source
+declining to advise on partitioning ([`decisions.md`](decisions.md), "D6"),
+until the phase that tunes the network changes that.
+
+**`datafusion-pgdump-cli` does not parse.** A missing or partial cache is an
+error printing the `pgdt parse --source <path>` that would build it. Doing a
+parse properly means `pgdt`'s parallelism and memory discovery, its interrupt
+guard, its status output and its cache-path rules, all of which live in
+`pgdt`'s `main.rs` rather than the library; a half-configured parse would be a
+slow way to build what `pgdt parse` builds properly. Filed as the Future item
+"Attach-time parse in `datafusion-pgdump-cli`".
+
+## What the phase promises
+
+**The type floor is stated**, in the binary's manual page: the Arrow schema is
+at least as good as the ADBC PostgreSQL driver's, naming the driver release the
+sweep was taken against and `money` as the one exception (`KD13`). The claim is
+already checked (`scripts/floor_mapping.py` over `fixtures/<major>/adbc/`,
+[`decisions.md`](decisions.md), "D38"); publishing it obliges re-taking that
+sweep whenever the pin moves.
+
+**No performance claim, and no figure.** Every `query` figure times `pgdt`,
+including its text rendering and, under `--dtcache none`, a mapping pass —
+neither of which an embedder holding a cache pays. The library's own cost is
+kept as profile proportions ([`decisions.md`](decisions.md), "D29"), which
+support a ratio or a per-row cost and never a throughput; an instrument that
+stops at the batch is later work if a figure is ever wanted, and a claim taken
+under it must name the allocator, which is the embedder's.
+
+## Crates
+
+**Two new workspace members, named by DataFusion's convention because they
+are DataFusion layers**: `datafusion-pgdump`, the provider library, and
+`datafusion-pgdump-cli`, the binary. Two rather than one crate with both
+targets, so that a library user does not inherit the binary's
+`datafusion-cli` dependency.
+
+## The provider's query surface
+
+- **Projection** maps onto the library's by-name projection
+  (`QueryOptions::projection`), so an unprojected column is never decoded; an
+  empty projection passes through as the `COUNT(*)` shape.
+- **Limit** is honoured by ceasing to pull, not by a new library option;
+  DataFusion's streaming exec applies it already.
+- **Batch size** is the session's `batch_size`, read inside `execute()` as
+  DataFusion's own sources read it, and becomes `QueryOptions::max_rows`.
+- **Schema mode** is per dump — a `:strings` suffix on `--dump`, or a
+  `pgdump.schema_mode` option — typed by default. It is the escape hatch from
+  a wrong type mapping, and until the Future item "Caller-supplied type
+  mapping" exists, the only way to pin a schema.
+
+## Verification
+
+All of it a test target in `datafusion-pgdump` over the committed fixtures,
+needing nothing machine-local; the koji replica stays ad hoc
+(`CLAUDE.local.md`).
+
+1. **Arrow-semantics order**, first and as evidence: each Arrow-mode
+   comparison, and each bound gathered in that mode, checked against Arrow's
+   own `cmp` kernels on the emitted arrays.
+2. **The same rows as the library.** Every fixture table's `SELECT *` through
+   the provider equals the library's own stream, value and type.
+3. **Pushdown never changes an answer.** Per comparison kind and operator, the
+   same query with pushdown on and forced off returns identical rows.
+4. **Statistics never change an answer.** `COUNT(*)`, `MIN` and `MAX` answered
+   from statistics equal the same queries with statistics disabled.
+
+## What DataFusion 55 offers an extension
+
+Facts read from the 55.0.0 source (`datafusion-cli` 55.1.0 diffed identical),
+2026-09-21, recorded for the questions still open. Paths are relative to the
+upstream tree.
+
+- **`datafusion-cli` is a library as well as a binary.** Its `lib.rs` exports
+  `exec::{exec_from_commands, exec_from_files, exec_from_repl}`, the
+  `CliSessionContext` trait, `PrintOptions`, `CliHelper` and the catalog
+  wrappers. `main.rs` (~465 lines of code) is private: argument parsing, the
+  memory pool, the session config, `enable_url_table()`, the built-in table
+  functions. Upstream's one endorsed pattern for extending the CLI is
+  `datafusion-cli/examples/cli-session-context.rs`: a downstream `main` that
+  calls `exec_from_repl` on its own context. So a `datafusion-pgdump-cli` is a
+  copy of `main.rs` plus registrations, re-copied at each DataFusion major.
+- **Backslash commands are closed.** `Command` is a closed enum and
+  `exec_from_repl` parses it inline, so a new meta-command means owning the REPL
+  loop (~85 lines of `exec.rs`).
+- **Registration routes:** a `TableProviderFactory` keyed by the upper-cased
+  `STORED AS` word; a `CatalogProvider` via `register_catalog`; a table function
+  via `register_udtf`, whose `call` is **synchronous**; a `UrlTableFactory`
+  behind `DynamicFileCatalog` for `SELECT * FROM 'file'`. In `datafusion-cli`,
+  `CREATE EXTERNAL TABLE … OPTIONS` keys are validated against registered
+  table-options extensions, so a custom format needs one (keys like
+  `'pgdump.table'`), and the location is parsed as a `ListingTableUrl`.
+- **`SHOW TABLES` and `information_schema.columns` call `table()` on every
+  table** — the CLI's catalog wrappers do not forward `table_type` — so a
+  catalog's `table()` must be cheap.
+- **There is no non-error diagnostic channel a provider can use.**
+  `datafusion_common::Diagnostic` rides only on an error, planner warnings are
+  internal to SQL planning, and `datafusion-cli` prints neither. What remains is
+  `log` (the CLI initialises `env_logger`, default level error), stderr, plan
+  metrics under `EXPLAIN ANALYZE`, or a side channel a binary of our own prints.
+- **Ctrl-C drops the statement's future** in the REPL only; `-c`/`-f` install no
+  handler. A `spawn_blocking` task is not stopped by a drop and must notice its
+  send failing.
+- **Output types.** `Utf8View`, `Dictionary`, `List` and `Struct` print through
+  arrow's pretty printer. No extension type is registered by default, so
+  `arrow.uuid`/`arrow.json` columns print as their storage type.
+- **`TableProvider::statistics()` is not used by mainline**; statistics reach
+  the optimizer through the `ExecutionPlan`, whose `partition_statistics` is
+  deprecated in 55 in favour of `statistics_from_inputs`. `ScanArgs` carries no
+  ordering.
+- **Cadence.** A major every two to three months, each moving `arrow`; `main`
+  already carries 56's breaking change to `scan`'s projection argument.

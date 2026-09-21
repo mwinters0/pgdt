@@ -3377,8 +3377,8 @@ cgroup one.
 So the region grows with the *schema* — table count and DDL size — and not with
 the data, which is what makes an immediate Ctrl-C during it a non-issue on a
 local file. The remote case is not covered by these numbers: 63 KB is still one
-ranged GET that can hang, and that is a P6 decision
-(`roadmap-P6-embeddable-engine-inbox.md`).
+ranged GET that can hang, which a cancellation reaching the source drops in
+flight ([`decisions.md`](decisions.md), "D26").
 
 ## Per-block cache saving is quadratic in block count, and so is the map
 

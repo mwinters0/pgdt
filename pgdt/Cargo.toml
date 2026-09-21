@@ -5,7 +5,7 @@ edition.workspace = true
 
 # The allocator is the *binary's* choice, never the library's: a
 # `#[global_allocator]` in `pgdump_query` would impose one on every embedder,
-# which is precisely P6's audience. See
+# which is precisely an embedding engine's position. See
 # `docs/design/decisions.md`, "D13", and
 # `docs/design/measurements.md`, "Which allocator a figure was taken under".
 #

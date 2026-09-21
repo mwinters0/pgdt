@@ -16,13 +16,14 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P6 — DataFusion integration | Current | [`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
-| P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
+| P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
 `Struck`**, and the prose after it is a caption. Two of them are set in the same
@@ -42,7 +43,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P22`** — nothing at or below it
+centering"). **Phase numbering continues from `P24`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -502,6 +503,16 @@ silent skip. A genuinely machine-local resource, which `mise` cannot pin, is
 the exception and gates the other way: unset by default, absent in every other
 checkout, per `CLAUDE.local.md`'s rule for the koji replica.
 
+### Arrow follows DataFusion
+
+**The workspace's `arrow` pin is the one the targeted DataFusion release
+depends on, and the two move together.** A crate here that builds DataFusion
+plans hands DataFusion `arrow` types, so a second `arrow` major anywhere in the
+workspace is a build that does not link; the library does not keep a pin of
+its own. So an `arrow` upgrade waits for a DataFusion release that takes it,
+and a DataFusion upgrade takes its `arrow` in the same change. Settled when P6
+was grilled (2026-09-21).
+
 ### Four decisions that keep later phases additive
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation
@@ -637,39 +648,22 @@ What it inherits:
   and `statistics-pruning` are stale because the margin now binds a typed
   number, and are not re-taken until the constant settles.
 
-## P6 — Embeddable engine story
+## P6 — DataFusion integration
 
-**Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
+**Specified and sliced (2026-09-21):
+[`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md).** What the maintainer
+fixed before the grilling:
 
-The least-specified phase — the user has explicitly flagged unfamiliarity
-with this space, so treat its eventual grilling session as needing real
-research (prior art from `object_store`/DataFusion/similar embedded-source
-crates), not just architectural taste. Rough shape, informed by the decisions
-under "Standing rules" above, made to keep this open:
+- **DataFusion only.** An Apache DataFusion `TableProvider` over a dump's
+  tables, as a new workspace member. Python bindings are their own phase, P24;
+  Spark and Trino are dropped from the roadmap.
+- **A deliverable binary is expected**: a build of `datafusion-cli` with the
+  provider built in, named `datafusion-pgdump-cli`.
+- **The provider may require a complete cache** built by `pgdt parse` before
+  any DataFusion use. Starting a parse from inside the SQL shell is a
+  convenience, wanted only if it comes cheaply.
 
-- Python bindings (likely `pyo3`), as a new workspace member.
-- Apache DataFusion `TableProvider` integration, as a new workspace member —
-  the async core and the `Utf8View` column choice were made with this
-  destination specifically in mind.
-- Apache Spark / Trino integration — order and approach TBD; likely follows
-  whatever pattern the DataFusion integration establishes, if applicable.
-
-The `object_store`-backed byte source that used to head that list was carved
-out and built before this phase, being an L1 addition rather than a surface
-this phase presents ([`decisions.md`](decisions.md), "D6", "D87").
-
-**Scheduled after the phases above**, because it is the phase that *presents* a
-surface over mechanisms they are still changing. A `TableProvider` commits to
-what the predicate can express and to the I/O layer beneath it; built while
-either is in motion, it is built twice. Each phase ahead of it hands it a
-settled input instead — the predicate surface from typed predicates, the
-byte-range abstraction with its measured defaults from scan performance, and
-the remote backend, built ahead of it — and this is also the least-specified phase, whose
-grilling needs real research rather than architectural taste, so it gains most
-from going last. Its inbox is
-the largest of the five and none of it decays by waiting: the entries are
-questions this phase must answer, not evidence that ages.
+**Moved to the front of the schedule**, ahead of the phases below it.
 
 ## P15 — gzip input
 
@@ -791,6 +785,15 @@ current:
 
 The decisions that keep all of this additive rather than a rewrite are listed
 under "Four decisions that keep later phases additive" above.
+
+## P24 — Python bindings
+
+Python bindings over the library, likely through `pyo3`, as a new workspace
+member. Carved out of the embeddable-engine phase when P6 narrowed to
+DataFusion (2026-09-21), and sketched to corner-avoidance depth: whatever
+surface P6 settles for an embedder is what this phase presents, and P6's
+inbox entries that concern Python alone were re-filed to [this phase's
+inbox](roadmap-P24-python-inbox.md).
 
 ## Out-of-band work
 
@@ -1054,6 +1057,29 @@ which is what makes the difference worth minding at the moment one is found.
   rather than re-deriving them. Deliberately deferred: it is an optimization
   over a query path still being iterated on, and it should be revisited once
   the feature set is settled rather than designed around now.
+
+- **A public-surface sweep at feature-completeness.** The library's public
+  surface is tightened once, when the feature set is complete, rather than piecemeal as each
+  phase finds something it does not use. Known candidates: `batch::read_table`
+  (push mode, whose only callers are tests and a bench, and which the DataFusion
+  provider does not use); `TableStream::batch_source_offset`, which exists for
+  `pgdt query`'s merge; and whether `pgdump_query` re-exports `bytes::Bytes`,
+  which `ByteRangeSource::read_range` names in its signature so that an
+  embedder implementing a source must depend on `bytes` in step with us.
+  Decided 2026-09-21, grilling P6.
+
+- **Declared output ordering from recorded sortedness, for DataFusion.** A
+  block's statistics record whether its values are sorted, which a provider
+  could declare as a partition's output ordering and so let DataFusion drop a
+  sort. It holds per block and so per partition only, and only under the
+  ordering DataFusion applies to the column's Arrow type. Left out of P6's first
+  cut, 2026-09-21.
+
+- **Attach-time parse in `datafusion-pgdump-cli`.** Building a missing cache
+  from inside the DataFusion binary instead of refusing and naming `pgdt parse`.
+  It wants `pgdt`'s parse configuration — parallelism and memory discovery, the
+  interrupt guard, the status output — moved into the library first, so that
+  the two binaries parse alike. Left out of P6, 2026-09-21.
 
 - **An allocator-contention figure for a capped arena count.** Parallel `.xz` throughput under `MALLOC_ARENA_MAX=2` against uncapped — the price no figure takes, and what would reopen the in-binary cap `decisions.md`, "D13" refuses.
 

@@ -186,9 +186,11 @@ pub enum ScanExtent {
     /// Deficiency register: `deficiency: KD6` — so a second, conflicting
     /// table past the stopping point is never seen, `Error::AmbiguousTable` is
     /// not raised for it, and the query answers with the candidate it found.
-    /// **(b) owned by P6**, which decides what the embedded API promises here.
-    /// [`Self::Full`], or a query after `pgdt parse`, gives exact detection
-    /// today; closing it by default means giving up the early stop.
+    /// **(c) unowned**; promoted by a concatenated or `pg_dumpall`-style file
+    /// reaching a user through a cold query. [`Self::Full`], or a query after
+    /// `pgdt parse`, gives exact detection today, which is why the DataFusion
+    /// provider, reading only a complete map, never shows it; closing it by
+    /// default means giving up the early stop.
     #[default]
     UntilTargetSettled,
     /// Map the whole file before returning anything. Costs a full scan and

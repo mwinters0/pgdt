@@ -1377,9 +1377,9 @@ enum Slot {
 /// **Announced by the CLI rather than by a library channel** — the signal is
 /// per-column *and* conditional on a predicate, so L4, while
 /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` L2. An embedder
-/// reads `TableStream::comparison_notes` for the same facts; what it *should*
-/// be handed is filed in
-/// `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
+/// reads `TableStream::comparison_notes` for the same facts, until the
+/// diagnostics sink lands (`docs/design/roadmap-P6-datafusion.md`,
+/// "Diagnostics: one sink").
 fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     for note in stream.comparison_notes() {
         eprintln!("warning: {}", note.message());
