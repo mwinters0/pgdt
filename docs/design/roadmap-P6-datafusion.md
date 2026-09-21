@@ -96,31 +96,41 @@ built from.
 
 ## Comparison means what DataFusion means
 
-**Inside DataFusion a comparison has DataFusion's semantics: Arrow's ordering
-of the emitted type.** A filter is pushed down `Exact` exactly when the library
-evaluates it as Arrow would over the value it emits, and `Unsupported`
-otherwise; nothing is `Inexact`. This keeps a pushed-down answer and a
+**Inside DataFusion a comparison has DataFusion's semantics: its own
+comparison of the emitted type** — `apply_cmp`, which is Arrow's `cmp` kernels
+with float operands' `-0.0` first made `+0.0`, and `make_comparator` for a
+nested type. The kernels alone are not the measure. A filter is pushed down
+`Exact` exactly when the library evaluates it as DataFusion does over the value
+it emits, and `Unsupported` otherwise; nothing is `Inexact`. This keeps a pushed-down answer and a
 re-filtered one identical, which is the property that matters — DataFusion
 decides per plan whether a filter reaches the provider (an `OR` it cannot
 split does not), so a provider answering in any other semantics makes a query's
 rows depend on its plan.
 
-Where the library's comparison and Arrow's differ today (`CompareKind`,
-`pgdump_query/src/pgtype.rs`):
+Where the library's comparison and DataFusion's differ (`CompareKind`,
+`pgdump_query/src/pgtype.rs`) — floats not among them, `-0` equalling `0` and a
+dump's one `NaN` sorting last under both:
 
-| Kind | The library compares | Arrow compares the emitted value |
+| Kind | The library compares | DataFusion compares the emitted value |
 |---|---|---|
 | Text, under any collation | bytewise | bytewise — the same |
 | Enum (emitted `Dictionary`) | by declaration order (I33) | by label text |
-| Bare `numeric`, `interval`, `timetz`, `inet`/`cidr`, `jsonb` (emitted `Utf8View`) | by value | bytewise |
+| Bare `numeric`, `timetz`, `inet`/`cidr`, `jsonb` (emitted `Utf8View`) | by value | bytewise |
+| `interval` (emitted `Interval(MonthDayNano)`) | by value | months, then days, then nanoseconds |
+| A column with no plan (emitted `Utf8View`) | `=` bytewise, ordering refused | bytewise |
 | `character(n)` | trailing blanks trimmed (I38) | padded text |
 
 So **the library gains an Arrow-semantics comparison mode** beside its
 PostgreSQL one — bytewise over the emitted text for the `Utf8View` kinds,
 label order for an enum — and the provider asks for it. Collated text is
-already in that mode and becomes pushable and prunable as it stands. **Statistics
-bounds are either gathered in the same mode or reported `Absent`** for a kind
-whose stored bounds are ordered otherwise.
+already in that mode and pushable as it stands. **Statistics bounds are either
+gathered in the same mode or reported `Absent`** for a kind whose stored bounds
+are ordered otherwise — and a text column's bounds and row order are gathered
+bytewise whatever its collation, believed only in Arrow semantics, so collated
+text prunes and stops early there too. No `CACHE_FORMAT_VERSION` bump: a cache
+written before holds none for it and reads `Absent` until re-parsed
+([`../status/history/2026-09-21.md`](../status/history/2026-09-21.md),
+"Collated text gets bytewise bounds").
 
 **Divergence from PostgreSQL is reported, never a reason to decline a
 pushdown.** It is a property of the column — `ORDER BY`, `MIN`/`MAX` and every
@@ -135,14 +145,15 @@ with PostgreSQL, which let an enum `<` answer in declaration order when pushed
 and in label order when not. `Inexact` stays refused for the reason it was: it
 promises a superset, and a comparison in other semantics can omit a row.
 
-Two facts about the mapping, from the v55 source: struct equality against a
-literal is coerced by field *name* in DataFusion
-(`datafusion/sqllogictest/test_files/struct.slt`) where PostgreSQL's
-`record_eq` is positional — harmless while a composite's fields are built in
-declaration order, the order the dump writes them; and `List` columns have
-element-wise, lexicographic `=`/`<`/`<=`/`>`/`>=` already (`array_query.slt`),
-so nothing in DataFusion obstructs pushing a nested comparison down where its
-element kind is in Arrow's semantics.
+**A nested column's comparison is refused in this mode, `=` included**, so its
+terms are never pushed down. DataFusion orders a list, struct or range by
+`make_comparator` under default `SortOptions` — nulls first, no zero
+normalization, a range by its `lower` field first — and its source marks that
+choice `TODO: make SortOptions configurable`: an order upstream means to change
+is not one the library can promise to evaluate identically. Nothing is lost to
+pruning, a nested column carrying no bounds or dictionary. Settled
+2026-09-21 ([`../status/history/2026-09-21.md`](../status/history/2026-09-21.md),
+"Arrow semantics is DataFusion's comparison").
 
 ## Cancellation
 
@@ -297,9 +308,10 @@ All of it a test target in `datafusion-pgdump` over the committed fixtures,
 needing nothing machine-local; the koji replica stays ad hoc
 (`CLAUDE.local.md`).
 
-1. **Arrow-semantics order**, first and as evidence: each Arrow-mode
-   comparison, and each bound gathered in that mode, checked against Arrow's
-   own `cmp` kernels on the emitted arrays.
+1. **Arrow-semantics order**: each Arrow-mode comparison, and each bound
+   gathered in that mode, checked against DataFusion's own comparison of the
+   emitted arrays. The library's check against the bare `cmp` kernels came
+   first, as evidence, and is not the authority.
 2. **The same rows as the library.** Every fixture table's `SELECT *` through
    the provider equals the library's own stream, value and type.
 3. **Pushdown never changes an answer.** Per comparison kind and operator, the

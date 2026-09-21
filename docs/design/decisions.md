@@ -269,10 +269,10 @@ An Arrow type does not name its literal (`int4range[]`, `int4multirange`: both `
 every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 
 ### D40 The comparison is decided per declared type, in the same arm
-`builtin_scalar` answers Arrow type and `CompareKind` both, keyed on declared type and `COLLATE`;
-six declared types share `Utf8View` under six comparisons. `predicate.rs` never reads the Arrow
-type; `ComparisonSemantics::Arrow`, one mode per query lest rows depend on what a plan pushes, maps
-each kind (`arrow_order`), refuses a nested column, and announces no divergence, the column's.
+`builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; six
+types share `Utf8View` under six comparisons, and `predicate.rs` never reads the Arrow type. Arrow
+semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`) and
+says no divergence. Rejected: a nested column ordered as DataFusion does — a `TODO` there, no promise.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
 An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided in

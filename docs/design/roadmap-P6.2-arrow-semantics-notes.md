@@ -16,18 +16,19 @@ and `predicate::resolve_term`. The why is
   oracle value, each value in turn the literal, on six majors, and compares
   the answer with `lt`/`eq`/`gt` on the array a batch builds. Three kinds were
   added, and no register arm produces them: `Float32Total`, `Float64Total`
-  (IEEE `totalOrder`) and `IntervalFields` (months, days, time, one after
-  another). The six kinds emitted as text or as a dictionary compare as
+  (IEEE `totalOrder`, which DataFusion's `apply_cmp` does not use for `-0`;
+  slice 6.2.1 retires them) and `IntervalFields` (months, days, time, one
+  after another). The six kinds emitted as text or as a dictionary compare as
   `Text`: `Enum`, `Numeric`, `TimeTz`, `Network`, `Jsonb` and `PaddedText`.
 - **Arrow semantics refuses every comparing operator on a nested column**,
   with `Error::UncomparablePredicateColumn`. That includes `=`, which
   PostgreSQL's semantics answers structurally or as text. A column with no
   plan still answers `=` bytewise, which is Arrow's `=` over the `Utf8View` it
-  emits. Its ordering operators stay refused, as in PostgreSQL's semantics.
+  emits. Its ordering operators stay refused here; 6.2.1 answers them.
   The refusal is raised at plan time, before a row. So for 6.6, a
   `supports_filters_pushdown` that asks the library whether a term resolves
-  in this mode gets `Unsupported` for every such term. See "Decisions worth
-  another look" in STATUS.
+  in this mode gets `Unsupported` for every such term. Why nested stays
+  refused: [`decisions.md`](decisions.md), "D40".
 - **An Arrow-semantics term announces no divergence.**
   `TableStream::comparison_notes` is empty for it. Divergence from PostgreSQL
   is reported per column at registration (6.3), and nothing per term remains
@@ -46,7 +47,7 @@ and `predicate::resolve_term`. The why is
   `varchar` or `character` column diverges (`UnknownCollation`). So in
   Arrow's semantics only a `COLLATE "C"` column or a `name` column prunes an
   ordering term by its bounds, and 6.7 has no `Exact` text bounds to hand
-  DataFusion. See "Decisions worth another look" in STATUS.
+  DataFusion. Slice 6.9 gathers them.
 - **The resume fingerprint covers the semantics**
   (`tests/batch.rs`, `a_resume_token_covers_the_whole_conjunction`).
 

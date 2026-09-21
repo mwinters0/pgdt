@@ -24,8 +24,9 @@ that does not. Two test-only helpers came with it: `batch::column_of` and
   emitted type. The two missing kinds and the misdescribed one:
   - **`Float32`/`Float64`.** Arrow's kernels order floats by IEEE `totalOrder`,
     so `-0` is below `0` and `eq(-0, 0)` is false, where PostgreSQL equates
-    them. `NaN` places the same way under both. An Arrow-mode float therefore
-    differs under `=` as well as under the four ordering operators.
+    them. `NaN` places the same way under both. DataFusion does not compare
+    with the bare kernels: its `apply_cmp` makes `-0` into `0` first, so in
+    DataFusion's semantics a float agrees with PostgreSQL's (slice 6.2.1).
   - **`Interval` is emitted as `Interval(MonthDayNano)`, not `Utf8View`** as
     the spec's table has it (`pgtype.rs`, `"interval"` in `builtin_scalar`).
     Arrow compares that type field by field (months, then days, then

@@ -87,6 +87,9 @@ delivered.
 - [x] **6.2** An Arrow-semantics comparison mode in the library, and bounds
   gathered in it or reported absent.
   [Notes](../design/roadmap-P6.2-arrow-semantics-notes.md).
+- [ ] **6.2.1** Arrow semantics as DataFusion compares, not as the bare kernels
+  do: a float's `-0` equal to `0`, and a column with no plan ordered bytewise
+  under every operator.
 - [ ] **6.3** One diagnostics sink draining the file-level, per-column and
   comparison channels.
 - [ ] **6.4** One schema per table: blocks reordered by name into the table's
@@ -95,7 +98,11 @@ delivered.
   single-table forms, the partitioned scan with projection, limit and batch
   size, the session budget; the same rows as the library over every fixture.
 - [ ] **6.6** Filter pushdown, `Exact` exactly where the library evaluates in
-  Arrow's semantics; pushdown on and off answer alike.
+  Arrow's semantics; each Arrow-mode comparison checked against DataFusion's
+  own, and pushdown on and off answer alike.
+- [ ] **6.9** Bytewise bounds and row order gathered for text whatever its
+  collation, believed only in Arrow semantics; a re-parse adds them to an older
+  cache; `statistics-gathering` re-taken.
 - [ ] **6.7** Statistics handed to DataFusion; answers with and without them
   alike.
 - [ ] **6.8** `datafusion-pgdump-cli`: `--dump`, `STORED AS PGDUMP` and its
@@ -393,26 +400,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **Arrow semantics refuses every comparing operator on a nested column, and
-  every ordering operator on a column with no plan** (6.2, `resolve_term`).
-  The spec's reading of the v55 source is that nothing in DataFusion
-  obstructs pushing a nested comparison down. But no nested order was checked
-  against Arrow's: 6.1 walked scalars only, and `cmp` refuses struct and list
-  arrays. A range, emitted as a struct, would compare field by field there,
-  unlike `range_cmp`. So the call was to refuse, never to guess, and 6.6 will
-  push none of these terms. Arrow does order a planless column's `Utf8View`
-  bytewise. That covers `--schema-mode strings`, `money`, `box` and `xml`,
-  and the library could answer it. Reconsidering means Arrow-order nested
-  keys, with evidence from DataFusion's own list and struct comparison, and a
-  `Text` kind for every column emitted as `Utf8View`.
-- **In Arrow semantics, collated text is not prunable by its bounds.** The
-  spec says collated text "becomes pushable and prunable as it stands".
-  Pushable holds. Prunable holds only for `=` through the dictionary.
-  `ColumnGatherer::new` (`gather.rs`) takes no bounds where PostgreSQL's
-  order diverges (D79), and every bare `text`, `varchar` and `character`
-  column diverges as `UnknownCollation`. So Arrow-mode bounds exist only for
-  a `COLLATE "C"` column or a `name` column, and 6.7 has no `Exact` text
-  bounds to hand DataFusion. Closing this means gathering bytewise bounds for
-  divergent text as well. That changes D79, raises statistics volume on
-  nearly every text column (D86, `KD33`), and moves the
-  `statistics-gathering` figure, so it was left alone.
