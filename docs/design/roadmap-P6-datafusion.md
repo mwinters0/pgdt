@@ -311,7 +311,11 @@ needing nothing machine-local; the koji replica stays ad hoc
 1. **Arrow-semantics order**: each Arrow-mode comparison, and each bound
    gathered in that mode, checked against DataFusion's own comparison of the
    emitted arrays. The library's check against the bare `cmp` kernels came
-   first, as evidence, and is not the authority.
+   first, as evidence, and is not the authority. **A nested column's
+   announcements are included though its terms are never pushed down**: each
+   note's claim — a NULL element first, a nested float's `-0` unequal to `0` —
+   is checked through `compare_op_for_nested`, so an upstream release that
+   changes either fails a test rather than leaving a false note.
 2. **The same rows as the library.** Every fixture table's `SELECT *` through
    the provider equals the library's own stream, value and type.
 3. **Pushdown never changes an answer.** Per comparison kind and operator, the

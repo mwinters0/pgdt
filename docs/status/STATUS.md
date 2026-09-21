@@ -411,15 +411,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A float inside a nested column gets a divergence of its own,
-  `UnnormalizedZero`.** The review behind 6.3.2 listed each position's
-  "own" divergence. A float has none as a column, because DataFusion's
-  `apply_cmp` makes `-0` into `0` first. Nested inside a list or struct it
-  does diverge: `make_comparator` compares floats by `total_cmp`, so `{-0}`
-  is below `{0}` and unequal to it. The call adds a seventh Arrow-only
-  variant, reaching equality, at every float position. The reason is the
-  announcing direction (`pgtype.rs`, `states_non_deterministic`): leaving it
-  out would make a `real[]` equality silently wrong. A unit case pins it on a
-  built array; the oracle holds no float array. Reconsidering means dropping
-  the variant, so that a nested float's `-0` goes unannounced.
-  ([6.3.2's notes](../design/roadmap-P6.3.2-registration-divergence-notes.md).)

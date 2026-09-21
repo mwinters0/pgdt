@@ -407,7 +407,20 @@ pub enum ComparisonDivergence {
     /// orders by IEEE `totalOrder` with no `-0` made `0` — the normalization
     /// DataFusion's `apply_cmp` gives a float column and not one nested in a
     /// list or struct — so `-0` is below `0` and unequal to it, where
-    /// `float8eq` equates them.
+    /// `float8eq` equates them. Upstream, as of DataFusion 55.1.0: `apply_cmp`
+    /// runs `normalize_cmp_input` over flat operands, and
+    /// `compare_op_for_nested` calls `make_comparator` with nothing before it;
+    /// a release normalizing there too makes this variant a false note.
+    ///
+    /// Announced from the schema alone, at every float position, as
+    /// [`Self::UnknownCollation`] is on the possibility: the census does not
+    /// record whether a `-0` occurs, and pricing a warning is no reason to make
+    /// it.
+    ///
+    /// *Rejected: emitting a nested `-0` as `0`.* Filters would then agree
+    /// with the server, and a projection would not — `{0}` shown where
+    /// PostgreSQL writes `{-0}`, and a flat float column keeping its `-0`
+    /// beside it. Upstream normalizes inside the comparison, never the value.
     UnnormalizedZero,
 }
 
