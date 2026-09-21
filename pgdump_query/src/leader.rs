@@ -226,9 +226,8 @@ pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
 /// Union `from` into `into`, growing `into` where the piece saw more columns
 /// than anything before it — the census fold, in one place because [`merge`]
 /// and the window accumulator in [`scan_region`] must not be two rules.
-/// Length-tolerant for the same reason `crate::index::union_census` is: a
-/// header-less block states no width, so two pieces of one block can
-/// legitimately report different lengths.
+/// Length-tolerant because a header-less block states no width, so two pieces
+/// of one block can legitimately report different lengths.
 fn absorb_census(into: &mut Vec<ArrayShape>, from: &[ArrayShape]) {
     if from.len() > into.len() {
         into.resize(from.len(), ArrayShape::default());

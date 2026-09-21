@@ -1218,9 +1218,9 @@ impl Builder {
     /// leader's `Interior`: this module is L1 and the leader L4, so the shape
     /// vector is the L1 value they share (`docs/design/decisions.md`, "D68").
     ///
-    /// Length-tolerant for the same reason [`crate::index::union_census`] is:
-    /// a header-less block states no width, so the workers' union can be wider
-    /// than what [`on_copy_start`](Self::on_copy_start) sized.
+    /// Length-tolerant because a header-less block states no width, so the
+    /// workers' union can be wider than what
+    /// [`on_copy_start`](Self::on_copy_start) sized.
     pub(crate) fn absorb_census(&mut self, census: &[ArrayShape]) {
         if census.len() > self.pending_census.len() {
             self.pending_census.resize(census.len(), ArrayShape::default());

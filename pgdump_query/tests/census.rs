@@ -195,7 +195,7 @@ async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
 
     let blocks: Vec<_> = index.blocks_for("public.spread").collect();
     assert!(blocks.len() > 1, "`spread` is written as two blocks under one name (I2)");
-    let union = union_census(blocks.iter().copied());
+    let union = union_census(&blocks[0].header.columns, blocks.iter().copied());
     assert_eq!(union.len(), blocks[0].header.columns.len());
     // No column in this fixture holds an array, so the union constrains
     // nothing — which is the answer that leaves every column optimistically

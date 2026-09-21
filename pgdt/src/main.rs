@@ -1320,6 +1320,8 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::DuplicateProjectionColumn { .. }
         | Lib::ResumeQueryMismatch
         | Lib::AmbiguousTable { .. }
+        | Lib::TableColumnsDisagree { .. }
+        | Lib::UnnamedBlockWidth { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRender { .. } => false,

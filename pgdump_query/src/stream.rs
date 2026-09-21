@@ -36,7 +36,9 @@
 //! against that captured metadata into a [`crate::resolve::ResolvedSchema`]
 //! ([`TableStream::resolved_schema`]), and the batches this stream yields are
 //! built to it: typed under `SchemaMode::Typed`, all-`Utf8View` under
-//! `SchemaMode::Strings`.
+//! `SchemaMode::Strings`. A table's blocks may list its columns in different
+//! orders, and every batch comes out in the table's one order
+//! ([`TableColumns`]).
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
@@ -75,7 +77,7 @@ use crate::pgtype::ComparisonSemantics;
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::prune::{SortedStop, prune_block};
-use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
+use crate::resolve::{ResolvedSchema, SchemaMode, database_for_name, resolve_columns};
 use crate::scan::{
     ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions, announce_cancellation,
 };
@@ -87,7 +89,7 @@ use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
 /// accumulating its rows, `QueryOptions::filter` resolved against this block's
-/// own schema (schemas can differ block-to-block), and the database this block
+/// own schema (a table's blocks can order its columns differently), and the database this block
 /// is attributed to (`docs/design/decisions.md`, "D49"). Each
 /// [`ResolvedExpr`] leaf carries the field index it reads — into the block's
 /// **unprojected** column list — plus the typed comparison it makes. Shared
@@ -1722,8 +1724,8 @@ impl<'a> TableStream<'a> {
         self.position.lock().unwrap().clone()
     }
 
-    /// This query's resolved schema and diagnostics — one schema per stream
-    /// (`docs/design/decisions.md`, "Type resolution and decoders"). The empty
+    /// This query's resolved schema and diagnostics — one schema per table,
+    /// whichever of its blocks a batch came from ([`TableColumns`]). The empty
     /// schema (`ResolvedSchema::default`) until the query's matching `COPY`
     /// block has been found, which for a table that never appears in the dump
     /// is forever.
@@ -1794,11 +1796,12 @@ impl<'a> TableStream<'a> {
 /// Build the [`ResolvedSchema`] for a table-matching block — the actual batch
 /// schema a [`RowBatcher`] built from it carries (see
 /// [`TableStream::resolved_schema`]) — scoped to `database`, the block's own
-/// attribution, never a guess (`docs/design/decisions.md`, "D49"). `census` is
-/// the union of the array-shape censuses of **every block this stream will
-/// replay**, a parameter rather than something `resolve_columns` looks up so
-/// that no call site can silently disagree
-/// (`docs/design/decisions.md`, "D35").
+/// attribution, never a guess (`docs/design/decisions.md`, "D49"). `names`
+/// are the block's fields in the order its rows carry them
+/// ([`TableColumns::block_names`]), and `census` is one entry per name, taken
+/// from the union over **every block this stream will replay**, a parameter
+/// rather than something `resolve_columns` looks up so that no call site can
+/// silently disagree (`docs/design/decisions.md`, "D35").
 ///
 /// `Typed` mode against metadata that has no *complete* entry for `database`
 /// is `Error::MetadataNotScanned` rather than a silent `NotDeclared`
@@ -1807,7 +1810,7 @@ impl<'a> TableStream<'a> {
 /// its first `COPY` block. The check is pinned by a unit test.
 fn resolve_block(
     header: &CopyHeader,
-    field_count: usize,
+    names: &[String],
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     schema_mode: SchemaMode,
@@ -1819,8 +1822,118 @@ fn resolve_block(
     {
         return Err(Error::MetadataNotScanned { database: database.map(str::to_string) });
     }
-    let names = column_names(header, field_count);
-    Ok(resolve_columns(&header.qualified_name(), &names, metadata, database, schema_mode, census))
+    Ok(resolve_columns(&header.qualified_name(), names, metadata, database, schema_mode, census))
+}
+
+/// **One table, one schema**: the column order every batch of a table
+/// carries, whichever of its blocks the rows came from, and the census keyed
+/// to it.
+///
+/// A table can own several blocks (I2), each listing its columns in its own
+/// leaf's order (I5), so a block's batches are reordered by name into the
+/// table's order — the table's DDL order where the dump declares the table,
+/// the first listing block's order where it does not — and a table whose
+/// blocks name different *sets* of columns is refused, naming two of them.
+/// Neither the order nor the refusal reads [`SchemaMode`], so a table's
+/// columns come out the same with typing on or off
+/// (`docs/design/decisions.md`, "D66").
+///
+/// **A block naming no columns** takes the table's names where its first
+/// row's field count matches them, and is refused where it does not
+/// ([`Self::block_names`]); where no block names its columns and the DDL
+/// declares none, there are no names to take and each such block keeps the
+/// placeholders [`column_names`] gives it.
+#[derive(Debug)]
+struct TableColumns {
+    /// `None` only where no block names its columns and the dump declares
+    /// none for the table.
+    order: Option<Vec<String>>,
+    /// Every name a block of this table can resolve under, placeholders
+    /// included, with its census unioned over every block
+    /// ([`union_census`]).
+    census: Vec<(String, ArrayShape)>,
+}
+
+impl TableColumns {
+    /// The table `matches` are the blocks of — one `(database, table)`
+    /// target, already narrowed (`docs/design/decisions.md`, "D49").
+    fn settle(matches: &[CopyBlock], metadata: Option<&DumpMetadata>) -> Result<Self> {
+        let mut listing = matches.iter().filter(|b| !b.header.columns.is_empty());
+        let declared: Option<Vec<&str>> = matches.first().and_then(|first| {
+            let db = database_for_name(metadata?, first.database.as_deref())?;
+            let columns = db.tables.get(&first.header.qualified_name())?;
+            Some(columns.iter().map(|c| c.name.as_str()).collect())
+        });
+        let order = match listing.next() {
+            Some(first) => {
+                fn set(b: &CopyBlock) -> Vec<&String> {
+                    let mut names: Vec<&String> = b.header.columns.iter().collect();
+                    names.sort();
+                    names
+                }
+                let first_set = set(first);
+                if let Some(other) = listing.find(|b| set(b) != first_set) {
+                    return Err(Error::TableColumnsDisagree {
+                        table: first.header.qualified_name(),
+                        header_offset: first.header_offset,
+                        other_offset: other.header_offset,
+                    });
+                }
+                // Stable, so a name the DDL does not declare keeps the first
+                // listing block's place for it, after every declared one.
+                let mut names = first.header.columns.clone();
+                let rank = |name: &String| {
+                    declared.as_ref().and_then(|d| d.iter().position(|c| c == name))
+                };
+                names.sort_by_key(|name| rank(name).unwrap_or(usize::MAX));
+                Some(names)
+            }
+            None => declared.map(|d| d.into_iter().map(str::to_string).collect()),
+        };
+        let keys = order.clone().unwrap_or_else(|| {
+            let widest = matches.iter().map(|b| b.array_shapes.len()).max().unwrap_or(0);
+            // No block names its columns, so the first one's header lists
+            // none and this is placeholders.
+            matches.first().map(|b| column_names(&b.header, widest)).unwrap_or_default()
+        });
+        let census = keys.iter().cloned().zip(union_census(&keys, matches)).collect();
+        Ok(Self { order, census })
+    }
+
+    /// The names of the block `header` opens, in the order its rows carry
+    /// them: its own list, or — for a block naming none, whose first row had
+    /// `field_count` fields — the table's, where the two agree in number.
+    fn block_names(
+        &self,
+        header: &CopyHeader,
+        header_offset: u64,
+        field_count: usize,
+    ) -> Result<Vec<String>> {
+        match &self.order {
+            Some(order) if header.columns.is_empty() => {
+                if order.len() != field_count {
+                    return Err(Error::UnnamedBlockWidth {
+                        table: header.qualified_name(),
+                        header_offset,
+                        expected: order.len(),
+                        found: field_count,
+                    });
+                }
+                Ok(order.clone())
+            }
+            _ => Ok(column_names(header, field_count)),
+        }
+    }
+
+    /// `names`' census, one entry per name, in `names`' order.
+    fn census_for(&self, names: &[String]) -> Vec<ArrayShape> {
+        names
+            .iter()
+            .map(|name| {
+                self.census.iter().find(|(n, _)| n == name).map(|(_, s)| *s).unwrap_or_default()
+            })
+            .collect()
+    }
 }
 
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
@@ -1869,15 +1982,16 @@ fn snapshot(
 /// (`docs/design/decisions.md`, "D51"). Held behind an `Arc`, `metadata` being
 /// the whole dump's DDL, and never mutated once shared with a sub-stream —
 /// `table_stream_partitions` writes the derived span onto `query_options`
-/// after the mapping pass and before the `Arc`: the census
-/// in particular is the union over **every** block the query will replay, so
-/// two partitions of one table cannot resolve its arrays differently
+/// after the mapping pass and before the `Arc`: the table's columns
+/// in particular — their order, and their census, the union over **every**
+/// block the query will replay — are settled once, so two partitions of one
+/// table cannot order its columns or resolve its arrays differently
 /// (`docs/design/decisions.md`, "D35").
 struct ReplayPlan {
     scan_options: ScanOptions,
     query_options: QueryOptions,
     metadata: Option<DumpMetadata>,
-    census: Vec<ArrayShape>,
+    table: TableColumns,
     /// Every matched block with a column list, resolved and keyed by the
     /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
     /// plan on any block's resolution refusal.
@@ -1894,20 +2008,21 @@ struct ReplayPlan {
 }
 
 impl ReplayPlan {
-    /// The plan for replaying `mapped`: its DDL and census, and every one of
-    /// its blocks resolved against them before any sub-stream exists — or
-    /// the first refusing block's refusal ([`plan_blocks`]).
+    /// The plan for replaying `matches`: the table's columns
+    /// ([`TableColumns::settle`]), and every one of its blocks resolved
+    /// against them and the DDL before any sub-stream exists — or the table's
+    /// refusal, or else the first refusing block's ([`plan_blocks`]).
     fn new(
         scan_options: ScanOptions,
         query_options: QueryOptions,
         matches: &[CopyBlock],
         metadata: Option<DumpMetadata>,
-        census: Vec<ArrayShape>,
     ) -> Result<Self> {
-        let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &census)?;
+        let table = TableColumns::settle(matches, metadata.as_ref())?;
+        let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
         let Pruned { kept, stops, note: pruned } =
             prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
-        Ok(Self { scan_options, query_options, metadata, census, blocks, kept, stops, pruned })
+        Ok(Self { scan_options, query_options, metadata, table, blocks, kept, stops, pruned })
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
@@ -1997,9 +2112,13 @@ struct PlannedBlock {
     notes: Vec<ComparisonNote>,
 }
 
-/// Resolve one block for a query: its schema, the filter against the
-/// unprojected schema, then the projection — in that order, which is the
+/// Resolve one block for a query: its names, its schema, the filter against
+/// the unprojected schema, then the projection — in that order, which is the
 /// order their refusals are raised in.
+///
+/// **An unprojected query projects the table's order** ([`TableColumns`]),
+/// so the batches of a block listing its columns in another order come out
+/// reordered by name, the same shape as every other block's.
 fn resolve_for_query(
     header: &CopyHeader,
     header_offset: u64,
@@ -2007,17 +2126,20 @@ fn resolve_for_query(
     database: Option<&str>,
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
-    census: &[ArrayShape],
+    table: &TableColumns,
 ) -> Result<PlannedBlock> {
+    let names = table.block_names(header, header_offset, field_count)?;
+    let census = table.census_for(&names);
     let full =
-        resolve_block(header, field_count, metadata, database, query_options.schema_mode, census)?;
-    // Against the *unprojected* schema: a term's index numbers the raw row's
-    // fields, and a term may name a column the projection dropped.
+        resolve_block(header, &names, metadata, database, query_options.schema_mode, &census)?;
+    // Against the *unprojected* schema, in the block's own order: a term's
+    // index numbers the raw row's fields, and a term may name a column the
+    // projection dropped.
     let filter =
         resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?;
     let notes = filter.comparison_notes();
-    let (resolved, field_targets) =
-        project(&full, query_options.projection.as_deref(), header_offset)?;
+    let projection = query_options.projection.as_deref().or(table.order.as_deref());
+    let (resolved, field_targets) = project(&full, projection, header_offset)?;
     Ok(PlannedBlock {
         header: header.clone(),
         field_count,
@@ -2047,7 +2169,7 @@ fn plan_blocks(
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
-    census: &[ArrayShape],
+    table: &TableColumns,
 ) -> Result<BTreeMap<u64, PlannedBlock>> {
     matches
         .iter()
@@ -2060,7 +2182,7 @@ fn plan_blocks(
                 block.database.as_deref(),
                 query_options,
                 metadata,
-                census,
+                table,
             )?;
             Ok((block.header_offset, planned))
         })
@@ -2215,7 +2337,7 @@ fn activate(
                 database.as_deref(),
                 &plan.query_options,
                 plan.metadata.as_ref(),
-                &plan.census,
+                &plan.table,
             )?;
             &resolved_here
         }
@@ -2265,11 +2387,10 @@ async fn first_row_start(
 }
 
 /// What a query's mapping pass settled: the blocks this query will replay,
-/// the DDL to type them against, and their combined array-shape census.
+/// and the DDL to type them against.
 struct MappedTable {
     matches: Vec<CopyBlock>,
     metadata: Option<DumpMetadata>,
-    census: Vec<ArrayShape>,
 }
 
 /// The two checks that are about the *request* rather than about the file, so
@@ -2414,10 +2535,10 @@ async fn map_for_query(
 
     // **A streamed schema needs no completeness test**
     // (`docs/design/decisions.md`, "D34"): the mapping pass has finished and
-    // `matches` is fixed, so the union below is the evidence for exactly the
-    // rows this stream will hand back (`docs/design/decisions.md`, "D35").
-    let census = union_census(matches.iter());
-    Ok(MappedTable { matches, metadata, census })
+    // `matches` is fixed, so the census the plan unions over them is the
+    // evidence for exactly the rows this stream will hand back
+    // (`docs/design/decisions.md`, "D35").
+    Ok(MappedTable { matches, metadata })
 }
 
 /// How many sub-streams a caller's [`Parallelism`] and a source's per-partition
@@ -3491,7 +3612,10 @@ fn replay<'a>(
 /// matching block's own schema is `Error::UnknownPredicateColumn`. Every
 /// refusal resolving a block raises — schema, filter or projection — is
 /// yielded before any row of the table, for the first refusing block in file
-/// order (`docs/design/decisions.md`, "D54").
+/// order (`docs/design/decisions.md`, "D54"), and so is
+/// `Error::TableColumnsDisagree`, for a table whose blocks name different
+/// columns ([`TableColumns`]); only a block naming no columns refuses where it
+/// is reached.
 ///
 /// `query_options.projection` decides which columns are materialized
 /// (`docs/design/decisions.md`, "D28"). It cuts the schema
@@ -3532,9 +3656,8 @@ pub fn table_stream<'a>(
         // Pass 2: replay each matching block for its rows, as one segment
         // per kept run. A resumed stream picks up inside this same list, every
         // resume point being inside a mapped block by construction.
-        let MappedTable { matches, metadata, census } = mapped;
-        let plan =
-            Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?);
+        let MappedTable { matches, metadata } = mapped;
+        let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata)?);
         *shared_for_stream.plan_notes.lock().unwrap() = plan.pruned.iter().cloned().collect();
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = matches
@@ -3601,8 +3724,8 @@ pub async fn table_stream_partitions<'a>(
     let watch = Arc::new(SourceWatch::open(source, cache.strict_identity()).await?);
     let mapped =
         map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await?;
-    let MappedTable { matches, metadata, census } = mapped;
-    let mut plan = ReplayPlan::new(scan_options, query_options, &matches, metadata, census)?;
+    let MappedTable { matches, metadata } = mapped;
+    let mut plan = ReplayPlan::new(scan_options, query_options, &matches, metadata)?;
     let (groups, mut plan_notes, span) = plan_partitions(
         source,
         &matches,
@@ -3906,9 +4029,15 @@ mod tests {
         };
         let metadata = DumpMetadata { databases: vec![first] };
 
-        let err =
-            resolve_block(&header, 1, Some(&metadata), Some("second"), SchemaMode::Typed, &[])
-                .expect_err("the metadata has no entry for `second`");
+        let err = resolve_block(
+            &header,
+            &header.columns,
+            Some(&metadata),
+            Some("second"),
+            SchemaMode::Typed,
+            &[],
+        )
+        .expect_err("the metadata has no entry for `second`");
         assert!(
             matches!(&err, Error::MetadataNotScanned { database } if database.as_deref() == Some("second")),
             "{err:?}"
@@ -3917,14 +4046,28 @@ mod tests {
         // The same block in a database the metadata covers resolves, so the
         // refusal is about coverage and not about the lookup failing.
         assert!(
-            resolve_block(&header, 1, Some(&metadata), Some("first"), SchemaMode::Typed, &[])
-                .is_ok()
+            resolve_block(
+                &header,
+                &header.columns,
+                Some(&metadata),
+                Some("first"),
+                SchemaMode::Typed,
+                &[]
+            )
+            .is_ok()
         );
 
         // `Strings` never looks, so it is never refused.
         assert!(
-            resolve_block(&header, 1, Some(&metadata), Some("second"), SchemaMode::Strings, &[])
-                .is_ok()
+            resolve_block(
+                &header,
+                &header.columns,
+                Some(&metadata),
+                Some("second"),
+                SchemaMode::Strings,
+                &[]
+            )
+            .is_ok()
         );
     }
 
@@ -4124,17 +4267,17 @@ mod tests {
         assert_ne!(first, of_two);
     }
 
-    /// One table in three blocks: two naming their columns differently and one
-    /// naming none, so a term or a projected name on `b` resolves against the
-    /// first, refuses the second, and cannot be tried on the third until a row
-    /// is read.
-    fn three_schemas(dir: &std::path::Path) -> std::path::PathBuf {
-        let path = dir.join("three_schemas.sql");
+    /// One table in three blocks: two naming its columns in different orders
+    /// and one naming none, so a term or a projected name resolves against the
+    /// first two at plan time and cannot be tried on the third until a row is
+    /// read.
+    fn three_blocks(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("three_blocks.sql");
         std::fs::write(
             &path,
             "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n\\.\n\n\
-             COPY public.t (a) FROM stdin;\n3\n\\.\n\n\
-             COPY public.t FROM stdin;\n4\ty\n\\.\n",
+             COPY public.t (b, a) FROM stdin;\ny\t3\n\\.\n\n\
+             COPY public.t FROM stdin;\n4\tz\n\\.\n",
         )
         .unwrap();
         path
@@ -4150,7 +4293,7 @@ mod tests {
         use crate::predicate::Predicate;
 
         let dir = tempfile::tempdir().unwrap();
-        let source = LocalFileSource::open(three_schemas(dir.path())).unwrap();
+        let source = LocalFileSource::open(three_blocks(dir.path())).unwrap();
         let not_null = |column: &str| {
             Expr::all([Predicate {
                 column: column.into(),
@@ -4184,24 +4327,23 @@ mod tests {
                 query_options.clone(),
                 &mapped.matches,
                 mapped.metadata.clone(),
-                mapped.census.clone(),
             )
         };
 
-        // A filter the second block refuses refuses the plan, naming it.
-        let refusing = QueryOptions { filter: not_null("b"), ..query_options.clone() };
+        // A filter no block can answer refuses the plan, naming the first.
+        let refusing = QueryOptions { filter: not_null("c"), ..query_options.clone() };
         assert!(matches!(
             plan_for(&refusing).map(|_| ()),
             Err(Error::UnknownPredicateColumn { header_offset, .. })
-                if header_offset == second.header_offset
+                if header_offset == first.header_offset
         ));
 
-        // So does a projection the second block refuses.
-        let refusing = QueryOptions { projection: Some(vec!["b".into()]), ..query_options.clone() };
+        // So does a projection naming a column no block carries.
+        let refusing = QueryOptions { projection: Some(vec!["c".into()]), ..query_options.clone() };
         assert!(matches!(
             plan_for(&refusing).map(|_| ()),
             Err(Error::UnknownProjectionColumn { header_offset, .. })
-                if header_offset == second.header_offset
+                if header_offset == first.header_offset
         ));
 
         let plan = plan_for(&query_options).unwrap();
@@ -4221,11 +4363,15 @@ mod tests {
                 block.database.as_deref(),
                 &query_options,
                 mapped.metadata.as_ref(),
-                &mapped.census,
+                &plan.table,
             )
         };
         let planned = &plan.blocks[&first.header_offset];
         assert_eq!(format!("{planned:?}"), format!("{:?}", live(first, 2).unwrap()));
+
+        // The second block's `a` is its second field, and it is `a` that
+        // feeds the projection.
+        assert_eq!(plan.blocks[&second.header_offset].field_targets, [None, Some(0)]);
 
         // Activating the planned block hands out the plan's own tree.
         let open = |block: &CopyBlock, field_count| {

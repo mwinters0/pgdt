@@ -100,19 +100,31 @@ impl ArrayShape {
     }
 }
 
-/// The census of several blocks read as one — what a table spanning more than
-/// one `COPY` block (I2) resolves against, and what a query's schema commits
-/// to over exactly the blocks it will replay
-/// (`docs/design/decisions.md`, "D35"). As long as the longest census in
-/// `blocks`; a column absent from a shorter one contributes nothing.
-pub fn union_census<'a>(blocks: impl IntoIterator<Item = &'a CopyBlock>) -> Vec<ArrayShape> {
-    let mut out: Vec<ArrayShape> = Vec::new();
+/// The census of several blocks read as one, one entry per name in `columns`
+/// — what a table spanning more than one `COPY` block (I2) resolves against,
+/// and what a query's schema commits to over exactly the blocks it will
+/// replay (`docs/design/decisions.md`, "D35").
+///
+/// **Keyed by column name, not by position**: a leaf partition's block lists
+/// its columns in the leaf's own order, which need not be the root's or a
+/// sibling's. A block naming no columns is read positionally against
+/// `columns`, which is the order such a block's fields arrive in; a name a
+/// block carries and `columns` does not contributes nothing.
+pub fn union_census<'a>(
+    columns: &[String],
+    blocks: impl IntoIterator<Item = &'a CopyBlock>,
+) -> Vec<ArrayShape> {
+    let mut out = vec![ArrayShape::default(); columns.len()];
     for block in blocks {
-        if block.array_shapes.len() > out.len() {
-            out.resize(block.array_shapes.len(), ArrayShape::default());
-        }
-        for (slot, shape) in out.iter_mut().zip(&block.array_shapes) {
-            slot.merge(shape);
+        for (i, shape) in block.array_shapes.iter().enumerate() {
+            let slot = if block.header.columns.is_empty() {
+                Some(i)
+            } else {
+                block.header.columns.get(i).and_then(|name| columns.iter().position(|c| c == name))
+            };
+            if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
+                slot.merge(shape);
+            }
         }
     }
     out

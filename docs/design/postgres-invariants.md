@@ -247,13 +247,25 @@ all — when that leaves no columns. Separately, under `--binary-upgrade`,
 `dumpTableSchema()` re-creates dropped columns in the `CREATE TABLE` body as
 `INTEGER /* dummy */`, so the DDL there contains columns the data never will.
 
+Nor can two blocks of one table (I2) be assumed to match each other: under
+load-via-partition-root `dumpTableData()` takes the header's *name* from
+`getRootTableInfo(tbinfo)` but its *list* from `fmtCopyColumnList(tbinfo, …)`,
+the leaf's own attributes in the leaf's `attnum` order — which differs from
+the root's for a partition created standalone and then attached. So each
+block of a partitioned table lists the same names in its own order.
+
 **Verified against:** v18.6 (source); the `dropped_column`/`generated_column`
 tables in `scripts/fixture_schema_edge_cases.sql` reproduce both shapes in
 real `pg_dump` output on 13.23/16.15/18.6 — the dummy column only appears
-under `--binary-upgrade`, matching the gate above.
+under `--binary-upgrade`, matching the gate above. The per-leaf list: source
+only, v13.23, v16.15 and v18.6; no fixture attaches a reordered partition.
 **Relied on by:** `decisions.md` ("D43" —
-the `COPY` header is authoritative; the DDL is a by-name type lookup).
-**Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`.
+the `COPY` header is authoritative; the DDL is a by-name type lookup);
+`stream.rs`'s `TableColumns`, which reorders a table's blocks by name and
+unions their census by name.
+**Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`,
+and `grep -n 'fmtCopyColumnList(tbinfo' src/bin/pg_dump/pg_dump.c` still
+passing the leaf's `tbinfo` where `copyFrom` is the root's.
 
 ---
 

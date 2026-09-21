@@ -219,7 +219,7 @@ impl ResolvedSchema {
 ///
 /// Per-block attribution (`docs/design/decisions.md`, "D49") is what makes the
 /// exact match possible.
-fn database_for_name<'a>(
+pub(crate) fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
     database: Option<&str>,
 ) -> Option<&'a DatabaseMetadata> {

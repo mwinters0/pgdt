@@ -40,6 +40,15 @@ have written, so switching `--schema-mode` never changes what shows up on
 your terminal or in a pipeline downstream — only whether `pgdt info` (and a
 caller reading `RecordBatch` types directly) sees a narrower Arrow type.
 
+A partitioned table dumped through its root — with `--load-via-partition-root`,
+or by `pg_dump` on its own for a table hash-partitioned on an enum column — is
+written as one `COPY` block per partition, and each block lists the columns in
+its own partition's order, which differs from the table's where a partition was
+created on its own and then attached. Every row comes back in one column order
+whichever block it came from: the table's `CREATE TABLE` order, or the first
+block's where the dump holds no DDL for it. A table whose blocks name different
+columns is refused rather than padded with NULLs the dump never held.
+
 ## What we can and cannot recover from a dump
 
 A dump is not a database. Some things PostgreSQL knows about a value are simply

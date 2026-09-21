@@ -3,6 +3,7 @@
 
 use arrow::datatypes::DataType;
 use futures::StreamExt;
+use pgdump_query::PredicateOp;
 use pgdump_query::cache::{CacheLoad, CacheMode};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{BlockingTableIter, LocalFileSource, QueryOptions, ScanOptions, table_stream};
@@ -618,74 +619,178 @@ async fn a_non_utf8_field_is_refused_only_where_it_is_read() {
     }
 }
 
-/// **A refusal resolving one block of a table is refused before any row**,
-/// even where the blocks before it would have answered: it is a fact of the
-/// plan, on the serial replay as its first item and on a partitioned one
-/// before any sub-stream exists (`docs/design/decisions.md`, "D54"). The
-/// refusing block is the first in file order whatever kind each refuses in:
-/// under a filter on `b` projecting `c`, the first block's missing `c` is the
-/// error, not the second block's missing `b`.
-#[tokio::test]
-async fn a_later_blocks_refusal_is_raised_before_any_row() {
-    use pgdump_query::{
-        Error, Expr, Parallelism, Predicate, PredicateOp, ScanExtent, table_stream_partitions,
+/// A batch's field names beside its rows.
+type NamedRows = (Vec<String>, Vec<Vec<Option<String>>>);
+
+/// Every batch of `table` in `path`, mapped to its end, serially and through
+/// four partitions — each batch's field names beside its rows, in file order.
+async fn one_table(
+    path: &std::path::Path,
+    table: &str,
+    options: QueryOptions,
+) -> pgdump_query::Result<Vec<NamedRows>> {
+    use pgdump_query::{Parallelism, table_stream_partitions};
+
+    // Past the first block, which would otherwise settle an unmarked table.
+    let options = QueryOptions { scan_extent: pgdump_query::ScanExtent::Full, ..options };
+    let source = LocalFileSource::open(path).unwrap();
+    let names = |batch: &arrow::array::RecordBatch| {
+        batch.schema().fields().iter().map(|f| f.name().clone()).collect::<Vec<_>>()
     };
+    let mut serial = Vec::new();
+    let mut stream = table_stream(
+        &source,
+        table,
+        ScanOptions::default(),
+        options.clone(),
+        None,
+        CacheMode::DISABLED,
+    );
+    while let Some(batch) = stream.next().await {
+        let batch = batch?;
+        serial.push((names(&batch), rows_of(&batch)));
+    }
+    let partitioned = QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..options };
+    let mut merged = Vec::new();
+    for mut stream in table_stream_partitions(
+        &source,
+        table,
+        ScanOptions::default(),
+        partitioned,
+        CacheMode::DISABLED,
+    )
+    .await?
+    {
+        while let Some(batch) = stream.next().await {
+            let batch = batch?;
+            merged.push((names(&batch), rows_of(&batch)));
+        }
+    }
+    let flat = |batches: &[NamedRows]| {
+        batches
+            .iter()
+            .flat_map(|(n, rows)| rows.iter().map(move |r| (n.clone(), r.clone())))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(flat(&serial), flat(&merged), "the partitioned replay answers as the serial one");
+    Ok(serial)
+}
+
+/// **One table, one schema** (I2, I5): a table whose blocks list its columns
+/// in different orders — as a partition attached with its own column order
+/// writes them — comes out in one order, each block's rows reordered by name,
+/// and a block naming no columns takes the table's names where its width
+/// matches. With no DDL, the order is the first listing block's.
+#[tokio::test]
+async fn a_tables_blocks_come_out_in_one_column_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("orders.sql");
+    // The block naming no columns carries its fields in the table's order,
+    // which is what `COPY` without a list means.
+    let blocks = |unnamed: &str| {
+        format!(
+            "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n\\.\n\n\
+             COPY public.t (b, a) FROM stdin;\ny\t3\n\\.\n\n\
+             COPY public.t FROM stdin;\n{unnamed}\n\\.\n"
+        )
+    };
+    std::fs::write(&path, blocks("4\tz")).unwrap();
+    let expected = |names: &[&str], rows: [[Option<&str>; 2]; 4]| {
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        rows.iter()
+            .map(|r| (names.clone(), r.iter().map(|v| v.map(str::to_string)).collect::<Vec<_>>()))
+            .collect::<Vec<_>>()
+    };
+    let flat = |batches: Vec<NamedRows>| {
+        batches
+            .into_iter()
+            .flat_map(|(n, rows)| rows.into_iter().map(move |r| (n.clone(), r)))
+            .collect::<Vec<_>>()
+    };
+    let rows = flat(one_table(&path, "public.t", QueryOptions::default()).await.unwrap());
+    assert_eq!(
+        rows,
+        expected(
+            &["a", "b"],
+            [
+                [Some("1"), Some("x")],
+                [Some("2"), None],
+                [Some("3"), Some("y")],
+                [Some("4"), Some("z")]
+            ]
+        )
+    );
+
+    // The DDL's order wins over the first block's, typed or not.
+    let declared =
+        format!("CREATE TABLE public.t (\n    b text,\n    a integer\n);\n\n{}", blocks("z\t4"));
+    std::fs::write(&path, declared).unwrap();
+    for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
+        let options = QueryOptions { schema_mode, ..QueryOptions::default() };
+        let rows = flat(one_table(&path, "public.t", options).await.unwrap());
+        assert_eq!(
+            rows,
+            expected(
+                &["b", "a"],
+                [
+                    [Some("x"), Some("1")],
+                    [None, Some("2")],
+                    [Some("y"), Some("3")],
+                    [Some("z"), Some("4")]
+                ]
+            ),
+            "{schema_mode:?}"
+        );
+    }
+
+    // A projection's order is still the caller's, and a filter reads each
+    // block's own field for the name it gives.
+    use pgdump_query::{Expr, Predicate};
+    let options = QueryOptions {
+        projection: Some(vec!["a".into()]),
+        filter: Expr::all([Predicate {
+            column: "b".into(),
+            op: PredicateOp::IsNotNull,
+            value: None,
+        }]),
+        ..QueryOptions::default()
+    };
+    let rows = flat(one_table(&path, "public.t", options).await.unwrap());
+    let a = |v: &str| (vec!["a".to_string()], vec![Some(v.to_string())]);
+    assert_eq!(rows, vec![a("1"), a("3"), a("4")]);
+}
+
+/// **A table whose blocks name different sets of columns is refused**, before
+/// any row and naming two of them, serially and partitioned alike: no one
+/// schema holds both without stating values the dump never held. So is a
+/// block naming no columns whose rows are not as wide as the table, where it
+/// is reached.
+#[tokio::test]
+async fn a_table_whose_blocks_disagree_on_its_columns_is_refused() {
+    use pgdump_query::Error;
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("two_schemas.sql");
-    std::fs::write(
-        &path,
-        "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n3\ty\n\\.\n\n\
-         COPY public.t (a, c) FROM stdin;\n4\tz\n\\.\n",
-    )
-    .unwrap();
-    let source = LocalFileSource::open(&path).unwrap();
-    let filter =
-        Expr::all([Predicate { column: "b".into(), op: PredicateOp::IsNotNull, value: None }]);
-    let filtered =
-        QueryOptions { filter, scan_extent: ScanExtent::Full, ..QueryOptions::default() };
-    let projected = QueryOptions { projection: Some(vec!["c".into()]), ..filtered.clone() };
-    // The refusal each query expects: its kind, the column it names, and
-    // whether it names the first block, which starts the file at offset 0.
-    let cases = [(filtered, "b", false), (projected, "c", true)];
-    let refused = |err: &Error, projection: bool, expected: &str| {
-        let (column, header_offset) = match err {
-            Error::UnknownPredicateColumn { column, header_offset } if !projection => {
-                (column, header_offset)
-            }
-            Error::UnknownProjectionColumn { column, header_offset } if projection => {
-                (column, header_offset)
-            }
-            other => panic!("the wrong refusal: {other}"),
-        };
-        column == expected && (*header_offset == 0) == projection
-    };
-
-    for (options, column, projection) in cases {
-        let mut stream = table_stream(
-            &source,
-            "public.t",
-            ScanOptions::default(),
-            options.clone(),
-            None,
-            CacheMode::DISABLED,
-        );
-        match stream.next().await.expect("the stream opens with the refusal") {
-            Ok(batch) => panic!("a row before the refusal: {:?}", rows_of(&batch)),
-            Err(err) => assert!(refused(&err, projection, column), "{err}"),
+    let path = dir.path().join("two_sets.sql");
+    let second = "COPY public.t (a, b) FROM stdin;\n1\tx\n\\.\n\n";
+    std::fs::write(&path, format!("{second}COPY public.t (a, c) FROM stdin;\n4\tz\n\\.\n"))
+        .unwrap();
+    let other = second.len() as u64;
+    for options in [
+        QueryOptions::default(),
+        QueryOptions { projection: Some(vec!["a".into()]), ..QueryOptions::default() },
+    ] {
+        match one_table(&path, "public.t", options).await {
+            Err(Error::TableColumnsDisagree { table, header_offset: 0, other_offset })
+                if table == "public.t" && other_offset == other => {}
+            other => panic!("the wrong answer: {other:?}"),
         }
+    }
 
-        let partitioned = QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..options };
-        let err = table_stream_partitions(
-            &source,
-            "public.t",
-            ScanOptions::default(),
-            partitioned,
-            CacheMode::DISABLED,
-        )
-        .await
-        .err()
-        .expect("the plan raises the block's refusal");
-        assert!(refused(&err, projection, column), "{err}");
+    std::fs::write(&path, format!("{second}COPY public.t FROM stdin;\n4\tz\textra\n\\.\n"))
+        .unwrap();
+    match one_table(&path, "public.t", QueryOptions::default()).await {
+        Err(Error::UnnamedBlockWidth { header_offset, expected: 2, found: 3, .. })
+            if header_offset == other => {}
+        other => panic!("the wrong answer: {other:?}"),
     }
 }
