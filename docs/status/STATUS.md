@@ -35,7 +35,7 @@ quotes a number: every figure is in
 | Column projection | working, library and CLI; an unprojected column is never decoded unless a filter term names it | `batch.rs`; D28; [`../manual/type-handling.md`](../manual/type-handling.md) |
 | The filter expression, three-valued | working; `Expr` is one tree evaluated in SQL's `True`/`False`/`Unknown` domain, reached as `--where` and as repeated `--filter` | `predicate.rs`; D53, D54 |
 | The `--where` and `--filter` grammars | working, CLI only; nothing below L4 parses a term | `pgdt/src/where_expr.rs`, `main.rs`; D60; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`" and "Writing a filter term" |
-| Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault | `predicate.rs`, `pgtype.rs`; D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
+| Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault; a query may compare in Arrow's order of the emitted value instead, which refuses a nested column | `predicate.rs`, `pgtype.rs`; D40, D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
 | The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced per term on its own channel; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation | committed under `fixtures/<major>/oracle/` and checked by `predicate.rs`'s unit test, `scripts/oracle_differences.py` and `scripts/oracle_register.py` | D70, D71 |
 | ADBC floor oracle and the floor rule | committed under `fixtures/<major>/adbc/` and reconciled by `scripts/floor_mapping.py` | D38 |
@@ -84,8 +84,9 @@ delivered.
   gathered bounds, checked against Arrow's `cmp` kernels on the emitted arrays,
   recording which kinds already agree. Test code only.
   [Notes](../design/roadmap-P6.1-arrow-order-notes.md).
-- [ ] **6.2** An Arrow-semantics comparison mode in the library, and bounds
+- [x] **6.2** An Arrow-semantics comparison mode in the library, and bounds
   gathered in it or reported absent.
+  [Notes](../design/roadmap-P6.2-arrow-semantics-notes.md).
 - [ ] **6.3** One diagnostics sink draining the file-level, per-column and
   comparison channels.
 - [ ] **6.4** One schema per table: blocks reordered by name into the table's
@@ -391,3 +392,27 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **Arrow semantics refuses every comparing operator on a nested column, and
+  every ordering operator on a column with no plan** (6.2, `resolve_term`).
+  The spec's reading of the v55 source is that nothing in DataFusion
+  obstructs pushing a nested comparison down. But no nested order was checked
+  against Arrow's: 6.1 walked scalars only, and `cmp` refuses struct and list
+  arrays. A range, emitted as a struct, would compare field by field there,
+  unlike `range_cmp`. So the call was to refuse, never to guess, and 6.6 will
+  push none of these terms. Arrow does order a planless column's `Utf8View`
+  bytewise. That covers `--schema-mode strings`, `money`, `box` and `xml`,
+  and the library could answer it. Reconsidering means Arrow-order nested
+  keys, with evidence from DataFusion's own list and struct comparison, and a
+  `Text` kind for every column emitted as `Utf8View`.
+- **In Arrow semantics, collated text is not prunable by its bounds.** The
+  spec says collated text "becomes pushable and prunable as it stands".
+  Pushable holds. Prunable holds only for `=` through the dictionary.
+  `ColumnGatherer::new` (`gather.rs`) takes no bounds where PostgreSQL's
+  order diverges (D79), and every bare `text`, `varchar` and `character`
+  column diverges as `UnknownCollation`. So Arrow-mode bounds exist only for
+  a `COLLATE "C"` column or a `name` column, and 6.7 has no `Exact` text
+  bounds to hand DataFusion. Closing this means gathering bytewise bounds for
+  divergent text as well. That changes D79, raises statistics volume on
+  nearly every text column (D86, `KD33`), and moves the
+  `statistics-gathering` figure, so it was left alone.

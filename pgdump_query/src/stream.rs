@@ -71,6 +71,7 @@ use crate::io::{
 };
 use crate::leader::{self, RegionScan};
 use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text};
+use crate::pgtype::ComparisonSemantics;
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::prune::{SortedStop, prune_block};
@@ -140,11 +141,12 @@ fn resolve_expr(
     filter: &Expr,
     resolved: &ResolvedSchema,
     header_offset: u64,
+    semantics: ComparisonSemantics,
 ) -> Result<ResolvedExpr> {
     let branch = |children: &[Expr]| {
         children
             .iter()
-            .map(|child| resolve_expr(child, resolved, header_offset))
+            .map(|child| resolve_expr(child, resolved, header_offset, semantics))
             .collect::<Result<Vec<_>>>()
     };
     Ok(match filter {
@@ -158,12 +160,12 @@ fn resolve_expr(
                     header_offset,
                     column: predicate.column.clone(),
                 })?;
-            ResolvedExpr::Term(resolve_term(predicate, index, resolved, header_offset)?)
+            ResolvedExpr::Term(resolve_term(predicate, index, resolved, header_offset, semantics)?)
         }
         Expr::And(children) => ResolvedExpr::And(branch(children)?),
         Expr::Or(children) => ResolvedExpr::Or(branch(children)?),
         Expr::Not(inner) => {
-            ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset)?))
+            ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset, semantics)?))
         }
     })
 }
@@ -210,7 +212,7 @@ fn project(
 }
 
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
-/// projection, the filter terms, the schema mode and — for a sub-stream of a
+/// projection, the filter terms and their semantics, the schema mode and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
 /// (`docs/design/decisions.md`, "D50"). The hasher's output is not stable
 /// across Rust releases: a token is valid only within its own process.
@@ -250,6 +252,11 @@ fn query_fingerprint(
         }
     }
     hash_expr(&options.filter, &mut hasher);
+    match options.semantics {
+        ComparisonSemantics::Postgres => 0u8,
+        ComparisonSemantics::Arrow => 1u8,
+    }
+    .hash(&mut hasher);
     hasher.finish()
 }
 
@@ -2004,7 +2011,8 @@ fn resolve_for_query(
         resolve_block(header, field_count, metadata, database, query_options.schema_mode, census)?;
     // Against the *unprojected* schema: a term's index numbers the raw row's
     // fields, and a term may name a column the projection dropped.
-    let filter = resolve_expr(&query_options.filter, &full, header_offset)?;
+    let filter =
+        resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?;
     let notes = filter.comparison_notes();
     let (resolved, field_targets) =
         project(&full, query_options.projection.as_deref(), header_offset)?;

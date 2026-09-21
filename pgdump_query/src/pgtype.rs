@@ -207,6 +207,63 @@ pub enum CompareKind {
     /// (I41) — the database's collation, absent from a plain dump (I32) — so
     /// the column carries [`ComparisonDivergence::JsonbStringCollation`].
     Jsonb,
+    /// `real` under Arrow's order: IEEE `totalOrder`, so `-0` is below `0`
+    /// and unequal to it, where [`Self::Float32`] equates them. No register
+    /// arm answers it; [`Self::arrow_order`] alone produces it.
+    Float32Total,
+    /// `double precision` under Arrow's order, as [`Self::Float32Total`].
+    Float64Total,
+    /// `interval` under Arrow's order of `Interval(MonthDayNano)`: months,
+    /// then days, then the time part, each compared alone, so `30 days` is
+    /// below `1 mon` where [`Self::Interval`] equates them. Produced only by
+    /// [`Self::arrow_order`].
+    IntervalFields,
+}
+
+/// Which order a query's comparisons answer in.
+///
+/// **One mode per query**, never per term: DataFusion decides per plan which
+/// filters reach a provider, so a filter answered in one semantics when
+/// pushed and another when not makes a query's rows depend on its plan
+/// (`docs/design/decisions.md`, "D40").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ComparisonSemantics {
+    /// PostgreSQL's comparison of the declared type, as the register gives
+    /// it — `pgdt`'s, and the default.
+    #[default]
+    Postgres,
+    /// Arrow's order of the value the column emits — what Arrow's `cmp`
+    /// kernels answer over the batch this build produces, and so what
+    /// DataFusion compares with. A comparison this build cannot answer that
+    /// way is refused rather than answered in the other semantics.
+    Arrow,
+}
+
+impl CompareKind {
+    /// The kind whose order over this kind's field text is Arrow's order over
+    /// the value its column emits. Most kinds are their own: their key *is*
+    /// the emitted value, or (`MacAddr`) its text orders as its octets do.
+    /// The kinds emitted as `Utf8View` whose comparison is not bytewise, an
+    /// enum (emitted `Dictionary`, compared by label text) and `character(n)`
+    /// (emitted padded) become [`Self::Text`]; the floats and `interval`
+    /// become their Arrow-order variants.
+    ///
+    /// A special value the emitted type cannot hold (`KD8`) keeps its rank in
+    /// the key, which no Arrow value contradicts.
+    pub fn arrow_order(&self) -> CompareKind {
+        match self {
+            Self::Float32 => Self::Float32Total,
+            Self::Float64 => Self::Float64Total,
+            Self::Interval => Self::IntervalFields,
+            Self::Enum(_)
+            | Self::Numeric { .. }
+            | Self::TimeTz
+            | Self::Network { .. }
+            | Self::Jsonb
+            | Self::PaddedText => Self::Text,
+            kind => kind.clone(),
+        }
+    }
 }
 
 /// How a comparison here differs from PostgreSQL's own for the same declared
@@ -544,6 +601,39 @@ impl ComparisonPlan {
             Self::Compared { .. } => true,
             Self::Nested(tree) => tree.uncomparable().is_none(),
             Self::Unanswerable(_) | Self::Refused => false,
+        }
+    }
+
+    /// Whether the bounds and row order gathering stores for a column of this
+    /// plan are ordered as `semantics` orders the column — `false` where
+    /// gathering keeps none. Gathering takes them under the register's own
+    /// order, and only where that order is exact
+    /// (`docs/design/decisions.md`, "D79"); Arrow's is the same order exactly
+    /// where [`CompareKind::arrow_order`] leaves the kind alone.
+    pub fn bounds_ordered_in(&self, semantics: ComparisonSemantics) -> bool {
+        match (self, semantics) {
+            (Self::Compared { divergence: None, .. }, ComparisonSemantics::Postgres) => true,
+            (Self::Compared { kind, divergence: None }, ComparisonSemantics::Arrow) => {
+                kind.arrow_order() == *kind
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the dictionary gathering stores for a column of this plan
+    /// answers `semantics`' equality — `false` where gathering keeps none.
+    /// It is kept where the register's `=` is exact (D79), and an entry is
+    /// the field's own text, which a term answers as it answers a row holding
+    /// it, whatever it compares by; `character(n)` alone stores its entries
+    /// unpadded, which is its `=` and not Arrow's.
+    pub fn dictionary_answers_in(&self, semantics: ComparisonSemantics) -> bool {
+        match self {
+            Self::Compared { kind, divergence } => {
+                divergence.is_none_or(|d| !d.affects_equality())
+                    && (semantics == ComparisonSemantics::Postgres
+                        || *kind != CompareKind::PaddedText)
+            }
+            _ => false,
         }
     }
 

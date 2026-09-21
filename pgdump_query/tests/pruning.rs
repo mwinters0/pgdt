@@ -18,9 +18,9 @@ use arrow::compute::concat_batches;
 use futures::StreamExt;
 use pgdump_query::cache::{self, CacheMode};
 use pgdump_query::{
-    CopyBlock, DumpIndex, EarlyStop, Expr, LocalFileSource, Parallelism, PlanNote, PlanNoteKind,
-    Predicate, PredicateOp, QueryOptions, ScanOptions, StatisticsRequest, StatisticsSelection,
-    map_file, table_stream, table_stream_partitions,
+    ComparisonSemantics, CopyBlock, DumpIndex, EarlyStop, Expr, LocalFileSource, Parallelism,
+    PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, StatisticsRequest,
+    StatisticsSelection, map_file, table_stream, table_stream_partitions,
 };
 
 mod common;
@@ -33,6 +33,10 @@ const TINY_GROUP: u64 = 32;
 
 /// Random trees per table, each run pruned and unpruned, serially and split.
 const TREES_PER_TABLE: usize = 24;
+
+/// Random trees per table under Arrow's semantics
+/// (`ComparisonSemantics::Arrow`), over the terms that resolve there.
+const ARROW_TREES_PER_TABLE: usize = 8;
 
 /// Literals drawn for each operator over each column.
 const LITERALS_PER_OPERATOR: usize = 2;
@@ -365,8 +369,10 @@ async fn check(
 
 /// **The correctness check.** Every fixture, gathered at [`TINY_GROUP`]
 /// bytes; for every table, terms under every operator over each column
-/// carrying statistics, and seeded random `And`/`Or`/`Not` trees over them.
-/// One thread per major, each with its own seed.
+/// carrying statistics, and seeded random `And`/`Or`/`Not` trees over them —
+/// in PostgreSQL's semantics, and again over the terms that resolve in
+/// Arrow's, where statistics are read only as far as they hold there. One
+/// thread per major, each with its own seed.
 ///
 /// **It runs whole, in the default suite**, though no other test here costs
 /// as much: its floors are what make it the check, and every later change to
@@ -377,7 +383,7 @@ async fn check(
 fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
     let mut fixtures = all_fixtures();
     fixtures.sort();
-    let tallies: Vec<Tally> = std::thread::scope(|scope| {
+    let tallies: Vec<(Tally, Tally)> = std::thread::scope(|scope| {
         let workers: Vec<_> = VERSIONS
             .iter()
             .map(|&version| {
@@ -393,26 +399,33 @@ fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
                     runtime.block_on(async {
                         let oracle = oracle_literals(&version.to_string());
                         let mut rng = Rng(0x5eed_1008 + u64::from(version));
-                        let mut tally = Tally::default();
+                        let mut tallies = (Tally::default(), Tally::default());
                         for fixture in mine {
-                            check_fixture(&fixture, &oracle, &mut rng, &mut tally).await;
+                            check_fixture(&fixture, &oracle, &mut rng, &mut tallies).await;
                         }
-                        tally
+                        tallies
                     })
                 })
             })
             .collect();
         workers.into_iter().map(|worker| worker.join().unwrap()).collect()
     });
-    let tally = tallies.into_iter().fold(Tally::default(), |mut sum, t| {
-        sum.compared += t.compared;
-        sum.pruning += t.pruning;
-        sum.stopping += t.stopping;
-        sum.skipped_groups += t.skipped_groups;
-        sum.unpruned_errors += t.unpruned_errors;
-        sum.errors_raised_pruned += t.errors_raised_pruned;
-        sum
-    });
+    let sum = |tallies: &mut dyn Iterator<Item = Tally>| {
+        tallies.fold(Tally::default(), |mut sum, t| {
+            sum.compared += t.compared;
+            sum.pruning += t.pruning;
+            sum.stopping += t.stopping;
+            sum.skipped_groups += t.skipped_groups;
+            sum.unpruned_errors += t.unpruned_errors;
+            sum.errors_raised_pruned += t.errors_raised_pruned;
+            sum
+        })
+    };
+    let (tally, arrow): (Vec<Tally>, Vec<Tally>) = tallies.into_iter().unzip();
+    let (tally, arrow) = (sum(&mut tally.into_iter()), sum(&mut arrow.into_iter()));
+    assert!(arrow.compared > 12_000, "{arrow:?}");
+    assert!(arrow.pruning > arrow.compared / 3, "{arrow:?}");
+    assert!(arrow.stopping > 10, "{arrow:?}");
     assert!(tally.compared > 40_000, "{tally:?}");
     assert!(tally.pruning > tally.compared / 3, "{tally:?}");
     assert!(tally.stopping > 20, "{tally:?}");
@@ -435,7 +448,7 @@ async fn check_fixture(
     fixture: &Path,
     oracle: &BTreeMap<String, Vec<String>>,
     rng: &mut Rng,
-    tally: &mut Tally,
+    (tally, arrow_tally): &mut (Tally, Tally),
 ) {
     let (dir, dump, index) = gathered(fixture, TINY_GROUP).await;
     // Resolution reads no statistic, so what refuses is asked of a cache
@@ -475,11 +488,14 @@ async fn check_fixture(
             }
         };
         let base = QueryOptions { projection, ..everything };
+        let arrow = QueryOptions { semantics: ComparisonSemantics::Arrow, ..base.clone() };
 
-        let mut terms = Vec::new();
+        let (mut terms, mut arrow_terms) = (Vec::new(), Vec::new());
         for (i, name) in header.columns.iter().enumerate() {
-            terms.push(term(name, PredicateOp::IsNull, None));
-            terms.push(term(name, PredicateOp::IsNotNull, None));
+            for op in [PredicateOp::IsNull, PredicateOp::IsNotNull] {
+                terms.push(term(name, op, None));
+                arrow_terms.push(term(name, op, None));
+            }
             let values = literals(&blocks, i, oracle, rng);
             if values.is_empty() {
                 continue;
@@ -489,6 +505,9 @@ async fn check_fixture(
                     let candidate = term(name, op, Some(&values[rng.below(values.len())]));
                     // Kept only where it resolves: a refusal refuses both
                     // queries alike, and a tree holding one compares nothing.
+                    if resolves(&dump, &plain, &table, &arrow, &candidate).await {
+                        arrow_terms.push(candidate.clone());
+                    }
                     if resolves(&dump, &plain, &table, &base, &candidate).await {
                         terms.push(candidate);
                     }
@@ -504,6 +523,10 @@ async fn check_fixture(
         for _ in 0..TREES_PER_TABLE {
             let tree = random_tree(rng, &terms, 3);
             check(&dump, (&plain, &gathered_cache), &table, &base, tree, tally).await;
+        }
+        for _ in 0..ARROW_TREES_PER_TABLE {
+            let tree = random_tree(rng, &arrow_terms, 3);
+            check(&dump, (&plain, &gathered_cache), &table, &arrow, tree, arrow_tally).await;
         }
     }
 }

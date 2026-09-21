@@ -322,6 +322,18 @@ async fn a_resume_token_covers_the_whole_conjunction() {
     );
     assert!(matches!(reshaped.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
 
+    // And the semantics its terms compare in, which can change the rows the
+    // same terms select.
+    let mut arrow = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        QueryOptions { semantics: pgdump_query::ComparisonSemantics::Arrow, ..options.clone() },
+        Some(token.clone()),
+        CacheMode::DISABLED,
+    );
+    assert!(matches!(arrow.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
+
     let mut resumed = table_stream(
         &source,
         "public.widgets",

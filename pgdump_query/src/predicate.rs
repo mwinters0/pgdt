@@ -8,8 +8,8 @@ use crate::copy::{RawRow, RowSplit};
 use crate::decode;
 use crate::nested;
 use crate::pgtype::{
-    CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare, NestedPlan,
-    UnanswerableReason,
+    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, NestedCompare,
+    NestedPlan, UnanswerableReason,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
@@ -844,12 +844,19 @@ enum OrderKey {
     Bool(bool),
     Int(i64),
     Float(f64),
+    /// A float under Arrow's order, IEEE `totalOrder` ([`f64::total_cmp`]).
+    /// Held as `f64` for a `real` too: widening preserves that order.
+    TotalFloat(f64),
     Decimal(i256),
     /// A bare `numeric`, whose digits do not fit any fixed-width integer.
     Numeric(NumericKey),
     /// An `interval`'s span in microseconds, which is 128 bits wide because
     /// PostgreSQL's own `interval_cmp_value` is (I40).
     Interval(i128),
+    /// An `interval`'s three fields as `Interval(MonthDayNano)` holds them —
+    /// months, days, microseconds — compared one after another, as Arrow
+    /// compares that type.
+    IntervalFields(i64, i64, i128),
     /// A `time with time zone`: the UTC-equivalent instant, then the stored
     /// zone as PostgreSQL stores it — seconds *west* of GMT, the negation of
     /// the sign the value displays.
@@ -887,9 +894,11 @@ impl OrderKey {
             Self::Bool(_)
             | Self::Int(_)
             | Self::Float(_)
+            | Self::TotalFloat(_)
             | Self::Decimal(_)
             | Self::Numeric(_)
             | Self::Interval(_)
+            | Self::IntervalFields(..)
             | Self::TimeTz { .. }
             | Self::Network(_)
             | Self::Jsonb(_)
@@ -921,7 +930,10 @@ impl OrderKey {
 /// not.
 fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
-        CompareKind::Date | CompareKind::Timestamp { .. } | CompareKind::Interval => match text {
+        CompareKind::Date
+        | CompareKind::Timestamp { .. }
+        | CompareKind::Interval
+        | CompareKind::IntervalFields => match text {
             "infinity" => Some(OrderKey::PositiveInfinity),
             "-infinity" => Some(OrderKey::NegativeInfinity),
             _ => None,
@@ -1061,6 +1073,8 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
+        CompareKind::Float32Total => OrderKey::TotalFloat(f64::from(decode::decode_f32(text)?)),
+        CompareKind::Float64Total => OrderKey::TotalFloat(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {
             OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, *scale)?)?)
         }
@@ -1075,6 +1089,10 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
             OrderKey::Int(decode::decode_timestamp_micros(text, *with_tz)?)
         }
         CompareKind::Interval => OrderKey::Interval(interval_span(text)?),
+        CompareKind::IntervalFields => {
+            let (months, days, time) = decode::interval_parts(text)?;
+            OrderKey::IntervalFields(months, days, time)
+        }
         CompareKind::TimeTz => timetz_key(text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
         CompareKind::MacAddr { octets } => macaddr_key(text, *octets)?,
@@ -1121,9 +1139,13 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         (OrderKey::Bool(x), OrderKey::Bool(y)) => x.cmp(y),
         (OrderKey::Int(x), OrderKey::Int(y)) => x.cmp(y),
         (OrderKey::Float(x), OrderKey::Float(y)) => pg_float_cmp(*x, *y),
+        (OrderKey::TotalFloat(x), OrderKey::TotalFloat(y)) => x.total_cmp(y),
         (OrderKey::Decimal(x), OrderKey::Decimal(y)) => x.cmp(y),
         (OrderKey::Numeric(x), OrderKey::Numeric(y)) => x.cmp(y),
         (OrderKey::Interval(x), OrderKey::Interval(y)) => x.cmp(y),
+        (OrderKey::IntervalFields(m, d, t), OrderKey::IntervalFields(n, e, u)) => {
+            (m, d, t).cmp(&(n, e, u))
+        }
         (
             OrderKey::TimeTz { utc: utc_x, zone: zone_x },
             OrderKey::TimeTz { utc: utc_y, zone: zone_y },
@@ -1168,8 +1190,10 @@ impl ValueKey {
             | OrderKey::Bool(_)
             | OrderKey::Int(_)
             | OrderKey::Float(_)
+            | OrderKey::TotalFloat(_)
             | OrderKey::Decimal(_)
             | OrderKey::Interval(_)
+            | OrderKey::IntervalFields(..)
             | OrderKey::TimeTz { .. }
             | OrderKey::Network(_)
             | OrderKey::PositiveInfinity
@@ -1713,8 +1737,11 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
         // rule the ordering operators use (I34).
         K::Float32
         | K::Float64
+        | K::Float32Total
+        | K::Float64Total
         | K::Numeric { .. }
         | K::Interval
+        | K::IntervalFields
         | K::Jsonb
         | K::TimeTz
         | K::Network { .. } => {
@@ -1823,7 +1850,9 @@ fn accepted_form(kind: &CompareKind) -> String {
         // The width *is* the refusal: `oidin` wraps a negative and this does
         // not, so the range is the useful half of the sentence.
         K::UnsignedInt => "as a whole number from 0 to 4294967295".into(),
-        K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`".into(),
+        K::Float32 | K::Float64 | K::Float32Total | K::Float64Total => {
+            "as a number, or `Infinity`, `-Infinity` or `NaN`".into()
+        }
         // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
         // `numeric` past 76 digits — has `NaN` and nothing else. Only the
         // typed arm carries a scale to be finer than: a `p > 76` column is
@@ -1853,7 +1882,7 @@ fn accepted_form(kind: &CompareKind) -> String {
         }
         // `interval_out` under `IntervalStyle = postgres` (I4), which is the
         // only style a `pg_dump` connection writes.
-        K::Interval => {
+        K::Interval | K::IntervalFields => {
             "the way `interval` prints it — `1 year 2 mons 3 days`, `-01:00:00`, `00:00:00` for \
              zero — or `infinity`/`-infinity`"
                 .into()
@@ -2082,6 +2111,8 @@ fn nested_refusal(path: &str, declared: &str) -> String {
     )
 }
 const NO_ORDER: &str = "this build defines no ordering for the column's declared type";
+const NESTED_IN_ARROW: &str = "the column is nested (array, composite, range or multirange), and \
+     this build does not compare a nested value in Arrow's semantics";
 
 /// The sentence for a column the register can answer **no** operator on,
 /// worded here rather than in `crate::pgtype` for the same reason
@@ -2118,11 +2149,19 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// Nothing here reads the Arrow type: how a column compares is a conclusion
 /// resolution already reached (`crate::pgtype::comparison_for`), carried in
 /// [`ResolvedSchema::comparisons`].
+///
+/// **Under [`ComparisonSemantics::Arrow`]** a scalar compares by its kind's
+/// [`CompareKind::arrow_order`], every comparing operator on a nested column
+/// is refused, statistics are read only where they are ordered or equated
+/// that way, and no term announces a divergence from PostgreSQL, which is a
+/// property of the column rather than of the term
+/// (`docs/design/decisions.md`, "D40").
 pub(crate) fn resolve_term(
     predicate: &Predicate,
     index: usize,
     resolved: &ResolvedSchema,
     header_offset: u64,
+    semantics: ComparisonSemantics,
 ) -> Result<ResolvedTerm> {
     if matches!(predicate.op, PredicateOp::IsNull | PredicateOp::IsNotNull) {
         return Ok(ResolvedTerm { op: predicate.op, index, compared: None });
@@ -2133,6 +2172,13 @@ pub(crate) fn resolve_term(
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
         reason: reason.to_string(),
+    };
+    let arrow = semantics == ComparisonSemantics::Arrow;
+    let refuse_nested_in_arrow = || Error::UncomparablePredicateColumn {
+        header_offset,
+        column: predicate.column.clone(),
+        op: predicate.op.symbol(),
+        reason: NESTED_IN_ARROW.to_string(),
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
     // `value` is `Some` for every operator but the two NULL tests. An
@@ -2171,6 +2217,9 @@ pub(crate) fn resolve_term(
             reason: unanswerable_reason(reason),
         });
     } else if let Some(ComparisonPlan::Nested(tree)) = plan {
+        if arrow {
+            return Err(refuse_nested_in_arrow());
+        }
         // A nested column whose *shape* is compared here but one of whose
         // positions is not: the ordering operators are refused naming that
         // position, and `=`/`!=` fall back to a byte comparison of the
@@ -2190,13 +2239,20 @@ pub(crate) fn resolve_term(
         // register has no bound type to name a refusal after — and it is also
         // where the two walks would land if they disagreed about a declared
         // type, the alternative to refusing being a silent scalar comparison.
+        if arrow {
+            return Err(refuse_nested_in_arrow());
+        }
         if ordering {
             return Err(refuse(NESTED));
         }
         plan = None;
     }
     let (comparison, divergences, statistics) = match plan {
-        Some(ComparisonPlan::Compared { kind, divergence }) => {
+        Some(compared @ ComparisonPlan::Compared { kind, divergence }) => {
+            let kind = &match semantics {
+                ComparisonSemantics::Postgres => kind.clone(),
+                ComparisonSemantics::Arrow => kind.arrow_order(),
+            };
             let comparison = if ordering {
                 Comparison::Ordered {
                     kind: kind.clone(),
@@ -2211,13 +2267,12 @@ pub(crate) fn resolve_term(
                 .into_iter()
                 .collect();
             let statistics = BelievedStatistics {
-                // Every divergence reaches ordering, so exactness is its
-                // absence. A literal that does not key reads no bounds.
-                bounds: divergence
-                    .is_none()
+                // A literal that does not key reads no bounds.
+                bounds: compared
+                    .bounds_ordered_in(semantics)
                     .then(|| order_key(kind, text).map(|key| Box::new((kind.clone(), key))))
                     .flatten(),
-                dictionary: !ordering && divergences.is_empty(),
+                dictionary: !ordering && compared.dictionary_answers_in(semantics),
             };
             (comparison, divergences, statistics)
         }
@@ -2282,6 +2337,9 @@ pub(crate) fn resolve_term(
             BelievedStatistics::NONE,
         ),
     };
+    // Arrow's answer is not the register's to qualify: a divergence from
+    // PostgreSQL is the column's (`docs/design/decisions.md`, "D40").
+    let divergences = if arrow { Vec::new() } else { divergences };
     Ok(ResolvedTerm {
         op: predicate.op,
         index,
@@ -2798,6 +2856,23 @@ mod tests {
     use crate::pgtype::comparison_for;
     use crate::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
+
+    /// [`super::resolve_term`] in PostgreSQL's semantics, which every test
+    /// but the Arrow-semantics ones asks for.
+    fn resolve_term(
+        predicate: &Predicate,
+        index: usize,
+        resolved: &ResolvedSchema,
+        header_offset: u64,
+    ) -> Result<ResolvedTerm> {
+        super::resolve_term(
+            predicate,
+            index,
+            resolved,
+            header_offset,
+            ComparisonSemantics::Postgres,
+        )
+    }
 
     /// A term resolved against a column the register has no plan for — what
     /// every `Eq`/`Ne` on an unresolved column falls back to, and what the
@@ -3680,6 +3755,74 @@ mod tests {
             resolve_term(&p, 0, &one_column("mystery", DataType::UInt8), 0).unwrap_err(),
             Error::UnorderedPredicateColumn { reason, .. } if reason == NO_ORDER
         ));
+    }
+
+    /// Under Arrow's semantics every comparing operator on a nested column is
+    /// refused — `=` too, which PostgreSQL's answers structurally or as text
+    /// — and a column with no plan still answers `=` bytewise, which is
+    /// Arrow's `=` over the `Utf8View` it emits, announcing nothing.
+    #[test]
+    fn arrow_semantics_refuses_a_nested_column_under_every_comparing_operator() {
+        let arrow = |p: &Predicate, resolved: &ResolvedSchema| {
+            super::resolve_term(p, 0, resolved, 0, ComparisonSemantics::Arrow)
+        };
+        let mut opaque = one_column("public.opaquerange", DataType::Utf8View);
+        opaque.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+        let array = nested_column("integer[]", &[]);
+        let mut inherited = one_column("json[]", DataType::Utf8View);
+        inherited.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        for resolved in [&opaque, &array, &inherited] {
+            for op in [PredicateOp::Eq, PredicateOp::IsDistinctFrom, PredicateOp::Lt] {
+                let err = arrow(&order_predicate(op, "{}"), resolved).unwrap_err();
+                assert!(
+                    matches!(&err, Error::UncomparablePredicateColumn { reason, .. }
+                        if reason == NESTED_IN_ARROW),
+                    "{err:?}"
+                );
+            }
+            assert!(arrow(&order_predicate(PredicateOp::IsNull, "{}"), resolved).is_ok());
+        }
+        let mut unknown = one_column("box", DataType::Utf8View);
+        unknown.columns[0] = ColumnResolution::UnknownType;
+        let term = arrow(&order_predicate(PredicateOp::Eq, "(1,1),(0,0)"), &unknown).unwrap();
+        assert!(term.comparison_notes().is_empty());
+        assert_eq!(term.eval_value(Some("(1,1),(0,0)")), Some(Truth::True));
+    }
+
+    /// Which statistics a term reads, per semantics: `(bounds under <,
+    /// dictionary under =)`. **Arrow's semantics reads bounds only where a
+    /// kind keeps its order there** — they were gathered in PostgreSQL's —
+    /// and a dictionary wherever its entries are the field's own text, which
+    /// `character(n)`'s, stored unpadded, are not.
+    #[test]
+    fn arrow_semantics_reads_only_the_statistics_that_hold_there() {
+        let read = |declared: &str, literal: &str, semantics| {
+            let believed = |op| {
+                let p = order_predicate(op, literal);
+                let resolved = one_column(declared, DataType::Utf8View);
+                let term = super::resolve_term(&p, 0, &resolved, 0, semantics).unwrap();
+                term.compared.unwrap().statistics
+            };
+            (believed(PredicateOp::Lt).bounds.is_some(), believed(PredicateOp::Eq).dictionary)
+        };
+        for (declared, literal, postgres, arrow) in [
+            ("integer", "1", (true, true), (true, true)),
+            ("uuid", "00000000-0000-0000-0000-000000000000", (true, true), (true, true)),
+            ("real", "1", (true, true), (false, true)),
+            ("numeric", "1", (true, true), (false, true)),
+            ("interval", "1 day", (true, true), (false, true)),
+            ("public.mood", "ok", (true, true), (false, true)),
+            // On the database's collation, so gathered with no bounds.
+            ("text", "a", (false, true), (false, true)),
+            ("character(3)", "a", (false, true), (false, false)),
+        ] {
+            assert_eq!(
+                read(declared, literal, ComparisonSemantics::Postgres),
+                postgres,
+                "{declared}"
+            );
+            assert_eq!(read(declared, literal, ComparisonSemantics::Arrow), arrow, "{declared}");
+        }
     }
 
     /// A range type declaring a `canonical` function refuses **every**
@@ -5558,7 +5701,8 @@ mod tests {
         const SUPPLEMENT: &[(&str, &str)] = &[("inet", "9.0.0.1"), ("cidr", "9.0.0.0/8")];
 
         /// A stable name per [`CompareKind`] variant, exhaustive so a new kind
-        /// cannot go unrecorded in [`ARROW_AGREEMENT`].
+        /// cannot go unrecorded in [`ARROW_AGREEMENT`]. The three only
+        /// [`CompareKind::arrow_order`] produces are named and never walked.
         fn kind_name(kind: &CompareKind) -> &'static str {
             match kind {
                 CompareKind::Bool => "Bool",
@@ -5581,6 +5725,9 @@ mod tests {
                 CompareKind::Network { .. } => "Network",
                 CompareKind::MacAddr { .. } => "MacAddr",
                 CompareKind::Jsonb => "Jsonb",
+                CompareKind::Float32Total => "Float32Total",
+                CompareKind::Float64Total => "Float64Total",
+                CompareKind::IntervalFields => "IntervalFields",
             }
         }
 
@@ -5766,6 +5913,124 @@ mod tests {
                 })
                 .collect();
             assert_eq!(table, ARROW_AGREEMENT, "\n{}", report.join("\n"));
+        }
+
+        /// **Under [`ComparisonSemantics::Arrow`] every comparing operator
+        /// answers as Arrow's kernels do** over the array a batch builds,
+        /// over every value the server wrote for every declared type the
+        /// register compares as a scalar, on six majors, each value in turn
+        /// the literal — and announces nothing. A nested column refuses
+        /// every comparing operator instead.
+        ///
+        /// It also holds the rule for which stored bounds Arrow's semantics
+        /// reads ([`ComparisonPlan::bounds_ordered_in`]) to the evidence
+        /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::arrow_order`]
+        /// leaves alone is one whose order and gathered bounds were found
+        /// to be Arrow's.
+        #[tokio::test]
+        async fn arrow_semantics_answers_as_arrow_s_kernels() {
+            const OPS: [PredicateOp; 8] = [
+                PredicateOp::Eq,
+                PredicateOp::Ne,
+                PredicateOp::Lt,
+                PredicateOp::Le,
+                PredicateOp::Gt,
+                PredicateOp::Ge,
+                PredicateOp::IsDistinctFrom,
+                PredicateOp::IsNotDistinctFrom,
+            ];
+            let arrow_term = |p: &Predicate, resolved: &ResolvedSchema| {
+                crate::predicate::resolve_term(p, 0, resolved, 0, ComparisonSemantics::Arrow)
+            };
+            let mut kinds: BTreeMap<&'static str, CompareKind> = BTreeMap::new();
+            let (mut answered, mut nested_refused) = (0usize, 0usize);
+            for major in MAJORS {
+                let types = types_of(major).await;
+                let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    if let (Some(declared), Some("ok"), Some(output)) =
+                        (row[0].clone(), row[2].as_deref(), row[3].clone())
+                    {
+                        outputs.entry(declared).or_default().insert(output);
+                    }
+                }
+                for (declared, value) in SUPPLEMENT {
+                    outputs.entry(declared.to_string()).or_default().insert(value.to_string());
+                }
+                for (declared, values) in outputs {
+                    let resolved = schema(&declared, None, &types);
+                    let kind = match &resolved.comparisons[0] {
+                        ComparisonPlan::Compared { kind, .. } => kind.clone(),
+                        ComparisonPlan::Nested(_) => {
+                            let literal = values.first().cloned();
+                            for op in OPS {
+                                let p =
+                                    Predicate { column: "v".into(), op, value: literal.clone() };
+                                assert!(
+                                    matches!(
+                                        arrow_term(&p, &resolved),
+                                        Err(Error::UncomparablePredicateColumn { .. })
+                                    ),
+                                    "{major} {declared} {op:?}"
+                                );
+                                nested_refused += 1;
+                            }
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    let data_type = resolved.schema.field(0).data_type();
+                    let plan = &resolved.plans[0];
+                    let held: Vec<&str> = values
+                        .iter()
+                        .map(String::as_str)
+                        .filter(|v| crate::batch::column_of(data_type, plan, &[v]).is_ok())
+                        .collect();
+                    if held.is_empty() {
+                        continue;
+                    }
+                    kinds.insert(kind_name(&kind), kind);
+                    let array = crate::batch::column_of(data_type, plan, &held).unwrap();
+                    for (j, b) in held.iter().enumerate() {
+                        let arrow = arrow_against(&array, j)
+                            .unwrap_or_else(|e| panic!("{major} {declared}: {e}"));
+                        for op in OPS {
+                            let p =
+                                Predicate { column: "v".into(), op, value: Some(b.to_string()) };
+                            let term = arrow_term(&p, &resolved)
+                                .unwrap_or_else(|e| panic!("{major} {declared} {op:?} {b:?}: {e}"));
+                            assert!(term.comparison_notes().is_empty(), "{major} {declared}");
+                            for (i, a) in held.iter().enumerate() {
+                                let ord = arrow[i];
+                                let want = match op {
+                                    PredicateOp::Eq | PredicateOp::IsNotDistinctFrom => ord.is_eq(),
+                                    PredicateOp::Ne | PredicateOp::IsDistinctFrom => ord.is_ne(),
+                                    PredicateOp::Lt => ord.is_lt(),
+                                    PredicateOp::Le => ord.is_le(),
+                                    PredicateOp::Gt => ord.is_gt(),
+                                    _ => ord.is_ge(),
+                                };
+                                assert_eq!(
+                                    term.eval_value(Some(a)),
+                                    Some(Truth::of(want)),
+                                    "{major} {declared}: {a:?} {} {b:?}",
+                                    op.symbol()
+                                );
+                                answered += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            let walked: Vec<&str> = kinds.keys().copied().collect();
+            let recorded: Vec<&str> = ARROW_AGREEMENT.iter().map(|(name, ..)| *name).collect();
+            assert_eq!(walked, recorded, "every kind the register compares is walked");
+            for (name, order, bounds) in ARROW_AGREEMENT {
+                if kinds[name].arrow_order() == kinds[name] {
+                    assert!(*order && *bounds, "{name} keeps its kind and disagrees with Arrow");
+                }
+            }
+            assert!(answered > 40_000 && nested_refused > 0, "{answered} {nested_refused}");
         }
 
         /// A range or multirange literal is put into the form the server

@@ -46,7 +46,7 @@ use std::sync::{Arc, OnceLock};
 use crate::copy::{CopyHeader, decode_field, split_fields};
 use crate::decode::{decode_bytea, render_bytea};
 use crate::instrument::StatisticsScope;
-use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan};
+use crate::pgtype::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan};
 use crate::preamble::{ColumnDef, DumpMetadata};
 use crate::predicate::ValueKey;
 use crate::resolve::{SchemaMode, resolve_columns};
@@ -711,12 +711,11 @@ impl ColumnGatherer {
         comparison: &ComparisonPlan,
         plan: &NestedPlan,
     ) -> Self {
+        let postgres = ComparisonSemantics::Postgres;
         let (bounds, dictionary) = match comparison {
-            ComparisonPlan::Compared { kind, divergence } if *plan == NestedPlan::Scalar => (
-                divergence.is_none().then(|| BoundsGatherer::new(kind.clone())),
-                divergence
-                    .is_none_or(|d| !d.affects_equality())
-                    .then(|| DictionaryGatherer::new(kind)),
+            ComparisonPlan::Compared { kind, .. } if *plan == NestedPlan::Scalar => (
+                comparison.bounds_ordered_in(postgres).then(|| BoundsGatherer::new(kind.clone())),
+                comparison.dictionary_answers_in(postgres).then(|| DictionaryGatherer::new(kind)),
             ),
             _ => (None, None),
         };

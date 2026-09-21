@@ -47,8 +47,8 @@ pub use map::{
     TilingIssue, TocHeader, attach_text, build_map, check_tiling,
 };
 pub use pgtype::{
-    CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare,
-    NestedPlan, TypeOutcome, UnanswerableReason, comparison_for, extension_for,
+    CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics,
+    NestedCompare, NestedPlan, TypeOutcome, UnanswerableReason, comparison_for, extension_for,
     resolve_declared_type,
 };
 pub use preamble::{

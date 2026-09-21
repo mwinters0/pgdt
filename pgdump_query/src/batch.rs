@@ -43,7 +43,7 @@ use crate::copy::{CopyHeader, RawRow, RowSplit};
 use crate::decode;
 use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
-use crate::pgtype::NestedPlan;
+use crate::pgtype::{ComparisonSemantics, NestedPlan};
 // L4, imported by L3: `QueryOptions::filter` is the query's filter tree. One
 // of the two deviations `docs/design/decisions.md`, "D68" records.
 use crate::predicate::Expr;
@@ -81,6 +81,12 @@ pub struct QueryOptions {
     /// A term may name a column the projection does not: the projection
     /// decides what is *built*, never what may be tested.
     pub filter: Expr,
+    /// Which order `filter`'s comparisons answer in: PostgreSQL's, by
+    /// default, or Arrow's order of the value each column emits, which a
+    /// comparison this build cannot make that way refuses
+    /// ([`ComparisonSemantics`]). Statistics prune a query in either, read
+    /// only where they were gathered in its order.
+    pub semantics: ComparisonSemantics,
     /// Rows per batch. A batch is flushed once it reaches this many rows.
     pub max_rows: usize,
     /// Optional cap on a batch's total field-byte count — counting only the
@@ -152,6 +158,7 @@ impl Default for QueryOptions {
         Self {
             projection: None,
             filter: Expr::default(),
+            semantics: ComparisonSemantics::default(),
             max_rows: 8192,
             max_bytes: None,
             max_source_span: Some(64 << 20),

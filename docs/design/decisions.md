@@ -270,7 +270,9 @@ every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field`
 
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, keyed on declared type and `COLLATE`;
-six declared types share `Utf8View` under six comparisons. `predicate.rs` never reads the Arrow type.
+six declared types share `Utf8View` under six comparisons. `predicate.rs` never reads the Arrow
+type; `ComparisonSemantics::Arrow`, one mode per query lest rows depend on what a plan pushes, maps
+each kind (`arrow_order`), refuses a nested column, and announces no divergence, the column's.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
 An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided in
@@ -329,9 +331,8 @@ Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`
 vetoes a stop on a partition root (I2) or any `\connect`. A conflict past the stop is unseen (`KD6`).
 
 ### D50 `ResumeToken` is opaque and fingerprints the query
-Table, projection, filter tree, schema mode and partition, hashed by explicit match (a derived
-`Hash` silently stops covering a new operator). `database`, `scan_extent`, the batching knobs and
-`use_statistics` are outside it, a skipped group holding no row a token resumes past.
+Hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
+`scan_extent`, the batching knobs and `use_statistics` stay out, no skipped group holding a resumed row.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 The first row is past the first LF at or after `start`; the piece runs to the first LF at or after
@@ -373,8 +374,7 @@ refused, not rounded. `JSONB_MAX_DEPTH` is fixed because a Rust stack overflow a
 no `Ord`. Rejected: excluding the row like a NULL, which has no order (I33, I34).
 
 ### D57 Equality has three canonicalizations, chosen by injectivity of `*_out`
-Render the literal once, trim the field per row (`bpchar`), or decode both per row; `v=1.5` must hit
-a `numeric(10,2)` written `1.50`. Rejected: rendering `timetz` and `inet` once too (I33, I38, I41).
+`v=1.5` hits a `numeric(10,2)` written `1.50`; rendering `timetz`, `inet` once is refused (I33, I38, I41).
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
 Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container
