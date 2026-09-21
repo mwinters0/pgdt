@@ -27,7 +27,8 @@
 //! [`DiagnosticKind`] variant carrying one would make L1 name an L2 type
 //! (`docs/design/decisions.md`, "D68"). `crate::resolve::ColumnNote` is the
 //! per-column record at L2 — one per column, always present — and
-//! `crate::predicate::ComparisonNote` the per-term one at L4.
+//! `crate::predicate::ComparisonNote` the comparison one at L4, per term or,
+//! from `crate::predicate::column_divergences`, per column.
 //!
 //! **The three are unified at the drain, not at the storage type**: each
 //! implements [`Finding`], defined here at L1 so that every layer can, and a
@@ -47,7 +48,8 @@ use crate::map::TilingIssue;
 /// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
 /// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (L1,
 /// about the file), `crate::resolve::ColumnNote` (L2, about one column's type)
-/// and `crate::predicate::ComparisonNote` (L4, about one term of a query).
+/// and `crate::predicate::ComparisonNote` (L4, about one term of a query, or
+/// one column in a query's semantics).
 ///
 /// A sink wanting the structured record rather than the sentence recovers it
 /// through [`Finding::as_any`], downcasting to one of those three.
@@ -74,8 +76,8 @@ impl<F: Fn(&dyn Finding) + Send + Sync> DiagnosticSink for F {
 }
 
 /// Hand every finding of one channel to `sink`, in the channel's own order —
-/// `sink` taking `&index.diagnostics`, `&resolved.notes` or
-/// `&stream.comparison_notes()` alike.
+/// `sink` taking `&index.diagnostics`, `&resolved.notes`,
+/// `&stream.comparison_notes()` or `&column_divergences(…)` alike.
 pub fn drain<'a, F: Finding + 'a>(
     sink: &dyn DiagnosticSink,
     findings: impl IntoIterator<Item = &'a F>,

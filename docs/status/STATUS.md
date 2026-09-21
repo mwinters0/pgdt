@@ -36,7 +36,7 @@ quotes a number: every figure is in
 | The filter expression, three-valued | working; `Expr` is one tree evaluated in SQL's `True`/`False`/`Unknown` domain, reached as `--where` and as repeated `--filter` | `predicate.rs`; D53, D54 |
 | The `--where` and `--filter` grammars | working, CLI only; nothing below L4 parses a term | `pgdt/src/where_expr.rs`, `main.rs`; D60; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`" and "Writing a filter term" |
 | Typed comparison: `=`/`!=` and the four ordering operators | working, library and CLI; equality falls back to text where the register gives no comparison and is refused only where the file says the server's is not a text comparison (a range declaring `canonical`), ordering is refused where the register gives no order, and a special value is a rank rather than a fault; a query may compare as DataFusion compares the emitted value instead, which refuses a nested column and orders one with no plan bytewise | `predicate.rs`, `pgtype.rs`; D40, D55–D58; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings" |
-| The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced per term on its own channel; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
+| The comparison register and the declared collation | L2, `comparison_for` in `pgtype.rs`: one `ComparisonPlan` per column, divergence announced on its own channel per term, or per column in a query's semantics; a stated collation this build does not implement compares bytewise (`KD7`) and an unmodelled scalar's equality is a guess (`KD10`) | D40, D59; [`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise" |
 | Comparison oracle, cross-major differ, register-to-oracle reconciliation | committed under `fixtures/<major>/oracle/` and checked by `predicate.rs`'s unit test, `scripts/oracle_differences.py` and `scripts/oracle_register.py` | D70, D71 |
 | ADBC floor oracle and the floor rule | committed under `fixtures/<major>/adbc/` and reconciled by `scripts/floor_mapping.py` | D38 |
 | Compressed input (`--source foo.dump.xz`) | working serially and at any `--jobs`; the seek table is cached; a file the budget cannot block-decode streams and says so; gzip, zstd and lz4 are not read (P15, P18) | `io.rs` (`XzSource`), `cache.rs`; D14–D19; [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md) |
@@ -94,9 +94,10 @@ delivered.
 - [x] **6.3** One diagnostics sink draining the file-level, per-column and
   comparison channels.
   [Notes](../design/roadmap-P6.3-diagnostics-sink-notes.md).
-- [ ] **6.3.1** Each column's divergence from PostgreSQL, in the semantics a
+- [x] **6.3.1** Each column's divergence from PostgreSQL, in the semantics a
   query asks for, produced from its resolved schema as findings the sink
   drains at registration.
+  [Notes](../design/roadmap-P6.3.1-column-divergence-notes.md).
 - [ ] **6.4** One schema per table: blocks reordered by name into the table's
   order, a disagreeing name set refused.
 - [ ] **6.5** `datafusion-pgdump`: a complete cache loaded, the catalog and
@@ -405,3 +406,16 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **Arrow-semantics registration over-announces rather than under-announces.**
+  `column_divergences` reports every nested column as `NestedArrowOrder` and
+  every unresolved column, which is every column under `:strings`, as
+  `EmittedText`. It also says `ValueAsText` and `PaddedText` reach equality.
+  That is true for a bare `numeric`, `jsonb` and a bare `bpchar`, and false
+  for `timetz`, `inet`/`cidr` and `character(n)`. The call follows the
+  register's announcing direction: a spurious note is better than a silent
+  wrong row set (`pgtype.rs`, `states_non_deterministic`). The cost is noise
+  at registration: one warning per array column, and under `:strings` one per
+  column. Reconsidering means splitting those variants by equality and
+  checking `make_comparator` against `array_cmp` per element kind, or having
+  6.8's sink group the warnings.
+  ([6.3.1's notes](../design/roadmap-P6.3.1-column-divergence-notes.md).)

@@ -35,10 +35,8 @@ finding is recovered as its own type.
   them beside the sink.
 - **In Arrow semantics a query's comparison channel is always empty**
   (6.2's notes). So the provider's comparison findings are not per term. The
-  spec reports divergence per column, at registration. No library call
-  produces that yet: `ComparisonNote` is built per term by
-  `predicate::resolve_term`, under PostgreSQL's semantics only. The
-  per-column producer is 6.3.1's.
+  spec reports divergence per column, at registration, which
+  `predicate::column_divergences` produces (6.3.1).
 
 ## Negative results
 

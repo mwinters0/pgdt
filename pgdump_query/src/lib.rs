@@ -55,7 +55,7 @@ pub use preamble::{
     CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,
     dump_metadata_from_spans,
 };
-pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth};
+pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth, column_divergences};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
     Cancellation, ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd,

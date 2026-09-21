@@ -29,7 +29,7 @@ and `predicate::resolve_term`. The why is
   refused: [`decisions.md`](decisions.md), "D40".
 - **An Arrow-semantics term announces no divergence.**
   `TableStream::comparison_notes` is empty for it. Divergence from PostgreSQL
-  is reported per column at registration (6.3), and nothing per term remains
+  is reported per column at registration (6.3.1), and nothing per term remains
   to drain there.
 - **Which stored statistics hold in Arrow's order.** Bounds and row order are
   gathered once, at parse, under the register's order. They are read in

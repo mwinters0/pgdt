@@ -182,10 +182,11 @@ impl Default for Expr {
 /// `crate::diagnostic::DiagnosticSink` beside them as a
 /// [`crate::diagnostic::Finding`].
 ///
-/// Per term rather than per column, a divergence being
-/// operator-conditional ([`ComparisonDivergence::affects_equality`]): a
-/// `text` column with no `COLLATE` clause earns a note under `<` and none
-/// under `=`, so a query filtering it with both operators carries one note.
+/// Per term, a divergence being operator-conditional
+/// ([`ComparisonDivergence::affects_equality`]): a `text` column with no
+/// `COLLATE` clause earns a note under `<` and none under `=`, so a query
+/// filtering it with both operators carries one note. The same record is also
+/// a column's, from [`column_divergences`], whatever terms a query names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonNote {
     pub column: String,
@@ -217,9 +218,12 @@ impl Finding for ComparisonNote {
     /// comparison is not.
     fn message(&self) -> String {
         let column = format!("{}{}", self.column, self.path.as_deref().unwrap_or(""));
-        let column = &column;
-        let declared = &self.declared_type;
-        let bytewise = |why: &str| format!("`{column}` ({declared}) is compared bytewise: {why}");
+        // A column no DDL declared has no type to name.
+        let subject = match self.declared_type.as_str() {
+            "" => format!("`{column}`"),
+            declared => format!("`{column}` ({declared})"),
+        };
+        let bytewise = |why: &str| format!("{subject} is compared bytewise: {why}");
         match self.divergence {
             // Not "PostgreSQL orders this differently": it does not order it
             // at all, and the sentence has to say which way the difference
@@ -253,15 +257,151 @@ impl Finding for ComparisonNote {
             // Not a `bytewise` sentence: the structure *is* compared the way
             // PostgreSQL compares it, and only a string leaf is left.
             ComparisonDivergence::JsonbStringCollation => format!(
-                "`{column}` ({declared}) is compared structurally, but every string value and \
-                 object key inside it is ordered by the database's collation, which a plain dump \
-                 does not record — this matches the server only if that collation is C or POSIX",
+                "{subject} is compared structurally, but every string value and object key inside \
+                 it is ordered by the database's collation, which a plain dump does not record — \
+                 this matches the server only if that collation is C or POSIX",
+            ),
+            ComparisonDivergence::LabelText => format!(
+                "{subject} is compared by its labels' text, as DataFusion compares the emitted \
+                 dictionary, where PostgreSQL orders an enum's labels as its type declares them"
+            ),
+            ComparisonDivergence::ValueAsText => bytewise(
+                "DataFusion compares the text it is emitted as, where PostgreSQL compares it by \
+                 value — the orders differ, and so does equality wherever the type writes one \
+                 value more than one way (`1.5` and `1.50`)",
+            ),
+            ComparisonDivergence::IntervalFields => format!(
+                "{subject} is compared as DataFusion compares an Interval(MonthDayNano) — months, \
+                 then days, then the time part — where PostgreSQL compares the whole span, so \
+                 `1 mon` and `30 days` are equal to the server and not here"
+            ),
+            ComparisonDivergence::PaddedText => bytewise(
+                "DataFusion compares the value with its blank padding, as it is emitted, where \
+                 PostgreSQL ignores trailing blanks on both sides",
+            ),
+            ComparisonDivergence::NestedArrowOrder => format!(
+                "{subject} is compared as DataFusion compares the emitted list or struct, which \
+                 is not PostgreSQL's comparison of the type and not one this build promises to \
+                 match"
+            ),
+            ComparisonDivergence::EmittedText => bytewise(
+                "it is emitted as text with no comparison of its declared type behind it, and \
+                 PostgreSQL's comparison of that type need not be a byte comparison, or exist",
             ),
         }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+/// Every column's divergence from PostgreSQL's comparison under `semantics`,
+/// as the notes a caller drains once, when a table is registered, rather than
+/// per term (`docs/design/decisions.md`, "D59"). In column order, a nested
+/// column's positions in walk order.
+///
+/// **Under [`ComparisonSemantics::Postgres`]** a column's notes are the union
+/// of what a term on it would announce under any operator
+/// ([`ResolvedTerm::comparison_notes`]): an operator refused on the column
+/// adds nothing, having no answer to diverge.
+///
+/// **Under [`ComparisonSemantics::Arrow`]** they say how DataFusion's
+/// comparison of the emitted value differs from the server's, whether or not
+/// this build answers a term on the column — `ORDER BY`, `MIN`/`MAX` and every
+/// filter a plan keeps reach it too, so a nested column whose every term is
+/// refused here still reports [`ComparisonDivergence::NestedArrowOrder`]. A
+/// kind [`CompareKind::arrow_order`] moves reports
+/// [`CompareKind::arrow_divergence`], beside any collation the register
+/// already announced; `jsonb`'s string collation is dropped, the whole value
+/// being compared as text.
+pub fn column_divergences(
+    resolved: &ResolvedSchema,
+    semantics: ComparisonSemantics,
+) -> Vec<ComparisonNote> {
+    let mut out = Vec::new();
+    for (index, note) in resolved.notes.iter().enumerate() {
+        let declared = note.declared.clone().unwrap_or_default();
+        let positions = match semantics {
+            ComparisonSemantics::Postgres => postgres_divergences(resolved, index, &declared),
+            ComparisonSemantics::Arrow => arrow_divergences(resolved, index, &declared),
+        };
+        out.extend(positions.into_iter().map(|(path, declared_type, divergence)| ComparisonNote {
+            column: note.column.clone(),
+            path,
+            declared_type,
+            divergence,
+        }));
+    }
+    out
+}
+
+/// One diverging position: its path inside the column (`None` for the column
+/// itself), its declared type, and the divergence.
+type DivergingPosition = (Option<String>, String, ComparisonDivergence);
+
+/// [`column_divergences`] under PostgreSQL's semantics: the arms of
+/// [`resolve_term`], each taken under both operator families.
+fn postgres_divergences(
+    resolved: &ResolvedSchema,
+    index: usize,
+    declared: &str,
+) -> Vec<DivergingPosition> {
+    let column = |divergence| vec![(None, declared.to_string(), divergence)];
+    if resolved.columns[index] != ColumnResolution::Mapped {
+        // Ordering refused; `=` compares the text, announced only where the
+        // file named a type this build models nothing for.
+        return match resolved.columns[index] {
+            ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType => {
+                column(ComparisonDivergence::UnmodelledType)
+            }
+            _ => Vec::new(),
+        };
+    }
+    match &resolved.comparisons[index] {
+        ComparisonPlan::Unanswerable(_) => Vec::new(),
+        ComparisonPlan::Nested(tree) => {
+            // A tree with an uncompared position answers only `=`/`!=`.
+            let equality_only = tree.uncomparable().is_some();
+            tree.divergences()
+                .into_iter()
+                .filter(|(_, _, d)| !equality_only || d.affects_equality())
+                .map(|(path, declared, d)| (Some(path), declared, d))
+                .collect()
+        }
+        _ if resolved.plans[index] != NestedPlan::Scalar => Vec::new(),
+        ComparisonPlan::Compared { divergence, .. } => divergence.map(column).unwrap_or_default(),
+        ComparisonPlan::Refused => Vec::new(),
+    }
+}
+
+/// [`column_divergences`] under Arrow's semantics, read off what the column
+/// emits rather than off which terms this build answers.
+fn arrow_divergences(
+    resolved: &ResolvedSchema,
+    index: usize,
+    declared: &str,
+) -> Vec<DivergingPosition> {
+    let column = |divergence| (None, declared.to_string(), divergence);
+    if resolved.columns[index] != ColumnResolution::Mapped {
+        return vec![column(ComparisonDivergence::EmittedText)];
+    }
+    if resolved.plans[index] != NestedPlan::Scalar {
+        return vec![column(ComparisonDivergence::NestedArrowOrder)];
+    }
+    match &resolved.comparisons[index] {
+        ComparisonPlan::Compared { kind, divergence } => kind
+            .arrow_divergence()
+            .into_iter()
+            .chain(divergence.filter(|d| *d != ComparisonDivergence::JsonbStringCollation))
+            .map(column)
+            .collect(),
+        // A scalar column's register never answers either; kept rather than
+        // assumed away, the fallback being the emitted text.
+        ComparisonPlan::Nested(_) | ComparisonPlan::Unanswerable(_) => {
+            vec![column(ComparisonDivergence::NestedArrowOrder)]
+        }
+        ComparisonPlan::Refused => vec![column(ComparisonDivergence::EmittedText)],
     }
 }
 
@@ -2156,8 +2296,8 @@ fn unanswerable_reason(reason: &UnanswerableReason) -> String {
 /// emits `Utf8View` — compares bytewise under every operator, every
 /// comparing operator on a nested column is refused, statistics are read only where they are ordered or equated
 /// that way, and no term announces a divergence from PostgreSQL, which is a
-/// property of the column rather than of the term
-/// (`docs/design/decisions.md`, "D40").
+/// property of the column rather than of the term ([`column_divergences`];
+/// `docs/design/decisions.md`, "D40").
 pub(crate) fn resolve_term(
     predicate: &Predicate,
     index: usize,
@@ -3801,6 +3941,75 @@ mod tests {
         let term = arrow(&order_predicate(PredicateOp::Eq, "(1,1),(0,0)"), &unknown).unwrap();
         assert!(term.comparison_notes().is_empty());
         assert_eq!(term.eval_value(Some("(1,1),(0,0)")), Some(Truth::True));
+    }
+
+    /// **A column's divergences depend on the semantics asked for**, and
+    /// Arrow's are read off what the column emits rather than off which terms
+    /// this build answers: a nested column refused every Arrow term still
+    /// reports DataFusion's order of it, an undeclared column its bytewise
+    /// one, an enum its label text; a float reports nothing in either. One
+    /// schema, so the order of the report is the columns'.
+    #[test]
+    fn a_column_s_divergences_follow_the_semantics_asked_for() {
+        use ComparisonDivergence as D;
+        let columns = [
+            one_column("real", DataType::Float32),
+            one_column("text", DataType::Utf8View),
+            one_column("interval", DataType::Interval(IntervalUnit::MonthDayNano)),
+            nested_column("integer[]", &[]),
+            {
+                let mut undeclared = one_column("text", DataType::Utf8View);
+                undeclared.columns[0] = ColumnResolution::NotDeclared;
+                undeclared.notes[0].declared = None;
+                undeclared.comparisons[0] = ComparisonPlan::Refused;
+                undeclared
+            },
+            {
+                let mut unknown = one_column("box", DataType::Utf8View);
+                unknown.columns[0] = ColumnResolution::UnknownType;
+                unknown.comparisons[0] = ComparisonPlan::Refused;
+                unknown
+            },
+        ];
+        let mut resolved = ResolvedSchema::default();
+        for (i, c) in columns.into_iter().enumerate() {
+            resolved.columns.extend(c.columns);
+            resolved
+                .notes
+                .extend(c.notes.into_iter().map(|n| ColumnNote { column: format!("c{i}"), ..n }));
+            resolved.plans.extend(c.plans);
+            resolved.comparisons.extend(c.comparisons);
+        }
+        let report = |semantics| {
+            column_divergences(&resolved, semantics)
+                .into_iter()
+                .map(|n| (n.column, n.path, n.divergence))
+                .collect::<Vec<_>>()
+        };
+        let c = |i: usize| format!("c{i}");
+        assert_eq!(
+            report(ComparisonSemantics::Postgres),
+            [(c(1), None, D::UnknownCollation), (c(5), None, D::UnmodelledType)]
+        );
+        assert_eq!(
+            report(ComparisonSemantics::Arrow),
+            [
+                (c(1), None, D::UnknownCollation),
+                (c(2), None, D::IntervalFields),
+                (c(3), None, D::NestedArrowOrder),
+                (c(4), None, D::EmittedText),
+                (c(5), None, D::EmittedText),
+            ]
+        );
+        let undeclared = column_divergences(&resolved, ComparisonSemantics::Arrow)
+            .into_iter()
+            .find(|n| n.column == c(4))
+            .unwrap();
+        assert!(
+            undeclared.message().starts_with("`c4` is compared bytewise"),
+            "{}",
+            undeclared.message()
+        );
     }
 
     /// **A column with no plan is ordered bytewise in Arrow's semantics**,
@@ -6100,11 +6309,173 @@ mod tests {
             let recorded: Vec<&str> = ARROW_AGREEMENT.iter().map(|(name, ..)| *name).collect();
             assert_eq!(walked, recorded, "every kind the register compares is walked");
             for (name, order, bounds) in ARROW_AGREEMENT {
+                assert_eq!(
+                    kinds[name].arrow_divergence().is_none(),
+                    kinds[name].arrow_order() == kinds[name],
+                    "{name}: a kind Arrow semantics moves reports a divergence, and only one"
+                );
                 if kinds[name].arrow_order() == kinds[name] {
                     assert!(*order && *bounds, "{name} keeps its kind and disagrees with Arrow");
                 }
             }
             assert!(answered > 40_000 && nested_refused > 0, "{answered} {nested_refused}");
+        }
+
+        /// Every `(declared type, COLLATE clause)` case of every major's
+        /// `comparisons.tsv`, resolved as a one-column schema, with the output
+        /// spelling of every literal the server accepted for its type.
+        async fn cases(major: u32) -> Vec<(String, Option<&'static str>, ResolvedSchema)> {
+            let types = types_of(major).await;
+            let mut seen = BTreeSet::new();
+            let mut out = Vec::new();
+            for row in rows(&fixture(major, "oracle/comparisons.tsv")) {
+                let declared = row[0].clone().expect("a case names a type");
+                let collation = clause(row[3].as_ref());
+                if seen.insert((declared.clone(), collation)) {
+                    let resolved = schema(&declared, collation, &types);
+                    out.push((declared, collation, resolved));
+                }
+            }
+            out
+        }
+
+        /// **Under PostgreSQL's semantics a column reports exactly what a term
+        /// on it would announce**, under `=` and under `<` — the two operator
+        /// families — over every case the oracle holds on six majors. The
+        /// report is written apart from [`resolve_term`], so this is what
+        /// holds the two to one answer.
+        #[tokio::test]
+        async fn a_column_reports_what_its_terms_announce() {
+            let mut compared = 0usize;
+            for major in MAJORS {
+                let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    if let (Some(declared), Some("ok"), Some(output)) =
+                        (row[0].clone(), row[2].as_deref(), row[3].clone())
+                    {
+                        outputs.entry(declared).or_default().insert(output);
+                    }
+                }
+                for (declared, collation, resolved) in cases(major).await {
+                    // The first literal both families decode: a refusal of
+                    // the operator is an answer, a literal that does not key
+                    // is not.
+                    let announced = outputs.get(&declared).into_iter().flatten().find_map(|v| {
+                        let mut notes = Vec::new();
+                        for op in [PredicateOp::Eq, PredicateOp::Lt] {
+                            let p = Predicate { column: "v".into(), op, value: Some(v.clone()) };
+                            match resolve_term(&p, 0, &resolved, 0) {
+                                Ok(term) => notes.extend(term.comparison_notes()),
+                                Err(Error::PredicateValueDecode { .. }) => return None,
+                                Err(_) => {}
+                            }
+                        }
+                        Some(notes)
+                    });
+                    let Some(announced) = announced else { continue };
+                    let reported = column_divergences(&resolved, ComparisonSemantics::Postgres);
+                    let context = format!("{major} {declared} {collation:?}");
+                    assert!(
+                        announced.iter().all(|n| reported.contains(n)),
+                        "{context}: {announced:?} not all in {reported:?}"
+                    );
+                    assert!(
+                        reported.iter().all(|n| announced.contains(n)),
+                        "{context}: {reported:?} not all announced ({announced:?})"
+                    );
+                    compared += 1;
+                }
+            }
+            assert!(compared > 300, "only {compared} cases compared");
+        }
+
+        /// **Under Arrow's semantics a column that reports nothing answers as
+        /// the server does**: every oracle cell a term in Arrow's semantics
+        /// answers differently from PostgreSQL falls on a column reporting a
+        /// divergence that reaches the cell's operator. The other direction
+        /// is not asserted — a report is allowed to announce a divergence this
+        /// population never exercises — and a nested column, whose every term
+        /// is refused here, is asserted to report DataFusion's own order.
+        #[tokio::test]
+        async fn a_column_reporting_no_arrow_divergence_answers_as_the_server() {
+            let (mut asserted, mut disagreed) = (0usize, BTreeSet::new());
+            for major in MAJORS {
+                let outputs: BTreeMap<(String, String), String> =
+                    rows(&fixture(major, "oracle/literals.tsv"))
+                        .into_iter()
+                        .filter_map(|r| Some(((r[0].clone()?, r[1].clone()?), r[3].clone()?)))
+                        .collect();
+                let resolved: BTreeMap<(String, Option<&str>), ResolvedSchema> = cases(major)
+                    .await
+                    .into_iter()
+                    .map(|(declared, collation, resolved)| ((declared, collation), resolved))
+                    .collect();
+                for row in rows(&fixture(major, "oracle/comparisons.tsv")) {
+                    let declared = row[0].clone().expect("a case names a type");
+                    let collation = clause(row[3].as_ref());
+                    let schema = &resolved[&(declared.clone(), collation)];
+                    let report = column_divergences(schema, ComparisonSemantics::Arrow);
+                    if matches!(schema.comparisons[0], ComparisonPlan::Nested(_)) {
+                        assert!(
+                            report
+                                .iter()
+                                .any(|n| n.divergence == ComparisonDivergence::NestedArrowOrder),
+                            "{major} {declared}: {report:?}"
+                        );
+                    }
+                    let output =
+                        |literal: &str| outputs.get(&(declared.clone(), literal.to_string()));
+                    let (Some(left), Some(right)) = (row[1].as_deref(), row[2].as_deref()) else {
+                        continue;
+                    };
+                    let (Some(field), Some(bound)) = (output(left), output(right)) else {
+                        continue;
+                    };
+                    for (offset, op) in ASSERTED {
+                        let cell = row[4 + offset].as_deref().expect("a cell is never NULL");
+                        let expected = match cell {
+                            "t" => Truth::True,
+                            "f" => Truth::False,
+                            _ => continue,
+                        };
+                        let p = Predicate { column: "v".into(), op, value: Some(bound.clone()) };
+                        let Ok(term) = crate::predicate::resolve_term(
+                            &p,
+                            0,
+                            schema,
+                            0,
+                            ComparisonSemantics::Arrow,
+                        ) else {
+                            continue;
+                        };
+                        let Ok(got) = term.eval(
+                            RawRow::unchecked(&encode_field(Some(field))),
+                            &mut RowSplit::default(),
+                            "public.t",
+                            0,
+                        ) else {
+                            continue;
+                        };
+                        asserted += 1;
+                        if got != expected {
+                            assert!(
+                                report
+                                    .iter()
+                                    .any(|n| op.is_ordering() || n.divergence.affects_equality()),
+                                "{major} {declared} {collation:?}: {left:?} {} {right:?} is \
+                                 {got:?} in Arrow semantics and {cell} on the server, and the \
+                                 column reports {report:?}",
+                                op.symbol()
+                            );
+                            disagreed.insert(declared.clone());
+                        }
+                    }
+                }
+            }
+            // A floor on both counts: a walk that asserted nothing, or found
+            // no disagreement at all, would prove nothing about the report.
+            assert!(asserted > 40_000, "only {asserted} cells asserted");
+            assert!(disagreed.len() >= 8, "only {disagreed:?} disagreed");
         }
 
         /// A range or multirange literal is put into the form the server

@@ -271,8 +271,8 @@ every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field`
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; six
 types share `Utf8View` under six comparisons, and `predicate.rs` never reads the Arrow type. Arrow
-semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`) and
-says no divergence. Rejected: a nested column ordered as DataFusion does — a `TODO` there, no promise.
+semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`); no
+term says a divergence (D59). Rejected: a nested column ordered as DataFusion does — a `TODO` there.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
 An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided in
@@ -382,10 +382,10 @@ but for `int2vector`, whose elements `int2vectorin` reads. Both sides of a range
 `make_range`, keyed on the range type; a user range declaring `canonical` is refused under every
 comparing operator, the NULL tests reading no value (I44–I47).
 
-### D59 Divergence is per term and per position, on its own channel
-`ComparisonNote` carries a path and the declared type there, reported by
-`TableStream::comparison_notes`: operator-conditional, so L4. Only the `json`
-arm announces its bytewise `=` under a container (I45). See `KD7`, `KD10`.
+### D59 Divergence is per position on its own channel: per term, and per column at registration
+`ComparisonNote` carries a path and its declared type, per term from `comparison_notes` (operator-
+conditional, so L4) and per column from `column_divergences` in a query's semantics — Arrow's variants
+there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
 `refuse_where_structure` refuses any `--filter` term that does not tokenize to one leaf, so a string

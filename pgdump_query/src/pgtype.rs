@@ -259,6 +259,20 @@ impl CompareKind {
             kind => kind.clone(),
         }
     }
+
+    /// How [`Self::arrow_order`]'s comparison differs from this kind's —
+    /// `None` exactly where it leaves the kind alone.
+    pub fn arrow_divergence(&self) -> Option<ComparisonDivergence> {
+        match self {
+            Self::Enum(_) => Some(ComparisonDivergence::LabelText),
+            Self::Numeric { .. } | Self::TimeTz | Self::Network { .. } | Self::Jsonb => {
+                Some(ComparisonDivergence::ValueAsText)
+            }
+            Self::Interval => Some(ComparisonDivergence::IntervalFields),
+            Self::PaddedText => Some(ComparisonDivergence::PaddedText),
+            _ => None,
+        }
+    }
 }
 
 /// How a comparison here differs from PostgreSQL's own for the same declared
@@ -339,6 +353,39 @@ pub enum ComparisonDivergence {
     /// `xml`, whose `=` PostgreSQL does not define at all, filtering by exact
     /// text is a thing a user legitimately wants.
     UnmodelledType,
+    /// An enum under [`ComparisonSemantics::Arrow`]: DataFusion compares the
+    /// emitted `Dictionary` by its label text, where PostgreSQL orders labels
+    /// by declaration (I33). Equality agrees, a label being unique.
+    ///
+    /// This and the five variants after it are Arrow semantics' own:
+    /// produced by [`CompareKind::arrow_divergence`] and
+    /// `crate::predicate::column_divergences`, never by the register — as
+    /// [`CompareKind::IntervalFields`] is produced by
+    /// [`CompareKind::arrow_order`] alone.
+    LabelText,
+    /// A type emitted as `Utf8View` whose PostgreSQL comparison is by value —
+    /// a bare `numeric`, `timetz`, `inet`/`cidr`, `jsonb` — which DataFusion
+    /// compares bytewise. Equality too, wherever the type writes one value
+    /// more than one way (a bare `numeric`'s `1.5` and `1.50`).
+    ValueAsText,
+    /// `interval` as DataFusion compares `Interval(MonthDayNano)`: months,
+    /// then days, then the time part, where PostgreSQL compares the span
+    /// (I40), so `1 mon` and `30 days` are equal only to the server.
+    IntervalFields,
+    /// `character(n)` compared with its blank padding, as it is emitted,
+    /// where `bpcharcmp` trims both sides first (I38). Equality too: a bare
+    /// `bpchar` keeps a value's trailing blanks.
+    PaddedText,
+    /// A nested column — array, composite, range, multirange — which
+    /// DataFusion compares with `make_comparator` under default options, an
+    /// order upstream marks for change and this build does not evaluate
+    /// (`docs/design/decisions.md`, "D40").
+    NestedArrowOrder,
+    /// A column this build emits as text with no comparison of its declared
+    /// type behind it — one that did not resolve, or whose type the register
+    /// has no order for — so DataFusion compares it bytewise under every
+    /// operator, which the server's comparison of that type need not be.
+    EmittedText,
 }
 
 impl ComparisonDivergence {
@@ -364,6 +411,15 @@ impl ComparisonDivergence {
             Self::UnknownCollation | Self::NonBytewiseCollation | Self::JsonbStringCollation => {
                 false
             }
+            Self::LabelText => false,
+            // True of some member of each — a type writing one value two
+            // ways, or a comparison this build does not model — so claimed
+            // for all, the announcing direction.
+            Self::ValueAsText
+            | Self::IntervalFields
+            | Self::PaddedText
+            | Self::NestedArrowOrder
+            | Self::EmittedText => true,
         }
     }
 }

@@ -9,9 +9,9 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::diagnostic::drain;
 use pgdump_query::{
-    ColumnNote, ComparisonNote, Diagnostic, DiagnosticKind, DiagnosticSink, Expr, Finding,
-    LocalFileSource, Predicate, PredicateOp, QueryOptions, ScanOptions, Severity, build_index,
-    table_stream,
+    ColumnNote, ComparisonDivergence, ComparisonNote, ComparisonSemantics, Diagnostic,
+    DiagnosticKind, DiagnosticSink, Expr, Finding, LocalFileSource, Predicate, PredicateOp,
+    QueryOptions, ScanOptions, Severity, build_index, column_divergences, table_stream,
 };
 
 mod common;
@@ -120,4 +120,51 @@ async fn a_column_note_reads_as_a_finding() {
     let bigint = notes.iter().find(|n| n.column == "v_bigint").unwrap();
     assert_eq!(bigint.severity(), Severity::Info);
     assert_eq!(bigint.message(), "column `v_bigint` (bigint): mapped");
+}
+
+/// **A table's divergences drain at registration, before any term is named**,
+/// on the comparison channel and in the semantics asked for: the enum and the
+/// label-less enum of `t_enum_domain` report nothing in PostgreSQL's
+/// semantics, and in Arrow's the one is compared by its label text and the
+/// other, emitted as text, bytewise. The domain over `integer` reports in
+/// neither.
+#[tokio::test]
+async fn a_table_s_divergences_drain_at_registration() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let mut stream = table_stream(
+        &source,
+        "public.t_enum_domain",
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
+        CacheMode::DISABLED,
+    );
+    while stream.next().await.transpose().unwrap().is_some() {}
+    let resolved = stream.resolved_schema();
+
+    let drained = |semantics| {
+        let seen = Mutex::new(Vec::new());
+        let sink = |finding: &dyn Finding| {
+            let note = finding.as_any().downcast_ref::<ComparisonNote>().unwrap();
+            assert_eq!(finding.severity(), Severity::Warning);
+            seen.lock().unwrap().push((note.column.clone(), note.divergence, finding.message()));
+        };
+        drain(&sink, &column_divergences(&resolved, semantics));
+        seen.into_inner().unwrap()
+    };
+    assert_eq!(drained(ComparisonSemantics::Postgres), []);
+    let arrow = drained(ComparisonSemantics::Arrow);
+    let divergences: Vec<_> = arrow.iter().map(|(c, d, _)| (c.as_str(), *d)).collect();
+    assert_eq!(
+        divergences,
+        [
+            ("v_mood", ComparisonDivergence::LabelText),
+            ("v_empty_enum", ComparisonDivergence::EmittedText)
+        ]
+    );
+    assert!(
+        arrow[0].2.starts_with("`v_mood` (public.mood) is compared by its labels' text"),
+        "{}",
+        arrow[0].2
+    );
 }
