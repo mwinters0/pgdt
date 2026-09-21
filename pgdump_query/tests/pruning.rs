@@ -470,6 +470,10 @@ async fn check_fixture(
     }
     for ((database, table), blocks) in tables {
         let header = &blocks[0].header;
+        // A table copying no columns (I5) has nothing a filter can name.
+        if header.columns.is_empty() {
+            continue;
+        }
         // Only the columns every row of the table decodes are built, so a
         // value the build cannot hold (`KD8`) ends no comparison.
         let everything = QueryOptions { database: database.clone(), ..Default::default() };

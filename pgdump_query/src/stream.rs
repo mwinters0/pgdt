@@ -53,11 +53,11 @@ use async_stream::try_stream;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
-use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent, column_names};
+use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent};
 #[cfg(test)]
 use crate::cache::StrictIdentity;
 use crate::cache::{CacheLoad, CacheMode, SourceWatch};
-use crate::copy::{COPY_TEXT_DELIMITER, CopyHeader, RawRow, RowSplit, validated_prefix};
+use crate::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::gather;
 use crate::index::{
@@ -134,10 +134,9 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 /// and a literal that is not a value of
 /// the column's type — `=` included — is `Error::PredicateValueDecode`. All
 /// are raised for the first offending term in a left-to-right walk. The plan
-/// runs it for every block with a column list before any is read, and raises
-/// the first refusing block's refusal in file order before any row of the
-/// table ([`plan_blocks`]); only a block with no column list refuses where it
-/// is reached. It takes the whole [`ResolvedSchema`] because the ordering
+/// runs it for every block before any is read, and raises the first refusing
+/// block's refusal in file order before any row of the table
+/// ([`plan_blocks`]). It takes the whole [`ResolvedSchema`] because the ordering
 /// refusal reads `columns` and `plans` too.
 fn resolve_expr(
     filter: &Expr,
@@ -1683,7 +1682,6 @@ struct InCopyResume {
     header: CopyHeader,
     header_offset: u64,
     rows_in_block: u64,
-    field_count: usize,
     database: Option<String>,
 }
 
@@ -1796,9 +1794,9 @@ impl<'a> TableStream<'a> {
 /// Build the [`ResolvedSchema`] for a table-matching block — the actual batch
 /// schema a [`RowBatcher`] built from it carries (see
 /// [`TableStream::resolved_schema`]) — scoped to `database`, the block's own
-/// attribution, never a guess (`docs/design/decisions.md`, "D49"). `names`
-/// are the block's fields in the order its rows carry them
-/// ([`TableColumns::block_names`]), and `census` is one entry per name, taken
+/// attribution, never a guess (`docs/design/decisions.md`, "D49"). Its
+/// fields are the header's list, in the order its rows carry them, and
+/// `census` is one entry per name, taken
 /// from the union over **every block this stream will replay**, a parameter
 /// rather than something `resolve_columns` looks up so that no call site can
 /// silently disagree (`docs/design/decisions.md`, "D35").
@@ -1810,7 +1808,6 @@ impl<'a> TableStream<'a> {
 /// its first `COPY` block. The check is pinned by a unit test.
 fn resolve_block(
     header: &CopyHeader,
-    names: &[String],
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     schema_mode: SchemaMode,
@@ -1822,7 +1819,14 @@ fn resolve_block(
     {
         return Err(Error::MetadataNotScanned { database: database.map(str::to_string) });
     }
-    Ok(resolve_columns(&header.qualified_name(), names, metadata, database, schema_mode, census))
+    Ok(resolve_columns(
+        &header.qualified_name(),
+        &header.columns,
+        metadata,
+        database,
+        schema_mode,
+        census,
+    ))
 }
 
 /// **One table, one schema**: the column order every batch of a table
@@ -1832,24 +1836,20 @@ fn resolve_block(
 /// A table can own several blocks (I2), each listing its columns in its own
 /// leaf's order (I5), so a block's batches are reordered by name into the
 /// table's order — the table's DDL order where the dump declares the table,
-/// the first listing block's order where it does not — and a table whose
-/// blocks name different *sets* of columns is refused, naming two of them.
-/// Neither the order nor the refusal reads [`SchemaMode`], so a table's
-/// columns come out the same with typing on or off
-/// (`docs/design/decisions.md`, "D66").
+/// the first block's order where it does not — and a table whose blocks name
+/// different *sets* of columns is refused, naming two of them. Neither the
+/// order nor the refusal reads [`SchemaMode`], so a table's columns come out
+/// the same with typing on or off (`docs/design/decisions.md`, "D66").
 ///
-/// **A block naming no columns** takes the table's names where its first
-/// row's field count matches them, and is refused where it does not
-/// ([`Self::block_names`]); where no block names its columns and the DDL
-/// declares none, there are no names to take and each such block keeps the
-/// placeholders [`column_names`] gives it.
+/// **A block naming no columns copies none** (I5: `pg_dump` lists none
+/// exactly when every column is dropped or generated), so its set is the
+/// empty one: a table whose blocks list nothing has an empty order whatever
+/// its DDL declares, and each of its rows is an empty line read as a row of
+/// zero fields ([`crate::batch::RowBatcher::push_row`]).
 #[derive(Debug)]
 struct TableColumns {
-    /// `None` only where no block names its columns and the dump declares
-    /// none for the table.
-    order: Option<Vec<String>>,
-    /// Every name a block of this table can resolve under, placeholders
-    /// included, with its census unioned over every block
+    order: Vec<String>,
+    /// One entry per name in `order`, its census unioned over every block
     /// ([`union_census`]).
     census: Vec<(String, ArrayShape)>,
 }
@@ -1858,71 +1858,33 @@ impl TableColumns {
     /// The table `matches` are the blocks of — one `(database, table)`
     /// target, already narrowed (`docs/design/decisions.md`, "D49").
     fn settle(matches: &[CopyBlock], metadata: Option<&DumpMetadata>) -> Result<Self> {
-        let mut listing = matches.iter().filter(|b| !b.header.columns.is_empty());
-        let declared: Option<Vec<&str>> = matches.first().and_then(|first| {
-            let db = database_for_name(metadata?, first.database.as_deref())?;
-            let columns = db.tables.get(&first.header.qualified_name())?;
-            Some(columns.iter().map(|c| c.name.as_str()).collect())
-        });
-        let order = match listing.next() {
-            Some(first) => {
-                fn set(b: &CopyBlock) -> Vec<&String> {
-                    let mut names: Vec<&String> = b.header.columns.iter().collect();
-                    names.sort();
-                    names
-                }
-                let first_set = set(first);
-                if let Some(other) = listing.find(|b| set(b) != first_set) {
-                    return Err(Error::TableColumnsDisagree {
-                        table: first.header.qualified_name(),
-                        header_offset: first.header_offset,
-                        other_offset: other.header_offset,
-                    });
-                }
-                // Stable, so a name the DDL does not declare keeps the first
-                // listing block's place for it, after every declared one.
-                let mut names = first.header.columns.clone();
-                let rank = |name: &String| {
-                    declared.as_ref().and_then(|d| d.iter().position(|c| c == name))
-                };
-                names.sort_by_key(|name| rank(name).unwrap_or(usize::MAX));
-                Some(names)
-            }
-            None => declared.map(|d| d.into_iter().map(str::to_string).collect()),
+        let Some(first) = matches.first() else {
+            return Ok(Self { order: Vec::new(), census: Vec::new() });
         };
-        let keys = order.clone().unwrap_or_else(|| {
-            let widest = matches.iter().map(|b| b.array_shapes.len()).max().unwrap_or(0);
-            // No block names its columns, so the first one's header lists
-            // none and this is placeholders.
-            matches.first().map(|b| column_names(&b.header, widest)).unwrap_or_default()
-        });
-        let census = keys.iter().cloned().zip(union_census(&keys, matches)).collect();
-        Ok(Self { order, census })
-    }
-
-    /// The names of the block `header` opens, in the order its rows carry
-    /// them: its own list, or — for a block naming none, whose first row had
-    /// `field_count` fields — the table's, where the two agree in number.
-    fn block_names(
-        &self,
-        header: &CopyHeader,
-        header_offset: u64,
-        field_count: usize,
-    ) -> Result<Vec<String>> {
-        match &self.order {
-            Some(order) if header.columns.is_empty() => {
-                if order.len() != field_count {
-                    return Err(Error::UnnamedBlockWidth {
-                        table: header.qualified_name(),
-                        header_offset,
-                        expected: order.len(),
-                        found: field_count,
-                    });
-                }
-                Ok(order.clone())
-            }
-            _ => Ok(column_names(header, field_count)),
+        fn set(b: &CopyBlock) -> Vec<&String> {
+            let mut names: Vec<&String> = b.header.columns.iter().collect();
+            names.sort();
+            names
         }
+        let first_set = set(first);
+        if let Some(other) = matches.iter().find(|b| set(b) != first_set) {
+            return Err(Error::TableColumnsDisagree {
+                table: first.header.qualified_name(),
+                header_offset: first.header_offset,
+                other_offset: other.header_offset,
+            });
+        }
+        let declared: Option<Vec<&str>> = metadata
+            .and_then(|metadata| database_for_name(metadata, first.database.as_deref()))
+            .and_then(|db| db.tables.get(&first.header.qualified_name()))
+            .map(|columns| columns.iter().map(|c| c.name.as_str()).collect());
+        // Stable, so a name the DDL does not declare keeps the first block's
+        // place for it, after every declared one.
+        let mut order = first.header.columns.clone();
+        let rank = |name: &String| declared.as_ref().and_then(|d| d.iter().position(|c| c == name));
+        order.sort_by_key(|name| rank(name).unwrap_or(usize::MAX));
+        let census = order.iter().cloned().zip(union_census(&order, matches)).collect();
+        Ok(Self { order, census })
     }
 
     /// `names`' census, one entry per name, in `names`' order.
@@ -1947,9 +1909,7 @@ fn resume_state(token: &ResumeToken, plan: &ReplayPlan) -> Result<(CopyScanner, 
     let active = token
         .in_copy
         .as_ref()
-        .map(|ic| {
-            activate(ic.header.clone(), ic.header_offset, ic.field_count, ic.database.clone(), plan)
-        })
+        .map(|ic| activate(ic.header.clone(), ic.header_offset, ic.database.clone(), plan))
         .transpose()?;
     Ok((scanner, active))
 }
@@ -1960,14 +1920,12 @@ fn snapshot(
     rows_emitted: u64,
     query_fingerprint: u64,
 ) -> ResumeToken {
-    let in_copy =
-        active.as_ref().map(|(header_offset, header, batcher, _, database)| InCopyResume {
-            header: header.clone(),
-            header_offset: *header_offset,
-            rows_in_block: scanner.in_copy_rows().unwrap_or(0),
-            field_count: batcher.field_count(),
-            database: database.clone(),
-        });
+    let in_copy = active.as_ref().map(|(header_offset, header, _, _, database)| InCopyResume {
+        header: header.clone(),
+        header_offset: *header_offset,
+        rows_in_block: scanner.in_copy_rows().unwrap_or(0),
+        database: database.clone(),
+    });
     ResumeToken {
         offset: scanner.position(),
         rows_emitted,
@@ -2097,13 +2055,12 @@ fn prune_blocks(
 /// everything [`activate`] builds a [`RowBatcher`] from, bar the batcher,
 /// which holds rows and so is built per activation.
 ///
-/// It records the three inputs the block itself contributes, so a lookup can
+/// It records the two inputs the block itself contributes, so a lookup can
 /// confirm it answers the activation asking rather than trusting the offset
 /// alone; the rest are the [`ReplayPlan`]'s, and fixed.
 #[derive(Debug)]
 struct PlannedBlock {
     header: CopyHeader,
-    field_count: usize,
     database: Option<String>,
     /// The **projected** schema, which is what the batches carry.
     resolved: ResolvedSchema,
@@ -2112,7 +2069,7 @@ struct PlannedBlock {
     notes: Vec<ComparisonNote>,
 }
 
-/// Resolve one block for a query: its names, its schema, the filter against
+/// Resolve one block for a query: its schema, the filter against
 /// the unprojected schema, then the projection — in that order, which is the
 /// order their refusals are raised in.
 ///
@@ -2122,27 +2079,23 @@ struct PlannedBlock {
 fn resolve_for_query(
     header: &CopyHeader,
     header_offset: u64,
-    field_count: usize,
     database: Option<&str>,
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
     table: &TableColumns,
 ) -> Result<PlannedBlock> {
-    let names = table.block_names(header, header_offset, field_count)?;
-    let census = table.census_for(&names);
-    let full =
-        resolve_block(header, &names, metadata, database, query_options.schema_mode, &census)?;
+    let census = table.census_for(&header.columns);
+    let full = resolve_block(header, metadata, database, query_options.schema_mode, &census)?;
     // Against the *unprojected* schema, in the block's own order: a term's
     // index numbers the raw row's fields, and a term may name a column the
     // projection dropped.
     let filter =
         resolve_expr(&query_options.filter, &full, header_offset, query_options.semantics)?;
     let notes = filter.comparison_notes();
-    let projection = query_options.projection.as_deref().or(table.order.as_deref());
-    let (resolved, field_targets) = project(&full, projection, header_offset)?;
+    let projection = query_options.projection.as_deref().unwrap_or(&table.order);
+    let (resolved, field_targets) = project(&full, Some(projection), header_offset)?;
     Ok(PlannedBlock {
         header: header.clone(),
-        field_count,
         database: database.map(str::to_string),
         resolved,
         field_targets,
@@ -2161,10 +2114,6 @@ fn resolve_for_query(
 /// whose [`resolve_for_query`] refuses — its schema, its filter or its
 /// projection, in that order — is the error, before any row of any block
 /// (`docs/design/decisions.md`, "D54").
-///
-/// **A block whose header names no columns** is left out without refusing
-/// the plan, its field count being what only its first row says; [`activate`]
-/// resolves it where it is reached, and raises its refusal there.
 fn plan_blocks(
     matches: &[CopyBlock],
     query_options: &QueryOptions,
@@ -2173,12 +2122,10 @@ fn plan_blocks(
 ) -> Result<BTreeMap<u64, PlannedBlock>> {
     matches
         .iter()
-        .filter(|block| !block.header.columns.is_empty())
         .map(|block| {
             let planned = resolve_for_query(
                 &block.header,
                 block.header_offset,
-                block.header.columns.len(),
                 block.database.as_deref(),
                 query_options,
                 metadata,
@@ -2311,29 +2258,26 @@ impl StreamShared {
 /// plan holds none ([`plan_blocks`]) — and build the [`RowBatcher`] that will
 /// hold its rows.
 ///
-/// The four places a block becomes active — a `COPY` header the scanner
-/// read, the first row of a headerless block, a partition that started inside
-/// a block, and a resumed token — differ only in where the header and field
-/// count come from.
+/// The three places a block becomes active — a `COPY` header the scanner
+/// read, a partition that started inside a block, and a resumed token —
+/// differ only in where the header comes from.
 fn activate(
     header: CopyHeader,
     header_offset: u64,
-    field_count: usize,
     database: Option<String>,
     plan: &ReplayPlan,
 ) -> Result<Opened> {
     let resolved_here;
-    let block = match plan.blocks.get(&header_offset).filter(|planned| {
-        planned.field_count == field_count
-            && planned.database == database
-            && planned.header == header
-    }) {
+    let block = match plan
+        .blocks
+        .get(&header_offset)
+        .filter(|planned| planned.database == database && planned.header == header)
+    {
         Some(planned) => planned,
         None => {
             resolved_here = resolve_for_query(
                 &header,
                 header_offset,
-                field_count,
                 database.as_deref(),
                 &plan.query_options,
                 plan.metadata.as_ref(),
@@ -3290,11 +3234,6 @@ fn replay<'a>(
             }
             _ => (None, None),
         };
-        // A matching header with no column list, waiting on its first row to
-        // learn the field count. Never non-empty across a resume point: a
-        // stream only yields right after a flush, by which time a pending
-        // headerless block has seen its first row.
-        let mut pending: Option<(CopyHeader, u64, Option<String>)> = None;
         // One buffer for the whole replay: every row of a block has the same
         // width, so after the first it never grows again.
         let mut split = RowSplit::default();
@@ -3347,35 +3286,22 @@ fn replay<'a>(
                                 .await?
                                 .filter(|&start| start <= seg_limit && start < seg_end);
                         // No header line is in range, so the schema comes off
-                        // the map's own copy of it — resolved now when the
-                        // header named its columns, deferred to the first row
-                        // when it did not, as the live paths below do.
-                        if block.header.columns.is_empty() {
-                            let Some(row_start) = row_start else { continue };
-                            pending = Some((
-                                block.header.clone(),
-                                block.header_offset,
-                                block_database.clone(),
-                            ));
-                            CopyScanner::resume(row_start, Some((block.header_offset, 0)))
-                        } else {
-                            let (opened, resolved, notes) = activate(
-                                block.header.clone(),
-                                block.header_offset,
-                                block.header.columns.len(),
-                                block_database.clone(),
-                                &plan,
-                            )?;
-                            // Published even for a piece holding no row, so a
-                            // sub-stream handed only such pieces — cuts inside
-                            // one row, or the runs pruning left — reports the
-                            // block's schema as one entered at its header does.
-                            *shared.comparison_notes.lock().unwrap() = notes;
-                            *shared.resolved_schema.lock().unwrap() = resolved;
-                            let Some(row_start) = row_start else { continue };
-                            active = Some(opened);
-                            CopyScanner::resume(row_start, Some((block.header_offset, 0)))
-                        }
+                        // the map's own copy of it.
+                        let (opened, resolved, notes) = activate(
+                            block.header.clone(),
+                            block.header_offset,
+                            block_database.clone(),
+                            &plan,
+                        )?;
+                        // Published even for a piece holding no row, so a
+                        // sub-stream handed only such pieces — cuts inside
+                        // one row, or the runs pruning left — reports the
+                        // block's schema as one entered at its header does.
+                        *shared.comparison_notes.lock().unwrap() = notes;
+                        *shared.resolved_schema.lock().unwrap() = resolved;
+                        let Some(row_start) = row_start else { continue };
+                        active = Some(opened);
+                        CopyScanner::resume(row_start, Some((block.header_offset, 0)))
                     }
                 },
             };
@@ -3420,46 +3346,17 @@ fn replay<'a>(
                     while let Some(event) = scanner.next_event(span, span_eof)? {
                         match event {
                             Event::CopyStart(start) => {
-                                if start.header.columns.is_empty() {
-                                    pending = Some((
-                                        start.header,
-                                        start.header_offset,
-                                        block_database.clone(),
-                                    ));
-                                } else {
-                                    let field_count = start.header.columns.len();
-                                    let (opened, resolved, notes) = activate(
-                                        start.header,
-                                        start.header_offset,
-                                        field_count,
-                                        block_database.clone(),
-                                        &plan,
-                                    )?;
-                                    *shared.comparison_notes.lock().unwrap() = notes;
-                                    *shared.resolved_schema.lock().unwrap() = resolved;
-                                    active = Some(opened);
-                                }
+                                let (opened, resolved, notes) = activate(
+                                    start.header,
+                                    start.header_offset,
+                                    block_database.clone(),
+                                    &plan,
+                                )?;
+                                *shared.comparison_notes.lock().unwrap() = notes;
+                                *shared.resolved_schema.lock().unwrap() = resolved;
+                                active = Some(opened);
                             }
                             Event::Row(row) => {
-                                if let Some((header, header_offset, block_database)) =
-                                    pending.take()
-                                {
-                                    let field_count = if header.columns.is_empty() {
-                                        memchr::memchr_iter(COPY_TEXT_DELIMITER, row.raw).count() + 1
-                                    } else {
-                                        header.columns.len()
-                                    };
-                                    let (opened, resolved, notes) = activate(
-                                        header,
-                                        header_offset,
-                                        field_count,
-                                        block_database,
-                                        &plan,
-                                    )?;
-                                    *shared.comparison_notes.lock().unwrap() = notes;
-                                    *shared.resolved_schema.lock().unwrap() = resolved;
-                                    active = Some(opened);
-                                }
                                 if let Some((header_offset, _, batcher, filter, _)) =
                                     active.as_mut()
                                 {
@@ -3511,7 +3408,6 @@ fn replay<'a>(
                                 }
                             }
                             Event::CopyEnd(_) => {
-                                pending = None;
                                 if let Some((_, _, mut batcher, _, _)) = active.take()
                                     && !batcher.is_empty()
                                 {
@@ -3581,7 +3477,6 @@ fn replay<'a>(
             // `\.` has no `CopyEnd` to flush it, so it flushes here — and
             // clears the block state either way, the next segment possibly
             // being a different block with a different schema.
-            pending = None;
             if let Some((_, _, mut batcher, _, _)) = active.take()
                 && !batcher.is_empty()
             {
@@ -3614,8 +3509,7 @@ fn replay<'a>(
 /// yielded before any row of the table, for the first refusing block in file
 /// order (`docs/design/decisions.md`, "D54"), and so is
 /// `Error::TableColumnsDisagree`, for a table whose blocks name different
-/// columns ([`TableColumns`]); only a block naming no columns refuses where it
-/// is reached.
+/// columns ([`TableColumns`]).
 ///
 /// `query_options.projection` decides which columns are materialized
 /// (`docs/design/decisions.md`, "D28"). It cuts the schema
@@ -4029,15 +3923,8 @@ mod tests {
         };
         let metadata = DumpMetadata { databases: vec![first] };
 
-        let err = resolve_block(
-            &header,
-            &header.columns,
-            Some(&metadata),
-            Some("second"),
-            SchemaMode::Typed,
-            &[],
-        )
-        .expect_err("the metadata has no entry for `second`");
+        let err = resolve_block(&header, Some(&metadata), Some("second"), SchemaMode::Typed, &[])
+            .expect_err("the metadata has no entry for `second`");
         assert!(
             matches!(&err, Error::MetadataNotScanned { database } if database.as_deref() == Some("second")),
             "{err:?}"
@@ -4046,28 +3933,13 @@ mod tests {
         // The same block in a database the metadata covers resolves, so the
         // refusal is about coverage and not about the lookup failing.
         assert!(
-            resolve_block(
-                &header,
-                &header.columns,
-                Some(&metadata),
-                Some("first"),
-                SchemaMode::Typed,
-                &[]
-            )
-            .is_ok()
+            resolve_block(&header, Some(&metadata), Some("first"), SchemaMode::Typed, &[]).is_ok()
         );
 
         // `Strings` never looks, so it is never refused.
         assert!(
-            resolve_block(
-                &header,
-                &header.columns,
-                Some(&metadata),
-                Some("second"),
-                SchemaMode::Strings,
-                &[]
-            )
-            .is_ok()
+            resolve_block(&header, Some(&metadata), Some("second"), SchemaMode::Strings, &[])
+                .is_ok()
         );
     }
 
@@ -4267,33 +4139,28 @@ mod tests {
         assert_ne!(first, of_two);
     }
 
-    /// One table in three blocks: two naming its columns in different orders
-    /// and one naming none, so a term or a projected name resolves against the
-    /// first two at plan time and cannot be tried on the third until a row is
-    /// read.
-    fn three_blocks(dir: &std::path::Path) -> std::path::PathBuf {
-        let path = dir.join("three_blocks.sql");
+    /// One table in two blocks naming its columns in different orders.
+    fn two_blocks(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("two_blocks.sql");
         std::fs::write(
             &path,
             "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n\\.\n\n\
-             COPY public.t (b, a) FROM stdin;\ny\t3\n\\.\n\n\
-             COPY public.t FROM stdin;\n4\tz\n\\.\n",
+             COPY public.t (b, a) FROM stdin;\ny\t3\n\\.\n",
         )
         .unwrap();
         path
     }
 
-    /// **The plan resolves every block with a column list before any is read,
-    /// and activation takes that resolution rather than making its own.** A
-    /// block's filter or projection refusal refuses the plan; a block with no
-    /// column list is left out, to be resolved where it is reached.
+    /// **The plan resolves every block before any is read, and activation
+    /// takes that resolution rather than making its own.** A block's filter
+    /// or projection refusal refuses the plan.
     #[tokio::test]
     async fn the_filter_is_resolved_once_per_block_at_plan_time() {
         use crate::io::LocalFileSource;
         use crate::predicate::Predicate;
 
         let dir = tempfile::tempdir().unwrap();
-        let source = LocalFileSource::open(three_blocks(dir.path())).unwrap();
+        let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
         let not_null = |column: &str| {
             Expr::all([Predicate {
                 column: column.into(),
@@ -4318,8 +4185,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let [first, second, third] = &mapped.matches[..] else {
-            panic!("three blocks: {:?}", mapped.matches)
+        let [first, second] = &mapped.matches[..] else {
+            panic!("two blocks: {:?}", mapped.matches)
         };
         let plan_for = |query_options: &QueryOptions| {
             ReplayPlan::new(
@@ -4351,15 +4218,13 @@ mod tests {
             plan.blocks.keys().copied().collect::<Vec<_>>(),
             [first.header_offset, second.header_offset]
         );
-        assert!(third.header.columns.is_empty());
 
         // The planned entry is what resolving the block where it is reached
         // would have produced.
-        let live = |block: &CopyBlock, field_count| {
+        let live = |block: &CopyBlock| {
             resolve_for_query(
                 &block.header,
                 block.header_offset,
-                field_count,
                 block.database.as_deref(),
                 &query_options,
                 mapped.metadata.as_ref(),
@@ -4367,28 +4232,23 @@ mod tests {
             )
         };
         let planned = &plan.blocks[&first.header_offset];
-        assert_eq!(format!("{planned:?}"), format!("{:?}", live(first, 2).unwrap()));
+        assert_eq!(format!("{planned:?}"), format!("{:?}", live(first).unwrap()));
 
         // The second block's `a` is its second field, and it is `a` that
         // feeds the projection.
         assert_eq!(plan.blocks[&second.header_offset].field_targets, [None, Some(0)]);
 
         // Activating the planned block hands out the plan's own tree.
-        let open = |block: &CopyBlock, field_count| {
-            activate(
-                block.header.clone(),
-                block.header_offset,
-                field_count,
-                block.database.clone(),
-                &plan,
-            )
+        let open = |header: &CopyHeader, block: &CopyBlock| {
+            activate(header.clone(), block.header_offset, block.database.clone(), &plan)
         };
-        let ((_, _, _, filter, _), resolved, notes) = open(first, 2).unwrap();
+        let ((_, _, _, filter, _), resolved, notes) = open(&first.header, first).unwrap();
         assert!(Arc::ptr_eq(&filter, &planned.filter));
         assert_eq!((resolved, notes), (planned.resolved.clone(), planned.notes.clone()));
 
         // An activation the entry does not describe resolves for itself.
-        let ((_, _, _, other, _), _, _) = open(first, 3).unwrap_or_else(|e| panic!("{e}"));
+        let ((_, _, _, other, _), _, _) =
+            open(&second.header, first).unwrap_or_else(|e| panic!("{e}"));
         assert!(!Arc::ptr_eq(&other, &planned.filter));
     }
 }

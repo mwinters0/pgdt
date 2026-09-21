@@ -77,41 +77,43 @@ async fn resume_continues_without_gap_or_repeat() {
     }
 }
 
-/// Resuming mid-block when the paused-on block has no explicit COPY column
-/// list still reconstructs the right (placeholder) schema, not just the
-/// right byte offset.
+/// Resuming mid-block in a block with no column list resumes rows of zero
+/// fields (I5): the schema stays empty and the rows still count.
 #[tokio::test]
-async fn resume_reconstructs_headerless_schema() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+async fn resume_inside_a_block_naming_no_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("listless.sql");
+    std::fs::write(&path, "COPY public.t  FROM stdin;\n\n\n\n\\.\n").unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     let mut stream = table_stream(
         &source,
-        "public.no_column_list",
+        "public.t",
         ScanOptions::default(),
-        QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
+        options.clone(),
         None,
         CacheMode::DISABLED,
     );
-
     let first = stream.next().await.unwrap().unwrap();
-    assert_eq!(rows_of(&first), vec![vec![Some("\\.".to_string())]]);
+    assert_eq!((first.num_columns(), first.num_rows()), (0, 1));
     let token = stream.resume_token();
     drop(stream);
 
     let mut resumed = table_stream(
         &source,
-        "public.no_column_list",
+        "public.t",
         ScanOptions::default(),
-        QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
+        options,
         Some(token),
         CacheMode::DISABLED,
     );
-    let second = resumed.next().await.unwrap().unwrap();
-    assert_eq!(
-        second.schema().fields().iter().map(|f| f.name().clone()).collect::<Vec<_>>(),
-        vec!["column1".to_string()]
-    );
-    assert_eq!(rows_of(&second), vec![vec![Some("just a value".to_string())]]);
-    assert!(resumed.next().await.is_none());
+    let mut rows = 0;
+    while let Some(batch) = resumed.next().await {
+        let batch = batch.unwrap();
+        assert_eq!(batch.num_columns(), 0);
+        rows += batch.num_rows();
+    }
+    assert_eq!(rows, 2);
 }
 
 /// A resume token taken exactly at a block boundary (just after the last row
@@ -464,6 +466,8 @@ async fn partition_root_is_recorded_only_on_marked_blocks() {
             vec![
                 ("feel", "public.feel"),
                 ("feel", "public.feel"),
+                ("shuffle", "public.shuffle"),
+                ("shuffle", "public.shuffle"),
                 ("spread", "public.spread"),
                 ("spread", "public.spread"),
             ],
@@ -480,7 +484,7 @@ async fn partition_root_is_recorded_only_on_marked_blocks() {
 
 /// An ordinary table in a file that *also* contains partition-root blocks
 /// still stops early — the marker gates the stop per matched block, not per
-/// file. `evt_m` is the second of nine blocks, and the first marked block
+/// file. `evt_m` is the third of twelve blocks, and the first marked block
 /// comes after it.
 #[tokio::test]
 async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks() {
@@ -678,23 +682,16 @@ async fn one_table(
 
 /// **One table, one schema** (I2, I5): a table whose blocks list its columns
 /// in different orders — as a partition attached with its own column order
-/// writes them — comes out in one order, each block's rows reordered by name,
-/// and a block naming no columns takes the table's names where its width
-/// matches. With no DDL, the order is the first listing block's.
+/// writes them — comes out in one order, each block's rows reordered by name.
+/// With no DDL, the order is the first block's.
 #[tokio::test]
 async fn a_tables_blocks_come_out_in_one_column_order() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("orders.sql");
-    // The block naming no columns carries its fields in the table's order,
-    // which is what `COPY` without a list means.
-    let blocks = |unnamed: &str| {
-        format!(
-            "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n\\.\n\n\
-             COPY public.t (b, a) FROM stdin;\ny\t3\n\\.\n\n\
-             COPY public.t FROM stdin;\n{unnamed}\n\\.\n"
-        )
-    };
-    std::fs::write(&path, blocks("4\tz")).unwrap();
+    let blocks = "COPY public.t (a, b) FROM stdin;\n1\tx\n2\t\\N\n\\.\n\n\
+                  COPY public.t (b, a) FROM stdin;\ny\t3\n\\.\n\n\
+                  COPY public.t (a, b) FROM stdin;\n4\tz\n\\.\n";
+    std::fs::write(&path, blocks).unwrap();
     let expected = |names: &[&str], rows: [[Option<&str>; 2]; 4]| {
         let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
         rows.iter()
@@ -722,8 +719,7 @@ async fn a_tables_blocks_come_out_in_one_column_order() {
     );
 
     // The DDL's order wins over the first block's, typed or not.
-    let declared =
-        format!("CREATE TABLE public.t (\n    b text,\n    a integer\n);\n\n{}", blocks("z\t4"));
+    let declared = format!("CREATE TABLE public.t (\n    b text,\n    a integer\n);\n\n{blocks}");
     std::fs::write(&path, declared).unwrap();
     for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
         let options = QueryOptions { schema_mode, ..QueryOptions::default() };
@@ -762,9 +758,8 @@ async fn a_tables_blocks_come_out_in_one_column_order() {
 
 /// **A table whose blocks name different sets of columns is refused**, before
 /// any row and naming two of them, serially and partitioned alike: no one
-/// schema holds both without stating values the dump never held. So is a
-/// block naming no columns whose rows are not as wide as the table, where it
-/// is reached.
+/// schema holds both without stating values the dump never held. A block
+/// naming no columns names the empty set, so it disagrees with any other.
 #[tokio::test]
 async fn a_table_whose_blocks_disagree_on_its_columns_is_refused() {
     use pgdump_query::Error;
@@ -786,11 +781,45 @@ async fn a_table_whose_blocks_disagree_on_its_columns_is_refused() {
         }
     }
 
-    std::fs::write(&path, format!("{second}COPY public.t FROM stdin;\n4\tz\textra\n\\.\n"))
-        .unwrap();
+    std::fs::write(&path, format!("{second}COPY public.t  FROM stdin;\n\n\\.\n")).unwrap();
     match one_table(&path, "public.t", QueryOptions::default()).await {
-        Err(Error::UnnamedBlockWidth { header_offset, expected: 2, found: 3, .. })
-            if header_offset == other => {}
+        Err(Error::TableColumnsDisagree { header_offset: 0, other_offset, .. })
+            if other_offset == other => {}
+        other => panic!("the wrong answer: {other:?}"),
+    }
+}
+
+/// **A block naming no columns copies none** (I5): each row is an empty line
+/// read as a row of zero fields, so the table's schema is empty — whatever
+/// its DDL declares, a table of generated columns included — and its row
+/// count is its true one, serially and partitioned alike. A line that is not
+/// empty is refused.
+#[tokio::test]
+async fn a_block_naming_no_columns_copies_rows_of_no_fields() {
+    use pgdump_query::Error;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("listless.sql");
+    let block = "COPY public.t  FROM stdin;\n\n\n\n\\.\n";
+    let counted = |batches: Vec<NamedRows>| {
+        assert!(batches.iter().all(|(names, _)| names.is_empty()), "{batches:?}");
+        batches.iter().map(|(_, rows)| rows.len()).sum::<usize>()
+    };
+    let generated =
+        "CREATE TABLE public.t (\n    one integer GENERATED ALWAYS AS (1) STORED\n);\n\n";
+    for ddl in ["", "CREATE TABLE public.t (\n);\n\n", generated] {
+        std::fs::write(&path, format!("{ddl}{block}{block}")).unwrap();
+        for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
+            let options = QueryOptions { schema_mode, ..QueryOptions::default() };
+            let batches = one_table(&path, "public.t", options).await.unwrap();
+            assert_eq!(counted(batches), 6, "{ddl:?} {schema_mode:?}");
+        }
+    }
+
+    std::fs::write(&path, format!("{block}COPY public.t  FROM stdin;\n\nx\n\\.\n")).unwrap();
+    match one_table(&path, "public.t", QueryOptions::default()).await {
+        Err(Error::ColumnCountMismatch { expected: 0, found: 1, row_offset, .. })
+            if row_offset == block.len() as u64 + 28 => {}
         other => panic!("the wrong answer: {other:?}"),
     }
 }

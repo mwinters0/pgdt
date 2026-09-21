@@ -1016,10 +1016,6 @@ fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
     let metadata = index.metadata.as_ref();
     index
         .blocks()
-        // A header with no column list takes placeholder names from its first
-        // row, which no DDL can ever explain; those are `NotDeclared` by
-        // construction and say nothing about the metadata.
-        .filter(|b| !b.header.columns.is_empty())
         .map(|b| {
             let schema = resolve_columns(
                 &b.header.qualified_name(),

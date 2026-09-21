@@ -39,7 +39,7 @@ use arrow::datatypes::{
 use bytes::Bytes;
 
 use crate::cache::CacheMode;
-use crate::copy::{CopyHeader, RawRow, RowSplit};
+use crate::copy::{RawRow, RowSplit};
 use crate::decode;
 use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
@@ -292,19 +292,6 @@ impl RetainedChunks {
         for chunk in self.chunks.iter_mut() {
             chunk.column_blocks.clear();
         }
-    }
-}
-
-/// The column names a `COPY` header implies: its own list, or — when it
-/// carried none, meaning "all columns, in table order" — placeholder names
-/// sized to `field_count` (the first row's field count), there being no DDL
-/// to name them from. This is also what a headerless block's
-/// [`crate::resolve::resolve_columns`] lookup is keyed against.
-pub(crate) fn column_names(header: &CopyHeader, field_count: usize) -> Vec<String> {
-    if header.columns.is_empty() {
-        (1..=field_count).map(|i| format!("column{i}")).collect()
-    } else {
-        header.columns.clone()
     }
 }
 
@@ -901,14 +888,6 @@ impl RowBatcher {
         self.span.map(|(start, _)| start)
     }
 
-    /// Columns in this block's schema — the field count a resumed stream
-    /// needs to rebuild the same schema without re-reading the header. The
-    /// block's own count, **not** the projected one: a headerless block names
-    /// its columns `column1..columnN` from this number.
-    pub(crate) fn field_count(&self) -> usize {
-        self.field_targets.len()
-    }
-
     /// The block's qualified table name — context for the
     /// `Error::FieldDecode` an ordering predicate raises on a value that is
     /// not of its mapped type, worded as this batcher words its own.
@@ -953,6 +932,10 @@ impl RowBatcher {
     /// row directly for the unfiltered case
     /// (`docs/design/decisions.md`, "D28"; `measurements.md`,
     /// `predicate-terms`).
+    ///
+    /// **A block of zero fields takes only empty lines** — one listing no
+    /// columns (I5) — where `split` reads an empty line as one empty field,
+    /// so any other line is the mismatch it is against a wider block.
     pub(crate) fn push_row(
         &mut self,
         header_offset: u64,
@@ -963,7 +946,8 @@ impl RowBatcher {
     ) -> Result<()> {
         let raw = row.bytes();
         let expected = self.field_targets.len();
-        let ends = split.complete(raw);
+        let ends: &[usize] =
+            if expected == 0 && raw.is_empty() { &[] } else { split.complete(raw) };
         let found = ends.len();
         if found != expected {
             return Err(Error::ColumnCountMismatch {
@@ -1854,7 +1838,6 @@ mod tests {
             vec![None, Some(0), None],
             DataType::Utf8View,
         );
-        assert_eq!(batcher.field_count(), 3, "a resumed stream needs the block's own width");
         let mut chunks = RetainedChunks::new();
         let err = batcher
             .push_row(0, 0, RawRow::unchecked(b"a\t1"), &mut RowSplit::default(), &mut chunks)

@@ -172,7 +172,7 @@ async fn a_query_grants_no_wait_in_either_loop() {
     let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());
     let mut stream = table_stream(
         &source,
-        "public.no_column_list",
+        "My Schema.Odd Table",
         ScanOptions::default(),
         QueryOptions::default(),
         None,
@@ -182,6 +182,6 @@ async fn a_query_grants_no_wait_in_either_loop() {
     while let Some(batch) = stream.next().await {
         rows += batch.unwrap().num_rows();
     }
-    assert!(rows > 0, "the fixture's `public.no_column_list` has rows");
+    assert!(rows > 0, "the fixture's `Odd Table` has rows");
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait]);
 }

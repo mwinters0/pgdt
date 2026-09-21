@@ -312,9 +312,8 @@ fn retype_from_census(
     }
 }
 
-/// Resolve `columns` (in `COPY`-header order — placeholder names like
-/// `column1` when the header carried none, same as `crate::batch::schema_for`
-/// derives) against `metadata` for `qualified_table`, scoped to the
+/// Resolve `columns` (in `COPY`-header order, and empty for a header listing
+/// none — I5) against `metadata` for `qualified_table`, scoped to the
 /// database this block was attributed to (`database` — `None` for a plain
 /// dump's single unnamed database).
 ///
@@ -774,8 +773,8 @@ mod tests {
         assert_eq!(resolved.plans, untouched.plans);
     }
 
-    /// A census shorter than the column list — a header-less block's, which
-    /// ends at the highest field that ever held a brace — leaves the columns
+    /// A census shorter than the column list — one ending at the highest
+    /// field that ever held a brace — leaves the columns
     /// past its end exactly as the DDL resolved them.
     #[test]
     fn a_census_shorter_than_the_column_list_constrains_only_what_it_covers() {

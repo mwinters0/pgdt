@@ -107,8 +107,8 @@ pub(crate) struct PieceObserver {
 /// last line was cut short and therefore not counted.
 ///
 /// `columns` sizes the census the way `map::Builder::on_copy_start` does, from
-/// the header's column list; a header-less block states zero and the rows grow
-/// it. Every row the piece owns is handed to `observer`, where the block
+/// the header's column list, and a row wider than it grows it
+/// (`crate::map::census_row`). Every row the piece owns is handed to `observer`, where the block
 /// gathers statistics. **Synchronous and free of I/O**: this is the body a
 /// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").
@@ -226,8 +226,8 @@ pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
 /// Union `from` into `into`, growing `into` where the piece saw more columns
 /// than anything before it — the census fold, in one place because [`merge`]
 /// and the window accumulator in [`scan_region`] must not be two rules.
-/// Length-tolerant because a header-less block states no width, so two pieces
-/// of one block can legitimately report different lengths.
+/// Length-tolerant because a row wider than its header grows a census, so two
+/// pieces of one block can report different lengths.
 fn absorb_census(into: &mut Vec<ArrayShape>, from: &[ArrayShape]) {
     if from.len() > into.len() {
         into.resize(from.len(), ArrayShape::default());

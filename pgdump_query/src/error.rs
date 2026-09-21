@@ -196,12 +196,6 @@ pub enum Error {
         "table `{table}` is written as COPY blocks naming different columns — the block at offset {header_offset} and the one at offset {other_offset}; one table's blocks must name the same columns"
     )]
     TableColumnsDisagree { table: String, header_offset: u64, other_offset: u64 },
-    /// A `COPY` block naming no columns, whose first row's field count is not
-    /// the number of columns the table's other blocks, or its DDL, name.
-    #[error(
-        "COPY block at offset {header_offset} names no columns and its first row has {found} field(s), where table `{table}` has {expected} column(s)"
-    )]
-    UnnamedBlockWidth { table: String, header_offset: u64, expected: usize, found: usize },
     #[error(
         "metadata for database {} was not scanned — run `pgdt parse` first, or use --schema-mode strings",
         database.as_deref().unwrap_or("(unnamed)")

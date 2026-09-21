@@ -78,9 +78,8 @@ impl PredicateOp {
 /// A single-column post-parse filter: `column <op> value`, and the **leaf**
 /// of an [`Expr`] — a query carries one expression and keeps a row only if
 /// its root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
-/// matched against the queried table's column names (the `COPY` header list,
-/// or the `column1`, `column2`, ... placeholders used when the header has
-/// none). `value` is `None` for `IsNull`/`IsNotNull`, which need no
+/// matched against the queried table's column names, the `COPY` header's
+/// list. `value` is `None` for `IsNull`/`IsNotNull`, which need no
 /// comparison value; it is always `Some` for every other operator.
 ///
 /// `value` is read with the column's own decoder wherever the register gives

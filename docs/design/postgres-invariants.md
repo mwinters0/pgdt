@@ -257,12 +257,16 @@ block of a partitioned table lists the same names in its own order.
 **Verified against:** v18.6 (source); the `dropped_column`/`generated_column`
 tables in `scripts/fixture_schema_edge_cases.sql` reproduce both shapes in
 real `pg_dump` output on 13.23/16.15/18.6 — the dummy column only appears
-under `--binary-upgrade`, matching the gate above. The per-leaf list: source
-only, v13.23, v16.15 and v18.6; no fixture attaches a reordered partition.
+under `--binary-upgrade`, matching the gate above. The absent list and the
+per-leaf list: `scripts/fixture_schema_partitions.sql`'s `hollow` (no
+columns), `derived` (only generated ones) and `shuffle` (a leaf attached in
+another order) on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, under both
+flag sets.
 **Relied on by:** `decisions.md` ("D43" —
 the `COPY` header is authoritative; the DDL is a by-name type lookup);
-`stream.rs`'s `TableColumns`, which reorders a table's blocks by name and
-unions their census by name.
+`stream.rs`'s `TableColumns`, which reorders a table's blocks by name,
+unions their census by name, and reads a header listing no columns as a
+block copying none.
 **Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`,
 and `grep -n 'fmtCopyColumnList(tbinfo' src/bin/pg_dump/pg_dump.c` still
 passing the leaf's `tbinfo` where `copyFrom` is the root's.

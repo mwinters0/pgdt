@@ -563,8 +563,9 @@ pub(crate) struct Builder {
     governing_toc: Option<TocHeader>,
     /// The census accumulating for the open `COPY` block (`ArrayShape`).
     /// Sized at `CopyStart` from the header's column list, and grown by any
-    /// row that turns out to have more fields (a header-less block, whose
-    /// column count only the rows know). Every mapping pass censuses, a block
+    /// row that turns out to have more fields, the mapping pass never
+    /// refusing a row's width (`docs/design/decisions.md`, "D28"); a query
+    /// refuses that row, so nothing reads the extra entries. Every mapping pass censuses, a block
     /// reaching the map only once walked end to end
     /// (`docs/design/decisions.md`, "D35").
     pending_census: Vec<ArrayShape>,
@@ -576,7 +577,7 @@ pub(crate) struct Builder {
 
 /// Fold one data row of a `COPY` block into `census`, one [`ArrayShape`] per
 /// column, growing it for a row that turns out to have more fields than the
-/// header named (a header-less block, whose column count only the rows know).
+/// header named — a malformed row, which the mapping pass does not refuse.
 ///
 /// The row is rejected wholesale before it is split: an array literal always
 /// contains a `{`, the only other thing that can start one is an `[lb:ub]=`
@@ -1218,8 +1219,8 @@ impl Builder {
     /// leader's `Interior`: this module is L1 and the leader L4, so the shape
     /// vector is the L1 value they share (`docs/design/decisions.md`, "D68").
     ///
-    /// Length-tolerant because a header-less block states no width, so the
-    /// workers' union can be wider than what
+    /// Length-tolerant because a row wider than its header grows a census
+    /// ([`census_row`]), so the workers' union can be wider than what
     /// [`on_copy_start`](Self::on_copy_start) sized.
     pub(crate) fn absorb_census(&mut self, census: &[ArrayShape]) {
         if census.len() > self.pending_census.len() {

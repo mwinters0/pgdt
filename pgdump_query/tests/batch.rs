@@ -465,37 +465,27 @@ async fn unmatched_table_produces_no_batches() {
     assert!(rows.is_empty());
 }
 
-/// A header with no explicit column list still gets a schema — placeholder
-/// names sized to the first row's field count — and its rows decode
-/// normally, including the row that reads `\\.` and must not be mistaken
-/// for the block terminator.
+/// A header with no column list copies no columns (I5), so a row that is
+/// not an empty line is refused at the first one — here the row reading
+/// `\\.`, which the scanner still reads as a row rather than the block's
+/// terminator. `pg_dump` writes no such block; the hand-written fixture
+/// keeps it for the scanner.
 #[tokio::test]
-async fn header_without_column_list_gets_placeholder_schema() {
+async fn header_without_column_list_refuses_a_non_empty_row() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut batches = Vec::new();
-    read_table(
+    let err = read_table(
         &source,
         "public.no_column_list",
         &ScanOptions::default(),
         &QueryOptions::default(),
         CacheMode::DISABLED,
-        |batch| {
-            batches.push(batch);
-            ControlFlow::Continue(())
-        },
+        |_| ControlFlow::Continue(()),
     )
     .await
-    .unwrap();
-
-    assert_eq!(batches.len(), 1);
-    let batch = &batches[0];
-    assert_eq!(
-        batch.schema().fields().iter().map(|f| f.name().clone()).collect::<Vec<_>>(),
-        vec!["column1".to_string()]
-    );
-    assert_eq!(
-        rows_of(batch),
-        vec![vec![Some("\\.".to_string())], vec![Some("just a value".to_string())]]
+    .unwrap_err();
+    assert!(
+        matches!(err, pgdump_query::Error::ColumnCountMismatch { expected: 0, found: 1, .. }),
+        "{err:?}"
     );
 }
 

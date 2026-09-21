@@ -106,10 +106,11 @@ delivered.
 - [x] **6.4** One schema per table: blocks reordered by name into the table's
   order, a disagreeing name set refused.
   [Notes](../design/roadmap-P6.4-one-schema-notes.md).
-- [ ] **6.4.1** A block with no column list copies no columns: rows of zero
+- [x] **6.4.1** A block with no column list copies no columns: rows of zero
   fields, a non-empty line refused, a zero-column table's row count kept; and
   the fixtures gain a reordered attached partition, a zero-column table and a
   generated-only table on every major, I5 verified against them.
+  [Notes](../design/roadmap-P6.4.1-listless-block-notes.md).
 - [ ] **6.5** `datafusion-pgdump`: a complete cache loaded, the catalog and
   single-table forms, the partitioned scan with projection, limit and batch
   size, the session budget; the same rows as the library over every fixture.

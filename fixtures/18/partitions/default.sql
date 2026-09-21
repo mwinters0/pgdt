@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict VpjLdgcsHLbhfJiuCldSHvWc3Chfy31Wu47lB7Zzv4DLVQBhPseiuS0aJEvbvwy
+\restrict yP5gbOk0zH0KfmDg2xtkgObnEqqSkfWku9lyt7GRceVFqdgTe7rsgcdEzT2axXQ
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -34,6 +34,20 @@ ALTER TYPE public.mood OWNER TO postgres;
 
 SET default_tablespace = '';
 
+SET default_table_access_method = heap;
+
+--
+-- Name: derived; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.derived (
+    one integer GENERATED ALWAYS AS (1) STORED,
+    label text GENERATED ALWAYS AS ('x'::text) STORED
+);
+
+
+ALTER TABLE public.derived OWNER TO postgres;
+
 --
 -- Name: evt; Type: TABLE; Schema: public; Owner: postgres
 --
@@ -46,8 +60,6 @@ PARTITION BY LIST (region);
 
 
 ALTER TABLE public.evt OWNER TO postgres;
-
-SET default_table_access_method = heap;
 
 --
 -- Name: evt_a; Type: TABLE; Schema: public; Owner: postgres
@@ -133,6 +145,56 @@ CREATE TABLE public.feel_z (
 ALTER TABLE public.feel_z OWNER TO postgres;
 
 --
+-- Name: hollow; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.hollow (
+);
+
+
+ALTER TABLE public.hollow OWNER TO postgres;
+
+--
+-- Name: shuffle; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.shuffle (
+    id integer,
+    m public.mood,
+    note text
+)
+PARTITION BY HASH (m);
+
+
+ALTER TABLE public.shuffle OWNER TO postgres;
+
+--
+-- Name: shuffle_a; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.shuffle_a (
+    id integer,
+    m public.mood,
+    note text
+);
+
+
+ALTER TABLE public.shuffle_a OWNER TO postgres;
+
+--
+-- Name: shuffle_z; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.shuffle_z (
+    note text,
+    m public.mood,
+    id integer
+);
+
+
+ALTER TABLE public.shuffle_z OWNER TO postgres;
+
+--
 -- Name: spread; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -198,6 +260,20 @@ ALTER TABLE ONLY public.feel ATTACH PARTITION public.feel_z FOR VALUES WITH (mod
 
 
 --
+-- Name: shuffle_a; Type: TABLE ATTACH; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.shuffle ATTACH PARTITION public.shuffle_a FOR VALUES WITH (modulus 2, remainder 0);
+
+
+--
+-- Name: shuffle_z; Type: TABLE ATTACH; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.shuffle ATTACH PARTITION public.shuffle_z FOR VALUES WITH (modulus 2, remainder 1);
+
+
+--
 -- Name: spread_a; Type: TABLE ATTACH; Schema: public; Owner: postgres
 --
 
@@ -209,6 +285,16 @@ ALTER TABLE ONLY public.spread ATTACH PARTITION public.spread_a FOR VALUES WITH 
 --
 
 ALTER TABLE ONLY public.spread ATTACH PARTITION public.spread_z FOR VALUES WITH (modulus 2, remainder 1);
+
+
+--
+-- Data for Name: derived; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.derived  FROM stdin;
+
+
+\.
 
 
 --
@@ -247,6 +333,7 @@ COPY public.evt_z (id, region) FROM stdin;
 
 COPY public.feel (id, m) FROM stdin;
 1	sad
+2	ok
 3	happy
 \.
 
@@ -267,7 +354,40 @@ unrelated
 -- load via partition root public.feel
 
 COPY public.feel (id, m) FROM stdin;
-2	ok
+\.
+
+
+--
+-- Data for Name: hollow; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.hollow  FROM stdin;
+
+
+
+\.
+
+
+--
+-- Data for Name: shuffle_a; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+-- load via partition root public.shuffle
+
+COPY public.shuffle (id, m, note) FROM stdin;
+1	sad	one
+2	ok	two
+3	happy	three
+\.
+
+
+--
+-- Data for Name: shuffle_z; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+-- load via partition root public.shuffle
+
+COPY public.shuffle (note, m, id) FROM stdin;
 \.
 
 
@@ -296,5 +416,5 @@ COPY public.spread (id, m) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict VpjLdgcsHLbhfJiuCldSHvWc3Chfy31Wu47lB7Zzv4DLVQBhPseiuS0aJEvbvwy
+\unrestrict yP5gbOk0zH0KfmDg2xtkgObnEqqSkfWku9lyt7GRceVFqdgTe7rsgcdEzT2axXQ
 

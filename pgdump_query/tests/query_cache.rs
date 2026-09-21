@@ -151,8 +151,7 @@ async fn non_matching_cached_blocks_cost_zero_bytes() {
 }
 
 /// Rows/schema replayed from a cached block are identical to a fresh
-/// (uncached) scan — both for a headered table and a headerless one (which
-/// must still recover the right field count from its first row on replay).
+/// (uncached) scan.
 #[tokio::test]
 async fn replay_matches_a_fresh_scan() {
     let (_dir, dump) = sandboxed_edge_cases();
@@ -172,17 +171,14 @@ async fn replay_matches_a_fresh_scan() {
     .await;
     assert_eq!(widgets, widgets_expected());
 
-    let headerless = drain(
+    let odd = drain(
         &source,
-        "public.no_column_list",
+        "My Schema.Odd Table",
         QueryOptions::default(),
         CacheMode::enabled(cache_path),
     )
     .await;
-    assert_eq!(
-        headerless,
-        vec![vec![Some("\\.".to_string())], vec![Some("just a value".to_string())]]
-    );
+    assert_eq!(odd, vec![vec![Some("1".to_string()), Some("quoted identifiers".to_string())]]);
 }
 
 /// `CacheMode::DISABLED` is a byte-for-byte regression no-op: same output as
@@ -359,17 +355,14 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
 
     // A second query against the same (partial) cache still finds
     // everything past where the first one stopped.
-    let headerless = drain(
+    let odd = drain(
         &source,
-        "public.no_column_list",
+        "My Schema.Odd Table",
         QueryOptions::default(),
         CacheMode::enabled(cache_path),
     )
     .await;
-    assert_eq!(
-        headerless,
-        vec![vec![Some("\\.".to_string())], vec![Some("just a value".to_string())]]
-    );
+    assert_eq!(odd, vec![vec![Some("1".to_string()), Some("quoted identifiers".to_string())]]);
 }
 
 /// The first database's preamble is captured up front, before any segment
@@ -436,7 +429,7 @@ async fn no_duplication_on_repeat_queries() {
 
     drain(
         &source,
-        "public.no_column_list",
+        "My Schema.Odd Table",
         QueryOptions::default(),
         CacheMode::enabled(cache_path.clone()),
     )

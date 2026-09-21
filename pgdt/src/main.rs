@@ -1321,7 +1321,6 @@ fn about_the_source(err: &pgdump_query::Error) -> bool {
         | Lib::ResumeQueryMismatch
         | Lib::AmbiguousTable { .. }
         | Lib::TableColumnsDisagree { .. }
-        | Lib::UnnamedBlockWidth { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRender { .. } => false,
@@ -2428,9 +2427,9 @@ fn type_kind_summary(kind: &TypeKind) -> String {
 /// short cannot speak for a block past its frontier and every column resolves
 /// optimistically until it can (`docs/design/decisions.md`, "D35").
 ///
-/// A header-less block resolves to an empty schema, its column names coming
-/// from its first data row, which no index records. It is still listed, so
-/// the export's shape does not vary per block.
+/// A header-less block copies no columns (I5) and resolves to an empty
+/// schema. It is still listed, so the export's shape does not vary per
+/// block.
 fn block_resolutions(
     index: &DumpIndex,
     complete: bool,
@@ -2482,9 +2481,8 @@ struct IndexJson<'a> {
 }
 
 /// One `COPY` block's resolution, keyed by the block rather than rolled up per
-/// table: a table can span blocks (I2) and a header-less block names its
-/// columns from its first row, so a per-table rollup needs a merge rule that
-/// does not exist (`docs/design/decisions.md`, "D67").
+/// table: a table can span blocks (I2), each naming its columns in its own
+/// order, so a per-table rollup needs a merge rule that does not exist (`docs/design/decisions.md`, "D67").
 #[derive(serde::Serialize)]
 struct BlockResolutionJson<'a> {
     database: Option<&'a str>,
@@ -2656,7 +2654,7 @@ fn print_index(
         headings.before(&block.database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         if block.header.columns.is_empty() {
-            println!("    columns: (not listed in COPY header)");
+            println!("    columns: none (every column dropped or generated, or none declared)");
         } else {
             let columns: Vec<String> = resolved
                 .notes

@@ -8,6 +8,10 @@
 -- Without this schema that rule would ship tested only against
 -- hand-written strings.
 --
+-- It also holds the shapes a table's one schema is settled over (the
+-- stream module's `TableColumns`, I5): blocks listing one set of columns
+-- in two orders, and blocks listing none at all.
+--
 -- Two independent ways to reach it, and both are exercised:
 --
 --   1. `--load-via-partition-root`, the explicit flag (this schema's second
@@ -74,3 +78,36 @@ CREATE TABLE public.spread_z PARTITION OF public.spread
 
 -- Only values hashing to one side, leaving the other partition empty.
 INSERT INTO public.spread SELECT 1, 'sad';
+
+-- ---------------------------------------------------------------------
+-- A leaf ATTACHED with its columns in another order. Its attnums are its
+-- own, and each block's `COPY public.shuffle (...)` header lists the leaf's
+-- columns in the leaf's order (I5), so the root's blocks name the same set
+-- in two orders. Hash on the enum again, so both flag sets load via the
+-- root and both show it.
+-- ---------------------------------------------------------------------
+CREATE TABLE public.shuffle (id integer, m public.mood, note text)
+    PARTITION BY HASH (m);
+CREATE TABLE public.shuffle_a PARTITION OF public.shuffle
+    FOR VALUES WITH (MODULUS 2, REMAINDER 0);
+CREATE TABLE public.shuffle_z (note text, m public.mood, id integer);
+ALTER TABLE public.shuffle ATTACH PARTITION public.shuffle_z
+    FOR VALUES WITH (MODULUS 2, REMAINDER 1);
+
+INSERT INTO public.shuffle VALUES (1, 'sad', 'one'), (2, 'ok', 'two'),
+    (3, 'happy', 'three');
+
+-- ---------------------------------------------------------------------
+-- Two tables whose `COPY` header lists no columns at all: pg_dump writes
+-- none exactly when every column is dropped or generated (I5). Each row is
+-- an empty line. `hollow` has no columns; `derived` has only generated
+-- ones, which its DDL declares and its data never carries.
+-- ---------------------------------------------------------------------
+CREATE TABLE public.hollow ();
+INSERT INTO public.hollow SELECT FROM generate_series(1, 3);
+
+CREATE TABLE public.derived (
+    one integer GENERATED ALWAYS AS (1) STORED,
+    label text GENERATED ALWAYS AS ('x') STORED
+);
+INSERT INTO public.derived SELECT FROM generate_series(1, 2);

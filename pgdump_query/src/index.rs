@@ -107,21 +107,17 @@ impl ArrayShape {
 ///
 /// **Keyed by column name, not by position**: a leaf partition's block lists
 /// its columns in the leaf's own order, which need not be the root's or a
-/// sibling's. A block naming no columns is read positionally against
-/// `columns`, which is the order such a block's fields arrive in; a name a
-/// block carries and `columns` does not contributes nothing.
+/// sibling's. A name a block carries and `columns` does not contributes
+/// nothing, and so does a census entry past its header's list — a block
+/// naming no columns copies none (I5).
 pub fn union_census<'a>(
     columns: &[String],
     blocks: impl IntoIterator<Item = &'a CopyBlock>,
 ) -> Vec<ArrayShape> {
     let mut out = vec![ArrayShape::default(); columns.len()];
     for block in blocks {
-        for (i, shape) in block.array_shapes.iter().enumerate() {
-            let slot = if block.header.columns.is_empty() {
-                Some(i)
-            } else {
-                block.header.columns.get(i).and_then(|name| columns.iter().position(|c| c == name))
-            };
+        for (name, shape) in block.header.columns.iter().zip(&block.array_shapes) {
+            let slot = columns.iter().position(|c| c == name);
             if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
                 slot.merge(shape);
             }
@@ -183,7 +179,7 @@ pub struct CopyBlock {
     /// (`docs/design/decisions.md`, "D35"), so a block in the map always
     /// carries one, and an empty vector means "censused, saw no array-shaped
     /// literal". Shorter than `header.columns` never happens; *longer* only
-    /// for a header-less block, whose field count comes from the rows.
+    /// where a row is wider than its header, which a query refuses.
     pub array_shapes: Vec<ArrayShape>,
 }
 

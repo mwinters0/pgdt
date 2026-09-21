@@ -49,6 +49,13 @@ whichever block it came from: the table's `CREATE TABLE` order, or the first
 block's where the dump holds no DDL for it. A table whose blocks name different
 columns is refused rather than padded with NULLs the dump never held.
 
+A table whose every column is dropped or generated — or that has no columns at
+all — is written with a `COPY` header listing none, and each of its rows as an
+empty line. It comes back as a table with **no columns** and its true row
+count, whatever its `CREATE TABLE` declares: a generated column's values are
+never in the dump, so they are not in the answer. A non-empty line in such a
+block is refused as a row with the wrong number of fields.
+
 ## What we can and cannot recover from a dump
 
 A dump is not a database. Some things PostgreSQL knows about a value are simply
@@ -830,8 +837,6 @@ Some columns have no type information available:
 - A `--data-only` dump has no DDL in it at all, so **every** column is
   untyped. This is not an error; you get string columns and one diagnostic
   explaining why.
-- A table with no undropped columns emits a `COPY` header with no column list,
-  and its columns are named `column1`, `column2`, …
 - A C-level base type (`CREATE TYPE x (INPUT = …, OUTPUT = …)`) tells us how the
   *server* parses the value, which tells us nothing about the value itself.
 
