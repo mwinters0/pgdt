@@ -8,14 +8,19 @@
 //! sub-stream, with the projection pushed into the library by name, a filter
 //! pushed `Exact` wherever the library answers it as DataFusion would, the batch
 //! size the session's, and the worker count the session's `target_partitions`
-//! lowered to what the session's [`ScanBudget`] affords.
+//! lowered to what the session's [`ScanBudget`] affords. The plan node carries
+//! what the map's statistics say about the table, so `COUNT(*)`,
+//! `COUNT(<column>)`, `MIN` and `MAX` can be answered without reading a row
+//! ([`crate::statistics`]).
 //!
 //! The design is `docs/design/roadmap-P6-datafusion.md`.
 
 mod budget;
 mod catalog;
 mod dump;
+mod exec;
 mod pushdown;
+mod statistics;
 mod table;
 
 use std::sync::Arc;

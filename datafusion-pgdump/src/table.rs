@@ -2,12 +2,12 @@
 //! library's partitioned replay.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
-use datafusion::common::{DataFusionError, Result};
+use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
@@ -21,7 +21,9 @@ use pgdump_query::{
 
 use crate::budget::{Draw, ScanBudget, pool_limit};
 use crate::dump::PgDump;
+use crate::exec::PgDumpExec;
 use crate::pushdown::translate;
+use crate::statistics::table_statistics;
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
 /// from the map and the DDL alone (`pgdump_query::table_schema`), so asking for
@@ -31,6 +33,12 @@ pub struct PgDumpTable {
     dump: Arc<PgDump>,
     name: TableName,
     resolved: ResolvedSchema,
+    /// What the map's statistics say about the whole table, in the schema's
+    /// own column order. Read off the resident map, so it never changes; and
+    /// taken on the first scan rather than here, because a catalog builds a
+    /// table for every `SHOW TABLES` row and folding every block's groups is
+    /// not what that should cost.
+    statistics: OnceLock<Arc<Statistics>>,
 }
 
 impl fmt::Debug for PgDumpTable {
@@ -48,7 +56,7 @@ impl PgDumpTable {
     pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
         let resolved = pgdump_query::table_schema(dump.index(), &name, &query_options(&dump))
             .map_err(external)?;
-        Ok(Self { dump, name, resolved })
+        Ok(Self { dump, name, resolved, statistics: OnceLock::new() })
     }
 
     /// The table this provider reads.
@@ -176,7 +184,22 @@ impl TableProvider for PgDumpTable {
                 }) as Arc<dyn PartitionStream>
             })
             .collect();
-        Ok(Arc::new(StreamingTableExec::try_new(schema, streams, None, [], false, limit)?))
+        let statistics = self
+            .statistics
+            .get_or_init(|| {
+                Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved))
+            })
+            .as_ref()
+            .clone()
+            .project(projection);
+        // A pushed-down filter takes rows out, so the table's counts and
+        // extremes stop describing what the node emits and are handed over as
+        // estimates — the rule DataFusion's own file sources follow
+        // (`FileScanConfig::statistics`, v55). `limit` is the plan node's, and
+        // is applied there.
+        let statistics = if filters.is_empty() { statistics } else { statistics.to_inexact() };
+        let inner = StreamingTableExec::try_new(schema, streams, None, [], false, limit)?;
+        Ok(Arc::new(PgDumpExec::new(inner, statistics)))
     }
 }
 

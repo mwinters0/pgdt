@@ -24,8 +24,11 @@ pub mod resolve;
 pub mod scan;
 pub mod statistics;
 pub mod stream;
+pub mod summary;
 
-pub use batch::{QueryOptions, ScanExtent, read_table, render_field, render_field_into};
+pub use batch::{
+    QueryOptions, ScanExtent, decode_field, read_table, render_field, render_field_into,
+};
 pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 pub use error::Error;
@@ -75,5 +78,6 @@ pub use stream::{
     TableStream, bounded_columns, gather_block_statistics, map_file, table_schema, table_stream,
     table_stream_partitions,
 };
+pub use summary::{Bound, ColumnSummary, TableSummary, table_summary};
 
 pub type Result<T> = std::result::Result<T, Error>;

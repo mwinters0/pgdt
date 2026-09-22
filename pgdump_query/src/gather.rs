@@ -1071,6 +1071,19 @@ enum Order {
     Keyed(CompareKind),
 }
 
+/// Whether a stored bound of `kind` may be a clipped stand-in for the value
+/// it came from rather than the value itself — true of exactly the bytewise
+/// kinds, whose extremes [`clipped_bounds`] cuts to
+/// [`DICTIONARY_ENTRY_MAX_BYTES`]. A keyed kind stores whole values and loses
+/// the group instead, so both its bounds are values the group holds.
+///
+/// **Only the upper bound says which it is** ([`Bounds::max_exact`]); a
+/// clipped lower bound is indistinguishable from an exact one, which is
+/// `KD39`.
+pub(crate) fn clips(kind: &CompareKind) -> bool {
+    matches!(kind, CompareKind::Text | CompareKind::PaddedText | CompareKind::Bytea)
+}
+
 /// The bytewise kinds, each by the text whose bytes order as its key does.
 #[derive(Clone, Copy)]
 enum Canonical {

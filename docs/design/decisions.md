@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the 575-line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D88 -->
+<!-- decision-watermark: D89 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -403,7 +403,7 @@ the scan's own refusals. A typed literal must be the column's Arrow type and is 
 Rejected: a formatter per type in the provider, a second grammar to drift; pushing `IN` on a float,
 answered from a set with no `-0` made `0`. Evidence: `datafusion-pgdump/tests/pushdown.rs`.
 
-## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`)
+## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`, `summary.rs`)
 ### D75 Pruning takes only what each operator family proves
 Bounds answer the ordering operators, and under an equality operator rule out "equal" but never
 "unequal"; a dictionary answers the equality operators; a stop needs an ordering term the root
@@ -488,6 +488,15 @@ many short columns raise it, as does a bytewise-comparable column earning per-gr
 is itself non-monotone in the container limit, being `margin_allowance(allowance) − budget`. Rejected:
 sizing an attribution input by row width. Evidence: `statistics-gathering`.
 
+### D89 Statistics reach DataFusion on a leaf plan node, and `Exact` means the bound is the value
+`TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so
+`PgDumpExec` *holds* one instead of parenting it: a parent's child can be replaced under it. Rows are
+`Exact` off the map's block counts; a bound only where every group of every block contributed and the
+stored text is the value it came from, `Inexact` where it still bounds, and a pushed filter or a fetch
+makes the lot `Inexact`, as v55's file sources do. Rejected: `Absent` for a partial bound, which gives
+up cardinality for nothing. Code: `datafusion-pgdump/src/{exec,statistics}.rs`, `summary.rs`.
+Evidence: `datafusion-pgdump/tests/statistics.rs`.
+
 ## The CLI (`main.rs`, `error.rs`)
 ### D61 `info` never scans
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
@@ -524,7 +533,7 @@ pages are snapshotted with width and bare-flag assertions. Rejected: `long_help`
 ### D68 Four layers, drawn where crate boundaries would go
 L1 bytes and structure (`io`, `scan`, `copy`, `map`, `index`, `preamble`, `cache`, `diagnostic`,
 `statistics`), L2 PostgreSQL semantics (`pgtype`, `resolve`, `decode`, `nested`), L3 Arrow assembly
-(`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`); `error`, `lib` and
+(`batch`), L4 query (`stream`, `predicate`, `leader`, `gather`, `prune`, `summary`); `error`, `lib` and
 `instrument` in none; CLI and embedders above L4. `use` points down or sideways; a module gets a
 layer before it is written (`tests/layering.rs`). Deviations, moved with a `batch` rework:
 `read_table` (L4 work) and `QueryOptions::filter` naming `predicate::Expr`. Rejected: a split (D74).

@@ -1115,6 +1115,26 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
     if render_field_into(column, row, plan, &mut out)? { Ok(Some(out)) } else { Ok(None) }
 }
 
+/// [`render_field`]'s inverse for one field: `text`, unescaped as a row's
+/// field arrives, as the one-element array a batch of this column would hold —
+/// or `None` where the text is not a value of the column's type, which is
+/// [`Error::FieldDecode`]'s condition without the row that raises it.
+///
+/// It exists so that a caller holding field text out of band — a stored bound
+/// ([`crate::statistics::Bounds`]) — reads it back through the one decoder,
+/// rather than a second one that could disagree with what a scan emits.
+/// `plan` travels beside the Arrow type as it does for [`render_field`].
+pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Option<ArrayRef> {
+    let mut builder = new_column_builder(data_type, plan);
+    match &mut builder {
+        // `append_typed` leaves this one to its caller, the scan's path being
+        // the borrowing one.
+        ColumnBuilder::Utf8View(b) => b.append_value(text),
+        _ => append_typed(&mut builder, text).ok()?,
+    }
+    Some(finish_column(&mut builder))
+}
+
 /// [`render_field`] appending to a caller's buffer instead of returning one.
 /// `Ok(false)` is SQL NULL and appends nothing; `Ok(true)` says the value was
 /// written. This is the form that does the work — [`render_field`] is a

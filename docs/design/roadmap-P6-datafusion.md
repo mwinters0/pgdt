@@ -349,8 +349,15 @@ needing nothing machine-local; the koji replica stays ad hoc
    the provider equals the library's own stream, value and type.
 3. **Pushdown never changes an answer.** Per comparison kind and operator, the
    same query with pushdown on and forced off returns identical rows.
-4. **Statistics never change an answer.** `COUNT(*)`, `MIN` and `MAX` answered
-   from statistics equal the same queries with statistics disabled.
+4. **Statistics never change an answer.** `COUNT(*)`, `COUNT(<column>)`,
+   `MIN` and `MAX` answered from statistics equal the same queries with
+   statistics disabled — **wherever reading the column answers at all**. A
+   column holding a value its Arrow type cannot represent (`KD8`) refuses
+   when it is read and is counted off the map when it is not, which is the
+   trade a pruned replay already makes
+   ([`decisions.md`](decisions.md), "D54"). Amended 2026-09-22
+   ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
+   "A statistic answers where reading the column refuses").
 
 ## What DataFusion 55 offers an extension
 
