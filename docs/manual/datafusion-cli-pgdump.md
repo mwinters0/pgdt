@@ -144,12 +144,14 @@ SET pgdump.memory = 4294967296;
 
 | Setting | As `pgdt`'s |
 |---|---|
-| `pgdump.memory` | [`--memory`](dump-inspection.md#--jobs-and---memory-the-workers-and-the-allowance): bytes every dump's scans may hold resident between them. Unset, the limit found, as above. |
+| `pgdump.memory` | [`--memory`](dump-inspection.md#--jobs-and---memory-the-workers-and-the-allowance): bytes every dump's scans may hold resident between them. Unset, or `0`, the limit found, as above. |
 | `pgdump.chunk_size` | [`--chunk-size`](dump-inspection.md#--chunk-size-you-almost-certainly-do-not-need-it): bytes a scan asks of the dump per read. |
 | `pgdump.max_line_bytes` | [`--max-line-bytes`](dump-inspection.md#--max-line-bytes-a-dump-holding-very-large-values): the longest row a scan holds before refusing the dump. |
 
-Each is a whole number of bytes, and none may be `0`. **A setting binds the
-queries planned after it**: a query already running keeps the memory it was
-given. `pgdump.memory` cannot be returned to the limit found once it is set —
-DataFusion's `RESET` reaches only its own settings — so state the number you
-want, or start the shell again.
+Each is a whole number of bytes. **A setting binds the queries planned after
+it**: a query already running keeps the memory it was given. `SET
+pgdump.memory = 0` returns to the limit found, as `SET
+datafusion.execution.target_partitions = 0` returns to the machine's cores;
+`RESET` does not, reaching only DataFusion's own settings. The other two may
+not be `0`, and neither may `pgdt --memory`, which returns to the limit found
+by being left off.

@@ -10,7 +10,9 @@ use arrow::array::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, ScanBudget, register_dump, register_table_factory};
+use datafusion_pgdump::{
+    PgDump, PgDumpOptions, PgDumpSettings, ScanBudget, register_dump, register_table_factory,
+};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     DiagnosticSink, Finding, LocalFileSource, MEMORY_RESERVE, PlanNote, PlanNoteKind, ScanOptions,
@@ -110,6 +112,35 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
     assert_eq!(budget.drawn(), 0);
 }
 
+/// **`SET pgdump.memory = 0` returns to the allowance the budget discovered**,
+/// as `target_partitions = 0` returns to the machine's parallelism: a plan
+/// seated by a stated allowance is followed by one floored under the budget's
+/// own, and the setting reads as unstated again. `RESET` still reaches none
+/// of it, which is why `0` is the way back; `pgdt --memory 0` stays refused
+/// (`pgdt/tests/parallelism.rs`), absence being how a flag asks.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_zero_allowance_returns_to_the_discovered_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(dir.path()).await;
+    let plans = Arc::new(Plans::default());
+    let ctx = session(&copy, MEMORY_RESERVE, &plans).await;
+    let query = format!("SELECT * FROM {EVENTS}");
+
+    run(&ctx, &format!("SET pgdump.memory = {}", 8u64 << 30)).await.unwrap();
+    drop(plan(&ctx, &query).await);
+    assert!(!plans.floored(), "a stated allowance seats a reader");
+
+    run(&ctx, "SET pgdump.memory = 0").await.unwrap();
+    drop(plan(&ctx, &query).await);
+    assert!(plans.floored(), "the budget's own allowance seats none");
+    let state = ctx.state();
+    let settings = state.config().options().extensions.get::<PgDumpSettings>().unwrap();
+    assert_eq!(settings.memory, None, "the allowance is unstated again");
+
+    let reset = run(&ctx, "RESET pgdump.memory").await.unwrap_err();
+    assert!(reset.contains("pgdump"), "{reset}");
+}
+
 /// **`pgdump.chunk_size` sizes the reads a scan makes and
 /// `pgdump.max_line_bytes` bounds the lines it carries across them**, as
 /// `--chunk-size` and `--max-line-bytes` do: a line limit shorter than the
@@ -135,8 +166,8 @@ async fn the_read_settings_reach_the_scan() {
 }
 
 /// **The settings are the session's, listed by `SHOW ALL`, and a value
-/// `pgdt` would refuse is refused by `SET`** — as is a key that is none of
-/// them, and `RESET` reaches none of them. `STORED AS PGDUMP` alone
+/// `pgdt` would refuse is refused by `SET`**, save the `0` that un-states an
+/// allowance — as is a key that is none of them. `STORED AS PGDUMP` alone
 /// installs them too.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_settings_are_listed_and_checked() {
@@ -152,7 +183,6 @@ async fn the_settings_are_listed_and_checked() {
         assert!(listed.contains(line), "{listed}");
     }
     for bad in [
-        "SET pgdump.memory = 0",
         "SET pgdump.chunk_size = 0",
         "SET pgdump.max_line_bytes = 0",
         "SET pgdump.memory = '4G'",
@@ -160,8 +190,4 @@ async fn the_settings_are_listed_and_checked() {
     ] {
         assert!(run(&ctx, bad).await.is_err(), "{bad}");
     }
-    // DataFusion 55 resets only its own namespace, so a stated allowance
-    // cannot be un-stated; the manual says so, and this fails when it can.
-    let reset = run(&ctx, "RESET pgdump.memory").await.unwrap_err();
-    assert!(reset.contains("pgdump"), "{reset}");
 }

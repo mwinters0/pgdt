@@ -5,6 +5,7 @@
 //! ```sql
 //! SET pgdump.memory = 4294967296;
 //! SET pgdump.chunk_size = 4194304;
+//! SET pgdump.memory = 0;  -- the discovered allowance again
 //! ```
 
 use std::any::Any;
@@ -26,15 +27,24 @@ use pgdump_query::{
 /// as it keeps its partitions. A session that never registered them — a
 /// provider registered by hand — plans under the defaults below.
 ///
-/// **Each is a byte count, and none may be zero**, for the reasons `pgdt`'s
-/// flags refuse one: no allowance a process can run in, a read that asks for
-/// nothing forever, a limit refusing every line a read splits.
+/// **Each is a byte count.** A read chunk or a line limit of zero is refused,
+/// as `pgdt`'s flags refuse one: a read that asks for nothing forever, a limit
+/// refusing every line a read splits.
+///
+/// **`pgdump.memory = 0` un-states the allowance**, returning the session to
+/// the one its budget discovered, as `datafusion.execution.target_partitions =
+/// 0` returns to the machine's parallelism: a `SET` cannot be taken back, and
+/// DataFusion 55's `RESET` reaches only its own `datafusion.` keys. `pgdt
+/// --memory 0` stays refused, because a flag is un-stated by leaving it off —
+/// absence is how `pgdt` asks for the discovered allowance
+/// (`docs/design/decisions.md`, "D64") — so there `0` could only mean no room to
+/// run in (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgDumpSettings {
     /// `pgdump.memory`: the resident allowance every pgdump scan of the
     /// session shares, where it is stated — `pgdt --memory`'s meaning, carved
     /// as [`crate::ScanBudget`] carves the one it discovered, which it
-    /// overrides. Unstated, the budget's own.
+    /// overrides. Unstated, or set to `0`, the budget's own.
     pub memory: Option<u64>,
     /// `pgdump.chunk_size`: bytes asked of the source per read
     /// ([`ScanOptions::chunk_size_bytes`]).
@@ -86,13 +96,20 @@ impl ConfigExtension for PgDumpSettings {
     const PREFIX: &'static str = "pgdump";
 }
 
+/// A whole number of bytes `key` may be set to, zero included.
+fn whole(key: &str, value: &str) -> Result<u64> {
+    match value.trim().parse::<u64>() {
+        Ok(n) => Ok(n),
+        Err(_) => plan_err!("pgdump.{key} is a whole number of bytes, not `{value}`"),
+    }
+}
+
 /// A byte count `key` may be set to: a whole number, never zero, with `zero`
 /// saying why not.
 fn bytes(key: &str, value: &str, zero: &str) -> Result<u64> {
-    match value.trim().parse::<u64>() {
-        Ok(0) => plan_err!("pgdump.{key} cannot be 0: {zero}"),
-        Ok(n) => Ok(n),
-        Err(_) => plan_err!("pgdump.{key} is a whole number of bytes, not `{value}`"),
+    match whole(key, value)? {
+        0 => plan_err!("pgdump.{key} cannot be 0: {zero}"),
+        n => Ok(n),
     }
 }
 
@@ -124,7 +141,7 @@ impl ExtensionOptions for PgDumpSettings {
         let field = key.strip_prefix("pgdump.").unwrap_or(key);
         match field {
             "memory" => {
-                self.memory = Some(bytes(field, value, "that leaves no room to run in")?);
+                self.memory = Some(whole(field, value)?).filter(|&n| n > 0);
             }
             "chunk_size" => {
                 self.chunk_size = usize_bytes(field, value, "a read of 0 bytes reads nothing")?;
@@ -154,7 +171,7 @@ impl ExtensionOptions for PgDumpSettings {
                 "memory",
                 self.memory.map(|n| n.to_string()),
                 "Bytes every pgdump scan of the session may hold resident between them; \
-                 unset, the memory limit found, else half of what is available.",
+                 unset or 0, the memory limit found, else half of what is available.",
             ),
             entry(
                 "chunk_size",
@@ -175,10 +192,11 @@ mod tests {
     use super::*;
     use datafusion::common::config::ConfigOptions;
 
-    /// **`SET` reaches each setting by its key, and a zero, a non-number or an
-    /// unknown key is refused**, leaving what was set before.
+    /// **`SET` reaches each setting by its key, and a zero chunk or line
+    /// limit, a non-number or an unknown key is refused**, leaving what was
+    /// set before; a zero allowance un-states the one set.
     #[test]
-    fn each_setting_takes_a_nonzero_byte_count() {
+    fn each_setting_takes_a_byte_count() {
         let mut options = ConfigOptions::new();
         options.extensions.insert(PgDumpSettings::default());
         options.set("pgdump.memory", "1073741824").unwrap();
@@ -189,7 +207,6 @@ mod tests {
         assert_eq!(options.extensions.get::<PgDumpSettings>(), Some(&stated));
 
         for (key, value) in [
-            ("pgdump.memory", "0"),
             ("pgdump.chunk_size", "0"),
             ("pgdump.max_line_bytes", "0"),
             ("pgdump.memory", "4G"),
@@ -210,6 +227,11 @@ mod tests {
             listed,
             ["pgdump.memory=1073741824", "pgdump.chunk_size=65536", "pgdump.max_line_bytes=4096"]
         );
+
+        options.set("pgdump.memory", "0").unwrap();
+        let unstated = PgDumpSettings { memory: None, ..stated };
+        assert_eq!(options.extensions.get::<PgDumpSettings>(), Some(&unstated));
+        assert!(options.entries().iter().any(|e| e.key == "pgdump.memory" && e.value.is_none()));
     }
 
     /// Unstated, the allowance is the budget's own and the reads are the

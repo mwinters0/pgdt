@@ -32,8 +32,9 @@ user's text is [`../manual/datafusion-cli-pgdump.md`](../manual/datafusion-cli-p
 - **`ScanOptions` comes from `PgDumpSettings::scan_options`**, which leaves
   every other field at its default. The provider sets no statistics
   allowance, because it never gathers.
-- **The zero refusals copy `pgdt`'s parsers** (`parse_memory`,
-  `parse_chunk_size`, `parse_max_line_bytes` in `pgdt/src/main.rs`). The
+- **The zero refusals copy `pgdt`'s parsers** (`parse_chunk_size` and
+  `parse_max_line_bytes` in `pgdt/src/main.rs`; `pgdump.memory`'s `0`
+  un-states instead, [6.11.1](roadmap-P6.11.1-memory-zero-notes.md)). The
   library does not validate `ScanOptions`, so each caller carries the rule.
   Values are plain byte counts, as `pgdt`'s flags take them, not
   `datafusion.runtime.memory_limit`'s `4G`.
@@ -42,9 +43,9 @@ user's text is [`../manual/datafusion-cli-pgdump.md`](../manual/datafusion-cli-p
 
 - **`RESET pgdump.memory` is refused by DataFusion 55.** `ConfigOptions`
   resets only its own `datafusion.` namespace, and `ExtensionOptions` has no
-  reset. So once an allowance is stated it cannot be un-stated. The manual
-  says so, and `tests/settings.rs` fails when that stops being true. 6.11.1
-  makes `SET pgdump.memory = 0` the way back.
+  reset, so `SET` alone cannot un-state an allowance; `SET pgdump.memory = 0`
+  is the way back ([6.11.1](roadmap-P6.11.1-memory-zero-notes.md)), and
+  `tests/settings.rs` fails when `RESET` starts to reach it.
 - **A line limit binds only a line that crosses a read.** Over the fixture's
   1 MiB default chunk, `max_line_bytes = 8` answers every row. It refuses
   only once `chunk_size` is shorter than a row, as `pgdt`'s manual says of
