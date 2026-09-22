@@ -355,12 +355,16 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
     drop(plan);
 }
 
-/// **What the session holds besides its scans comes off before any scan
-/// draws**: a finite memory pool's limit, and each registered dump's resident
-/// statistics, billed once per budget and returned when the dump is dropped
-/// (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
+/// **What the session holds besides its scans is billed to its budget**: each
+/// registered dump's resident statistics, once per budget and returned when the
+/// dump is dropped, and a finite memory pool's limit read at every draw. Both
+/// come off the margin's ceiling alone, so they bound a scan's count and never
+/// its budget (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory"):
+/// a plain source, which recommends no per-reader memory and so has no count
+/// the ceiling bounds, draws its default however little they leave. What they
+/// do to a source that recommends one is `budget.rs`'s unit tests.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_pool_limit_and_resident_statistics_come_off_the_budget() {
+async fn the_resident_statistics_are_billed_and_leave_a_budget_alone() {
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
     use pgdump_query::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE};
 
@@ -376,13 +380,11 @@ async fn the_pool_limit_and_resident_statistics_come_off_the_budget() {
     let statistics = dump.statistics_bytes();
     assert!(statistics > 0, "a parse gathering statistics leaves some resident");
 
-    // An allowance leaving 16 MiB once the reserve, the statistics and the
-    // pool are off, so a plain source's scan — which recommends no per-reader
-    // memory and caps at `DEFAULT_MEMORY_BUDGET` — draws exactly the rest.
+    // An allowance whose margin the statistics and the pool fill, and whose
+    // cap past the reserve still holds the plain scan's default.
     let pool = 128u64 << 20;
-    let left = 16u64 << 20;
-    assert!(left < DEFAULT_MEMORY_BUDGET && pool + left > DEFAULT_MEMORY_BUDGET);
-    let allowance = MEMORY_RESERVE + statistics + pool + left;
+    let allowance = MEMORY_RESERVE + statistics + pool;
+    assert!(allowance - MEMORY_RESERVE > DEFAULT_MEMORY_BUDGET);
     let query = "SELECT * FROM shop.public.widgets";
 
     let budget = Arc::new(ScanBudget::new(allowance));
@@ -395,17 +397,7 @@ async fn the_pool_limit_and_resident_statistics_come_off_the_budget() {
     register_dump(&ctx, Some("again"), &dump).unwrap();
     assert_eq!(budget.resident(), statistics, "once per budget, however often registered");
     let plan = ctx.sql(query).await.unwrap().create_physical_plan().await.unwrap();
-    assert_eq!(budget.drawn(), left, "the pool and the statistics came off first");
-    drop(plan);
-
-    // The same allowance with an unbounded pool leaves the scan its default.
-    let unbounded = Arc::new(ScanBudget::new(allowance));
-    let ctx_unbounded = SessionContext::new_with_config(
-        SessionConfig::new().with_target_partitions(4).with_extension(Arc::clone(&unbounded)),
-    );
-    register_dump(&ctx_unbounded, Some("shop"), &dump).unwrap();
-    let plan = ctx_unbounded.sql(query).await.unwrap().create_physical_plan().await.unwrap();
-    assert_eq!(unbounded.drawn(), DEFAULT_MEMORY_BUDGET);
+    assert_eq!(budget.drawn(), DEFAULT_MEMORY_BUDGET, "the holdings are not the cap's");
     drop(plan);
 
     // A table registered by hand is billed at its first scan.
@@ -422,8 +414,8 @@ async fn the_pool_limit_and_resident_statistics_come_off_the_budget() {
     // Returned when the dump is dropped, and not before.
     drop(ctx);
     assert_eq!(budget.resident(), statistics, "the dump is still alive");
-    drop((ctx_unbounded, ctx_by_hand, dump));
-    for budget in [budget, unbounded, by_hand] {
+    drop((ctx_by_hand, dump));
+    for budget in [budget, by_hand] {
         assert_eq!(budget.resident(), 0);
         assert_eq!(budget.drawn(), 0);
     }

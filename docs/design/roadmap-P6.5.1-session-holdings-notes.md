@@ -8,7 +8,7 @@ statistics of every dump billed to it before any scan draws, both on
 `ScanBudget`'s rustdoc. The library gained
 `DumpIndex::statistics_heap_bytes`, the one sum `map_file` bills as
 `Term::Loaded` and the provider bills for a resident map. The check is
-`the_pool_limit_and_resident_statistics_come_off_the_budget` in
+`the_resident_statistics_are_billed_and_leave_a_budget_alone` in
 `datafusion-pgdump/tests/provider.rs`.
 
 ## What later slices inherit
@@ -32,12 +32,11 @@ statistics of every dump billed to it before any scan draws, both on
 
 ## Negative results
 
-- **The holdings come off as drawn, not off the allowance.** Subtracting them
-  from the allowance before carving would take the margin as a fraction of
-  less than the container's limit, letting the predicted resident pass the
-  margin. Which bound each holding comes off is 6.5.2's
-  ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
-  "Which bound the holdings come off").
+- **The holdings never come off the allowance.** Subtracting them from the
+  allowance before carving would take the margin as a fraction of less than
+  the container's limit, letting the predicted resident pass the margin.
+  Which bound they come off is 6.5.2's
+  ([`roadmap-P6.5.2-holdings-margin-notes.md`](roadmap-P6.5.2-holdings-margin-notes.md)).
 - **With no allowance, nothing is subtracted.** A host where neither a limit
   nor `MemAvailable` answers leaves `ScanBudget` without an allowance; the
   scan takes the library's own discovery, and a pool limit or resident

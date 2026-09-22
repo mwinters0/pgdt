@@ -914,12 +914,14 @@ impl Parallelism {
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
     pub fn within(jobs: usize, memory: Option<WorkerMemory>, allowance: u64) -> Self {
-        Self::within_shared(jobs, memory, allowance, 0)
+        Self::within_shared(jobs, memory, allowance, 0, 0)
     }
 
     /// [`Parallelism::within`] for one of several arrangements drawing on one
     /// allowance at once — concurrent scans in one process — where `drawn` is
-    /// the read-buffer budget the others already hold.
+    /// the read-buffer budget the others already hold, and `held` what the
+    /// process holds resident besides any arrangement: loaded statistics, or
+    /// memory granted to something other than a scan.
     ///
     /// **The reserve comes off once, and what is drawn comes off both
     /// bounds**: [`MEMORY_RESERVE`] covers the process however many
@@ -927,17 +929,26 @@ impl Parallelism {
     /// is a byte of the cap and of [`margin_allowance`]'s ceiling this one
     /// cannot spend. An allowance already drawn to nothing leaves one worker
     /// on a budget of zero, the floor [`Parallelism::within`] has too.
+    ///
+    /// **What is `held` comes off the ceiling alone**, as
+    /// [`statistics_allowance`] bills statistics (`docs/design/decisions.md`,
+    /// "D85"): the cap is the reserve's, which stands for the arrangements'
+    /// own excess over their budgets, and a holding is none of that excess.
+    /// So a holding lowers the count and never the budget a count spends — a
+    /// source recommending no per-worker memory, whose count no ceiling
+    /// bounds, does not see it, and one worker is still the floor.
     pub fn within_shared(
         jobs: usize,
         memory: Option<WorkerMemory>,
         allowance: u64,
         drawn: u64,
+        held: u64,
     ) -> Self {
         let (jobs, budget) = Self::fit(
             jobs,
             memory,
             allowance.saturating_sub(MEMORY_RESERVE).saturating_sub(drawn),
-            Some(margin_allowance(allowance).saturating_sub(drawn)),
+            Some(margin_allowance(allowance).saturating_sub(drawn).saturating_sub(held)),
         );
         Self::workers(jobs, budget)
     }
@@ -6866,21 +6877,61 @@ mod tests {
         let memory = Some(WorkerMemory::per_worker(per_worker));
         let allowance = 10 << 30;
         assert_eq!(
-            Parallelism::within_shared(24, memory, allowance, 0),
+            Parallelism::within_shared(24, memory, allowance, 0, 0),
             Parallelism::within(24, memory, allowance),
             "nothing drawn is `within` itself"
         );
         assert_eq!(Parallelism::within(24, memory, allowance).jobs(), 7);
 
-        let first = Parallelism::within_shared(4, memory, allowance, 0);
+        let first = Parallelism::within_shared(4, memory, allowance, 0, 0);
         assert_eq!(first.jobs(), 4);
         let drawn = first.memory_bytes().unwrap();
-        let second = Parallelism::within_shared(4, memory, allowance, drawn);
+        let second = Parallelism::within_shared(4, memory, allowance, drawn, 0);
         assert_eq!(second.jobs(), 3);
         assert_eq!(second.memory_bytes(), Some(3 * per_worker));
 
-        let exhausted = Parallelism::within_shared(4, memory, allowance, allowance);
+        let exhausted = Parallelism::within_shared(4, memory, allowance, allowance, 0);
         assert_eq!(exhausted, Parallelism::Serial { memory_bytes: Some(0) });
+    }
+
+    /// **What the process holds besides its arrangements comes off the
+    /// margin's ceiling alone.** Where the ceiling binds, a holding lowers
+    /// the count exactly as a draw of the same size does; where the cap binds
+    /// and the holding fits under the gap between them, it changes nothing a
+    /// draw would; and a holding filling the ceiling leaves one worker at what
+    /// one spends, where a draw filling the allowance leaves a budget of zero.
+    /// A source recommending nothing keeps its count and its constant.
+    #[test]
+    fn a_holding_comes_off_the_ceiling_and_never_the_cap() {
+        let per_worker = 1 << 30;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let allowance = 10 << 30;
+        let held = 2 << 30;
+        let holding = Parallelism::within_shared(24, memory, allowance, 0, held);
+        assert_eq!(holding, Parallelism::within_shared(24, memory, allowance, held, 0));
+        assert_eq!(holding.jobs(), 5);
+
+        // Under `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` the cap binds,
+        // and a holding no larger than the ceiling's lead over it is free.
+        let small = 600 << 20;
+        let cap = small - MEMORY_RESERVE;
+        let unit = Some(WorkerMemory::per_worker(cap / 4));
+        let lead = margin_allowance(small) - cap;
+        assert!(lead > 0);
+        assert_eq!(Parallelism::within(64, unit, small).jobs(), 4);
+        assert_eq!(
+            Parallelism::within_shared(64, unit, small, 0, lead),
+            Parallelism::within(64, unit, small),
+        );
+        assert_eq!(Parallelism::within_shared(64, unit, small, lead, 0).jobs(), 3);
+
+        let filled = Parallelism::within_shared(4, memory, allowance, 0, allowance);
+        assert_eq!(filled, Parallelism::Serial { memory_bytes: Some(per_worker) });
+
+        assert_eq!(
+            Parallelism::within_shared(8, None, allowance, 0, allowance),
+            Parallelism::within(8, None, allowance),
+        );
     }
 
     /// **An unlimited environment falls back to the shipped constant**, and at

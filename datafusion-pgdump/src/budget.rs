@@ -18,17 +18,22 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// container is given — and each scan carves its read-buffer budget from it
 /// through [`Parallelism::within_shared`], the reserve once for the process.
 ///
-/// **What the session holds besides its scans is drawn too**, before any scan
+/// **What the session holds besides its scans is billed too**, before any scan
 /// draws: a memory pool stating a `Finite` limit — what `datafusion-cli
 /// --memory-limit` grants DataFusion's own operators, in the same container —
 /// and the statistics each dump registered against this budget holds in its
 /// resident map, billed as `pgdt` bills the statistics a cache hands a mapping
 /// pass ([`pgdump_query::DumpIndex::statistics_heap_bytes`]). Both come off
-/// as another scan's draw would, off the cap and the margin's ceiling alike,
-/// never off the allowance the margin is a fraction of: the container's limit
-/// is still the whole allowance, and a margin taken of less would let the
-/// predicted resident leave less than [`pgdump_query::MEMORY_MARGIN_PERCENT`]
-/// of the container unused, short by that fraction of what the session holds.
+/// the margin's ceiling alone, as `held` in [`Parallelism::within_shared`]:
+/// the cap is the reserve's, standing for the scans' own excess over their
+/// budgets, and neither holding is any of it. So they lower a scan's count
+/// and never the budget that count spends. *Rejected: taking them off the
+/// allowance the margin is a fraction of*: the container's limit is still the
+/// whole allowance, and a margin taken of less would let the predicted
+/// resident leave less than [`pgdump_query::MEMORY_MARGIN_PERCENT`] of the
+/// container unused, short by that fraction of what the session holds.
+/// *Rejected: taking them off the cap as well*, as another scan's draw comes
+/// off, which bills them against the reserve's excess a second time.
 ///
 /// What a scan draws it holds until its plan and every stream it started are
 /// dropped, not only while rows flow: a plan is a promise to run, and its
@@ -119,9 +124,11 @@ impl ScanBudget {
         pool: u64,
     ) -> Draw {
         let mut held = self.held.lock().unwrap();
-        let others = held.scans.saturating_add(held.maps).saturating_add(pool);
+        let holdings = held.maps.saturating_add(pool);
         let parallelism = match self.allowance {
-            Some(allowance) => Parallelism::within_shared(jobs, memory, allowance, others),
+            Some(allowance) => {
+                Parallelism::within_shared(jobs, memory, allowance, held.scans, holdings)
+            }
             None => Parallelism::discover_for(jobs, memory),
         };
         let bytes = match self.allowance {
@@ -196,5 +203,61 @@ impl Drop for Draw {
     fn drop(&mut self) {
         let mut held = self.budget.held.lock().unwrap();
         held.scans = held.scans.saturating_sub(self.bytes);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::execution::runtime_env::RuntimeEnvBuilder;
+    use datafusion::prelude::{SessionConfig, SessionContext};
+
+    /// **The session's holdings come off the margin's ceiling alone**: a
+    /// resident map, or a pool limit, lowers a scan's count exactly as a draw
+    /// of the same size would where the ceiling binds, yet never the budget
+    /// the count spends — holdings filling the margin leave one reader at what
+    /// one reader costs, where scans having drawn the whole leave it nothing.
+    #[test]
+    fn holdings_lower_the_count_and_never_the_budget() {
+        let per_worker = 1u64 << 30;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let allowance = 10u64 << 30;
+
+        let alone = Arc::new(ScanBudget::new(allowance));
+        assert_eq!(alone.draw(24, memory, 0).parallelism().jobs(), 7);
+
+        let mapped = Arc::new(ScanBudget::new(allowance));
+        let _map = mapped.hold(2 << 30);
+        let pooled = Arc::new(ScanBudget::new(allowance));
+        let scanned = Arc::new(ScanBudget::new(allowance));
+        let _scan = scanned.draw(2, memory, 0);
+        for budget in [&mapped, &pooled, &scanned] {
+            let pool = if Arc::ptr_eq(budget, &pooled) { 2 << 30 } else { 0 };
+            let draw = budget.draw(24, memory, pool);
+            assert_eq!(draw.parallelism().jobs(), 5);
+            assert_eq!(draw.parallelism().memory_bytes(), Some(5 * per_worker));
+        }
+
+        let full = Arc::new(ScanBudget::new(allowance));
+        let _map = full.hold(allowance);
+        let draw = full.draw(4, memory, 0);
+        assert_eq!(draw.parallelism(), Parallelism::Serial { memory_bytes: Some(per_worker) });
+        assert_eq!(full.drawn(), per_worker);
+
+        let drained = Arc::new(ScanBudget::new(allowance));
+        let _all = drained.draw(24, Some(WorkerMemory::per_worker(allowance)), 0);
+        let starved = drained.draw(4, memory, 0);
+        assert_eq!(starved.parallelism(), Parallelism::Serial { memory_bytes: Some(0) });
+    }
+
+    /// A pool stating a `Finite` limit bills that limit; the default,
+    /// unbounded pool bills nothing.
+    #[test]
+    fn a_finite_pool_limit_is_read_off_the_session() {
+        let limit = 128usize << 20;
+        let runtime = RuntimeEnvBuilder::new().with_memory_limit(limit, 1.0).build_arc().unwrap();
+        let bounded = SessionContext::new_with_config_rt(SessionConfig::new(), runtime);
+        assert_eq!(pool_limit(&bounded.state()), limit as u64);
+        assert_eq!(pool_limit(&SessionContext::new().state()), 0);
     }
 }
