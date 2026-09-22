@@ -92,7 +92,7 @@ through its streaming decoder because one of its blocks would not fit
 ([Memory](#memory)).
 
 ```
-warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for — the budget in force is what bound it
+warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for
 ```
 
 `-q` keeps these warnings off and leaves errors on.

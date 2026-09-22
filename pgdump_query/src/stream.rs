@@ -2865,7 +2865,7 @@ impl Finding for PlanNote {
             PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } => format!(
                 "a memory budget of {memory_bytes} byte(s) is less than the {unit_bytes} byte(s) \
                  one reader of this source holds, so this runs at its one-slot floor whatever \
-                 concurrency is asked for — the budget in force is what bound it"
+                 concurrency is asked for"
             ),
             PlanNoteKind::BatchSpanNarrowed {
                 stated_bytes,

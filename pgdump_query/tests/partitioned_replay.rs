@@ -288,9 +288,9 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
         notes[0].message()
     );
     // Where the budget came from is the caller's to say
-    // (`docs/design/decisions.md`, "D64"), so the sentence stops at the budget.
+    // (`docs/design/decisions.md`, "D64"), so the sentence stops at the floor.
     assert!(
-        notes[0].message().ends_with("the budget in force is what bound it"),
+        notes[0].message().ends_with("whatever concurrency is asked for"),
         "the message claims no provenance: {}",
         notes[0].message()
     );
