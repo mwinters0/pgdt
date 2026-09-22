@@ -43,8 +43,8 @@ user's text is [`../manual/datafusion-cli-pgdump.md`](../manual/datafusion-cli-p
 - **`RESET pgdump.memory` is refused by DataFusion 55.** `ConfigOptions`
   resets only its own `datafusion.` namespace, and `ExtensionOptions` has no
   reset. So once an allowance is stated it cannot be un-stated. The manual
-  says so, and `tests/settings.rs` fails when that stops being true. See
-  STATUS's "Decisions worth another look".
+  says so, and `tests/settings.rs` fails when that stops being true. 6.11.1
+  makes `SET pgdump.memory = 0` the way back.
 - **A line limit binds only a line that crosses a read.** Over the fixture's
   1 MiB default chunk, `max_line_bytes = 8` answers every row. It refuses
   only once `chunk_size` is shorter than a row, as `pgdt`'s manual says of

@@ -223,13 +223,20 @@ settings**, a `ConfigExtension` under `pgdump.` — `SET pgdump.memory`,
 one set mid-session binds the scans planned after it, as `SET
 datafusion.runtime.memory_limit` already moves the pool limit the budget reads.
 A stated allowance overrides the one `ScanBudget` discovered; what live scans
-have drawn stays drawn. Amended 2026-09-22
+have drawn stays drawn. **`SET pgdump.memory = 0` returns to the discovered
+allowance**, as `SET datafusion.execution.target_partitions = 0` returns to the
+machine's parallelism: a session setting cannot be left unstated again, and
+DataFusion 55's `RESET` reaches only `datafusion.` keys
+(`ConfigOptions::reset`), where `pgdt` asks by leaving `--memory` off
+([`decisions.md`](decisions.md), "D64") and so keeps refusing `0`. Amended 2026-09-22
 ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md), "What a
 provider's plan note says about its budget"). Rejected: a `KD` for notes
 naming levers nobody can reach; an allowance fixed at startup, which a REPL
 user can only change by restarting; per-table `OPTIONS`, a chunk being the
 device's and a long line's limit wanted only by whatever reads that dump,
-which one `SET` covers.
+which one `SET` covers; a sentinel word for "discovered", which no DataFusion
+setting spells; `pgdt --memory 0` meaning the same, a second spelling of
+absence.
 
 ## Library surfaces the provider does not use
 

@@ -1098,3 +1098,11 @@ which is what makes the difference worth minding at the moment one is found.
   a dump whose cache predates it. The limit is also what one row may cost
   resident ([`decisions.md`](decisions.md), "D23"), and the parse already paid
   it. It moves the cache format, so it was left out of P6, 2026-09-22.
+
+- **`RESET` for a provider's session settings, upstream.** DataFusion 55's
+  `ConfigOptions::reset` refuses any key outside `datafusion.`, and
+  `ExtensionOptions` has no `reset`, so `RESET pgdump.memory` fails and a
+  session returns to the discovered allowance only by `SET pgdump.memory = 0`.
+  A `reset` on `ExtensionOptions` that `ConfigOptions::reset` routes to is an
+  upstream change; taken at the pin that carries it, beside `0` rather than in
+  place of it. Left out of P6, 2026-09-22.

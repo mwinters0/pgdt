@@ -164,6 +164,9 @@ delivered.
   one it discovered, `pgdump.chunk_size` and `pgdump.max_line_bytes` into
   `ScanOptions` — read when a scan is planned; after `M133`.
   [Notes](../design/roadmap-P6.11-scan-settings-notes.md).
+- [ ] **6.11.1** `SET pgdump.memory = 0` returns to the discovered
+  allowance, as `target_partitions = 0` does; `PgDumpSettings`' rustdoc says
+  why `pgdt --memory` still refuses `0`, and `tests/settings.rs` pins both.
 - [ ] **6.12** A plan note's budget account: `ScanBudget` keeping where its
   allowance came from, and a note quoting a budget reaching the sink wrapped
   in the provider's finding, its four terms and the setting keys that move
@@ -490,14 +493,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A stated `pgdump.memory` cannot be un-stated** (6.11). DataFusion 55's
-  `RESET` reaches only its own `datafusion.` namespace and `ExtensionOptions`
-  has no reset, so a REPL user who has `SET` an allowance can state another
-  but never return to the discovered one without restarting — the spec's
-  "Workers and memory" rejects startup-fixed allowances for exactly that
-  cost. Taken this way because every other way is a sentinel value of ours
-  (`SET pgdump.memory = ''`, or `= 'discovered'`), a spelling DataFusion's
-  own `Option` settings do not accept either. Reconsidering means choosing
-  that spelling in `PgDumpSettings::set` and the manual's "Scan settings";
-  `tests/settings.rs` pins today's refusal of `RESET`.
