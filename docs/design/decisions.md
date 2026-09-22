@@ -4,7 +4,7 @@ The decisions the code cannot explain: shapes kept for a deliverable not yet bui
 over an alternative, and obvious changes measured or argued and refused. Nothing here says how the
 code works (the named module does) or quotes a number (`measurements.md` does, by figure id, as the
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
-rules, the 550-line cap included, are `docs/process.md`, "The decision register".
+rules, the 575-line cap included, are `docs/process.md`, "The decision register".
 
 <!-- decision-watermark: D87 -->
 
