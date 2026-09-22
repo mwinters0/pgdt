@@ -13,8 +13,9 @@ same seed, same draws).
 
 **The column is `text`, so a dictionary is the only statistic that can prune
 it.** The generated file declares no collation, and text under anything but
-`C`/`POSIX` gets no bounds; an integer label would be pruned by its bounds as
-well, and the leg would stop pricing a dictionary.
+`C`/`POSIX` is bounded bytewise, which `pgdt query`'s PostgreSQL semantics
+never reads; an integer label would be pruned by its bounds as well, and the
+leg would stop pricing a dictionary.
 
 **Its values arrive in runs**, `RUN_ROWS` rows of one label, the labels cycling
 through `LABELS` in order. A label drawn per row would put every label in every

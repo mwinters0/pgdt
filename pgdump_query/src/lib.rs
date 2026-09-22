@@ -72,7 +72,7 @@ pub use statistics::{
 };
 pub use stream::{
     BlockingTableIter, EarlyStop, MapRun, PlanNote, PlanNoteKind, ResumeToken, TablePartitions,
-    TableStream, gather_block_statistics, map_file, table_schema, table_stream,
+    TableStream, bounded_columns, gather_block_statistics, map_file, table_schema, table_stream,
     table_stream_partitions,
 };
 

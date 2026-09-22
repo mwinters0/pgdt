@@ -439,12 +439,13 @@ meets the statistics and a kill keeps the last save, orphaning its file. Rejecte
 statistics file; its own semantics version; the copy charged; one beside name two saves share.
 Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
-### D79 Bounds go where a comparison orders exactly, a dictionary where it equates exactly
-Bounds and row order need the key a filter compares with, so a divergent comparison gets neither; a
-dictionary needs equality alone, reaching `KD7`'s text. Nested columns get neither. A value that
-does not key leaves its group without bounds and its block `Unsorted`, or a bound would not cover
-its row. A dictionary is never an Arrow encoding, which would change a query's schema between a cold
-and a warm cache (D37). Rejected: a distinct count. Code: `gather::ColumnGatherer::new`.
+### D79 Bounds go where a comparison orders exactly or is text, a dictionary where it equates exactly
+Bounds and row order need the key a filter compares with, so a divergent comparison gets neither but
+text, bytewise whatever its collation: Arrow's order, believed there alone (`bounds_ordered_in`),
+an older cache's re-read by `parse` (`StatisticsRequest::backfill`), no format bump (D78). A
+dictionary needs equality alone, reaching `KD7`'s text. Nested columns get neither. A value that does
+not key leaves its group without bounds and its block `Unsorted`. A dictionary is never an Arrow
+encoding (D37). Rejected: a distinct count; bounds read off a dictionary, capped (D75). Code: `gather::gathers_bounds`.
 
 ### D80 An early stop is reported after the fact, per block, in bytes
 Rejected: counting rows past the stop, never read and so only estimable; a zero for a stop planned

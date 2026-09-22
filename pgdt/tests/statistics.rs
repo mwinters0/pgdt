@@ -276,7 +276,7 @@ fn info_json_exports_every_groups_statistics_compact_and_unrolled() {
         assert!(array(group).iter().all(|i| i.as_u64().unwrap() < entries), "{group}");
     }
     let default_text = column(ordered, "default_text");
-    assert!(default_text["bounds"].is_null());
+    assert_eq!(default_text["bounds"]["sortedness"], "Unsorted", "bytewise, not the server's");
     assert!(!default_text["dictionary"].is_null());
 
     let long_value = &blocks.iter().find(|(t, _)| t == "public.long_value").unwrap().1;

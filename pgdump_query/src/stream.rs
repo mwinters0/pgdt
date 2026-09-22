@@ -1303,6 +1303,7 @@ async fn backfill_statistics(
     mut loaded: HashSet<u64>,
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
+    let metadata = index.metadata.as_ref();
     let lacking: Vec<(usize, StatisticsBackfill)> = if statistics.gathers() {
         index
             .spans
@@ -1310,7 +1311,11 @@ async fn backfill_statistics(
             .enumerate()
             .filter_map(|(at, span)| match &span.body {
                 SpanBody::Data(DataBlock::Copy(block)) => statistics
-                    .backfill(block, scan_options.statistics_allowance_bytes)
+                    .backfill(
+                        block,
+                        &bounded_columns(block, metadata),
+                        scan_options.statistics_allowance_bytes,
+                    )
                     .map(|backfill| (at, backfill)),
                 _ => None,
             })
@@ -1394,7 +1399,11 @@ async fn backfill_statistics(
                         account.apply(&[(term, -(replaced as i64))]);
                     }
                 }
-                plan = statistics.backfill(block, scan_options.statistics_allowance_bytes);
+                plan = statistics.backfill(
+                    block,
+                    &bounded_columns(block, index.metadata.as_ref()),
+                    scan_options.statistics_allowance_bytes,
+                );
             }
         }
         run.reread += 1;
@@ -1478,6 +1487,15 @@ fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) 
     source.hint_parallelism(scan_options.parallelism);
     announce_cancellation(source, scan_options);
     source.hint_wait_policy(WaitPolicy::NeverWait);
+}
+
+/// Which of `block`'s columns gathering keeps bounds and row order for,
+/// positionally to its header, its columns resolved against `metadata` as a
+/// mapping pass resolves them — what [`StatisticsRequest::backfill`] reads a
+/// block's held statistics against, a column held without the bounds this
+/// says it gets lacking them (`docs/design/decisions.md`, "D79").
+pub fn bounded_columns(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> Vec<bool> {
+    gather::bounded_columns(&block.header, metadata, block.database.as_deref())
 }
 
 /// Re-read one block the map already holds and gather what `backfill` names —

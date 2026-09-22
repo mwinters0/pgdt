@@ -131,8 +131,9 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
 /// `scripts/generate_pruning_bench.py` exists for what `statistics-pruning`
 /// prices, so its guard is that the statistics that figure reads are the ones
 /// a `parse` stores: `id` ascending with bounds in every group, `v_category`
-/// answered by a dictionary alone — a bound on it would let the equality leg be
-/// pruned by something other than the dictionary it is named for — and
+/// with a dictionary in every group — its bytewise bounds are read in Arrow's
+/// semantics alone, never by `pgdt`'s (`docs/design/decisions.md`, "D79"), so
+/// the equality leg is pruned by the dictionary it is named for — and
 /// `v_smallint` bounded in every group with no dictionary in any, so the
 /// figure's filter on it consults every group's bounds and skips none — and,
 /// against a cache `parse --statistics none` wrote, asks for statistics and
@@ -179,7 +180,6 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     assert!(id.contains("ascending"), "{id}");
     assert!(id.contains(&format!("bounds in {groups} of {groups} group(s)")), "{id}");
     let category = line("v_category");
-    assert!(category.contains("no bounds"), "{category}");
     assert!(
         category.contains(&format!("dictionary in {groups} of {groups} group(s)")),
         "{category}"

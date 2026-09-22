@@ -4,10 +4,11 @@
 //!
 //! [`observer_for`] builds one per `COPY` block from the block's resolved
 //! schema. Every tracked column counts its NULLs per group; a column its
-//! comparison orders exactly — a `Compared` plan with no divergence — also
-//! keeps per-group bounds and the block's row order, under the key a filter
-//! orders by ([`ValueKey`]); and a column its comparison equates exactly keeps
-//! a dictionary per group.
+//! comparison orders exactly — a `Compared` plan with no divergence — or
+//! compares as text whatever its collation also keeps per-group bounds and the
+//! block's row order, under the key a filter orders by ([`ValueKey`])
+//! ([`ComparisonPlan::gathers_bounds`]); and a column its comparison equates
+//! exactly keeps a dictionary per group.
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
@@ -116,6 +117,33 @@ pub(crate) fn observer_tracking(
     // (`docs/design/decisions.md`, "D85").
     gatherer.decline_if_over();
     Box::new(gatherer)
+}
+
+/// Whether gathering keeps bounds and row order for a column resolved to
+/// `comparison` and `plan` — a scalar whose plan gathers them
+/// ([`ComparisonPlan::gathers_bounds`]).
+fn gathers_bounds(comparison: &ComparisonPlan, plan: &NestedPlan) -> bool {
+    *plan == NestedPlan::Scalar && comparison.gathers_bounds()
+}
+
+/// Which of `header`'s columns gathering keeps bounds for, positionally, under
+/// the DDL `metadata` states for it — what a block's held statistics are read
+/// against to find a column gathered by a build that kept none
+/// ([`crate::StatisticsRequest::backfill`]).
+pub(crate) fn bounded_columns(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> Vec<bool> {
+    let resolved = resolve_columns(
+        &header.qualified_name(),
+        &header.columns,
+        metadata,
+        database,
+        SchemaMode::Typed,
+        &[],
+    );
+    resolved.comparisons.iter().zip(&resolved.plans).map(|(c, p)| gathers_bounds(c, p)).collect()
 }
 
 /// The columns `metadata` declares for the table `qualified` in `database` —
@@ -703,8 +731,9 @@ struct ColumnGatherer {
 }
 
 impl ColumnGatherer {
-    /// Bounds where the comparison orders exactly, a dictionary where it
-    /// equates exactly (`docs/design/decisions.md`, "D79").
+    /// Bounds where the comparison orders exactly or is text
+    /// ([`gathers_bounds`]), a dictionary where it equates exactly
+    /// (`docs/design/decisions.md`, "D79").
     fn new(
         declared_type: Option<String>,
         collation: Option<String>,
@@ -714,7 +743,7 @@ impl ColumnGatherer {
         let postgres = ComparisonSemantics::Postgres;
         let (bounds, dictionary) = match comparison {
             ComparisonPlan::Compared { kind, .. } if *plan == NestedPlan::Scalar => (
-                comparison.bounds_ordered_in(postgres).then(|| BoundsGatherer::new(kind.clone())),
+                gathers_bounds(comparison, plan).then(|| BoundsGatherer::new(kind.clone())),
                 comparison.dictionary_answers_in(postgres).then(|| DictionaryGatherer::new(kind)),
             ),
             _ => (None, None),

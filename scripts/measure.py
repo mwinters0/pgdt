@@ -2238,7 +2238,7 @@ PRUNING_FAMILY = "query-pruning-"
 #: outside it are skipped by their bounds, and the block's ascending order stops
 #: the read at the first row past its upper bound. **The equality is answered by
 #: a dictionary alone**, `v_category` being text under no stated collation, so
-#: it has no bounds (`generate_pruning_bench.py`). Both select 3,000 rows of the
+#: `pgdt`'s semantics reads no bounds for it (`generate_pruning_bench.py`). Both select 3,000 rows of the
 #: 3.00 GiB input: one run of `id`, and three runs of one label spread across
 #: the file — which is what the table's rows-returned column reads back.
 #: **The third is one its statistics cannot narrow** (`PRUNING_UNNARROWED`):

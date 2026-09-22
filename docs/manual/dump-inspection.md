@@ -389,7 +389,10 @@ stated maximum (both below) — the number of
 rows, each column's number of NULLs, and, where pgdt compares a column's values
 exactly, its least and greatest value and its distinct values (up to 64, none
 longer than 256 bytes; past either, that group records no distinct values for
-the column).
+the column). A text column keeps its least and greatest value by bytes whatever
+its collation; `query` reads them only under `C` or `POSIX`, where bytes are the
+server's order, and a DataFusion query, which compares text by bytes, reads
+them under any.
 They are stored in the cache beside the rest of the index; `info --detail`
 sums them per table and column, and `info --json` exports every group's (below), and
 `query` reads them to skip what its filter rules out (below).
@@ -448,7 +451,8 @@ reads no row.
 **Asking for statistics the cache lacks re-reads what lacks them.** Once the
 rest of the file is scanned, `parse` re-reads each table's data an earlier run
 mapped without the statistics this one asks for — gathered with `--statistics
-none`, left out of a selection, at a group size other than a
+none`, left out of a selection, without the least and greatest values this
+build keeps for a column, at a group size other than a
 `--statistics-group-size` stated now, or under bounds other than a
 `--statistics-min-rows` or `--statistics-max-rows` stated now — one `COPY`
 block at a time, banking each as it goes, so an interrupted re-read continues
@@ -1114,7 +1118,7 @@ filter cannot compare against a single label there anyway.
 statistics:
     public.ordered: statistics over 1 of 1 block(s), group size 4096 bytes; 83 rows and 4049 bytes per group over 12 group(s)
         id: over 1 of 1 block(s), ascending, bounds in 12 of 12 group(s), dictionary in 0 of 12 group(s)
-        default_text: over 1 of 1 block(s), no bounds, dictionary in 12 of 12 group(s)
+        default_text: over 1 of 1 block(s), unsorted, bounds in 12 of 12 group(s), dictionary in 12 of 12 group(s)
         note: not gathered
 ```
 
@@ -1129,8 +1133,9 @@ statistics:
   then its **order**: `ascending`, `descending` or `unsorted` row by row
   through each block (a column whose blocks differ says how many are which),
   followed by how many groups carry a least and greatest value — or `no bounds`
-  where pgdt does not order the column's values exactly, text under a
-  collation other than `C` for one. Last, how many groups carry a list of
+  where pgdt keeps none for the column, `jsonb` or a type it does not order
+  for one; a text column's are by bytes, and its order too, whatever its
+  collation (above). Last, how many groups carry a list of
   distinct values, or `no dictionary` where it does not compare them exactly.
   A group holding only NULLs carries no bounds. `not gathered` is a column a
   `--statistics` selection left out.

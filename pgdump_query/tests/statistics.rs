@@ -20,7 +20,7 @@ use pgdump_query::{
     DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES, DumpIndex, GroupSizing, LocalFileSource,
     MapRun, Parallelism, STATISTICS_GROUP_DEFAULT_MIN_ROWS, STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
     ScanOptions, Sortedness, StatisticsBackfill, StatisticsRequest, StatisticsSelection,
-    StatisticsTarget, gather_block_statistics, map_file,
+    StatisticsTarget, bounded_columns, gather_block_statistics, map_file,
 };
 
 mod common;
@@ -229,8 +229,9 @@ async fn every_statistic_describes_the_file() {
 }
 
 /// The block-level order of every column that gets bounds, as the fixture's
-/// schema states each one, and no bounds on text under the database's
-/// default collation — which still gets a dictionary.
+/// schema states each one — text under the database's default collation
+/// included, ordered bytewise, which is not the order the server sees it in
+/// (`docs/design/decisions.md`, "D79") — and a dictionary for that text too.
 #[tokio::test]
 async fn sortedness_is_the_blocks_row_order() {
     use Sortedness::{Ascending, Descending, Unsorted};
@@ -250,10 +251,10 @@ async fn sortedness_is_the_blocks_row_order() {
             ("low_card", Unsorted),
             ("high_card", Unsorted),
             ("c_text", Ascending),
+            ("default_text", Unsorted),
         ] {
             assert_eq!(sortedness(ordered, column), Some(expected), "{column} on {version}");
         }
-        assert_eq!(sortedness(ordered, "default_text"), None, "default_text on {version}");
         let default_text = statistics(ordered).columns[11].as_ref().unwrap();
         assert!(default_text.dictionary.is_some(), "default_text's equality is exact");
         assert_eq!(default_text.collation, None);
@@ -615,6 +616,55 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
     }
 }
 
+/// **A text column held without bounds is re-read for them**: a cache whose
+/// `default_text` — on the database's collation — was gathered with a
+/// dictionary and no bounds, as a build bounding only exact orders stored it,
+/// is re-read by a `parse` asking for nothing more, into exactly what one
+/// gathering pass now stores, and nothing is re-read after that. No other
+/// block lacks anything, and a column whose declared type is bounded nowhere
+/// never reads as lacking.
+#[tokio::test]
+async fn a_text_column_held_without_bounds_is_reread_for_them() {
+    use pgdump_query::map::{DataBlock, SpanBody};
+    let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "unbounded.sql");
+    let options = ScanOptions::default();
+    let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await.index;
+    let ordered = block(&fresh, "public.ordered");
+    let bounded = bounded_columns(ordered, fresh.metadata.as_ref());
+    assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");
+    assert_eq!(bounded_columns(ordered, None), vec![false; bounded.len()], "no DDL, no plan");
+
+    let mut older = fresh.clone();
+    for span in &mut older.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
+            && block.header.table == "ordered"
+        {
+            let mut held = BlockStatistics::clone(block.statistics.as_deref().unwrap());
+            held.columns[11].as_mut().unwrap().bounds = None;
+            block.statistics = Some(Arc::new(held));
+        }
+    }
+    let unbounded = block(&older, "public.ordered");
+    let backfill = StatisticsRequest::ALL
+        .backfill(unbounded, &bounded, None)
+        .expect("a bounded column held without bounds lacks them");
+    let held = statistics(unbounded);
+    assert_eq!((backfill.group_size, backfill.sizing), (held.group_size, held.sizing));
+    assert_eq!(
+        StatisticsRequest::ALL.backfill(unbounded, &vec![false; bounded.len()], None),
+        None,
+        "a column bounded nowhere lacks nothing"
+    );
+    let source = LocalFileSource::open(&dump).unwrap();
+    cache::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
+
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
+    assert_eq!(run.index.spans, fresh.spans);
+    let again = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    assert_eq!((again.lacking_statistics, again.backfilled), (0, 0));
+}
+
 /// A request naming one table re-reads that table's block alone; a request
 /// gathering nothing re-reads nothing and keeps what the blocks hold.
 #[tokio::test]
@@ -647,7 +697,9 @@ async fn one_block_is_gathered_on_its_own() {
     let reference = gathered(&dump, &wanted).await;
     let source = LocalFileSource::open(&dump).unwrap();
     let ordered = block(&bare, "public.ordered");
-    let backfill = wanted.backfill(ordered, None).expect("a block with no statistics lacks them");
+    let backfill = wanted
+        .backfill(ordered, &bounded_columns(ordered, bare.metadata.as_ref()), None)
+        .expect("a block with no statistics lacks them");
     let gathered = gather_block_statistics(
         &source,
         &ScanOptions::default(),
@@ -661,7 +713,14 @@ async fn one_block_is_gathered_on_its_own() {
     .gathered()
     .expect("an unbounded allowance declines nothing");
     assert_eq!(Some(&gathered), block(&reference, "public.ordered").statistics.as_deref());
-    assert_eq!(wanted.backfill(block(&reference, "public.ordered"), None), None);
+    assert_eq!(
+        wanted.backfill(
+            block(&reference, "public.ordered"),
+            &bounded_columns(block(&reference, "public.ordered"), reference.metadata.as_ref()),
+            None,
+        ),
+        None
+    );
 }
 
 /// **A block records the request its size was chosen under, and a back-fill
@@ -912,9 +971,17 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
         let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
-            let backfill = unstated.backfill(block, None).expect("the block holds no statistics");
+            let backfill = unstated
+                .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                .expect("the block holds no statistics");
             assert_eq!(backfill.group_cap, Some(BLOCK_MAX_STATISTICS_GROUPS));
-            assert_eq!(stated.backfill(block, None).unwrap().group_cap, None);
+            assert_eq!(
+                stated
+                    .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                    .unwrap()
+                    .group_cap,
+                None
+            );
             let capped = StatisticsBackfill {
                 group_size: BASE,
                 group_cap: Some(CAP),
@@ -992,14 +1059,18 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
         let run = map_file(&source, &options, &mode, &StatisticsRequest::NONE);
         let index = run.await.unwrap().index;
         for block in index.blocks() {
-            let backfill = unstated.backfill(block, None).expect("the block holds no statistics");
+            let backfill = unstated
+                .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                .expect("the block holds no statistics");
             let default_sizing = GroupSizing::Density {
                 min_rows: STATISTICS_GROUP_DEFAULT_MIN_ROWS,
                 max_rows: None,
             };
             assert_eq!(backfill.min_rows, Some(STATISTICS_GROUP_DEFAULT_MIN_ROWS));
             assert_eq!(backfill.sizing, default_sizing);
-            let exact_request = stated.backfill(block, None).unwrap();
+            let exact_request = stated
+                .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                .unwrap();
             assert_eq!((exact_request.min_rows, exact_request.sizing), (None, GroupSizing::Stated));
             let sized = StatisticsBackfill {
                 group_size: BASE,
@@ -1084,8 +1155,9 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     );
     assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
 
-    let backfill =
-        StatisticsRequest::ALL.backfill(mapped_block, None).expect("it holds no statistics");
+    let backfill = StatisticsRequest::ALL
+        .backfill(mapped_block, &bounded_columns(mapped_block, mapped.metadata.as_ref()), None)
+        .expect("it holds no statistics");
     let err = gather_block_statistics(
         &source,
         &ScanOptions::default(),

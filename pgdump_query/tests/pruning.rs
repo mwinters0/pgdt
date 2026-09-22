@@ -601,6 +601,49 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
     }
 }
 
+/// **Text on the database's collation is bounded bytewise, and only Arrow's
+/// semantics reads the bounds**: `default_text` holds `a…` then `Z…`, so
+/// under `>= 'a'` every group holding only `Z…` rows is skipped there, while
+/// PostgreSQL's semantics — whose order for the column the file does not
+/// state — skips none, and both answer the rows an unpruned read does
+/// (`docs/design/decisions.md`, "D79").
+#[tokio::test]
+async fn collated_text_prunes_by_its_bytewise_bounds_in_arrow_semantics_alone() {
+    for version in VERSIONS {
+        let (_dir, dump, index) =
+            gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
+        let block = index.blocks_for("public.ordered").next().unwrap();
+        let statistics = block.statistics.as_deref().unwrap();
+        let bounds = statistics.columns[11].as_ref().unwrap().bounds.as_ref().unwrap();
+        let below = bounds.groups.iter().flatten().filter(|b| b.max.as_str() < "a").count() as u64;
+        assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
+
+        let filter = Expr::all([term("default_text", PredicateOp::Ge, Some("a"))]);
+        for semantics in [ComparisonSemantics::Postgres, ComparisonSemantics::Arrow] {
+            for jobs in [1, SPLIT_JOBS] {
+                let options = |use_statistics| QueryOptions {
+                    semantics,
+                    ..with(filter.clone(), use_statistics, jobs)
+                };
+                let cache = cache::colocated_path(&dump);
+                let (rows, notes, ..) =
+                    answer(&dump, &cache, "public.ordered", options(true)).await.unwrap();
+                let (unpruned, ..) =
+                    answer(&dump, &cache, "public.ordered", options(false)).await.unwrap();
+                let what = format!("pg_dump {version}, {semantics:?}, {jobs} job(s)");
+                assert_eq!(rows, unpruned, "{what}");
+                assert_eq!(rows.unwrap().num_rows(), 500, "{what}");
+                let skipped = pruned(&notes).map_or(0, |p| p.0);
+                let expected = match semantics {
+                    ComparisonSemantics::Postgres => 0,
+                    ComparisonSemantics::Arrow => below,
+                };
+                assert_eq!(skipped, expected, "{what}");
+            }
+        }
+    }
+}
+
 /// **A dictionary rules out a literal its bounds cannot**: `low_card` cycles
 /// through four texts, so every group holds all four and bounds from `amber`
 /// to `dusk`, and `bravo` sorts inside them and is none of them — so every

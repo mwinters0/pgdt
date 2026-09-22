@@ -210,7 +210,10 @@ impl StatisticsRequest {
     /// when the request tracks nothing in it.
     ///
     /// **A block lacks the requested statistics** where it holds none, where a
-    /// column the request tracks was not gathered, where the request
+    /// column the request tracks was not gathered or was gathered without the
+    /// bounds `bounded` says gathering keeps for it, positionally to the
+    /// block's header (`crate::stream::bounded_columns`;
+    /// `docs/design/decisions.md`, "D79"), where the request
     /// **states** a group size other than the one the block was gathered at,
     /// or where it states no size and **states** a bound — minimum or maximum
     /// — other than the block's record ([`BlockStatistics::sizing`]). A
@@ -236,6 +239,7 @@ impl StatisticsRequest {
     pub fn backfill(
         &self,
         block: &CopyBlock,
+        bounded: &[bool],
         allowance: Option<u64>,
     ) -> Option<StatisticsBackfill> {
         let requested = self.tracked_columns(&block.header)?;
@@ -255,10 +259,12 @@ impl StatisticsRequest {
         let unmet_max = !resized
             && held.group_size == self.group_size()
             && self.max_rows().is_some_and(|max_rows| held.breaks_max_rows(max_rows));
-        let missing = requested
-            .iter()
-            .enumerate()
-            .any(|(i, &wanted)| wanted && held.columns.get(i).is_none_or(Option::is_none));
+        let missing = requested.iter().enumerate().any(|(i, &wanted)| {
+            wanted
+                && held.columns.get(i).and_then(Option::as_ref).is_none_or(|column| {
+                    column.bounds.is_none() && bounded.get(i).copied().unwrap_or(false)
+                })
+        });
         if !resized && !unmet_max && !missing {
             return None;
         }
@@ -461,7 +467,8 @@ pub struct ColumnStatistics {
     pub collation: Option<String>,
     /// NULLs per group.
     pub null_counts: Vec<u64>,
-    /// Present for a column its comparison orders exactly.
+    /// Present for a column its comparison orders exactly, and for text
+    /// whatever its collation, bytewise (`docs/design/decisions.md`, "D79").
     pub bounds: Option<ColumnBounds>,
     /// Present for a column its comparison equates exactly.
     pub dictionary: Option<ColumnDictionary>,

@@ -2193,8 +2193,8 @@ struct ComparedTerm {
 #[derive(Debug, Clone)]
 struct BelievedStatistics {
     /// The column's kind and the term's literal read as a key, present only
-    /// where the column's plan orders **exactly** — a `Compared` plan with no
-    /// divergence, which is the only order a gathered bound is taken under.
+    /// where the stored bounds are ordered as the term's semantics orders the
+    /// column ([`ComparisonPlan::bounds_ordered_in`]).
     /// Carried for the equality operators too, whose [`Comparison`] keeps no
     /// kind. Boxed, as [`Comparison::Nested`] is, because every resolved
     /// leaf carries it.
@@ -2751,9 +2751,9 @@ impl ResolvedExpr {
 
     /// The ordering terms every row this tree keeps must make `True` — the
     /// root when it is one, and each member of a conjunction at the root,
-    /// conjunctions nested in it flattened — whose column's plan orders
-    /// **exactly**, the only order a block's stored row order is gathered
-    /// under ([`BelievedStatistics::bounds`]). A term beneath an `Or` or a
+    /// conjunctions nested in it flattened — whose column's stored row order
+    /// is ordered as the term's semantics orders it
+    /// ([`BelievedStatistics::bounds`]). A term beneath an `Or` or a
     /// `Not` is not one: a row can be kept while it is `False`.
     pub(crate) fn required_ordering_terms(&self) -> Vec<&ResolvedTerm> {
         let mut out = Vec::new();
@@ -4154,9 +4154,10 @@ mod tests {
 
     /// Which statistics a term reads, per semantics: `(bounds under <,
     /// dictionary under =)`. **Arrow's semantics reads bounds only where a
-    /// kind keeps its order there** — they were gathered in PostgreSQL's —
-    /// and a dictionary wherever its entries are the field's own text, which
-    /// `character(n)`'s, stored unpadded, are not.
+    /// kind keeps its order there** — they are gathered in PostgreSQL's, or
+    /// bytewise for text whatever its collation, which PostgreSQL's semantics
+    /// never reads — and a dictionary wherever its entries are the field's
+    /// own text, which `character(n)`'s, stored unpadded, are not.
     #[test]
     fn arrow_semantics_reads_only_the_statistics_that_hold_there() {
         let read = |declared: &str, literal: &str, semantics| {
@@ -4175,8 +4176,13 @@ mod tests {
             ("numeric", "1", (true, true), (false, true)),
             ("interval", "1 day", (true, true), (false, true)),
             ("public.mood", "ok", (true, true), (false, true)),
-            // On the database's collation, so gathered with no bounds.
-            ("text", "a", (false, true), (false, true)),
+            // On the database's collation, so bounded bytewise, which is
+            // Arrow's order and not known to be the server's.
+            ("text", "a", (false, true), (true, true)),
+            ("json", "{}", (false, false), (true, false)),
+            // Diverging and not compared as `Text` by the register, so
+            // gathered with no bounds.
+            ("jsonb", "{}", (false, true), (false, true)),
             ("character(3)", "a", (false, true), (false, false)),
         ] {
             assert_eq!(
