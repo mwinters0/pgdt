@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the 575-line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D87 -->
+<!-- decision-watermark: D88 -->
 
 ## I/O, memory and parallelism (`io.rs`)
 ### D1 The library never spawns threads by surprise
@@ -349,7 +349,7 @@ names the same byte. `close_copy_block` has one body and two callers, or a paral
 matching a serial one's. A failure only reading finds is the lowest-indexed failed sub-stream's,
 after the rows before it; a resolution refusal comes from the plan (D54).
 
-## Predicates (`predicate.rs`, `where_expr.rs`)
+## Predicates (`predicate.rs`, `where_expr.rs`, `pushdown.rs`)
 ### D53 The operator set is closed
 No `LIKE` (collation-dependent folding), `IN` (`Or`), `BETWEEN` (`And`), or
 column-to-column. `IS [NOT] DISTINCT FROM` is what three-valued logic forces.
@@ -392,6 +392,13 @@ there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45,
 both flags accept means one thing. A keyword needs whitespace or a paren on both sides and `NOT`
 after `is` stays in the term. A term splits at the earliest operator outside quotes, longest first;
 quotes are stripped in `--filter` and nowhere else. Rejected: `&&`/`||`; backslash escaping.
+
+### D88 A pushed filter is `Exact` where the plan resolves it; a literal is the renderer's text
+`supports_filters_pushdown` asks `table_schema` to resolve the translated term in Arrow semantics,
+the scan's own refusals. A typed literal must be the column's Arrow type and is written by
+`render_field`, the decoders' inverse; a string one stands only where the library compares text.
+Rejected: a formatter per type in the provider, a second grammar to drift; pushing `IN` on a float,
+answered from a set with no `-0` made `0`. Evidence: `datafusion-pgdump/tests/pushdown.rs`.
 
 ## Statistics (`statistics.rs`, `gather.rs`, `prune.rs`)
 ### D75 Pruning takes only what each operator family proves

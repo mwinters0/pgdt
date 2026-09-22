@@ -10,7 +10,7 @@ use datafusion::catalog::{Session, TableProvider};
 use datafusion::common::{DataFusionError, Result};
 use datafusion::datasource::TableType;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
-use datafusion::logical_expr::Expr;
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::streaming::{PartitionStream, StreamingTableExec};
@@ -21,6 +21,7 @@ use pgdump_query::{
 
 use crate::budget::{Draw, ScanBudget, pool_limit};
 use crate::dump::PgDump;
+use crate::pushdown::translate;
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
 /// from the map and the DDL alone (`pgdump_query::table_schema`), so asking for
@@ -90,16 +91,43 @@ impl TableProvider for PgDumpTable {
         TableType::Base
     }
 
+    /// `Exact` for a filter that translates into the library's tree and that
+    /// the library's plan of this table resolves in Arrow semantics, as the
+    /// scan will ask it to; `Unsupported` for every other
+    /// ([`crate::pushdown`]). Resolving is the plan's own check, over every
+    /// block, and reads no byte of the dump.
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> Result<Vec<TableProviderFilterPushDown>> {
+        Ok(filters
+            .iter()
+            .map(|filter| {
+                let answered = translate(filter, &self.resolved).is_some_and(|filter| {
+                    let options = QueryOptions { filter, ..query_options(&self.dump) };
+                    pgdump_query::table_schema(self.dump.index(), &self.name, &options).is_ok()
+                });
+                if answered {
+                    TableProviderFilterPushDown::Exact
+                } else {
+                    TableProviderFilterPushDown::Unsupported
+                }
+            })
+            .collect())
+    }
+
     /// The replay planned now, against the session's `target_partitions` and
     /// what the session's [`ScanBudget`] leaves; the partitions are streamed
     /// when DataFusion runs them. The projection is the library's by name, so
-    /// an unprojected column is never decoded. `limit` is left to the plan,
-    /// which stops pulling once it is met.
+    /// an unprojected column is never decoded, and `filters` are the ones
+    /// [`Self::supports_filters_pushdown`] answered `Exact`, evaluated by the
+    /// library as one conjunction. `limit` is left to the plan, which stops
+    /// pulling once it is met, after the filter.
     async fn scan(
         &self,
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
+        filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let source = Arc::clone(self.dump.source());
@@ -116,6 +144,11 @@ impl TableProvider for PgDumpTable {
         let query_options = QueryOptions {
             projection: projection
                 .map(|columns| columns.iter().map(|&i| schema[i].name().clone()).collect()),
+            // A filter that does not translate was not answered `Exact`, so
+            // DataFusion keeps it above the scan and it is not needed here.
+            filter: pgdump_query::Expr::And(
+                filters.iter().filter_map(|filter| translate(filter, &self.resolved)).collect(),
+            ),
             parallelism,
             max_rows: state.config().batch_size(),
             ..query_options(&self.dump)

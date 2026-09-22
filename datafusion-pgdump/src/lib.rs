@@ -5,7 +5,8 @@
 //! ([`register_dump`]), its PostgreSQL schemas DataFusion schemas and its
 //! tables tables; one table can also be had on its own ([`PgDump::table`]).
 //! A scan is the library's partitioned replay, one DataFusion partition per
-//! sub-stream, with the projection pushed into the library by name, the batch
+//! sub-stream, with the projection pushed into the library by name, a filter
+//! pushed `Exact` wherever the library answers it as DataFusion would, the batch
 //! size the session's, and the worker count the session's `target_partitions`
 //! lowered to what the session's [`ScanBudget`] affords.
 //!
@@ -14,6 +15,7 @@
 mod budget;
 mod catalog;
 mod dump;
+mod pushdown;
 mod table;
 
 use std::sync::Arc;
