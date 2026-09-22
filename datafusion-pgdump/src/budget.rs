@@ -27,7 +27,9 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// the margin's ceiling alone, as `held` in [`Parallelism::within_shared`]:
 /// the cap is the reserve's, standing for the scans' own excess over their
 /// budgets, and neither holding is any of it. So they lower a scan's count
-/// and never the budget that count spends. *Rejected: taking them off the
+/// first, and whatever of them the ceiling's room cannot absorb at that count
+/// comes off its budget — a plain dump's scan, or one reader, whose count
+/// cannot fall, still leaves the margin. *Rejected: taking them off the
 /// allowance the margin is a fraction of*: the container's limit is still the
 /// whole allowance, and a margin taken of less would let the predicted
 /// resident leave less than [`pgdump_query::MEMORY_MARGIN_PERCENT`] of the
@@ -108,7 +110,9 @@ impl ScanBudget {
     /// The arrangement one more scan takes: as many of `jobs` workers as what
     /// the live scans, the billed maps and `pool` — the session's memory
     /// pool's finite limit, [`pool_limit`] — leave affords, at what that many
-    /// spend. Held until the returned [`Draw`] drops.
+    /// spend less whatever of the holdings the margin cannot fit beside them
+    /// ([`Parallelism::within_shared`]). Held until the returned [`Draw`]
+    /// drops.
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
     /// a join plans both its tables before either runs, so the first can take
@@ -212,13 +216,14 @@ mod tests {
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
     use datafusion::prelude::{SessionConfig, SessionContext};
 
-    /// **The session's holdings come off the margin's ceiling alone**: a
-    /// resident map, or a pool limit, lowers a scan's count exactly as a draw
-    /// of the same size would where the ceiling binds, yet never the budget
-    /// the count spends — holdings filling the margin leave one reader at what
-    /// one reader costs, where scans having drawn the whole leave it nothing.
+    /// **The session's holdings come off the margin's ceiling, and off a
+    /// budget only where the count cannot fall**: a resident map, or a pool
+    /// limit, lowers a scan's count exactly as a draw of the same size would
+    /// where the ceiling binds, leaving the budget what the count spends;
+    /// holdings filling the margin leave one reader on nothing, as scans
+    /// having drawn the whole do.
     #[test]
-    fn holdings_lower_the_count_and_never_the_budget() {
+    fn holdings_lower_the_count_before_the_budget() {
         let per_worker = 1u64 << 30;
         let memory = Some(WorkerMemory::per_worker(per_worker));
         let allowance = 10u64 << 30;
@@ -241,8 +246,8 @@ mod tests {
         let full = Arc::new(ScanBudget::new(allowance));
         let _map = full.hold(allowance);
         let draw = full.draw(4, memory, 0);
-        assert_eq!(draw.parallelism(), Parallelism::Serial { memory_bytes: Some(per_worker) });
-        assert_eq!(full.drawn(), per_worker);
+        assert_eq!(draw.parallelism(), Parallelism::Serial { memory_bytes: Some(0) });
+        assert_eq!(full.drawn(), 0);
 
         let drained = Arc::new(ScanBudget::new(allowance));
         let _all = drained.draw(24, Some(WorkerMemory::per_worker(allowance)), 0);

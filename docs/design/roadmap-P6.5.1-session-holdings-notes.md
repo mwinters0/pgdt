@@ -8,7 +8,7 @@ statistics of every dump billed to it before any scan draws, both on
 `ScanBudget`'s rustdoc. The library gained
 `DumpIndex::statistics_heap_bytes`, the one sum `map_file` bills as
 `Term::Loaded` and the provider bills for a resident map. The check is
-`the_resident_statistics_are_billed_and_leave_a_budget_alone` in
+`the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot_hold` in
 `datafusion-pgdump/tests/provider.rs`.
 
 ## What later slices inherit

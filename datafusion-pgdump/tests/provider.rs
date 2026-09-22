@@ -358,15 +358,18 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
 /// **What the session holds besides its scans is billed to its budget**: each
 /// registered dump's resident statistics, once per budget and returned when the
 /// dump is dropped, and a finite memory pool's limit read at every draw. Both
-/// come off the margin's ceiling alone, so they bound a scan's count and never
-/// its budget (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory"):
-/// a plain source, which recommends no per-reader memory and so has no count
-/// the ceiling bounds, draws its default however little they leave. What they
+/// come off the margin's ceiling, and what its room cannot absorb at the
+/// count a scan resolves comes off that scan's budget
+/// (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory"): a plain
+/// source, which recommends no per-reader memory and so keeps its count,
+/// draws only what they leave under the ceiling, and still reads. What they
 /// do to a source that recommends one is `budget.rs`'s unit tests.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_resident_statistics_are_billed_and_leave_a_budget_alone() {
+async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot_hold() {
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-    use pgdump_query::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE};
+    use pgdump_query::{
+        DEFAULT_MEMORY_BUDGET, MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND,
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/edge_cases/default.sql");
@@ -380,11 +383,16 @@ async fn the_resident_statistics_are_billed_and_leave_a_budget_alone() {
     let statistics = dump.statistics_bytes();
     assert!(statistics > 0, "a parse gathering statistics leaves some resident");
 
-    // An allowance whose margin the statistics and the pool fill, and whose
-    // cap past the reserve still holds the plain scan's default.
+    // An allowance whose cap past the reserve holds the plain scan's
+    // default, and whose margin, once the statistics and the pool are off
+    // it, does not.
     let pool = 128u64 << 20;
     let allowance = MEMORY_RESERVE + statistics + pool;
     assert!(allowance - MEMORY_RESERVE > DEFAULT_MEMORY_BUDGET);
+    let ceiling = (allowance / 100 * (100 - MEMORY_MARGIN_PERCENT))
+        .saturating_sub(MEMORY_UNPOOLED_BOUND)
+        .saturating_sub(statistics + pool);
+    assert!(0 < ceiling && ceiling < DEFAULT_MEMORY_BUDGET);
     let query = "SELECT * FROM shop.public.widgets";
 
     let budget = Arc::new(ScanBudget::new(allowance));
@@ -397,7 +405,9 @@ async fn the_resident_statistics_are_billed_and_leave_a_budget_alone() {
     register_dump(&ctx, Some("again"), &dump).unwrap();
     assert_eq!(budget.resident(), statistics, "once per budget, however often registered");
     let plan = ctx.sql(query).await.unwrap().create_physical_plan().await.unwrap();
-    assert_eq!(budget.drawn(), DEFAULT_MEMORY_BUDGET, "the holdings are not the cap's");
+    assert_eq!(budget.drawn(), ceiling, "what the margin cannot hold comes off the budget");
+    let rows = partition_batches(&ctx, Arc::clone(&plan)).await.unwrap();
+    assert!(rows.iter().map(RecordBatch::num_rows).sum::<usize>() > 0);
     drop(plan);
 
     // A table registered by hand is billed at its first scan.
