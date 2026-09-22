@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -831,6 +832,14 @@ class SlicePairing(unittest.TestCase):
 
 class ThisRepo(unittest.TestCase):
     """The register in the tree, held to its own rules."""
+
+    def test_every_workspace_crate_may_carry_a_marker(self):
+        """A crate outside the roots would have its markers never resolved."""
+        cargo = tomllib.loads((deficiencies.REPO / "Cargo.toml").read_text())
+        self.assertEqual(
+            set(deficiencies.CODE_ROOTS),
+            {deficiencies.REPO / m / "src" for m in cargo["workspace"]["members"]},
+        )
 
     def test_the_real_register_reconciles(self):
         out = io.StringIO()

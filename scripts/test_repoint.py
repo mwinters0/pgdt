@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -208,6 +209,11 @@ class ThisRepo(unittest.TestCase):
         self.assertFalse(repoint.is_live_doc("vendor/xz-seek/README.md"))
         self.assertTrue(repoint.is_source("pgdump_query/tests/layering.rs"))
         self.assertFalse(repoint.is_source("vendor/xz-seek/src/lib.rs"))
+
+    def test_every_workspace_crate_is_counted(self):
+        """A crate the meter does not read grows the record unmetered."""
+        cargo = tomllib.loads((repoint.REPO / "Cargo.toml").read_text())
+        self.assertEqual(set(repoint.CODE_ROOTS), set(cargo["workspace"]["members"]))
 
 
 if __name__ == "__main__":

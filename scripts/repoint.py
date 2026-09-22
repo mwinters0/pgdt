@@ -80,7 +80,7 @@ MEASURED_RE = re.compile(
 #: `RT<n>` are handles, not provenance, and are what a comment should carry.
 PROVENANCE_RE = re.compile(r"\bP\d+\.\d+\b|\bM\d{1,3}\b|\b2026-\d\d-\d\d\b")
 COMMENT_RE = re.compile(r"^\s*//")
-CODE_ROOTS = ("pgdump_query", "pgdt")
+CODE_ROOTS = ("pgdump_query", "pgdt", "datafusion-pgdump")
 
 
 @dataclass(frozen=True)

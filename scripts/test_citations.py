@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -418,6 +419,11 @@ class RealTreeTests(unittest.TestCase):
         # cannot hide behind the other two.
         suffixes = {Path(c.path).suffix for c in cites}
         self.assertLessEqual({".md", ".rs", ".py"}, suffixes)
+
+    def test_every_workspace_crate_is_read(self) -> None:
+        """A crate the walk does not read has its citations go unresolved."""
+        cargo = tomllib.loads((citations.REPO / "Cargo.toml").read_text())
+        self.assertEqual(set(citations.RUST_ROOTS), set(cargo["workspace"]["members"]))
 
 
 class DatedEntryTests(unittest.TestCase):
