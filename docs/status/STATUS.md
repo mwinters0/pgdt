@@ -151,7 +151,7 @@ delivered.
   [Notes](../design/roadmap-P6.10.1-undeclared-bounds-notes.md).
 - [ ] **6.7** Statistics handed to DataFusion; answers with and without them
   alike.
-- [ ] **6.8** `datafusion-pgdump-cli`: `--dump`, `STORED AS PGDUMP` and its
+- [ ] **6.8** `datafusion-cli-pgdump`: `--dump`, `STORED AS PGDUMP` and its
   options extension, the stderr sink, and its manual page stating the ADBC
   floor.
 

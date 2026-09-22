@@ -17,7 +17,7 @@ finding is recovered as its own type.
   sentence moved out of `pgdt`'s `resolution_words` into
   `ColumnResolution::describe`. `pgdt` calls both, so its output is unchanged.
   `pgdt` keeps only the `--json` token (`resolution_token`). So a stderr sink
-  in `datafusion-pgdump-cli` prints `<severity>: <message>` and writes no
+  in `datafusion-cli-pgdump` prints `<severity>: <message>` and writes no
   sentences of its own.
 - **A finding does not name its table.** `ColumnNote` names its column only,
   and so does `ComparisonNote`. At registration the provider knows which table

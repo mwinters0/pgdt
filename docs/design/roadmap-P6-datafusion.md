@@ -14,7 +14,7 @@ numbers after it are allocation order as much as schedule. The checklist is
 
 **DataFusion only.** Python bindings are P24's; Spark and Trino are off the
 roadmap. The phase's deliverables are the provider crate and a
-`datafusion-cli` build with the provider built in, `datafusion-pgdump-cli`.
+`datafusion-cli` build with the provider built in, `datafusion-cli-pgdump`.
 
 **The target is the latest DataFusion release, 55.1.0** (tagged upstream and
 on crates.io; `datafusion-cli`'s sources are unchanged from 55.0.0), whose
@@ -62,7 +62,7 @@ schemas and its tables are tables, so `koji.public.build` names a table and
 single-database dump taken without `--create` does not record its database's
 name. **A multi-database file registers one catalog per database, named after
 that database**; it is refused only where a name is needed and nothing
-supplies one. In `datafusion-pgdump-cli` that reads: a bare `--dump <path>`
+supplies one. In `datafusion-cli-pgdump` that reads: a bare `--dump <path>`
 takes its catalog names from the file; `<name>=` is required only where the
 file names no database, and is refused on a multi-database file. Rejected:
 prefixing each database with the given name, which invents names nobody wrote;
@@ -242,9 +242,9 @@ reading a row, so an `Exact` that is wrong is a wrong answer with no error.
 - **Output ordering from recorded sortedness** is not declared by this phase;
   it is a Future item.
 
-## The binary: `datafusion-pgdump-cli`
+## The binary: `datafusion-cli-pgdump`
 
-**A new workspace member building `datafusion-pgdump-cli`**, depending on the
+**A new workspace member building `datafusion-cli-pgdump`**, depending on the
 `datafusion-cli` library at the targeted release: a copy of its private
 `main.rs` plus our registrations, which is upstream's endorsed pattern
 (`datafusion-cli/examples/cli-session-context.rs`). **A dump is attached by a
@@ -266,7 +266,7 @@ comparison notes (L4). Each channel's type reaches it through one shared trait
 bearing `diagnostic::Severity`, which is the unification point left open when
 the channels were kept as separate types — unifying at the drain rather than at
 the storage type, which the layering forbids ([`decisions.md`](decisions.md),
-"D68"). **The provider takes a sink; `datafusion-pgdump-cli` supplies one
+"D68"). **The provider takes a sink; `datafusion-cli-pgdump` supplies one
 printing to stderr** — at registration for file- and column-level notes, and
 after the statement for what a query raised. `pgdt` may adopt the sink later;
 that is not this phase's work.
@@ -279,18 +279,18 @@ and `log` is hidden by `datafusion-cli`'s default level.
 **A dump is anything `Origin::resolve` accepts** — a local path, an `.xz`, an
 `http(s)://` URL — resolved exactly as `pgdt` resolves it, the cache location
 for a URL included. The provider crate carries an `http` feature passing
-through to the library's, **off by default**; `datafusion-pgdump-cli` turns it
+through to the library's, **off by default**; `datafusion-cli-pgdump` turns it
 on, as `pgdt` does. A remote dump reads as one partition, the remote source
 declining to advise on partitioning ([`decisions.md`](decisions.md), "D6"),
 until the phase that tunes the network changes that.
 
-**`datafusion-pgdump-cli` does not parse.** A missing or partial cache is an
+**`datafusion-cli-pgdump` does not parse.** A missing or partial cache is an
 error printing the `pgdt parse --source <path>` that would build it. Doing a
 parse properly means `pgdt`'s parallelism and memory discovery, its interrupt
 guard, its status output and its cache-path rules, all of which live in
 `pgdt`'s `main.rs` rather than the library; a half-configured parse would be a
 slow way to build what `pgdt parse` builds properly. Filed as the Future item
-"Attach-time parse in `datafusion-pgdump-cli`".
+"Attach-time parse in `datafusion-cli-pgdump`".
 
 ## What the phase promises
 
@@ -313,7 +313,7 @@ under it must name the allocator, which is the embedder's.
 
 **Two new workspace members, named by DataFusion's convention because they
 are DataFusion layers**: `datafusion-pgdump`, the provider library, and
-`datafusion-pgdump-cli`, the binary. Two rather than one crate with both
+`datafusion-cli-pgdump`, the binary. Two rather than one crate with both
 targets, so that a library user does not inherit the binary's
 `datafusion-cli` dependency.
 
@@ -365,7 +365,7 @@ upstream tree.
   memory pool, the session config, `enable_url_table()`, the built-in table
   functions. Upstream's one endorsed pattern for extending the CLI is
   `datafusion-cli/examples/cli-session-context.rs`: a downstream `main` that
-  calls `exec_from_repl` on its own context. So a `datafusion-pgdump-cli` is a
+  calls `exec_from_repl` on its own context. So a `datafusion-cli-pgdump` is a
   copy of `main.rs` plus registrations, re-copied at each DataFusion major.
 - **Backslash commands are closed.** `Command` is a closed enum and
   `exec_from_repl` parses it inline, so a new meta-command means owning the REPL

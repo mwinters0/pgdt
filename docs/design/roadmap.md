@@ -658,7 +658,7 @@ fixed before the grilling:
   tables, as a new workspace member. Python bindings are their own phase, P24;
   Spark and Trino are dropped from the roadmap.
 - **A deliverable binary is expected**: a build of `datafusion-cli` with the
-  provider built in, named `datafusion-pgdump-cli`.
+  provider built in, named `datafusion-cli-pgdump`.
 - **The provider may require a complete cache** built by `pgdt parse` before
   any DataFusion use. Starting a parse from inside the SQL shell is a
   convenience, wanted only if it comes cheaply.
@@ -1075,7 +1075,7 @@ which is what makes the difference worth minding at the moment one is found.
   ordering DataFusion applies to the column's Arrow type. Left out of P6's first
   cut, 2026-09-21.
 
-- **Attach-time parse in `datafusion-pgdump-cli`.** Building a missing cache
+- **Attach-time parse in `datafusion-cli-pgdump`.** Building a missing cache
   from inside the DataFusion binary instead of refusing and naming `pgdt parse`.
   It wants `pgdt`'s parse configuration — parallelism and memory discovery, the
   interrupt guard, the status output — moved into the library first, so that
