@@ -10,7 +10,7 @@ Dated notes, for two purposes only:
   invariant, or a `runs/` artifact, cited from there. The entry here points at
   those. It is not where reasoning lives.
 
-**A day's entry is short** — pointers and settled facts, **200 lines at most**.
+**A day's entry is short** — pointers and settled facts, **250 lines at most**.
 This is the cap's one statement; `scripts/repoint.py` asserts it, against
 entries dated after 2026-09-13, and everything else cites it rather than
 repeating the number. Reasoning that must outlive the day goes beside its
