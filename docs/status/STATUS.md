@@ -131,6 +131,10 @@ delivered.
   Arrow's semantics; each Arrow-mode comparison checked against DataFusion's
   own, and pushdown on and off answer alike.
   [Notes](../design/roadmap-P6.6-pushdown-notes.md).
+- [ ] **6.2.2** Arrow semantics compares every text-emitted kind as text:
+  `macaddr`/`macaddr8` to `Text` under `arrow_order`, announcing
+  `ValueAsText`; the oracle asserting it of every such kind; the provider's
+  `macaddr` exception gone. Blocks nothing; lands before 6.9.
 - [ ] **6.9** Bytewise bounds and row order gathered for text whatever its
   collation, believed only in Arrow semantics; a re-parse adds them to an older
   cache; `statistics-gathering` re-taken.
@@ -437,18 +441,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A `macaddr` column's text literal is not pushed down (6.6).** The call:
-  `pushdown.rs`'s `literal_text` passes a string literal only where the
-  library compares the column's text bytewise, and `macaddr`/`macaddr8` is
-  the one text-emitted kind Arrow semantics leaves as itself
-  (`CompareKind::arrow_order`), whose literal the library reads in either case
-  of hex (D55) — so `v = '08:00:2B:01:02:03'` would match the row
-  `08:00:2b:01:02:03` in the library and not in DataFusion. Every such term is
-  left to DataFusion, the lowercase spelling that would answer alike included.
-  Why there: the defect is in 6.2's Arrow mode, and fixing it there — `MacAddr`
-  moving to `Text` under `arrow_order` — also withdraws its bounds from Arrow
-  semantics (`bounds_ordered_in`) and raises the question whether the column
-  should announce `ValueAsText` at registration, a rework of tested code this
-  round would have bundled with a new module. Reconsidering means that library
-  change, after which the provider's guard needs no exception: every
-  text-emitted kind would then compare as text.
