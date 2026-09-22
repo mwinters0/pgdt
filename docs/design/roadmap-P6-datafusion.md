@@ -214,6 +214,23 @@ compressed source. DataFusion supplies no reading to divide: its memory pool
 explicitly does not cover data sources, and nothing in it reads a cgroup
 (`datafusion/execution/src/memory_pool/mod.rs`, v55).
 
+**Every lever a plan note names is one the provider's caller can pull**, and
+every scan setting `pgdt query` has a flag for is settable too: the scans'
+allowance as `pgdt --memory` states one, and `ScanOptions`' read chunk and line
+limit as `--chunk-size` and `--max-line-bytes` do. **They are session
+settings**, a `ConfigExtension` under `pgdump.` — `SET pgdump.memory`,
+`pgdump.chunk_size`, `pgdump.max_line_bytes` — read when a scan is planned, so
+one set mid-session binds the scans planned after it, as `SET
+datafusion.runtime.memory_limit` already moves the pool limit the budget reads.
+A stated allowance overrides the one `ScanBudget` discovered; what live scans
+have drawn stays drawn. Amended 2026-09-22
+([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md), "What a
+provider's plan note says about its budget"). Rejected: a `KD` for notes
+naming levers nobody can reach; an allowance fixed at startup, which a REPL
+user can only change by restarting; per-table `OPTIONS`, a chunk being the
+device's and a long line's limit wanted only by whatever reads that dump,
+which one `SET` covers.
+
 ## Library surfaces the provider does not use
 
 The provider pulls partitions under DataFusion's scheduler, so it uses neither
@@ -251,7 +268,12 @@ reading a row, so an `Exact` that is wrong is a wrong answer with no error.
 repeatable `--dump <name>=<path>` flag**, registering it as catalog `<name>`,
 **and by `CREATE EXTERNAL TABLE … STORED AS PGDUMP`**, whose options live
 under a registered `pgdump.` table-options extension. **No backslash commands
-of our own**, which would mean owning the REPL loop as well.
+of our own**, which would mean owning the REPL loop as well, **and no flag for
+a scan setting**: the `pgdump.*` session settings ("Workers and memory") are
+set with `SET`, by `-c` or an `--rc` file at startup, as one surface listed by
+`SHOW ALL`. Amended 2026-09-22; rejected: `--pgdump-memory` beside
+`--memory-limit`, one of three settings given a flag and another line of
+upstream's `main.rs` to carry.
 
 Rejected: a `pgdt sql` subcommand, which puts DataFusion into the build every
 figure in [`measurements.md`](measurements.md) is taken from; and no binary at
@@ -275,6 +297,25 @@ under `EXPLAIN ANALYZE`, not a finding. Amended 2026-09-22
 ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md), "The
 binary's sink reports at planning, and a scan's counts are metrics"). `pgdt`
 may adopt the sink later; that is not this phase's work.
+
+**A plan note quoting a budget reaches the sink saying where that budget came
+from, in the provider's words.** The library states the number and never its
+origin ([`decisions.md`](decisions.md), "D64"), so the provider wraps such a
+note in a finding of its own carrying the scan's budget account: the allowance
+and where it came from — stated, a discovered limit and the file stating it,
+half of what the machine reports available, or none found — the session pool's
+finite limit, the dumps' resident statistics, and what scans still alive had
+drawn. Its message is the note's followed by a clause naming those terms and,
+by their setting keys, the levers that move them — `pgdump.memory`,
+`pgdump.chunk_size`, `datafusion.execution.target_partitions`,
+`datafusion.runtime.memory_limit`, each where it applies (below, "Workers and
+memory"): a key is a lever a user types as it stands. A caller wanting its own
+names downcasts it. `datafusion-cli-pgdump` prints the message
+unchanged. Amended 2026-09-22
+([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md), "What a
+provider's plan note says about its budget"). Rejected: an English clause
+appended in `report_plan`, leaving an embedder to parse prose; the binary's
+sink wording it, which has no account to read.
 
 DataFusion 55 offers no non-error channel a provider could use instead (below),
 and `log` is hidden by `datafusion-cli`'s default level.

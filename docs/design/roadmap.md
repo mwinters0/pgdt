@@ -1090,3 +1090,11 @@ which is what makes the difference worth minding at the moment one is found.
   general rule sizes by rows per group at a block's end, because `varchar` and
   its kin leave a header silent on width ([`decisions.md`](decisions.md),
   "D82"); this is the cheaper case beside it, taken once that rule has shipped.
+
+- **A query's line limit taken from the map.** A parse that needed
+  `--max-line-bytes` has seen the dump's longest line, so the cache could
+  record it and a query read with the larger of that and the default, leaving
+  `pgdt query --max-line-bytes` and the provider's `pgdump.max_line_bytes` for
+  a dump whose cache predates it. The limit is also what one row may cost
+  resident ([`decisions.md`](decisions.md), "D23"), and the parse already paid
+  it. It moves the cache format, so it was left out of P6, 2026-09-22.

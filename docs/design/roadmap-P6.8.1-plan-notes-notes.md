@@ -42,7 +42,7 @@ for the severity.
   a metric, and nothing drains them into a sink. `pgdt` still sums them
   after the query in `announce_early_stops`.
 - **The provider adds no provenance clause to a note that quotes a budget.**
-  See STATUS, "Decisions worth another look".
+  The spec's "Diagnostics: one sink" now asks for one; 6.12 builds it.
 - **`bytes_unread_early_stop` shows `0` wherever no stop was planned.** A
   per-partition counter is registered for every partition that runs. The
   pruning metric appears only where statistics were consulted.

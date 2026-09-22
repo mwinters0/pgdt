@@ -159,6 +159,14 @@ delivered.
   `Finding` carrying the severity `pgdt` chose per kind; groups pruned and
   bytes an early stop left unread are `PgDumpExec` metrics.
   [Notes](../design/roadmap-P6.8.1-plan-notes-notes.md).
+- [ ] **6.11** Scan settings: a `pgdump.*` `ConfigExtension` —
+  `pgdump.memory` a stated allowance `ScanBudget` reads at each draw over the
+  one it discovered, `pgdump.chunk_size` and `pgdump.max_line_bytes` into
+  `ScanOptions` — read when a scan is planned; after `M133`.
+- [ ] **6.12** A plan note's budget account: `ScanBudget` keeping where its
+  allowance came from, and a note quoting a budget reaching the sink wrapped
+  in the provider's finding, its four terms and the setting keys that move
+  them in the clause.
 
 ## Not started
 
@@ -473,17 +481,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A scan's plan note reaches the provider's sink in the library's words
-  alone** (6.8.1). `pgdt` appends where the budget a note quotes came from
-  (`decisions.md`, "D64"); the provider appends nothing. So under a
-  `--memory-limit` above the allowance `datafusion-cli-pgdump` prints "a
-  memory budget of 0 byte(s) … where nothing stated one it is the memory limit
-  this process is running under", when what bound the scan was the session's
-  `ScanBudget` — the allowance less that pool limit and the dumps' resident
-  statistics — and a short count offers "a smaller read chunk … or a larger
-  memory budget", neither a flag the binary has. Left so because D64 makes
-  provenance the caller's, and no sentence for the provider's was settled.
-  Reconsidering it means a clause from `ScanBudget` naming those three terms,
-  added in `PgDumpTable::report_plan` (`datafusion-pgdump/src/report.rs`) to
-  each note whose `budget_bytes` is set, as `pgdt`'s `plan_note_origin` does.
