@@ -136,7 +136,15 @@ bytewise whatever its collation, believed only in Arrow semantics, so collated
 text prunes and stops early there too. No `CACHE_FORMAT_VERSION` bump: a cache
 written before holds none for it and reads `Absent` until re-parsed
 ([`../status/history/2026-09-21.md`](../status/history/2026-09-21.md),
-"Collated text gets bytewise bounds").
+"Collated text gets bytewise bounds"). **Every scalar column carries bounds in
+each semantics whose order over the file's text is exact**, one set where the
+two coincide, so `jsonb`, `character(n)` off `C` and a column with no plan are
+bounded in Arrow's order, and a kind whose PostgreSQL bounds are not Arrow's
+— an enum, `interval`, a bare `numeric`, `timetz`, `inet`/`cidr`,
+`character(n)` under `C` — carries a second set keyed by its Arrow order, a
+cache shape that bumps `CACHE_FORMAT_VERSION`
+([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
+"Which columns carry bounds in Arrow's order").
 
 **Divergence from PostgreSQL is reported, never a reason to decline a
 pushdown.** It is a property of the column — `ORDER BY`, `MIN`/`MAX` and every

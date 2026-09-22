@@ -136,9 +136,14 @@ delivered.
   `ValueAsText`; the oracle asserting it of every such kind; the provider's
   `macaddr` exception gone.
   [Notes](../design/roadmap-P6.2.2-macaddr-as-text-notes.md).
-- [ ] **6.9** Bytewise bounds and row order gathered for text whatever its
+- [x] **6.9** Bytewise bounds and row order gathered for text whatever its
   collation, believed only in Arrow semantics; a re-parse adds them to an older
-  cache; `statistics-gathering` re-taken.
+  cache. [Notes](../design/roadmap-P6.9-bytewise-text-bounds-notes.md).
+- [ ] **6.10** Bounds in every semantics whose order over the file's text is
+  exact: `jsonb`, `character(n)` off `C` and a column with no plan bounded in
+  Arrow's order, and a second set in Arrow's order for every kind whose
+  PostgreSQL bounds are not Arrow's, bumping `CACHE_FORMAT_VERSION`; a
+  `macaddr`'s one set believed in both.
 - [ ] **6.7** Statistics handed to DataFusion; answers with and without them
   alike.
 - [ ] **6.8** `datafusion-pgdump-cli`: `--dump`, `STORED AS PGDUMP` and its
