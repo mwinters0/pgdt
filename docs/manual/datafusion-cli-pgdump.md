@@ -84,7 +84,28 @@ months, then days, then time, a bare `numeric`, `jsonb` or `inet` as the text
 it is emitted as. `pgdt query` compares as PostgreSQL does where it can
 ([type handling](type-handling.md)); here SQL is DataFusion's.
 
+**Planning a query prints what its scan could not do as asked**, once per
+table it reads, before any row is: fewer readers than DataFusion's
+`target_partitions` because the memory the scans share could not seat them,
+one reader only because it could not seat even that, or an `.xz` dump read
+through its streaming decoder because one of its blocks would not fit
+([Memory](#memory)).
+
+```
+warning: shop.logs.events: a memory budget of 0 byte(s) is less than the 8388608 byte(s) one reader of this source holds, so this runs at its one-slot floor whatever concurrency is asked for — …
+```
+
 `-q` keeps these warnings off and leaves errors on.
+
+**What a scan skipped is under `EXPLAIN ANALYZE`**, as the scan node's
+metrics: `row_groups_pruned_statistics`, how many of the row groups `pgdt
+parse` recorded statistics for a `WHERE` ruled out unread, and
+`bytes_unread_early_stop`, the bytes of rows left unread in a block sorted
+past the filter's bound.
+
+```sql
+> EXPLAIN ANALYZE SELECT * FROM koji.public.build WHERE id < 1000;
+```
 
 ## Types
 

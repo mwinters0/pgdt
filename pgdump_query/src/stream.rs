@@ -58,7 +58,7 @@ use crate::batch::{QueryOptions, RetainedChunks, RowBatcher, ScanExtent};
 use crate::cache::StrictIdentity;
 use crate::cache::{CacheLoad, CacheMode, SourceWatch};
 use crate::copy::{CopyHeader, RawRow, RowSplit, validated_prefix};
-use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Finding, Severity};
 use crate::gather;
 use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, TableName, scan_preamble, tiling_diagnostics,
@@ -1746,7 +1746,7 @@ impl<'a> TableStream<'a> {
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
     /// under `=`. A third channel beside `DumpIndex.diagnostics` (L1) and
     /// `ResolvedSchema.notes` (L2), each a [`crate::diagnostic::Finding`] a
-    /// caller drains into one sink with the other two. Like
+    /// caller drains into one sink with the others. Like
     /// [`Self::resolved_schema`], it describes the **last** block whose schema
     /// resolved.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
@@ -2557,7 +2557,8 @@ pub(crate) fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<
 /// ([`crate::diagnostic::DiagnosticKind`], L1), about one column
 /// (`crate::resolve::ResolvedSchema::notes`, L2) or about one predicate term
 /// ([`ComparisonNote`], L4) — a fourth channel, deliberately not a widening of
-/// any of the other three (`docs/design/decisions.md`, "D19"). See
+/// any of the other three (`docs/design/decisions.md`, "D19"), and a
+/// [`Finding`] like each of them, so one sink drains all four. See
 /// [`TableStream::plan_notes`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanNote {
@@ -2795,11 +2796,31 @@ impl PlanNote {
             PlanNoteKind::StatisticsPruned { .. } => None,
         }
     }
+}
+
+impl Finding for PlanNote {
+    /// `Info` for a fact that is no fault — a skip, and a span the plan
+    /// narrowed to seat the readers asked for (`docs/design/decisions.md`,
+    /// "D84"), where the `Warning` beside it is what says a count still came
+    /// up short — and `Warning` for every note saying the budget in force
+    /// declined something asked of it. Derived from the kind, as
+    /// `ColumnNote`'s is from its resolution, so a caller printing it and one
+    /// draining it into a sink cannot disagree.
+    fn severity(&self) -> Severity {
+        match self.kind {
+            PlanNoteKind::StatisticsPruned { .. } | PlanNoteKind::BatchSpanNarrowed { .. } => {
+                Severity::Info
+            }
+            PlanNoteKind::ParallelismBudgetLimited { .. }
+            | PlanNoteKind::CompressedBlockPathDeclined { .. }
+            | PlanNoteKind::AllocationBelowFloor { .. } => Severity::Warning,
+        }
+    }
 
     /// One sentence naming why the plan fell short of what was asked, and what
     /// to raise to close the gap — in the library's own vocabulary rather than
-    /// any caller's flag names, as `ComparisonNote`'s `Finding::message` is.
-    pub fn message(&self) -> String {
+    /// any caller's flag names, as `ComparisonNote`'s is.
+    fn message(&self) -> String {
         match &self.kind {
             PlanNoteKind::ParallelismBudgetLimited {
                 requested,
@@ -2867,6 +2888,10 @@ impl PlanNote {
                 )
             }
         }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -4033,6 +4058,36 @@ mod tests {
                 note.message().contains(&format!("memory budget of {memory_bytes} byte(s)"));
             assert_eq!(note.budget_bytes().is_some(), quoted, "{}", note.message());
             assert!(note.budget_bytes().is_none_or(|bytes| bytes == memory_bytes));
+        }
+    }
+
+    /// **A note is a `Warning` exactly where the budget declined something
+    /// asked of it**: a skip and a narrowed span are `Info`, as `pgdt` has
+    /// always printed them `note:`. A sink recovers the note itself.
+    #[test]
+    fn a_plan_note_warns_where_the_budget_declined_what_was_asked() {
+        let memory_bytes = 64 << 20;
+        let cases = [
+            (PlanNote::compressed_block_path_declined(9, 1, 2, memory_bytes), Severity::Warning),
+            (PlanNote::allocation_below_floor(8 << 20, memory_bytes), Severity::Warning),
+            (PlanNote::parallelism_budget_limited(8, 7, 1, None, memory_bytes), Severity::Warning),
+            (PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes), Severity::Info),
+            (
+                PlanNote {
+                    kind: PlanNoteKind::StatisticsPruned {
+                        skipped_groups: 1,
+                        groups: 2,
+                        skipped_bytes: 3,
+                        bytes: 4,
+                    },
+                },
+                Severity::Info,
+            ),
+        ];
+        for (note, severity) in cases {
+            let finding: &dyn Finding = &note;
+            assert_eq!(finding.severity(), severity, "{}", finding.message());
+            assert_eq!(finding.as_any().downcast_ref::<PlanNote>(), Some(&note));
         }
     }
 

@@ -109,8 +109,8 @@ fn register_in(
 ) -> Vec<(Option<String>, String)> {
     let databases = dump.databases();
     let name = matches!(databases.as_slice(), [None] | []).then_some("dump");
-    let catalogs = register_dump(sessions.0, name, dump, &ignore).unwrap();
-    register_dump(sessions.1, name, dump, &ignore).unwrap();
+    let catalogs = register_dump(sessions.0, name, dump, Arc::new(ignore)).unwrap();
+    register_dump(sessions.1, name, dump, Arc::new(ignore)).unwrap();
     databases.into_iter().zip(catalogs).collect()
 }
 

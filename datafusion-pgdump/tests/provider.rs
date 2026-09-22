@@ -87,7 +87,7 @@ fn quoted(name: &str) -> String {
 fn register(ctx: &SessionContext, dump: &Arc<PgDump>) -> Vec<(Option<String>, String)> {
     let databases = dump.databases();
     let name = matches!(databases.as_slice(), [None] | []).then_some("dump");
-    let catalogs = register_dump(ctx, name, dump, &ignore).unwrap();
+    let catalogs = register_dump(ctx, name, dump, Arc::new(ignore)).unwrap();
     databases.into_iter().zip(catalogs).collect()
 }
 
@@ -207,10 +207,10 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
 
     // A plain dump names no database: a name is required.
     let (_, plain) = fixture_dump("edge_cases", "default", dir.path()).await;
-    let refused = register_dump(&session(1, 8192), None, &plain, &ignore).unwrap_err();
+    let refused = register_dump(&session(1, 8192), None, &plain, Arc::new(ignore)).unwrap_err();
     assert!(matches!(refused, Error::CatalogName(_)), "{refused}");
     let ctx = session(1, 8192);
-    assert_eq!(register_dump(&ctx, Some("shop"), &plain, &ignore).unwrap(), ["shop"]);
+    assert_eq!(register_dump(&ctx, Some("shop"), &plain, Arc::new(ignore)).unwrap(), ["shop"]);
     let catalog = ctx.catalog("shop").unwrap();
     assert!(catalog.schema_names().contains(&"public".to_string()));
     assert!(catalog.schema("logs").unwrap().table_names().contains(&"events".to_string()));
@@ -218,10 +218,11 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
     // A file of several databases takes their names, and refuses one given.
     let dir = tempfile::tempdir().unwrap();
     let (_, all) = fixture_dump("edge_cases", "dumpall", dir.path()).await;
-    let refused = register_dump(&session(1, 8192), Some("shop"), &all, &ignore).unwrap_err();
+    let refused =
+        register_dump(&session(1, 8192), Some("shop"), &all, Arc::new(ignore)).unwrap_err();
     assert!(matches!(refused, Error::CatalogName(_)), "{refused}");
     let ctx = session(1, 8192);
-    let names = register_dump(&ctx, None, &all, &ignore).unwrap();
+    let names = register_dump(&ctx, None, &all, Arc::new(ignore)).unwrap();
     assert!(names.contains(&"pgdt_fixture".to_string()), "{names:?}");
     assert!(names.contains(&"pgdt_tenant".to_string()), "{names:?}");
     let tenant = ctx.catalog("pgdt_tenant").unwrap();
@@ -334,7 +335,7 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
     let ctx = SessionContext::new_with_config(
         SessionConfig::new().with_target_partitions(4).with_extension(Arc::clone(&budget)),
     );
-    register_dump(&ctx, Some("shop"), &dump, &ignore).unwrap();
+    register_dump(&ctx, Some("shop"), &dump, Arc::new(ignore)).unwrap();
     let query = "SELECT * FROM shop.public.widgets";
 
     let first = ctx.sql(query).await.unwrap().create_physical_plan().await.unwrap();
@@ -352,7 +353,7 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
 
     // The session's own, not a process-wide one.
     let other = session(4, 8192);
-    register_dump(&other, Some("shop"), &dump, &ignore).unwrap();
+    register_dump(&other, Some("shop"), &dump, Arc::new(ignore)).unwrap();
     let plan = other.sql(query).await.unwrap().create_physical_plan().await.unwrap();
     assert_eq!(budget.drawn(), 0);
     drop(plan);
@@ -403,9 +404,9 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     let runtime =
         RuntimeEnvBuilder::new().with_memory_limit(pool as usize, 1.0).build_arc().unwrap();
     let ctx = SessionContext::new_with_config_rt(config, runtime);
-    register_dump(&ctx, Some("shop"), &dump, &ignore).unwrap();
+    register_dump(&ctx, Some("shop"), &dump, Arc::new(ignore)).unwrap();
     assert_eq!(budget.resident(), statistics, "registration bills the resident statistics");
-    register_dump(&ctx, Some("again"), &dump, &ignore).unwrap();
+    register_dump(&ctx, Some("again"), &dump, Arc::new(ignore)).unwrap();
     assert_eq!(budget.resident(), statistics, "once per budget, however often registered");
     let plan = ctx.sql(query).await.unwrap().create_physical_plan().await.unwrap();
     assert_eq!(budget.drawn(), ceiling, "what the margin cannot hold comes off the budget");
@@ -449,7 +450,7 @@ async fn a_single_table_registers_on_its_own() {
     let ctx = session(1, 8192);
     ctx.register_table("w", widgets).unwrap();
     let alone = ctx.sql("SELECT * FROM w").await.unwrap().collect().await.unwrap();
-    register_dump(&ctx, None, &all, &ignore).unwrap();
+    register_dump(&ctx, None, &all, Arc::new(ignore)).unwrap();
     let catalogued =
         ctx.sql("SELECT * FROM pgdt_tenant.public.widgets").await.unwrap().collect().await.unwrap();
     let schema = alone[0].schema();

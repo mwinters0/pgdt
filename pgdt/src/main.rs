@@ -1407,14 +1407,12 @@ fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
 fn announce_plan_notes(stream: &pgdump_query::TableStream<'_>, parallel: &Resolved) {
     let origin = parallel.plan_note_origin();
     for note in stream.plan_notes() {
-        // A skip is no fault, and neither is a span the plan narrowed to seat
-        // the readers that were asked for (`docs/design/decisions.md`, "D84")
-        // — where that still came up short, the `warning:` beside it is what
-        // says so.
-        let severity = match note.kind {
-            pgdump_query::PlanNoteKind::StatisticsPruned { .. }
-            | pgdump_query::PlanNoteKind::BatchSpanNarrowed { .. } => "note",
-            _ => "warning",
+        // The library's severity, as the DataFusion provider's sink hears it;
+        // an `Info` here is a `note:`, the word the other query-time facts use.
+        let severity = match note.severity() {
+            Severity::Info => "note",
+            Severity::Warning => "warning",
+            Severity::Error => "error",
         };
         let origin = if note.budget_bytes().is_some() { origin.as_str() } else { "" };
         eprintln!("{severity}: {}{origin}", note.message());

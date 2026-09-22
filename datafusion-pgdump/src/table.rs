@@ -2,7 +2,7 @@
 //! library's partitioned replay.
 
 use std::fmt;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
@@ -21,8 +21,9 @@ use pgdump_query::{
 
 use crate::budget::{Draw, ScanBudget, pool_limit};
 use crate::dump::PgDump;
-use crate::exec::PgDumpExec;
+use crate::exec::{PgDumpExec, ScanMetrics};
 use crate::pushdown::translate;
+use crate::report::Reporting;
 use crate::statistics::table_statistics;
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
@@ -39,6 +40,9 @@ pub struct PgDumpTable {
     /// table for every `SHOW TABLES` row and folding every block's groups is
     /// not what that should cost.
     statistics: OnceLock<Arc<Statistics>>,
+    /// Where this table's scans report their plans, once it has been
+    /// reported ([`PgDumpTable::report`]).
+    reporting: Mutex<Option<Arc<Reporting>>>,
 }
 
 impl fmt::Debug for PgDumpTable {
@@ -56,7 +60,7 @@ impl PgDumpTable {
     pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
         let resolved = pgdump_query::table_schema(dump.index(), &name, &query_options(&dump))
             .map_err(external)?;
-        Ok(Self { dump, name, resolved, statistics: OnceLock::new() })
+        Ok(Self { dump, name, resolved, statistics: OnceLock::new(), reporting: Mutex::default() })
     }
 
     /// The table this provider reads.
@@ -68,6 +72,10 @@ impl PgDumpTable {
     /// its `notes` included.
     pub fn resolved_schema(&self) -> &ResolvedSchema {
         &self.resolved
+    }
+
+    pub(crate) fn reporting(&self) -> &Mutex<Option<Arc<Reporting>>> {
+        &self.reporting
     }
 }
 
@@ -131,6 +139,10 @@ impl TableProvider for PgDumpTable {
     /// [`Self::supports_filters_pushdown`] answered `Exact`, evaluated by the
     /// library as one conjunction. `limit` is left to the plan, which stops
     /// pulling once it is met, after the filter.
+    ///
+    /// **What the plan settled is reported here**, to the sink the table was
+    /// registered with ([`PgDumpTable::report`]), and what statistics pruned
+    /// is the plan node's metric ([`ScanMetrics`]).
     async fn scan(
         &self,
         state: &dyn Session,
@@ -172,6 +184,8 @@ impl TableProvider for PgDumpTable {
         )
         .await
         .map_err(external)?;
+        self.report_plan(partitions.plan_notes());
+        let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
         let schema = partitions.resolved_schema().schema;
         let streams = (0..partitions.len())
@@ -181,6 +195,7 @@ impl TableProvider for PgDumpTable {
                     index,
                     schema: Arc::clone(&schema),
                     draw: Arc::clone(&draw),
+                    metrics: metrics.clone(),
                 }) as Arc<dyn PartitionStream>
             })
             .collect();
@@ -199,7 +214,7 @@ impl TableProvider for PgDumpTable {
         // is applied there.
         let statistics = if filters.is_empty() { statistics } else { statistics.to_inexact() };
         let inner = StreamingTableExec::try_new(schema, streams, None, [], false, limit)?;
-        Ok(Arc::new(PgDumpExec::new(inner, statistics)))
+        Ok(Arc::new(PgDumpExec::new(inner, statistics, metrics)))
     }
 }
 
@@ -211,6 +226,7 @@ struct Partition {
     /// Held by the plan and by every stream it starts, so the budget it drew
     /// returns once the last of them is gone.
     draw: Arc<Draw>,
+    metrics: ScanMetrics,
 }
 
 impl fmt::Debug for Partition {
@@ -228,12 +244,11 @@ impl PartitionStream for Partition {
     /// DataFusion's own sources read it.
     fn execute(&self, ctx: Arc<TaskContext>) -> SendableRecordBatchStream {
         let draw = Arc::clone(&self.draw);
-        let rows = self.partitions.stream(self.index, ctx.session_config().batch_size()).map(
-            move |batch| {
-                let _held = &draw;
-                batch.map_err(external)
-            },
-        );
+        let stream = self.partitions.stream(self.index, ctx.session_config().batch_size());
+        let rows = self.metrics.counted(stream, self.index).map(move |batch| {
+            let _held = &draw;
+            batch.map_err(external)
+        });
         Box::pin(RecordBatchStreamAdapter::new(Arc::clone(&self.schema), rows))
     }
 }

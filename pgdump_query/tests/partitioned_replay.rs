@@ -23,8 +23,8 @@ use std::process::Command;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, LocalFileSource, Parallelism, PlanNoteKind,
-    Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Expr, Finding, LocalFileSource, Parallelism,
+    PlanNoteKind, Predicate, PredicateOp, QueryOptions, ScanOptions, XzSource, table_stream,
     table_stream_partitions,
 };
 

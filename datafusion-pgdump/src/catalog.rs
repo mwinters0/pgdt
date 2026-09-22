@@ -54,13 +54,15 @@ impl PgDumpCatalog {
     }
 
     /// Hand every table's findings to `sink`, each named as SQL reaches it
-    /// under `catalog` ([`PgDumpTable::report`]). A table whose plan refuses
-    /// reports nothing here, its refusal being what a query of it raises.
-    pub(crate) fn report(&self, catalog: &str, sink: &dyn DiagnosticSink) {
+    /// under `catalog`, and make it the sink their scans report to
+    /// ([`PgDumpTable::report`]). A table whose plan refuses reports nothing
+    /// here, its refusal being what a query of it raises.
+    pub(crate) fn report(&self, catalog: &str, sink: &Arc<dyn DiagnosticSink>) {
         for (schema_name, schema) in &self.schemas {
             for table in schema.tables.keys() {
                 if let Ok(provider) = schema.provider(table) {
-                    provider.report(&format!("{catalog}.{schema_name}.{table}"), sink);
+                    let subject = format!("{catalog}.{schema_name}.{table}");
+                    provider.report(&subject, Arc::clone(sink));
                 }
             }
         }

@@ -120,8 +120,8 @@ impl ExtensionOptions for PgDumpTableOptions {
 /// Builds a [`crate::PgDumpTable`] for `CREATE EXTERNAL TABLE … STORED AS
 /// PGDUMP`: the dump at `LOCATION` opened through its complete cache
 /// ([`PgDump::open`]), the table its options name, and what the dump and the
-/// table find reported to the sink, the table named as the statement names
-/// it.
+/// table find reported to the sink, then what each scan's plan settles, the
+/// table named as the statement names it.
 ///
 /// **The table's columns are the dump's**, so a statement declaring columns,
 /// partition columns or an order is refused rather than believed.
@@ -171,7 +171,7 @@ impl TableProviderFactory for PgDumpTableFactory {
         let provider = dump
             .table(options.database.as_deref(), options.schema.as_deref(), table)
             .map_err(external)?;
-        provider.report(&cmd.name.to_string(), self.sink.as_ref());
+        provider.report(&cmd.name.to_string(), Arc::clone(&self.sink));
         Ok(provider)
     }
 }

@@ -1,15 +1,18 @@
 //! The scan's plan node: a `StreamingTableExec` over the replay's
 //! sub-streams, carrying what the dump's map says about the table.
 //!
-//! **It exists only to answer `statistics_from_inputs`.** DataFusion reads a
-//! source's statistics off the `ExecutionPlan` — `TableProvider` has no
-//! statistics method in 55 — and `StreamingTableExec` answers
-//! `Statistics::new_unknown`. So the streaming exec stays, held as an
-//! implementation detail rather than as a child: this is a leaf, and nothing
-//! in a plan tree sees the node inside it.
+//! **It exists to answer `statistics_from_inputs`, and to carry the scan's
+//! own metrics.** DataFusion reads a source's statistics off the
+//! `ExecutionPlan` — `TableProvider` has no statistics method in 55 — and
+//! `StreamingTableExec` answers `Statistics::new_unknown`. So the streaming
+//! exec stays, held as an implementation detail rather than as a child: this
+//! is a leaf, and nothing in a plan tree sees the node inside it. Its metrics
+//! are reported beside the streaming exec's own ([`ScanMetrics`]).
 
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use datafusion::common::stats::Precision;
 use datafusion::common::tree_node::TreeNodeRecursion;
@@ -17,10 +20,15 @@ use datafusion::common::{Result, Statistics, internal_err};
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::execution_plan::{ChildrenPropertiesMode, ReplaceChildrenOptions};
-use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::metrics::{
+    Count, ExecutionPlanMetricsSet, MetricBuilder, MetricCategory, MetricType, MetricValue,
+    MetricsSet, PruningMetrics,
+};
 use datafusion::physical_plan::statistics::{ChildStats, StatisticsArgs};
 use datafusion::physical_plan::streaming::StreamingTableExec;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use futures::{Stream, StreamExt};
+use pgdump_query::{PlanNote, PlanNoteKind, TableStream};
 
 /// The replay of one table, with its statistics.
 #[derive(Debug, Clone)]
@@ -31,11 +39,16 @@ pub(crate) struct PgDumpExec {
     /// statistics.
     inner: Arc<StreamingTableExec>,
     statistics: Arc<Statistics>,
+    metrics: ScanMetrics,
 }
 
 impl PgDumpExec {
-    pub(crate) fn new(inner: StreamingTableExec, statistics: Statistics) -> Self {
-        Self { inner: Arc::new(inner), statistics: Arc::new(statistics) }
+    pub(crate) fn new(
+        inner: StreamingTableExec,
+        statistics: Statistics,
+        metrics: ScanMetrics,
+    ) -> Self {
+        Self { inner: Arc::new(inner), statistics: Arc::new(statistics), metrics }
     }
 }
 
@@ -104,8 +117,14 @@ impl ExecutionPlan for PgDumpExec {
         self.inner.execute(partition, context)
     }
 
+    /// The streaming exec's own — its output rows and time — and this
+    /// scan's ([`ScanMetrics`]).
     fn metrics(&self) -> Option<MetricsSet> {
-        self.inner.metrics()
+        let mut metrics = self.inner.metrics().unwrap_or_default();
+        for metric in self.metrics.set.clone_inner().iter() {
+            metrics.push(Arc::clone(metric));
+        }
+        Some(metrics)
     }
 
     fn fetch(&self) -> Option<usize> {
@@ -118,6 +137,7 @@ impl ExecutionPlan for PgDumpExec {
         Some(Arc::new(Self {
             inner: Arc::new(inner.clone()),
             statistics: Arc::clone(&self.statistics),
+            metrics: self.metrics.clone(),
         }))
     }
 
@@ -154,4 +174,109 @@ fn fetched(statistics: &Statistics, limit: Option<usize>) -> Statistics {
         statistics.num_rows = Precision::Inexact(limit);
     }
     statistics
+}
+
+/// The metric counting the row groups statistics ruled out, named as Parquet's
+/// scan names its own, so a reader of `EXPLAIN ANALYZE` meets one word for one
+/// thing.
+pub(crate) const ROW_GROUPS_PRUNED_STATISTICS: &str = "row_groups_pruned_statistics";
+
+/// The metric counting the bytes of rows an early stop on sorted data left
+/// unread.
+pub(crate) const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
+
+/// What a scan reports under `EXPLAIN ANALYZE`, beside the streaming exec's
+/// rows and time: the row groups the map's statistics ruled out, of those its
+/// blocks list ([`ROW_GROUPS_PRUNED_STATISTICS`]), and the bytes of rows an
+/// early stop left unread ([`BYTES_UNREAD_EARLY_STOP`]). Counts rather than
+/// findings (`docs/design/roadmap-P6-datafusion.md`, "Diagnostics: one sink"):
+/// the note saying the same of the pruning is also a plan note, which the
+/// table's sink hears as an `Info`.
+///
+/// **The pruning is counted once, for the whole node, when the scan is
+/// planned**, since that is when the library settles it; an early stop is
+/// found while rows are read, so it is counted per partition as each one
+/// ends. Clones share one set, so a plan node rebuilt around a fetch reports
+/// what its partitions count.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ScanMetrics {
+    set: ExecutionPlanMetricsSet,
+}
+
+impl ScanMetrics {
+    /// The metrics of a scan whose plan settled `notes`.
+    pub(crate) fn planned(notes: &[PlanNote]) -> Self {
+        let set = ExecutionPlanMetricsSet::new();
+        for note in notes {
+            if let PlanNoteKind::StatisticsPruned { skipped_groups, groups, .. } = note.kind {
+                let pruning = PruningMetrics::new();
+                pruning.add_pruned(skipped_groups as usize);
+                pruning.add_matched((groups - skipped_groups) as usize);
+                MetricBuilder::new(&set)
+                    .with_type(MetricType::Summary)
+                    .with_category(MetricCategory::Rows)
+                    .build(MetricValue::PruningMetrics {
+                        name: ROW_GROUPS_PRUNED_STATISTICS.into(),
+                        pruning_metrics: pruning,
+                    });
+            }
+        }
+        Self { set }
+    }
+
+    /// `stream`, partition `partition` of this scan, counting what its early
+    /// stops left unread once it ends or is dropped — a `LIMIT` met drops a
+    /// partition before its end, and what was stopped by then was still not
+    /// read.
+    pub(crate) fn counted(
+        &self,
+        stream: TableStream<'static>,
+        partition: usize,
+    ) -> EarlyStopsCounted {
+        let unread = MetricBuilder::new(&self.set)
+            .with_type(MetricType::Summary)
+            .with_category(MetricCategory::Bytes)
+            .counter(BYTES_UNREAD_EARLY_STOP, partition);
+        EarlyStopsCounted { stream, unread, counted: false }
+    }
+}
+
+/// A partition's stream, adding its early stops' unread bytes to the scan's
+/// metric once ([`ScanMetrics::counted`]). A block cut across partitions is
+/// counted in each for the pieces that partition read, and the pieces' bytes
+/// add (`pgdump_query::EarlyStop::unread_bytes`).
+pub(crate) struct EarlyStopsCounted {
+    stream: TableStream<'static>,
+    unread: Count,
+    counted: bool,
+}
+
+impl EarlyStopsCounted {
+    fn add_unread(&mut self) {
+        if !std::mem::replace(&mut self.counted, true) {
+            let stops = self.stream.early_stops();
+            let bytes: u64 = stops.iter().filter_map(|stop| stop.unread_bytes).sum();
+            self.unread.add(usize::try_from(bytes).unwrap_or(usize::MAX));
+        }
+    }
+}
+
+impl Stream for EarlyStopsCounted {
+    type Item = pgdump_query::Result<arrow::array::RecordBatch>;
+
+    /// Counted before the end is handed on, so a reader of the metrics who
+    /// waited for the end finds it there.
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let polled = self.stream.poll_next_unpin(cx);
+        if let Poll::Ready(None) = polled {
+            self.add_unread();
+        }
+        polled
+    }
+}
+
+impl Drop for EarlyStopsCounted {
+    fn drop(&mut self) {
+        self.add_unread();
+    }
 }

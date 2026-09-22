@@ -28,9 +28,10 @@
 //! (`docs/design/decisions.md`, "D68"). `crate::resolve::ColumnNote` is the
 //! per-column record at L2 — one per column, always present — and
 //! `crate::predicate::ComparisonNote` the comparison one at L4, per term or,
-//! from `crate::predicate::column_divergences`, per column.
+//! from `crate::predicate::column_divergences`, per column, and
+//! `crate::stream::PlanNote` what a query's plan settled, also at L4.
 //!
-//! **The three are unified at the drain, not at the storage type**: each
+//! **The four are unified at the drain, not at the storage type**: each
 //! implements [`Finding`], defined here at L1 so that every layer can, and a
 //! caller hands any of them to one [`DiagnosticSink`] of its own through
 //! [`drain`]. Each channel is still read where it is produced — a
@@ -47,12 +48,13 @@ use crate::map::TilingIssue;
 /// One finding from any of the library's diagnostic channels, as a
 /// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
 /// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (L1,
-/// about the file), `crate::resolve::ColumnNote` (L2, about one column's type)
-/// and `crate::predicate::ComparisonNote` (L4, about one term of a query, or
-/// one column in a query's semantics).
+/// about the file), `crate::resolve::ColumnNote` (L2, about one column's type),
+/// `crate::predicate::ComparisonNote` (L4, about one term of a query, or one
+/// column in a query's semantics) and `crate::stream::PlanNote` (L4, about one
+/// query's plan).
 ///
 /// A sink wanting the structured record rather than the sentence recovers it
-/// through [`Finding::as_any`], downcasting to one of those three.
+/// through [`Finding::as_any`], downcasting to one of those four.
 pub trait Finding: Debug + Send + Sync {
     fn severity(&self) -> Severity;
     /// One sentence, with no severity label and no trailing newline: the
@@ -77,7 +79,8 @@ impl<F: Fn(&dyn Finding) + Send + Sync> DiagnosticSink for F {
 
 /// Hand every finding of one channel to `sink`, in the channel's own order —
 /// `sink` taking `&index.diagnostics`, `&resolved.notes`,
-/// `&stream.comparison_notes()` or `&column_divergences(…)` alike.
+/// `&stream.comparison_notes()`, `&column_divergences(…)` or
+/// `&stream.plan_notes()` alike.
 pub fn drain<'a, F: Finding + 'a>(
     sink: &dyn DiagnosticSink,
     findings: impl IntoIterator<Item = &'a F>,

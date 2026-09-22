@@ -86,6 +86,33 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
     assert_eq!(text(&out.stderr), "");
 }
 
+/// **A scan's warnings reach stderr when it is planned, named**, and
+/// `--quiet` keeps them off: a `--memory-limit` beyond any allowance a host
+/// reports leaves the scans nothing, and the plan says it runs at its floor.
+#[tokio::test]
+async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let dump = format!("shop={}", copy.display());
+    let args = ["--memory-limit", "1024T", "--dump", &dump, "-c", "SELECT * FROM shop.logs.events"];
+    let floor = |stderr: &str| {
+        stderr
+            .lines()
+            .filter(|line| {
+                line.starts_with("warning: shop.logs.events: ") && line.contains("floor")
+            })
+            .count()
+    };
+
+    let out = run(&args);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(floor(&text(&out.stderr)), 1, "{}", text(&out.stderr));
+
+    let out = run(&[&["-q"], &args[..]].concat());
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+}
+
 /// **A dump with no complete cache ends the run before any SQL**, naming the
 /// parse that builds it.
 #[tokio::test]

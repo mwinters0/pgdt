@@ -15,7 +15,9 @@
 //!
 //! **What a registration finds is handed to the caller's sink**
 //! (`pgdump_query::DiagnosticSink`): the dump's file-level findings, and each
-//! table's column notes and divergence from PostgreSQL ([`crate::report`]).
+//! table's column notes and divergence from PostgreSQL; and what a scan's
+//! plan settles is handed to it when the scan is planned ([`crate::report`]).
+//! What a scan finds while reading is a plan metric under `EXPLAIN ANALYZE`.
 //! `CREATE EXTERNAL TABLE … STORED AS PGDUMP` is [`register_table_factory`]'s.
 //!
 //! The design is `docs/design/roadmap-P6-datafusion.md`.
@@ -79,12 +81,13 @@ pub enum Error {
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
 /// unless it already carries one, and `dump`'s statistics are billed to it.
 /// `sink` hears the dump's findings and then every table's, each table named
-/// `catalog.schema.table`.
+/// `catalog.schema.table`, and is kept to hear each scan's plan notes under
+/// that name.
 pub fn register_dump(
     ctx: &SessionContext,
     name: Option<&str>,
     dump: &Arc<PgDump>,
-    sink: &dyn DiagnosticSink,
+    sink: Arc<dyn DiagnosticSink>,
 ) -> Result<Vec<String>, Error> {
     let databases = dump.databases();
     let named: Vec<(Option<String>, String)> = match (databases.as_slice(), name) {
@@ -121,13 +124,13 @@ pub fn register_dump(
         }
     };
     dump.bill(&session_budget(ctx));
-    dump.report(sink);
+    dump.report(sink.as_ref());
     Ok(named
         .into_iter()
         .map(|(database, name)| {
             let catalog = Arc::new(PgDumpCatalog::new(dump, database.as_deref()));
             ctx.register_catalog(&name, Arc::clone(&catalog) as _);
-            catalog.report(&name, sink);
+            catalog.report(&name, &sink);
             name
         })
         .collect())

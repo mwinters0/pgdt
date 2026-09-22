@@ -76,7 +76,7 @@ pub async fn register(ctx: &SessionContext, dumps: &[DumpArg], quiet: bool) -> R
     for dump in dumps {
         let options = PgDumpOptions { schema_mode: dump.schema_mode, ..PgDumpOptions::default() };
         let opened = PgDump::open(&dump.source, options).await.map_err(external)?;
-        register_dump(ctx, dump.name.as_deref(), &opened, sink.as_ref()).map_err(external)?;
+        register_dump(ctx, dump.name.as_deref(), &opened, Arc::clone(&sink)).map_err(external)?;
     }
     Ok(())
 }

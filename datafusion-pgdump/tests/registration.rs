@@ -78,9 +78,9 @@ async fn registration_reports_every_table_s_columns_named_by_catalog() {
     let dir = tempfile::tempdir().unwrap();
     let copy = parsed_copy(&fixture("types", "default"), dir.path()).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-    let heard = Heard::default();
+    let heard = Arc::new(Heard::default());
     let ctx = SessionContext::new();
-    register_dump(&ctx, Some("shop"), &dump, &heard).unwrap();
+    register_dump(&ctx, Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
     let heard = heard.take();
 
     assert!(heard.iter().all(|(_, _, channel)| *channel != "unknown"), "{heard:#?}");
@@ -125,8 +125,8 @@ async fn a_strings_registration_warns_each_column_once() {
     let copy = parsed_copy(&fixture("types", "default"), dir.path()).await;
     let options = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
     let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
-    let heard = Heard::default();
-    register_dump(&SessionContext::new(), Some("shop"), &dump, &heard).unwrap();
+    let heard = Arc::new(Heard::default());
+    register_dump(&SessionContext::new(), Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
     let heard = heard.take();
     let columns: Vec<_> = heard.iter().filter(|(_, _, channel)| *channel == "column").collect();
     assert!(!columns.is_empty());
@@ -163,7 +163,7 @@ async fn a_pgdump_external_table_answers_as_its_catalog_table() {
     );
 
     let dump = PgDump::open(location, PgDumpOptions::default()).await.unwrap();
-    register_dump(&ctx, Some("shop"), &dump, &|_: &dyn Finding| {}).unwrap();
+    register_dump(&ctx, Some("shop"), &dump, Arc::new(|_: &dyn Finding| {})).unwrap();
     let alone = rows(&ctx, "SELECT * FROM ev ORDER BY event_id").await.unwrap();
     let catalogued = rows(&ctx, "SELECT * FROM shop.logs.events ORDER BY event_id").await.unwrap();
     assert_eq!(alone, catalogued);
