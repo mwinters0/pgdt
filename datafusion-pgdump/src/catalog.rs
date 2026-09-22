@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
 use datafusion::common::Result;
-use pgdump_query::TableName;
+use pgdump_query::{DiagnosticSink, TableName};
 
 use crate::dump::PgDump;
 use crate::table::PgDumpTable;
@@ -52,6 +52,19 @@ impl PgDumpCatalog {
             .collect();
         Self { schemas }
     }
+
+    /// Hand every table's findings to `sink`, each named as SQL reaches it
+    /// under `catalog` ([`PgDumpTable::report`]). A table whose plan refuses
+    /// reports nothing here, its refusal being what a query of it raises.
+    pub(crate) fn report(&self, catalog: &str, sink: &dyn DiagnosticSink) {
+        for (schema_name, schema) in &self.schemas {
+            for table in schema.tables.keys() {
+                if let Ok(provider) = schema.provider(table) {
+                    provider.report(&format!("{catalog}.{schema_name}.{table}"), sink);
+                }
+            }
+        }
+    }
 }
 
 impl CatalogProvider for PgDumpCatalog {
@@ -72,7 +85,20 @@ impl CatalogProvider for PgDumpCatalog {
 struct PgDumpSchema {
     dump: Arc<PgDump>,
     tables: BTreeMap<String, TableName>,
-    providers: Mutex<BTreeMap<String, Arc<dyn TableProvider>>>,
+    providers: Mutex<BTreeMap<String, Arc<PgDumpTable>>>,
+}
+
+impl PgDumpSchema {
+    /// The provider for `name`, built from the map on the first call and kept.
+    fn provider(&self, name: &str) -> Result<Arc<PgDumpTable>> {
+        if let Some(provider) = self.providers.lock().unwrap().get(name) {
+            return Ok(Arc::clone(provider));
+        }
+        let table = self.tables[name].clone();
+        let provider = Arc::new(PgDumpTable::new(Arc::clone(&self.dump), table)?);
+        self.providers.lock().unwrap().insert(name.to_string(), Arc::clone(&provider));
+        Ok(provider)
+    }
 }
 
 impl fmt::Debug for PgDumpSchema {
@@ -88,14 +114,10 @@ impl SchemaProvider for PgDumpSchema {
     }
 
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>> {
-        let Some(table) = self.tables.get(name) else { return Ok(None) };
-        if let Some(provider) = self.providers.lock().unwrap().get(name) {
-            return Ok(Some(Arc::clone(provider)));
+        if !self.tables.contains_key(name) {
+            return Ok(None);
         }
-        let provider: Arc<dyn TableProvider> =
-            Arc::new(PgDumpTable::new(Arc::clone(&self.dump), table.clone())?);
-        self.providers.lock().unwrap().insert(name.to_string(), Arc::clone(&provider));
-        Ok(Some(provider))
+        Ok(Some(self.provider(name)? as Arc<dyn TableProvider>))
     }
 
     fn table_exist(&self, name: &str) -> bool {

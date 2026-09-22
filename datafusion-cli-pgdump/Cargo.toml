@@ -1,0 +1,37 @@
+[package]
+name = "datafusion-cli-pgdump"
+version.workspace = true
+edition.workspace = true
+# `src/main.rs` is a copy of `datafusion-cli`'s, which is Apache-2.0.
+license = "Apache-2.0"
+
+# `datafusion-cli` with the `pg_dump` provider built in
+# (`docs/design/roadmap-P6-datafusion.md`, "The binary: `datafusion-cli-pgdump`"):
+# a copy of the upstream binary's private `main.rs` plus our registrations,
+# re-copied at each DataFusion major. Its own crate, so an embedder of
+# `datafusion-pgdump` does not inherit `datafusion-cli`.
+
+[dependencies]
+# Every version below is the targeted `datafusion-cli` release's own
+# (`datafusion-cli/Cargo.toml` and its workspace's, 55.1.0), so the copied
+# `main.rs` builds against what it was written for.
+clap = { version = "4.5.60", features = ["cargo", "derive"] }
+datafusion = { version = "55.1.0", default-features = false }
+datafusion-cli = "=55.1.0"
+datafusion-common = { version = "55.1.0", default-features = false }
+# `http` on, as `pgdt` turns it on: a dump is anything `pgdt --source` takes.
+datafusion-pgdump = { version = "0.1.0", path = "../datafusion-pgdump", features = ["http"] }
+dirs = "6.0.0"
+env_logger = "0.11"
+# The upstream binary's allocator, kept with the copy: the allocator is the
+# binary's choice (`docs/design/decisions.md`, "D13"), and this binary is
+# `datafusion-cli`'s.
+mimalloc = { version = "0.1", default-features = false }
+pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
+regex = "1.12"
+tokio = { version = "1.52", features = ["macros", "rt", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+pgdump_query = { version = "0.1.0", path = "../pgdump_query" }
+tempfile = "3.27.0"
+tokio = { version = "1.52", features = ["macros", "rt"] }

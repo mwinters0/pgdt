@@ -29,11 +29,10 @@ in `pgdump_query/tests/partitioned_replay.rs`.
   (`table_schema`), and a scan's batches carry exactly
   `TablePartitions::resolved_schema`. The fixture walk asserts the two agree
   with the library's stream on every table, typed and as text.
-- **The provider takes no diagnostics sink yet.** The spec gives it one and
-  no slice row names it. `PgDump::diagnostics` and
-  `PgDumpTable::resolved_schema().notes` expose the file and column channels,
-  and `column_divergences` is not yet called at registration. 6.8's stderr
-  sink is where this lands, and a finding still names no table (6.3's notes).
+- **The provider took no diagnostics sink here.** `PgDump::diagnostics` and
+  `PgDumpTable::resolved_schema().notes` expose the file and column channels;
+  the sink and the registration report are 6.8's
+  ([notes](roadmap-P6.8-datafusion-cli-notes.md)).
 - **`PgDump::table(database, schema, table)` is the single-table form** that
   6.8's `STORED AS PGDUMP` factory builds on: an omitted schema or database
   matches any, and more than one match is refused, naming them. Parsing an

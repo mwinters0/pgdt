@@ -154,6 +154,7 @@ CODE_ROOTS = (
     REPO / "pgdump_query" / "src",
     REPO / "pgdt" / "src",
     REPO / "datafusion-pgdump" / "src",
+    REPO / "datafusion-cli-pgdump" / "src",
 )
 
 SECTION_HEADING = "## Known deficiencies"

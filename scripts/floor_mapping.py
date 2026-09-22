@@ -54,7 +54,9 @@ arm arrive loudly.
 **The pin is asserted here** (the spec's D8): the driver version every floor
 row records must equal `scripts/pyproject.toml`'s. The floor is a claim about
 one release, and bumping the pin is what obliges re-taking the oracle -- so the
-two are made unable to drift rather than trusted not to.
+two are made unable to drift rather than trusted not to. The manual page that
+publishes the floor to a user names the release too, and is held to the pin
+the same way.
 
 Usage:
 
@@ -86,6 +88,11 @@ MAPPING = REPO / "pgdump_query" / "src" / "pgtype.rs"
 #: Where the driver pin lives. One value, in one place, asserted against the
 #: rows rather than restated here.
 PYPROJECT = REPO / "scripts" / "pyproject.toml"
+
+#: The page that publishes the floor to a user
+#: (`docs/design/roadmap-P6-datafusion.md`, "What the phase promises"), which
+#: names the release it holds for.
+MANUAL = REPO / "docs" / "manual" / "datafusion-cli-pgdump.md"
 
 #: The register the `money` disposition cites, and the checklist a waiting
 #: disposition names a slice of.
@@ -366,6 +373,24 @@ def pinned_driver(path: Path = PYPROJECT) -> tuple[str | None, list[str]]:
     ]
 
 
+def published_pin_problems(pin: str | None, manual: Path = MANUAL) -> list[str]:
+    """The manual names the pinned release as `` `adbc-driver-postgresql` <pin> ``.
+
+    A moved pin re-takes the sweep, and a page still naming the old release
+    would publish a floor nobody checked against the new one."""
+    if pin is None:
+        return []
+    wanted = f"`{adbc_floor.DRIVER_DIST.replace('_', '-')}` {pin}"
+    if not manual.is_file():
+        return [f"{manual} does not exist — it is where the floor is published"]
+    if wanted not in manual.read_text():
+        return [
+            f"{manual.name} does not name {wanted}: the floor it publishes is the "
+            "pinned release's, so a moved pin re-writes the page with the sweep"
+        ]
+    return []
+
+
 # --------------------------------------------------------------------------
 # Placing a floor row
 # --------------------------------------------------------------------------
@@ -507,6 +532,7 @@ def reconcile(
     fixtures: Path = FIXTURES,
     pyproject: Path = PYPROJECT,
     status: Path = STATUS,
+    manual: Path = MANUAL,
 ) -> Reconciliation:
     out = Reconciliation()
     out.mapping = parse_mapping(mapping_path)
@@ -518,6 +544,7 @@ def reconcile(
 
     pin, pin_problems = pinned_driver(pyproject)
     out.problems += pin_problems
+    out.problems += published_pin_problems(pin, manual)
 
     seen_versions = majors(fixtures)
     if not seen_versions:
@@ -677,8 +704,9 @@ def check(
     pyproject: Path = PYPROJECT,
     status: Path = STATUS,
     out=sys.stdout,
+    manual: Path = MANUAL,
 ) -> int:
-    found = reconcile(mapping_path, fixtures, pyproject, status)
+    found = reconcile(mapping_path, fixtures, pyproject, status, manual)
     report(found, out=out)
     return 1 if found.problems or found.unanswered or found.unevidenced else 0
 
@@ -699,8 +727,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--status", type=Path, default=STATUS, help="the register and slice checklist"
     )
+    parser.add_argument(
+        "--manual", type=Path, default=MANUAL, help="the page publishing the floor"
+    )
     args = parser.parse_args(argv)
-    return check(args.mapping, args.fixtures, args.pyproject, args.status)
+    return check(args.mapping, args.fixtures, args.pyproject, args.status, manual=args.manual)
 
 
 if __name__ == "__main__":

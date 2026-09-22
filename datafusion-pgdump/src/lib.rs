@@ -13,24 +13,34 @@
 //! `COUNT(<column>)`, `MIN` and `MAX` can be answered without reading a row
 //! ([`crate::statistics`]).
 //!
+//! **What a registration finds is handed to the caller's sink**
+//! (`pgdump_query::DiagnosticSink`): the dump's file-level findings, and each
+//! table's column notes and divergence from PostgreSQL ([`crate::report`]).
+//! `CREATE EXTERNAL TABLE … STORED AS PGDUMP` is [`register_table_factory`]'s.
+//!
 //! The design is `docs/design/roadmap-P6-datafusion.md`.
 
 mod budget;
 mod catalog;
 mod dump;
 mod exec;
+mod factory;
 mod pushdown;
+mod report;
 mod statistics;
 mod table;
 
 use std::sync::Arc;
 
 use datafusion::prelude::SessionContext;
-use pgdump_query::TableName;
+use pgdump_query::{DiagnosticSink, TableName};
 
 pub use budget::ScanBudget;
 pub use catalog::{PgDumpCatalog, UNQUALIFIED_SCHEMA};
 pub use dump::{PgDump, PgDumpOptions};
+pub use factory::{
+    PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
+};
 pub use table::PgDumpTable;
 
 /// What opening or registering a dump can refuse.
@@ -68,10 +78,13 @@ pub enum Error {
 ///
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
 /// unless it already carries one, and `dump`'s statistics are billed to it.
+/// `sink` hears the dump's findings and then every table's, each table named
+/// `catalog.schema.table`.
 pub fn register_dump(
     ctx: &SessionContext,
     name: Option<&str>,
     dump: &Arc<PgDump>,
+    sink: &dyn DiagnosticSink,
 ) -> Result<Vec<String>, Error> {
     let databases = dump.databases();
     let named: Vec<(Option<String>, String)> = match (databases.as_slice(), name) {
@@ -107,26 +120,32 @@ pub fn register_dump(
             named
         }
     };
-    let budget = {
-        let state = ctx.state_ref();
-        let mut state = state.write();
-        match state.config().get_extension::<ScanBudget>() {
-            Some(budget) => budget,
-            None => {
-                let budget = Arc::new(ScanBudget::discover());
-                state.config_mut().set_extension(Arc::clone(&budget));
-                budget
-            }
-        }
-    };
-    dump.bill(&budget);
+    dump.bill(&session_budget(ctx));
+    dump.report(sink);
     Ok(named
         .into_iter()
-        .map(|(database, catalog)| {
-            ctx.register_catalog(&catalog, Arc::new(PgDumpCatalog::new(dump, database.as_deref())));
-            catalog
+        .map(|(database, name)| {
+            let catalog = Arc::new(PgDumpCatalog::new(dump, database.as_deref()));
+            ctx.register_catalog(&name, Arc::clone(&catalog) as _);
+            catalog.report(&name, sink);
+            name
         })
         .collect())
+}
+
+/// `ctx`'s [`ScanBudget`], installed discovered from the process's allowance
+/// where the session carries none yet.
+fn session_budget(ctx: &SessionContext) -> Arc<ScanBudget> {
+    let state = ctx.state_ref();
+    let mut state = state.write();
+    match state.config().get_extension::<ScanBudget>() {
+        Some(budget) => budget,
+        None => {
+            let budget = Arc::new(ScanBudget::discover());
+            state.config_mut().set_extension(Arc::clone(&budget));
+            budget
+        }
+    }
 }
 
 impl PgDump {

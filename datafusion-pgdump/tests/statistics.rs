@@ -18,7 +18,10 @@ use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, register_dump};
 use pgdump_query::cache::CacheMode;
-use pgdump_query::{LocalFileSource, ScanOptions, StatisticsRequest, TableName, map_file};
+use pgdump_query::{Finding, LocalFileSource, ScanOptions, StatisticsRequest, TableName, map_file};
+
+/// A sink for a registration whose findings this target is not about.
+fn ignore(_: &dyn Finding) {}
 
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures")
@@ -106,8 +109,8 @@ fn register_in(
 ) -> Vec<(Option<String>, String)> {
     let databases = dump.databases();
     let name = matches!(databases.as_slice(), [None] | []).then_some("dump");
-    let catalogs = register_dump(sessions.0, name, dump).unwrap();
-    register_dump(sessions.1, name, dump).unwrap();
+    let catalogs = register_dump(sessions.0, name, dump, &ignore).unwrap();
+    register_dump(sessions.1, name, dump, &ignore).unwrap();
     databases.into_iter().zip(catalogs).collect()
 }
 

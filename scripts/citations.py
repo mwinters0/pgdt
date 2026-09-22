@@ -137,7 +137,7 @@ HISTORY_DIR = "docs/status/history/"
 DATED_ENTRY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 
 #: Rust: sources only. Comments and doc comments, never code.
-RUST_ROOTS = ("pgdump_query", "pgdt", "datafusion-pgdump")
+RUST_ROOTS = ("pgdump_query", "pgdt", "datafusion-pgdump", "datafusion-cli-pgdump")
 
 #: Python: sources only. Docstrings and comments, never string literals.
 PYTHON_ROOTS = ("scripts",)

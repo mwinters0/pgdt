@@ -251,6 +251,21 @@ class Reconciling(unittest.TestCase):
         )
         self.assertTrue(any("D8" in p for p in self.reconcile().problems))
 
+    def test_a_manual_naming_another_release_is_a_problem(self) -> None:
+        """The page publishing the floor names the pinned release, or the
+        floor it states is one nobody swept."""
+        manual = self.root / "manual.md"
+        manual.write_text("at least as good as `adbc-driver-postgresql` 1.11.0\n")
+        found = fm.reconcile(
+            self.mapping_path, self.fixtures, self.pyproject, self.status, manual
+        )
+        self.assertTrue(any("does not name" in p for p in found.problems))
+        manual.write_text("at least as good as `adbc-driver-postgresql` 1.12.0\n")
+        found = fm.reconcile(
+            self.mapping_path, self.fixtures, self.pyproject, self.status, manual
+        )
+        self.assertFalse(any("does not name" in p for p in found.problems))
+
     def test_majors_that_disagree_about_a_type_are_a_problem(self) -> None:
         """A verdict is per type across the whole tree, so a row that is opaque
         at one major and answered at another is read rather than merged."""
