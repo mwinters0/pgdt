@@ -123,6 +123,9 @@ delivered.
   the pool limit and the resident statistics billed as D85 bills statistics,
   the cap left to the scans.
   [Notes](../design/roadmap-P6.5.2-holdings-margin-notes.md).
+- [ ] **6.5.3** The holdings the margin's room cannot absorb at a scan's
+  count come off its budget, every source alike, so the margin holds where
+  the count cannot fall.
 - [ ] **6.6** Filter pushdown, `Exact` exactly where the library evaluates in
   Arrow's semantics; each Arrow-mode comparison checked against DataFusion's
   own, and pushdown on and off answer alike.
@@ -431,18 +434,4 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **6.5.2 lets the session's holdings leave a scan's budget alone where its
-  count cannot fall.** Built as settled: the pool limit and the resident
-  statistics come off the margin's ceiling only (`ScanBudget::draw`). The
-  review's reasoning held that this differs from 6.5.1 only where the cap binds,
-  but `Parallelism::fit` (`pgdump_query/src/io.rs`) bounds a count, never a
-  budget, by the ceiling, and returns `DEFAULT_MEMORY_BUDGET.min(cap)` for a
-  source recommending no per-reader memory without reading the ceiling at all.
-  So a plain dump's scan now draws its default however much the session holds,
-  and a compressed one whose holdings fill the margin keeps one reader at
-  `WorkerMemory::at(1)` — block decode included — where 6.5.1 left it the
-  cap's remainder. Reconsidering means billing the holdings' excess over the
-  ceiling's room against the cap as well, a third rule touching `within_shared`
-  and its tests only.
 

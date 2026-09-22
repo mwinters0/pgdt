@@ -188,11 +188,16 @@ read buffers and DataFusion's own operators live in one container, and a
 `--memory-limit` already granted to the latter is not the scans' to draw —
 **and less the statistics each registered dump's resident map holds**
 (`Term::Loaded`, as `pgdt` bills it), taken at registration and returned when
-the dump is dropped. Both come off the margin's ceiling alone, as
+the dump is dropped. Both come off the margin's ceiling, as
 [`decisions.md`](decisions.md), "D85" bills statistics: the cap is the reserve's,
-standing for the scans' own excess, and neither holding is any of it. Settled
-2026-09-22 ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
-"The session budget" and "Which bound the holdings come off").
+standing for the scans' own excess, and neither holding is any of it. **Whatever
+of them the ceiling's room cannot absorb at the count a scan resolves comes off
+that scan's budget**, whatever the source — so where the count cannot fall, a
+plain source or one reader, the predicted resident still stays under the margin,
+and a budget too small for a unit declines it (D4). Settled 2026-09-22
+([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
+"The session budget", "Which bound the holdings come off" and "The holdings at
+the floors").
 
 Rejected: a budget per registered table, which has no precedent among
 DataFusion's sources and multiplies by the tables a join names; and no budget,
