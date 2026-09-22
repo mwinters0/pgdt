@@ -3,7 +3,7 @@
 //! cache, and never maps").
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pgdump_query::cache::{self, CacheClaim, CacheMode, CacheStatus, SourceWatch, StrictIdentity};
 use pgdump_query::{
@@ -11,6 +11,7 @@ use pgdump_query::{
 };
 
 use crate::Error;
+use crate::budget::{Hold, ScanBudget};
 
 /// How a dump is opened.
 #[derive(Debug, Clone, Default)]
@@ -40,6 +41,10 @@ pub struct PgDumpOptions {
 /// dump is opened again: a changed file fails the identity check at the next
 /// scan's end, and an unchanged file's rebuilt cache differs only in the
 /// statistics a later `pgdt parse` gathered.
+///
+/// **Its statistics are billed to every [`ScanBudget`] it is registered or
+/// scanned under**, once each, for as long as the dump is alive: the map is
+/// resident whether or not a scan runs.
 pub struct PgDump {
     origin: String,
     source: Arc<dyn ByteRangeSource>,
@@ -47,6 +52,9 @@ pub struct PgDump {
     index: DumpIndex,
     tables: Vec<TableName>,
     schema_mode: SchemaMode,
+    statistics_bytes: u64,
+    /// One per budget this dump's statistics are billed to.
+    holds: Mutex<Vec<Hold>>,
 }
 
 impl std::fmt::Debug for PgDump {
@@ -125,6 +133,7 @@ impl PgDump {
             }
         };
         let tables = index.tables();
+        let statistics_bytes = index.statistics_heap_bytes();
         Ok(Arc::new(Self {
             origin: origin.to_string(),
             source,
@@ -132,6 +141,8 @@ impl PgDump {
             index,
             tables,
             schema_mode: options.schema_mode,
+            statistics_bytes,
+            holds: Mutex::default(),
         }))
     }
 
@@ -167,6 +178,20 @@ impl PgDump {
             }
         }
         names
+    }
+
+    /// The heap the statistics in this dump's resident map hold — what it
+    /// bills each [`ScanBudget`] it is registered or scanned under.
+    pub fn statistics_bytes(&self) -> u64 {
+        self.statistics_bytes
+    }
+
+    /// Bill this dump's statistics to `budget`, unless they already are.
+    pub(crate) fn bill(&self, budget: &Arc<ScanBudget>) {
+        let mut holds = self.holds.lock().unwrap();
+        if !holds.iter().any(|hold| hold.bills(budget)) {
+            holds.push(budget.hold(self.statistics_bytes));
+        }
     }
 
     /// What the file-level channel says about this dump and its cache.

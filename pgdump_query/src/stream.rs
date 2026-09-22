@@ -1066,7 +1066,7 @@ pub async fn map_file(
         }
     };
     let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance_bytes));
-    let loaded = statistics_heap(&index);
+    let loaded = index.statistics_heap_bytes();
     #[cfg(feature = "introspect")]
     statistics_loaded(loaded);
     account.apply(&[(Term::Loaded, loaded as i64)]);
@@ -1259,20 +1259,6 @@ fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
         );
     }
     held
-}
-
-/// The heap every block's statistics in `index` hold
-/// ([`BlockStatistics::heap_bytes`]).
-fn statistics_heap(index: &DumpIndex) -> u64 {
-    index
-        .spans
-        .iter()
-        .filter_map(|span| match &span.body {
-            SpanBody::Data(DataBlock::Copy(block)) => block.statistics.as_deref(),
-            _ => None,
-        })
-        .map(BlockStatistics::heap_bytes)
-        .sum()
 }
 
 /// What [`backfill_statistics`] did.
@@ -2391,7 +2377,7 @@ async fn map_for_query(
     // The one statistics term a query has: it keeps no account, so nothing else
     // says what the cache handed it.
     #[cfg(feature = "introspect")]
-    statistics_loaded(statistics_heap(&index));
+    statistics_loaded(index.statistics_heap_bytes());
 
     // The first database's preamble is captured before anything else runs,
     // whatever table this call queries (`docs/design/decisions.md`, "D30").

@@ -4,6 +4,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use datafusion::catalog::Session;
+use datafusion::execution::memory_pool::MemoryLimit;
 use pgdump_query::{Parallelism, WorkerMemory};
 
 /// What the pgdump scans of one DataFusion session may hold resident between
@@ -17,6 +18,17 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// container is given — and each scan carves its read-buffer budget from it
 /// through [`Parallelism::within_shared`], the reserve once for the process.
 ///
+/// **What the session holds besides its scans is drawn too**, before any scan
+/// draws: a memory pool stating a `Finite` limit — what `datafusion-cli
+/// --memory-limit` grants DataFusion's own operators, in the same container —
+/// and the statistics each dump registered against this budget holds in its
+/// resident map, billed as `pgdt` bills the statistics a cache hands a mapping
+/// pass ([`pgdump_query::DumpIndex::statistics_heap_bytes`]). Both come off
+/// as another scan's draw would, off the cap and the margin's ceiling alike,
+/// never off the allowance the margin is a fraction of: the container's limit
+/// is still the whole allowance, and a margin taken of less would shrink with
+/// every dump registered.
+///
 /// What a scan draws it holds until its plan and every stream it started are
 /// dropped, not only while rows flow: a plan is a promise to run, and its
 /// partition count is what the draw buys. *Rejected: drawing at `execute`*,
@@ -26,7 +38,16 @@ use pgdump_query::{Parallelism, WorkerMemory};
 #[derive(Debug)]
 pub struct ScanBudget {
     allowance: Option<u64>,
-    drawn: Mutex<u64>,
+    held: Mutex<Held>,
+}
+
+/// What a [`ScanBudget`]'s holders have taken of it.
+#[derive(Debug, Default)]
+struct Held {
+    /// The read-buffer budgets of the scans alive.
+    scans: u64,
+    /// The statistics of the dumps billed to it and not yet dropped.
+    maps: u64,
 }
 
 impl ScanBudget {
@@ -39,18 +60,19 @@ impl ScanBudget {
     /// **The halved figure is carved as an allowance, reserve and margin
     /// included**, where `pgdt` caps its buffers at it with neither, so the
     /// provider's budget there is the smaller: the reserve here stands for
-    /// DataFusion's own resident memory, which a `pgdt` process does not hold.
+    /// what DataFusion holds resident beyond any pool limit it states, which a
+    /// `pgdt` process does not hold.
     pub fn discover() -> Self {
         let allowance = pgdump_query::discover_memory_limit()
             .map(|limit| limit.bytes)
             .or_else(|| pgdump_query::available_memory().map(|free| free / 2));
-        Self { allowance, drawn: Mutex::new(0) }
+        Self { allowance, held: Mutex::default() }
     }
 
     /// A stated resident allowance, in bytes, carved exactly as a discovered
     /// one is.
     pub fn new(allowance: u64) -> Self {
-        Self { allowance: Some(allowance), drawn: Mutex::new(0) }
+        Self { allowance: Some(allowance), held: Mutex::default() }
     }
 
     /// The resident allowance, or `None` where nothing stated or discovered
@@ -61,12 +83,26 @@ impl ScanBudget {
 
     /// The read-buffer bytes the scans alive now hold between them.
     pub fn drawn(&self) -> u64 {
-        *self.drawn.lock().unwrap()
+        self.held.lock().unwrap().scans
+    }
+
+    /// The statistics bytes the dumps billed to this budget hold in their
+    /// resident maps between them, returned as each dump is dropped.
+    pub fn resident(&self) -> u64 {
+        self.held.lock().unwrap().maps
+    }
+
+    /// Bill `bytes` of a resident map's statistics to this budget until the
+    /// returned [`Hold`] drops.
+    pub(crate) fn hold(self: &Arc<Self>, bytes: u64) -> Hold {
+        self.held.lock().unwrap().maps += bytes;
+        Hold { budget: Arc::clone(self), bytes }
     }
 
     /// The arrangement one more scan takes: as many of `jobs` workers as what
-    /// the live scans leave affords, at what that many spend. Held until the
-    /// returned [`Draw`] drops.
+    /// the live scans, the billed maps and `pool` — the session's memory
+    /// pool's finite limit, [`pool_limit`] — leave affords, at what that many
+    /// spend. Held until the returned [`Draw`] drops.
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
     /// a join plans both its tables before either runs, so the first can take
@@ -75,17 +111,23 @@ impl ScanBudget {
     /// **(c) unowned.** Closing it means a share fixed before either draws —
     /// the pgdump scans of a physical plan counted and the allowance split
     /// between them — which nothing has yet measured a reason to build.
-    pub(crate) fn draw(self: &Arc<Self>, jobs: usize, memory: Option<WorkerMemory>) -> Draw {
-        let mut drawn = self.drawn.lock().unwrap();
+    pub(crate) fn draw(
+        self: &Arc<Self>,
+        jobs: usize,
+        memory: Option<WorkerMemory>,
+        pool: u64,
+    ) -> Draw {
+        let mut held = self.held.lock().unwrap();
+        let others = held.scans.saturating_add(held.maps).saturating_add(pool);
         let parallelism = match self.allowance {
-            Some(allowance) => Parallelism::within_shared(jobs, memory, allowance, *drawn),
+            Some(allowance) => Parallelism::within_shared(jobs, memory, allowance, others),
             None => Parallelism::discover_for(jobs, memory),
         };
         let bytes = match self.allowance {
             Some(_) => parallelism.memory_bytes().unwrap_or(0),
             None => 0,
         };
-        *drawn += bytes;
+        held.scans += bytes;
         Draw { budget: Arc::clone(self), bytes, parallelism }
     }
 
@@ -99,6 +141,38 @@ impl ScanBudget {
             .config()
             .get_extension::<ScanBudget>()
             .unwrap_or_else(|| Arc::clone(PROCESS.get_or_init(|| Arc::new(Self::discover()))))
+    }
+}
+
+/// The bytes `state`'s memory pool is limited to, where it states a `Finite`
+/// limit; an unbounded or unknown pool grants DataFusion's operators nothing
+/// the scans could otherwise have held, and draws nothing.
+pub(crate) fn pool_limit(state: &dyn Session) -> u64 {
+    match state.runtime_env().memory_pool.memory_limit() {
+        MemoryLimit::Finite(bytes) => bytes as u64,
+        MemoryLimit::Infinite | MemoryLimit::Unknown => 0,
+    }
+}
+
+/// A resident map's statistics billed to a [`ScanBudget`], returned to it on
+/// drop.
+#[derive(Debug)]
+pub(crate) struct Hold {
+    budget: Arc<ScanBudget>,
+    bytes: u64,
+}
+
+impl Hold {
+    /// Whether this is `budget`'s.
+    pub(crate) fn bills(&self, budget: &Arc<ScanBudget>) -> bool {
+        Arc::ptr_eq(&self.budget, budget)
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        let mut held = self.budget.held.lock().unwrap();
+        held.maps = held.maps.saturating_sub(self.bytes);
     }
 }
 
@@ -119,7 +193,7 @@ impl Draw {
 
 impl Drop for Draw {
     fn drop(&mut self) {
-        let mut drawn = self.budget.drawn.lock().unwrap();
-        *drawn = drawn.saturating_sub(self.bytes);
+        let mut held = self.budget.held.lock().unwrap();
+        held.scans = held.scans.saturating_sub(self.bytes);
     }
 }

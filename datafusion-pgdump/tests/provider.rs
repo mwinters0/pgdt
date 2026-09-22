@@ -355,6 +355,80 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
     drop(plan);
 }
 
+/// **What the session holds besides its scans comes off before any scan
+/// draws**: a finite memory pool's limit, and each registered dump's resident
+/// statistics, billed once per budget and returned when the dump is dropped
+/// (`docs/design/roadmap-P6-datafusion.md`, "Workers and memory").
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pool_limit_and_resident_statistics_come_off_the_budget() {
+    use datafusion::execution::runtime_env::RuntimeEnvBuilder;
+    use pgdump_query::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE};
+
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = fixtures_root().join("16/edge_cases/default.sql");
+    let dir = tempfile::tempdir_in(dir.path()).unwrap().keep();
+    let copy = dir.join("default.sql");
+    std::fs::copy(&fixture, &copy).unwrap();
+    let source = LocalFileSource::open(&copy).unwrap();
+    let cache = CacheMode::enabled(pgdump_query::cache::colocated_path(&copy));
+    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::ALL).await.unwrap();
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let statistics = dump.statistics_bytes();
+    assert!(statistics > 0, "a parse gathering statistics leaves some resident");
+
+    // An allowance leaving 16 MiB once the reserve, the statistics and the
+    // pool are off, so a plain source's scan — which recommends no per-reader
+    // memory and caps at `DEFAULT_MEMORY_BUDGET` — draws exactly the rest.
+    let pool = 128u64 << 20;
+    let left = 16u64 << 20;
+    assert!(left < DEFAULT_MEMORY_BUDGET && pool + left > DEFAULT_MEMORY_BUDGET);
+    let allowance = MEMORY_RESERVE + statistics + pool + left;
+    let query = "SELECT * FROM shop.public.widgets";
+
+    let budget = Arc::new(ScanBudget::new(allowance));
+    let config = SessionConfig::new().with_target_partitions(4).with_extension(Arc::clone(&budget));
+    let runtime =
+        RuntimeEnvBuilder::new().with_memory_limit(pool as usize, 1.0).build_arc().unwrap();
+    let ctx = SessionContext::new_with_config_rt(config, runtime);
+    register_dump(&ctx, Some("shop"), &dump).unwrap();
+    assert_eq!(budget.resident(), statistics, "registration bills the resident statistics");
+    register_dump(&ctx, Some("again"), &dump).unwrap();
+    assert_eq!(budget.resident(), statistics, "once per budget, however often registered");
+    let plan = ctx.sql(query).await.unwrap().create_physical_plan().await.unwrap();
+    assert_eq!(budget.drawn(), left, "the pool and the statistics came off first");
+    drop(plan);
+
+    // The same allowance with an unbounded pool leaves the scan its default.
+    let unbounded = Arc::new(ScanBudget::new(allowance));
+    let ctx_unbounded = SessionContext::new_with_config(
+        SessionConfig::new().with_target_partitions(4).with_extension(Arc::clone(&unbounded)),
+    );
+    register_dump(&ctx_unbounded, Some("shop"), &dump).unwrap();
+    let plan = ctx_unbounded.sql(query).await.unwrap().create_physical_plan().await.unwrap();
+    assert_eq!(unbounded.drawn(), DEFAULT_MEMORY_BUDGET);
+    drop(plan);
+
+    // A table registered by hand is billed at its first scan.
+    let by_hand = Arc::new(ScanBudget::new(allowance));
+    let ctx_by_hand =
+        SessionContext::new_with_config(SessionConfig::new().with_extension(Arc::clone(&by_hand)));
+    ctx_by_hand.register_table("w", dump.table(None, None, "widgets").unwrap()).unwrap();
+    assert_eq!(by_hand.resident(), 0);
+    let plan =
+        ctx_by_hand.sql("SELECT * FROM w").await.unwrap().create_physical_plan().await.unwrap();
+    assert_eq!(by_hand.resident(), statistics);
+    drop(plan);
+
+    // Returned when the dump is dropped, and not before.
+    drop(ctx);
+    assert_eq!(budget.resident(), statistics, "the dump is still alive");
+    drop((ctx_unbounded, ctx_by_hand, dump));
+    for budget in [budget, unbounded, by_hand] {
+        assert_eq!(budget.resident(), 0);
+        assert_eq!(budget.drawn(), 0);
+    }
+}
+
 /// **One table on its own is the provider its catalog hands out**, and a name
 /// matching tables in several databases is refused rather than picked.
 #[tokio::test(flavor = "multi_thread")]

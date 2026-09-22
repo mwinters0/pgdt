@@ -290,6 +290,17 @@ impl DumpIndex {
         self.blocks().filter(move |b| table.names(b))
     }
 
+    /// The heap every block's statistics hold
+    /// ([`BlockStatistics::heap_bytes`]) — what a mapping pass bills
+    /// for the statistics a cache handed it, and what a caller holding this
+    /// map resident bills for keeping them.
+    pub fn statistics_heap_bytes(&self) -> u64 {
+        self.blocks()
+            .filter_map(|block| block.statistics.as_deref())
+            .map(BlockStatistics::heap_bytes)
+            .sum()
+    }
+
     pub fn total_rows(&self) -> u64 {
         self.blocks().map(|b| b.row_count).sum()
     }

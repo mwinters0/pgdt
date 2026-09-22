@@ -60,7 +60,7 @@ pub enum Error {
 /// that database's name.
 ///
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
-/// unless it already carries one.
+/// unless it already carries one, and `dump`'s statistics are billed to it.
 pub fn register_dump(
     ctx: &SessionContext,
     name: Option<&str>,
@@ -100,13 +100,19 @@ pub fn register_dump(
             named
         }
     };
-    {
+    let budget = {
         let state = ctx.state_ref();
         let mut state = state.write();
-        if state.config().get_extension::<ScanBudget>().is_none() {
-            state.config_mut().set_extension(Arc::new(ScanBudget::discover()));
+        match state.config().get_extension::<ScanBudget>() {
+            Some(budget) => budget,
+            None => {
+                let budget = Arc::new(ScanBudget::discover());
+                state.config_mut().set_extension(Arc::clone(&budget));
+                budget
+            }
         }
-    }
+    };
+    dump.bill(&budget);
     Ok(named
         .into_iter()
         .map(|(database, catalog)| {

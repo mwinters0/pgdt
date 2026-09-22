@@ -19,7 +19,7 @@ use pgdump_query::{
     ComparisonSemantics, QueryOptions, ResolvedSchema, ScanOptions, TableName, TablePartitions,
 };
 
-use crate::budget::{Draw, ScanBudget};
+use crate::budget::{Draw, ScanBudget, pool_limit};
 use crate::dump::PgDump;
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
@@ -103,10 +103,14 @@ impl TableProvider for PgDumpTable {
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let source = Arc::clone(self.dump.source());
-        let draw = Arc::new(
-            ScanBudget::of(state)
-                .draw(state.config().target_partitions(), source.default_worker_memory()),
-        );
+        let budget = ScanBudget::of(state);
+        // A table registered by hand reaches its session's budget only here.
+        self.dump.bill(&budget);
+        let draw = Arc::new(budget.draw(
+            state.config().target_partitions(),
+            source.default_worker_memory(),
+            pool_limit(state),
+        ));
         let parallelism = draw.parallelism();
         let schema = self.resolved.schema.fields();
         let query_options = QueryOptions {
