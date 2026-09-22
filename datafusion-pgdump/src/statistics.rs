@@ -14,9 +14,8 @@
 //! column holding a value its Arrow type cannot represent (`KD8`) refuses on
 //! the row that holds it, while a NULL count read off the text and a bound
 //! that decodes both describe the column truthfully — so a `COUNT` of such a
-//! column answers here and refuses when read. That is the trade a pruned
-//! replay already makes (`docs/design/decisions.md`, "D54"), and the spec's
-//! verification is written to it.
+//! column answers here and refuses when read (`docs/design/decisions.md`,
+//! "D89").
 
 use arrow::datatypes::DataType;
 use datafusion::common::stats::Precision;

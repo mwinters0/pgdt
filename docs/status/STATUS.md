@@ -461,16 +461,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **6.7 amended its own verification item rather than withhold a correct
-  statistic.** A column holding a value its Arrow type cannot represent
-  (`KD8`) refuses when it is read, while `COUNT(*)`, `COUNT(<column>)`, `MIN`
-  and `MAX` taken off the map answer over it — so the spec's "answers with and
-  without the statistics alike" now reads "wherever reading the column answers
-  at all" ([`../design/roadmap-P6-datafusion.md`](../design/roadmap-P6-datafusion.md),
-  "Verification"). It was amended because the map's answer is the true one and
-  D54 already gives up the same error when pruning skips the group that holds
-  such a value. Reconsidering it means withholding the NULL count for any
-  column that could hold one — a type-by-type list in the provider — and
-  `COUNT` over `date`, `timestamp` and typed `numeric` columns going back to
-  reading every row.
-

@@ -344,6 +344,11 @@ fn astronomical_year(y: i64, bc: bool) -> i64 {
 /// read it. `--schema-mode strings` returns the literal verbatim. **(c)
 /// unowned** — what is open is materialization, where the choice between a
 /// null, a sentinel and the error belongs to whichever phase takes it up.
+/// **A null makes every NULL count a floor**, each being `\N`s counted off
+/// the text: pruning's `IS NULL` truths (`ResolvedTerm::truths`) and the
+/// provider's `Exact` `COUNT(<column>)` would both answer wrongly unless
+/// they change with it. A sentinel stays consistent, rows and bounds
+/// decoding through the same function.
 pub fn decode_date32(s: &str) -> Option<i32> {
     if s == "infinity" || s == "-infinity" {
         return None;
