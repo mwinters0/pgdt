@@ -287,6 +287,13 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
         "the message names the arrangement: {}",
         notes[0].message()
     );
+    // Where the budget came from is the caller's to say
+    // (`docs/design/decisions.md`, "D64"), so the sentence stops at the budget.
+    assert!(
+        notes[0].message().ends_with("the budget in force is what bound it"),
+        "the message claims no provenance: {}",
+        notes[0].message()
+    );
 
     let mut rows = Rows::new();
     while let Some(batch) = streams[0].next().await {
