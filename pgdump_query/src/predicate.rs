@@ -13,6 +13,7 @@ use crate::pgtype::{
     NestedPlan, UnanswerableReason, arrow_position_divergences,
 };
 use crate::resolve::{ColumnResolution, ResolvedSchema};
+use crate::statistics::BoundsSet;
 use crate::{Error, Result};
 
 /// Comparison operator for [`Predicate`].
@@ -2192,13 +2193,13 @@ struct ComparedTerm {
 /// share.
 #[derive(Debug, Clone)]
 struct BelievedStatistics {
-    /// The column's kind and the term's literal read as a key, present only
-    /// where the stored bounds are ordered as the term's semantics orders the
-    /// column ([`ComparisonPlan::bounds_ordered_in`]).
-    /// Carried for the equality operators too, whose [`Comparison`] keeps no
-    /// kind. Boxed, as [`Comparison::Nested`] is, because every resolved
-    /// leaf carries it.
-    bounds: Option<Box<(CompareKind, OrderKey)>>,
+    /// The stored set of bounds ordered as the term's semantics orders the
+    /// column ([`crate::ResolvedSchema::bounds_in`]), the kind the term
+    /// compares by and its literal read as a key — present only where such a
+    /// set is kept. Carried for the equality operators too, whose
+    /// [`Comparison`] keeps no kind. Boxed, as [`Comparison::Nested`] is,
+    /// because every resolved leaf carries it.
+    bounds: Option<Box<(BoundsSet, CompareKind, OrderKey)>>,
     /// Whether a group's dictionary answers this term: one of the four
     /// equality operators, on a `Compared` column whose divergence, if any,
     /// does not reach equality.
@@ -2206,8 +2207,8 @@ struct BelievedStatistics {
 }
 
 impl BelievedStatistics {
-    /// A term no statistic but the counts answers: a nested column, and a
-    /// column compared as its text for want of a plan.
+    /// A term no statistic but the counts answers: a nested column, and one
+    /// compared as its text for want of a plan outside Arrow's semantics.
     const NONE: Self = Self { bounds: None, dictionary: false };
 }
 
@@ -2427,11 +2428,7 @@ pub(crate) fn resolve_term(
                 .into_iter()
                 .collect();
             let statistics = BelievedStatistics {
-                // A literal that does not key reads no bounds.
-                bounds: compared
-                    .bounds_ordered_in(semantics)
-                    .then(|| order_key(kind, text).map(|key| Box::new((kind.clone(), key))))
-                    .flatten(),
+                bounds: believed_bounds(resolved, index, semantics, kind, text),
                 dictionary: !ordering && compared.dictionary_answers_in(semantics),
             };
             (comparison, divergences, statistics)
@@ -2461,7 +2458,8 @@ pub(crate) fn resolve_term(
         // on a column the register does not compare is a comparison of the
         // canonical `*_out` text the file holds. In Arrow's semantics the
         // column is the `Utf8View` holding that text, which DataFusion orders
-        // bytewise, and so is it ordered here; nothing was gathered for it.
+        // bytewise, and so is it ordered here, reading the bytewise bounds
+        // gathered for it.
         _ if ordering && arrow => (
             Comparison::Ordered {
                 kind: CompareKind::Text,
@@ -2469,7 +2467,10 @@ pub(crate) fn resolve_term(
                     .ok_or_else(|| refuse_literal(&CompareKind::Text))?,
             },
             Vec::new(),
-            BelievedStatistics::NONE,
+            BelievedStatistics {
+                bounds: believed_bounds(resolved, index, semantics, &CompareKind::Text, text),
+                dictionary: false,
+            },
         ),
         _ if ordering => return Err(refuse(NO_ORDER)),
         //
@@ -2505,7 +2506,10 @@ pub(crate) fn resolve_term(
                 .into_iter()
                 .collect(),
             },
-            BelievedStatistics::NONE,
+            BelievedStatistics {
+                bounds: believed_bounds(resolved, index, semantics, &CompareKind::Text, text),
+                dictionary: false,
+            },
         ),
     };
     // Arrow's answer is not the register's to qualify: a divergence from
@@ -2522,6 +2526,20 @@ pub(crate) fn resolve_term(
             statistics,
         }),
     })
+}
+
+/// The stored set of column `index`'s bounds a term comparing by `kind` in
+/// `semantics` reads, with `text` read as its key — `None` where no set is
+/// ordered that way, or the literal does not key.
+fn believed_bounds(
+    resolved: &ResolvedSchema,
+    index: usize,
+    semantics: ComparisonSemantics,
+    kind: &CompareKind,
+    text: &str,
+) -> Option<Box<(BoundsSet, CompareKind, OrderKey)>> {
+    let set = resolved.bounds_in(index, semantics)?;
+    order_key(kind, text).map(|key| Box::new((set, kind.clone(), key)))
 }
 
 impl ResolvedTerm {
@@ -2629,6 +2647,12 @@ impl ResolvedTerm {
     /// column list.
     pub(crate) fn index(&self) -> usize {
         self.index
+    }
+
+    /// The stored set of bounds and row order this term reads, if any
+    /// ([`BelievedStatistics::bounds`]).
+    pub(crate) fn bounds_set(&self) -> Option<BoundsSet> {
+        self.compared.as_ref()?.statistics.bounds.as_deref().map(|(set, ..)| *set)
     }
 
     /// Whether `raw_row` makes this term [`Truth::False`] — answered where
@@ -2900,7 +2924,7 @@ pub(crate) trait GroupStatistics {
     /// **A bound need not be a value the group holds**, and is never read as
     /// one: a bound truncated past a storage cap is read exactly as an exact
     /// one is, so it only has to be on the right side.
-    fn bounds(&self, column: usize) -> Option<(&str, &str)>;
+    fn bounds(&self, column: usize, set: BoundsSet) -> Option<(&str, &str)>;
 
     /// Every distinct text among `column`'s non-NULL values, as unescaped
     /// field text — complete, or `None`.
@@ -2957,8 +2981,8 @@ impl ResolvedTerm {
                 set = set.intersection(answered);
             }
         }
-        if let Some((kind, literal)) = compared.statistics.bounds.as_deref()
-            && let Some((min, max)) = group.bounds(self.index)
+        if let Some((stored, kind, literal)) = compared.statistics.bounds.as_deref()
+            && let Some((min, max)) = group.bounds(self.index, *stored)
         {
             set = set.intersection(self.bounded(kind, literal, min, max));
         }
@@ -3439,7 +3463,7 @@ mod tests {
         fn null_count(&self, _: usize) -> Option<u64> {
             self.nulls
         }
-        fn bounds(&self, _: usize) -> Option<(&str, &str)> {
+        fn bounds(&self, _: usize, _: BoundsSet) -> Option<(&str, &str)> {
             self.bounds.as_ref().map(|(min, max)| (min.as_str(), max.as_str()))
         }
         fn dictionary(&self, _: usize) -> Option<impl Iterator<Item = &str>> {
@@ -4110,8 +4134,10 @@ mod tests {
     /// column emits the file's text as `Utf8View`, which DataFusion orders by
     /// its bytes. Both roads there — a type this build does not map, and a
     /// column no DDL declared, which is every column under
-    /// `--schema-mode strings` — answer alike, announce nothing and read no
-    /// statistics.
+    /// `--schema-mode strings` — answer alike and announce nothing. Only the
+    /// first reads the bytewise bounds gathered for it: the second's
+    /// statistics were gathered under whatever type its DDL gives it, if any
+    /// (`crate::ResolvedSchema::bounds_kinds`).
     #[test]
     fn arrow_semantics_orders_a_column_with_no_plan_bytewise() {
         let mut unknown = one_column("box", DataType::Utf8View);
@@ -4128,7 +4154,7 @@ mod tests {
             (PredicateOp::Ge, "b", [false, false, true, true]),
         ];
         let values = ["Z", "a", "b", "é"];
-        for resolved in [&unknown, &undeclared] {
+        for (resolved, bounded) in [(&unknown, true), (&undeclared, false)] {
             for (op, literal, want) in cases {
                 let p = order_predicate(op, literal);
                 assert!(matches!(
@@ -4139,7 +4165,10 @@ mod tests {
                     super::resolve_term(&p, 0, resolved, 0, ComparisonSemantics::Arrow).unwrap();
                 assert!(term.comparison_notes().is_empty());
                 let statistics = &term.compared.as_ref().unwrap().statistics;
-                assert!(statistics.bounds.is_none() && !statistics.dictionary);
+                let set = statistics.bounds.as_deref().map(|(set, kind, _)| (*set, kind.clone()));
+                let want_set = bounded.then_some((BoundsSet::Primary, CompareKind::Text));
+                assert_eq!(set, want_set);
+                assert!(!statistics.dictionary);
                 for (value, want) in values.iter().zip(want) {
                     assert_eq!(
                         term.eval_value(Some(value)),
@@ -4152,14 +4181,16 @@ mod tests {
         }
     }
 
-    /// Which statistics a term reads, per semantics: `(bounds under <,
-    /// dictionary under =)`. **Arrow's semantics reads bounds only where a
-    /// kind keeps its order there** — they are gathered in PostgreSQL's, or
-    /// bytewise for text whatever its collation, which PostgreSQL's semantics
-    /// never reads — and a dictionary wherever its entries are the field's
-    /// own text, which `character(n)`'s, stored unpadded, are not.
+    /// Which statistics a term reads, per semantics: `(the set of bounds
+    /// under <, dictionary under =)`. **Each semantics reads the set gathered
+    /// in its own order** — the primary set where one order serves both, the
+    /// Arrow set where the register's exact order is another, and a divergent
+    /// column's one set, Arrow's, in Arrow's alone — and a dictionary
+    /// wherever its entries are the field's own text, which `character(n)`'s,
+    /// stored unpadded, are not.
     #[test]
     fn arrow_semantics_reads_only_the_statistics_that_hold_there() {
+        use BoundsSet::{Arrow as A, Primary as P};
         let read = |declared: &str, literal: &str, semantics| {
             let believed = |op| {
                 let p = order_predicate(op, literal);
@@ -4167,23 +4198,24 @@ mod tests {
                 let term = super::resolve_term(&p, 0, &resolved, 0, semantics).unwrap();
                 term.compared.unwrap().statistics
             };
-            (believed(PredicateOp::Lt).bounds.is_some(), believed(PredicateOp::Eq).dictionary)
+            let set = believed(PredicateOp::Lt).bounds.map(|b| b.0);
+            (set, believed(PredicateOp::Eq).dictionary)
         };
         for (declared, literal, postgres, arrow) in [
-            ("integer", "1", (true, true), (true, true)),
-            ("uuid", "00000000-0000-0000-0000-000000000000", (true, true), (true, true)),
-            ("real", "1", (true, true), (true, true)),
-            ("numeric", "1", (true, true), (false, true)),
-            ("interval", "1 day", (true, true), (false, true)),
-            ("public.mood", "ok", (true, true), (false, true)),
+            ("integer", "1", (Some(P), true), (Some(P), true)),
+            ("uuid", "00000000-0000-0000-0000-000000000000", (Some(P), true), (Some(P), true)),
+            ("real", "1", (Some(P), true), (Some(P), true)),
+            ("macaddr", "08:00:2b:01:02:03", (Some(P), true), (Some(P), true)),
+            ("numeric", "1", (Some(P), true), (Some(A), true)),
+            ("interval", "1 day", (Some(P), true), (Some(A), true)),
+            ("public.mood", "ok", (Some(P), true), (Some(A), true)),
             // On the database's collation, so bounded bytewise, which is
             // Arrow's order and not known to be the server's.
-            ("text", "a", (false, true), (true, true)),
-            ("json", "{}", (false, false), (true, false)),
-            // Diverging and not compared as `Text` by the register, so
-            // gathered with no bounds.
-            ("jsonb", "{}", (false, true), (false, true)),
-            ("character(3)", "a", (false, true), (false, false)),
+            ("text", "a", (None, true), (Some(P), true)),
+            ("json", "{}", (None, false), (Some(P), false)),
+            // Diverging, so bounded in Arrow's order alone, as text.
+            ("jsonb", "{}", (None, true), (Some(P), true)),
+            ("character(3)", "a", (None, true), (Some(P), false)),
         ] {
             assert_eq!(
                 read(declared, literal, ComparisonSemantics::Postgres),
@@ -5949,10 +5981,11 @@ mod tests {
 
         /// The persisted format version and the ordering digest it was pinned
         /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-        const GOLDEN_ORDER: (u32, u64) = (23, 6_241_334_826_557_786_742);
+        const GOLDEN_ORDER: (u32, u64) = (24, 7_882_341_807_793_490_139);
 
         /// **Every committed oracle value, sorted under its declared type's
-        /// comparison kind, digests to the value pinned beside the cache's
+        /// comparison kind and under each kind a set of its bounds is stored
+        /// by, digests to the value pinned beside the cache's
         /// `CACHE_FORMAT_VERSION`.** A stored bound, sortedness or dictionary means
         /// what this build's comparison says, so a change to how any kind
         /// orders or equates values is a persisted reshape that bumps the
@@ -5985,24 +6018,34 @@ mod tests {
                     }
                 }
                 for (declared, values) in outputs {
-                    let ComparisonPlan::Compared { kind, .. } =
-                        comparison_for(&declared, None, &types, &[])
-                    else {
+                    let plan = comparison_for(&declared, None, &types, &[]);
+                    let ComparisonPlan::Compared { kind, .. } = &plan else {
                         continue;
                     };
-                    let mut keyed: Vec<(ValueKey, &String)> = values
-                        .iter()
-                        .map(|v| (ValueKey::of(&kind, v).expect("the server wrote it"), v))
-                        .collect();
-                    keyed.sort_by(|(ka, a), (kb, b)| ka.compare(kb).then_with(|| a.cmp(b)));
-                    fnv(&mut digest, format!("{major}\t{declared}\n").as_bytes());
-                    let mut previous: Option<&ValueKey> = None;
-                    for (key, value) in &keyed {
-                        let tie = previous.is_some_and(|p| p.compare(key) == Ordering::Equal);
-                        fnv(&mut digest, if tie { b"=" } else { b"<" });
-                        fnv(&mut digest, value.as_bytes());
-                        previous = Some(key);
-                        values_sorted += 1;
+                    // The register's kind, and each kind a set of bounds is
+                    // stored under.
+                    let mut kinds = vec![kind.clone()];
+                    for stored in plan.bounds_kinds().into_iter().flatten() {
+                        if !kinds.contains(&stored) {
+                            kinds.push(stored);
+                        }
+                    }
+                    for kind in kinds {
+                        let mut keyed: Vec<(ValueKey, &String)> = values
+                            .iter()
+                            .map(|v| (ValueKey::of(&kind, v).expect("the server wrote it"), v))
+                            .collect();
+                        keyed.sort_by(|(ka, a), (kb, b)| ka.compare(kb).then_with(|| a.cmp(b)));
+                        let name = kind_name(&kind);
+                        fnv(&mut digest, format!("{major}\t{declared}\t{name}\n").as_bytes());
+                        let mut previous: Option<&ValueKey> = None;
+                        for (key, value) in &keyed {
+                            let tie = previous.is_some_and(|p| p.compare(key) == Ordering::Equal);
+                            fnv(&mut digest, if tie { b"=" } else { b"<" });
+                            fnv(&mut digest, value.as_bytes());
+                            previous = Some(key);
+                            values_sorted += 1;
+                        }
                     }
                 }
             }
@@ -6144,6 +6187,32 @@ mod tests {
                 .collect()
         }
 
+        /// Whether `stored` are Arrow's minimum and maximum of `group`, over
+        /// `array`, the group's values followed by the two bounds: each bound
+        /// at or below (above) every value and equal to one of them — the
+        /// upper one only where it is exact.
+        fn arrow_extremes(
+            array: &arrow::array::ArrayRef,
+            group: &[&str],
+            stored: &crate::statistics::Bounds,
+        ) -> std::result::Result<(), String> {
+            let n = group.len();
+            let (min, max) = (arrow_against(array, n)?, arrow_against(array, n + 1)?);
+            let below = min[..n].iter().all(|o| o.is_ge());
+            let above = max[..n].iter().all(|o| o.is_le());
+            let min_held = min[..n].contains(&Ordering::Equal);
+            let max_held = max[..n].contains(&Ordering::Equal);
+            if below && above && min_held && (max_held || !stored.max_exact) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{:?} and {:?} over {group:?}: below {below}, above {above}, min held \
+                     {min_held}, max held {max_held}",
+                    stored.min, stored.max
+                ))
+            }
+        }
+
         /// One kind's findings over every declared type compared by it.
         #[derive(Default)]
         struct Agreement {
@@ -6251,27 +6320,7 @@ mod tests {
                                 continue;
                             }
                         };
-                        let n = group.len();
-                        let problem = (|| {
-                            let (min, max) =
-                                (arrow_against(&array, n)?, arrow_against(&array, n + 1)?);
-                            // Arrow's extremes are the bounds when the bound
-                            // is at or below (above) every value and equal to
-                            // one of them.
-                            let below = min[..n].iter().all(|o| o.is_ge());
-                            let above = max[..n].iter().all(|o| o.is_le());
-                            let min_held = min[..n].contains(&Ordering::Equal);
-                            let max_held = max[..n].contains(&Ordering::Equal);
-                            if below && above && min_held && (max_held || !stored.max_exact) {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "{:?} and {:?} over {group:?}: below {below}, above {above}, \
-                                     min held {min_held}, max held {max_held}",
-                                    stored.min, stored.max
-                                ))
-                            }
-                        })();
+                        let problem = arrow_extremes(&array, &group, &stored);
                         if let Err(e) = problem {
                             agreement.bounds.get_or_insert(format!("{major} {declared}: {e}"));
                         }
@@ -6315,6 +6364,12 @@ mod tests {
         /// there**: the walk's literals are the server's own spellings, so
         /// agreeing over them cannot show that a user's literal is compared
         /// as DataFusion compares it, and only bytewise is.
+        ///
+        /// **The set of bounds Arrow's semantics reads is DataFusion's minimum
+        /// and maximum**, gathered under its kind over every value and over
+        /// runs of three, on six majors; and an undivergent column reads its one set there
+        /// exactly where [`ARROW_AGREEMENT`] records that set agreeing —
+        /// `macaddr` among them — and a second set everywhere else.
         #[tokio::test]
         async fn arrow_semantics_answers_as_datafusion_does() {
             const OPS: [PredicateOp; 8] = [
@@ -6332,6 +6387,7 @@ mod tests {
             };
             let mut kinds: BTreeMap<&'static str, CompareKind> = BTreeMap::new();
             let (mut answered, mut nested_refused, mut text_emitted) = (0usize, 0usize, 0usize);
+            let (mut arrow_bounds_checked, mut primary_in_both) = (0usize, 0usize);
             for major in MAJORS {
                 let types = types_of(major).await;
                 let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -6388,7 +6444,42 @@ mod tests {
                     if held.is_empty() {
                         continue;
                     }
-                    kinds.insert(kind_name(&kind), kind);
+                    kinds.insert(kind_name(&kind), kind.clone());
+                    let set = resolved.bounds_in(0, ComparisonSemantics::Arrow);
+                    if matches!(
+                        resolved.comparisons[0],
+                        ComparisonPlan::Compared { divergence: None, .. }
+                    ) {
+                        let agrees = ARROW_AGREEMENT
+                            .iter()
+                            .any(|(name, _, bounds)| *name == kind_name(&kind) && *bounds);
+                        let one = set == Some(BoundsSet::Primary);
+                        assert_eq!(one, agrees, "{major} {declared}: one set read in both");
+                        primary_in_both += usize::from(one);
+                    }
+                    let set = set.unwrap_or_else(|| panic!("{major} {declared}: no Arrow bounds"));
+                    let stored_kind = resolved.bounds_kinds(0)[match set {
+                        BoundsSet::Primary => 0,
+                        BoundsSet::Arrow => 1,
+                    }]
+                    .clone()
+                    .expect("a set read is gathered");
+                    let groups =
+                        std::iter::once(held.clone()).chain(held.chunks(3).map(<[_]>::to_vec));
+                    for group in groups {
+                        let Some(stored) =
+                            crate::gather::one_group_bounds(stored_kind.clone(), &group)
+                        else {
+                            continue;
+                        };
+                        let mut with_bounds = group.clone();
+                        with_bounds.extend([stored.min.as_str(), stored.max.as_str()]);
+                        let array = crate::batch::column_of(data_type, plan, &with_bounds)
+                            .unwrap_or_else(|v| panic!("{major} {declared}: bound {v:?}"));
+                        arrow_extremes(&array, &group, &stored)
+                            .unwrap_or_else(|e| panic!("{major} {declared}: {e}"));
+                        arrow_bounds_checked += 1;
+                    }
                     let array = crate::batch::column_of(data_type, plan, &held).unwrap();
                     for (j, b) in held.iter().enumerate() {
                         let arrow = arrow_against(&array, j)
@@ -6437,6 +6528,10 @@ mod tests {
             assert!(
                 answered > 40_000 && nested_refused > 0 && text_emitted > 0,
                 "{answered} {nested_refused} {text_emitted}"
+            );
+            assert!(
+                arrow_bounds_checked > 400 && primary_in_both > 0,
+                "{arrow_bounds_checked} {primary_in_both}"
             );
         }
 

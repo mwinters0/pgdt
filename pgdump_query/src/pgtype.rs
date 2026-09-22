@@ -15,6 +15,7 @@ use arrow_schema::extension::{Json, Uuid};
 
 use crate::copy::Cursor;
 use crate::preamble::{CollationDef, TypeDef, TypeKind};
+use crate::statistics::BoundsSet;
 
 /// The outcome of mapping one declared type string, mirroring
 /// [`crate::resolve::ColumnResolution`] but at single-type granularity.
@@ -728,34 +729,63 @@ impl ComparisonPlan {
         }
     }
 
-    /// Whether gathering keeps bounds and row order for a scalar column of
-    /// this plan: where the register's order is exact, and for
-    /// [`CompareKind::Text`] whatever its divergence, its bytewise order being
-    /// Arrow's whether or not it is the server's
+    /// The kinds gathering orders a scalar column's bounds and row order by,
+    /// one per [`BoundsSet`]: **one set in every semantics whose order over the
+    /// file's text is exact, shared where two coincide**
     /// (`docs/design/decisions.md`, "D79").
-    pub fn gathers_bounds(&self) -> bool {
-        matches!(
-            self,
-            Self::Compared { divergence: None, .. }
-                | Self::Compared { kind: CompareKind::Text, .. }
-        )
+    ///
+    /// The primary set is the register's kind where its order is exact,
+    /// which is PostgreSQL's, and otherwise Arrow's ([`CompareKind::arrow_order`]),
+    /// which is always exact over the text the column emits: a divergent text
+    /// column's bytewise order, `jsonb`'s and a `character(n)`'s off `C`
+    /// (padded) as text, and a column with no plan bytewise, as Arrow
+    /// semantics compares it. The Arrow set is a second one, for an exact kind
+    /// whose Arrow order is another — but `macaddr`, whose field text orders
+    /// as its octets do (I40), so its one set serves both.
+    pub fn bounds_kinds(&self) -> [Option<CompareKind>; 2] {
+        match self {
+            Self::Compared { kind, divergence: None } => {
+                let arrow = kind.arrow_order();
+                let second = (arrow != *kind && !matches!(kind, CompareKind::MacAddr { .. }))
+                    .then_some(arrow);
+                [Some(kind.clone()), second]
+            }
+            Self::Compared { kind, divergence: Some(_) } => [Some(kind.arrow_order()), None],
+            Self::Refused => [Some(CompareKind::Text), None],
+            Self::Nested(_) | Self::Unanswerable(_) => [None, None],
+        }
     }
 
-    /// Whether the bounds and row order gathering stores for a column of this
-    /// plan are ordered as `semantics` orders the column — `false` where
-    /// gathering keeps none ([`Self::gathers_bounds`]). They are the
-    /// register's order where that is exact, which is PostgreSQL's; Arrow's is
-    /// the same order exactly where [`CompareKind::arrow_order`] leaves the
-    /// kind alone, which is also what makes a divergent text column's
-    /// bytewise bounds Arrow's and no one else's.
-    pub fn bounds_ordered_in(&self, semantics: ComparisonSemantics) -> bool {
-        match (self, semantics) {
-            (Self::Compared { divergence: None, .. }, ComparisonSemantics::Postgres) => true,
-            (Self::Compared { kind, .. }, ComparisonSemantics::Arrow) => {
-                self.gathers_bounds() && kind.arrow_order() == *kind
+    /// Whether gathering keeps bounds and row order for a scalar column of
+    /// this plan: wherever some semantics' order over its text is exact
+    /// ([`Self::bounds_kinds`]).
+    pub fn gathers_bounds(&self) -> bool {
+        self.bounds_kinds()[0].is_some()
+    }
+
+    /// Which stored set of bounds and row order is ordered as `semantics`
+    /// orders the column, if any — `None` where gathering keeps none in that
+    /// order. PostgreSQL's reads the primary set where the register's order
+    /// is exact; Arrow's reads the second set where one is kept, and the
+    /// primary set otherwise ([`Self::bounds_kinds`]). A term reads the set
+    /// keyed by the kind it compares by, which is that set's kind but for
+    /// `macaddr`'s, whose octet order is its text's.
+    pub fn bounds_in(&self, semantics: ComparisonSemantics) -> Option<BoundsSet> {
+        let [primary, second] = self.bounds_kinds();
+        match semantics {
+            ComparisonSemantics::Postgres => {
+                matches!(self, Self::Compared { divergence: None, .. })
+                    .then_some(BoundsSet::Primary)
             }
-            _ => false,
+            ComparisonSemantics::Arrow if second.is_some() => Some(BoundsSet::Arrow),
+            ComparisonSemantics::Arrow => primary.map(|_| BoundsSet::Primary),
         }
+    }
+
+    /// Whether gathering stores bounds and row order for a column of this plan
+    /// ordered as `semantics` orders the column ([`Self::bounds_in`]).
+    pub fn bounds_ordered_in(&self, semantics: ComparisonSemantics) -> bool {
+        self.bounds_in(semantics).is_some()
     }
 
     /// Whether the dictionary gathering stores for a column of this plan
@@ -2501,33 +2531,65 @@ mod tests {
         assert_eq!(comparison_for("public.empty", None, &empty, &[]), ComparisonPlan::Refused);
     }
 
-    /// **Text is bounded whatever its collation, and believed only where its
-    /// bytewise order is the one asked for**: every divergence a `Text` plan
-    /// carries leaves it gathered and read in Arrow's semantics alone, where
-    /// a divergent kind that is not `Text` gathers nothing
-    /// (`docs/design/decisions.md`, "D79").
+    /// **A scalar column is bounded in every semantics whose order over its
+    /// text is exact, one set where two coincide**: a divergent plan's one set
+    /// is Arrow's and read there alone, a column with no plan is bounded
+    /// bytewise for Arrow, and an exact kind Arrow orders otherwise keeps a
+    /// second set in Arrow's order — but `macaddr`, whose one set is read in
+    /// both (`docs/design/decisions.md`, "D79").
     #[test]
-    fn text_is_bounded_whatever_its_collation_and_believed_in_arrow_alone() {
+    fn a_column_is_bounded_in_each_semantics_whose_order_is_exact() {
+        use BoundsSet::{Arrow as A, Primary as P};
         use ComparisonDivergence::*;
         use ComparisonSemantics::{Arrow, Postgres};
+        let text = || Some(CompareKind::Text);
         let read = |plan: &ComparisonPlan| {
-            (plan.gathers_bounds(), plan.bounds_ordered_in(Postgres), plan.bounds_ordered_in(Arrow))
+            (plan.bounds_kinds(), plan.bounds_in(Postgres), plan.bounds_in(Arrow))
         };
-        assert_eq!(read(&ComparisonPlan::agrees(CompareKind::Text)), (true, true, true));
+        assert_eq!(
+            read(&ComparisonPlan::agrees(CompareKind::Text)),
+            ([text(), None], Some(P), Some(P))
+        );
         for divergence in
             [AsText, UnknownCollation, NonBytewiseCollation, NonDeterministicCollation]
         {
             let plan = ComparisonPlan::diverging(CompareKind::Text, divergence);
-            assert_eq!(read(&plan), (true, false, true), "{divergence:?}");
+            assert_eq!(read(&plan), ([text(), None], None, Some(P)), "{divergence:?}");
         }
         for (kind, divergence) in [
             (CompareKind::PaddedText, UnknownCollation),
+            (CompareKind::PaddedText, NonBytewiseCollation),
             (CompareKind::Jsonb, JsonbStringCollation),
         ] {
             let plan = ComparisonPlan::diverging(kind.clone(), divergence);
-            assert_eq!(read(&plan), (false, false, false), "{kind:?}");
+            assert_eq!(read(&plan), ([text(), None], None, Some(P)), "{kind:?}");
         }
-        assert_eq!(read(&ComparisonPlan::agrees(CompareKind::PaddedText)), (true, true, false));
+        assert_eq!(read(&ComparisonPlan::Refused), ([text(), None], None, Some(P)));
+        let labels: Arc<[String]> = Arc::from(vec!["b".to_string(), "a".to_string()]);
+        for kind in [
+            CompareKind::PaddedText,
+            CompareKind::Enum(labels),
+            CompareKind::Numeric { infinities: true },
+            CompareKind::TimeTz,
+            CompareKind::Network { cidr: false },
+            CompareKind::Jsonb,
+        ] {
+            let plan = ComparisonPlan::agrees(kind.clone());
+            assert_eq!(read(&plan), ([Some(kind.clone()), text()], Some(P), Some(A)), "{kind:?}");
+        }
+        assert_eq!(
+            read(&ComparisonPlan::agrees(CompareKind::Interval)),
+            ([Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], Some(P), Some(A))
+        );
+        for kind in [CompareKind::MacAddr { octets: 6 }, CompareKind::Int, CompareKind::Bytea] {
+            let plan = ComparisonPlan::agrees(kind.clone());
+            assert_eq!(read(&plan), ([Some(kind.clone()), None], Some(P), Some(P)), "{kind:?}");
+        }
+        let nested = ComparisonPlan::Unanswerable(UnanswerableReason::RangeCanonical {
+            range_type: "r".into(),
+            function: "f".into(),
+        });
+        assert_eq!(read(&nested), ([None, None], None, None));
     }
 
     /// The collation rule, as a table: what a text column's `COLLATE` clause

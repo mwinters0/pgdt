@@ -19,7 +19,7 @@ use crate::gather::declared_columns;
 use crate::index::CopyBlock;
 use crate::preamble::DumpMetadata;
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
-use crate::statistics::{BlockStatistics, ColumnStatistics, Sortedness};
+use crate::statistics::{BlockStatistics, BoundsSet, ColumnStatistics, Sortedness};
 
 /// What one block's statistics let a filter skip.
 #[derive(Debug, Clone)]
@@ -123,7 +123,8 @@ pub(crate) fn prune_block(
         .into_iter()
         .filter(|term| {
             let column = term.index();
-            let bounds = statistics.columns.get(column).and_then(|c| c.as_ref()?.bounds.as_ref());
+            let Some(set) = term.bounds_set() else { return false };
+            let bounds = statistics.columns.get(column).and_then(|c| c.as_ref()?.bounds_in(set));
             let Some(bounds) = bounds.filter(|_| believed.get(column) == Some(&true)) else {
                 return false;
             };
@@ -193,8 +194,8 @@ impl GroupStatistics for Group<'_> {
         self.statistics.columns.get(column)?.as_ref()?.null_counts.get(self.index).copied()
     }
 
-    fn bounds(&self, column: usize) -> Option<(&str, &str)> {
-        let bounds = self.believed(column)?.bounds.as_ref()?.groups.get(self.index)?.as_ref()?;
+    fn bounds(&self, column: usize, set: BoundsSet) -> Option<(&str, &str)> {
+        let bounds = self.believed(column)?.bounds_in(set)?.groups.get(self.index)?.as_ref()?;
         Some((&bounds.min, &bounds.max))
     }
 

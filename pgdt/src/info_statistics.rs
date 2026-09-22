@@ -270,6 +270,7 @@ mod tests {
                 sortedness,
                 groups: bounded.iter().map(|&b| if b { bounds() } else { None }).collect(),
             }),
+            arrow_bounds: None,
             dictionary: Some(ColumnDictionary {
                 entries: vec!["1".into()],
                 groups: bounded.iter().map(|_| Some(vec![0])).collect(),

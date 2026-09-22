@@ -467,11 +467,28 @@ pub struct ColumnStatistics {
     pub collation: Option<String>,
     /// NULLs per group.
     pub null_counts: Vec<u64>,
-    /// Present for a column its comparison orders exactly, and for text
-    /// whatever its collation, bytewise (`docs/design/decisions.md`, "D79").
+    /// Present for a declared scalar column, in the register's order where
+    /// that is exact and Arrow's otherwise
+    /// ([`crate::ResolvedSchema::bounds_kinds`]).
     pub bounds: Option<ColumnBounds>,
+    /// A second set in Arrow's order, present only where the register's
+    /// order is exact and Arrow's is another (`docs/design/decisions.md`,
+    /// "D79").
+    pub arrow_bounds: Option<ColumnBounds>,
     /// Present for a column its comparison equates exactly.
     pub dictionary: Option<ColumnDictionary>,
+}
+
+/// Which of a column's stored sets of bounds and row order a statistic is read
+/// from ([`crate::ComparisonPlan::bounds_kinds`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundsSet {
+    /// [`ColumnStatistics::bounds`]: the register's order where it is
+    /// exact, Arrow's otherwise.
+    Primary,
+    /// [`ColumnStatistics::arrow_bounds`]: Arrow's order, kept beside
+    /// an exact register order that is not it.
+    Arrow,
 }
 
 /// Bounds per group and the block's row order, for one column.
@@ -609,9 +626,17 @@ impl Drop for BlockStatistics {
 }
 
 impl ColumnStatistics {
+    /// The stored set of bounds `set` names, if it was kept.
+    pub fn bounds_in(&self, set: BoundsSet) -> Option<&ColumnBounds> {
+        match set {
+            BoundsSet::Primary => self.bounds.as_ref(),
+            BoundsSet::Arrow => self.arrow_bounds.as_ref(),
+        }
+    }
+
     fn heap_bytes(&self) -> u64 {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
-        let bounds = self.bounds.as_ref().map_or(0, |bounds| {
+        let bounds = [&self.bounds, &self.arrow_bounds].into_iter().flatten().map(|bounds| {
             vec_heap(&bounds.groups)
                 + bounds
                     .groups
@@ -620,6 +645,7 @@ impl ColumnStatistics {
                     .map(|b| text_heap(&b.min) + text_heap(&b.max))
                     .sum::<u64>()
         });
+        let bounds = bounds.sum::<u64>();
         let dictionary = self.dictionary.as_ref().map_or(0, |dictionary| {
             vec_heap(&dictionary.entries)
                 + dictionary.entries.iter().map(text_heap).sum::<u64>()

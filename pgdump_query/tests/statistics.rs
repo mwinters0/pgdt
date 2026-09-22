@@ -139,7 +139,11 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             let values: Vec<&str> = members.iter().filter_map(|r| r.fields[c].as_deref()).collect();
             let what = format!("{label}: group {k}, column {c} ({declared})");
             assert_eq!(column.null_counts[k], (members.len() - values.len()) as u64, "{what}");
-            if let Some(bounds) = &column.bounds {
+            // The fixture's one column keeping a second set is a bare
+            // `numeric`, whose Arrow order is its text's.
+            let sets = [(declared, &column.bounds), ("text", &column.arrow_bounds)];
+            for (declared, bounds) in sets {
+                let Some(bounds) = bounds else { continue };
                 match &bounds.groups[k] {
                     None => assert!(
                         values.is_empty()

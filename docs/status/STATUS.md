@@ -139,11 +139,12 @@ delivered.
 - [x] **6.9** Bytewise bounds and row order gathered for text whatever its
   collation, believed only in Arrow semantics; a re-parse adds them to an older
   cache. [Notes](../design/roadmap-P6.9-bytewise-text-bounds-notes.md).
-- [ ] **6.10** Bounds in every semantics whose order over the file's text is
-  exact: `jsonb`, `character(n)` off `C` and a column with no plan bounded in
-  Arrow's order, and a second set in Arrow's order for every kind whose
-  PostgreSQL bounds are not Arrow's, bumping `CACHE_FORMAT_VERSION`; a
+- [x] **6.10** Bounds in every semantics whose order over the file's text is
+  exact: `jsonb`, `character(n)` off `C` and a declared column with no plan
+  bounded in Arrow's order, and a second set in Arrow's order for every kind
+  whose PostgreSQL bounds are not Arrow's, bumping `CACHE_FORMAT_VERSION`; a
   `macaddr`'s one set believed in both.
+  [Notes](../design/roadmap-P6.10-arrow-order-bounds-notes.md).
 - [ ] **6.7** Statistics handed to DataFusion; answers with and without them
   alike.
 - [ ] **6.8** `datafusion-pgdump-cli`: `--dump`, `STORED AS PGDUMP` and its
@@ -446,4 +447,19 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A column no DDL declared keeps no bounds, though Arrow semantics orders
+  it bytewise** (6.10). The spec bounds "a column with no plan" in Arrow's
+  order. 6.10 bounds a declared one only: a type the register does not order,
+  or one the resolver declined. The call was forced by
+  `ResolvedSchema`'s shape. Under `SchemaMode::Strings` every column
+  resolves `NotDeclared`/`Refused`, including one gathering resolved typed
+  and bounded by its own kind (`resolve.rs`, `resolve_columns`), so a term
+  cannot tell a data-only dump's column from a Strings-mode `integer`. If
+  it believed the set, it would read `integer` bounds as text.
+  Reconsidering means `ResolvedSchema` saying whether the DDL was
+  consulted, a public-surface change, as an earned 6.10.1. The gain is
+  Arrow-mode pruning and 6.7's `Exact` bounds for a `--data-only` dump's
+  columns. Recorded in
+  [`../design/roadmap-P6.10-arrow-order-bounds-notes.md`](../design/roadmap-P6.10-arrow-order-bounds-notes.md).
 

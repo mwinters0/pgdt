@@ -64,7 +64,7 @@ pub use scan::{
     ScanOptions, scan,
 };
 pub use statistics::{
-    BLOCK_MAX_STATISTICS_GROUPS, BlockGathered, BlockStatistics, Bounds, ColumnBounds,
+    BLOCK_MAX_STATISTICS_GROUPS, BlockGathered, BlockStatistics, Bounds, BoundsSet, ColumnBounds,
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     GroupSizing, RowGroup, STATISTICS_GROUP_DEFAULT_MIN_ROWS, STATISTICS_GROUP_DEFAULT_SIZE_BYTES,
     Sortedness, StatisticsBackfill, StatisticsHeld, StatisticsRequest, StatisticsSelection,

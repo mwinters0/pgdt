@@ -24,7 +24,7 @@ use pgdump_query::{
 };
 
 mod common;
-use common::{VERSIONS, all_fixtures, sandboxed, statistics_fixture};
+use common::{VERSIONS, all_fixtures, sandboxed, statistics_fixture, types_fixture};
 
 /// The group size the generated check gathers at: tens of bytes, where the
 /// shipped mebibyte makes every fixture block one group and pruning has
@@ -640,6 +640,53 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_arrow_semantics_alone() 
                 };
                 assert_eq!(skipped, expected, "{what}");
             }
+        }
+    }
+}
+
+/// **An enum keeps a second set of bounds in Arrow's order, and each
+/// semantics reads its own**: `v_mood` holds `sad`, `has space`, `has,comma`
+/// and `has'quote`, declared in that order, so its one group is bounded
+/// `sad`–`has'quote` by declaration and `has space`–`sad` by label text. Each
+/// semantics skips the group under a term only its own order rules out, and
+/// keeps it under one the other set would have ruled out wrongly
+/// (`docs/design/decisions.md`, "D79").
+#[tokio::test]
+async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
+    use ComparisonSemantics::{Arrow, Postgres};
+    for version in VERSIONS {
+        let (_dir, dump, index) = gathered(&types_fixture(version, "default"), SMALL_GROUP).await;
+        let block = index.blocks_for("public.t_enum_domain").next().unwrap();
+        let statistics = block.statistics.as_deref().unwrap();
+        assert_eq!(statistics.groups.len(), 1, "pg_dump {version}");
+        let column = statistics.columns[1].as_ref().unwrap();
+        let extremes = |bounds: Option<&pgdump_query::ColumnBounds>| {
+            let group = bounds.unwrap().groups[0].clone().unwrap();
+            (group.min, group.max)
+        };
+        assert_eq!(extremes(column.bounds.as_ref()), ("sad".into(), "has'quote".into()));
+        assert_eq!(extremes(column.arrow_bounds.as_ref()), ("has space".into(), "sad".into()));
+
+        for (semantics, op, literal, rows, skipped) in [
+            (Postgres, PredicateOp::Gt, "sad", 3, 0),
+            (Postgres, PredicateOp::Lt, "sad", 0, 1),
+            (Arrow, PredicateOp::Lt, "has,comma", 2, 0),
+            (Arrow, PredicateOp::Gt, "sad", 0, 1),
+        ] {
+            let filter = Expr::all([term("v_mood", op, Some(literal))]);
+            let options = |use_statistics| QueryOptions {
+                semantics,
+                ..with(filter.clone(), use_statistics, 1)
+            };
+            let cache = cache::colocated_path(&dump);
+            let what = format!("pg_dump {version}, {semantics:?}, {} {literal}", op.symbol());
+            let (answered, notes, ..) =
+                answer(&dump, &cache, "public.t_enum_domain", options(true)).await.unwrap();
+            let (unpruned, ..) =
+                answer(&dump, &cache, "public.t_enum_domain", options(false)).await.unwrap();
+            assert_eq!(answered, unpruned, "{what}");
+            assert_eq!(answered.map_or(0, |b| b.num_rows()), rows, "{what}");
+            assert_eq!(pruned(&notes).map_or(0, |p| p.0), skipped, "{what}");
         }
     }
 }

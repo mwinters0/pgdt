@@ -392,7 +392,13 @@ longer than 256 bytes; past either, that group records no distinct values for
 the column). A text column keeps its least and greatest value by bytes whatever
 its collation; `query` reads them only under `C` or `POSIX`, where bytes are the
 server's order, and a DataFusion query, which compares text by bytes, reads
-them under any.
+them under any. A DataFusion query compares every column as the value it
+receives, which for some types is not PostgreSQL's order — an enum by its
+label's text, a bare `numeric` or an `inet` by its text, an `interval` by
+months, then days, then time — so those columns keep a second least and
+greatest value in that order; and a column `query` keeps none for — `jsonb`, a
+`character(n)` outside `C`, a type pgdt does not order — keeps one by bytes,
+which only a DataFusion query reads.
 They are stored in the cache beside the rest of the index; `info --detail`
 sums them per table and column, and `info --json` exports every group's (below), and
 `query` reads them to skip what its filter rules out (below).
@@ -1133,9 +1139,10 @@ statistics:
   then its **order**: `ascending`, `descending` or `unsorted` row by row
   through each block (a column whose blocks differ says how many are which),
   followed by how many groups carry a least and greatest value — or `no bounds`
-  where pgdt keeps none for the column, `jsonb` or a type it does not order
-  for one; a text column's are by bytes, and its order too, whatever its
-  collation (above). Last, how many groups carry a list of
+  where pgdt keeps none for the column, an array or a composite for one; a
+  text column's are by bytes, and its order too, whatever its collation, as
+  are those of the columns only a DataFusion query reads (above). A second
+  set, in a DataFusion query's order, is not summed here. Last, how many groups carry a list of
   distinct values, or `no dictionary` where it does not compare them exactly.
   A group holding only NULLs carries no bounds. `not gathered` is a column a
   `--statistics` selection left out.
@@ -1296,7 +1303,9 @@ holds them — `null` for a block `parse` gathered nothing for. Each has its
 entry per column of the block's header, `null` for a column a `--statistics`
 selection left out: the column's `declared_type` and `collation`, its
 `null_counts` per group, `bounds` (a block-wide `sortedness` and per group a
-`min`, `max` and `max_exact`, or `null`), and `dictionary` (the block's
+`min`, `max` and `max_exact`, or `null`), `arrow_bounds` (the same, in a
+DataFusion query's order, for a column whose PostgreSQL order is another, and
+`null` for every other column), and `dictionary` (the block's
 distinct `entries` once each, and per group a list of indices into them, or
 `null`). Every per-group array is as long as `groups`. Nothing is summed per
 table the way `--detail` sums it; that is yours to do, and the export grows

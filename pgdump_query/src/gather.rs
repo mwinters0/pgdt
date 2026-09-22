@@ -3,12 +3,12 @@
 //! (`docs/design/decisions.md`, "D74").
 //!
 //! [`observer_for`] builds one per `COPY` block from the block's resolved
-//! schema. Every tracked column counts its NULLs per group; a column its
-//! comparison orders exactly — a `Compared` plan with no divergence — or
-//! compares as text whatever its collation also keeps per-group bounds and the
-//! block's row order, under the key a filter orders by ([`ValueKey`])
-//! ([`ComparisonPlan::gathers_bounds`]); and a column its comparison equates
-//! exactly keeps a dictionary per group.
+//! schema. Every tracked column counts its NULLs per group; a scalar column
+//! also keeps per-group bounds and the block's row order in each order some
+//! semantics compares it by exactly, under the key a filter orders by
+//! ([`ValueKey`]) — one set where the orders coincide, two where PostgreSQL's
+//! is exact and Arrow's is another (`crate::ResolvedSchema::bounds_kinds`);
+//! and a column its comparison equates exactly keeps a dictionary per group.
 //!
 //! **A leader piece gathers into an observer of its own, and the pieces join
 //! in file order into exactly what one observer handed every row gathers**
@@ -103,6 +103,7 @@ pub(crate) fn observer_tracking(
                 ColumnGatherer::new(
                     def.map(|d| d.declared_type.clone()),
                     def.and_then(|d| d.collation.clone()),
+                    resolved.bounds_kinds(i),
                     &resolved.comparisons[i],
                     &resolved.plans[i],
                 )
@@ -117,13 +118,6 @@ pub(crate) fn observer_tracking(
     // (`docs/design/decisions.md`, "D85").
     gatherer.decline_if_over();
     Box::new(gatherer)
-}
-
-/// Whether gathering keeps bounds and row order for a column resolved to
-/// `comparison` and `plan` — a scalar whose plan gathers them
-/// ([`ComparisonPlan::gathers_bounds`]).
-fn gathers_bounds(comparison: &ComparisonPlan, plan: &NestedPlan) -> bool {
-    *plan == NestedPlan::Scalar && comparison.gathers_bounds()
 }
 
 /// Which of `header`'s columns gathering keeps bounds for, positionally, under
@@ -143,7 +137,7 @@ pub(crate) fn bounded_columns(
         SchemaMode::Typed,
         &[],
     );
-    resolved.comparisons.iter().zip(&resolved.plans).map(|(c, p)| gathers_bounds(c, p)).collect()
+    (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)[0].is_some()).collect()
 }
 
 /// The columns `metadata` declares for the table `qualified` in `database` —
@@ -530,8 +524,10 @@ impl Gatherer {
             } else {
                 mine.group = state;
             }
-            if let (Some(mine), Some(theirs)) = (&mut mine.bounds, &mut theirs.bounds) {
-                mine.rows.absorb(mem::take(&mut theirs.rows));
+            for (mine, theirs) in mine.bounds.iter_mut().zip(&mut theirs.bounds) {
+                if let (Some(mine), Some(theirs)) = (mine, theirs) {
+                    mine.rows.absorb(mem::take(&mut theirs.rows));
+                }
             }
         }
         self.carried = later.held();
@@ -722,7 +718,8 @@ struct ColumnGatherer {
     declared_type: Option<String>,
     collation: Option<String>,
     null_counts: Vec<u64>,
-    bounds: Option<BoundsGatherer>,
+    /// One per [`BoundsSet`], in its order.
+    bounds: [Option<BoundsGatherer>; 2],
     dictionary: Option<DictionaryGatherer>,
     /// The column over the open group.
     group: GroupState,
@@ -731,33 +728,35 @@ struct ColumnGatherer {
 }
 
 impl ColumnGatherer {
-    /// Bounds where the comparison orders exactly or is text
-    /// ([`gathers_bounds`]), a dictionary where it equates exactly
+    /// A set of bounds under each of `bounds`, the kinds some semantics
+    /// orders the column by exactly (`crate::ResolvedSchema::bounds_kinds`),
+    /// and a dictionary where the comparison equates exactly
     /// (`docs/design/decisions.md`, "D79").
     fn new(
         declared_type: Option<String>,
         collation: Option<String>,
+        bounds: [Option<CompareKind>; 2],
         comparison: &ComparisonPlan,
         plan: &NestedPlan,
     ) -> Self {
         let postgres = ComparisonSemantics::Postgres;
-        let (bounds, dictionary) = match comparison {
-            ComparisonPlan::Compared { kind, .. } if *plan == NestedPlan::Scalar => (
-                gathers_bounds(comparison, plan).then(|| BoundsGatherer::new(kind.clone())),
-                comparison.dictionary_answers_in(postgres).then(|| DictionaryGatherer::new(kind)),
-            ),
-            _ => (None, None),
+        let dictionary = match comparison {
+            ComparisonPlan::Compared { kind, .. } if *plan == NestedPlan::Scalar => {
+                comparison.dictionary_answers_in(postgres).then(|| DictionaryGatherer::new(kind))
+            }
+            _ => None,
         };
+        let bounds = bounds.map(|kind| kind.map(BoundsGatherer::new));
         Self::with(declared_type, collation, bounds, dictionary)
     }
 
     fn with(
         declared_type: Option<String>,
         collation: Option<String>,
-        bounds: Option<BoundsGatherer>,
+        bounds: [Option<BoundsGatherer>; 2],
         dictionary: Option<DictionaryGatherer>,
     ) -> Self {
-        let group = GroupState::fresh(bounds.as_ref());
+        let group = GroupState::fresh(&bounds);
         Self {
             declared_type,
             collation,
@@ -776,7 +775,7 @@ impl ColumnGatherer {
         let named = self.declared_type.iter().chain(&self.collation).map(text_heap).sum::<u64>();
         let head = self.head.as_ref().map_or(0, GroupState::heap_bytes);
         let mut structure = named + vec_heap(&self.null_counts) + self.group.heap_bytes() + head;
-        if let Some(bounds) = &self.bounds {
+        for bounds in self.bounds.iter().flatten() {
             structure += vec_heap(&bounds.groups)
                 + vec_heap(&bounds.flags)
                 + bounds.stored
@@ -793,7 +792,8 @@ impl ColumnGatherer {
 
     /// The heap a row can change: the open group and the row order.
     fn open_heap(&self) -> u64 {
-        self.group.heap_bytes() + self.bounds.as_ref().map_or(0, |b| b.rows.heap_bytes())
+        self.group.heap_bytes()
+            + self.bounds.iter().flatten().map(|b| b.rows.heap_bytes()).sum::<u64>()
     }
 
     /// A column of this one's kind that has gathered nothing: what a piece
@@ -802,14 +802,14 @@ impl ColumnGatherer {
         Self::with(
             self.declared_type.clone(),
             self.collation.clone(),
-            self.bounds.as_ref().map(BoundsGatherer::fresh),
+            self.bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh)),
             self.dictionary.as_ref().map(DictionaryGatherer::fresh),
         )
     }
 
     /// The open group's state, leaving a fresh one open.
     fn take_group(&mut self) -> GroupState {
-        let fresh = GroupState::fresh(self.bounds.as_ref());
+        let fresh = GroupState::fresh(&self.bounds);
         mem::replace(&mut self.group, fresh)
     }
 
@@ -826,8 +826,10 @@ impl ColumnGatherer {
                 return 0;
             }
             Ok(Some(text)) => {
-                if let (Some(bounds), Some(group)) = (&mut self.bounds, &mut self.group.bounds) {
-                    bounds.observe(group, &text);
+                for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
+                    if let (Some(bounds), Some(group)) = (bounds, group) {
+                        bounds.observe(group, &text);
+                    }
                 }
                 if let Some(dictionary) = &self.dictionary {
                     dictionary.observe(&mut self.group, &text);
@@ -836,8 +838,10 @@ impl ColumnGatherer {
             // Not text at all, so neither a key nor an entry: the group can
             // cover the row with neither, and the block's order is lost.
             Err(_) => {
-                if let (Some(bounds), Some(group)) = (&mut self.bounds, &mut self.group.bounds) {
-                    bounds.lose_value(group);
+                for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
+                    if let (Some(bounds), Some(group)) = (bounds, group) {
+                        bounds.lose_value(group);
+                    }
                 }
                 self.group.lose_texts();
             }
@@ -856,8 +860,10 @@ impl ColumnGatherer {
         let base = charge.charged();
         let group = self.take_group();
         push_charged(&mut self.null_counts, group.nulls, charge);
-        if let (Some(bounds), Some(group)) = (&mut self.bounds, group.bounds) {
-            bounds.close_group(group, charge);
+        for (bounds, group) in self.bounds.iter_mut().zip(group.bounds) {
+            if let (Some(bounds), Some(group)) = (bounds, group) {
+                bounds.close_group(group, charge);
+            }
         }
         if let Some(dictionary) = &mut self.dictionary {
             dictionary.close_group(group.texts, charge);
@@ -872,7 +878,7 @@ impl ColumnGatherer {
     fn merge_pairs(&mut self, charge: &mut Charge) {
         let (before, base) = (self.held(), charge.charged());
         merge_adjacent(&mut self.null_counts, |a, b| a + b);
-        if let Some(bounds) = &mut self.bounds {
+        for bounds in self.bounds.iter_mut().flatten() {
             bounds.merge_pairs();
         }
         if let Some(dictionary) = &mut self.dictionary {
@@ -894,14 +900,14 @@ impl ColumnGatherer {
     fn reopen_last(&mut self, charge: &mut Charge) {
         let (before, base) = (self.held(), charge.charged());
         let nulls = self.null_counts.pop().expect("a closed group counts its NULLs");
-        let bounds = self.bounds.as_mut().map(BoundsGatherer::reopen_last);
+        let bounds = self.bounds.each_mut().map(|b| b.as_mut().map(BoundsGatherer::reopen_last));
         let texts = match &mut self.dictionary {
             Some(dictionary) => dictionary.reopen_last(),
             None => Some(Vec::new()),
         };
         let text_bytes = texts.iter().flatten().map(text_heap).sum();
         let mut group = GroupState { nulls, bounds, texts, text_bytes };
-        group.absorb(mem::replace(&mut self.group, GroupState::fresh(None)));
+        group.absorb(mem::replace(&mut self.group, GroupState::fresh(&[None, None])));
         self.group = group;
         let after = self.held();
         charge.set(base.0 + after.0 - before.0, base.1 + after.1 - before.1);
@@ -926,7 +932,10 @@ impl ColumnGatherer {
         self.null_counts.extend_from_slice(&later.null_counts);
         later.null_counts = Vec::new();
         resync(pair(self, later), charge);
-        if let (Some(mine), Some(theirs)) = (&mut self.bounds, &mut later.bounds) {
+        for set in 0..self.bounds.len() {
+            let (Some(mine), Some(theirs)) = (&mut self.bounds[set], &mut later.bounds[set]) else {
+                continue;
+            };
             reserve_charged(&mut mine.groups, theirs.groups.len(), charge);
             reserve_charged(&mut mine.flags, theirs.flags.len(), charge);
             mine.groups.append(&mut theirs.groups);
@@ -935,7 +944,7 @@ impl ColumnGatherer {
             (theirs.groups, theirs.flags) = (Vec::new(), Vec::new());
             resync(pair(self, later), charge);
         }
-        let fresh = GroupState::fresh(later.bounds.as_ref());
+        let fresh = GroupState::fresh(&later.bounds);
         self.group = mem::replace(&mut later.group, fresh);
         if let (Some(mine), Some(theirs)) = (&mut self.dictionary, &mut later.dictionary) {
             mine.append(theirs, charge);
@@ -944,11 +953,13 @@ impl ColumnGatherer {
     }
 
     fn finish(self) -> ColumnStatistics {
+        let [primary, arrow] = self.bounds;
         ColumnStatistics {
             declared_type: self.declared_type,
             collation: self.collation,
             null_counts: self.null_counts,
-            bounds: self.bounds.map(BoundsGatherer::finish),
+            bounds: primary.map(BoundsGatherer::finish),
+            arrow_bounds: arrow.map(BoundsGatherer::finish),
             dictionary: self.dictionary.map(DictionaryGatherer::finish),
         }
     }
@@ -957,8 +968,8 @@ impl ColumnGatherer {
 /// One column over one group while the group is open.
 struct GroupState {
     nulls: u64,
-    /// `None` for a column keeping no bounds.
-    bounds: Option<GroupBounds>,
+    /// One per [`BoundsSet`], `None` for a set the column does not keep.
+    bounds: [Option<GroupBounds>; 2],
     /// The group's distinct texts in first-seen order, `None` once past a cap
     /// or at a field that is not text;
     /// read only for a column keeping a dictionary.
@@ -968,10 +979,10 @@ struct GroupState {
 }
 
 impl GroupState {
-    fn fresh(bounds: Option<&BoundsGatherer>) -> Self {
+    fn fresh(bounds: &[Option<BoundsGatherer>; 2]) -> Self {
         Self {
             nulls: 0,
-            bounds: bounds.map(BoundsGatherer::fresh_group),
+            bounds: bounds.each_ref().map(|b| b.as_ref().map(BoundsGatherer::fresh_group)),
             texts: Some(Vec::new()),
             text_bytes: 0,
         }
@@ -987,17 +998,21 @@ impl GroupState {
     /// bounds.
     fn heap_bytes(&self) -> u64 {
         let texts = self.texts.as_ref().map_or(0, |texts| vec_heap(texts) + self.text_bytes);
-        let bounds = match &self.bounds {
-            None => 0,
-            Some(GroupBounds::Bytewise { min, max, .. }) => {
-                [min, max].into_iter().flatten().map(|c| text_heap(&c.head)).sum()
-            }
-            Some(GroupBounds::Keyed { min, max, .. }) => [min, max]
-                .into_iter()
-                .flatten()
-                .map(|(key, text)| key.heap_bytes() + text_heap(text))
-                .sum(),
-        };
+        let bounds: u64 = self
+            .bounds
+            .iter()
+            .flatten()
+            .map(|bounds| match bounds {
+                GroupBounds::Bytewise { min, max, .. } => {
+                    [min, max].into_iter().flatten().map(|c| text_heap(&c.head)).sum()
+                }
+                GroupBounds::Keyed { min, max, .. } => [min, max]
+                    .into_iter()
+                    .flatten()
+                    .map(|(key, text)| key.heap_bytes() + text_heap(text))
+                    .sum::<u64>(),
+            })
+            .sum();
         texts + bounds
     }
 
@@ -1006,8 +1021,10 @@ impl GroupState {
     /// cap is passed.
     fn absorb(&mut self, later: GroupState) {
         self.nulls += later.nulls;
-        if let (Some(mine), Some(theirs)) = (&mut self.bounds, later.bounds) {
-            mine.absorb(theirs);
+        for (mine, theirs) in self.bounds.iter_mut().zip(later.bounds) {
+            if let (Some(mine), Some(theirs)) = (mine, theirs) {
+                mine.absorb(theirs);
+            }
         }
         let Some(theirs) = later.texts else {
             self.lose_texts();
@@ -2058,7 +2075,11 @@ mod tests {
             |kind: &CompareKind| ComparisonPlan::Compared { kind: kind.clone(), divergence: None };
         JOIN_KINDS
             .iter()
-            .map(|kind| Some(ColumnGatherer::new(None, None, &plan(kind), &NestedPlan::Scalar)))
+            .map(|kind| {
+                let plan = plan(kind);
+                let bounds = plan.bounds_kinds();
+                Some(ColumnGatherer::new(None, None, bounds, &plan, &NestedPlan::Scalar))
+            })
             .chain([None])
             .collect()
     }
