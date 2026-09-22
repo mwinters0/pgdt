@@ -236,14 +236,14 @@ pub enum ComparisonSemantics {
 impl CompareKind {
     /// The kind whose order over this kind's field text is
     /// [`ComparisonSemantics::Arrow`]'s order over the value its column emits.
-    /// Most kinds are their own: their key *is* the emitted value, or
-    /// (`MacAddr`) its text orders as its octets do. A float is its own too:
-    /// with `-0` made `0`, IEEE `totalOrder` over what a dump holds — one
-    /// `NaN`, which it writes as `NaN` — is `float8_cmp`'s. The kinds emitted as
-    /// `Utf8View` whose comparison is not bytewise, an enum (emitted
+    /// A kind whose key *is* the emitted value is its own. A float is its own
+    /// too: with `-0` made `0`, IEEE `totalOrder` over what a dump holds — one
+    /// `NaN`, which it writes as `NaN` — is `float8_cmp`'s. **Every kind
+    /// emitted as text becomes [`Self::Text`]**, an enum (emitted
     /// `Dictionary`, compared by label text) and `character(n)` (emitted
-    /// padded) become [`Self::Text`]; `interval` becomes its field-wise
-    /// variant.
+    /// padded) among them, and `macaddr` too, though the file's text orders
+    /// as its octets do (`docs/design/decisions.md`, "D40"). `interval`
+    /// becomes its field-wise variant.
     ///
     /// A special value the emitted type cannot hold (`KD8`) keeps its rank in
     /// the key, which no Arrow value contradicts.
@@ -254,6 +254,7 @@ impl CompareKind {
             | Self::Numeric { .. }
             | Self::TimeTz
             | Self::Network { .. }
+            | Self::MacAddr { .. }
             | Self::Jsonb
             | Self::PaddedText => Self::Text,
             kind => kind.clone(),
@@ -266,9 +267,11 @@ impl CompareKind {
     pub fn arrow_divergence(&self) -> Option<ComparisonDivergence> {
         match self {
             Self::Enum(_) => Some(ComparisonDivergence::LabelText),
-            Self::Numeric { .. } | Self::TimeTz | Self::Network { .. } | Self::Jsonb => {
-                Some(ComparisonDivergence::ValueAsText)
-            }
+            Self::Numeric { .. }
+            | Self::TimeTz
+            | Self::Network { .. }
+            | Self::MacAddr { .. }
+            | Self::Jsonb => Some(ComparisonDivergence::ValueAsText),
             Self::Interval => Some(ComparisonDivergence::IntervalFields),
             Self::PaddedText => Some(ComparisonDivergence::PaddedText),
             _ => None,
@@ -379,11 +382,17 @@ pub enum ComparisonDivergence {
     /// [`CompareKind::arrow_order`] alone.
     LabelText,
     /// A type emitted as `Utf8View` whose PostgreSQL comparison is by value —
-    /// a bare `numeric`, `timetz`, `inet`/`cidr`, `jsonb` — which DataFusion
-    /// compares bytewise. Equality too: a literal matches only the text the
-    /// server writes, so `'12:00+00'` misses `12:00:00+00` and `'10.0.0.1/32'`
-    /// misses an `inet`'s `10.0.0.1`, and a bare `numeric` writes one value
-    /// two ways (`1.5` and `1.50`).
+    /// a bare `numeric`, `timetz`, `inet`/`cidr`, `macaddr`/`macaddr8`,
+    /// `jsonb` — which DataFusion compares bytewise. Equality too: a literal
+    /// matches only the text the server writes, so `'12:00+00'` misses
+    /// `12:00:00+00`, `'10.0.0.1/32'` misses an `inet`'s `10.0.0.1` and
+    /// `'08:00:2B:01:02:03'` misses `08:00:2b:01:02:03`, and a bare `numeric`
+    /// writes one value two ways (`1.5` and `1.50`).
+    ///
+    /// A `macaddr`'s reaches only a literal not in the server's spelling: the
+    /// file's fixed-width lowercase hex orders as the octets do, so its order
+    /// over the file's values agrees, and an uppercase literal still moves an
+    /// ordering term's answer (`v < 'A0:…'`).
     ValueAsText,
     /// `interval` as DataFusion compares `Interval(MonthDayNano)`: months,
     /// then days, then the time part, where PostgreSQL compares the span

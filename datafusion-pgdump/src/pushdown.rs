@@ -161,10 +161,9 @@ fn column_index(expr: &Expr, table: &ResolvedSchema) -> Option<usize> {
 ///
 /// **A string literal against a column emitted as text is passed as it
 /// stands**, and only where the library compares that column's text bytewise,
-/// as DataFusion compares the emitted string: every text-emitted kind but
-/// `macaddr`, whose literal the library reads in either case of hex
-/// (`docs/design/decisions.md`, "D55"). **Any other literal must be of the
-/// column's own Arrow type**, and is rendered back into the column's text by
+/// as DataFusion compares the emitted string — every text-emitted kind.
+/// **Any other literal must be of the column's own Arrow type**, and is
+/// rendered back into the column's text by
 /// the library, so a cast DataFusion wrapped around the column, or one it left
 /// on the literal, is not pushed.
 fn literal_text(literal: &ScalarValue, index: usize, table: &ResolvedSchema) -> Option<String> {

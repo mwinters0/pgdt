@@ -131,10 +131,11 @@ delivered.
   Arrow's semantics; each Arrow-mode comparison checked against DataFusion's
   own, and pushdown on and off answer alike.
   [Notes](../design/roadmap-P6.6-pushdown-notes.md).
-- [ ] **6.2.2** Arrow semantics compares every text-emitted kind as text:
+- [x] **6.2.2** Arrow semantics compares every text-emitted kind as text:
   `macaddr`/`macaddr8` to `Text` under `arrow_order`, announcing
   `ValueAsText`; the oracle asserting it of every such kind; the provider's
-  `macaddr` exception gone. Blocks nothing; lands before 6.9.
+  `macaddr` exception gone.
+  [Notes](../design/roadmap-P6.2.2-macaddr-as-text-notes.md).
 - [ ] **6.9** Bytewise bounds and row order gathered for text whatever its
   collation, believed only in Arrow semantics; a re-parse adds them to an older
   cache; `statistics-gathering` re-taken.

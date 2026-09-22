@@ -272,7 +272,10 @@ every builder takes a plan. Rejected: widening `builtin_scalar`'s tuple; `Field`
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; six
 types share `Utf8View` under six comparisons, and `predicate.rs` never reads the Arrow type. Arrow
 semantics, one per query lest rows depend on what a plan pushes, maps each kind (`arrow_order`); no
-term says a divergence (D59). Rejected: a nested column ordered as DataFusion does — a `TODO` there.
+term says a divergence (D59); every text-emitted kind maps to `Text`, `macaddr` too though its file
+text orders as its octets, since a user's literal is compared bytewise. Rejected: a nested column
+ordered as DataFusion does — a `TODO` there; for `macaddr`, refusing a literal not in lowercase, or
+keeping the octet key for one that is, a per-literal switch bought for range pruning.
 
 ### D41 Array shapes: two refusals off one domain walk, six spellings to one level
 An opaque element delimiter (I22) and an array element (I26) both resolve `Utf8View`, decided in

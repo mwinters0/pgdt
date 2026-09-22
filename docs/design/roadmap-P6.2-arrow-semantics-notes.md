@@ -16,9 +16,10 @@ and `predicate::resolve_term`. The why is
   oracle value, each value in turn the literal, on six majors, and compares
   the answer with `lt`/`eq`/`gt` on the array a batch builds, a float's `-0`
   made `0` first (6.2.1's notes). One kind was added, and no register arm
-  produces it: `IntervalFields` (months, days, time, one after another). The
-  six kinds emitted as text or as a dictionary compare as
-  `Text`: `Enum`, `Numeric`, `TimeTz`, `Network`, `Jsonb` and `PaddedText`.
+  produces it: `IntervalFields` (months, days, time, one after another).
+  Every kind emitted as text or as a dictionary compares as `Text`: `Enum`,
+  `Numeric`, `TimeTz`, `Network`, `MacAddr` (6.2.2), `Jsonb` and
+  `PaddedText`.
 - **Arrow semantics refuses every comparing operator on a nested column**,
   with `Error::UncomparablePredicateColumn`. That includes `=`, which
   PostgreSQL's semantics answers structurally or as text. A column with no

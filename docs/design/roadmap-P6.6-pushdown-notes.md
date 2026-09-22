@@ -41,10 +41,6 @@ text and a filter is `Exact` exactly where the plan resolves it is
 
 ## Negative results
 
-- **A `macaddr` text literal is never pushed**, the library's Arrow mode
-  reading it as octets; 6.2.2 moves the kind to text
-  ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
-  "A `macaddr` literal in Arrow semantics").
 - **A long `IN` list on a float column is not pushed.** DataFusion answers it
   from a set of the values and makes no `-0` into `0` first. A short list
   arrives as `=` terms and pushes.

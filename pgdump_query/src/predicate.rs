@@ -266,10 +266,10 @@ impl Finding for ComparisonNote {
             ),
             ComparisonDivergence::ValueAsText => bytewise(
                 "DataFusion compares the text it is emitted as, where PostgreSQL compares it by \
-                 value — the orders differ, and so does equality: a literal matches only the \
+                 value — the orders can differ, and so can equality: a literal matches only the \
                  spelling the server writes (`'12:00+00'` misses `12:00:00+00`, `'10.0.0.1/32'` \
-                 misses an inet's `10.0.0.1`), and some types write one value two ways (`1.5` \
-                 and `1.50`)",
+                 misses an inet's `10.0.0.1`, uppercase hex misses a macaddr), and some types \
+                 write one value two ways (`1.5` and `1.50`)",
             ),
             ComparisonDivergence::IntervalFields => format!(
                 "{subject} is compared as DataFusion compares an Interval(MonthDayNano) — months, \
@@ -4073,6 +4073,19 @@ mod tests {
         assert_eq!(note.divergence, ComparisonDivergence::ValueAsText);
         assert!(note.divergence.affects_equality());
         assert!(note.message().contains("`'12:00+00'` misses `12:00:00+00`"), "{}", note.message());
+
+        // `macaddr`'s text orders as its octets do, and an uppercase literal,
+        // which PostgreSQL reads as the same octets, still misses.
+        let resolved = one_column("macaddr", DataType::Utf8View);
+        let p = order_predicate(PredicateOp::Eq, "08:00:2B:01:02:03");
+        let postgres = resolve_term(&p, 0, &resolved, 0).unwrap();
+        assert_eq!(postgres.eval_value(Some("08:00:2b:01:02:03")), Some(Truth::True));
+        let arrow = super::resolve_term(&p, 0, &resolved, 0, ComparisonSemantics::Arrow).unwrap();
+        assert_eq!(arrow.eval_value(Some("08:00:2b:01:02:03")), Some(Truth::False));
+        let [note] = &column_divergences(&resolved, ComparisonSemantics::Arrow)[..] else {
+            panic!("one note")
+        };
+        assert_eq!(note.divergence, ComparisonDivergence::ValueAsText);
     }
 
     /// **A float nested in a list is compared with no `-0` made `0`**, as
@@ -6005,8 +6018,10 @@ mod tests {
         /// Every kind whose key is the decoded Arrow value agrees by
         /// construction — a float's too, its `-0` made `0` before the
         /// kernels see it; `MacAddr` agrees because `macaddr_out` writes
-        /// fixed-width lowercase hex, whose bytes order as the octets do. The
-        /// seven that do not, each with the pair the walk first meets:
+        /// fixed-width lowercase hex, whose bytes order as the octets do, and
+        /// is compared as text in Arrow semantics all the same, a user's
+        /// literal not being bound to that spelling. The seven that do not,
+        /// each with the pair the walk first meets:
         ///
         /// - `Enum`, emitted `Dictionary`: Arrow compares the label text, not
         ///   the declaration order (I33).
@@ -6289,7 +6304,11 @@ mod tests {
         /// reads ([`ComparisonPlan::bounds_ordered_in`]) to the evidence
         /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::arrow_order`]
         /// leaves alone is one whose order and gathered bounds were found
-        /// to be DataFusion's.
+        /// to be DataFusion's. And **every kind emitted as text —
+        /// `Utf8View` or a `Dictionary` of `Utf8` — is [`CompareKind::Text`]
+        /// there**: the walk's literals are the server's own spellings, so
+        /// agreeing over them cannot show that a user's literal is compared
+        /// as DataFusion compares it, and only bytewise is.
         #[tokio::test]
         async fn arrow_semantics_answers_as_datafusion_does() {
             const OPS: [PredicateOp; 8] = [
@@ -6306,7 +6325,7 @@ mod tests {
                 crate::predicate::resolve_term(p, 0, resolved, 0, ComparisonSemantics::Arrow)
             };
             let mut kinds: BTreeMap<&'static str, CompareKind> = BTreeMap::new();
-            let (mut answered, mut nested_refused) = (0usize, 0usize);
+            let (mut answered, mut nested_refused, mut text_emitted) = (0usize, 0usize, 0usize);
             for major in MAJORS {
                 let types = types_of(major).await;
                 let mut outputs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -6343,6 +6362,17 @@ mod tests {
                         _ => continue,
                     };
                     let data_type = resolved.schema.field(0).data_type();
+                    let emitted_as_text = match data_type {
+                        DataType::Utf8View => true,
+                        DataType::Dictionary(_, value) => value.as_ref() == &DataType::Utf8,
+                        _ => false,
+                    };
+                    assert!(
+                        !emitted_as_text || kind.arrow_order() == CompareKind::Text,
+                        "{major} {declared}: emitted as text, compared as {:?}",
+                        kind.arrow_order()
+                    );
+                    text_emitted += usize::from(emitted_as_text);
                     let plan = &resolved.plans[0];
                     let held: Vec<&str> = values
                         .iter()
@@ -6398,7 +6428,10 @@ mod tests {
                     assert!(*order && *bounds, "{name} keeps its kind and disagrees with Arrow");
                 }
             }
-            assert!(answered > 40_000 && nested_refused > 0, "{answered} {nested_refused}");
+            assert!(
+                answered > 40_000 && nested_refused > 0 && text_emitted > 0,
+                "{answered} {nested_refused} {text_emitted}"
+            );
         }
 
         /// Every `(declared type, COLLATE clause)` case of every major's
