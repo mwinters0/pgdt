@@ -182,7 +182,14 @@ metadata-cache limit, a bounded object set once on the `RuntimeEnv`) and shared
 by every pgdump scan the session runs, so concurrent scans draw from it rather
 than each taking the whole. Its default follows [`roadmap.md`](roadmap.md), "A
 default runs as fast as the allocation permits": the process's discovered
-allowance, as `pgdt` derives it.
+allowance, as `pgdt` derives it, **less the session's memory pool where that
+pool states a finite limit** (`MemoryPool::memory_limit`, `Finite`) — the scans'
+read buffers and DataFusion's own operators live in one container, and a
+`--memory-limit` already granted to the latter is not the scans' to draw —
+**and less the statistics each registered dump's resident map holds**
+(`Term::Loaded`, as `pgdt` bills it), taken at registration and returned when
+the dump is dropped. Settled 2026-09-22 ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
+"The session budget").
 
 Rejected: a budget per registered table, which has no precedent among
 DataFusion's sources and multiplies by the tables a join names; and no budget,

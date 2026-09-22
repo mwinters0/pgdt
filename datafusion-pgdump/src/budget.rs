@@ -18,7 +18,11 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// through [`Parallelism::within_shared`], the reserve once for the process.
 ///
 /// What a scan draws it holds until its plan and every stream it started are
-/// dropped, not only while rows flow: a plan is a promise to run.
+/// dropped, not only while rows flow: a plan is a promise to run, and its
+/// partition count is what the draw buys. *Rejected: drawing at `execute`*,
+/// which would leave that count unpaid for — the library cuts a table from the
+/// budget and the count at plan time (`docs/design/decisions.md`, "D84") and
+/// refuses a unit rather than shrinking it ("D4").
 #[derive(Debug)]
 pub struct ScanBudget {
     allowance: Option<u64>,
@@ -31,6 +35,11 @@ impl ScanBudget {
     /// available (`docs/design/roadmap.md`, "A default runs as fast as the
     /// allocation permits"). A host that answers neither leaves no allowance,
     /// and a scan then takes the library's own discovery for its count.
+    ///
+    /// **The halved figure is carved as an allowance, reserve and margin
+    /// included**, where `pgdt` caps its buffers at it with neither, so the
+    /// provider's budget there is the smaller: the reserve here stands for
+    /// DataFusion's own resident memory, which a `pgdt` process does not hold.
     pub fn discover() -> Self {
         let allowance = pgdump_query::discover_memory_limit()
             .map(|limit| limit.bytes)
@@ -58,6 +67,14 @@ impl ScanBudget {
     /// The arrangement one more scan takes: as many of `jobs` workers as what
     /// the live scans leave affords, at what that many spend. Held until the
     /// returned [`Draw`] drops.
+    ///
+    /// Deficiency register: `deficiency: KD38` — first planned, first served:
+    /// a join plans both its tables before either runs, so the first can take
+    /// `target_partitions` readers and the whole allowance and the second one
+    /// reader on nothing, the floor spending past the budget by its one slot.
+    /// **(c) unowned.** Closing it means a share fixed before either draws —
+    /// the pgdump scans of a physical plan counted and the allowance split
+    /// between them — which nothing has yet measured a reason to build.
     pub(crate) fn draw(self: &Arc<Self>, jobs: usize, memory: Option<WorkerMemory>) -> Draw {
         let mut drawn = self.drawn.lock().unwrap();
         let parallelism = match self.allowance {

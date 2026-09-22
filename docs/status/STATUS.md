@@ -115,6 +115,9 @@ delivered.
   single-table forms, the partitioned scan with projection, limit and batch
   size, the session budget; the same rows as the library over every fixture.
   [Notes](../design/roadmap-P6.5-provider-notes.md).
+- [ ] **6.5.1** The session budget makes room for what the session holds
+  besides the scans: a `Finite` DataFusion pool limit, and each registered
+  dump's loaded statistics, come off the allowance before any scan draws.
 - [ ] **6.6** Filter pushdown, `Exact` exactly where the library evaluates in
   Arrow's semantics; each Arrow-mode comparison checked against DataFusion's
   own, and pushdown on and off answer alike.
@@ -173,8 +176,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD37 -->
-**`KD1`–`KD37` are allocated, and nothing at or below `KD37` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD38 -->
+**`KD1`–`KD38` are allocated, and nothing at or below `KD38` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -401,6 +404,12 @@ a phase nobody has sliced.
   its map reached EOF, the fix being the arm the mapping pass already carries.
   Detail: `pgdump_query/src/stream.rs`.
 
+- **KD38** — a pgdump scan planned while others hold the session budget gets
+  what they left, so a join's second-planned table can run on one reader while
+  the first holds the whole allowance: planning order, which the user does not
+  choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
+  of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
+
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
   remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`
@@ -418,31 +427,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A scan draws its share of the session budget when it is planned, and
-  holds it until its plan and every stream it started are gone** (6.5,
-  `datafusion-pgdump/src/budget.rs`). The spec says concurrent scans "draw
-  from" one per-session object and does not say when or how much. The call:
-  at `scan()` a scan takes `Parallelism::within_shared` of the allowance —
-  the reserve off once, what the live scans hold off both the cap and the
-  margin — so it gets the `target_partitions` readers what is left affords,
-  and a budget of nothing, which the plan seats as one reader, once the
-  whole is spent; an `EXPLAIN`'s plan draws until it is dropped. Made so because a partition count must be fixed
-  at plan time and is what the draw buys. Two edges went the same way: a
-  session built without `register_dump` shares one process-wide budget, and
-  where no limit is found the allowance is half of what the machine reports
-  available, carved with the reserve and margin — so the read-buffer budget
-  there is smaller than the one `pgdt` takes, which caps at that half with
-  neither. Reconsidering changes when a draw happens (at `execute`, which
-  would leave the plan's partition count unpaid for) or what a late scan gets
-  (an equal share of the whole rather than the remainder).
-- **A registered dump holds its map for its lifetime, loaded once at open**
-  (6.5, `datafusion-pgdump/src/dump.rs`). Every catalog, table and scan
-  reads that one `DumpIndex`, and each scan's end checks the file against
-  the identity observed at open. So `SHOW TABLES` and every `table()` read no
-  disk, but the map stays resident for as long as the dump is registered, and
-  a cache rebuilt after registration — a re-run `pgdt parse` — is not seen
-  until the dump is opened again. The spec's "opens a dump only through a
-  cache" leaves open whether each scan reloads it. Reconsidering to a reload
-  per scan trades that residency for a cache decode on every query and a
-  second, later answer to "is this cache complete".
 

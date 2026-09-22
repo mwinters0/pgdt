@@ -31,6 +31,15 @@ pub struct PgDumpOptions {
 /// loaded whole at open and believed only where it reaches the end of the file
 /// and its identity checks pass as they do for any load; anything short of
 /// that is an error naming the `pgdt parse` that would build it.
+///
+/// **The map is resident for as long as the dump is registered**, because
+/// DataFusion asks for a table's schema and statistics while it plans, and
+/// the cache decodes whole. *Rejected: a reload per scan*, which decodes it
+/// for every table every query names and answers "is this cache complete" a
+/// second time, later. So a cache rebuilt after open is not seen until the
+/// dump is opened again: a changed file fails the identity check at the next
+/// scan's end, and an unchanged file's rebuilt cache differs only in the
+/// statistics a later `pgdt parse` gathered.
 pub struct PgDump {
     origin: String,
     source: Arc<dyn ByteRangeSource>,

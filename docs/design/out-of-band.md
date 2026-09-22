@@ -65,3 +65,4 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | `M128` | 2026-09-20 | The CLI is renamed `pgdt`: the binary, the package and its directory (`pgdump_query-cli` → `pgdt`, the `[[bin]]` stanza dropped with it), `--dqcache`/`.dqcache` → `--dtcache`/`.dtcache`, and every `PGDQ_*` variable → `PGDT_*`. "DQ" reads as *data quality* to a reader who does not know the project. The library crate and the repository keep their names, and dated entries keep theirs |  | [2026-09-20](../status/history/2026-09-20.md), "`M128`: the CLI is `pgdt`" |
+| `M129` |  | `citations.py`'s `RUST_ROOTS` and `repoint.py`'s `CODE_ROOTS` name `pgdump_query` and `pgdt` only, so neither reads `datafusion-pgdump`: its citations go unresolved and its comments uncounted by the meter. `deficiencies.py`'s roots were widened when `KD38` was filed there |  | [2026-09-22](../status/history/2026-09-22.md), "The session budget" |
