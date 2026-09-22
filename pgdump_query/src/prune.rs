@@ -15,11 +15,12 @@
 use std::ops::Range;
 
 use crate::copy::{RawRow, RowSplit};
-use crate::gather::declared_columns;
+use crate::gather::{declared_columns, stored_bounds_kinds};
 use crate::index::CopyBlock;
+use crate::pgtype::{CompareKind, bounds_set_keyed_by};
 use crate::preamble::DumpMetadata;
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
-use crate::statistics::{BlockStatistics, BoundsSet, ColumnStatistics, Sortedness};
+use crate::statistics::{BlockStatistics, ColumnBounds, ColumnStatistics, Sortedness};
 
 /// What one block's statistics let a filter skip.
 #[derive(Debug, Clone)]
@@ -84,7 +85,10 @@ impl SortedStop {
 /// (`docs/design/decisions.md`, "D78"), compared against
 /// what `metadata` declares now; its NULL counts are read off the text and
 /// believed regardless. What the comparison itself believes is settled when
-/// the filter resolved ([`ResolvedExpr::truths`]).
+/// the filter resolved ([`ResolvedExpr::truths`]), **and which stored set of
+/// bounds a term reads is this block's**: the one gathering stored under the
+/// kind the term compares by, gathering's kinds recomputed from the DDL the
+/// believed column was gathered under (`docs/design/decisions.md`, "D79").
 pub(crate) fn prune_block(
     block: &CopyBlock,
     filter: &ResolvedExpr,
@@ -117,17 +121,15 @@ pub(crate) fn prune_block(
                 && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
         })
         .collect();
+    let kinds = stored_bounds_kinds(&block.header, metadata, block.database.as_deref());
+    let view = Believed { statistics, believed: &believed, kinds: &kinds };
 
     let terms: Vec<ResolvedTerm> = filter
         .required_ordering_terms()
         .into_iter()
         .filter(|term| {
-            let column = term.index();
-            let Some(set) = term.bounds_set() else { return false };
-            let bounds = statistics.columns.get(column).and_then(|c| c.as_ref()?.bounds_in(set));
-            let Some(bounds) = bounds.filter(|_| believed.get(column) == Some(&true)) else {
-                return false;
-            };
+            let Some(kind) = term.bounds_kind() else { return false };
+            let Some(bounds) = view.bounds(term.index(), kind) else { return false };
             matches!(
                 (bounds.sortedness, term.op()),
                 (Sortedness::Ascending, PredicateOp::Lt | PredicateOp::Le)
@@ -146,8 +148,7 @@ pub(crate) fn prune_block(
         stop: (!terms.is_empty()).then_some(SortedStop { terms }),
     };
     for (index, group) in statistics.groups.iter().enumerate() {
-        let view = Group { statistics, believed: &believed, index };
-        if !filter.truths(&view).contains(Truth::True) {
+        if !filter.truths(&Group { view: &view, index }).contains(Truth::True) {
             pruning.skipped_groups += 1;
             pruning.skipped_bytes += group.bytes;
             continue;
@@ -168,39 +169,52 @@ pub(crate) fn prune_block(
     Some(pruning)
 }
 
-/// One group of a block's statistics, as the evaluator reads it.
-struct Group<'a> {
+/// A block's statistics as far as they are believed.
+struct Believed<'a> {
     statistics: &'a BlockStatistics,
     /// Per header column, whether its bounds and dictionary are believed.
     believed: &'a [bool],
-    index: usize,
+    /// Per header column, the kinds its stored sets of bounds are ordered by.
+    kinds: &'a [[Option<CompareKind>; 2]],
 }
 
-impl Group<'_> {
+impl Believed<'_> {
     fn believed(&self, column: usize) -> Option<&ColumnStatistics> {
         if !self.believed.get(column).copied().unwrap_or(false) {
             return None;
         }
         self.statistics.columns.get(column)?.as_ref()
     }
+
+    /// The believed set of `column`'s bounds ordered as `kind` orders.
+    fn bounds(&self, column: usize, kind: &CompareKind) -> Option<&ColumnBounds> {
+        let set = bounds_set_keyed_by(self.kinds.get(column)?, kind)?;
+        self.believed(column)?.bounds_in(set)
+    }
+}
+
+/// One group of a block's statistics, as the evaluator reads it.
+struct Group<'a> {
+    view: &'a Believed<'a>,
+    index: usize,
 }
 
 impl GroupStatistics for Group<'_> {
     fn rows(&self) -> u64 {
-        self.statistics.groups[self.index].rows
+        self.view.statistics.groups[self.index].rows
     }
 
     fn null_count(&self, column: usize) -> Option<u64> {
-        self.statistics.columns.get(column)?.as_ref()?.null_counts.get(self.index).copied()
+        self.view.statistics.columns.get(column)?.as_ref()?.null_counts.get(self.index).copied()
     }
 
-    fn bounds(&self, column: usize, set: BoundsSet) -> Option<(&str, &str)> {
-        let bounds = self.believed(column)?.bounds_in(set)?.groups.get(self.index)?.as_ref()?;
+    fn bounds(&self, column: usize, kind: &CompareKind) -> Option<(&str, &str)> {
+        let bounds = self.view.bounds(column, kind)?.groups.get(self.index)?.as_ref()?;
         Some((&bounds.min, &bounds.max))
     }
 
     fn dictionary(&self, column: usize) -> Option<impl Iterator<Item = &str>> {
-        let dictionary = self.believed(column)?.dictionary.as_ref()?;
+        let dictionary = self.view.believed(column)?.dictionary.as_ref()?;
         let indices = dictionary.groups.get(self.index)?.as_ref()?;
         // An index past the entries leaves the dictionary incomplete, and an
         // incomplete dictionary is no dictionary.

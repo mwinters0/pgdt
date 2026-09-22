@@ -15,11 +15,10 @@ use arrow::datatypes::{Field, Schema, SchemaRef};
 use crate::diagnostic::{Finding, Severity};
 use crate::index::{ArrayShape, PG_ARRAY_MAX_DIMS};
 use crate::pgtype::{
-    CompareKind, ComparisonPlan, ComparisonSemantics, NestedPlan, TypeOutcome, comparison_for,
-    resolve_declared_type, with_extension,
+    CompareKind, ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type,
+    with_extension,
 };
 use crate::preamble::{DatabaseMetadata, DumpMetadata};
-use crate::statistics::BoundsSet;
 
 /// Whether a query resolves column types at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -214,40 +213,22 @@ impl ResolvedSchema {
     }
 
     /// The kinds gathering orders column `i`'s bounds and row order by, one
-    /// per [`BoundsSet`] ([`ComparisonPlan::bounds_kinds`]), for a scalar
-    /// column resolved from its declared type — and none for any other.
+    /// per [`crate::BoundsSet`] ([`ComparisonPlan::bounds_kinds`]), for a scalar
+    /// column — and none for a nested one. A column nothing declared is
+    /// [`ComparisonPlan::Refused`], and bounded as its text.
     ///
-    /// **A column nothing declared says nothing of what was stored for it**:
-    /// its [`ComparisonPlan::Refused`] is the same under `SchemaMode::Strings`
-    /// for a column gathering resolved typed and bounded in its own order, so
-    /// neither that nor a data-only dump's column is bounded or read as
-    /// bounded; nor is a column only the census took out of `Mapped`, which
-    /// gathering, resolving against no census, saw nested.
+    /// **Meaningful for a schema resolved as gathering resolves it**:
+    /// `SchemaMode::Typed` against the block's own DDL and no census
+    /// (`crate::gather`). A query's schema says only which kind a term reads
+    /// bounds by ([`ComparisonPlan::bounds_read_by`]); which stored set that
+    /// is, is read off these kinds recomputed for the block
+    /// ([`crate::pgtype::bounds_set_keyed_by`]).
     pub fn bounds_kinds(&self, i: usize) -> [Option<CompareKind>; 2] {
-        if self.declares_scalar(i) { self.comparisons[i].bounds_kinds() } else { [None, None] }
-    }
-
-    /// Which stored set of column `i`'s bounds is ordered as `semantics`
-    /// orders it ([`ComparisonPlan::bounds_in`]), under
-    /// [`Self::bounds_kinds`]'s restriction.
-    pub fn bounds_in(&self, i: usize, semantics: ComparisonSemantics) -> Option<BoundsSet> {
-        self.declares_scalar(i).then(|| self.comparisons[i].bounds_in(semantics)).flatten()
-    }
-
-    /// Whether column `i` is a scalar whose comparison was read off its
-    /// declared type, as gathering reads it.
-    fn declares_scalar(&self, i: usize) -> bool {
-        use ColumnResolution::*;
-        self.plans[i] == NestedPlan::Scalar
-            && matches!(
-                self.columns[i],
-                Mapped
-                    | UnknownType
-                    | OpaqueElementType
-                    | NestedArrayElement
-                    | OpaqueBaseType
-                    | EmptyEnum
-            )
+        if self.plans[i] == NestedPlan::Scalar {
+            self.comparisons[i].bounds_kinds()
+        } else {
+            [None, None]
+        }
     }
 }
 

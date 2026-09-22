@@ -145,11 +145,10 @@ delivered.
   whose PostgreSQL bounds are not Arrow's, bumping `CACHE_FORMAT_VERSION`; a
   `macaddr`'s one set believed in both.
   [Notes](../design/roadmap-P6.10-arrow-order-bounds-notes.md).
-- [ ] **6.10.1** A column no DDL declared bounded in Arrow's order, and a
+- [x] **6.10.1** A column no DDL declared bounded in Arrow's order, and a
   term reading the set gathering stored under the kind it compares by rather
-  than the one its own plan names
-  ([2026-09-22](history/2026-09-22.md), "A column no DDL declared is bounded,
-  its set chosen by what gathering stored").
+  than the one its own plan names.
+  [Notes](../design/roadmap-P6.10.1-undeclared-bounds-notes.md).
 - [ ] **6.7** Statistics handed to DataFusion; answers with and without them
   alike.
 - [ ] **6.8** `datafusion-pgdump-cli`: `--dump`, `STORED AS PGDUMP` and its

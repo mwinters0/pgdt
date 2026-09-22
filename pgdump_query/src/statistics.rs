@@ -467,9 +467,9 @@ pub struct ColumnStatistics {
     pub collation: Option<String>,
     /// NULLs per group.
     pub null_counts: Vec<u64>,
-    /// Present for a declared scalar column, in the register's order where
-    /// that is exact and Arrow's otherwise
-    /// ([`crate::ResolvedSchema::bounds_kinds`]).
+    /// Present for a scalar column, in the register's order where that is
+    /// exact and Arrow's otherwise — as its text for a column nothing
+    /// declared ([`crate::ResolvedSchema::bounds_kinds`]).
     pub bounds: Option<ColumnBounds>,
     /// A second set in Arrow's order, present only where the register's
     /// order is exact and Arrow's is another (`docs/design/decisions.md`,

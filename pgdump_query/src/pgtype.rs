@@ -716,6 +716,31 @@ pub enum UnanswerableReason {
     RangeCanonical { range_type: String, function: String },
 }
 
+/// Which of the sets gathering stored under `stored` — one kind per
+/// [`BoundsSet`], as [`ComparisonPlan::bounds_kinds`] names them — a term
+/// comparing by `kind` reads: the set keyed by that kind, or a `macaddr` set
+/// for a term comparing as text, its field text ordering as its octets do
+/// (I40). `None` where no stored set is ordered as `kind` orders.
+///
+/// **The set is chosen by what gathering stored, not by the term's own plan**
+/// (`docs/design/decisions.md`, "D79"): under `SchemaMode::Strings` every
+/// column is [`ComparisonPlan::Refused`] and compares as text, while gathering
+/// resolved it typed, so an `integer`'s set, keyed `Int`, is never read as
+/// text, and a text column's `Text` set is.
+pub fn bounds_set_keyed_by(
+    stored: &[Option<CompareKind>; 2],
+    kind: &CompareKind,
+) -> Option<BoundsSet> {
+    let serves = |stored: &CompareKind| {
+        stored == kind
+            || (*kind == CompareKind::Text && matches!(stored, CompareKind::MacAddr { .. }))
+    };
+    [BoundsSet::Primary, BoundsSet::Arrow]
+        .into_iter()
+        .zip(stored)
+        .find_map(|(set, stored)| stored.as_ref().is_some_and(serves).then_some(set))
+}
+
 impl ComparisonPlan {
     /// Whether the register gives a column of this plan an order at all —
     /// the question the four ordering operators ask, and the one a caller
@@ -767,18 +792,27 @@ impl ComparisonPlan {
     /// orders the column, if any — `None` where gathering keeps none in that
     /// order. PostgreSQL's reads the primary set where the register's order
     /// is exact; Arrow's reads the second set where one is kept, and the
-    /// primary set otherwise ([`Self::bounds_kinds`]). A term reads the set
-    /// keyed by the kind it compares by, which is that set's kind but for
-    /// `macaddr`'s, whose octet order is its text's.
+    /// primary set otherwise ([`Self::bounds_kinds`]): the set
+    /// [`bounds_set_keyed_by`] finds for the kind a term compares by in
+    /// `semantics`, of the sets gathered under this plan.
     pub fn bounds_in(&self, semantics: ComparisonSemantics) -> Option<BoundsSet> {
-        let [primary, second] = self.bounds_kinds();
-        match semantics {
-            ComparisonSemantics::Postgres => {
-                matches!(self, Self::Compared { divergence: None, .. })
-                    .then_some(BoundsSet::Primary)
+        bounds_set_keyed_by(&self.bounds_kinds(), &self.bounds_read_by(semantics)?)
+    }
+
+    /// The kind a term reads bounds by in `semantics` — the kind it compares
+    /// by — or `None` where that semantics believes no bounds for a column of
+    /// this plan: PostgreSQL's wherever the register's order is not exact, and
+    /// either for a nested or unanswerable plan. Which stored set it reads is
+    /// the block's to say ([`bounds_set_keyed_by`]), gathering having
+    /// resolved the column under its own schema.
+    pub fn bounds_read_by(&self, semantics: ComparisonSemantics) -> Option<CompareKind> {
+        match (self, semantics) {
+            (Self::Compared { kind, divergence: None }, ComparisonSemantics::Postgres) => {
+                Some(kind.clone())
             }
-            ComparisonSemantics::Arrow if second.is_some() => Some(BoundsSet::Arrow),
-            ComparisonSemantics::Arrow => primary.map(|_| BoundsSet::Primary),
+            (Self::Compared { kind, .. }, ComparisonSemantics::Arrow) => Some(kind.arrow_order()),
+            (Self::Refused, ComparisonSemantics::Arrow) => Some(CompareKind::Text),
+            _ => None,
         }
     }
 
@@ -2590,6 +2624,36 @@ mod tests {
             function: "f".into(),
         });
         assert_eq!(read(&nested), ([None, None], None, None));
+    }
+
+    /// **A term reads the set gathering stored under the kind it compares
+    /// by**, not the one its own plan would have stored: a column compared as
+    /// text for want of a plan — every column under `SchemaMode::Strings` —
+    /// reads a set keyed `Text` or `macaddr`'s, whose text orders as its
+    /// octets (I40), and never one keyed by a value order
+    /// (`docs/design/decisions.md`, "D79").
+    #[test]
+    fn a_term_reads_the_set_keyed_by_the_kind_it_compares_by() {
+        use BoundsSet::{Arrow as A, Primary as P};
+        let text = CompareKind::Text;
+        let refused = ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::Arrow);
+        assert_eq!(refused.as_ref(), Some(&text));
+        assert_eq!(ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::Postgres), None);
+        let labels: Arc<[String]> = Arc::from(vec!["b".to_string()]);
+        for (declared, stored, want) in [
+            ("text", [Some(text.clone()), None], Some(P)),
+            ("an enum", [Some(CompareKind::Enum(labels)), Some(text.clone())], Some(A)),
+            ("macaddr", [Some(CompareKind::MacAddr { octets: 6 }), None], Some(P)),
+            ("integer", [Some(CompareKind::Int), None], None),
+            ("interval", [Some(CompareKind::Interval), Some(CompareKind::IntervalFields)], None),
+            ("a nested column", [None, None], None),
+        ] {
+            assert_eq!(bounds_set_keyed_by(&stored, &text), want, "{declared}");
+        }
+        let int = [Some(CompareKind::Int), None];
+        assert_eq!(bounds_set_keyed_by(&int, &CompareKind::Int), Some(P));
+        let mac = [Some(CompareKind::MacAddr { octets: 6 }), None];
+        assert_eq!(bounds_set_keyed_by(&mac, &CompareKind::MacAddr { octets: 8 }), None);
     }
 
     /// The collation rule, as a table: what a text column's `COLLATE` clause

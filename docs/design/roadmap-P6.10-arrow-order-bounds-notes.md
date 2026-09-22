@@ -6,19 +6,17 @@ columns carry bounds in Arrow's order". A scalar column now keeps bounds and
 row order in each order some semantics compares it by exactly, one set where
 two coincide. `ColumnStatistics::arrow_bounds` holds the second set, and
 `CACHE_FORMAT_VERSION` is 24. The kinds are `ComparisonPlan::bounds_kinds`
-(`pgtype.rs`), restricted to declared scalars by
-`ResolvedSchema::bounds_kinds` (`resolve.rs`). A term reads the set
-`ResolvedSchema::bounds_in` names. The why is
-[`decisions.md`](decisions.md), "D79".
+(`pgtype.rs`), restricted to scalars by `ResolvedSchema::bounds_kinds`
+(`resolve.rs`). Which set a term reads is 6.10.1's
+([`roadmap-P6.10.1-undeclared-bounds-notes.md`](roadmap-P6.10.1-undeclared-bounds-notes.md)).
+The why is [`decisions.md`](decisions.md), "D79".
 
 ## What 6.7 and 6.8 inherit
 
-- **Which set holds each column's Arrow bounds.** `bounds_in(i, Arrow)` is
-  `Primary` or `Arrow`, and `ColumnStatistics::bounds_in` reads it. It is
-  `None` only for a nested column and one no DDL declared. So 6.7's `Exact`
-  predicate for a column's bounds is `bounds_in(i, Arrow).is_some()` with
-  every group carrying that set. `bounds_ordered_in(Arrow)` still answers
-  the same question for a plan.
+- **Which set holds each column's Arrow bounds.** For a plan,
+  `ComparisonPlan::bounds_in(Arrow)` is `Primary` or `Arrow`, and
+  `ColumnStatistics::bounds_in` reads it; for a query's column it is chosen
+  per block, as 6.10.1's notes say.
 - **What each set is keyed by.** The primary set is the register's kind where
   its order is exact (`divergence: None`), and `arrow_order()` of it
   otherwise. The Arrow set is `arrow_order()` of an exact kind that differs
@@ -44,17 +42,9 @@ two coincide. `ColumnStatistics::arrow_bounds` holds the second set, and
 
 ## Negative results
 
-- **A column no DDL declared is not bounded**, though Arrow semantics orders
-  it bytewise. Under `SchemaMode::Strings` every column is `NotDeclared` and
-  `Refused`, including one gathering resolved typed and bounded by its own
-  kind. So believing a planless column's set there would read an `integer`'s
-  bounds as text. `arrow_semantics_orders_a_column_with_no_plan_bytewise`
-  (`predicate.rs`) pins both roads. A data-only dump's columns go unbounded
-  with them.
-- **The back-fill of a column held without bounds is unreachable across the
-  bump.** `StatisticsRequest::backfill`'s `missing` test answered 6.9's
-  unbumped change. Every cache this build reads now holds the sets this build
-  keeps. It stays as a guard; nothing exercises it outside its own test.
+- **6.10's bump left `StatisticsRequest::backfill`'s `missing` test
+  nothing to catch**, every cache at 24 holding the sets 6.10 kept; 6.10.1's
+  undeclared columns are what reach it again.
 - **The golden order digests the stored kinds too.**
   `golden_order_is_pinned_to_the_format_version` now sorts each oracle type
   under its register kind and under each kind a set is stored by, so a moved

@@ -1141,7 +1141,9 @@ statistics:
   followed by how many groups carry a least and greatest value — or `no bounds`
   where pgdt keeps none for the column, an array or a composite for one; a
   text column's are by bytes, and its order too, whatever its collation, as
-  are those of the columns only a DataFusion query reads (above). A second
+  are those of the columns only a DataFusion query reads (above) and of a
+  column no `CREATE TABLE` declares, which is every column of a
+  `--data-only` dump. A second
   set, in a DataFusion query's order, is not summed here. Last, how many groups carry a list of
   distinct values, or `no dictionary` where it does not compare them exactly.
   A group holding only NULLs carries no bounds. `not gathered` is a column a

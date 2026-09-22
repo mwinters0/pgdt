@@ -27,17 +27,17 @@ reserve").
 - **Still unbounded in both semantics**: `jsonb` (`JsonbStringCollation`),
   `character(n)` off `C` (a `PaddedText` plan), nested columns, and every
   planless or `Refused` column. These are Arrow-bytewise too, and a `Text`
-  gatherer would serve them. 6.10 bounds all but the nested ones, and gives
-  a second set to every kind whose PostgreSQL bounds are not Arrow's
-  ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
+  gatherer would serve them. 6.10 and 6.10.1 bound all but the nested ones,
+  and 6.10 gives a second set to every kind whose PostgreSQL bounds are not
+  Arrow's ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
   "Which columns carry bounds in Arrow's order").
 - **`json` gets bounds and still no dictionary.** Its `AsText` affects
   equality, so D79 keeps no dictionary. In Arrow semantics its `=` prunes by
   bounds alone.
 - **What the back-fill resolves.** `bounded_columns` resolves a block's columns
   against the map's DDL, as `observer_tracking` does, for every block of a
-  gathering `parse`. With no DDL no column is bounded, so a data-only dump
-  never reads as lacking. A held column with bounds is never re-read for this.
+  gathering `parse`. With no DDL every scalar column is bounded as its text
+  (6.10.1). A held column with bounds is never re-read for this.
 - **`info --detail` and `--json` now show bytewise bounds and a row order for
   collated text.** Nothing there says in which semantics they hold. The manual
   says it once, in "`--statistics`: what `parse` records for later queries".

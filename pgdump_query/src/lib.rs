@@ -49,8 +49,8 @@ pub use map::{
 };
 pub use pgtype::{
     CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics,
-    NestedCompare, NestedPlan, TypeOutcome, UnanswerableReason, comparison_for, extension_for,
-    resolve_declared_type,
+    NestedCompare, NestedPlan, TypeOutcome, UnanswerableReason, bounds_set_keyed_by,
+    comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
     CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,

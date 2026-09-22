@@ -691,6 +691,58 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
     }
 }
 
+/// **A term reads the set gathering stored under the kind it compares by,
+/// whatever its own plan says** (`docs/design/decisions.md`, "D79"). A column
+/// no DDL declared — every column of a `--data-only` dump — is bounded as its
+/// text, and Arrow's semantics prunes by it. Under `SchemaMode::Strings`,
+/// where every column compares as its text, `v_mood` reads its enum's Arrow
+/// set, which is its labels' text, and `id` reads none: its one set is
+/// ordered as integers, and a build reading it as text would skip the group
+/// under `id > '9'`.
+#[tokio::test]
+async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
+    use ComparisonSemantics::{Arrow, Postgres};
+    use pgdump_query::SchemaMode::{Strings, Typed};
+    for version in VERSIONS {
+        for (flag_set, schema_mode, semantics, column, op, literal, rows, skipped) in [
+            ("data-only", Typed, Arrow, "v_mood", PredicateOp::Gt, "sad", 0, 1),
+            ("data-only", Typed, Arrow, "v_mood", PredicateOp::Lt, "has,comma", 2, 0),
+            ("data-only", Typed, Arrow, "id", PredicateOp::Gt, "4", 0, 1),
+            // PostgreSQL's semantics believes no bounds for a column it has
+            // no plan for: its `=` is bytewise, and it reads none.
+            ("data-only", Typed, Postgres, "id", PredicateOp::Eq, "9", 0, 0),
+            ("default", Strings, Arrow, "v_mood", PredicateOp::Gt, "sad", 0, 1),
+            ("default", Strings, Arrow, "id", PredicateOp::Gt, "9", 0, 0),
+            ("default", Typed, Arrow, "id", PredicateOp::Gt, "9", 0, 1),
+        ] {
+            let (_dir, dump, index) =
+                gathered(&types_fixture(version, flag_set), SMALL_GROUP).await;
+            let block = index.blocks_for("public.t_enum_domain").next().unwrap();
+            let statistics = block.statistics.as_deref().unwrap();
+            assert_eq!(statistics.groups.len(), 1, "pg_dump {version} {flag_set}");
+            let filter = Expr::all([term(column, op, Some(literal))]);
+            let options = |use_statistics| QueryOptions {
+                semantics,
+                schema_mode,
+                ..with(filter.clone(), use_statistics, 1)
+            };
+            let cache = cache::colocated_path(&dump);
+            let what = format!(
+                "pg_dump {version} {flag_set}, {schema_mode:?}, {semantics:?}, {column} {} \
+                 {literal}",
+                op.symbol()
+            );
+            let (answered, notes, ..) =
+                answer(&dump, &cache, "public.t_enum_domain", options(true)).await.unwrap();
+            let (unpruned, ..) =
+                answer(&dump, &cache, "public.t_enum_domain", options(false)).await.unwrap();
+            assert_eq!(answered, unpruned, "{what}");
+            assert_eq!(answered.map_or(0, |b| b.num_rows()), rows, "{what}");
+            assert_eq!(pruned(&notes).map_or(0, |p| p.0), skipped, "{what}");
+        }
+    }
+}
+
 /// **A dictionary rules out a literal its bounds cannot**: `low_card` cycles
 /// through four texts, so every group holds all four and bounds from `amber`
 /// to `dusk`, and `bravo` sorts inside them and is none of them — so every

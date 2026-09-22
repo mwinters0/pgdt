@@ -440,13 +440,13 @@ statistics file; its own semantics version; the copy charged; one beside name tw
 Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
 ### D79 Bounds go in each order a semantics compares by exactly, a dictionary where it equates exactly
-A scalar column keeps bounds and row order per exact order, one set where two coincide: the
-register's where exact, else Arrow's (text bytewise whatever its collation, `jsonb` and off-`C`
-`character(n)` as text, a planless column bytewise), and Arrow's beside an exact one it differs from
-(a D78 bump); `macaddr`'s one serves both (I40). No DDL, no bounds: `SchemaMode::Strings` is
-`Refused` too. A dictionary needs equality alone, reaching `KD7`'s text, and is never an Arrow
-encoding (D37). Nested columns get neither. Rejected: a distinct count; bounds read off a dictionary
-(D75); one slot, leaving an enum no Arrow bounds; a second `macaddr` set. Code: `bounds_kinds`.
+A scalar column keeps bounds and row order per exact order, one set where two coincide: the register's
+where exact, else Arrow's (bytewise: text in any collation, `jsonb`, off-`C` `character(n)`, no plan,
+no DDL), and Arrow's beside an exact one it differs from (a D78 bump); `macaddr`'s serves both (I40).
+A term reads the set keyed by its compared kind as gathering resolved the column, not by its plan. A
+dictionary needs equality alone, reaching `KD7`'s text, never an Arrow encoding (D37); nested columns
+get neither. Rejected: a distinct count; bounds off a dictionary (D75); one slot; a second `macaddr`
+set; a kind stored per set; a DDL flag. Code: `bounds_kinds`, `bounds_set_keyed_by`.
 
 ### D80 An early stop is reported after the fact, per block, in bytes
 Rejected: counting rows past the stop, never read and so only estimable; a zero for a stop planned

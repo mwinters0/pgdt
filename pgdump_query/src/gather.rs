@@ -129,6 +129,19 @@ pub(crate) fn bounded_columns(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
 ) -> Vec<bool> {
+    stored_bounds_kinds(header, metadata, database).iter().map(|kinds| kinds[0].is_some()).collect()
+}
+
+/// The kinds each of `header`'s columns' stored sets of bounds are ordered
+/// by, positionally, resolved as [`observer_tracking`] resolves them — so for
+/// a column whose statistics record the declared type and collation
+/// `metadata` states now, the kinds its sets were gathered under
+/// (`crate::prune`; `docs/design/decisions.md`, "D79").
+pub(crate) fn stored_bounds_kinds(
+    header: &CopyHeader,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> Vec<[Option<CompareKind>; 2]> {
     let resolved = resolve_columns(
         &header.qualified_name(),
         &header.columns,
@@ -137,7 +150,7 @@ pub(crate) fn bounded_columns(
         SchemaMode::Typed,
         &[],
     );
-    (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)[0].is_some()).collect()
+    (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)).collect()
 }
 
 /// The columns `metadata` declares for the table `qualified` in `database` —

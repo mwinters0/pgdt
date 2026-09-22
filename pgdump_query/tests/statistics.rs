@@ -24,7 +24,7 @@ use pgdump_query::{
 };
 
 mod common;
-use common::{VERSIONS, sandboxed, statistics_fixture};
+use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
 
 /// A group size several `ordered` rows long and well under its block, so
 /// `ordered` has several groups, some holding more distinct `high_card` texts
@@ -636,7 +636,7 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
     let ordered = block(&fresh, "public.ordered");
     let bounded = bounded_columns(ordered, fresh.metadata.as_ref());
     assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");
-    assert_eq!(bounded_columns(ordered, None), vec![false; bounded.len()], "no DDL, no plan");
+    assert_eq!(bounded_columns(ordered, None), bounded, "no DDL, bounded as its text");
 
     let mut older = fresh.clone();
     for span in &mut older.spans {
@@ -667,6 +667,42 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
     assert_eq!(run.index.spans, fresh.spans);
     let again = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
     assert_eq!((again.lacking_statistics, again.backfilled), (0, 0));
+}
+
+/// **A column no DDL declared, held without bounds, is re-read for them**: a
+/// `--data-only` dump's cache as a build bounding only declared columns
+/// stored it — every column's bounds absent — is re-read by a `parse` asking
+/// for nothing more, into exactly what one gathering pass now stores, which
+/// bounds every column of every block as its text
+/// (`docs/design/decisions.md`, "D79").
+#[tokio::test]
+async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
+    use pgdump_query::map::{DataBlock, SpanBody};
+    let (_dir, dump) = sandboxed(&types_fixture(16, "data-only"), "undeclared.sql");
+    let options = ScanOptions::default();
+    let fresh = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await.index;
+    let mut older = fresh.clone();
+    let mut blocks = 0;
+    for span in &mut older.spans {
+        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
+            let Some(held) = block.statistics.as_deref() else { continue };
+            let mut held = BlockStatistics::clone(held);
+            for column in held.columns.iter_mut().flatten() {
+                assert!(column.bounds.is_some(), "{}", block.header.table);
+                assert!(column.declared_type.is_none() && column.arrow_bounds.is_none());
+                column.bounds = None;
+            }
+            block.statistics = Some(Arc::new(held));
+            blocks += 1;
+        }
+    }
+    assert!(blocks > 0);
+    let source = LocalFileSource::open(&dump).unwrap();
+    cache::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
+
+    let run = mapped_into_cache(&dump, &options, &StatisticsRequest::ALL).await;
+    assert_eq!((run.lacking_statistics, run.backfilled), (blocks, blocks));
+    assert_eq!(run.index.spans, fresh.spans);
 }
 
 /// A request naming one table re-reads that table's block alone; a request
