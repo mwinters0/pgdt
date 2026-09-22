@@ -179,8 +179,9 @@ impl TableProviderFactory for PgDumpTableFactory {
 /// Let `ctx` run `CREATE EXTERNAL TABLE … STORED AS PGDUMP`, reporting what
 /// each registration finds to `sink`: the factory keyed [`PGDUMP_FILE_TYPE`],
 /// the [`PgDumpTableOptions`] extension, and the session's [`crate::ScanBudget`]
-/// installed as [`crate::register_dump`] installs it, so every table the
-/// statement registers draws on the one budget.
+/// and [`crate::PgDumpSettings`] installed as [`crate::register_dump`] installs
+/// them, so every table the statement registers draws on the one budget and
+/// `SET pgdump.…` reaches every scan.
 pub fn register_table_factory(ctx: &SessionContext, sink: Arc<dyn DiagnosticSink>) {
     ctx.register_table_options_extension(PgDumpTableOptions::default());
     session_budget(ctx);

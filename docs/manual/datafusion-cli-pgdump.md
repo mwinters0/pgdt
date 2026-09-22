@@ -129,4 +129,27 @@ Every dump's scans share one budget, carved from the memory limit the process
 runs under — a container's or a cgroup's — or, where nothing limits it, from
 half of what is free. A `--memory-limit` given to DataFusion's own operators
 comes off it, as does what each attached dump's cache holds in memory, so the
-scans never count on memory already spoken for.
+scans never count on memory already spoken for. `SET pgdump.memory` states
+the allowance instead ([below](#scan-settings)).
+
+## Scan settings
+
+What `pgdt query` takes as flags, this shell takes as settings, set with `SET`
+like DataFusion's own — in the REPL, by `-c`, or in an `--rc` file — and
+listed by `SHOW ALL`:
+
+```sql
+SET pgdump.memory = 4294967296;
+```
+
+| Setting | As `pgdt`'s |
+|---|---|
+| `pgdump.memory` | [`--memory`](dump-inspection.md#--jobs-and---memory-the-workers-and-the-allowance): bytes every dump's scans may hold resident between them. Unset, the limit found, as above. |
+| `pgdump.chunk_size` | [`--chunk-size`](dump-inspection.md#--chunk-size-you-almost-certainly-do-not-need-it): bytes a scan asks of the dump per read. |
+| `pgdump.max_line_bytes` | [`--max-line-bytes`](dump-inspection.md#--max-line-bytes-a-dump-holding-very-large-values): the longest row a scan holds before refusing the dump. |
+
+Each is a whole number of bytes, and none may be `0`. **A setting binds the
+queries planned after it**: a query already running keeps the memory it was
+given. `pgdump.memory` cannot be returned to the limit found once it is set —
+DataFusion's `RESET` reaches only its own settings — so state the number you
+want, or start the shell again.

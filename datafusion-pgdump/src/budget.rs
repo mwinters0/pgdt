@@ -37,6 +37,11 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// *Rejected: taking them off the cap as well*, as another scan's draw comes
 /// off, which bills them against the reserve's excess a second time.
 ///
+/// **An allowance the session states overrides the one the budget holds**,
+/// read at each draw (`pgdump.memory`, [`crate::PgDumpSettings`]): one `SET`
+/// mid-session binds the scans planned after it, and what live scans drew
+/// stays drawn against it, as it would against the budget's own.
+///
 /// What a scan draws it holds until its plan and every stream it started are
 /// dropped, not only while rows flow: a plan is a promise to run, and its
 /// partition count is what the draw buys. *Rejected: drawing at `execute`*,
@@ -109,8 +114,9 @@ impl ScanBudget {
 
     /// The arrangement one more scan takes: as many of `jobs` workers as what
     /// the live scans, the billed maps and `pool` — the session's memory
-    /// pool's finite limit, [`pool_limit`] — leave affords, at what that many
-    /// spend less whatever of the holdings the margin cannot fit beside them
+    /// pool's finite limit, [`pool_limit`] — leave of `stated`, else of this
+    /// budget's own allowance, affords, at what that many spend less whatever
+    /// of the holdings the margin cannot fit beside them
     /// ([`Parallelism::within_shared`]). Held until the returned [`Draw`]
     /// drops.
     ///
@@ -126,16 +132,18 @@ impl ScanBudget {
         jobs: usize,
         memory: Option<WorkerMemory>,
         pool: u64,
+        stated: Option<u64>,
     ) -> Draw {
         let mut held = self.held.lock().unwrap();
         let holdings = held.maps.saturating_add(pool);
-        let parallelism = match self.allowance {
+        let allowance = stated.or(self.allowance);
+        let parallelism = match allowance {
             Some(allowance) => {
                 Parallelism::within_shared(jobs, memory, allowance, held.scans, holdings)
             }
             None => Parallelism::discover_for(jobs, memory),
         };
-        let bytes = match self.allowance {
+        let bytes = match allowance {
             Some(_) => parallelism.memory_bytes().unwrap_or(0),
             None => 0,
         };
@@ -229,30 +237,53 @@ mod tests {
         let allowance = 10u64 << 30;
 
         let alone = Arc::new(ScanBudget::new(allowance));
-        assert_eq!(alone.draw(24, memory, 0).parallelism().jobs(), 7);
+        assert_eq!(alone.draw(24, memory, 0, None).parallelism().jobs(), 7);
 
         let mapped = Arc::new(ScanBudget::new(allowance));
         let _map = mapped.hold(2 << 30);
         let pooled = Arc::new(ScanBudget::new(allowance));
         let scanned = Arc::new(ScanBudget::new(allowance));
-        let _scan = scanned.draw(2, memory, 0);
+        let _scan = scanned.draw(2, memory, 0, None);
         for budget in [&mapped, &pooled, &scanned] {
             let pool = if Arc::ptr_eq(budget, &pooled) { 2 << 30 } else { 0 };
-            let draw = budget.draw(24, memory, pool);
+            let draw = budget.draw(24, memory, pool, None);
             assert_eq!(draw.parallelism().jobs(), 5);
             assert_eq!(draw.parallelism().memory_bytes(), Some(5 * per_worker));
         }
 
         let full = Arc::new(ScanBudget::new(allowance));
         let _map = full.hold(allowance);
-        let draw = full.draw(4, memory, 0);
+        let draw = full.draw(4, memory, 0, None);
         assert_eq!(draw.parallelism(), Parallelism::Serial { memory_bytes: Some(0) });
         assert_eq!(full.drawn(), 0);
 
         let drained = Arc::new(ScanBudget::new(allowance));
-        let _all = drained.draw(24, Some(WorkerMemory::per_worker(allowance)), 0);
-        let starved = drained.draw(4, memory, 0);
+        let _all = drained.draw(24, Some(WorkerMemory::per_worker(allowance)), 0, None);
+        let starved = drained.draw(4, memory, 0, None);
         assert_eq!(starved.parallelism(), Parallelism::Serial { memory_bytes: Some(0) });
+    }
+
+    /// **A stated allowance is carved in place of the budget's own**, at each
+    /// draw: larger or smaller, it decides the count, and what a live scan
+    /// drew under the one stays drawn under the other.
+    #[test]
+    fn a_stated_allowance_overrides_the_budget_s_own_at_each_draw() {
+        let per_worker = 1u64 << 30;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let budget = Arc::new(ScanBudget::new(10 << 30));
+        assert_eq!(budget.draw(24, memory, 0, None).parallelism().jobs(), 7);
+        assert_eq!(budget.draw(24, memory, 0, Some(20 << 30)).parallelism().jobs(), 15);
+        let first = budget.draw(24, memory, 0, Some(5 << 30));
+        assert_eq!(first.parallelism().jobs(), 3);
+        assert_eq!(budget.drawn(), 3 * per_worker);
+        // The live draw comes off the next one's, whichever allowance it is.
+        assert_eq!(budget.draw(24, memory, 0, None).parallelism().jobs(), 4);
+        assert_eq!(budget.allowance(), Some(10 << 30));
+
+        let unfound = Arc::new(ScanBudget { allowance: None, held: Mutex::default() });
+        let stated = unfound.draw(24, memory, 0, Some(10 << 30));
+        assert_eq!(stated.parallelism().jobs(), 7);
+        assert_eq!(unfound.drawn(), 7 * per_worker);
     }
 
     /// A pool stating a `Finite` limit bills that limit; the default,

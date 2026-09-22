@@ -113,6 +113,40 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
     assert_eq!(text(&out.stderr), "");
 }
 
+/// **The scan settings are `SET` like DataFusion's own and listed beside
+/// them**: an allowance stated too small for one reader floors the next scan,
+/// whatever the host reports, and `SHOW ALL` names every `pgdump.` key.
+#[tokio::test]
+async fn a_scan_setting_is_set_by_sql() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let dump = format!("shop={}", copy.display());
+
+    let out = run(&[
+        "--dump",
+        &dump,
+        "-c",
+        "SET pgdump.memory = 1",
+        "SELECT count(*) AS n FROM (SELECT * FROM shop.logs.events)",
+    ]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("n\n3\n"), "{}", text(&out.stdout));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.lines().any(|line| {
+            line.starts_with("warning: shop.logs.events: ") && line.contains("floor")
+        }),
+        "{stderr}"
+    );
+
+    let out = run(&["-q", "-c", "SHOW ALL"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    for key in ["pgdump.memory", "pgdump.chunk_size", "pgdump.max_line_bytes"] {
+        assert!(shown.contains(key), "{key}: {shown}");
+    }
+}
+
 /// **A dump with no complete cache ends the run before any SQL**, naming the
 /// parse that builds it.
 #[tokio::test]

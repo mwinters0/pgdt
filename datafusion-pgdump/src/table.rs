@@ -15,15 +15,14 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::streaming::{PartitionStream, StreamingTableExec};
 use futures::StreamExt;
-use pgdump_query::{
-    ComparisonSemantics, QueryOptions, ResolvedSchema, ScanOptions, TableName, TablePartitions,
-};
+use pgdump_query::{ComparisonSemantics, QueryOptions, ResolvedSchema, TableName, TablePartitions};
 
 use crate::budget::{Draw, ScanBudget, pool_limit};
 use crate::dump::PgDump;
 use crate::exec::{PgDumpExec, ScanMetrics};
 use crate::pushdown::translate;
 use crate::report::Reporting;
+use crate::settings::PgDumpSettings;
 use crate::statistics::table_statistics;
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
@@ -133,7 +132,8 @@ impl TableProvider for PgDumpTable {
     }
 
     /// The replay planned now, against the session's `target_partitions` and
-    /// what the session's [`ScanBudget`] leaves; the partitions are streamed
+    /// what the session's [`ScanBudget`] leaves, under the `pgdump.` settings
+    /// the session states now ([`PgDumpSettings`]); the partitions are streamed
     /// when DataFusion runs them. The projection is the library's by name, so
     /// an unprojected column is never decoded, and `filters` are the ones
     /// [`Self::supports_filters_pushdown`] answered `Exact`, evaluated by the
@@ -154,10 +154,12 @@ impl TableProvider for PgDumpTable {
         let budget = ScanBudget::of(state);
         // A table registered by hand reaches its session's budget only here.
         self.dump.bill(&budget);
+        let settings = PgDumpSettings::of(state);
         let draw = Arc::new(budget.draw(
             state.config().target_partitions(),
             source.default_worker_memory(),
             pool_limit(state),
+            settings.memory,
         ));
         let parallelism = draw.parallelism();
         let schema = self.resolved.schema.fields();
@@ -173,7 +175,7 @@ impl TableProvider for PgDumpTable {
             max_rows: state.config().batch_size(),
             ..query_options(&self.dump)
         };
-        let scan_options = ScanOptions { parallelism, ..ScanOptions::default() };
+        let scan_options = settings.scan_options(parallelism);
         let partitions = TablePartitions::plan(
             source,
             self.dump.index(),

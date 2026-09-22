@@ -8,7 +8,9 @@
 //! sub-stream, with the projection pushed into the library by name, a filter
 //! pushed `Exact` wherever the library answers it as DataFusion would, the batch
 //! size the session's, and the worker count the session's `target_partitions`
-//! lowered to what the session's [`ScanBudget`] affords. The plan node carries
+//! lowered to what the session's [`ScanBudget`] affords, and the `pgdump.`
+//! settings a `SET` states read as each scan is planned ([`PgDumpSettings`]).
+//! The plan node carries
 //! what the map's statistics say about the table, so `COUNT(*)`,
 //! `COUNT(<column>)`, `MIN` and `MAX` can be answered without reading a row
 //! ([`crate::statistics`]).
@@ -29,6 +31,7 @@ mod exec;
 mod factory;
 mod pushdown;
 mod report;
+mod settings;
 mod statistics;
 mod table;
 
@@ -43,6 +46,7 @@ pub use dump::{PgDump, PgDumpOptions};
 pub use factory::{
     PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
 };
+pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
 
 /// What opening or registering a dump can refuse.
@@ -79,7 +83,8 @@ pub enum Error {
 /// that database's name.
 ///
 /// The session gains a [`ScanBudget`] discovered from the process's allowance,
-/// unless it already carries one, and `dump`'s statistics are billed to it.
+/// unless it already carries one, and `dump`'s statistics are billed to it;
+/// and the [`PgDumpSettings`] `SET` moves, unless it already carries them.
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
 /// that name.
@@ -137,8 +142,9 @@ pub fn register_dump(
 }
 
 /// `ctx`'s [`ScanBudget`], installed discovered from the process's allowance
-/// where the session carries none yet.
+/// where the session carries none yet, beside its [`PgDumpSettings`].
 fn session_budget(ctx: &SessionContext) -> Arc<ScanBudget> {
+    PgDumpSettings::install(ctx);
     let state = ctx.state_ref();
     let mut state = state.write();
     match state.config().get_extension::<ScanBudget>() {
