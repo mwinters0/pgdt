@@ -311,6 +311,14 @@ pub enum ComparisonDivergence {
     /// carries no `COLLATE` clause and its type's default collation is the
     /// *database's*, which a plain dump never records (I32). Bytewise is
     /// PostgreSQL's answer only if that collation is `C`/`POSIX`.
+    ///
+    /// deficiency: KD40 — a `--create` or `pg_dumpall` dump *does* state the
+    /// database's collation, in its `CREATE DATABASE`, which `preamble.rs`
+    /// leaves `Unparsed`; so this fires there too, and its sentence says the
+    /// dump does not record what it does. Read, a `C`/`POSIX` database would
+    /// make its uncollated columns agree outright and any other would make
+    /// them [`Self::NonBytewiseCollation`], per database of a `pg_dumpall`.
+    /// **(c) unowned**.
     UnknownCollation,
     /// A collatable column that states a collation other than `C`/`POSIX`,
     /// whose order this build does not implement.

@@ -260,16 +260,21 @@ all. The cost accepted is re-copying `main.rs` at each DataFusion major.
 ## Diagnostics: one sink
 
 **The library gains one diagnostics sink**, a caller-supplied trait object into
-which all three channels drain: the file-level `DumpIndex::diagnostics` (L1),
-the per-column `ResolvedSchema::notes` (L2), and the query-conditional
-comparison notes (L4). Each channel's type reaches it through one shared trait
+which all four channels drain: the file-level `DumpIndex::diagnostics` (L1),
+the per-column `ResolvedSchema::notes` (L2), the query-conditional
+comparison notes (L4), and what a scan's plan settled
+(`TableStream::plan_notes`). Each channel's type reaches it through one shared trait
 bearing `diagnostic::Severity`, which is the unification point left open when
 the channels were kept as separate types — unifying at the drain rather than at
 the storage type, which the layering forbids ([`decisions.md`](decisions.md),
 "D68"). **The provider takes a sink; `datafusion-cli-pgdump` supplies one
 printing to stderr** — at registration for file- and column-level notes, and
-after the statement for what a query raised. `pgdt` may adopt the sink later;
-that is not this phase's work.
+at planning for what a scan's plan settled. What a scan finds while reading —
+groups statistics pruned, bytes an early stop left unread — is a plan metric
+under `EXPLAIN ANALYZE`, not a finding. Amended 2026-09-22
+([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md), "The
+binary's sink reports at planning, and a scan's counts are metrics"). `pgdt`
+may adopt the sink later; that is not this phase's work.
 
 DataFusion 55 offers no non-error channel a provider could use instead (below),
 and `log` is hidden by `datafusion-cli`'s default level.

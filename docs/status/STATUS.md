@@ -155,6 +155,9 @@ delivered.
 - [x] **6.8** `datafusion-cli-pgdump`: `--dump`, `STORED AS PGDUMP` and its
   options extension, the stderr sink, and its manual page stating the ADBC
   floor. [Notes](../design/roadmap-P6.8-datafusion-cli-notes.md).
+- [ ] **6.8.1** A plan's notes reach the sink at `scan()`, `PlanNote` a
+  `Finding` carrying the severity `pgdt` chose per kind; groups pruned and
+  bytes an early stop left unread are `PgDumpExec` metrics.
 
 ## Not started
 
@@ -202,8 +205,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD39 -->
-**`KD1`–`KD39` are allocated, and nothing at or below `KD39` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD40 -->
+**`KD1`–`KD40` are allocated, and nothing at or below `KD40` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -445,6 +448,14 @@ a phase nobody has sliced.
   query that matters, the fix being a flag beside `max_exact` and a
   `CACHE_FORMAT_VERSION` bump. Detail: `datafusion-pgdump/src/statistics.rs`.
 
+- **KD40** — a `--create` or `pg_dumpall` dump states each database's
+  collation (I32), and nothing reads it: every text column with no `COLLATE`
+  clause still warns that the dump does not record its collation, so a `C`
+  database's columns warn where they agree with the server, and another
+  collation's are announced as a possibility rather than a fact. **(c)
+  unowned**; promoted by the roadmap's "Collation-aware comparison", whose
+  environment-free half it belongs to. Detail: `pgdump_query/src/pgtype.rs`.
+
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
   remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`
@@ -461,26 +472,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`datafusion-cli-pgdump` prints nothing after a statement** (6.8). The
-  spec's sink prints "after the statement for what a query raised", but in
-  Arrow semantics the query-time comparison channel is always empty, and the
-  statistics pruning and early stops a scan reports
-  (`TableStream::plan_notes`, `early_stops`) do not implement `Finding`. So
-  the provider drains nothing at query time, and the binary adds no hook,
-  which would mean owning the REPL loop. To reconsider: give `PlanNote` and
-  `EarlyStop` a `Finding` impl, moving `pgdt`'s severity choice into the
-  library, and drain them as each partition ends. `datafusion-cli` collects a
-  bounded result before printing it, so those lines would come before the
-  table, not after it.
-
-- **What attaching a dump prints** (6.8). The stderr sink prints `Warning`
-  and `Error` findings. It never prints `Info`, which every mapped column
-  earns, and `-q` drops `Warning`s too. Each `text` column with no `COLLATE`
-  still warns that it compares bytewise, so a dump of many tables prints one
-  line for each such column when it is attached. The spec reports per column
-  at registration, and the sink follows it. To reconsider: a flag to show
-  `Info`, or one line per dump summarising the database-collation warning in
-  place of one per column. Either changes only `StderrSink` in
-  `datafusion-cli-pgdump/src/pgdump.rs`, or the provider's report if the
-  summary belongs to every embedder.

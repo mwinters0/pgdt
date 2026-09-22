@@ -72,13 +72,14 @@ runs it.
   over `ARROW_AGREEMENT`). The other two per-query channels,
   `TableStream::plan_notes` and `early_stops`, do not implement `Finding`
   (6.3's notes). So the binary installs no after-statement hook. Such a hook
-  would mean owning the REPL loop, which the spec refuses. This is under
-  "Decisions worth another look".
+  would mean owning the REPL loop, which the spec refuses. 6.8.1 reports a
+  plan's notes at planning instead.
 - **Registration on a real dump is loud.** Every `text` column with no
   `COLLATE` clause warns that its comparison is bytewise, because a plain dump
   does not record the database's collation. So attaching a dump prints one
-  line per such column in every table. This is also under "Decisions worth
-  another look".
+  line per such column in every table. `M132` folds them into one line per
+  dump in the binary, and a `--create` dump's stated collation going unread
+  is `KD40`.
 - **`datafusion-cli` reads `LOCATION` before the factory does.** Its
   `create_plan` parses the location as a `ListingTableUrl` and registers an
   object store for its scheme. For a path or an `http(s)` URL this is
