@@ -34,8 +34,10 @@ statistics of every dump billed to it before any scan draws, both on
 
 - **The holdings come off as drawn, not off the allowance.** Subtracting them
   from the allowance before carving would take the margin as a fraction of
-  less than the container's limit. The call is under STATUS's "Decisions worth
-  another look".
+  less than the container's limit, letting the predicted resident pass the
+  margin. Which bound each holding comes off is 6.5.2's
+  ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md),
+  "Which bound the holdings come off").
 - **With no allowance, nothing is subtracted.** A host where neither a limit
   nor `MemAvailable` answers leaves `ScanBudget` without an allowance; the
   scan takes the library's own discovery, and a pool limit or resident

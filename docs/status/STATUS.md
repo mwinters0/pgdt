@@ -119,6 +119,9 @@ delivered.
   besides the scans: a `Finite` DataFusion pool limit, and each registered
   dump's loaded statistics, come off the allowance before any scan draws.
   [Notes](../design/roadmap-P6.5.1-session-holdings-notes.md).
+- [ ] **6.5.2** The session's holdings come off the margin's ceiling alone:
+  the pool limit and the resident statistics billed as D85 bills statistics,
+  the cap left to the scans.
 - [ ] **6.6** Filter pushdown, `Exact` exactly where the library evaluates in
   Arrow's semantics; each Arrow-mode comparison checked against DataFusion's
   own, and pushdown on and off answer alike.
@@ -427,16 +430,4 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The session's holdings come off as drawn, not off the allowance** (6.5.1,
-  `ScanBudget` in `datafusion-pgdump/src/budget.rs`). The spec says the
-  default is the allowance "less" a finite pool limit and the resident
-  statistics; the build passes them to `Parallelism::within_shared` as bytes
-  already drawn, so they come off the cap and off the margin's ceiling, while
-  the margin itself stays a fraction of the whole allowance. Made that way
-  because the allowance is the container's limit, and a margin taken of a
-  smaller number shrinks with every dump registered; it also bills the
-  statistics against the cap, where `pgdt` bills them against the margin's
-  ceiling alone. Reconsidering means a smaller allowance handed to
-  `within_shared`, which lowers the margin by a fifth of what is subtracted.
 

@@ -26,8 +26,9 @@ use pgdump_query::{Parallelism, WorkerMemory};
 /// pass ([`pgdump_query::DumpIndex::statistics_heap_bytes`]). Both come off
 /// as another scan's draw would, off the cap and the margin's ceiling alike,
 /// never off the allowance the margin is a fraction of: the container's limit
-/// is still the whole allowance, and a margin taken of less would shrink with
-/// every dump registered.
+/// is still the whole allowance, and a margin taken of less would let the
+/// predicted resident leave less than [`pgdump_query::MEMORY_MARGIN_PERCENT`]
+/// of the container unused, short by that fraction of what the session holds.
 ///
 /// What a scan draws it holds until its plan and every stream it started are
 /// dropped, not only while rows flow: a plan is a promise to run, and its
