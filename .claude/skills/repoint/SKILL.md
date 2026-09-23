@@ -26,8 +26,8 @@ one exactly this and nothing else:
   `rg -n -w '<module>|<its public types and functions>'` over
   `docs/design/decisions.md`, `docs/design/roadmap.md`,
   `docs/design/*-invariants.md`, `docs/design/measurements.md`,
-  `docs/status/STATUS.md` and `docs/manual/`, plus the register section
-  headed with that module's name.
+  `docs/status/STATUS.md`, `docs/status/deficiencies.md` and `docs/manual/`,
+  plus the register section headed with that module's name.
 
 > Read the source in full. Then read only the record lines given. For every
 > sentence in those lines, and for every comment in the source that asserts a

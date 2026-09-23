@@ -97,35 +97,7 @@ alters implementation state. During a sliced phase it is a terse checklist —
 one linking its notes doc. **A box is ticked only when the whole spec row is
 delivered**; an unfinished one keeps its empty box and says what landed and what
 did not. **Progress lives here, never in the spec.** Then **Not started**, and
-two registers.
-
-- **Known deficiencies** — one indexed line per entry, at most eight wrapped
-  lines: `- **KD<k>** — <one sentence>`, a stance, `Detail: [<name>](<path>)`.
-  `KD<k>` is allocated on discovery and never reused; two letters, so it cannot
-  alias a sibling namespace's `D<k>`.
-
-  - **Each entry declares one of three stances**, since the difference decides
-    whether anyone should act: **(a) deliberate tradeoff**, never to be worked
-    because closing it gives up something chosen; **(b) owned by
-    `<destination>`**; **(c) unowned**, in that word — a legitimate resting
-    state, naming whatever would promote the entry. A `(b)` owner is read from
-    the roadmap's phase index, so one owned by a `Complete`, `Struck` or
-    unlisted phase drops to `(c)` unless a phase absorbs it.
-  - **The register is an index; the detail lives at the code marker** — one
-    `deficiency: KD<k>` comment at the mechanism, in the `.rs` file the index
-    line names, never in a document: locality is what makes a session touching
-    the mechanism meet its limitations, and `deficiencies.py` resolves each
-    indexed entry to exactly one marker and each marker back.
-  - **An entry is struck by the change that closes its last part**, not at a
-    phase boundary — index line, detail and marker together. Partial closure
-    **rewrites** it to what is still true, and a part closing into a *property*
-    migrates beside its mechanism. The allocated range lives in a
-    `<!-- deficiency-watermark: KD<k> -->` marker: a spent number the index
-    does not carry *is* struck.
-  - **A slice that anticipates closing an entry, and that entry, name each
-    other**, so **a slice that splits re-targets it**. A **ticked** line is a
-    record and may cite a struck entry but not an unallocated number; an entry
-    is present tense and may not name a ticked slice.
+one register; the deficiency register is its own file beside it (below).
 
 - **Decisions worth another look** — calls made without the maintainer present
   that a person should still weigh in on: cautionary, never blocking, each
@@ -142,6 +114,37 @@ two registers.
   - **Name the decision, or file it elsewhere.** If the honest answer to *what
     is the maintainer being asked to decide* is "nothing — they would nod", it
     is a known deficiency, an inbox entry or an out-of-band row, and goes there.
+
+## Known deficiencies
+
+`docs/status/deficiencies.md`, beside STATUS and present tense like it: one
+indexed line per entry, at most eight wrapped lines, `- **KD<k>** — <one
+sentence>`, a stance, `Detail: [<name>](<path>)`. `KD<k>` is allocated on
+discovery and never reused; two letters, so it cannot alias a sibling
+namespace's `D<k>`.
+
+- **Each entry declares one of three stances**, since the difference decides
+  whether anyone should act: **(a) deliberate tradeoff**, never to be worked
+  because closing it gives up something chosen; **(b) owned by
+  `<destination>`**; **(c) unowned**, in that word — a legitimate resting
+  state, naming whatever would promote the entry. A `(b)` owner is read from
+  the roadmap's phase index, so one owned by a `Complete`, `Struck` or
+  unlisted phase drops to `(c)` unless a phase absorbs it.
+- **The register is an index; the detail lives at the code marker** — one
+  `deficiency: KD<k>` comment at the mechanism, in the `.rs` file the index
+  line names, never in a document: locality is what makes a session touching
+  the mechanism meet its limitations, and `deficiencies.py` resolves each
+  indexed entry to exactly one marker and each marker back.
+- **An entry is struck by the change that closes its last part**, not at a
+  phase boundary — index line, detail and marker together. Partial closure
+  **rewrites** it to what is still true, and a part closing into a *property*
+  migrates beside its mechanism. The allocated range lives in a
+  `<!-- deficiency-watermark: KD<k> -->` marker: a spent number the index
+  does not carry *is* struck.
+- **A slice that anticipates closing an entry, and that entry, name each
+  other**, so **a slice that splits re-targets it**. A **ticked** line is a
+  record and may cite a struck entry but not an unallocated number; an entry
+  is present tense and may not name a ticked slice.
 
 ## History
 
@@ -351,7 +354,7 @@ high-water mark, unlanded items' numbers being spent too.
 | Why it is that shape, what was refused, what would reopen it | a **`D<k>`** entry |
 | A measured quantity | **measurements.md**, once; everything else cites the figure |
 | What exists right now | **STATUS.md** |
-| A deficiency we know about and are not fixing now | the **`KD<k>` register** — one indexed line in STATUS, the detail at the code marker |
+| A deficiency we know about and are not fixing now | the **`KD<k>` register** — one indexed line in `deficiencies.md`, the detail at the code marker |
 | A limitation whose remedy the user already has today | beside the **mechanism**; it is a property, not a deficiency |
 | A call made unattended, reviewed, and **affirmed with nothing changed** | the `D<k>` entry it governs, as its `Rejected` line — then the STATUS entry is deleted |
 | Why we changed our mind, and the evidence | a **history** entry, cited from the doc holding the decision — never inlined into it |

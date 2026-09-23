@@ -37,11 +37,11 @@ Every one of these is in the *same* change as the code, never a follow-up.
    external behaviour not already recorded there.
 7. **An inbox entry** for each fact a phase with no spec yet will need — the
    fact, why *that* phase cares, where it came from — filed now, not at wrap.
-8. **The deficiency register re-read** if the checklist line names a `KD<k>`:
-   closing its last part strikes index line and code-marker detail together in
-   this change, a part closing into a *property* migrating beside its mechanism;
-   partial closure rewrites the entry to what is still true and never annotates
-   it with what was fixed.
+8. **The deficiency register** (`docs/status/deficiencies.md`) **re-read** if
+   the checklist line names a `KD<k>`: closing its last part strikes index line
+   and code-marker detail together in this change, a part closing into a
+   *property* migrating beside its mechanism; partial closure rewrites the
+   entry to what is still true and never annotates it with what was fixed.
 
 ## Writing or re-slicing a slice list
 

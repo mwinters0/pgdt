@@ -22,7 +22,7 @@ FILES = {
     "docs/design/decisions.md": "# Decisions\n\n## A (`a.rs`)\n### D1 x\nbody\n",
     "docs/status/STATUS.md": (
         "# Status\n\n<!-- repointed: STAMP -->\n\n## What exists\n\n"
-        "| a | b |\n|---|---|\n| x | y |\n\n## Known deficiencies\n\n- **KD1** — 5 MiB. Detail: x\n"
+        "| a | b |\n|---|---|\n| x | y |\n\n## Not started\n\n- a thing that will hold 5 MiB.\n"
     ),
     "docs/status/history/README.md": "# History\n",
     "docs/design/roadmap.md": "# Roadmap\n",

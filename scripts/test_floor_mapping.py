@@ -8,7 +8,7 @@ Stdlib `unittest`, no dependency added and no container, in the idiom
 Two halves. The unit tests run the parse and the verdict against synthetic
 sources, so a change to either fails with a five-line input in front of the
 reader. `CommittedTree` at the bottom runs the whole reconciliation over the
-real `pgtype.rs`, the real `fixtures/` tree and the real `STATUS.md`, and is
+real `pgtype.rs`, the real `fixtures/` tree and the real status files, and is
 the slice's suite assertion.
 
 **The parse is the half worth testing hardest**, for the reason that file
@@ -59,15 +59,17 @@ dependencies = [
 ]
 """
 
-#: A `STATUS.md` holding the two pointers a disposition can carry.
+#: A `STATUS.md` and a `deficiencies.md` holding the two pointers a
+#: disposition can carry: a slice, and a register entry.
 STATUS_MD = """# Status
 
 ## P12 progress
 
 - [ ] **12.3** `interval`.
 - [ ] **12.6** `int2vector`.
+"""
 
-## Known deficiencies
+REGISTER_MD = """# Known deficiencies
 
 <!-- deficiency-watermark: KD13 -->
 
@@ -214,6 +216,8 @@ class Reconciling(unittest.TestCase):
         self.pyproject.write_text(PYPROJECT_TOML)
         self.status = self.root / "STATUS.md"
         self.status.write_text(STATUS_MD)
+        self.register = self.root / "deficiencies.md"
+        self.register.write_text(REGISTER_MD)
         self.fixtures = self.root / "fixtures"
         write_tree(
             self.fixtures,
@@ -226,6 +230,7 @@ class Reconciling(unittest.TestCase):
             kwargs.get("fixtures", self.fixtures),
             kwargs.get("pyproject", self.pyproject),
             kwargs.get("status", self.status),
+            register=kwargs.get("register", self.register),
         )
 
     def test_an_arm_with_no_floor_row_is_named(self) -> None:
@@ -257,12 +262,14 @@ class Reconciling(unittest.TestCase):
         manual = self.root / "manual.md"
         manual.write_text("at least as good as `adbc-driver-postgresql` 1.11.0\n")
         found = fm.reconcile(
-            self.mapping_path, self.fixtures, self.pyproject, self.status, manual
+            self.mapping_path, self.fixtures, self.pyproject, self.status, manual,
+            register=self.register,
         )
         self.assertTrue(any("does not name" in p for p in found.problems))
         manual.write_text("at least as good as `adbc-driver-postgresql` 1.12.0\n")
         found = fm.reconcile(
-            self.mapping_path, self.fixtures, self.pyproject, self.status, manual
+            self.mapping_path, self.fixtures, self.pyproject, self.status, manual,
+            register=self.register,
         )
         self.assertFalse(any("does not name" in p for p in found.problems))
 
@@ -281,7 +288,15 @@ class Reconciling(unittest.TestCase):
     def test_the_check_fails_on_either_direction(self) -> None:
         out = io.StringIO()
         self.assertEqual(
-            fm.check(self.mapping_path, self.fixtures, self.pyproject, self.status, out=out), 1
+            fm.check(
+                self.mapping_path,
+                self.fixtures,
+                self.pyproject,
+                self.status,
+                out=out,
+                register=self.register,
+            ),
+            1,
         )
         self.assertIn("no evidence", out.getvalue())
 
@@ -307,14 +322,18 @@ class Dispositions(unittest.TestCase):
         self.root = Path(self.dir.name)
         self.status = self.root / "STATUS.md"
         self.status.write_text(STATUS_MD)
+        self.register = self.root / "deficiencies.md"
+        self.register.write_text(REGISTER_MD)
 
     def citations(self, *dispositions: fm.Disposition) -> list[str]:
-        return fm._citation_problems(dispositions, self.status)
+        return fm._citation_problems(dispositions, self.register, self.status)
 
     def test_the_committed_dispositions_resolve(self) -> None:
-        """Against the real STATUS.md: every slice named is listed and every
+        """Against the real status files: every slice named is listed and every
         `KD<k>` cited is indexed."""
-        self.assertEqual(fm._citation_problems(fm.DISPOSITIONS, fm.STATUS), [])
+        self.assertEqual(
+            fm._citation_problems(fm.DISPOSITIONS, fm.REGISTER, fm.STATUS), []
+        )
 
     def test_a_slice_no_checklist_lists_is_a_problem(self) -> None:
         problems = self.citations(replace(self.WAITING, closes="12.9"))
@@ -343,6 +362,7 @@ class DispositionsAgainstVerdicts(unittest.TestCase):
         (self.root / "pgtype.rs").write_text(MAPPING_RS)
         (self.root / "pyproject.toml").write_text(PYPROJECT_TOML)
         (self.root / "STATUS.md").write_text(STATUS_MD)
+        (self.root / "deficiencies.md").write_text(REGISTER_MD)
         self.fixtures = self.root / "fixtures"
 
     def problems(self, rows) -> list[str]:
@@ -352,6 +372,7 @@ class DispositionsAgainstVerdicts(unittest.TestCase):
             self.fixtures,
             self.root / "pyproject.toml",
             self.root / "STATUS.md",
+            register=self.root / "deficiencies.md",
         ).problems
 
     def test_a_row_that_started_meeting_the_floor_drops_its_disposition(self) -> None:
@@ -380,7 +401,11 @@ class DispositionsAgainstVerdicts(unittest.TestCase):
         mapping.write_text(MAPPING_RS.replace('"integer" =>', '"money" => (Int64, x), "integer" =>'))
         write_tree(self.fixtures, {"18": [floor_row("money", "int32")]})
         found = fm.reconcile(
-            mapping, self.fixtures, self.root / "pyproject.toml", self.root / "STATUS.md"
+            mapping,
+            self.fixtures,
+            self.root / "pyproject.toml",
+            self.root / "STATUS.md",
+            register=self.root / "deficiencies.md",
         )
         self.assertTrue(any("we answer" in p for p in found.problems))
 
@@ -391,7 +416,7 @@ class DispositionsAgainstVerdicts(unittest.TestCase):
 
 
 class CommittedTree(unittest.TestCase):
-    """The real mapping, the real fixtures and the real STATUS.md."""
+    """The real mapping, the real fixtures and the real status files."""
 
     def test_the_check_passes(self) -> None:
         out = io.StringIO()

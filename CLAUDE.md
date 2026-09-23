@@ -59,6 +59,9 @@ Never edit a `runs/` orchestration script while it is running.
   grilled and specified before code is written.
 - `docs/design/out-of-band.md` — work belonging to no phase. **Read it whole
   before allocating an `M<k>`** and before picking up unscheduled work.
+- `docs/status/deficiencies.md` — the `KD<k>` register. **Read it before
+  grilling or specifying a phase, admitting an `M<k>`, or proposing a change
+  to a mechanism**; each entry's detail is at its code marker.
 - `docs/design/postgres-invariants.md` (`I<n>`) and
   `docs/design/runtime-invariants.md` (`RT<n>`) — properties of `pg_dump`
   output and of the process's environment that decisions depend on. **Add an
@@ -79,8 +82,8 @@ Never edit a `runs/` orchestration script while it is running.
 - `docs/process.md` — the development process. **Don't read it directly:
   invoke the `process` skill** before implementing or wrapping a phase or
   slice, writing a spec, repointing, or updating `STATUS.md`. It holds the
-  rules for `STATUS.md`'s deficiency register (`KD<k>`), "Decisions worth
-  another look", inboxes, repointing, and the keystone.
+  rules for the deficiency register (`KD<k>`), "Decisions worth another
+  look", inboxes, repointing, and the keystone.
 - `docs/status/STATUS.md` — what is built. `docs/status/history/YYYY-MM-DD.md`
   — only what a future session must pick up and discoveries that changed the
   plan, written as settled facts; rules in `docs/status/history/README.md`.

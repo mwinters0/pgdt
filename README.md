@@ -124,7 +124,7 @@ Note that this order is not strictly necessary -- you can "cold query" the file 
 ## Documentation
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
-- [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not, plus known deficiencies). [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
+- [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not); [`docs/status/deficiencies.md`](docs/status/deficiencies.md) beside it indexes the known deficiencies. [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
 - [`docs/manual/`](docs/manual/) — user manual: [type handling](docs/manual/type-handling.md), [dump inspection](docs/manual/dump-inspection.md), [SQL over a dump](docs/manual/datafusion-cli-pgdump.md).
 - [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 500 lines; how the system works is the code and its rustdoc.
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.

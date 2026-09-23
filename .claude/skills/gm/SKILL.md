@@ -24,7 +24,9 @@ then return one of five verdicts.
   sound and stays inside the open phase. Agree, and say in one line why. Counted.
 - **`misfiled`** — not a decision at all, by `process.md`'s "Name the decision,
   or file it elsewhere". Say whether it is a known deficiency, an inbox entry or
-  an out-of-band row, and have the round file it there. Counted.
+  an out-of-band row, and have the round file it there — checking
+  `docs/status/deficiencies.md` first, since it may already be indexed.
+  Counted.
 - **`refuted`** — it contradicts the record **and the record is wrong**; not an
   escalation, see below. Counted, and watched most closely.
 - **`escalate`** — the maintainer must answer this one. Stops the loop.

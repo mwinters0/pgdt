@@ -37,7 +37,7 @@ checklist pairing both ways — a checklist under a row that is not `Current`
 fails, and so does a `Current` row with no checklist — and a known deficiency
 owned by a phase that is `Complete`, `Struck`, or absent from this table has no
 destination, so it drops to `(c) unowned` unless another phase absorbs it
-(`../status/STATUS.md`, "Known deficiencies").
+(`../status/deficiencies.md`, "Known deficiencies").
 
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
@@ -891,7 +891,8 @@ which is what makes the difference worth minding at the moment one is found.
   before it lands, not a spec. **It also raises what the charge bills**, the
   same product being `Partitioning::partition_bytes` — which over-bills the
   plain path already
-  (`KD25`, [`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies"),
+  (`KD25`, [`../status/deficiencies.md`](../status/deficiencies.md),
+  "Known deficiencies"),
   so whichever of the two lands
   first decides whether the other is arithmetic or a second decision.
 

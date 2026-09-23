@@ -93,8 +93,10 @@ PYPROJECT = REPO / "scripts" / "pyproject.toml"
 #: holds for, so moving the pin obliges re-taking the sweep.
 MANUAL = REPO / "docs" / "manual" / "datafusion-cli-pgdump.md"
 
-#: The register the `money` disposition cites, and the checklist a waiting
-#: disposition names a slice of.
+#: The register the `money` disposition cites.
+REGISTER = deficiencies.REGISTER
+
+#: The checklist a waiting disposition names a slice of.
 STATUS = deficiencies.STATUS
 
 #: The extension name that takes a row out of the rule. The driver's bottom is
@@ -198,7 +200,7 @@ class Disposition:
     #: discipline.
     closes: str | None = None
     #: The register entry that carries it, for a row nothing will ever close.
-    #: Resolved against `STATUS.md`'s index.
+    #: Resolved against `deficiencies.md`'s index.
     deficiency: str | None = None
 
 
@@ -481,24 +483,26 @@ class Reconciliation:
 
 
 def _citation_problems(
-    dispositions: Sequence[Disposition], status: Path
+    dispositions: Sequence[Disposition], register: Path, status: Path
 ) -> list[str]:
     """Whatever stops a disposition's citation resolving.
 
     A `waiting` row names the slice that closes it (the spec's D10) and the
     `below-by-decision` row names the register entry that carries it. Both are
-    pointers into `STATUS.md`, and both go stale silently: a re-slice renumbers
-    the first, a strike deletes the second. So they are resolved rather than
-    trusted, which is `deficiencies.py`'s own argument for the slice pairing,
-    reused against the same file.
+    pointers, into `STATUS.md` and `deficiencies.md`, and both go stale
+    silently: a re-slice renumbers the first, a strike deletes the second. So
+    they are resolved rather than trusted, which is `deficiencies.py`'s own
+    argument for the slice pairing, reused against the same files.
     """
     problems: list[str] = []
-    if not status.is_file():
-        return [f"{status} does not exist"]
-    text = status.read_text()
-    entries, _ = deficiencies.parse_index(text)
+    for path in (register, status):
+        if not path.is_file():
+            problems.append(f"{path} does not exist")
+    if problems:
+        return problems
+    entries, _ = deficiencies.parse_index(register.read_text())
     indexed = {entry.id for entry in entries}
-    checklists = deficiencies.parse_checklists(text)
+    checklists = deficiencies.parse_checklists(status.read_text())
     listed = {item.id for items in checklists.values() for item in items}
     for disposition in dispositions:
         if disposition.stance not in STANCES:
@@ -520,7 +524,7 @@ def _citation_problems(
         if disposition.deficiency is not None and disposition.deficiency not in indexed:
             problems.append(
                 f"{disposition.declared} cites {disposition.deficiency}, which "
-                "STATUS's register does not index — the entry was struck or "
+                "the deficiency register does not index — the entry was struck or "
                 "never written"
             )
     return problems
@@ -532,6 +536,7 @@ def reconcile(
     pyproject: Path = PYPROJECT,
     status: Path = STATUS,
     manual: Path = MANUAL,
+    register: Path = REGISTER,
 ) -> Reconciliation:
     out = Reconciliation()
     out.mapping = parse_mapping(mapping_path)
@@ -539,7 +544,7 @@ def reconcile(
     out.dispositions = {d.declared: d for d in DISPOSITIONS}
     if len(out.dispositions) != len(DISPOSITIONS):
         out.problems.append("two dispositions name one declared type")
-    out.problems += _citation_problems(DISPOSITIONS, status)
+    out.problems += _citation_problems(DISPOSITIONS, register, status)
 
     pin, pin_problems = pinned_driver(pyproject)
     out.problems += pin_problems
@@ -704,8 +709,9 @@ def check(
     status: Path = STATUS,
     out=sys.stdout,
     manual: Path = MANUAL,
+    register: Path = REGISTER,
 ) -> int:
-    found = reconcile(mapping_path, fixtures, pyproject, status, manual)
+    found = reconcile(mapping_path, fixtures, pyproject, status, manual, register)
     report(found, out=out)
     return 1 if found.problems or found.unanswered or found.unevidenced else 0
 
@@ -724,13 +730,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--pyproject", type=Path, default=PYPROJECT, help="where the driver pin lives"
     )
     parser.add_argument(
-        "--status", type=Path, default=STATUS, help="the register and slice checklist"
+        "--status", type=Path, default=STATUS, help="the slice checklist"
+    )
+    parser.add_argument(
+        "--register", type=Path, default=REGISTER, help="the deficiency register"
     )
     parser.add_argument(
         "--manual", type=Path, default=MANUAL, help="the page publishing the floor"
     )
     args = parser.parse_args(argv)
-    return check(args.mapping, args.fixtures, args.pyproject, args.status, manual=args.manual)
+    return check(
+        args.mapping,
+        args.fixtures,
+        args.pyproject,
+        args.status,
+        manual=args.manual,
+        register=args.register,
+    )
 
 
 if __name__ == "__main__":

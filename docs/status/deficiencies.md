@@ -1,0 +1,305 @@
+# Known deficiencies
+
+The deficiency register, beside [`STATUS.md`](STATUS.md) and read with it.
+Every known deficiency carries a stable `KD<k>`, allocated on discovery and
+never reused, and **one line here**: what it costs, its stance, and the `.rs`
+file carrying its `deficiency: KD<k>` marker. **The comment at that marker is
+the detail** — it sits on the mechanism, so the session editing the mechanism
+reads it without being sent anywhere. This is an index, not the document.
+
+Three stances, because these are not one kind of thing and the difference
+decides whether anyone should act. **(a)** a consequence of a deliberate
+tradeoff, never to be worked. **(b)** a defect with a known fix and a named
+destination. **(c)** a defect with a known fix and no owner — a legitimate
+resting state, said in those words, naming whatever would promote it. A
+limitation whose remedy the user already has today is not here at all: it is a
+property of how the system works, and it lives beside its mechanism with no
+identifier.
+
+A coverage statement is not a deficiency:
+[`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)'s
+`Unsupported` and `Untested` rows are scope and evidence, and earn a `KD<k>`
+only by naming one.
+
+An entry is struck by the change that closes its last part, not at a phase
+boundary, and a part closing into a *property* migrates beside its mechanism
+rather than being deleted. <!-- deficiency-watermark: KD44 -->
+**`KD1`–`KD44` are allocated, and nothing at or below `KD44` is reused** — a
+number the index below does not carry is a struck entry, not a typo. That
+watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
+marker beside it is what a citation resolves against; the names of the struck
+entries went at the keystone, `git log` being what answers *when*.
+
+Where a `(b)` entry's owning phase has been sliced, the entry names the slice
+and the slice names the entry, so landing one re-reads the other and a re-slice
+is obliged to re-target. The two directions are asymmetric: a checklist line is
+a **record**, so its `KD<k>` is a citation that may name a struck entry and may
+not name a number nobody allocated; an entry is **present tense**, so it may
+name only live slices, and naming a ticked one is an error — closing a part
+rewrites the entry in the change that ticks the box. A `(b)` stance also needs
+its destination to exist: an entry owned by a phase the roadmap's index calls
+`Complete` or `Struck`, or does not list, drops to `(c) unowned` unless a phase
+actually absorbs it.
+
+`cd scripts && uv run deficiencies.py` reconciles this index against the code
+markers — one apiece, in the file the entry names, and none anywhere under
+`docs/` — against [`STATUS.md`](STATUS.md)'s slice checklist and against the
+roadmap's phase index, and fails on any of them. An entry owned by a phase
+with no checklist yet names no slice and is not asked to. That last read is
+pinned at both ends: a phase carrying a checklist is `Current` in the index and
+a `Current` phase carries one, so a wrap that dropped the checklist and left
+the state, or a slicing that wrote the checklist and left it, fails here rather
+than reading as a phase nobody has sliced.
+
+- **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
+  span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
+  `Span::toc`. **(c) unowned**; promoted by a dump in hand whose data spans
+  need attribution. Detail: `pgdump_query/src/map.rs`.
+
+- **KD2** — an array nested inside a composite is decided optimistically, so a
+  multi-dimensional or `[lb:ub]=`-decorated value there is a hard
+  `Error::FieldDecode`. **(c) unowned**; promoted by a schema that holds one,
+  the per-path census being deferred on frequency. Detail:
+  `pgdump_query/src/resolve.rs`.
+
+- **KD3** — two array shapes come back as text with no way to ask for more,
+  `NestedArrayElement` and `VaryingArrayShape`, though both are fully
+  understood. **(c) unowned**; promoted by a caller whose arrays are matrices
+  or scientific data, for whom a string is the wrong answer. Detail:
+  `pgdump_query/src/pgtype.rs`.
+
+- **KD4** — a type name that needs quoting resolves `Unknown` (I29): a weaker
+  type, never a wrong one. **(c) unowned**; promoted by a dump whose type names
+  are not ordinary identifiers, which neither any fixture nor koji is. Detail:
+  `pgdump_query/src/pgtype.rs`.
+
+- **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
+  wherever the save throttle's gate does not close it — which is every
+  `--dtcache none` scan, since a no-op save leaves nothing to amortize.
+  **(c) unowned**; promoted by a dump with thousands of blocks
+  scanned under `--dtcache none`. Detail: `pgdump_query/src/stream.rs`.
+
+- **KD6** — a conflicting table past a query's stopping point is never seen, so
+  `Error::AmbiguousTable` is not raised for it and the query returns the
+  candidate it found. The DataFusion provider never shows it, reading only a
+  complete map. **(c) unowned**; promoted by a concatenated or
+  `pg_dumpall`-style file reaching a user through a cold query. Detail:
+  `pgdump_query/src/batch.rs`.
+
+- **KD7** — a column that *states* a collation this build does not implement is
+  compared bytewise, so the row set is not the server's: under `<`/`>` always,
+  and under `=`/`!=` where the dump declares it `deterministic = false` (I42);
+  the fix is a comparison per named collation, up to a provider version. **(c)
+  unowned**; promoted by [`../design/roadmap.md`](../design/roadmap.md)'s
+  Future item "collation-aware comparison", intent without a phase. Detail:
+  `pgdump_query/src/pgtype.rs`.
+
+- **KD8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, nor —
+  on an `interval` — a time part past `2562047:47:16.854775807`, so
+  materializing one raises `Error::FieldDecode` and there is no typed way to
+  read the value. **(c) unowned**; promoted by whichever phase takes typed
+  materialization, which is where the choice between a null, a sentinel and the
+  error belongs. Detail: `pgdump_query/src/decode.rs`.
+
+- **KD9** — an `INSERT` run costs several times a `COPY` scan's per-byte CPU
+  warm and most of a cold NVMe scan's time (`measurements.md`,
+  `scan-throughput-warm` and `scan-throughput-nvme`), and two cuts
+  against that remainder are known and untaken. **(b) owned by P8**, whose
+  Track A row reader extends the very scan both cuts are in; the cold-NVMe
+  figure confirmed the entry where it might have retired it. Detail:
+  `pgdump_query/src/preamble.rs`.
+
+- **KD10** — a column whose declared type this build models no comparison for
+  answers `=`/`!=` bytewise, which is not the server's answer for the geometric
+  types (`box_eq` compares areas), so the row set is wrong; ordering is refused
+  outright, and the announcement misses a type reached through a container
+  (`box[]`). **(c) unowned**; promoted by a dump whose queried columns are
+  geometric or hold a `money`-shaped extension type. Detail:
+  `pgdump_query/src/pgtype.rs`.
+
+- **KD13** — `money` is below the ADBC floor: the driver answers `int64` and we
+  answer `Utf8View`, because `cash_out` renders through the monetary locale and
+  `pg_dump` sets `lc_monetary` nowhere, so the file cannot say which locale
+  wrote a value. **(a) deliberate tradeoff** — closing it means guessing a
+  locale or asking for one, which the bar refuses for every other type. Detail:
+  `pgdump_query/src/pgtype.rs`.
+
+- **KD17** — a plain typed `query` gains about a tenth by four sub-streams
+  and nothing past them (`measurements.md`, `parallel-scan-throughput`). The
+  named suspect — `POOL_DEPTH` clamping the chunk pool — moved no cell
+  measurably in a probe build that lifts it, so what caps them is
+  unidentified. **(c) unowned**; promoted by a phase that
+  takes up plain-source extraction throughput, since no defaults change reaches
+  it. Detail: `pgdump_query/src/stream.rs`.
+
+- **KD20** — a block-decoding worker decodes its **successor's block as well as
+  its own**, nothing sharing the two, so a parallel compressed scan does about
+  twice the decode work and its speedup is capped near half the reader count.
+  **(c) unowned**; promoted by a phase taking up compressed scan throughput,
+  and the fix left is an in-flight map, a wider cut having been measured and
+  refused. Detail: `pgdump_query/src/io.rs`.
+
+- **KD21** — the block pool's slot ceiling follows the worker count a caller
+  *announced* rather than the one delivered, so a `--jobs` well above what the
+  read-buffer budget affords holds more than that budget — 1,280 MiB against
+  1,024 at `--jobs 24` and a 1 GiB budget on a 128 MiB-block file.
+  **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
+  Detail: `pgdump_query/src/io.rs`.
+
+- **KD22** — the leader cuts a window of `workers × partition_bytes` from a
+  `COPY` block's start and drains every piece before merging, so a dump of
+  blocks much smaller than that window is read and parsed two orders of
+  magnitude over, worse at every worker added and reached with no flag typed.
+  **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
+  `pgdump_query/src/leader.rs`.
+
+- **KD23** — a `pgdt query` sub-stream can pin several decoded blocks where the
+  budget bills one: a query partition is cut over a whole `CopyBlock` rather
+  than through the leader's window, so `BOUNDARIED_PARTITION_UNITS` does not
+  bound it and a held batch's `max_source_span` reaches up to four of koji's 24
+  MiB blocks. **(c) unowned**; promoted by a phase that takes up query-path
+  memory, the repair reversing a recorded decision either way. Detail:
+  `pgdump_query/src/stream.rs`.
+
+- **KD24** — the chunk pool's free list is billed nowhere, so a compressed
+  source's charge is short by `⌊budget/chunk⌋.clamp(1, POOL_DEPTH)` chunks — 4
+  MiB at the shipped chunk, 64 MiB against 16 billed at `--chunk-size 16m`,
+  flat in the count and never above the stated budget unless one chunk is. **(c) unowned**;
+  promoted by a caller announcing a large chunk, or by a phase reworking
+  `WorkerMemory`, which has no count-independent term to bill it with. Detail:
+  `pgdump_query/src/io.rs`.
+
+- **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS × chunk` a reader
+  where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
+  memory at all, so plain readers are bounded by a charge describing nothing held — 8 MiB
+  billed against 4 held at the shipped chunk, and unbounded above a budget of
+  `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
+  scan on a real device, which is that path's own reopening condition. Detail:
+  `pgdump_query/src/io.rs`.
+
+- **KD26** — no charge bills a compressed source's seek table, the only
+  unbilled term in the account that grows with the file rather than the count —
+  3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
+  read off. **(c) unowned**; promoted by a source whose index is not small
+  beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
+  has no per-source term to bill it with. Detail: `pgdump_query/src/io.rs`.
+
+- **KD32** — `max_source_span` is solved against the read-buffer budget, which
+  D83 leaves at `DEFAULT_MEMORY_BUDGET` capped by the allowance on a plain
+  source whatever `--memory` states, so a plain `query`'s sub-stream count and
+  batch size are fixed at the number D3 picked to decline block decode on an
+  ordinary `.xz`: a stated allowance moves neither, and the only flag that
+  does is `--chunk-size`, both terms of the charge sized from it.
+  **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
+  on a real device. Detail: `pgdump_query/src/stream.rs`.
+
+- **KD14** — peak resident set is flat in dump bytes but grows several
+  kilobytes per table, over a third of it live structure the preamble alone
+  pays (`measurements.md`, `peak-rss` and `rss-attribution`).
+  **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
+  in hand being one. Detail: `pgdump_query/src/preamble.rs`.
+
+- **KD29** — a flagless `pgdt` run reads its memory limit once for the
+  status lines and the statistics allowance and again inside
+  `Parallelism::discover_holding_in` for each read-buffer budget it carves, so
+  a limit rewritten between two reads is announced and carved for statistics as
+  one number while the pools are budgeted from another. **(c) unowned**; promoted by a limit
+  seen to move inside a run, or by discovery that can take a limit already
+  read. Detail: `pgdt/src/main.rs`.
+
+- **KD30** — a cache from a build whose persisted shape changed is decoded
+  whole before its version is read, so it almost always reads as not a pgdt
+  cache rather than as another build's, and `info` sends the user to check the
+  path. **(c) unowned**; promoted by a user misled by it, the fix being the
+  version read first. Detail: `pgdump_query/src/cache.rs`.
+
+- **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
+  the run's start, so a span following one longer than the cap can be stored
+  empty and `truncated` however short it is. **(c) unowned**; promoted by a
+  `--map` listing seen to lose a statement's text. Detail:
+  `pgdump_query/src/map.rs`.
+
+- **KD33** — statistics stop where the account fills: nothing releases
+  `Term::Retained` while the pass gathers forward, so a dump long enough fills
+  its allowance partway through and every block after it declines, leaving statistics a prefix of the
+  file and a query pruning nothing over the tail. How much is covered depends on
+  the allowance the box resolved, which a user cannot predict. **(b) owned by
+  P23**, whose remedy is a granularity derived from the dump's length. Detail:
+  `pgdump_query/src/gather.rs`.
+
+- **KD35** — a budget too small for a decoded block is read serially: the
+  piecewise arm advises one partition on both providers, where a decoder retains
+  far less than the block it decodes and several would fit. What pins the count
+  at one is not the budget but one forward-only handle behind a mutex — the
+  fetched arm's statelessness, which would have served several partitions for
+  want of cut points alone, was spent to stop it re-decoding a block a scan sits
+  inside. **(c) unowned**; promoted by a phase taking up compressed scan
+  throughput, which is also what takes the figure. Detail: `pgdump_query/src/io.rs`.
+
+- **KD36** — a fetched `.xz` file with no cached seek table is walked one
+  request at a time, so a cold remote open costs at least four round trips per
+  stream — a footer, an index, a header and a padding probe — before a row is
+  read. The remedy is a straddling window, below which one fetch a stream is a
+  floor rather than a remaining cost. **(c) unowned**; promoted by a phase that
+  tunes the network, which is where the deferred fetch policy belongs.
+  Detail: `pgdump_query/src/io.rs`.
+
+- **KD37** — a cancelled read the leader dispatched inside the statistics
+  back-fill propagates instead of banking: a source answering a cancellation by
+  failing its read ends a `parse` as `Error::ScanCancelled` with nothing saved,
+  where the same Ctrl-C during the mapping pass is an interrupted run. **(c)
+  unowned**; promoted by a parallel remote `parse` seen to error on Ctrl-C after
+  its map reached EOF, the fix being the arm the mapping pass already carries.
+  Detail: `pgdump_query/src/stream.rs`.
+
+- **KD38** — a pgdump scan planned while others hold the session budget gets
+  what they left, so a join's second-planned table can run on one reader while
+  the first holds the whole allowance: planning order, which the user does not
+  choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
+  of two pgdump tables slowed by it. Detail: `datafusion-pgdump/src/budget.rs`.
+
+- **KD39** — a `MIN` never answers from the DataFusion provider's statistics
+  for a text-ordered column, and neither extreme does for an enum: a stored
+  lower bound does not say whether it is the value it came from, only the
+  upper one does, and an enum's column is emitted `Dictionary`, whose
+  `MIN`/`MAX` DataFusion types as the value type. Those queries read every
+  row. **(c) unowned**; promoted by a user for whom `MIN` over text is the
+  query that matters, the fix being a flag beside `max_exact` and a
+  `CACHE_FORMAT_VERSION` bump. Detail: `datafusion-pgdump/src/statistics.rs`.
+
+- **KD40** — a `--create` or `pg_dumpall` dump states each database's
+  collation (I32), and nothing reads it: every text column with no `COLLATE`
+  clause still warns that the dump does not record its collation, so a `C`
+  database's columns warn where they agree with the server, and another
+  collation's are announced as a possibility rather than a fact. **(c)
+  unowned**; promoted by the roadmap's "Collation-aware comparison", whose
+  environment-free half it belongs to. Detail: `pgdump_query/src/pgtype.rs`.
+
+- **KD41** — a replay plan never announces its read chunk, so a plain
+  source is cut by the chunk its last read announced: a `pgdt query` over a
+  complete cache plans at the default whatever `--chunk-size` states, and a
+  provider's first scan after `SET pgdump.chunk_size` at the chunk before it,
+  so the smaller chunk a plan note advises seats nothing more on that plan.
+  **(c) unowned**; promoted by a stated chunk seen not to seat what the note
+  promised. Detail: `pgdump_query/src/stream.rs`.
+
+- **KD42** — a float column holding both `-0` and `0` at an extreme can be
+  handed to DataFusion an `Exact` `MIN` or `MAX` of the other zero: its bound
+  is gathered in PostgreSQL's order, where the two tie, and DataFusion's
+  aggregate orders by `total_cmp`. A wrong answer with no error. **(c)
+  unowned**; promoted by a float column seen to hold both zeros at an extreme.
+  Detail: `datafusion-pgdump/src/statistics.rs`.
+
+- **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
+  last group stands unpaired: at 19, 39, 59… groups one merge can lower the
+  90th-percentile group it is read at, so a block already past the maximum
+  merges further past it. **(c) unowned**; promoted by a stated maximum seen
+  to leave a block's groups past it. Detail: `pgdump_query/src/gather.rs`.
+
+- **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
+  its charge and its statistics account: the attribution sitting read a worst
+  remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`
+  leg from 1 GiB up was OOM-killed in every rep on that build. The reserve was
+  fixed before statistics existed and has not been read since. **(b) owned by
+  P23**, which sets it from those readings and runs the blind gate an
+  attribution cannot stand in for. Detail: `pgdump_query/src/io.rs`.

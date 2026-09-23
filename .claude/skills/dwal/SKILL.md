@@ -24,8 +24,9 @@ entries touching the same mechanism, whose answers constrain each other.
 
 It was written by a session that has since ended, about code and docs that have
 moved. Before framing a single question: read the mechanism it governs — the
-source it names and the `decisions.md` entry or spec documenting it; check its
-claims against what is actually there; and look for what it did *not* consider,
+source it names, the `decisions.md` entry or spec documenting it, and the
+`docs/status/deficiencies.md` entries naming that source; check its claims
+against what is actually there; and look for what it did *not* consider,
 its author's framing being the likeliest thing to be too narrow — a binary where
 a third option exists, a rule stated in one direction the code enforces in both.
 Finding that is the highest value this review has. Finding facts is your job,

@@ -103,9 +103,9 @@ attributes an `--inserts` dump's rows" and "Grilling M7", I31 in
 "D33".
 
 **Contingent on.** The `--disable-triggers` deficiency `KD1` staying open
-(`../status/STATUS.md`, "Known deficiencies"). If the unscheduled fix for it
-(`roadmap.md`, "Future") lands first, both shapes collapse back to one and only
-the `data_offset` question remains.
+(`../status/deficiencies.md`, "Known deficiencies"). If the unscheduled fix
+for it (`roadmap.md`, "Future") lands first, both shapes collapse back to one
+and only the `data_offset` question remains.
 
 ---
 

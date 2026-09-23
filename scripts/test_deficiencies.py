@@ -25,9 +25,7 @@ from pathlib import Path
 
 import deficiencies
 
-INDEX_HEAD = """# Status
-
-## Known deficiencies
+INDEX_HEAD = """# Known deficiencies
 
 The deficiency register. Prose above the entries, which the parser must skip.
 <!-- deficiency-watermark: KD9 -->
@@ -108,6 +106,16 @@ CODE_D3 = marker("KD3")
 CODE_D4 = marker("KD4")
 CODE_D1_D3 = CODE_D1 + "\n" + CODE_D3
 
+#: A `STATUS.md` with no phase sliced; a test slicing one puts its checklist
+#: between this and `TAIL`.
+STATUS_HEAD = """# Status
+
+## Not started
+
+Nothing.
+
+"""
+
 TAIL = """## Decisions worth another look
 
 *Nothing is open.*
@@ -128,12 +136,14 @@ def roadmap_for(status: str) -> str:
 def build(
     tmp: Path,
     *,
-    status: str,
+    register: str,
+    status: str = STATUS_HEAD + TAIL,
     code: str = "",
     roadmap: str | None = None,
     extra=None,
 ) -> Path:
-    """A repo shaped like this one: an index, a doc tree, a crate source dir.
+    """A repo shaped like this one: an index beside a status, a doc tree, a
+    crate source dir.
 
     `code` is `pgdump_query/src/lib.rs`, which every fixture entry names as its
     detail. A second source file, or a stray marker in a document, goes through
@@ -143,6 +153,7 @@ def build(
     (tmp / "docs" / "status").mkdir(parents=True)
     (tmp / "docs" / "design").mkdir(parents=True)
     (tmp / "pgdump_query" / "src").mkdir(parents=True)
+    (tmp / "docs" / "status" / "deficiencies.md").write_text(register)
     (tmp / "docs" / "status" / "STATUS.md").write_text(status)
     (tmp / "docs" / "design" / "roadmap.md").write_text(roadmap)
     (tmp / "pgdump_query" / "src" / "lib.rs").write_text(code)
@@ -161,7 +172,7 @@ def run(tmp: Path) -> tuple[int, str]:
 
 class Parsing(unittest.TestCase):
     def test_an_entry_yields_its_stance_and_detail(self):
-        entries, problems = deficiencies.parse_index(INDEX_HEAD + ENTRY_D1 + ENTRY_D2 + TAIL)
+        entries, problems = deficiencies.parse_index(INDEX_HEAD + ENTRY_D1 + ENTRY_D2)
         self.assertEqual(problems, [])
         self.assertEqual([e.id for e in entries], ["KD1", "KD2"])
         self.assertEqual(entries[0].stance, "c")
@@ -171,7 +182,7 @@ class Parsing(unittest.TestCase):
         self.assertEqual(entries[0].detail, "pgdump_query/src/lib.rs")
 
     def test_prose_above_the_entries_is_not_an_entry(self):
-        entries, problems = deficiencies.parse_index(INDEX_HEAD + ENTRY_D1 + TAIL)
+        entries, problems = deficiencies.parse_index(INDEX_HEAD + ENTRY_D1)
         self.assertEqual(len(entries), 1)
         self.assertEqual(problems, [])
 
@@ -181,42 +192,42 @@ class Parsing(unittest.TestCase):
         self.assertEqual([e.id for e in entries], ["KD1"])
 
     def test_a_deleted_section_is_a_problem_not_an_empty_register(self):
-        entries, problems = deficiencies.parse_index("# Status\n\n## Not started\n\nnothing\n")
+        entries, problems = deficiencies.parse_index(STATUS_HEAD + TAIL)
         self.assertEqual(entries, [])
         self.assertIn("the register is gone", problems[0])
 
     def test_a_stanceless_entry_is_named(self):
-        text = INDEX_HEAD + "- **KD1** — a thing. Detail: `pgdump_query/src/lib.rs`.\n" + TAIL
+        text = INDEX_HEAD + "- **KD1** — a thing. Detail: `pgdump_query/src/lib.rs`.\n"
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("KD1 declares no stance" in p for p in problems))
 
     def test_stance_c_must_say_unowned_in_that_word(self):
-        text = INDEX_HEAD + ENTRY_D1.replace("unowned", "nobody is on it") + TAIL
+        text = INDEX_HEAD + ENTRY_D1.replace("unowned", "nobody is on it")
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any('does not say "unowned"' in p for p in problems))
 
     def test_stance_b_must_name_a_destination(self):
-        text = INDEX_HEAD + ENTRY_D2.replace("owned by P7", "owned") + TAIL
+        text = INDEX_HEAD + ENTRY_D2.replace("owned by P7", "owned")
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("names no destination" in p for p in problems))
 
     def test_stance_a_must_say_it_is_a_tradeoff(self):
-        text = INDEX_HEAD + ENTRY_D1.replace("(c) unowned", "(a) fine as it is") + TAIL
+        text = INDEX_HEAD + ENTRY_D1.replace("(c) unowned", "(a) fine as it is")
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("deliberate tradeoff" in p for p in problems))
 
     def test_an_entry_with_no_detail_pointer_is_named(self):
-        text = INDEX_HEAD + "- **KD1** — a thing. **(c) unowned**; promoted by nothing.\n" + TAIL
+        text = INDEX_HEAD + "- **KD1** — a thing. **(c) unowned**; promoted by nothing.\n"
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("names no detail entry" in p for p in problems))
 
     def test_a_repeated_identifier_is_named(self):
-        text = INDEX_HEAD + ENTRY_D1 + ENTRY_D1 + TAIL
+        text = INDEX_HEAD + ENTRY_D1 + ENTRY_D1
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("indexed 2 times" in p for p in problems))
 
     def test_a_bullet_that_is_not_an_entry_is_named(self):
-        text = INDEX_HEAD + "- a deficiency someone forgot to number.\n" + TAIL
+        text = INDEX_HEAD + "- a deficiency someone forgot to number.\n"
         _, problems = deficiencies.parse_index(text)
         self.assertTrue(any("does not open" in p for p in problems))
 
@@ -241,16 +252,26 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                register=INDEX_HEAD + ENTRY_D1,
                 code=CODE_D1,
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
             self.assertIn("all resolve", text)
 
+    def test_a_missing_register_file_is_the_register_gone(self):
+        """The register has its own file, so deleting it is one step, and it
+        must read as a deleted register rather than an empty one."""
+        with tempfile.TemporaryDirectory() as d:
+            build(Path(d), register=INDEX_HEAD + ENTRY_D1, code=CODE_D1)
+            (Path(d) / "docs" / "status" / "deficiencies.md").unlink()
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("the register is gone", text)
+
     def test_an_indexed_entry_with_no_marker_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            build(Path(d), status=INDEX_HEAD + ENTRY_D1 + TAIL, code="")
+            build(Path(d), register=INDEX_HEAD + ENTRY_D1, code="")
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("no code marker carries its detail", text)
@@ -259,7 +280,7 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                register=INDEX_HEAD + ENTRY_D1,
                 code=CODE_D1 + marker("KD9"),
             )
             code, text = run(Path(d))
@@ -272,7 +293,7 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                register=INDEX_HEAD + ENTRY_D1,
                 code="",
                 extra={"pgdt/src/main.rs": CODE_D1},
             )
@@ -286,7 +307,7 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                register=INDEX_HEAD + ENTRY_D1,
                 code=CODE_D1 + CODE_D1,
             )
             code, text = run(Path(d))
@@ -297,7 +318,7 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + "<!-- deficiency: KD1 -->\n" + TAIL,
+                register=INDEX_HEAD + ENTRY_D1 + "<!-- deficiency: KD1 -->\n",
                 code=CODE_D1,
             )
             code, text = run(Path(d))
@@ -311,7 +332,7 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                register=INDEX_HEAD + ENTRY_D1,
                 code=CODE_D1,
                 extra={
                     "docs/design/decisions.md": "<!-- deficiency: KD1 -->\nfiled here\n"
@@ -325,7 +346,7 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1.replace("lib.rs", "gone.rs") + TAIL,
+                register=INDEX_HEAD + ENTRY_D1.replace("lib.rs", "gone.rs"),
                 code="",
             )
             code, text = run(Path(d))
@@ -338,9 +359,8 @@ class Reconciliation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1.replace("pgdump_query/src/lib.rs", "docs/design/decisions.md")
-                + TAIL,
+                register=INDEX_HEAD
+                + ENTRY_D1.replace("pgdump_query/src/lib.rs", "docs/design/decisions.md"),
                 code=CODE_D1,
             )
             code, text = run(Path(d))
@@ -350,7 +370,7 @@ class Reconciliation(unittest.TestCase):
 
 class WatermarkParsing(unittest.TestCase):
     def test_the_marker_carries_the_allocated_range(self):
-        mark, problems = deficiencies.parse_watermark(INDEX_HEAD + ENTRY_D1 + TAIL)
+        mark, problems = deficiencies.parse_watermark(INDEX_HEAD + ENTRY_D1)
         self.assertEqual(mark, "KD9")
         self.assertEqual(problems, [])
 
@@ -379,7 +399,7 @@ class WatermarkParsing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1.replace("KD1", "KD12") + TAIL,
+                register=INDEX_HEAD + ENTRY_D1.replace("KD1", "KD12"),
                 code=marker("KD12"),
             )
             code, text = run(Path(d))
@@ -436,7 +456,7 @@ class OwningPhaseState(unittest.TestCase):
 
     def test_an_entry_owned_by_a_complete_phase_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            build(Path(d), status=INDEX_HEAD + ENTRY_D4 + TAIL, code=CODE_D4)
+            build(Path(d), register=INDEX_HEAD + ENTRY_D4, code=CODE_D4)
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("KD4 is (b) owned by P12, which is complete", text)
@@ -446,7 +466,7 @@ class OwningPhaseState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D4.replace("P12", "P2") + TAIL,
+                register=INDEX_HEAD + ENTRY_D4.replace("P12", "P2"),
                 code=CODE_D4,
             )
             code, text = run(Path(d))
@@ -457,7 +477,7 @@ class OwningPhaseState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D4.replace("P12", "P42") + TAIL,
+                register=INDEX_HEAD + ENTRY_D4.replace("P12", "P42"),
                 code=CODE_D4,
             )
             code, text = run(Path(d))
@@ -470,8 +490,8 @@ class OwningPhaseState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
+                register=INDEX_HEAD + ENTRY_D1,
+                status=STATUS_HEAD
                 + "## P12 progress\n\n- [x] **12.1** A slice that landed.\n\n"
                 + TAIL,
                 code=CODE_D1,
@@ -485,7 +505,7 @@ class OwningPhaseState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D2 + TAIL,
+                register=INDEX_HEAD + ENTRY_D2,
                 code=CODE_D2,
             )
             code, text = run(Path(d))
@@ -500,7 +520,8 @@ class PhaseChecklistPairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
+                register=INDEX_HEAD + ENTRY_D1 + ENTRY_D3,
+                status=STATUS_HEAD + CHECKLIST + TAIL,
                 code=CODE_D1_D3,
                 roadmap=ROADMAP_SLICED,
             )
@@ -513,7 +534,8 @@ class PhaseChecklistPairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
+                register=INDEX_HEAD + ENTRY_D1 + ENTRY_D3,
+                status=STATUS_HEAD + CHECKLIST + TAIL,
                 code=CODE_D1_D3,
                 roadmap=ROADMAP,
             )
@@ -530,7 +552,7 @@ class PhaseChecklistPairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                register=INDEX_HEAD + ENTRY_D1,
                 code=CODE_D1,
                 roadmap=ROADMAP_SLICED,
             )
@@ -548,8 +570,8 @@ class PhaseChecklistPairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
+                register=INDEX_HEAD + ENTRY_D1,
+                status=STATUS_HEAD
                 + "## P42 progress\n\n- [ ] **42.1** A slice.\n\n"
                 + TAIL,
                 code=CODE_D1,
@@ -565,7 +587,7 @@ class PhaseChecklistPairing(unittest.TestCase):
 
 class ChecklistParsing(unittest.TestCase):
     def test_a_checklist_yields_its_slices_with_their_state(self):
-        checklists = deficiencies.parse_checklists(INDEX_HEAD + CHECKLIST + TAIL)
+        checklists = deficiencies.parse_checklists(STATUS_HEAD + CHECKLIST + TAIL)
         self.assertEqual(sorted(checklists), [11])
         self.assertEqual([s.id for s in checklists[11]], ["11.1", "11.5", "11.6"])
         self.assertEqual([s.done for s in checklists[11]], [True, False, False])
@@ -580,7 +602,7 @@ class ChecklistParsing(unittest.TestCase):
         self.assertEqual(len(checklists[11]), 3)
 
     def test_a_phase_with_no_checklist_is_absent(self):
-        checklists = deficiencies.parse_checklists(INDEX_HEAD + ENTRY_D3 + TAIL)
+        checklists = deficiencies.parse_checklists(STATUS_HEAD + TAIL)
         self.assertEqual(checklists, {})
 
     def test_two_phases_in_flight_each_keep_their_own(self):
@@ -611,7 +633,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
+                register=INDEX_HEAD + ENTRY_D1 + ENTRY_D3,
+                status=STATUS_HEAD + CHECKLIST + TAIL,
                 code=CODE_D1_D3,
             )
             code, text = run(Path(d))
@@ -624,8 +647,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D2
+                register=INDEX_HEAD + ENTRY_D2,
+                status=STATUS_HEAD
                 + CHECKLIST.replace("Closes `KD3`'s first row.", "").replace(
                     ", and **strikes `KD3`**", ""
                 )
@@ -639,10 +662,10 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D3.replace(", struck at\n  11.6", "").replace(
+                register=INDEX_HEAD + ENTRY_D3.replace(", struck at\n  11.6", "").replace(
                     "— 11.5 closes the first row and 11.6 the last.", "It will."
-                )
+                ),
+                status=STATUS_HEAD
                 + CHECKLIST.replace("Closes `KD3`'s first row.", "").replace(
                     ", and **strikes `KD3`**", ""
                 )
@@ -659,8 +682,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D3
+                register=INDEX_HEAD + ENTRY_D3,
+                status=STATUS_HEAD
                 + CHECKLIST.replace("**11.6**", "**11.6.1**")
                 + TAIL,
                 code=CODE_D3,
@@ -677,8 +700,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D3
+                register=INDEX_HEAD + ENTRY_D3,
+                status=STATUS_HEAD
                 + CHECKLIST.replace(", and **strikes `KD3`**", "")
                 + TAIL,
                 code=CODE_D3,
@@ -694,9 +717,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
-                + ENTRY_D3
+                register=INDEX_HEAD + ENTRY_D1 + ENTRY_D3,
+                status=STATUS_HEAD
                 + CHECKLIST.replace(
                     "- [ ] **11.5** The first row. Closes `KD3`'s first row.",
                     "- [ ] **11.5** The first row. Closes `KD1` too.",
@@ -717,9 +739,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
-                + ENTRY_D3
+                register=INDEX_HEAD + ENTRY_D1 + ENTRY_D3,
+                status=STATUS_HEAD
                 + CHECKLIST.replace("`KD3`'s first row", "`KD9`'s first row")
                 + TAIL,
                 code=CODE_D1_D3,
@@ -738,8 +759,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D3
+                register=INDEX_HEAD + ENTRY_D3,
+                status=STATUS_HEAD
                 + CHECKLIST.replace(
                     "- [ ] **11.5** The first row.", "- [x] **11.5** The first row."
                 )
@@ -756,8 +777,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
+                register=INDEX_HEAD + ENTRY_D1,
+                status=STATUS_HEAD
                 + CHECKLIST.replace(
                     "- [x] **11.1** A slice that landed.",
                     "- [x] **11.1** A slice that landed, striking `KD8`.",
@@ -776,8 +797,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
+                register=INDEX_HEAD + ENTRY_D1,
+                status=STATUS_HEAD
                 + CHECKLIST.replace(
                     "- [x] **11.1** A slice that landed.",
                     "- [x] **11.1** A slice that landed, striking `KD12`.",
@@ -801,8 +822,8 @@ class SlicePairing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             build(
                 Path(d),
-                status=INDEX_HEAD
-                + ENTRY_D1
+                register=INDEX_HEAD + ENTRY_D1,
+                status=STATUS_HEAD
                 + CHECKLIST.replace(
                     "- [x] **11.1** A slice that landed.",
                     "- [x] **11.1** A slice that landed, closing `KD8` and `KD1`.",
@@ -820,7 +841,7 @@ class SlicePairing(unittest.TestCase):
         pointing into a slice list that is gone."""
         with tempfile.TemporaryDirectory() as d:
             build(
-                Path(d), status=INDEX_HEAD + ENTRY_D3 + TAIL, code=CODE_D3
+                Path(d), register=INDEX_HEAD + ENTRY_D3, code=CODE_D3
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -847,7 +868,7 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(code, 0, out.getvalue())
 
     def test_every_entry_has_an_identifier_that_is_a_number(self):
-        entries, problems = deficiencies.parse_index((deficiencies.STATUS).read_text())
+        entries, problems = deficiencies.parse_index(deficiencies.REGISTER.read_text())
         self.assertEqual(problems, [])
         self.assertTrue(entries)
         for entry in entries:
@@ -865,10 +886,9 @@ class ThisRepo(unittest.TestCase):
         there is no checklist in the tree at all. The rule itself is carried in
         both directions by the fixture tests above; what this adds is that the
         real files satisfy it while there is anything to satisfy."""
-        text = (deficiencies.STATUS).read_text()
-        entries, problems = deficiencies.parse_index(text)
+        entries, problems = deficiencies.parse_index(deficiencies.REGISTER.read_text())
         self.assertEqual(problems, [])
-        checklists = deficiencies.parse_checklists(text)
+        checklists = deficiencies.parse_checklists(deficiencies.STATUS.read_text())
         if not checklists:
             self.skipTest("no phase is sliced right now")
         paired = [
@@ -888,9 +908,9 @@ class ThisRepo(unittest.TestCase):
         """Not a restatement of the check: this asserts the marker is actually
         in the file, so a repo that lost it cannot pass the citation rule
         vacuously."""
-        mark, problems = deficiencies.parse_watermark((deficiencies.STATUS).read_text())
+        mark, problems = deficiencies.parse_watermark(deficiencies.REGISTER.read_text())
         self.assertEqual(problems, [])
-        entries, _ = deficiencies.parse_index((deficiencies.STATUS).read_text())
+        entries, _ = deficiencies.parse_index(deficiencies.REGISTER.read_text())
         for entry in entries:
             self.assertLessEqual(deficiencies._index(entry.id), deficiencies._index(mark))
 
@@ -903,8 +923,7 @@ class ThisRepo(unittest.TestCase):
         phase has already wrapped. Those are skipped here for the same reason
         the check skips them, rather than asserted over: there is nothing to
         resolve a ledger row against that this test would not be inventing."""
-        text = (deficiencies.STATUS).read_text()
-        entries, problems = deficiencies.parse_index(text)
+        entries, problems = deficiencies.parse_index(deficiencies.REGISTER.read_text())
         self.assertEqual(problems, [])
         phases, problems = deficiencies.parse_phase_index(
             (deficiencies.ROADMAP).read_text()
@@ -934,7 +953,7 @@ class ThisRepo(unittest.TestCase):
         and nothing is sliced again until the next phase is. Skipping there is
         not vacuity — the pairing's two failure directions are asserted over
         fixtures above, and this is only the tree's instance of them."""
-        checklists = deficiencies.parse_checklists((deficiencies.STATUS).read_text())
+        checklists = deficiencies.parse_checklists(deficiencies.STATUS.read_text())
         phases, problems = deficiencies.parse_phase_index(
             (deficiencies.ROADMAP).read_text()
         )
@@ -961,7 +980,7 @@ class ThisRepo(unittest.TestCase):
         """Not a restatement of the check: this asserts the population is
         non-empty, so a tree that lost every marker cannot pass the
         index-to-marker resolution vacuously."""
-        entries, problems = deficiencies.parse_index((deficiencies.STATUS).read_text())
+        entries, problems = deficiencies.parse_index(deficiencies.REGISTER.read_text())
         self.assertEqual(problems, [])
         self.assertTrue(entries)
         markers = deficiencies.markers_under(
@@ -976,7 +995,7 @@ class ThisRepo(unittest.TestCase):
     def test_the_index_carries_no_paragraph(self):
         """One line per entry, wrapped — an entry that has grown into a
         paragraph is the index becoming the document."""
-        lines = deficiencies.section_lines((deficiencies.STATUS).read_text())
+        lines = deficiencies.section_lines(deficiencies.REGISTER.read_text())
         for bullet in deficiencies.bullets(lines):
             self.assertLessEqual(
                 len(bullet), 8, f"{bullet[0].strip()[:40]} has grown into a paragraph"

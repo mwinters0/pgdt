@@ -3547,9 +3547,9 @@ is two orders of magnitude past the 14% a session's own drift reaches.
 4003 saves ([`decisions.md`](decisions.md), "D63"), which splits roughly as
 29 s of saving on top of the ~19 s of mapping this table reads — a historical
 reading rather than a column, that build being retired. What is left is `KD5`
-([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies"): the
-rebuild is a whole-list clone, so it is only ever as cheap as the gate is
-closed.
+([`../status/deficiencies.md`](../status/deficiencies.md),
+"Known deficiencies"): the rebuild is a whole-list clone, so it is only ever
+as cheap as the gate is closed.
 
 Save counts come from `strace -f -e trace=open,openat` filtered to the cache
 path (a save opens once, the file it writes beside the cache and renames over

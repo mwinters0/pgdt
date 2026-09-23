@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The deficiency register's reconciliation: STATUS.md's index against the
-code marker that carries each entry's detail.
+"""The deficiency register's reconciliation: `deficiencies.md`'s index against
+the code marker that carries each entry's detail.
 
 `docs/process.md` ("Known deficiencies") makes the register an index whose
 detail lives elsewhere -- and "elsewhere" is **the code**, in the comment at a
@@ -139,6 +139,9 @@ REPO = Path(__file__).resolve().parent.parent
 #: The index. Nothing under `docs/` may carry a marker, this file least of all:
 #: a detail written here is the decay `process.md` names -- the index has become
 #: the document, and the session editing the mechanism will not see it.
+REGISTER = REPO / "docs" / "status" / "deficiencies.md"
+
+#: Where the slice checklists are, which a `(b)` entry and its slice pair across.
 STATUS = REPO / "docs" / "status" / "STATUS.md"
 
 #: The phase index, which is where a `(b)` entry's owner is resolved: it is the
@@ -157,7 +160,7 @@ CODE_ROOTS = (
     REPO / "datafusion-cli-pgdump" / "src",
 )
 
-SECTION_HEADING = "## Known deficiencies"
+SECTION_HEADING = "# Known deficiencies"
 
 #: One token. Deliberately unanchored to any comment syntax, so the sweep over
 #: `docs/` finds a stray one however it was written.
@@ -166,6 +169,7 @@ MARKER_RE = re.compile(r"deficiency:\s*(KD\d+)")
 #: An index entry opens a bullet at column 0 and runs to the next one.
 ENTRY_HEAD_RE = re.compile(r"^-\s+\*\*(KD\d+)\*\*\s+—\s*(.*)$")
 BULLET_RE = re.compile(r"^-\s")
+HEADING_RE = re.compile(r"^#{1,6}\s")
 
 #: A phase's slice checklist. `process.md` fixes both the heading and the item
 #: shape: `## P<N> progress`, then one `- [ ] **<N>.<M>**` per slice.
@@ -302,7 +306,7 @@ def repo_rel(path: Path, repo: Path) -> str:
 
 
 def section_lines(text: str, heading: str = SECTION_HEADING) -> list[str]:
-    """The lines under `heading`, up to the next heading of the same level.
+    """The lines under `heading`, up to the next heading of any level.
 
     Returns nothing when the section is absent, which the caller reports --
     a missing section is a register that has been deleted, not an empty one.
@@ -310,7 +314,7 @@ def section_lines(text: str, heading: str = SECTION_HEADING) -> list[str]:
     out: list[str] = []
     inside = False
     for line in text.splitlines():
-        if line.startswith("## "):
+        if HEADING_RE.match(line):
             if inside:
                 break
             inside = line.strip() == heading
@@ -851,15 +855,17 @@ def report(
 
 
 def check(repo: Path = REPO, out=sys.stdout) -> int:
-    status = repo / "docs" / "status" / "STATUS.md"
-    roadmap = repo / "docs" / "design" / "roadmap.md"
+    register = repo / REGISTER.relative_to(REPO)
+    status = repo / STATUS.relative_to(REPO)
+    roadmap = repo / ROADMAP.relative_to(REPO)
     doc_root = repo / "docs"
     code_roots = tuple(repo / p.relative_to(REPO) for p in CODE_ROOTS)
 
-    text = status.read_text()
+    # A missing file parses as a register that is gone, which is what it is.
+    text = register.read_text() if register.exists() else ""
     entries, problems = parse_index(text)
-    checklists = parse_checklists(text)
     watermark, watermark_problems = parse_watermark(text)
+    checklists = parse_checklists(status.read_text()) if status.exists() else {}
     if roadmap.exists():
         phases, phase_problems = parse_phase_index(roadmap.read_text())
     else:

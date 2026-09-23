@@ -10,8 +10,9 @@ approach, or unblock you.
 
 1. **Invoke the `process` skill** — first, not after you have decided what to
    build. It requires a full read of `docs/process.md` and names the obligations.
-2. Read `docs/status/STATUS.md`: the phase checklist, "Not started", the
-   deficiency register, and "Decisions worth another look".
+2. Read `docs/status/STATUS.md` — the phase checklist, "Not started" and
+   "Decisions worth another look" — and the deficiency register beside it,
+   `docs/status/deficiencies.md`.
 3. Read the current phase spec and the notes docs of its landed slices.
 4. Read `docs/design/out-of-band.md` **whole**, for rows whose Date is empty;
    they are in allocation order, so a partial read is how one goes unpicked-up.
