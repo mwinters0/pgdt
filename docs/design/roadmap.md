@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9–P14, P16, P17, P19, P20 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P6 — DataFusion integration | Current | [`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md) |
+| P6 — DataFusion integration | Complete | [`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md); [notes](roadmap-P6-datafusion-notes.md) |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below |
@@ -653,8 +653,9 @@ What it inherits:
 
 ## P6 — DataFusion integration
 
-**Specified and sliced (2026-09-21):
-[`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md).** What the maintainer
+**Complete (2026-09-23):
+[`roadmap-P6-datafusion.md`](roadmap-P6-datafusion.md), with its
+[consolidated notes](roadmap-P6-datafusion-notes.md).** What the maintainer
 fixed before the grilling:
 
 - **DataFusion only.** An Apache DataFusion `TableProvider` over a dump's
@@ -665,8 +666,6 @@ fixed before the grilling:
 - **The provider may require a complete cache** built by `pgdt parse` before
   any DataFusion use. Starting a parse from inside the SQL shell is a
   convenience, wanted only if it comes cheaply.
-
-**Moved to the front of the schedule**, ahead of the phases below it.
 
 ## P15 — gzip input
 

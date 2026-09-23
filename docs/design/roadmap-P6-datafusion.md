@@ -7,8 +7,9 @@ carries it.
 Grilled 2026-09-21; its inbox was drained into this file and deleted. **The
 first slice exists to produce evidence**: 6.1 checks the library's orderings
 against Arrow's before 6.2 builds a comparison mode on the result, so slice
-numbers after it are allocation order as much as schedule. The checklist is
-`../status/STATUS.md`, "P6 progress".
+numbers after it are allocation order as much as schedule. The phase is
+complete; what it leaves later work is
+[`roadmap-P6-datafusion-notes.md`](roadmap-P6-datafusion-notes.md).
 
 ## Scope
 

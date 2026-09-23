@@ -67,7 +67,7 @@ Anything unchecked here is considered "TODO" / Future.
     - [ ] CLI parquet
 - Consumers
     - [x] Rust
-    - [ ] DataFusion
+    - [x] DataFusion
     - [ ] Python
     - [ ] Trino
     - [ ] DuckDB
