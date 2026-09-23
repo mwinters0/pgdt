@@ -44,12 +44,14 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M135 are struck**, and nothing at or below `M135` is reused. That is a
+**M1–M141 are struck**, and nothing at or below `M141` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
-numbers are spent all the same. What each struck item decided is in `decisions.md` —
+numbers are spent all the same. What each struck item decided is filed by kind —
 [`decisions.md`](decisions.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
+[`postgres-invariants.md`](postgres-invariants.md) for an external fact,
+[`../manual/`](../manual/) for a flag,
 [`decisions.md`](decisions.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
 in the dated history entry it was filed under.
@@ -64,9 +66,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M136 | 2026-09-23 | `--where`: a `(` before a keyword is structure, as D60 states | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
-| M137 | 2026-09-23 | A declared type is read as PostgreSQL's grammar reads it — aliases, a mid-name typmod, `interval`'s fields; strikes `KD44` | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
-| M138 | 2026-09-23 | Every stale figure re-taken by `measure.py --all`, launched detached once `M136` and `M137` land | | [2026-09-23](../status/history/2026-09-23.md), "The repoint's findings, dispositioned" |
-| M139 | 2026-09-23 | Named what moved `peak-rss` and `rss-attribution` between `9b35bea` and `542fdfb`: `f672ad6`'s linked HTTP stack and `d767794`'s save | | [2026-09-23](../status/history/2026-09-23.md), "`M139`: what moved the resident figures" |
-| M140 | 2026-09-23 | `--statistics-group-size` is `--row-group-size`, and `STATISTICS_GROUP_*` is `ROW_GROUP_*`: Parquet's name for the unit `RowGroup` already carried | | [2026-09-23](../status/history/2026-09-23.md), "`M140`: a statistics group is a row group" |
-| M141 | 2026-09-23 | `--statistics-min-rows` and `--statistics-max-rows` are `--row-group-min-rows` and `--row-group-max-rows`; the manual says how a row group differs from Parquet's | | [2026-09-23](../status/history/2026-09-23.md), "`M140`: a statistics group is a row group" |
