@@ -48,8 +48,7 @@ The user's text is
   does not depend on the chunk's size, but whether a floor fires at all can.
 - **`BatchSpanNarrowed` lists no chunk lever, though a chunk-sized source's
   span would widen under a smaller one.** This follows the row, which changed
-  only the floor note's sentence. It is filed under STATUS's "Decisions worth
-  another look".
+  only the floor note's sentence, against the spec's rule; `M134` adds it.
 - **No `D<k>` entry.** The spec holds the decision, and the rule is in the
   rustdoc on `PlanNote::levers` and `BudgetedPlanNote`. No figure was taken
   and no cache format moved.

@@ -500,16 +500,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`BatchSpanNarrowed` names no smaller read chunk, in its sentence or its
-  levers** (6.12.1). On a source that sizes a reader from the chunk, a
-  smaller chunk shrinks the per-reader charge `derived_source_span`
-  subtracts before dividing the rest among the readers, so it widens the
-  narrowed span. For example, eight readers under a 64 MiB plain budget get
-  one chunk each at the default chunk and several MiB at a quarter of it.
-  The call followed the row, which changed only `AllocationBelowFloor`'s
-  sentence, and 6.12's clause, which offered only
-  `datafusion.execution.target_partitions` for this note. Reconsidering adds
-  `SmallerReadChunk` to its levers where `Partitioning::sized_by_read_chunk`
-  holds and a chunk clause to its sentence, so the provider would name
-  `pgdump.chunk_size` there.
