@@ -971,14 +971,98 @@ pub const RANGE_STRUCT_FIELDS: [&str; 5] =
     ["lower", "upper", "lower_inclusive", "upper_inclusive", "empty"];
 
 /// Split `declared` into its base type name and typmod contents, if any
-/// (`numeric(38,10)` -> `("numeric", Some("38,10"))`). Only `numeric` reads
-/// the typmod's *value*; every other mapping below is `Microsecond`-precision
-/// or otherwise typmod-independent.
+/// (`numeric(38,10)` -> `("numeric", Some("38,10"))`), where the typmod ends
+/// the string. It says whether a name is schema-qualified; a built-in's is read
+/// by [`builtin_name`]. Only `numeric` and `float` read the typmod's *value*;
+/// every other mapping below is `Microsecond`-precision or otherwise
+/// typmod-independent.
 pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
     match s.find('(') {
         Some(i) if s.ends_with(')') => (s[..i].trim_end(), Some(&s[i + 1..s.len() - 1])),
         _ => (s, None),
     }
+}
+
+/// A built-in's declared spelling — no `.` in it (I8) — as the one name
+/// [`builtin_scalar`] and [`builtin_range_subtype`] match on, and its typmod,
+/// read the way PostgreSQL's grammar reads it (`docs/design/roadmap.md`, "The
+/// input contract is valid PostgreSQL").
+///
+/// - **A typmod may sit mid-name**: `format_type` writes
+///   `timestamp(3) with time zone`, `time(2) without time zone` and
+///   `interval day to second(3)`, so the one parenthesized group is cut out
+///   wherever it falls.
+/// - **`interval`'s field qualifiers** restrict what a value may hold, never
+///   how it is written, so `interval year to month` is `interval`.
+/// - **An unquoted name is folded to lower case and its whitespace to one
+///   space**, then read through the grammar's own keywords (`int`, `char`,
+///   `varchar`, `dec`, `float(p)`, bare `timestamp`, …) and then as a catalog
+///   name (`int4`, `bpchar`, `timestamptz`, …). `format_type` writes one of the
+///   latter itself: `bpchar`, for a `character` column with no typmod.
+/// - **A quoted name is a catalog name alone**, case and all, as the grammar
+///   takes it: `"char"` is the one-byte internal type, not `character`, and
+///   reaches no arm.
+fn builtin_name(declared: &str) -> (std::borrow::Cow<'static, str>, Option<&str>) {
+    let (words, typmod) = match (declared.find('('), declared.rfind(')')) {
+        (Some(open), Some(close)) if open < close => (
+            format!("{} {}", &declared[..open], &declared[close + 1..]),
+            Some(&declared[open + 1..close]),
+        ),
+        _ => (declared.to_owned(), None),
+    };
+    let words = words.trim();
+    if let Some(quoted) = words.strip_prefix('"').and_then(|w| w.strip_suffix('"')) {
+        return (catalog_name(quoted).unwrap_or(quoted).to_owned().into(), typmod);
+    }
+    let words = words.split_ascii_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+    let keyword = match words.as_str() {
+        "int" => "integer",
+        "dec" | "decimal" => "numeric",
+        // `float(p)` is `real` through 24 bits of precision and `double
+        // precision` past them; the precision is spent choosing, and the type
+        // chosen takes no typmod.
+        "float" => {
+            let real = typmod.and_then(|p| p.trim().parse::<u8>().ok()).is_some_and(|p| p <= 24);
+            return ((if real { "real" } else { "double precision" }).into(), None);
+        }
+        "char" | "nchar" | "national char" | "national character" => "character",
+        "char varying"
+        | "nchar varying"
+        | "national char varying"
+        | "national character varying" => "character varying",
+        "timestamp" => "timestamp without time zone",
+        "time" => "time without time zone",
+        w if w.strip_prefix("interval ").is_some_and(|fields| {
+            fields.split(' ').all(|f| {
+                matches!(f, "year" | "month" | "day" | "hour" | "minute" | "second" | "to")
+            })
+        }) =>
+        {
+            "interval"
+        }
+        w => return (catalog_name(w).map_or_else(|| words.clone(), str::to_owned).into(), typmod),
+    };
+    (keyword.into(), typmod)
+}
+
+/// A catalog type name whose SQL spelling is another, as that spelling —
+/// `None` where the two agree or the name is not a built-in's.
+fn catalog_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "int2" => "smallint",
+        "int4" => "integer",
+        "int8" => "bigint",
+        "float4" => "real",
+        "float8" => "double precision",
+        "bool" => "boolean",
+        "bpchar" => "character",
+        "varchar" => "character varying",
+        "timestamp" => "timestamp without time zone",
+        "timestamptz" => "timestamp with time zone",
+        "time" => "time without time zone",
+        "timetz" => "time with time zone",
+        _ => return None,
+    })
 }
 
 /// `numeric(p,s)` -> `Decimal128`/`Decimal256` when `p` fits; bare `numeric`
@@ -1045,13 +1129,7 @@ fn builtin_scalar(
     use arrow::datatypes::TimeUnit::Microsecond;
     let agrees = ComparisonPlan::agrees;
     let text = ComparisonPlan::AS_TEXT;
-    // deficiency: KD44 — only SQL spellings are arms here, so a declaration by
-    // a type's internal name (`int4`, `int8`, `float8`, `bool`, `timestamptz`,
-    // …), which PostgreSQL reads as the same type, resolves `Unknown`: a
-    // weaker type, never a wrong one. `format_type` writes one itself, `bpchar`
-    // for a `character` column with no typmod. **(b)**, queued in
-    // `docs/design/out-of-band.md`'s ledger.
-    Some(match base.to_ascii_lowercase().as_str() {
+    Some(match base {
         "smallint" => (Int16, agrees(K::Int)),
         "integer" => (Int32, agrees(K::Int)),
         "bigint" => (Int64, agrees(K::Int)),
@@ -1205,7 +1283,7 @@ pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExten
         };
         return extension_for(base_type, types);
     }
-    match base.to_ascii_lowercase().as_str() {
+    match &*builtin_name(declared).0 {
         "uuid" => Some(CanonicalExtension::Uuid),
         "json" | "jsonb" => Some(CanonicalExtension::Json),
         _ => None,
@@ -1234,7 +1312,7 @@ fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<Ty
         // an `int2vector` one are both `List<Int16>` and are written in
         // different grammars (`docs/design/decisions.md`, "D39"). Exactly one
         // built-in is a container.
-        let plan = match base.to_ascii_lowercase().as_str() {
+        let plan = match base {
             "int2vector" => NestedPlan::Int2Vector,
             _ => NestedPlan::Scalar,
         };
@@ -1252,7 +1330,7 @@ fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<Ty
     // Built-in ranges, and their PG14+ multirange counterparts (I10): both
     // appear bare, never schema-qualified, so both need this table rather
     // than the user-defined lookup (I8).
-    let BuiltinRange { subtype, multi, .. } = builtin_range_subtype(&base.to_ascii_lowercase())?;
+    let BuiltinRange { subtype, multi, .. } = builtin_range_subtype(base)?;
     let (bound, bound_plan) = resolve_nested(subtype, types);
     Some(if multi {
         TypeOutcome::Mapped(
@@ -1575,11 +1653,12 @@ pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     if let Some(element) = array_element(declared) {
         return resolve_array(element, types);
     }
-    let (base, typmod) = split_typmod(declared);
+    let (base, _) = split_typmod(declared);
     if base.contains('.') {
         return resolve_user_type(base, types);
     }
-    map_builtin(base, typmod, types).unwrap_or(TypeOutcome::Unknown)
+    let (base, typmod) = builtin_name(declared);
+    map_builtin(&base, typmod, types).unwrap_or(TypeOutcome::Unknown)
 }
 
 /// The comparison for an array column, from the same walk [`resolve_array`]
@@ -1740,17 +1819,18 @@ pub fn comparison_for(
     if array_element(declared).is_some() {
         return array_comparison(declared, collation, types, collations);
     }
-    let (base, typmod) = split_typmod(declared);
+    let (base, _) = split_typmod(declared);
     if base.contains('.') {
         return comparison_user_type(base, collation, types, collations);
     }
-    if let Some((_, plan)) = builtin_scalar(base, typmod, collation, collations) {
+    let (base, typmod) = builtin_name(declared);
+    if let Some((_, plan)) = builtin_scalar(&base, typmod, collation, collations) {
         return plan;
     }
     // The twelve built-in range and multirange names, which reach no arm of
     // `builtin_scalar` and appear in no `CREATE TYPE` (I10) — the same fourth
     // step `map_builtin` takes, so the two walks agree.
-    match builtin_range_subtype(&base.to_ascii_lowercase()) {
+    match builtin_range_subtype(&base) {
         Some(range) => {
             range_comparison(Some(range.subtype), range.discrete, range.multi, types, collations)
         }
@@ -1926,6 +2006,70 @@ mod tests {
             resolve_declared_type("time with time zone", &[]),
             TypeOutcome::Mapped(DataType::Utf8View, NestedPlan::Scalar)
         );
+        // The typmod `format_type` writes mid-name, before the zone.
+        for (declared, bare) in [
+            ("timestamp(3) with time zone", "timestamp with time zone"),
+            ("timestamp(0) without time zone", "timestamp without time zone"),
+            ("time(2) with time zone", "time with time zone"),
+            ("time(6) without time zone", "time without time zone"),
+        ] {
+            assert_eq!(resolve_declared_type(declared, &[]), resolve_declared_type(bare, &[]));
+        }
+    }
+
+    /// **A declared type is read as PostgreSQL's grammar reads it**: every
+    /// spelling on the left names the type on the right, a catalog name, a
+    /// grammar keyword or an `interval` field qualifier alike.
+    #[test]
+    fn every_spelling_of_a_built_in_is_that_built_in() {
+        for (declared, canonical) in [
+            ("int2", "smallint"),
+            ("int4", "integer"),
+            ("INT", "integer"),
+            ("int8", "bigint"),
+            ("float4", "real"),
+            ("float(24)", "real"),
+            ("float8", "double precision"),
+            ("float", "double precision"),
+            ("float(25)", "double precision"),
+            ("bool", "boolean"),
+            ("bpchar", "character"),
+            ("bpchar(5)", "character(5)"),
+            ("char(5)", "character(5)"),
+            ("national character(5)", "character(5)"),
+            ("varchar(16)", "character varying(16)"),
+            ("char  varying", "character varying"),
+            ("decimal(10,2)", "numeric(10,2)"),
+            ("dec", "numeric"),
+            ("timestamp", "timestamp without time zone"),
+            ("timestamptz", "timestamp with time zone"),
+            ("TIMESTAMP(3)", "timestamp without time zone"),
+            ("time", "time without time zone"),
+            ("timetz", "time with time zone"),
+            ("interval year to month", "interval"),
+            ("interval day to second(3)", "interval"),
+            ("interval second", "interval"),
+            ("\"int4\"", "integer"),
+            ("\"timestamptz\"", "timestamp with time zone"),
+        ] {
+            let got = resolve_declared_type(declared, &[]);
+            assert_ne!(got, TypeOutcome::Unknown, "`{declared}`");
+            assert_eq!(got, resolve_declared_type(canonical, &[]), "`{declared}`");
+            assert_eq!(
+                comparison_for(declared, None, &[], &[]),
+                comparison_for(canonical, None, &[], &[]),
+                "`{declared}`"
+            );
+        }
+    }
+
+    /// A quoted name is a catalog name, case and all: `"char"` is the one-byte
+    /// internal type, which no arm maps, and `"INT4"` names nothing.
+    #[test]
+    fn a_quoted_name_is_only_a_catalog_name() {
+        for declared in ["\"char\"", "\"INT4\"", "\"bit\"", "interval fortnight"] {
+            assert_eq!(resolve_declared_type(declared, &[]), TypeOutcome::Unknown, "`{declared}`");
+        }
     }
 
     /// `interval` is the one type whose Arrow mapping is a *struct* of

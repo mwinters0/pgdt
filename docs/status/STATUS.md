@@ -391,12 +391,6 @@ a phase nobody has sliced.
   merges further past it. **(c) unowned**; promoted by a stated maximum seen
   to leave a block's groups past it. Detail: `pgdump_query/src/gather.rs`.
 
-- **KD44** — a column declared by a type's internal name (`int4`, `float8`,
-  `bool`, …) resolves `Unknown`, though PostgreSQL reads it as the type the SQL
-  spelling names: a weaker type, never a wrong one. `pg_dump` writes one, an
-  unbounded `character` column's `bpchar`. **(b) owned by `M137`**. Detail:
-  `pgdump_query/src/pgtype.rs`.
-
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: the attribution sitting read a worst
   remainder of 544 MiB on a compressed `query`, and every `wide-xz24` `query`

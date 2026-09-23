@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 9m1WeUQerN2E5MqO4To6bHcQigvsVrOALsteAy2NIA78doN9N0SgUU8zAgNZjzN
+\restrict 10Xs1JFZDriLYWzG5ZUHpVV5a9lyLttf8SPq9AhE4FIxtJycWMc5B47JUrdae01
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -625,6 +625,24 @@ CREATE TABLE public.t_timestamp (
 ALTER TABLE public.t_timestamp OWNER TO postgres;
 
 --
+-- Name: t_type_spelling; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_type_spelling (
+    id integer NOT NULL,
+    v_ts3 timestamp(3) without time zone,
+    v_tstz0 timestamp(0) with time zone,
+    v_time3 time(3) without time zone,
+    v_timetz2 time(2) with time zone,
+    v_ym interval year to month,
+    v_ds2 interval day to second(2),
+    v_bpchar bpchar
+);
+
+
+ALTER TABLE public.t_type_spelling OWNER TO postgres;
+
+--
 -- Name: t_user_range; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -957,6 +975,16 @@ COPY public.t_timestamp (id, v_ts, v_tstz) FROM stdin;
 
 
 --
+-- Data for Name: t_type_spelling; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_type_spelling (id, v_ts3, v_tstz0, v_time3, v_timetz2, v_ym, v_ds2, v_bpchar) FROM stdin;
+1	2024-01-01 00:00:00.123	2024-01-01 00:00:01+00	12:34:56.789	12:34:56.79+02	1 year 2 mons	3 days 04:05:06.79	ab  
+2	\N	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_user_range; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1179,6 +1207,14 @@ ALTER TABLE ONLY public.t_timestamp
 
 
 --
+-- Name: t_type_spelling t_type_spelling_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_type_spelling
+    ADD CONSTRAINT t_type_spelling_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_user_range t_user_range_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1198,5 +1234,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 9m1WeUQerN2E5MqO4To6bHcQigvsVrOALsteAy2NIA78doN9N0SgUU8zAgNZjzN
+\unrestrict 10Xs1JFZDriLYWzG5ZUHpVV5a9lyLttf8SPq9AhE4FIxtJycWMc5B47JUrdae01
 

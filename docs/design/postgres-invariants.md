@@ -357,11 +357,21 @@ spelling at all, which falls back to its bare `typname`.
 int2vector` at all six majors. A declared name with no `.` in it is a
 `pg_catalog` name, whether or not the SQL standard has a word for the type.
 
+**The standard spelling is not always the one written.** `format_type` puts a
+typmod where the grammar does — `timestamp(3) with time zone`,
+`time(2) without time zone`, `interval day to second(2)` — and writes a
+`character` or `bit` column with no typmod as `bpchar` and `"bit"`, the SQL
+word alone meaning length 1 (`format_type.c`, the `BPCHAROID` and `BITOID`
+cases). `fixtures/<13–18>/types/default.sql`'s `t_type_spelling` carries each
+at all six majors; `pgtype.rs`'s `builtin_name` reads them.
+
 **Verified against:** v18.6 source; koji and all three fixture versions emit
 the empty-`search_path` line.
 **Relied on by:** `decisions.md` ("Type resolution and decoders").
 **Re-verify:** `grep -n 'dumpSearchPath' -A45 src/bin/pg_dump/pg_dump.c`, and
-confirm fixtures still contain `set_config('search_path', '', false)`.
+confirm fixtures still contain `set_config('search_path', '', false)`;
+`grep -n 'BPCHAROID' -A14 src/backend/utils/adt/format_type.c`, and
+`cargo test -p pgdump_query --test pgtype`, which reads `t_type_spelling`.
 
 ---
 

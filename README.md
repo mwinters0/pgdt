@@ -1,13 +1,16 @@
 # pgdump_query / pgdt
 
-Query Postgres dumps like they're parquet.  (Or just inspect them without having to load them.)
-Because sometimes stupid problems need stupid solutions.
+Inspect Postgres dumps, query them like they're parquet, and export results.
 
 Available as:
-- A Rust library (`pgdump_query`)
-- A CLI (`pgdt` aka "Postgres Dump Tool")
-- A DataFusion catalog and `TableProvider` (`datafusion-pgdump`), over a dump `pgdt parse` has cached
-- A SQL shell (`datafusion-cli-pgdump`): `datafusion-cli` with those tables attached
+- A Rust library: `pgdump_query`
+- A CLI: `pgdt`, aka "Postgres Dump Tool"
+    - Generates metadata and statistics (cached as `*.dtcache`)
+    - Supports queries with SQL-like `WHERE` syntax (no joins)
+- A DataFusion catalog and `TableProvider`: `datafusion-pgdump`
+- A DataFusion SQL shell: `datafusion-cli-pgdump`
+
+Quickstart:
 
 ```bash
 # Parse a dump (builds a cache)
@@ -18,9 +21,13 @@ pgdt info --details --source=f00.xz
 
 # Run a query.  Look ma, no daemons!
 pgdt query --where='foo.bar = baz' --source=f00.xz
+
+# Use DuckDB to convert the TSV output to parquet
+pgdt query ... \
+  | duckdb -c "COPY (SELECT * FROM read_csv('/dev/stdin', delim='\t', header=true, auto_detect=true)) TO 'output.parquet' (FORMAT PARQUET)"
 ```
 
-Heavily assisted by LLMs.
+_Mostly written by LLMs, reviewed through human wetware._
 
 
 ## Roadmap / Status

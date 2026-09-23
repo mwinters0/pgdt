@@ -161,6 +161,26 @@ INSERT INTO public.t_interval VALUES
     (4, '1.5 hours'),
     (5, NULL);
 
+-- The spellings `format_type` writes around a typmod -- mid-name before a
+-- zone, after an `interval` field qualifier -- and the one internal name it
+-- writes, `bpchar`, for a `character` column with no typmod. Each is read as
+-- the type the grammar reads it as (roadmap.md, "The input contract is valid
+-- PostgreSQL").
+CREATE TABLE public.t_type_spelling (
+    id integer PRIMARY KEY,
+    v_ts3 timestamp(3) without time zone,
+    v_tstz0 timestamp(0) with time zone,
+    v_time3 time(3) without time zone,
+    v_timetz2 time(2) with time zone,
+    v_ym interval year to month,
+    v_ds2 interval day to second(2),
+    v_bpchar bpchar
+);
+INSERT INTO public.t_type_spelling VALUES
+    (1, '2024-01-01 00:00:00.123456', '2024-01-01 00:00:00.6+00', '12:34:56.7891',
+        '12:34:56.789+02', '1 year 2 months', '3 days 04:05:06.789', 'ab  '),
+    (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
 CREATE TABLE public.t_bytea (
     id integer PRIMARY KEY,
     v_bytea bytea

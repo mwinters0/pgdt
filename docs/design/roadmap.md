@@ -266,9 +266,9 @@ Two consequences, and the second is what the rule is really for:
 
 - **A declared type is read the way PostgreSQL's own type system reads it**,
   because that is the type the values in the `COPY` block were written by.
-  `resolve_declared_type` is nothing but this — typmod splitting, the domain
-  walk, and `int4` → `Int32` once `KD44` closes — so a spelling read *more
-  literally* than the server reads it is the anomaly, not the interpretation.
+  `resolve_declared_type` is nothing but this — `int4` → `Int32`, a typmod
+  wherever it falls, the domain walk — so a spelling read *more literally*
+  than the server reads it is the anomaly, not the interpretation.
 - **A resolution outcome states only what the DDL supports.** Refusing a
   column is always available; refusing it under a label that makes a false
   claim about the column is not.

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict CbNcCGl4iNbb4rHvkE4DSN8BqD0hdFxSnixcBT2dVTFBS1NgleFrKyWTiN49jir
+\restrict aghigmZ4uLDAnqrQAtlDsmNiP9W8PNPLYFXvl5FiOuQg2c7I2zwJm9ZcoSkVECd
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -328,6 +328,16 @@ COPY public.t_timestamp (id, v_ts, v_tstz) FROM stdin;
 
 
 --
+-- Data for Name: t_type_spelling; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_type_spelling (id, v_ts3, v_tstz0, v_time3, v_timetz2, v_ym, v_ds2, v_bpchar) FROM stdin;
+1	2024-01-01 00:00:00.123	2024-01-01 00:00:01+00	12:34:56.789	12:34:56.79+02	1 year 2 mons	3 days 04:05:06.79	ab  
+2	\N	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_user_range; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -353,5 +363,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict CbNcCGl4iNbb4rHvkE4DSN8BqD0hdFxSnixcBT2dVTFBS1NgleFrKyWTiN49jir
+\unrestrict aghigmZ4uLDAnqrQAtlDsmNiP9W8PNPLYFXvl5FiOuQg2c7I2zwJm9ZcoSkVECd
 

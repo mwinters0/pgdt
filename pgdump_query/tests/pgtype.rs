@@ -75,6 +75,9 @@ async fn every_column_family_resolves_as_the_mapping_table_says() {
             "public.t_date",
             "public.t_time",
             "public.t_timestamp",
+            // Every spelling `format_type` writes around a typmod, and its
+            // `bpchar`: read as the grammar reads them, never `UnknownType`.
+            "public.t_type_spelling",
             "public.t_uuid",
             "public.t_bytea",
         ] {
