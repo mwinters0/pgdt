@@ -173,6 +173,10 @@ delivered.
   in the provider's finding, its four terms and the setting keys that move
   them in the clause.
   [Notes](../design/roadmap-P6.12-budget-account-notes.md).
+- [ ] **6.12.1** A plan note names only the levers that move it: the
+  library's `AllocationBelowFloor` sentence names its levers as its siblings
+  do, every plan note exposes them as data, and the provider's clause names a
+  key only where its lever is listed.
 
 ## Not started
 
@@ -495,18 +499,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **Which setting keys a budget-quoting plan note's clause names** (6.12).
-  The spec says "each where it applies" and leaves the rule open.
-  `BudgetedPlanNote` names `pgdump.memory` always,
-  `datafusion.runtime.memory_limit` where the pool states a limit, and the
-  other two only where the note's own sentence offers them:
-  `pgdump.chunk_size` on `ParallelismBudgetLimited`, and
-  `datafusion.execution.target_partitions` on `BatchSpanNarrowed`
-  (`datafusion-pgdump/src/report.rs`). So `AllocationBelowFloor` on a plain
-  dump does not name `pgdump.chunk_size`, although that source's unit is a
-  multiple of the chunk and a smaller one could seat the reader. It was left
-  out because the library's sentence offers no chunk there, and a key the
-  sentence does not explain would be a lever with no reason given. The
-  alternative is to name the chunk wherever the source cuts by it, which
-  the provider would have to ask the source about.

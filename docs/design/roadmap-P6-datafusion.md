@@ -316,11 +316,14 @@ drawn. Its message is the note's followed by a clause naming those terms and,
 by their setting keys, the levers that move them — `pgdump.memory`,
 `pgdump.chunk_size`, `datafusion.execution.target_partitions`,
 `datafusion.runtime.memory_limit`, each where it applies (below, "Workers and
-memory"): a key is a lever a user types as it stands. A caller wanting its own
-names downcasts it. `datafusion-cli-pgdump` prints the message
-unchanged. Amended 2026-09-22
+memory"): a key is a lever a user types as it stands, and one is named only
+where it would change what the note reports for this source and this budget.
+A caller wanting its own names downcasts it. `datafusion-cli-pgdump` prints the
+message unchanged. Amended 2026-09-22
 ([`../status/history/2026-09-22.md`](../status/history/2026-09-22.md), "What a
-provider's plan note says about its budget"). Rejected: an English clause
+provider's plan note says about its budget") and 2026-09-23
+([`../status/history/2026-09-23.md`](../status/history/2026-09-23.md), "Which
+keys a budget-quoting plan note's clause names"). Rejected: an English clause
 appended in `report_plan`, leaving an embedder to parse prose; the binary's
 sink wording it, which has no account to read.
 
